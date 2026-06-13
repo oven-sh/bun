@@ -1,5 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use super::DiffFormatter;
 use super::Expect;
@@ -52,5 +51,3 @@ impl Expect {
         this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter))
     }
 }
-
-// ported from: src/test_runner/expect/toStrictEqual.zig

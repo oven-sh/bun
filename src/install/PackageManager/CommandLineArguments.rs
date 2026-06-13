@@ -11,24 +11,23 @@
 //! - bun audit
 
 use crate::package_install;
+use crate::package_manager_real::PackageManagerCommand;
 use crate::package_manager_real::Subcommand;
 use bun_clap as clap;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::npm as Npm;
 use bun_paths::{self as Path, PathBuffer};
-// TODO(b0): PackageManagerCommand arrives from move-in
-// (bun_runtime::cli::package_manager_command::PackageManagerCommand → install::PackageManager::CommandLineArguments).
-use crate::package_manager_real::PackageManagerCommand;
 
 use std::sync::OnceLock;
 
 use super::package_manager_options as Options;
 
 /// `Output.pretty(text, .{})` — runtime `<tag>` → ANSI rewrite of a help-text
-/// literal then write to stdout. The Zig version did this at comptime; here the
-/// help strings are runtime `&str`s so we use the runtime expander.
+/// literal then write to stdout. The help strings are runtime `&str`s so we
+/// use the runtime expander.
 #[inline]
+#[allow(clippy::disallowed_methods)] // template is a runtime &str parameter
 fn pretty_help(text: &str) {
     Output::pretty(format_args!(
         "{}",
@@ -38,16 +37,13 @@ fn pretty_help(text: &str) {
 
 type ParamType = clap::Param<clap::Help>;
 
-// Zig `++` does comptime array concatenation. `bun_clap::concat_params!` is a
-// const-fn slice concat over `Param<Help>`, so combined tables
+// `bun_clap::concat_params!` is a const-fn slice concat over `Param<Help>`, so combined tables
 // (`INSTALL_PARAMS`, …) are baked into rodata with zero runtime init.
 use bun_clap::concat_params;
 
-// PORT NOTE: Zig builds the `--backend` param spec via comptime string `++` against
-// `platform_specific_backend_label`. `clap::param!` is a proc-macro that requires a
+// `clap::param!` is a proc-macro that requires a
 // *literal* token (it parses the spec at compile time), so `const_format::concatcp!`
-// can't feed it. Instead we cfg-select the fully-expanded literal per platform —
-// semantically identical to the Zig comptime concat.
+// can't feed it. Instead we cfg-select the fully-expanded literal per platform.
 #[cfg(target_os = "macos")]
 const BACKEND_PARAM: ParamType = clap::param!(
     "--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\""
@@ -353,10 +349,10 @@ static WHY_PARAMS: &[ParamType] = concat_params![
 
 // NOTE: `string` (= `[]const u8`) fields here are slices into process argv (owned by `clap::Args`
 // which itself lives for the program duration). They are never freed. Mapped to `&'static [u8]`
-// per PORTING.md (no `deinit`, never `allocator.free`d). Phase B may want to thread an explicit
-// lifetime if `clap::Args` ever becomes scoped.
+// per PORTING.md (no `deinit`, never `allocator.free`d). An explicit lifetime would only
+// become necessary if `clap::Args` ever becomes scoped.
 //
-// `Clone` mirrors Zig value-copy semantics — `updatePackageJSONAndInstall`
+// `Clone` is needed because `updatePackageJSONAndInstall`
 // passes `cli` by value into `PackageManager.init` while retaining its own
 // copy.
 #[derive(Clone)]
@@ -539,12 +535,14 @@ pub enum AuditLevel {
     Critical,
 }
 
-static AUDIT_LEVEL_MAP: phf::Map<&'static [u8], AuditLevel> = phf::phf_map! {
-    b"low" => AuditLevel::Low,
-    b"moderate" => AuditLevel::Moderate,
-    b"high" => AuditLevel::High,
-    b"critical" => AuditLevel::Critical,
-};
+bun_core::comptime_string_map! {
+    static AUDIT_LEVEL_MAP: AuditLevel = {
+        b"low" => AuditLevel::Low,
+        b"moderate" => AuditLevel::Moderate,
+        b"high" => AuditLevel::High,
+        b"critical" => AuditLevel::Critical,
+    };
+}
 
 impl AuditLevel {
     pub fn from_string(str: &[u8]) -> Option<AuditLevel> {
@@ -603,7 +601,7 @@ impl CommandLineArguments {
 Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(&INSTALL_PARAMS);
+                clap::simple_help(INSTALL_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -632,7 +630,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(&UPDATE_PARAMS);
+                clap::simple_help(UPDATE_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -660,7 +658,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(&PATCH_PARAMS);
+                clap::simple_help(PATCH_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -683,7 +681,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
 "#;
                 pretty_help(intro_text);
-                clap::simple_help(&PATCH_PARAMS);
+                clap::simple_help(PATCH_COMMIT_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -714,7 +712,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(&ADD_PARAMS);
+                clap::simple_help(ADD_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -735,7 +733,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(&REMOVE_PARAMS);
+                clap::simple_help(REMOVE_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -759,7 +757,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(&LINK_PARAMS);
+                clap::simple_help(LINK_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -781,7 +779,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/unlink<r>.
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(&UNLINK_PARAMS);
+                clap::simple_help(UNLINK_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -813,7 +811,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/outdated<r>
 "#;
 
                 pretty_help(intro_text);
-                clap::simple_help(&OUTDATED_PARAMS);
+                clap::simple_help(OUTDATED_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -834,7 +832,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(&PACK_PARAMS);
+                clap::simple_help(PACK_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -865,7 +863,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(&PUBLISH_PARAMS);
+                clap::simple_help(PUBLISH_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -918,7 +916,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>.
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(&INFO_PARAMS);
+                clap::simple_help(INFO_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -941,7 +939,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
 "#;
 
                 pretty_help(intro_text);
-                clap::simple_help(&WHY_PARAMS);
+                clap::simple_help(WHY_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -966,16 +964,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(&PM_PARAMS);
+                clap::simple_help(PM_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
         }
     }
 
-    // TODO(port): narrow error set
     pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, bun_core::Error> {
-        // PERF(port): was comptime monomorphization on `subcommand` — profile in Phase B
         Output::set_is_verbose(Output::is_verbose());
 
         let params: &'static [ParamType] = match subcommand {
@@ -1002,12 +998,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
         let mut diag = clap::Diagnostic::default();
 
-        // PORT NOTE: Zig kept `args` (and its arena) alive for the program duration —
+        // `args` must stay alive for the program duration —
         // `cli` stores slices into it. Park the parsed `Args` in a process-global
         // `OnceLock` so outer slice borrows (`positionals()`, `options()`) are
         // `'static`; inner `&[u8]` are argv-backed and already `'static`. CLI args
-        // are parsed exactly once per process, so this is the semantic equivalent
-        // of the Zig arena that was never `deinit`'d.
+        // are parsed exactly once per process.
         static PARSED_ARGS: OnceLock<clap::Args<clap::Help>> = OnceLock::new();
         let args: &'static clap::Args<clap::Help> = match clap::parse::<clap::Help>(
             params,
@@ -1076,7 +1071,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if let Some(network_concurrency) = args.option(b"--network-concurrency") {
-            // TODO(port): parse u16 from &[u8] — bun_str helper or core::str::from_utf8 + parse
             cli.network_concurrency =
                 Some(match strings::parse_int::<u16>(network_concurrency, 10) {
                     Ok(n) => n,
@@ -1095,7 +1089,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if let Some(min_age_secs) = args.option(b"--minimum-release-age") {
-            // TODO(port): parse f64 from &[u8]
             let secs: f64 = match bun_core::parse_double(min_age_secs) {
                 Ok(s) => s,
                 Err(_) => {
@@ -1430,10 +1423,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 } else if git_tag_version == b"false" {
                     cli.git_tag_version = false;
                 }
-            } else if args.flag(b"--no-git-tag-version") {
-                cli.git_tag_version = false;
             } else {
-                cli.git_tag_version = true;
+                cli.git_tag_version = !args.flag(b"--no-git-tag-version");
             }
             cli.allow_same_version = args.flag(b"--allow-same-version");
             if let Some(preid) = args.option(b"--preid") {
@@ -1464,5 +1455,3 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         Ok(cli)
     }
 }
-
-// ported from: src/install/PackageManager/CommandLineArguments.zig

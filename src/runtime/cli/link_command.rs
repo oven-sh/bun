@@ -10,17 +10,17 @@ use bun_install::Features;
 use bun_install::bin_real as bin;
 use bun_install::lockfile_real::{Lockfile, package::Package};
 use bun_install::package_manager_real::{
-    self as pm, CommandLineArguments, PackageManager, Subcommand, attempt_to_create_package_json,
+    self as pm, CommandLineArguments, Subcommand, attempt_to_create_package_json,
     options::LogLevel, package_manager_options, setup_global_dir,
     update_package_json_and_install_with_manager,
 };
 
 use crate::command;
 
-pub struct LinkCommand;
+pub(crate) struct LinkCommand;
 
 impl LinkCommand {
-    pub fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
         link(ctx)
     }
 }
@@ -32,8 +32,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
         Err(e) if e == err!(MissingPackageJSON) => {
             attempt_to_create_package_json()?;
             // Re-parse argv: `CommandLineArguments` is not `Clone`, and `parse`
-            // is deterministic over process argv. Mirrors Zig passing the
-            // by-value `cli` struct to both `init` calls.
+            // is deterministic over process argv.
             let cli = CommandLineArguments::parse(Subcommand::Link)?;
             pm::init(&mut *ctx, cli, Subcommand::Link)?
         }
@@ -42,10 +41,10 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
     // `defer ctx.allocator.free(original_cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
 
     if manager.options.should_print_command_name() {
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b>bun link <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
     }
 
@@ -90,25 +89,25 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
             let name = lockfile.str(&package.name);
             if name.is_empty() {
                 if manager.options.log_level != LogLevel::Silent {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error:<r> package.json missing \"name\" <d>in \"{}\"<r>",
                         BStr::new(package_json_source.path.text),
-                    ));
+                    );
                 }
                 Global::crash();
             } else if !strings::is_npm_package_name(name) {
                 if manager.options.log_level != LogLevel::Silent {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error:<r> invalid package.json name \"{}\" <d>in \"{}\"<r>",
                         BStr::new(name),
                         BStr::new(package_json_source.path.text),
-                    ));
+                    );
                 }
                 Global::crash();
             }
         }
 
-        // PORT NOTE: reshaped for borrowck — re-derive `name` here so its
+        // Reshaped for borrowck — re-derive `name` here so its
         // lifetime is tied only to `lockfile.buffers.string_bytes`, decoupled
         // from `package_json_source` (dropped above).
         let name = lockfile.str(&package.name);
@@ -128,16 +127,17 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
 
             match manager
                 .global_dir
+                .as_ref()
                 .unwrap()
                 .make_open_path(b"node_modules", Default::default())
             {
                 Ok(d) => break 'brk d,
                 Err(e) => {
                     if manager.options.log_level != LogLevel::Silent {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> failed to create node_modules in global dir due to error {}",
                             e.name(),
-                        ));
+                        );
                     }
                     Global::crash();
                 }
@@ -155,10 +155,10 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                     if let Err(e) = node_modules.make_dir(&name[..i as usize]) {
                         if e != err!(PathAlreadyExists) {
                             if manager.options.log_level != LogLevel::Silent {
-                                Output::pretty_errorln(format_args!(
+                                bun_core::pretty_errorln!(
                                     "<r><red>error:<r> failed to create scope in global dir due to error {}",
                                     e.name(),
-                                ));
+                                );
                             }
                             Global::crash();
                         }
@@ -186,10 +186,10 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                     bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
                 ) {
                     Err(e) => {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> failed to create junction to node_modules in global dir due to error {}",
                             e,
-                        ));
+                        );
                         Global::crash();
                     }
                     Ok(()) => {}
@@ -201,14 +201,14 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                 if let Err(e) = node_modules.sym_link(
                     FileSystem::instance().top_level_dir_without_trailing_slash(),
                     name,
-                    // Zig: `.{ .is_directory = true }` — std.fs.Dir.SymLinkFlags.
+                    // is_directory
                     true,
                 ) {
                     if manager.options.log_level != LogLevel::Silent {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> failed to create symlink to node_modules in global dir due to error {}",
                             e.name(),
-                        ));
+                        );
                     }
                     Global::crash();
                 }
@@ -221,11 +221,9 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
             let mut link_dest_buf = PathBuffer::uninit();
             let mut link_rel_buf = PathBuffer::uninit();
 
-            // PORT NOTE: Zig passed `&node_modules_path` for both
-            // `target_node_modules_path` (`*const`) and `node_modules_path`
-            // (`*mut`). Rust forbids `&` + `&mut` to the same value, so resolve
-            // the fd path twice (cheap: one `getFdPath` syscall) into two
-            // independent `AbsPath` buffers.
+            // `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`)
+            // cannot alias the same value, so resolve the fd path twice (cheap:
+            // one `getFdPath` syscall) into two independent `AbsPath` buffers.
             let mut node_modules_path =
                 match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
                     Ok(p) => p,
@@ -270,10 +268,10 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
 
             if let Some(e) = bin_linker.err {
                 if manager.options.log_level != LogLevel::Silent {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error:<r> failed to link bin due to error {}",
                         e.name(),
-                    ));
+                    );
                 }
                 Global::crash();
             }
@@ -284,15 +282,20 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
         // Done
         if manager.options.log_level != LogLevel::Silent {
             let name = BStr::new(name);
-            Output::prettyln(format_args!(
-                "<r><green>Success!<r> Registered \"{name}\"\n\
+            bun_core::prettyln!(
+                "<r><green>Success!<r> Registered \"{}\"\n\
                  \n\
-                 To use {name} in a project, run:\n  \
-                 <cyan>bun link {name}<r>\n\
+                 To use {} in a project, run:\n  \
+                 <cyan>bun link {}<r>\n\
                  \n\
                  Or add it in dependencies in your package.json file:\n  \
-                 <cyan>\"{name}\": \"link:{name}\"<r>\n",
-            ));
+                 <cyan>\"{}\": \"link:{}\"<r>\n",
+                name,
+                name,
+                name,
+                name,
+                name,
+            );
         }
 
         Output::flush();
@@ -304,5 +307,3 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
 
     Ok(())
 }
-
-// ported from: src/cli/link_command.zig

@@ -1,4 +1,3 @@
-#![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
 use crate as css;
 use crate::css_properties::custom::UnparsedProperty;
@@ -7,8 +6,8 @@ use crate::css_values::length::Length;
 use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::targets::Browsers;
 use crate::{
-    DeclarationList, Feature, Parser, ParserError, PrintErr, Printer, PropertyCategory,
-    PropertyHandlerContext, Result as CssResult, SmallList, Targets,
+    DeclarationList, Feature, Parser, PrintErr, Printer, PropertyCategory, PropertyHandlerContext,
+    Result as CssResult, SmallList, Targets,
 };
 use bun_alloc::ArenaVecExt as _;
 
@@ -22,27 +21,27 @@ use bun_alloc::Arena as Bump;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A value for the [border-top](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-top) shorthand property.
-pub type BorderTop = GenericBorder<LineStyle, 0>;
+pub(crate) type BorderTop = GenericBorder<LineStyle, 0>;
 /// A value for the [border-right](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-right) shorthand property.
-pub type BorderRight = GenericBorder<LineStyle, 1>;
+pub(crate) type BorderRight = GenericBorder<LineStyle, 1>;
 /// A value for the [border-bottom](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-bottom) shorthand property.
-pub type BorderBottom = GenericBorder<LineStyle, 2>;
+pub(crate) type BorderBottom = GenericBorder<LineStyle, 2>;
 /// A value for the [border-left](https://www.w3.org/TR/css-backgrounds-3/#propdef-border-left) shorthand property.
-pub type BorderLeft = GenericBorder<LineStyle, 3>;
+pub(crate) type BorderLeft = GenericBorder<LineStyle, 3>;
 /// A value for the [border-block-start](https://drafts.csswg.org/css-logical/#propdef-border-block-start) shorthand property.
-pub type BorderBlockStart = GenericBorder<LineStyle, 4>;
+pub(crate) type BorderBlockStart = GenericBorder<LineStyle, 4>;
 /// A value for the [border-block-end](https://drafts.csswg.org/css-logical/#propdef-border-block-end) shorthand property.
-pub type BorderBlockEnd = GenericBorder<LineStyle, 5>;
+pub(crate) type BorderBlockEnd = GenericBorder<LineStyle, 5>;
 /// A value for the [border-inline-start](https://drafts.csswg.org/css-logical/#propdef-border-inline-start) shorthand property.
-pub type BorderInlineStart = GenericBorder<LineStyle, 6>;
+pub(crate) type BorderInlineStart = GenericBorder<LineStyle, 6>;
 /// A value for the [border-inline-end](https://drafts.csswg.org/css-logical/#propdef-border-inline-end) shorthand property.
-pub type BorderInlineEnd = GenericBorder<LineStyle, 7>;
+pub(crate) type BorderInlineEnd = GenericBorder<LineStyle, 7>;
 /// A value for the [border-block](https://drafts.csswg.org/css-logical/#propdef-border-block) shorthand property.
-pub type BorderBlock = GenericBorder<LineStyle, 8>;
+pub(crate) type BorderBlock = GenericBorder<LineStyle, 8>;
 /// A value for the [border-inline](https://drafts.csswg.org/css-logical/#propdef-border-inline) shorthand property.
-pub type BorderInline = GenericBorder<LineStyle, 9>;
+pub(crate) type BorderInline = GenericBorder<LineStyle, 9>;
 /// A value for the [border](https://www.w3.org/TR/css-backgrounds-3/#propdef-border) shorthand property.
-pub type Border = GenericBorder<LineStyle, 10>;
+pub(crate) type Border = GenericBorder<LineStyle, 10>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // GenericBorder
@@ -133,10 +132,6 @@ where
                 dest.write_str(b" ")?;
             }
             self.color.to_css(dest)?;
-            #[allow(unused_assignments)]
-            {
-                needs_space = true;
-            }
         }
         Ok(())
     }
@@ -151,10 +146,8 @@ where
         + for<'b> css::generics::DeepClone<'b>
         + css::generics::CssEql,
 {
-    fn get_fallbacks(&mut self, arena: &Bump, targets: Targets) -> SmallList<Self, 2> {
-        use css::generics::DeepClone as _;
+    fn get_fallbacks(&mut self, arena: &Bump, targets: &Targets) -> SmallList<Self, 2> {
         let fallbacks = self.color.get_fallbacks(arena, targets);
-        // PERF(port): was arena bulk-free (fallbacks.deinit) — profile in Phase B
         let mut out: SmallList<Self, 2> = SmallList::init_capacity(fallbacks.len());
         for color in fallbacks.slice() {
             out.append_assume_capacity(Self {
@@ -167,35 +160,20 @@ where
         out
     }
 
-    pub fn deep_clone(&self, arena: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, arena: &Bump) -> Self {
         css::implement_deep_clone(self, arena)
     }
 
     /// Deep-clone into a `GenericBorder` with a different const-generic
-    /// discriminant `Q`. The fields are identical regardless of `P`; this is
-    /// the Rust equivalent of Zig coercing one anonymous struct literal into
-    /// multiple `Border*` aliases. Needed when one logical value must be
-    /// emitted as two distinct physical `Property` variants (e.g.
-    /// inline-start → BorderLeft + BorderRight).
-    pub fn clone_as<const Q: u8>(&self, arena: &Bump) -> GenericBorder<S, Q> {
+    /// discriminant `Q`. The fields are identical regardless of `P`. Needed
+    /// when one logical value must be emitted as two distinct physical
+    /// `Property` variants (e.g. inline-start → BorderLeft + BorderRight).
+    pub(crate) fn clone_as<const Q: u8>(&self, arena: &Bump) -> GenericBorder<S, Q> {
         let cloned = self.deep_clone(arena);
         GenericBorder {
             width: cloned.width,
             style: cloned.style,
             color: cloned.color,
-        }
-    }
-
-    pub fn eql(&self, other: &Self) -> bool {
-        css::implement_eql(self, other)
-    }
-
-    #[inline]
-    pub fn default() -> Self {
-        Self {
-            width: BorderSideWidth::Medium,
-            style: S::default(),
-            color: CssColor::CurrentColor,
         }
     }
 }
@@ -205,9 +183,10 @@ where
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A [`<line-style>`](https://drafts.csswg.org/css-backgrounds/#typedef-line-style) value, used in the `border-style` property.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)] // TODO(port): provides eql/hash/parse/to_css/deep_clone
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum LineStyle {
     /// No border.
+    #[default]
     None,
     /// Similar to `none` but with different rules for tables.
     Hidden,
@@ -230,14 +209,8 @@ pub enum LineStyle {
 }
 
 impl LineStyle {
-    pub fn is_compatible(&self, _: Browsers) -> bool {
+    pub fn is_compatible(self, _: &Browsers) -> bool {
         true
-    }
-}
-
-impl Default for LineStyle {
-    fn default() -> Self {
-        LineStyle::None
     }
 }
 
@@ -246,11 +219,12 @@ impl Default for LineStyle {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A value for the [border-width](https://www.w3.org/TR/css-backgrounds-3/#border-width) property.
-#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
+#[derive(Clone, Default, PartialEq, css::Parse, css::ToCss)]
 pub enum BorderSideWidth {
     /// A UA defined `thin` value.
     Thin,
     /// A UA defined `medium` value.
+    #[default]
     Medium,
     /// A UA defined `thick` value.
     Thick,
@@ -260,7 +234,7 @@ pub enum BorderSideWidth {
 
 impl BorderSideWidth {
     // blocked_on: Length::is_compatible
-    pub fn is_compatible(&self, browsers: Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
             BorderSideWidth::Length(len) => len.is_compatible(browsers),
             _ => true,
@@ -268,23 +242,16 @@ impl BorderSideWidth {
     }
 
     pub fn deep_clone(&self, _arena: &Bump) -> Self {
-        // PORT NOTE: css.implementDeepClone — Length is value-type; Clone suffices.
+        // css.implementDeepClone — Length is value-type; Clone suffices.
         self.clone()
     }
 }
 crate::css_eql_partialeq!(BorderSideWidth);
 
-impl Default for BorderSideWidth {
-    fn default() -> Self {
-        BorderSideWidth::Medium
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
-// ImplFallbacks (Zig: `pub fn ImplFallbacks(comptime T: type) type`)
+// impl_fallbacks
 // ──────────────────────────────────────────────────────────────────────────
-// TODO(port): Zig used `inline for (std.meta.fields(T))` reflection. We expand
-// the field list at macro invocation. All fields are `CssColor`.
+// The field list is expanded at macro invocation. All fields are `CssColor`.
 // Hoisted here because `macro_rules!` is order-sensitive.
 macro_rules! impl_fallbacks {
     ($T:ty; $($field:ident),+) => {
@@ -292,7 +259,7 @@ macro_rules! impl_fallbacks {
             pub fn get_fallbacks(
                 &mut self,
                 arena: &Bump,
-                targets: Targets,
+                targets: &Targets,
             ) -> SmallList<$T, 2> {
                 let _ = arena;
                 let mut fallbacks = ColorFallbackKind::empty();
@@ -354,6 +321,7 @@ define_rect_shorthand! {
     bottom: BorderBottomStyle,
     left: BorderLeftStyle
 }
+impl Eq for BorderStyle {}
 
 define_rect_shorthand! {
     /// A value for the [border-width](https://drafts.csswg.org/css-backgrounds/#propdef-border-width) shorthand property.
@@ -385,15 +353,13 @@ macro_rules! define_size_shorthand {
         }
 
         impl $name {
-            // TODO(port): bring this back
-            // (old using name space) css::DefineShorthand(@This(), PropertyIdTag::$shorthand_id);
-
+            // The table is kept as data for a future shorthand derive to consume.
             pub const PROPERTY_FIELD_MAP: &[(&str, PropertyIdTag)] = &[
                 ("start", PropertyIdTag::$start_id),
                 ("end", PropertyIdTag::$end_id),
             ];
         }
-        // Zig `css.DefineSizeShorthand(@This(), V)` — parse/to_css via `Size2D<V>`.
+        // parse/to_css via `Size2D<V>`.
         // Shared impl macro lives in `properties/mod.rs`.
         impl_size_shorthand!($name, $inner, start, end);
     };
@@ -414,6 +380,7 @@ define_size_shorthand! {
     start: BorderBlockStartStyle,
     end: BorderBlockEndStyle
 }
+impl Eq for BorderBlockStyle {}
 
 define_size_shorthand! {
     /// A value for the [border-block-width](https://drafts.csswg.org/css-logical/#propdef-border-block-width) shorthand property.
@@ -437,6 +404,7 @@ define_size_shorthand! {
     start: BorderInlineStartStyle,
     end: BorderInlineEndStyle
 }
+impl Eq for BorderInlineStyle {}
 
 define_size_shorthand! {
     /// A value for the [border-inline-width](https://drafts.csswg.org/css-logical/#propdef-border-inline-width) shorthand property.
@@ -457,28 +425,23 @@ struct BorderShorthand {
 }
 
 impl BorderShorthand {
-    pub fn eql(&self, rhs: &Self) -> bool {
+    pub(crate) fn eql(&self, rhs: &Self) -> bool {
         css::generic::eql(&self.width, &rhs.width)
             && css::generic::eql(&self.style, &rhs.style)
             && css::generic::eql(&self.color, &rhs.color)
     }
 
     // `border: anytype` — any GenericBorder<S, P>
-    pub fn set_border<S: for<'a> css::DeepClone<'a>, const P: u8>(
-        &mut self,
-        arena: &Bump,
-        border: &GenericBorder<S, P>,
-    ) where
-        S: Into<LineStyle>,
+    pub(crate) fn set_border<S, const P: u8>(&mut self, arena: &Bump, border: &GenericBorder<S, P>)
+    where
+        S: for<'a> css::DeepClone<'a> + Into<LineStyle>,
     {
-        // TODO(port): Zig accepted `anytype`; all callers pass GenericBorder<LineStyle, _>.
         self.width = Some(border.width.deep_clone(arena));
         self.style = Some(border.style.deep_clone(arena).into());
         self.color = Some(border.color.deep_clone(arena));
     }
 
     fn reset(&mut self, _arena: &Bump) {
-        // PERF(port): was arena bulk-free via bun.clear — profile in Phase B
         self.width = None;
         self.style = None;
         self.color = None;
@@ -489,8 +452,7 @@ impl BorderShorthand {
     }
 
     /// Generic over the `P` const param so the same `BorderShorthand` data
-    /// can populate any of `BorderTop`/`BorderLeft`/.../`Border` (Zig used a
-    /// single anonymous struct literal that coerced to each alias).
+    /// can populate any of `BorderTop`/`BorderLeft`/.../`Border`.
     fn to_border<const P: u8>(&self, arena: &Bump) -> GenericBorder<LineStyle, P> {
         GenericBorder {
             width: css::generic::deep_clone(&self.width, arena).unwrap(),
@@ -501,7 +463,7 @@ impl BorderShorthand {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// BorderProperty bitflags (Zig: `packed struct(u32)` of all-bool fields)
+// BorderProperty bitflags
 // ──────────────────────────────────────────────────────────────────────────
 
 bitflags::bitflags! {
@@ -583,10 +545,10 @@ bitflags::bitflags! {
 
 // blocked_on: PropertyIdTag variant name verification (PascalCase mapping)
 impl BorderProperty {
-    pub fn try_from_property_id(property_id: PropertyIdTag) -> Option<Self> {
-        // TODO(port): Zig used `inline for` over PropertyIdTag fields + @hasDecl.
-        // Expanded to an explicit match over every PropertyIdTag whose name
-        // starts with "border" and has a matching const above.
+    pub(crate) fn try_from_property_id(property_id: PropertyIdTag) -> Option<Self> {
+        // An explicit match over every PropertyIdTag whose name starts
+        // with "border" and has a matching const above — keep in sync when new
+        // Border* PropertyIdTag variants are added.
         use PropertyIdTag as P;
         Some(match property_id {
             P::BorderTopColor => Self::BORDER_TOP_COLOR,
@@ -664,19 +626,34 @@ mod border_handler_body {
     use super::*;
     use crate::generics::{CssEql, DeepClone};
     // ──────────────────────────────────────────────────────────────────────────
-    // FlushContext + flush_category! (Zig: nested struct with inline fns and
-    // extensive comptime string-dispatch)
+    // FlushContext + flush_category!
     // ──────────────────────────────────────────────────────────────────────────
-    // PORT NOTE: hoisted above `impl BorderHandler` — macro_rules! is order-
+    // hoisted above `impl BorderHandler` — macro_rules! is order-
     // sensitive and the flush_category!() callsites in `flush()` need these.
 
+    // Route the large `Property` enum construction through a non-inlined
+    // callee so each temporary lives in the helper's frame, not in
+    // `flush_logical`'s 146 KB monolith (clippy::large_stack_frames).
+    #[inline(never)]
+    fn dest_push_with(dest: &mut DeclarationList, mk: impl FnOnce() -> Property) {
+        dest.push(mk());
+    }
+    #[inline(never)]
+    fn ctx_add_logical_with(
+        ctx: &mut PropertyHandlerContext,
+        mk: impl FnOnce() -> (Property, Property),
+    ) {
+        let (a, b) = mk();
+        ctx.add_logical_rule(a, b);
+    }
+
     struct FlushContext<'a, 'bump, 'ctx> {
-        // PORT NOTE: Zig stored `self: *BorderHandler`; we only need flushed_properties
-        // here because the per-side BorderShorthand pointers are passed separately.
+        // Only flushed_properties is needed here because the per-side
+        // BorderShorthand pointers are passed separately.
         flushed_properties: &'a mut BorderProperty,
         dest: &'a mut DeclarationList<'bump>,
         ctx: &'a mut PropertyHandlerContext<'ctx>,
-        // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
+        // `arena` field dropped from PropertyHandlerContext; the
         // arena is recovered once via `dest.bump()` and threaded here.
         arena: &'bump Bump,
         logical_supported: bool,
@@ -684,10 +661,10 @@ mod border_handler_body {
     }
 
     // `f.logicalProp(ltr, ltr_key, rtl, rtl_key, val)` — ltr_key/rtl_key were unused.
-    // PORT NOTE: `$val` is evaluated *before* reborrowing `$f` so callers may pass
+    // `$val` is evaluated *before* reborrowing `$f` so callers may pass
     // expressions that read `f.arena` without tripping E0502.
     macro_rules! fc_logical_prop {
-        // PORT NOTE: the `GenericBorder` shorthand pairs carry distinct const-generic
+        // the `GenericBorder` shorthand pairs carry distinct const-generic
         // discriminants per side (BorderLeft = P=3, BorderRight = P=1), so a single
         // `__val` cannot `deep_clone()` into both `Property` variants. Recast via
         // `clone_as::<Q>()` instead. Callers always pass a `to_border()` result here,
@@ -695,40 +672,49 @@ mod border_handler_body {
         ($f:expr, BorderLeft, BorderRight, $val:expr) => {{
             let __val: BorderLeft = $val;
             let f = &mut *$f;
-            f.ctx.add_logical_rule(
-                Property::BorderLeft(__val.clone_as(f.arena)),
-                Property::BorderRight(__val.clone_as(f.arena)),
-            );
+            let arena = f.arena;
+            ctx_add_logical_with(f.ctx, || {
+                (
+                    Property::BorderLeft(__val.clone_as(arena)),
+                    Property::BorderRight(__val.clone_as(arena)),
+                )
+            });
         }};
         ($f:expr, BorderRight, BorderLeft, $val:expr) => {{
             let __val: BorderRight = $val;
             let f = &mut *$f;
-            f.ctx.add_logical_rule(
-                Property::BorderRight(__val.clone_as(f.arena)),
-                Property::BorderLeft(__val.clone_as(f.arena)),
-            );
+            let arena = f.arena;
+            ctx_add_logical_with(f.ctx, || {
+                (
+                    Property::BorderRight(__val.clone_as(arena)),
+                    Property::BorderLeft(__val.clone_as(arena)),
+                )
+            });
         }};
         ($f:expr, $ltr:ident, $rtl:ident, $val:expr) => {{
             let __val = $val;
             let f = &mut *$f;
-            f.ctx.add_logical_rule(
-                Property::$ltr(__val.deep_clone(f.arena)),
-                Property::$rtl(__val.deep_clone(f.arena)),
-            );
+            let arena = f.arena;
+            ctx_add_logical_with(f.ctx, || {
+                (
+                    Property::$ltr(__val.deep_clone(arena)),
+                    Property::$rtl(__val.deep_clone(arena)),
+                )
+            });
         }};
     }
 
     // `f.push(p, val)`
-    // PORT NOTE: Zig's `@field(BorderProperty, p)` keyed both Property and BorderProperty
-    // off one kebab string. Here `$p` is the PascalCase Property/PropertyIdTag variant;
+    // `$p` is the PascalCase Property/PropertyIdTag variant;
     // the bitflags const is derived via try_from_property_id so a single ident suffices.
     macro_rules! fc_push {
         ($f:expr, $p:ident, $val:expr) => {{
             let __val = $val;
             let f = &mut *$f;
+            let arena = f.arena;
             f.flushed_properties
                 .insert(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap());
-            f.dest.push(Property::$p(__val.deep_clone(f.arena)));
+            dest_push_with(f.dest, || Property::$p(__val.deep_clone(arena)));
         }};
     }
 
@@ -741,17 +727,16 @@ mod border_handler_body {
                 .flushed_properties
                 .contains(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap())
             {
-                let fbs = val.get_fallbacks(f.arena, f.ctx.targets);
+                let fbs = val.get_fallbacks(f.arena, &f.ctx.targets);
                 for fallback in css::generic::slice(&fbs) {
-                    f.dest.push(Property::$p(fallback.clone()));
+                    dest_push_with(f.dest, || Property::$p(fallback.clone()));
                 }
             }
             fc_push!(f, $p, val);
         }};
     }
 
-    // `f.prop(prop_name, val)` — comptime string dispatch over prop_name.
-    // In Rust we dispatch on the Property variant ident.
+    // Dispatch on the Property variant ident.
     macro_rules! fc_prop {
         // border-inline-start*
         ($f:expr, BorderInlineStart, $val:expr) => {{
@@ -918,9 +903,8 @@ mod border_handler_body {
         };
     }
 
-    // `flushCategory(...)` — was a fn with comptime string params + nested `State`
-    // struct of inline fns. In Rust we expand it as a macro so the `comptime` prop
-    // names remain compile-time idents and the nested closures become local macros.
+    // `flush_category!` is a macro so the prop names remain
+    // compile-time idents and the nested closures become local macros.
     macro_rules! flush_category {
     (
         $f:expr,
@@ -1230,20 +1214,19 @@ mod border_handler_body {
         }
     }};
 }
-    use flush_category;
 
     impl BorderHandler {
-        pub fn handle_property(
+        pub(crate) fn handle_property(
             &mut self,
             property: &Property,
             dest: &mut DeclarationList,
             context: &mut PropertyHandlerContext,
         ) -> bool {
-            // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
+            // `arena` field dropped from PropertyHandlerContext; the
             // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
             let arena = dest.bump();
 
-            // Helper macros — Zig used local comptime closures with @field string access.
+            // Helper macros.
 
             macro_rules! flush_helper {
                 ($key:ident, $prop:ident, $val:expr, $category:expr) => {{
@@ -1254,7 +1237,10 @@ mod border_handler_body {
                     if let Some(existing) = &self.$key.$prop {
                         if !existing.eql($val)
                             && context.targets.browsers.is_some()
-                            && !css::generic::is_compatible($val, context.targets.browsers.unwrap())
+                            && !css::generic::is_compatible(
+                                $val,
+                                &context.targets.browsers.unwrap(),
+                            )
                         {
                             self.flush(dest, context);
                         }
@@ -1481,7 +1467,7 @@ mod border_handler_body {
             true
         }
 
-        pub fn finalize(
+        pub(crate) fn finalize(
             &mut self,
             dest: &mut DeclarationList,
             context: &mut PropertyHandlerContext,
@@ -1499,13 +1485,32 @@ mod border_handler_body {
 
             self.has_any = false;
 
+            self.flush_physical(dest, context);
+            self.flush_logical(dest, context);
+
+            let arena = dest.bump();
+            self.border_top.reset(arena);
+            self.border_bottom.reset(arena);
+            self.border_left.reset(arena);
+            self.border_right.reset(arena);
+            self.border_block_start.reset(arena);
+            self.border_block_end.reset(arena);
+            self.border_inline_start.reset(arena);
+            self.border_inline_end.reset(arena);
+        }
+
+        #[inline(never)]
+        fn flush_physical(
+            &mut self,
+            dest: &mut DeclarationList,
+            context: &mut PropertyHandlerContext,
+        ) {
             let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
             let logical_shorthand_supported =
                 !context.should_compile_logical(Feature::LogicalBorderShorthand);
 
-            // PORT NOTE: reshaped for borrowck — Zig stored `self: *BorderHandler` in
-            // FlushContext and accessed self.border_* through it. We instead take
-            // independent &mut borrows of each shorthand, plus &mut self.flushed_properties.
+            // Take independent &mut borrows of each shorthand, plus
+            // &mut self.flushed_properties, instead of one &mut self.
             let arena = dest.bump();
             let mut flctx = FlushContext {
                 flushed_properties: &mut self.flushed_properties,
@@ -1540,6 +1545,27 @@ mod border_handler_body {
                 &mut self.border_right,
                 is_logical = false
             );
+        }
+
+        #[inline(never)]
+        fn flush_logical(
+            &mut self,
+            dest: &mut DeclarationList,
+            context: &mut PropertyHandlerContext,
+        ) {
+            let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
+            let logical_shorthand_supported =
+                !context.should_compile_logical(Feature::LogicalBorderShorthand);
+
+            let arena = dest.bump();
+            let mut flctx = FlushContext {
+                flushed_properties: &mut self.flushed_properties,
+                dest,
+                ctx: context,
+                arena,
+                logical_supported,
+                logical_shorthand_supported,
+            };
 
             flush_category!(
                 &mut flctx,
@@ -1565,15 +1591,6 @@ mod border_handler_body {
                 &mut self.border_inline_end,
                 is_logical = true
             );
-
-            self.border_top.reset(arena);
-            self.border_bottom.reset(arena);
-            self.border_left.reset(arena);
-            self.border_right.reset(arena);
-            self.border_block_start.reset(arena);
-            self.border_block_end.reset(arena);
-            self.border_inline_start.reset(arena);
-            self.border_inline_end.reset(arena);
         }
 
         fn flush_unparsed(
@@ -1594,16 +1611,15 @@ mod border_handler_body {
             }
 
             macro_rules! prop {
-            ($id:ident) => {{
-                let _ = &dest; // autofix (matches Zig: `_ = d;`)
-                let mut upppppppppp =
-                    unparsed.with_property_id(arena, PropertyId::$id);
-                context.add_unparsed_fallbacks(arena, &mut upppppppppp);
-                self.flushed_properties
-                    .insert(BorderProperty::try_from_property_id(PropertyIdTag::$id).unwrap());
-                // TODO(port): Zig did NOT push to dest here (likely a bug upstream) — preserved.
-            }};
-        }
+                ($id:ident) => {{
+                    let _ = &dest; // autofix
+                    let mut upppppppppp = unparsed.with_property_id(arena, PropertyId::$id);
+                    context.add_unparsed_fallbacks(arena, &mut upppppppppp);
+                    self.flushed_properties
+                        .insert(BorderProperty::try_from_property_id(PropertyIdTag::$id).unwrap());
+                    // Intentionally not pushed to dest (preserves existing behavior; likely a bug).
+                }};
+            }
 
             macro_rules! logical_prop {
                 ($ltr:ident, $rtl:ident) => {{
@@ -1709,6 +1725,4 @@ mod border_handler_body {
                 | P::Border
         )
     }
-
-    // ported from: src/css/properties/border.zig
 } // mod border_handler_body

@@ -1,5 +1,5 @@
-//! Port of `std.fs.path.ComponentIterator(format, T)` + the `std.fs.Dir.makePath`
-//! back-then-forward walk. Pure path logic — no I/O; the mkdir walk takes a
+//! Path component iteration plus the recursive-mkdir back-then-forward
+//! walk. Pure path logic — no I/O; the mkdir walk takes a
 //! closure so callers supply `mkdirat` / `NtCreateFile(FILE_OPEN_IF)` /
 //! `CreateDirectoryW` themselves.
 //!
@@ -11,7 +11,7 @@
 
 use crate::PathChar;
 
-/// Runtime equivalent of Zig's `comptime path_type: PathType`. The hot
+/// Path format selector. The hot
 /// `is_sep` branch inlines to a single compare on POSIX and two compares on
 /// Windows; we keep it a runtime enum (vs. a const-generic) so one
 /// monomorphisation per `T` covers both — call sites that hard-code the
@@ -23,7 +23,7 @@ pub enum PathFormat {
 }
 
 impl PathFormat {
-    /// `std.fs.path.native_os` → `.windows` / `.posix`.
+    /// The native path format for the target OS.
     #[cfg(windows)]
     pub const NATIVE: Self = Self::Windows;
     #[cfg(not(windows))]
@@ -50,7 +50,7 @@ pub struct Component<'a, T> {
     pub path: &'a [T],
 }
 
-/// Port of `std.fs.path.ComponentIterator(path_type, T)` — bidirectional
+/// A bidirectional
 /// iterator over `Component`s with a parsed root prefix that is never yielded.
 #[derive(Clone, Copy, Debug)]
 pub struct ComponentIterator<'a, T> {
@@ -206,7 +206,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     }
 }
 
-/// `std.fs.path.componentIterator` — native-format convenience wrapper over
+/// Native-format convenience wrapper over
 /// `ComponentIterator::init` for `u8` paths.
 #[inline]
 pub fn component_iterator(path: &[u8]) -> Result<ComponentIterator<'_, u8>, bun_core::Error> {
@@ -227,7 +227,7 @@ pub enum MakePathStep<E> {
     NotFound(E),
 }
 
-/// Port of the `std.fs.Dir.makePath` back-then-forward walk, parameterised
+/// The recursive-mkdir back-then-forward walk, parameterised
 /// over the per-prefix `mkdir` step so callers supply `mkdirat` /
 /// `NtCreateFile(FILE_OPEN_IF)` / `CreateDirectoryW` themselves.
 ///
@@ -265,8 +265,8 @@ pub fn make_path_with<'a, T: PathChar, E>(
 }
 
 // ─── Windows root parsing ───────────────────────────────────────────────────
-// Direct port of `std.os.windows.{getNamespacePrefix, getUnprefixedPathType}`
-// + the `.windows` arm of `ComponentIterator.init`. Kept private — callers
+// Windows namespace-prefix and unprefixed-path-type parsing backing the
+// Windows arm of `ComponentIterator::init`. Kept private — callers
 // only see `ComponentIterator::init`; for ad-hoc root-length probing
 // `resolve_path::windows_filesystem_root_t` already exists.
 
@@ -412,8 +412,10 @@ mod tests {
         assert_eq!(it.last().unwrap().name, b"c");
         assert_eq!(it.previous().unwrap().name, b"b");
         assert_eq!(it.previous().unwrap().name, b"a");
+        // `previous()` returning `None` doesn't rewind the cursor — still on `a`.
         assert!(it.previous().is_none());
-        assert_eq!(it.next().unwrap().name, b"a");
         assert_eq!(it.next().unwrap().name, b"b");
+        assert_eq!(it.next().unwrap().name, b"c");
+        assert!(it.next().is_none());
     }
 }

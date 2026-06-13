@@ -8,7 +8,7 @@ use crate::node::util::validators;
 use bun_dotenv::env_loader as envloader;
 
 #[bun_jsc::host_fn]
-pub fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<1>();
     let arguments = arguments.slice();
     if arguments.is_empty() {
@@ -24,12 +24,18 @@ pub fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 }
 
 #[bun_jsc::host_fn]
-pub fn etimedout_error_code(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn etimedout_error_code(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     Ok(JSValue::js_number_from_int32(-UV_E::TIMEDOUT))
 }
 
 #[bun_jsc::host_fn]
-pub fn enobufs_error_code(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn enobufs_error_code(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     Ok(JSValue::js_number_from_int32(-UV_E::NOBUFS))
 }
 
@@ -42,7 +48,7 @@ pub fn enobufs_error_code(_global: &JSGlobalObject, _frame: &CallFrame) -> JsRes
 /// extractedSplitNewLines = value => RegExpPrototypeSymbolSplit(extractedNewLineRe, value);
 /// ```
 #[bun_jsc::host_fn]
-pub fn extracted_split_new_lines_fast_path_strings_only(
+pub(crate) fn extracted_split_new_lines_fast_path_strings_only(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -55,7 +61,6 @@ pub fn extracted_split_new_lines_fast_path_strings_only(
     let str = OwnedString::new(value.to_bun_string(global)?);
 
     match str.encoding() {
-        // `inline .utf16, .latin1 => |encoding| split(encoding, ...)` — runtime → comptime dispatch
         EncodingNonAscii::Utf16 => split(EncodingNonAscii::Utf16, global, &str),
         EncodingNonAscii::Latin1 => split(EncodingNonAscii::Latin1, global, &str),
         EncodingNonAscii::Utf8 => {
@@ -68,7 +73,7 @@ pub fn extracted_split_new_lines_fast_path_strings_only(
     }
 }
 
-// PERF(port): `encoding` was a comptime parameter (Zig); demoted to runtime
+// PERF: `encoding` is a runtime parameter
 // because `EncodingNonAscii` doesn't derive `ConstParamTy` (would need nightly
 // `adt_const_params`). The hot u8/u16 split is still type-dispatched below.
 fn split(
@@ -76,19 +81,14 @@ fn split(
     global: &JSGlobalObject,
     str: &BunString,
 ) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback (std.heap.stackFallback(1024)) — profile in Phase B.
-    // Allocator param dropped (non-AST crate uses global mimalloc).
-
-    // `defer { for (lines.items) |out| out.deref(); lines.deinit(alloc); }`
-    // — `Vec<OwnedString>`'s Drop runs `deref()` on every element (covers both
+    // `Vec<OwnedString>`'s Drop runs `deref()` on every element (covers both
     // the success path after `to_js_array` and any `?` early-return). Raw
     // `bun_core::String` is `Copy` and has NO Drop, so a `Vec<BunString>` would
-    // leak; `OwnedString` is the RAII wrapper that mirrors Zig's defer loop.
+    // leak; `OwnedString` is the RAII wrapper that releases each ref.
     let mut lines: Vec<OwnedString> = Vec::new();
 
-    // Zig: `const Char = switch (encoding) { .utf8, .latin1 => u8, .utf16 => u16 };`
-    // PORT NOTE: reshaped — comptime enum cannot select an associated type in
-    // stable Rust; split into two arms over the buffer's element type.
+    // Split into two arms over the buffer's element type (u8 for
+    // utf8/latin1, u16 for utf16).
     match encoding {
         EncodingNonAscii::Utf16 => {
             let buffer: &[u16] = str.utf16();
@@ -122,14 +122,14 @@ fn split(
     bun_string_jsc::to_js_array(global, OwnedString::as_raw_slice(&lines))
 }
 
-pub struct SplitNewlineIterator<'a, T> {
+pub(crate) struct SplitNewlineIterator<'a, T> {
     buffer: &'a [T],
     index: Option<usize>,
 }
 
 impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
     /// Returns a slice of the next field, or null if splitting is complete.
-    pub fn next(&mut self) -> Option<&'a [T]> {
+    pub(crate) fn next(&mut self) -> Option<&'a [T]> {
         let start = self.index?;
 
         if let Some(delim_start) = self.buffer[start..]
@@ -149,7 +149,7 @@ impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
 }
 
 #[bun_jsc::host_fn]
-pub fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let input = frame.argument(0);
     // `defer str.deref()` — `from_js` returns +1; OwnedString releases on Drop.
     let str = OwnedString::new(BunString::from_js(input, global)?);
@@ -168,9 +168,6 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     let content = frame.argument(0);
     validators::validate_string(global, content, "content")?;
 
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B.
-    // Non-AST crate: arena dropped; Map/Loader use global allocator and Drop.
-
     // `validate_string` above guarantees `content.is_string()`, so
     // `as_string()` returns a non-null live JSString*. `JSString` is an
     // `opaque_ffi!` ZST handle; `opaque_ref` is the centralised deref proof.
@@ -185,11 +182,9 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     for (k, v) in map.iter() {
         obj.put(
             global,
-            &ZigString::init_utf8(k),
+            ZigString::init_utf8(k),
             bun_string_jsc::create_utf8_for_js(global, &v.value)?,
         );
     }
     Ok(obj)
 }
-
-// ported from: src/runtime/node/node_util_binding.zig

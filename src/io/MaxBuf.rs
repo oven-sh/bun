@@ -20,11 +20,11 @@ pub struct MaxBuf {
     // (once both are cleared, it is freed)
 }
 
-// TODO(port): LIFETIMES.tsv classifies the caller fields (Subprocess.{stdout,stderr}_maxbuf,
+// TODO(refactor): LIFETIMES.tsv classifies the caller fields (Subprocess.{stdout,stderr}_maxbuf,
 // {Posix,Windows}BufferedReader.maxbuf) as SHARED → Option<Arc<MaxBuf>>. The fn params below
 // (`ptr: &mut Option<NonNull<MaxBuf>>`, `value: Option<NonNull<MaxBuf>>`) and the hand-rolled
-// heap::alloc/disowned()/destroy() refcount will not typecheck against those field types in
-// Phase B — reconcile by retyping to Option<Arc<MaxBuf>> and dropping destroy()/disowned().
+// heap::alloc/disowned()/destroy() refcount will not typecheck against those field types —
+// reconcile by retyping to Option<Arc<MaxBuf>> and dropping destroy()/disowned().
 impl MaxBuf {
     /// Single nonnull-asref projection for the dual-owner back-pointer.
     ///
@@ -137,5 +137,3 @@ pub enum Kind {
     Stdout,
     Stderr,
 }
-
-// ported from: src/io/MaxBuf.zig

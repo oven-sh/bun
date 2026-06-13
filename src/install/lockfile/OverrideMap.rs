@@ -5,7 +5,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::Error;
 use bun_core::strings;
 use bun_install::dependency::{self, Behavior, Dependency, DependencyExt as _};
-use bun_install::{Lockfile, PackageManager, PackageNameHash};
+use bun_install::{PackageManager, PackageNameHash};
 use bun_output::{declare_scope, scoped_log};
 use bun_semver::String as SemverString;
 use bun_semver::string::Builder as SemverBuilder;
@@ -14,15 +14,13 @@ use super::{StringBuilder, package::Package};
 // LAYERING NOTE: package.json is parsed by `bun_parsers::json` which
 // produces the T2 value-shaped `bun_ast::Expr` (aliased as
 // `crate::bun_json::Expr`), NOT the full T4 `bun_ast::Expr`. JSON parse
-// is always UTF-8, so `as_utf8_string_literal()` is the allocator-free port of
-// Zig's `asString(lockfile.allocator)`.
+// is always UTF-8, so `as_utf8_string_literal()` needs no allocator.
 use crate::bun_json::{Expr, ExprData};
 
 declare_scope!(OverrideMap, visible);
 
 #[derive(Default)]
 pub struct OverrideMap {
-    // Zig used ArrayIdentityContext.U64 (identity hash on u64 key); the Rust
     // `ArrayHashMap` defaults to identity hashing for integer keys.
     pub map: ArrayHashMap<PackageNameHash, Dependency>,
 }
@@ -34,7 +32,7 @@ impl OverrideMap {
     /// A potential approach is to add another buffer to the lockfile that maps Dependency ID to Package ID,
     /// and from there `OverrideMap.map` can have a union as the value, where the union is between "override all"
     /// and "here is a list of overrides depending on the package that imported" similar to PackageIndex above.
-    pub fn get(&self, name_hash: PackageNameHash) -> Option<dependency::Version> {
+    pub(crate) fn get(&self, name_hash: PackageNameHash) -> Option<dependency::Version> {
         scoped_log!(OverrideMap, "looking up override for {:x}", name_hash);
         if self.map.count() == 0 {
             return None;
@@ -42,33 +40,30 @@ impl OverrideMap {
         self.map.get(&name_hash).map(|dep| dep.version.clone())
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig took `*const Lockfile` but every
-    // caller already holds `&mut self` on `lockfile.overrides`, so accept just
-    // the string buffer (the only field `sort` reads).
-    pub fn sort(&mut self, string_bytes: &[u8]) {
+    // Every caller already holds `&mut self` on `lockfile.overrides`, so
+    // accept just the string buffer (the only lockfile field `sort` reads)
+    // rather than the whole `Lockfile`.
+    pub(crate) fn sort(&mut self, string_bytes: &[u8]) {
         self.map.sort(|_, deps: &[Dependency], l, r| {
-            deps[l]
-                .name
-                .order(&deps[r].name, string_bytes, string_bytes)
-                == Ordering::Less
+            deps[l].name.order(deps[r].name, string_bytes, string_bytes) == Ordering::Less
         });
     }
 
-    /// PORT NOTE: Zig took `*const Lockfile` but only ever read
-    /// `lockfile.buffers.string_bytes` — accept the slice directly so callers
-    /// can split-borrow the lockfile alongside a live `StringBuilder`.
-    pub fn count(&self, string_bytes: &[u8], builder: &mut StringBuilder) {
+    /// Accepts `lockfile.buffers.string_bytes` directly (rather than the whole
+    /// `Lockfile`) so callers can split-borrow the lockfile alongside a live
+    /// `StringBuilder`.
+    pub(crate) fn count(&self, string_bytes: &[u8], builder: &mut StringBuilder) {
         for dep in self.map.values() {
             dep.count(string_bytes, builder);
         }
     }
 
-    /// PORT NOTE: Zig also passed `*Lockfile new`, but it was unused —
-    /// the new-side buffer lives inside `new_builder`. Dropped to avoid the alias.
-    /// `pm` is generic over `NpmAliasRegistry` (was `&mut PackageManager`) so a
+    /// The new-side buffer lives inside `new_builder`, so no separate
+    /// `new: &mut Lockfile` param is taken — that would alias the borrow.
+    /// `pm` is generic over `NpmAliasRegistry` (not `&mut PackageManager`) so a
     /// caller already holding `&mut manager.lockfile` can pass
     /// `&mut manager.known_npm_aliases` instead of the whole manager.
-    pub fn clone<PM: crate::dependency::NpmAliasRegistry>(
+    pub(crate) fn clone<PM: crate::dependency::NpmAliasRegistry>(
         &self,
         pm: &mut PM,
         old_string_bytes: &[u8],
@@ -78,7 +73,6 @@ impl OverrideMap {
         new.map.ensure_total_capacity(self.map.count())?;
 
         for (k, v) in self.map.keys().iter().zip(self.map.values()) {
-            // PERF(port): was ensureTotalCapacity + putAssumeCapacity — profile in Phase B
             new.map
                 .put_assume_capacity(*k, v.clone_in(pm, old_string_bytes, new_builder)?);
         }
@@ -88,11 +82,10 @@ impl OverrideMap {
 
     // the rest of this struct is expression parsing code:
 
-    // PORT NOTE: Zig passed `lockfile: *Lockfile` solely for `lockfile.allocator`
-    // (string transcode); JSON strings are already UTF-8 here, so the parameter
-    // is dropped — also avoids the `&mut lockfile.overrides` / `&mut lockfile`
-    // alias at the only call site.
-    pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
+    // No `lockfile` param: JSON strings are already UTF-8 here, and omitting
+    // it avoids the `&mut lockfile.overrides` / `&mut lockfile` alias at the
+    // only call site.
+    pub(crate) fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
         if let Some(overrides) = expr.as_property(b"overrides") {
             let ExprData::EObject(obj) = &overrides.expr.data else {
                 return;
@@ -160,7 +153,7 @@ impl OverrideMap {
 
     /// Given a package json expression, detect and parse override configuration into the given override map.
     /// It is assumed the input map is uninitialized (zero entries)
-    pub fn parse_append(
+    pub(crate) fn parse_append(
         &mut self,
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
@@ -197,7 +190,7 @@ impl OverrideMap {
     }
 
     /// https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
-    pub fn parse_from_overrides(
+    pub(crate) fn parse_from_overrides(
         &mut self,
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
@@ -314,7 +307,7 @@ impl OverrideMap {
 
     /// yarn classic: https://classic.yarnpkg.com/lang/en/docs/selective-version-resolutions/
     /// yarn berry: https://yarnpkg.com/configuration/manifest#resolutions
-    pub fn parse_from_resolutions(
+    pub(crate) fn parse_from_resolutions(
         &mut self,
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
@@ -422,14 +415,13 @@ impl OverrideMap {
     }
 }
 
-// PERF(port): was comptime monomorphization (`comptime field: []const u8`) — profile in Phase B.
-// Only used in warning-message formatting, so runtime &'static str is fine.
+// `field` is only used in warning-message
+// formatting, so a runtime `&'static str` is fine.
 pub fn parse_override_value(
     field: &'static str,
-    // PORT NOTE: Zig took `*Lockfile` but only read `buffers.dependencies` and
-    // `buffers.string_bytes`. Callers hold a live `StringBuilder` (which owns
-    // `&mut string_bytes`), so accept the dependency slice directly and read
-    // string-bytes through `builder.string_bytes`.
+    // Callers hold a live `StringBuilder` (which owns `&mut string_bytes`), so
+    // accept the dependency slice directly and read string-bytes through
+    // `builder.string_bytes` instead of taking the whole `Lockfile`.
     lockfile_dependencies: &[Dependency],
     package_manager: &mut PackageManager,
     root_package: &Package,
@@ -511,5 +503,3 @@ pub fn parse_override_value(
         behavior: Behavior::default(),
     }))
 }
-
-// ported from: src/install/lockfile/OverrideMap.zig

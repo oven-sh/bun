@@ -1,16 +1,10 @@
 use bun_alloc::AllocError;
 use bun_core::Error;
 
-// fn isOomOnlyError(comptime ErrorUnionOrSet: type) bool
-//
-// Zig's `isOomOnlyError` is pure comptime `@typeInfo` reflection over an
-// error set: it iterates the set's members and checks every name == "OutOfMemory".
-// Rust has no error-set reflection. The equivalent is encoded structurally in
-// the `HandleOom` trait impls below — the `AllocError` impls ARE the
-// "OOM-only" arm (Output = T / Output = !), and the `bun_core::Error` impls
-// ARE the "other errors possible" arm (Output = Result<T, E> / Output = E).
-//
-// TODO(port): @typeInfo reflection — no direct Rust equivalent; encoded as trait impls.
+// "OOM-only" vs "other errors possible" is encoded structurally in the
+// `HandleOom` trait impls below — the `AllocError` impls ARE the "OOM-only"
+// arm (Output = T / Output = !), and the `bun_core::Error` impls ARE the
+// "other errors possible" arm (Output = Result<T, E> / Output = E).
 
 /// If `error_union_or_set` is `error.OutOfMemory`, calls `bun.outOfMemory`. Otherwise:
 ///
@@ -31,7 +25,7 @@ use bun_core::Error;
 /// let thing = match allocate_thing() { Ok(v) => v, Err(err) => bun::handle_oom(err) };
 /// ```
 ///
-/// PORT NOTE: In Rust, `Vec`/`Box` allocation already aborts on OOM via the
+/// In Rust, `Vec`/`Box` allocation already aborts on OOM via the
 /// global allocator's `handle_alloc_error`. Per PORTING.md §Allocators,
 /// callsites of `bun.handleOom(expr)` translate to bare `expr`. This function
 /// remains for the residual cases where a `Result<T, AllocError>` is threaded
@@ -40,10 +34,8 @@ pub fn handle_oom<A: HandleOom>(error_union_or_set: A) -> A::Output {
     error_union_or_set.handle_oom()
 }
 
-/// Encodes Zig's comptime return-type block (`return_type: { ... }`) of
-/// `handleOom`. The Zig branched on `@typeInfo(ArgType)` (error_union vs
-/// error_set) and on `isOomOnlyError(ArgType)`; each impl below is one arm of
-/// that comptime switch.
+/// Output-type selection for [`handle_oom`]: each impl below is one arm of
+/// the input-shape × OOM-only matrix (see the section comments).
 pub trait HandleOom {
     type Output;
     fn handle_oom(self) -> Self::Output;
@@ -71,12 +63,10 @@ impl HandleOom for AllocError {
 }
 
 // ── .error_union, mixed error set → same union with OOM subtracted ───────
-// Zig computed the narrowed type via
-//   `@TypeOf(switch (err) { error.OutOfMemory => unreachable, else => |e| e })`.
 // Rust error enums are nominal, not sets — there is no set subtraction. For
 // the catch-all `bun_core::Error` we compare against the interned tag and
 // return the same type. Per-crate `thiserror` enums that carry an
-// `OutOfMemory` variant should add their own `HandleOom` impl in Phase B.
+// `OutOfMemory` variant should add their own `HandleOom` impl.
 impl<T> HandleOom for Result<T, Error> {
     type Output = Result<T, Error>;
     fn handle_oom(self) -> Result<T, Error> {
@@ -99,5 +89,3 @@ impl HandleOom for Error {
         }
     }
 }
-
-// ported from: src/crash_handler/handle_oom.zig

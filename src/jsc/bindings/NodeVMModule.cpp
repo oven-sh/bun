@@ -302,19 +302,40 @@ void NodeVMModulePrototype::finishCreation(JSC::VM& vm)
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeVmModuleGetterIdentifier, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
-    auto* thisObject = uncheckedDowncast<NodeVMModule>(JSC::JSValue::decode(thisValue));
-    return JSValue::encode(JSC::jsString(globalObject->vm(), thisObject->identifier()));
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* thisObject = dynamicDowncast<NodeVMModule>(JSC::JSValue::decode(thisValue))) {
+        return JSValue::encode(JSC::jsString(vm, thisObject->identifier()));
+    }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetStatusCode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* thisObject = uncheckedDowncast<NodeVMModule>(callFrame->thisValue());
-    return JSValue::encode(JSC::jsNumber(static_cast<uint32_t>(thisObject->status())));
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* thisObject = dynamicDowncast<NodeVMModule>(callFrame->thisValue())) {
+        return JSValue::encode(JSC::jsNumber(static_cast<uint32_t>(thisObject->status())));
+    }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+    return {};
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetStatus, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* thisObject = uncheckedDowncast<NodeVMModule>(callFrame->thisValue());
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = dynamicDowncast<NodeVMModule>(callFrame->thisValue());
+    if (!thisObject) {
+        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+        return {};
+    }
 
     using enum NodeVMModule::Status;
     switch (thisObject->status()) {
@@ -353,7 +374,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetError, (JSC::JSGlobalObject * globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* thisObject = uncheckedDowncast<NodeVMSourceTextModule>(callFrame->thisValue())) {
+    if (auto* thisObject = dynamicDowncast<NodeVMSourceTextModule>(callFrame->thisValue())) {
         if (JSC::Exception* exception = thisObject->evaluationException()) {
             return JSValue::encode(exception->value());
         }
@@ -370,7 +391,11 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests, (JSC::JSGlobalObject *
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = uncheckedDowncast<NodeVMModule>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<NodeVMModule>(callFrame->thisValue());
+    if (!thisObject) {
+        throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+        return {};
+    }
 
     if (auto* sourceTextModule = dynamicDowncast<NodeVMSourceTextModule>(callFrame->thisValue())) {
         sourceTextModule->ensureModuleRecord(globalObject);
@@ -493,8 +518,15 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData, (JSC::JSGlobalObject * 
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateModuleRecord, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* thisObject = uncheckedDowncast<NodeVMModule>(callFrame->thisValue());
-    return JSValue::encode(thisObject->createModuleRecord(globalObject));
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* thisObject = dynamicDowncast<NodeVMModule>(callFrame->thisValue())) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->createModuleRecord(globalObject)));
+    }
+
+    throwTypeError(globalObject, scope, "This function must be called on a SourceTextModule or SyntheticModule"_s);
+    return {};
 }
 
 template<typename Visitor>

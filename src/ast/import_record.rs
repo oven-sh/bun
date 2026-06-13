@@ -1,4 +1,4 @@
-//! `src/options_types/import_record.zig` — `ImportRecord` and friends.
+//! `ImportRecord` and friends.
 //!
 //! Lives in `bun_ast` so `Ast` (which holds `Vec<ImportRecord>`) is
 //! self-contained and `bun_js_printer` can drop its `bun_js_parser` dep.
@@ -9,14 +9,13 @@ use crate::Range;
 use bun_paths::fs::Path;
 
 // Re-exported here (canonical at crate root) so callers that path through
-// `bun_ast::import_record::{ImportKind, Index, Loader}` — mirroring the Zig
-// `import_record.zig` namespace — keep resolving.
+// `bun_ast::import_record::{ImportKind, Index, Loader}` keep resolving.
 pub use crate::{ImportKind, Index, Loader};
 
 pub struct ImportRecord {
     pub range: Range,
-    // TODO(port): lifetime — `bun_paths::fs::Path<'a>` borrows resolver-owned
-    // strings. Phase A uses 'static (PORTING.md: no struct lifetime params).
+    // TODO: lifetime — `bun_paths::fs::Path<'a>` borrows resolver-owned
+    // strings. Uses 'static (PORTING.md: no struct lifetime params).
     pub path: Path<'static>,
     pub kind: ImportKind,
     pub tag: Tag,
@@ -24,18 +23,16 @@ pub struct ImportRecord {
 
     pub source_index: Index,
 
-    /// `js_printer::printBundledImport` reads this. The Zig field was removed
-    /// from `ImportRecord` but the printer body referencing it is dead (never
-    /// analysed by Zig's lazy compilation). Kept here so the eagerly-compiled
-    /// Rust port of that body type-checks; always 0 in practice.
-    // TODO(port): delete once `printBundledImport` is confirmed dead and removed.
+    /// Dead field: the only reader (`js_printer`'s `print_bundled_import`)
+    /// has been deleted. Always 0. Remove together with the `module_id: 0` initializers
+    /// in the parser/bundler/css constructors when those files are next touched.
     pub module_id: u32,
 
     /// The original import specifier as written in source code (e.g., "./foo.js").
     /// This is preserved before resolution overwrites `path` with the resolved path.
     /// Used for metafile generation.
-    // TODO(port): lifetime — Zig `[]const u8` defaulting to "", never freed in this file.
-    // Likely a borrow into parser-owned source text; using &'static [u8] as Phase-A placeholder.
+    // TODO: lifetime — likely a borrow into parser-owned source text; using
+    // &'static [u8] as a placeholder.
     pub original_path: &'static [u8],
 
     /// Pack all boolean flags into 2 bytes to reduce padding overhead.
@@ -104,11 +101,14 @@ bitflags::bitflags! {
         const WRAP_WITH_TO_ESM = 1 << 13;
         const WRAP_WITH_TO_COMMONJS = 1 << 14;
 
-        // bit 15 (_padding: u1) intentionally unused
+        /// "import defer * as ns from 'path'" — defer evaluation of the
+        /// imported module until a property on the namespace object is
+        /// accessed. Requires `CONTAINS_IMPORT_STAR`.
+        const PHASE_DEFER = 1 << 15;
     }
 }
 
-pub type List = Vec<ImportRecord>;
+pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord>;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
@@ -152,8 +152,6 @@ pub enum PrintMode {
     NapiModule,
 }
 
-// NOTE: no `impl Default for ImportRecord` — Zig gives `range`, `path`, `kind` no defaults,
-// so `.{}` is invalid there. Construction sites must supply required fields explicitly
+// NOTE: no `impl Default for ImportRecord` — `range`, `path`, `kind` have no
+// sensible defaults. Construction sites must supply required fields explicitly
 // (struct-update or a `new(range, path, kind)` helper).
-
-// ported from: src/options_types/import_record.zig

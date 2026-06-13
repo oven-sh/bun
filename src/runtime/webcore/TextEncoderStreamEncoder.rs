@@ -2,15 +2,13 @@ use core::cell::Cell;
 
 use bun_collections::VecExt as _;
 use bun_core::strings;
-use bun_jsc::{CallFrame, JSGlobalObject, JSString, JSUint8Array, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use bun_simdutf_sys::simdutf;
 
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the single
-// mutable field is `Cell<Option<u16>>` (Copy). The codegen shim still emits
-// `this: &mut TextEncoderStreamEncoder` until Phase 1 lands — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either.
+// mutable field is `Cell<Option<u16>>` (Copy).
 #[derive(Default)]
 #[bun_jsc::JsClass]
 pub struct TextEncoderStreamEncoder {
@@ -18,10 +16,10 @@ pub struct TextEncoderStreamEncoder {
 }
 
 impl TextEncoderStreamEncoder {
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — that macro's free-fn arm emits
+    // No `#[bun_jsc::host_fn]` here — that macro's free-fn arm emits
     // a bare `constructor(...)` which cannot resolve inside an `impl`. The
     // `#[bun_jsc::JsClass]` derive already emits the `<Self>::constructor` shim.
-    pub fn constructor(
+    pub(crate) fn constructor(
         _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<Box<TextEncoderStreamEncoder>> {
@@ -29,7 +27,7 @@ impl TextEncoderStreamEncoder {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn encode(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn encode(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_old::<1>();
         let arguments = arguments.slice();
         if arguments.is_empty() {
@@ -47,16 +45,6 @@ impl TextEncoderStreamEncoder {
         }
 
         Ok(self.encode_latin1(global, str.slice()))
-    }
-
-    pub fn encode_without_type_checks(&self, global: &JSGlobalObject, input: &JSString) -> JSValue {
-        let str = input.get_zig_string(global);
-
-        if str.is_16bit() {
-            return self.encode_utf16(global, str.utf16_slice_aligned());
-        }
-
-        self.encode_latin1(global, str.slice())
     }
 
     fn encode_latin1(&self, global: &JSGlobalObject, input: &[u8]) -> JSValue {
@@ -85,10 +73,8 @@ impl TextEncoderStreamEncoder {
         // 278.00 ms   13.0%    278.00 ms           simdutf::arm64::implementation::utf8_length_from_latin1(char const*, unsigned long) const
         //
         //
-        // TODO(port): Zig threw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
         let mut buffer: Vec<u8> = Vec::with_capacity(input.len() + prepend_replacement_len);
         if prepend_replacement_len > 0 {
-            // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
             buffer.extend_from_slice(&[0xef, 0xbf, 0xbd]);
         }
 
@@ -105,16 +91,14 @@ impl TextEncoderStreamEncoder {
             remain = &remain[result.read as usize..];
 
             if result.written == 0 && result.read == 0 {
-                // TODO(port): Zig threw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
                 buffer.reserve(2);
             } else if buffer.len() == buffer.capacity() && !remain.is_empty() {
-                // TODO(port): Zig threw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
                 buffer.ensure_total_capacity(buffer.len() + remain.len() + 1);
             }
         }
 
         if cfg!(debug_assertions) {
-            // wrap in comptime if so simdutf isn't called in a release build here.
+            // guarded so simdutf isn't called in a release build here.
             debug_assert!(
                 buffer.len()
                     == (simdutf::length::utf8::from::latin1(input) + prepend_replacement_len)
@@ -186,7 +170,6 @@ impl TextEncoderStreamEncoder {
 
         let length = simdutf::length::utf8::from::utf16::le(remain);
 
-        // TODO(port): Zig threw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.
         let mut buf: Vec<u8> = Vec::with_capacity(
             length
                 + match prepend {
@@ -196,7 +179,6 @@ impl TextEncoderStreamEncoder {
         );
 
         if let Some(pre) = &prepend {
-            // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
             buf.extend_from_slice(&pre.bytes[0..pre.len as usize]);
         }
 
@@ -238,12 +220,8 @@ impl TextEncoderStreamEncoder {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn flush(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn flush(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Ok(self.flush_body(global))
-    }
-
-    pub fn flush_without_type_checks(&self, global: &JSGlobalObject) -> JSValue {
-        self.flush_body(global)
     }
 
     fn flush_body(&self, global: &JSGlobalObject) -> JSValue {
@@ -254,5 +232,3 @@ impl TextEncoderStreamEncoder {
         }
     }
 }
-
-// ported from: src/runtime/webcore/TextEncoderStreamEncoder.zig

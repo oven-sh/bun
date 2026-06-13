@@ -65,8 +65,8 @@ enum RequestHeader {
     Sensitive,
 }
 
-// PORT NOTE: Zig used a comptime case-insensitive map. The first pass below
-// pre-lowercases the probe so a case-sensitive match suffices.
+// The match is case-sensitive; the first pass below pre-lowercases the probe
+// so that suffices (header name matching must be case-insensitive).
 fn classify_request_header(name: &[u8]) -> Option<RequestHeader> {
     Some(match name {
         b"connection" => RequestHeader::Drop,
@@ -91,7 +91,7 @@ pub fn write_request(
     stream: &mut Stream,
     request: &picohttp::Request<'_>,
 ) -> Result<(), bun_core::Error> {
-    // PORT NOTE: reshaped for borrowck — `encode_scratch` is borrowed mutably
+    // `encode_scratch` would be borrowed mutably
     // alongside `&mut *session` below; pull the Vec out, push it back at the end.
     let mut encoded = core::mem::take(&mut session.encode_scratch);
     encoded.clear();
@@ -305,7 +305,7 @@ pub fn write_data_windowed(
 
 /// Push as much of `stream`'s request body as the send windows allow.
 /// Buffers into `write_buffer`; caller flushes.
-pub fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: usize) {
+pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: usize) {
     if stream.local_closed() || stream.awaiting_continue || stream.fatal_error.is_some() {
         return;
     }
@@ -363,15 +363,15 @@ pub fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: us
     }
 }
 
-pub fn drain_send_bodies(session: &mut ClientSession) {
+pub(crate) fn drain_send_bodies(session: &mut ClientSession) {
     // Round-robin: each pass gives every uploader at most one
     // remote_max_frame_size slice before the next stream gets a turn, so
     // the lowest-index stream can't monopolise conn_send_window.
     let slice: usize = session.remote_max_frame_size as usize;
     while session.conn_send_window > 0 && session.write_buffer.size() < WRITE_BUFFER_HIGH_WATER {
         let mut progressed = false;
-        // PORT NOTE: reshaped for borrowck — Zig iterates `session.streams.values()`
-        // while passing `session` mutably to `drain_send_body`. Iterate by index
+        // Iterating `session.streams.values()` while passing `session` mutably
+        // to `drain_send_body` would conflict; iterate by index
         // and re-borrow each pass.
         let mut i = 0usize;
         while i < session.streams.count() {
@@ -393,7 +393,7 @@ pub fn drain_send_bodies(session: &mut ClientSession) {
     }
 }
 
-pub fn encode_header(
+pub(crate) fn encode_header(
     session: &mut ClientSession,
     encoded: &mut Vec<u8>,
     name: &[u8],
@@ -402,11 +402,10 @@ pub fn encode_header(
 ) -> Result<(), bun_core::Error> {
     let required = encoded.len() + name.len() + value.len() + 32;
     encoded.reserve(required.saturating_sub(encoded.len()));
-    // Zig passed `encoded.allocatedSlice()` (ptr[0..capacity]) + current len as
-    // offset; mirror with the raw buffer and set_len after.
+    let len = encoded.len();
+    // Write through the raw buffer and set_len after.
     // SAFETY: `hpack.encode` writes only into `[len..len+written]`, which is
     // within the just-reserved capacity; bytes in `[0..len]` are initialized.
-    let len = encoded.len();
     let buf = unsafe { bun_core::vec::allocated_bytes_mut(encoded) };
     let written = session
         .hpack
@@ -420,22 +419,16 @@ pub fn encode_header(
 /// RFC 7541 §6.3 Dynamic Table Size Update: `001` prefix, 5-bit-prefix
 /// integer. Must be the first opcode in a header block. Caller guarantees
 /// at least 6 bytes of capacity (max for a u32).
-pub fn encode_hpack_table_size_update(encoded: &mut Vec<u8>, value: u32) {
+pub(crate) fn encode_hpack_table_size_update(encoded: &mut Vec<u8>, value: u32) {
     if value < 31 {
-        // PERF(port): was assume_capacity
         encoded.push(0x20 | u8::try_from(value).expect("int cast"));
         return;
     }
-    // PERF(port): was assume_capacity
     encoded.push(0x20 | 31);
     let mut rest = value - 31;
     while rest >= 128 {
-        // PERF(port): was assume_capacity
         encoded.push((rest as u8) | 0x80);
         rest >>= 7;
     }
-    // PERF(port): was assume_capacity
     encoded.push(rest as u8);
 }
-
-// ported from: src/http/h2_client/encode.zig

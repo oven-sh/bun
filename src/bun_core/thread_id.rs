@@ -2,9 +2,8 @@
 //! for storing in an atomic and printing in panics so it lines up with what a
 //! debugger / `top -H` / Instruments shows.
 //!
-//! Ground truth is Zig's `std.Thread.Id` / `std.Thread.getCurrentId()`
-//! (vendor/zig/lib/std/Thread.zig). This is the single Rust port of that
-//! per-OS ladder; every other crate re-exports or widens from here:
+//! This is the single per-OS ladder; every other crate re-exports or widens
+//! from here:
 //!   * `bun_safety::thread_id`       → `pub use bun_core::thread_id::*;`
 //!   * `bun_threading::current_thread_id` → `current() as u64`
 //!   * `bun_core::util::debug_thread_id`  → `current() as u64` (debug-only)
@@ -13,15 +12,16 @@
 //! process-local monotonic counter (no `MAX`, no atomic repr, not the kernel
 //! TID), whereas every consumer (`CriticalSection`, `ThreadLock`, `ThreadCell`)
 //! needs a plain integer it can store in an atomic and compare against a
-//! sentinel — exactly Zig's semantics.
+//! sentinel.
 
-// ── ThreadId width (mirrors Zig `std.Thread.Id` switch) ───────────────────
+// ── ThreadId width ─────────────────────────────────────────────────────────
 //   linux / *bsd / haiku / wasi / serenity → u32
 //   macOS / iOS / watchOS / tvOS / visionOS → u64
 //   Windows                                → DWORD (u32)
 //   else                                   → usize
 #[cfg(any(
     target_os = "linux",
+    target_os = "android",
     target_os = "freebsd",
     target_os = "netbsd",
     target_os = "openbsd",
@@ -43,6 +43,7 @@ pub type ThreadId = u64;
 
 #[cfg(not(any(
     target_os = "linux",
+    target_os = "android",
     target_os = "freebsd",
     target_os = "netbsd",
     target_os = "openbsd",
@@ -58,10 +59,11 @@ pub type ThreadId = u64;
 )))]
 pub type ThreadId = usize;
 
-// ── Atomic wrapper (Zig: `std.atomic.Value(Thread.Id)`) ───────────────────
+// ── Atomic wrapper ─────────────────────────────────────────────────────────
 // Width-matched alias so `CriticalSection` can `compare_exchange` on it directly.
 #[cfg(any(
     target_os = "linux",
+    target_os = "android",
     target_os = "freebsd",
     target_os = "netbsd",
     target_os = "openbsd",
@@ -83,6 +85,7 @@ pub type AtomicThreadId = core::sync::atomic::AtomicU64;
 
 #[cfg(not(any(
     target_os = "linux",
+    target_os = "android",
     target_os = "freebsd",
     target_os = "netbsd",
     target_os = "openbsd",
@@ -99,20 +102,45 @@ pub type AtomicThreadId = core::sync::atomic::AtomicU64;
 pub type AtomicThreadId = core::sync::atomic::AtomicUsize;
 
 /// A value that does not alias any other thread ID.
-/// See `Thread/Mutex/Recursive.zig` in the Zig standard library.
-// Zig: `pub const invalid = std.math.maxInt(std.Thread.Id);`
 pub const INVALID: ThreadId = ThreadId::MAX;
+
+/// Per-thread cache of [`current()`]. Without it, every call paid a syscall
+/// (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`). The
+/// bundler's `Worker::get(ctx)` calls `current()` once per scheduled task —
+/// parse, line-offset table, quoted source contents, compile-result
+/// generation, link step 5 — so a 19 K-module build paid ~109 K `gettid`
+/// syscalls (~36 % of total syscall time on the rolldown `apps/10000` bench).
+///
+/// `0` is the unset sentinel: kernel TIDs / `pthread_threadid_np` IDs /
+/// Win32 thread IDs are all nonzero. A bare `#[thread_local]` slot (not the
+/// `thread_local!` macro) so this is a single TLS load with no `LocalKey`
+/// initialization-state branch or destructor registration.
+#[thread_local]
+static TLS_THREAD_ID: core::cell::Cell<ThreadId> = core::cell::Cell::new(0);
 
 /// Returns the platform's notion of the calling thread's ID.
 ///
-/// Port of Zig `std.Thread.getCurrentId()` (`PosixThreadImpl` / `WindowsThreadImpl` /
-/// `LinuxThreadImpl`). Attempts to use OS-specific primitives so the value matches what
+/// Attempts to use OS-specific primitives so the value matches what
 /// debuggers/tracers report; falls back to `pthread_self()` as a `usize` on unknown targets.
+///
+/// Cached per-thread after the first call (see [`TLS_THREAD_ID`]); subsequent
+/// calls are a single TLS read with no syscall. Lazy rather than set-at-spawn so threads not started
+/// by Bun's pool (FFI callbacks, the main thread) still get a valid ID.
 #[inline]
 pub fn current() -> ThreadId {
-    #[cfg(target_os = "linux")]
+    let cached = TLS_THREAD_ID.get();
+    if cached != 0 {
+        return cached;
+    }
+    let id = current_uncached();
+    TLS_THREAD_ID.set(id);
+    id
+}
+
+#[cold]
+fn current_uncached() -> ThreadId {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // Zig: `LinuxThreadImpl.getCurrentId()` → `linux.gettid()`.
         // SAFETY: `gettid` takes no arguments and cannot fail.
         return unsafe { libc::gettid() } as ThreadId;
     }
@@ -124,7 +152,6 @@ pub fn current() -> ThreadId {
         target_os = "visionos",
     ))]
     {
-        // Zig: `pthread_threadid_np(null, &thread_id)`.
         unsafe extern "C" {
             fn pthread_threadid_np(
                 thread: *mut core::ffi::c_void,
@@ -133,7 +160,7 @@ pub fn current() -> ThreadId {
         }
         let mut id: u64 = 0;
         // SAFETY: passing null requests the current thread; `id` is a valid out-ptr.
-        let rc = unsafe { pthread_threadid_np(core::ptr::null_mut(), &mut id) };
+        let rc = unsafe { pthread_threadid_np(core::ptr::null_mut(), &raw mut id) };
         debug_assert_eq!(rc, 0);
         return id;
     }
@@ -179,6 +206,7 @@ pub fn current() -> ThreadId {
     }
     #[cfg(not(any(
         target_os = "linux",
+        target_os = "android",
         target_os = "freebsd",
         target_os = "netbsd",
         target_os = "openbsd",
@@ -191,7 +219,6 @@ pub fn current() -> ThreadId {
         target_os = "visionos",
     )))]
     {
-        // Zig fallback: `@intFromPtr(c.pthread_self())`.
         unsafe extern "C" {
             // safe: no args; infallible.
             safe fn pthread_self() -> usize;
@@ -199,5 +226,3 @@ pub fn current() -> ThreadId {
         return pthread_self() as ThreadId;
     }
 }
-
-// ported from: vendor/zig/lib/std/Thread.zig (Id / getCurrentId)

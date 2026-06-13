@@ -1,12 +1,9 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
 use super::{Expect, get_signature};
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_nth_returned_with(
+pub(crate) fn to_have_nth_returned_with(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -49,8 +46,7 @@ pub fn to_have_nth_returned_with(
         if nth_result.is_object() {
             let result_type = nth_result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
-                let type_str = result_type.to_bun_string(global)?;
-                // defer type_str.deref() — handled by Drop on bun_core::String
+                let type_str = bun_core::OwnedString::new(result_type.to_bun_string(global)?);
                 if type_str.eql_comptime("return") {
                     nth_return_value = nth_result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
                     if nth_return_value.jest_deep_equals(expected, global)? {
@@ -73,7 +69,6 @@ pub fn to_have_nth_returned_with(
     let mut formatter2 = super::make_formatter(global);
     // defer formatter.deinit() — handled by Drop
 
-    // TODO(port): get_signature should be a const fn returning &'static str (was `comptime getSignature(...)`)
     let signature = get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
 
     if this.flags.get().not() {
@@ -141,5 +136,3 @@ pub fn to_have_nth_returned_with(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveNthReturnedWith.zig

@@ -1,7 +1,5 @@
 use core::ffi::c_void;
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
-use bun_jsc::console_object::Formatter;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
@@ -26,12 +24,13 @@ extern "C" fn deep_equals_iterator(
     };
     if eq {
         *entry.pass = true;
-        // TODO(perf): break out of the `forEach` when a match is found
+        // PERF: break out of the `forEach` when a match is found
     }
 }
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_contain_equal(
+// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
+// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
+pub(crate) fn to_contain_equal(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -72,7 +71,7 @@ pub fn to_contain_equal(
             // it immediately spreads the value into an array.
 
             let mut expected_codepoint_cursor = strings::Cursor::default();
-            let mut expected_iter = strings::CodepointIterator::init(expected_string.slice());
+            let expected_iter = strings::CodepointIterator::init(expected_string.slice());
             let _ = expected_iter.next(&mut expected_codepoint_cursor);
 
             pass = if expected_iter.next(&mut expected_codepoint_cursor) {
@@ -106,8 +105,8 @@ pub fn to_contain_equal(
     }
 
     // handle failure
-    // PORT NOTE: Zig shared one Formatter for both `toFmt` calls; Rust borrowck forbids two
-    // live `&mut formatter` borrows, so allocate a second Formatter for the expected value.
+    // Two live `&mut formatter` borrows cannot coexist, so allocate a second
+    // Formatter for the expected value.
     let mut formatter = super::make_formatter(global);
     let mut formatter2 = super::make_formatter(global);
     let value_fmt = value.to_fmt(&mut formatter);
@@ -134,5 +133,3 @@ pub fn to_contain_equal(
         format_args!("{}{}", expected_fmt, value_fmt),
     )
 }
-
-// ported from: src/test_runner/expect/toContainEqual.zig

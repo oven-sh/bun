@@ -7,7 +7,7 @@
 //! read/written directly by C (loop.c walks `head_sockets`/`iterator`,
 //! context.c flips `linked`).
 
-use core::ffi::{c_char, c_int, c_ushort, c_void};
+use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
 use crate::{
@@ -97,10 +97,7 @@ impl SocketGroup {
     /// Initialise an embedded group. `owner_ptr` is what `group.owner::<T>()`
     /// recovers inside handlers — pass the embedding struct so dispatch can
     /// find it from a raw `*us_socket_t`.
-    // TODO(port): Zig accepted `owner_ptr: anytype` (any single-item pointer or
-    // null) with comptime @typeInfo validation. Rust callers cast at the call
-    // site; consider a typed `init_with_owner<T>(&mut self, ..., owner: &mut T)`
-    // helper in Phase B if ergonomics warrant.
+    // Callers cast to `*mut c_void` at the call site.
     pub fn init(&mut self, loop_: *mut Loop, vt: Option<&'static VTable>, owner_ptr: *mut c_void) {
         // SAFETY: C initializes all fields of `self` in-place; `self` is a valid
         // `#[repr(C)]` slot embedded in the caller.
@@ -117,7 +114,7 @@ impl SocketGroup {
         }
     }
 
-    // PORT NOTE: not `impl Drop`. SocketGroup is `#[repr(C)]`, embedded
+    // Not `impl Drop`. SocketGroup is `#[repr(C)]`, embedded
     // by-value in its owner, and its lifecycle is FFI-managed (C unlinks it
     // from the loop). PORTING.md's #[repr(C)]-across-FFI exception applies:
     // expose `unsafe fn destroy(*mut Self)` and have the owner call it
@@ -323,10 +320,6 @@ unsafe extern "C" {
     // `close_all` reenters Rust callbacks that touch this group via aliasing
     // pointers (`us_socket_group(s)`).
     fn us_socket_group_close_all(group: *mut SocketGroup);
-    #[allow(dead_code)]
-    fn us_socket_group_timestamp(group: *mut SocketGroup) -> c_ushort;
-    #[allow(dead_code)]
-    fn us_socket_group_loop(group: *mut SocketGroup) -> *mut Loop;
     fn us_socket_group_listen(
         group: *mut SocketGroup,
         kind: u8,
@@ -384,5 +377,3 @@ unsafe extern "C" {
         fds: *mut [LIBUS_SOCKET_DESCRIPTOR; 2],
     ) -> *mut us_socket_t;
 }
-
-// ported from: src/uws_sys/SocketGroup.zig

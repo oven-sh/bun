@@ -2,8 +2,9 @@ use core::ptr::NonNull;
 
 use crate::BundledAst as JSAst;
 use bun_alloc::Arena as ThreadLocalArena;
+use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::server_component_boundary;
-use bun_collections::{MultiArrayList, VecExt};
+use bun_collections::MultiArrayList;
 use enum_map::EnumMap;
 
 use crate::IndexStringMap::IndexStringMap;
@@ -12,24 +13,20 @@ use crate::options;
 use crate::{AdditionalFile, BundleV2, ThreadPool};
 
 use bun_ast::Index;
-use bun_ast::Ref;
 
 // `bun.ast.Index.Int` — the underlying integer repr of `Index`.
 pub(crate) use crate::IndexInt;
 
-pub struct Graph {
-    // TODO(port): lifetime — no direct LIFETIMES.tsv row for Graph.pool, but row 170
-    // (ThreadPool.v2, BACKREF) evidence states "BundleV2.graph.pool owns ThreadPool".
-    // bundle_v2.zig:992 allocates it from `this.arena()` (the `self.heap` arena) and
-    // bundle_v2.zig:2248 calls `pool.deinit()`, so this is arena-owned but self-referential
+pub struct Graph<'a> {
+    // `BundleV2::init` allocates this from the `self.heap` arena and
+    // `BundleV2::deinit` calls `pool.deinit()`, so this is arena-owned but self-referential
     // (sibling field). `BackRef` (not raw `NonNull`) so the read accessor `pool()` is
     // safe — the BACKREF invariant (pointee outlives holder) holds for the entire
     // bundle pass.
     pub pool: bun_ptr::BackRef<ThreadPool>,
-    pub heap: ThreadLocalArena,
+    pub heap: &'a ThreadLocalArena,
 
     /// Mapping user-specified entry points to their Source Index
-    // PERF(port): arena-fed ArrayList (self.heap) — self-referential, revisit in Phase B
     pub entry_points: Vec<Index>,
     /// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
     pub entry_point_original_names: IndexStringMap,
@@ -37,9 +34,9 @@ pub struct Graph {
     pub input_files: MultiArrayList<InputFile>,
     /// Every source index has an associated Ast
     /// When a parse is in progress / queued, it is `Ast.empty`
-    // PORT NOTE: BundledAst<'arena> borrows from self.heap (sibling-field self-ref);
-    // 'static here is a placeholder — Phase-B lifetime threading via raw ptr or Ouroboros.
-    pub ast: MultiArrayList<JSAst<'static>>,
+    // `JSAst<'a>` borrows from the arena behind `self.heap`; `'a` ties the AST
+    // entries to that arena's lifetime (sibling-field relationship).
+    pub ast: MultiArrayList<JSAst<'a>>,
 
     /// During the scan + parse phase, this value keeps a count of the remaining
     /// tasks. Once it hits zero, the scan phase ends and linking begins. Note
@@ -80,7 +77,6 @@ pub struct Graph {
     /// pre-allocations without re-iterating the file listing.
     pub css_file_count: usize,
 
-    // PERF(port): arena-fed ArrayList (self.heap) — self-referential, revisit in Phase B
     pub additional_output_files: Vec<options::OutputFile>,
 
     pub kit_referenced_server_data: bool,
@@ -100,19 +96,32 @@ pub struct HtmlImports {
     pub html_source_indices: Vec<IndexInt>,
 }
 
-#[derive(Default)]
 pub struct InputFile {
     pub source: bun_ast::Source,
-    pub secondary_path: Box<[u8]>,
+    pub secondary_path: AstVec<u8>,
     pub loader: options::Loader,
     pub side_effects: SideEffects,
-    // PORT NOTE: Zig stored `arena: std.mem.Allocator = bun.default_allocator`
-    // here so deinit could free `source`/`secondary_path` with the right alloc.
-    // In Rust the owned fields (Box/Vec) carry their arena; field dropped.
-    pub additional_files: Vec<AdditionalFile>,
-    pub unique_key_for_additional_file: Box<[u8]>,
+    // No `arena` field — the owned fields
+    // (Box/Vec) carry their allocator.
+    pub additional_files: AstVec<AdditionalFile>,
+    pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
+}
+
+impl Default for InputFile {
+    fn default() -> Self {
+        Self {
+            source: bun_ast::Source::default(),
+            secondary_path: AstAlloc::vec(),
+            loader: options::Loader::default(),
+            side_effects: SideEffects::default(),
+            additional_files: AstAlloc::vec(),
+            unique_key_for_additional_file: AstAlloc::vec().into_boxed_slice(),
+            content_hash_for_additional_file: 0,
+            flags: InputFileFlags::default(),
+        }
+    }
 }
 
 // SoA column accessors on `MultiArrayList<InputFile>` and `Slice<InputFile>`.
@@ -121,11 +130,11 @@ pub struct InputFile {
 bun_collections::multi_array_columns! {
     pub trait InputFileColumns for InputFile {
         source: bun_ast::Source,
-        secondary_path: Box<[u8]>,
+        secondary_path: AstVec<u8>,
         loader: options::Loader,
         side_effects: SideEffects,
-        additional_files: Vec<AdditionalFile>,
-        unique_key_for_additional_file: Box<[u8]>,
+        additional_files: AstVec<AdditionalFile>,
+        unique_key_for_additional_file: Box<[u8], AstAlloc>,
         content_hash_for_additional_file: u64,
         flags: InputFileFlags,
     }
@@ -140,13 +149,13 @@ bitflags::bitflags! {
     }
 }
 
-impl Default for Graph {
-    fn default() -> Self {
+impl<'a> Graph<'a> {
+    pub fn new(heap: &'a ThreadLocalArena) -> Self {
         Self {
             // Self-referential arena pointer; real value wired in
-            // `BundleV2::init` before any use (Graph.zig has `= undefined`).
+            // `BundleV2::init` before any use.
             pool: bun_ptr::BackRef::from(NonNull::<ThreadPool>::dangling()),
-            heap: ThreadLocalArena::new(),
+            heap,
             entry_points: Vec::new(),
             entry_point_original_names: IndexStringMap::default(),
             input_files: MultiArrayList::default(),
@@ -166,11 +175,11 @@ impl Default for Graph {
     }
 }
 
-impl Graph {
+impl<'a> Graph<'a> {
     /// Shared borrow of the bundler `ThreadPool`.
     ///
-    /// `pool` is arena-allocated in `BundleV2::init` (bundle_v2.zig:992) and
-    /// torn down in `BundleV2::deinit` (bundle_v2.zig:2248). It is non-null
+    /// `pool` is arena-allocated in `BundleV2::init` and
+    /// torn down in `BundleV2::deinit`. It is non-null
     /// and valid for the entire bundle pass; see LIFETIMES.tsv row 170
     /// (BACKREF). All `ThreadPool` driver methods (`schedule`, `start`,
     /// `worker_pool`, `schedule_inside_thread_pool`) take `&self`, so callers
@@ -225,10 +234,8 @@ impl Graph {
     }
 }
 
-// Spec: `side_effects: _resolver.SideEffects` (Graph.zig:74). The resolver
+// The resolver
 // crate re-exports the canonical enum from `bun_options_types`; re-export it
 // here so `InputFile` and the derived `items_side_effects()` SoA accessor share
 // the same type that `LinkerContext::mark_file_live_for_tree_shaking` expects.
 use bun_ast::SideEffects;
-
-// ported from: src/bundler/Graph.zig

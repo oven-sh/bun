@@ -3,7 +3,6 @@ use core::ptr::{self, NonNull};
 
 use bun_brotli::c;
 type Op = c::BrotliEncoderOperation;
-// TODO(port): exact path — Zig: bun.brotli.c.BrotliEncoder.Operation
 
 // ─── type defs (real) ─────────────────────────────────────────────────────
 
@@ -46,12 +45,7 @@ impl Default for Context {
     }
 }
 
-// ─── gated: JsClass payload + host fns + Context method bodies ────────────
-// `NativeBrotli` carries `#[bun_jsc::JsClass]`; `impl Context` calls
-// `Error::init(&str, ..)` and uses brotli-C variant names that diverge from
-// `bun_brotli_sys` (e.g. `BrotliDecoderResult::Error` vs `::err`). Unblocking
-// requires aligning those signatures — Phase B.
-// TODO(b2-blocked): un-gate once bun_jsc JsClass + Error::init str overload + brotli_c variant names settle.
+// ─── JsClass payload + host fns + Context method bodies ───────────────────
 
 mod _impl {
     use super::*;
@@ -66,11 +60,9 @@ mod _impl {
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
     use crate::node::util::validators;
 
-    // Intrusive refcount: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`.
-    // In Rust the handle type is `bun_ptr::IntrusiveRc<NativeBrotli>`; the
+    // Intrusive refcount: the handle type is `bun_ptr::IntrusiveRc<NativeBrotli>`; the
     // `ref_count` field below is read/written by that wrapper, and `deinit` is the
     // drop body invoked when the count reaches zero.
-    // TODO(port): wire `ref`/`deref` via `bun_ptr::IntrusiveRc` impl.
 
     // `.classes.ts`-backed: the C++ JSCell wrapper (JSNativeBrotli) is generated;
     // this struct is the `m_ctx` payload. Codegen provides toJS/fromJS/fromJSDirect.
@@ -85,27 +77,30 @@ mod _impl {
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
-        /// Points into a JS `Uint32Array` (`this._writeState`). Kept alive because
-        /// the JS object is tied to the native handle as `_handle[owner_symbol]`.
-        pub write_result: Cell<Option<*mut u32>>,
         pub poll_ref: JsCell<CountedKeepAlive>,
-        // TODO(port): Strong on m_ctx self-ref → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
+        // TODO: Strong self-ref on the wrapper → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
         pub this_value: JsCell<StrongOptional>, // Strong.Optional — empty-initialised
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
         pub pending_reset: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
+        /// External-allocation footprint reported to the GC, fixed at
+        /// construction. `mode` never changes after this (only `close()` sets
+        /// it to `NONE`, on the JS thread), so the external state size is
+        /// constant for the life of the instance. Cached here as a plain
+        /// immutable field because `estimated_size` runs on the concurrent GC
+        /// marking thread, where reading `self.stream` through the `JsCell`
+        /// would alias the `&mut` held by an in-progress `with_mut` drive loop.
+        pub estimated_external_size: usize,
     }
 
-    // `const impl = CompressionStream(@This())` — Zig mixin that provides
     // write / runFromJSThread / writeSync / reset / close / setOnError /
-    // getOnError / finalize / emitError. In Rust these are generic associated
+    // getOnError / finalize / emitError are generic associated
     // fns on `CompressionStream::<NativeBrotli>` (see node_zlib_binding.rs).
-    // TODO(port): expose via inherent-looking methods so .classes.ts codegen can resolve them.
 
     impl NativeBrotli {
-        // PORT NOTE: no `#[bun_jsc::host_fn]` — the free-fn shim it emits calls
+        // No `#[bun_jsc::host_fn]` — the free-fn shim it emits calls
         // a bare `constructor(...)` which cannot resolve inside an `impl` block.
         // The `#[bun_jsc::JsClass]` derive already emits the construct shim that
         // calls `<Self>::constructor(__g, __f)`.
@@ -136,14 +131,16 @@ mod _impl {
                 ));
             }
 
-            let mut stream = Context::default();
-            stream.mode = bun_zlib::NodeMode::from_int(mode_int as u8);
+            let mode = bun_zlib::NodeMode::from_int(mode_int as u8);
+            let stream = Context {
+                mode,
+                ..Default::default()
+            };
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
                 // JSC_BORROW backref — the global outlives this m_ctx payload.
                 global_this: bun_ptr::BackRef::new(global_this),
                 stream: JsCell::new(stream),
-                write_result: Cell::new(None),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
@@ -155,18 +152,25 @@ mod _impl {
                     node: Default::default(),
                     callback: noop_task_callback,
                 }),
+                estimated_external_size: Self::external_size_for(mode),
             }))
         }
 
-        pub fn estimated_size(&self) -> usize {
+        /// Per-mode external-allocation footprint, fixed at construction.
+        fn external_size_for(mode: bun_zlib::NodeMode) -> usize {
             const ENCODER_STATE_SIZE: usize = 5143; // sizeof(BrotliEncoderStateStruct)
             const DECODER_STATE_SIZE: usize = 855; // sizeof(BrotliDecoderStateStruct)
-            core::mem::size_of::<Self>()
-                + match self.stream.get().mode {
-                    bun_zlib::NodeMode::BROTLI_ENCODE => ENCODER_STATE_SIZE,
-                    bun_zlib::NodeMode::BROTLI_DECODE => DECODER_STATE_SIZE,
-                    _ => 0,
-                }
+            match mode {
+                bun_zlib::NodeMode::BROTLI_ENCODE => ENCODER_STATE_SIZE,
+                bun_zlib::NodeMode::BROTLI_DECODE => DECODER_STATE_SIZE,
+                _ => 0,
+            }
+        }
+
+        /// Called from any thread (concurrent GC marking). Reads only the
+        /// immutable `estimated_external_size` field, never `self.stream`.
+        pub fn estimated_size(&self) -> usize {
+            core::mem::size_of::<Self>() + self.estimated_external_size
         }
 
         #[bun_jsc::host_fn(method)]
@@ -186,18 +190,55 @@ mod _impl {
                     .throw());
             }
 
-            // this does not get gc'd because it is stored in the JS object's
-            // `this._writeState`. and the JS object is tied to the native handle
-            // as `_handle[owner_symbol]`.
-            let write_result = arguments.ptr[1]
-                .as_array_buffer(global_this)
-                .unwrap()
-                .as_u32()
-                .as_mut_ptr();
+            // `flush_write_result` writes two u32s into this array, so the
+            // caller-supplied array must hold at least 2 elements.
+            let write_result_value = arguments.ptr[1];
+            let Some(mut write_result_buf) = write_result_value.as_array_buffer(global_this) else {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "writeResult",
+                    "Uint32Array",
+                    write_result_value,
+                ));
+            };
+            if write_result_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "writeResult",
+                    "Uint32Array",
+                    write_result_value,
+                ));
+            }
+            let write_result_slice = write_result_buf.as_u32();
+            if write_result_slice.len() < 2 {
+                return Err(global_this
+                    .err(
+                        ErrorCode::INVALID_ARG_VALUE,
+                        format_args!("writeResult must be a Uint32Array with at least 2 elements"),
+                    )
+                    .throw());
+            }
             let write_callback =
                 validators::validate_function(global_this, "writeCallback", arguments.ptr[2])?;
 
-            self.write_result.set(Some(write_result));
+            // Validate `params` before any native state is initialized so the
+            // error path needs no cleanup. `as_u32` reinterprets the view's
+            // bytes, so the element type must actually be Uint32Array.
+            let params_value = arguments.ptr[0];
+            let Some(mut params_buf) = params_value.as_array_buffer(global_this) else {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "params",
+                    "Uint32Array",
+                    params_value,
+                ));
+            };
+            if params_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "params",
+                    "Uint32Array",
+                    params_value,
+                ));
+            }
+
+            js::write_result_set_cached(this_value, global_this, write_result_value);
 
             js::write_callback_set_cached(
                 this_value,
@@ -211,7 +252,6 @@ mod _impl {
                 return Ok(JSValue::FALSE);
             }
 
-            let mut params_buf = arguments.ptr[0].as_array_buffer(global_this).unwrap();
             let params_ = params_buf.as_u32();
 
             for (i, &d) in params_.iter().enumerate() {
@@ -242,8 +282,7 @@ mod _impl {
         }
 
         /// `CellRefCounted::destroy` target (refcount hit zero). Runs `deinit`
-        /// then frees the Box-allocated payload — matches Zig
-        /// `bun.ptr.RefCount(.., deinit, .{}).deref()` → `deinit()` + `bun.destroy(this)`.
+        /// then frees the Box-allocated payload.
         ///
         /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
         /// whose generated trait `destroy` upholds the sole-owner contract.
@@ -257,16 +296,16 @@ mod _impl {
         /// RefCount destructor body (called when ref_count → 0).
         fn deinit(&mut self) {
             // this_value / poll_ref have Drop impls; explicit calls kept for
-            // ordering parity with Zig.
-            // TODO(port): confirm Strong/CountedKeepAlive Drop ordering is benign
-            // and remove explicit deinit calls.
+            // ordering. The `stream` close below is load-bearing:
+            // `Context` has no Drop, so the brotli encoder/decoder state would
+            // leak without it.
             self.this_value.set(StrongOptional::empty());
             drop(self.poll_ref.replace(CountedKeepAlive::default()));
             self.stream.with_mut(|s| match s.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE | bun_zlib::NodeMode::BROTLI_DECODE => s.close(),
                 _ => {}
             });
-            // bun.destroy(this) — freeing self is handled by IntrusiveRc / heap::take.
+            // Freeing self is handled by IntrusiveRc / heap::take.
         }
     }
 
@@ -362,7 +401,7 @@ mod _impl {
         pub fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
             self.next_in = in_.map_or(ptr::null(), |p| p.as_ptr());
             self.avail_in = in_.map_or(0, |p| p.len());
-            // PORT NOTE: reshaped for borrowck — compute ptr/len before consuming `out`.
+            // Reshaped for borrowck — compute ptr/len before consuming `out`.
             match out {
                 Some(p) => {
                     self.avail_out = p.len();
@@ -379,7 +418,7 @@ mod _impl {
             // Caller passes a valid BrotliEncoderOperation discriminant (Node
             // zlib constants 0..=3). Exhaustive match — `Op` is `#[repr(u32)]`
             // so the prior `c_int` bit-cast was a width hazard anyway. Out-of-
-            // range traps to match Zig `this.flush = @enumFromInt(flush)`.
+            // range traps.
             self.flush = match flush {
                 0 => Op::process,
                 1 => Op::flush,
@@ -522,8 +561,6 @@ mod _impl {
     crate::__impl_compression_stream!(NativeBrotli, Context, "NativeBrotli");
 
     fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
-        // Zig: `inline for (std.meta.fieldNames(E), std.enums.values(E)) |n, v|
-        //          if (err == v) return "ERR_BROTLI_DECODER_" ++ n;`
         // Rust has no enum reflection — expand the table by hand. Keep in sync
         // with `bun_brotli::c::BrotliDecoderErrorCode2`.
         use c::BrotliDecoderErrorCode2 as E;
@@ -571,7 +608,7 @@ mod _impl {
     }
 
     /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
-    /// (see `CompressionStream::write` in node_zlib_binding.rs). Zig: `.callback = undefined`.
+    /// (see `CompressionStream::write` in node_zlib_binding.rs).
     /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     /// struct-init site; the body never dereferences the pointer.
     fn noop_task_callback(_task: *mut WorkPoolTask) {}
@@ -580,5 +617,3 @@ mod _impl {
 } // mod _impl
 
 pub use _impl::NativeBrotli;
-
-// ported from: src/runtime/node/zlib/NativeBrotli.zig

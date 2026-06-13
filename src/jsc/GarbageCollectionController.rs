@@ -20,23 +20,23 @@
 
 use core::ffi::c_int;
 
-#[allow(unused_imports)]
+#[cfg(debug_assertions)]
 use bun_core::env_var;
 use bun_uws as uws;
 
-#[allow(unused_imports)]
 use crate::VM;
 use crate::virtual_machine::VirtualMachine;
 
 pub struct GarbageCollectionController {
-    // TODO(port): lifetime — FFI handle created by uws::Timer::create_fallthrough, freed in Drop.
-    // Stored as `Option<NonNull<Timer>>` (None = uninit; Some after `init`).
+    // Raw FFI handle created by `uws::Timer::create_fallthrough` in `init`,
+    // freed in Drop. Stored as `Option<NonNull<Timer>>` (None = uninit).
     pub gc_timer: Option<core::ptr::NonNull<uws::Timer>>,
     pub gc_last_heap_size: usize,
     pub gc_last_heap_size_on_repeating_timer: usize,
     pub heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
     pub gc_timer_state: GCTimerState,
-    // TODO(port): lifetime — FFI handle created by uws::Timer::create_fallthrough, freed in Drop
+    // Raw FFI handle created by `uws::Timer::create_fallthrough` in `init`,
+    // freed in Drop.
     pub gc_repeating_timer: Option<core::ptr::NonNull<uws::Timer>>,
     pub gc_timer_interval: i32,
     pub gc_repeating_timer_fast: bool,
@@ -129,12 +129,10 @@ impl GarbageCollectionController {
             }
         }
 
-        // PORT NOTE: in the Zig spec `vm.transpiler` is fully constructed
-        // before `JSGlobalObject.create` → `ensureWaker` → this `init`. The
-        // Rust port defers `Transpiler::init` to the high-tier
-        // `init_runtime_state` hook (which runs *after* `ensure_waker`), so
-        // `vm.transpiler.env` is still the zeroed null ptr here on the main
-        // boot path. Fall back to defaults when null — these are debug/tuning
+        // `Transpiler::init` is deferred to the high-tier
+        // `init_runtime_state` hook (which runs *after* `ensure_waker` →
+        // this `init`), so `vm.transpiler.env` is still the zeroed null ptr
+        // here on the main boot path. Fall back to defaults when null — these are debug/tuning
         // knobs (BUN_GC_TIMER_INTERVAL / BUN_GC_TIMER_DISABLE /
         // BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS) and the dot_env loader would
         // just be reading process env anyway.
@@ -187,7 +185,7 @@ impl GarbageCollectionController {
         VirtualMachine::get().as_mut()
     }
 
-    /// Explicit teardown (Zig `deinit`). Idempotent — `Drop` forwards here.
+    /// Explicit teardown. Idempotent — `Drop` forwards here.
     /// Kept as an inherent method because callers (web_worker, VM exit path)
     /// need to release the uws timers before the owning VM storage is freed.
     pub fn deinit(&mut self) {
@@ -214,7 +212,6 @@ impl GarbageCollectionController {
     //
     // When the heap size is increasing, we always switch to fast mode
     // When the heap size has been the same or less for 30 seconds, we switch to slow mode
-    // PERF(port): was comptime enum-literal monomorphization — profile in Phase B
     pub fn update_gc_repeat_timer(&mut self, setting: GcRepeatSetting) {
         if setting == GcRepeatSetting::Fast && !self.gc_repeating_timer_fast {
             self.gc_repeating_timer_fast = true;
@@ -292,7 +289,7 @@ impl Drop for GarbageCollectionController {
     }
 }
 
-pub extern "C" fn on_gc_timer(timer: *mut uws::Timer) {
+pub(crate) extern "C" fn on_gc_timer(timer: *mut uws::Timer) {
     let this = GarbageCollectionController::from_timer_ext(timer);
     if this.disabled {
         return;
@@ -300,7 +297,7 @@ pub extern "C" fn on_gc_timer(timer: *mut uws::Timer) {
     this.gc_timer_state = GCTimerState::RunOnNextTick;
 }
 
-pub extern "C" fn on_gc_repeating_timer(timer: *mut uws::Timer) {
+pub(crate) extern "C" fn on_gc_repeating_timer(timer: *mut uws::Timer) {
     let this = GarbageCollectionController::from_timer_ext(timer);
     let prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
     this.perform_gc();
@@ -326,5 +323,3 @@ pub enum GCTimerState {
     Scheduled,
     RunOnNextTick,
 }
-
-// ported from: src/jsc/GarbageCollectionController.zig

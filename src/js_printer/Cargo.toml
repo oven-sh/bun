@@ -6,10 +6,12 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 bytemuck = "1"
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true
@@ -23,6 +25,7 @@ bun_alloc.workspace = true
 bun_core.workspace = true
 bun_ptr.workspace = true
 bun_collections.workspace = true
+bun_wyhash.workspace = true
 bun_crash_handler.workspace = true
 bun_io.workspace = true
 bun_ast.workspace = true

@@ -7,15 +7,11 @@ use bun_sql::postgres::protocol::field_message::FieldMessage;
 use crate::postgres::error_jsc::create_postgres_error;
 use bun_sql::postgres::any_postgres_error::PostgresErrorOptions;
 
-use super::notice_response_jsc::field_message_payload;
-
-pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
+pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
     let mut b = StringBuilder::default();
 
     for msg in this.messages.iter() {
-        // Zig: `switch (msg.*) { inline else => |m| m.utf8ByteLength() }` — every
-        // FieldMessage variant carries a single bun.String payload.
-        b.cap += field_message_payload(msg).utf8_byte_length() + 1;
+        b.cap += msg.payload().utf8_byte_length() + 1;
     }
     let _ = b.allocate();
 
@@ -123,8 +119,7 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
     let line_slice = maybe_slice(line);
     let routine_slice = maybe_slice(routine);
 
-    // PORT NOTE: reshaped for borrowck — `b.allocated_slice()` borrows `b`
-    // mutably; capture `b.len` first.
+    // Capture `b.len` first: `b.allocated_slice()` borrows `b` mutably.
     let len = b.len;
     let error_message: &[u8] = if len > 0 {
         &b.allocated_slice()[..len]
@@ -135,7 +130,7 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
     create_postgres_error(
         global_object,
         error_message,
-        PostgresErrorOptions {
+        &PostgresErrorOptions {
             code: error_code,
             errno,
             detail: detail_slice,
@@ -157,5 +152,3 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
     )
     .unwrap_or_else(|e| global_object.take_error(e))
 }
-
-// ported from: src/sql_jsc/postgres/protocol/error_response_jsc.zig

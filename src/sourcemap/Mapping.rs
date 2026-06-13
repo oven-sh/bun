@@ -2,7 +2,7 @@ use bun_collections::VecExt;
 use core::mem::size_of;
 
 use bun_ast::Loc;
-use bun_collections::{ByteVecExt, MultiArrayList};
+use bun_collections::MultiArrayList;
 use bun_core::{self, ZigStringSlice};
 use bun_core::{declare_scope, err, scoped_log};
 use bun_semver::String as SemverString;
@@ -78,7 +78,7 @@ pub struct MappingWithoutName {
 }
 
 impl MappingWithoutName {
-    pub fn to_named(&self) -> Mapping {
+    pub(crate) fn to_named(&self) -> Mapping {
         Mapping {
             generated: self.generated,
             original: self.original,
@@ -99,8 +99,7 @@ impl Default for ListValue {
     }
 }
 
-/// Dispatch a single body over both `ListValue` arms — Rust's spelling of Zig's
-/// `switch (this.impl) { inline else => |*list| ... }`. `$body` is duplicated
+/// Dispatch a single body over both `ListValue` arms. `$body` is duplicated
 /// textually so each arm monomorphizes over its own `MultiArrayList<T>`; the
 /// arms therefore need NOT have a common element type, only a common `$body`
 /// result type. Match-ergonomics governs the borrow: pass `&v` / `&mut v` and
@@ -116,11 +115,14 @@ macro_rules! both_lists {
 }
 
 impl ListValue {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         both_lists!(self, |list| list.memory_cost())
     }
 
-    pub fn ensure_total_capacity(&mut self, count: usize) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn ensure_total_capacity(
+        &mut self,
+        count: usize,
+    ) -> Result<(), bun_alloc::AllocError> {
         both_lists!(self, |list| list.ensure_total_capacity(count))
     }
 }
@@ -138,8 +140,9 @@ impl List {
             return Ok(());
         }
 
-        // PORT NOTE: reshaped for borrowck — move the without_names list out, build the
-        // with_names list, then assign back. The old list drops at end of scope.
+        // Move the without_names list out, build the with_names list, then
+        // assign back (satisfies the borrow checker). The old list drops at
+        // end of scope.
         let ListValue::WithoutNames(without_names) = core::mem::replace(
             &mut self.r#impl,
             ListValue::WithNames(MultiArrayList::default()),
@@ -151,9 +154,9 @@ impl List {
         with_names.ensure_total_capacity(without_names.len())?;
         // `without_names` drops at end of scope (was `defer without_names.deinit(allocator)`).
 
-        // PORT NOTE: Zig set_len + per-column memcpy. Rust MultiArrayList has no
+        // MultiArrayList has no
         // public `set_len`; rebuild element-wise (capacity already reserved, so no
-        // realloc). PERF(port): revisit once typed mut-column accessors exist.
+        // realloc). PERF: revisit once typed mut-column accessors exist.
         for i in 0..without_names.len() {
             with_names.append_assume_capacity(without_names.get(i).to_named());
         }
@@ -202,19 +205,15 @@ impl List {
     }
 
     pub fn sort(&mut self) {
-        // PORT NOTE: reshaped for borrowck — `MultiArrayList::sort(&self, ctx)` takes
-        // `&self` (it swaps via raw column ptrs internally), so the `generated` column
-        // borrow does not conflict. The `Slice` is captured by-value so its lifetime
-        // is detached from `list`.
-        both_lists!(&self.r#impl, |list| {
-            // SAFETY: column borrow is read-only; `sort` swaps via raw ptrs.
-            let generated = unsafe {
-                core::slice::from_raw_parts(
-                    list.items_raw::<"generated", LineColumnOffset>(),
-                    list.len(),
-                )
-            };
-            list.sort(SortContext { generated });
+        // `MultiArrayList::sort(&mut self, ctx)` swaps the `generated` column
+        // in place, so the comparator cannot hold a `&[LineColumnOffset]` over
+        // it (that aliased the swap before this rewrite). Instead capture the
+        // raw column base + len; the column is never reallocated during sort.
+        both_lists!(&mut self.r#impl, |list| {
+            let generated: *const LineColumnOffset =
+                list.items_raw::<"generated", LineColumnOffset>();
+            let len = list.len();
+            list.sort(&SortContext { generated, len });
         })
     }
 
@@ -269,9 +268,6 @@ impl List {
 
     pub fn name_index(&self) -> &[i32] {
         match &self.r#impl {
-            // TODO(port): Zig `inline else` calls `.items(.name_index)` on both arms, but
-            // `MappingWithoutName` has no `name_index` field — relies on Zig lazy analysis.
-            // Return an empty slice for the without-names case.
             ListValue::WithoutNames(_list) => &[],
             ListValue::WithNames(list) => list.items_name_index(),
         }
@@ -309,14 +305,18 @@ impl List {
     }
 }
 
-struct SortContext<'a> {
-    generated: &'a [LineColumnOffset],
+struct SortContext {
+    generated: *const LineColumnOffset,
+    len: usize,
 }
 
-impl<'a> bun_collections::multi_array_list::SortContext for SortContext<'a> {
+impl bun_collections::multi_array_list::SortContext for SortContext {
     fn less_than(&self, a_index: usize, b_index: usize) -> bool {
-        let a = self.generated[a_index];
-        let b = self.generated[b_index];
+        debug_assert!(a_index < self.len && b_index < self.len);
+        // SAFETY: indices are `< len`; `generated` is the column base pointer
+        // captured before sort, which swaps elements in place but never
+        // reallocates, so it remains valid for `len` reads throughout.
+        let (a, b) = unsafe { (*self.generated.add(a_index), *self.generated.add(b_index)) };
 
         if a.lines.zero_based() != b.lines.zero_based() {
             return a.lines.zero_based() < b.lines.zero_based();
@@ -362,10 +362,8 @@ impl Lookup {
         }
 
         if bun_paths::is_absolute(base_filename) {
-            // PORT NOTE: Zig passed runtime `.auto` Platform; bun_paths exposes
-            // const-generic `PlatformT` only. `platform::Auto` is a cfg-selected
-            // type alias (Posix on unix, Windows on windows), which is what
-            // `.auto` resolved to at comptime anyway.
+            // `platform::Auto` is a cfg-selected
+            // type alias (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
             return Some(bun_core::String::clone_utf8(
                 bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name),
@@ -389,9 +387,7 @@ impl Lookup {
             let source_map = self.source_map.as_deref()?;
             debug_assert!(source_map.is_external());
 
-            let Some(provider) = source_map.underlying_provider.provider() else {
-                return None;
-            };
+            let provider = source_map.underlying_provider.provider()?;
 
             let index = usize::try_from(self.mapping.source_index).ok()?;
 
@@ -429,9 +425,8 @@ impl Lookup {
             let name: &[u8] = &source_map.external_source_names[index];
 
             let mut buf = bun_paths::PathBuffer::uninit();
-            // PORT NOTE: Zig passed runtime `.auto` / `.loose`; bun_paths
-            // exposes const-generic `PlatformT` ZSTs. `platform::Auto` is
-            // cfg-selected (Posix on unix, Windows on windows) — same result.
+            // `platform::Auto` is
+            // cfg-selected (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
             let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
                 bun_paths::platform::Loose,
@@ -688,7 +683,8 @@ pub fn parse(
                             err: err!("InvalidNameIndexDelta"),
                             value: i32::from(c),
                             loc: Loc {
-                                start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
+                                start: i32::try_from(bytes.len() - remain.len())
+                                    .unwrap_or(i32::MAX),
                             },
                         });
                     }
@@ -746,5 +742,3 @@ pub fn parse(
     psm.input_line_count = input_line_count;
     ParseResult::Success(psm)
 }
-
-// ported from: src/sourcemap/Mapping.zig

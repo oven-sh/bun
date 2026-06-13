@@ -6,46 +6,41 @@ use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use bun_collections::{ArrayHashMap, BoundedArray, StringHashMap};
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
-use bun_core::{err_generic, pretty_error, pretty_errorln};
+use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
-use bun_http::HTTPThread;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
 // `set_time_zone` / `delete_module_registry_entry` take the JSC-side
 // `ZigString` (repr(C)-identical to `bun_core::ZigString`, but with the
 // JSGlobalObject FFI methods); import that one so the call sites type-check.
 use bun_core::ZigStringSlice;
-use bun_core::immutable::Appender as _;
-use bun_core::{PathString, strings};
-use bun_js_parser as js_ast;
+use bun_core::strings;
 use bun_jsc::zig_string::ZigString;
-use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
+use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
 use bun_paths::{self as bun_path, PathBuffer};
+use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
-use bun_uws as uws;
 
-// Debug log scope for test-runner entrypoint loading (Zig: bun.jsc.Jest.bun_test.debug.group).
+// Debug log scope for test-runner entrypoint loading.
 bun_output::declare_scope!(bun_test, hidden);
 
 // ─── coverage façade ────────────────────────────────────────────────────────
 // Thin adapter over `bun_sourcemap_jsc::code_coverage` that preserves the
-// Zig-shaped call paths used in `print_code_coverage` below
-// (`CodeCoverageReport::Text::writeFormat(..., enable_ansi_colors)` took a
-// runtime bool in Zig; the Rust port lifted it to a const generic, so the
-// adapter dispatches). Drop once the body is normalised to call
-// `code_coverage::{text,lcov}` directly with `<ENABLE_ANSI_COLORS>`.
+// legacy call paths used in `print_code_coverage` below (the adapter
+// dispatches the runtime `enable_ansi_colors` bool to the const generic).
+// Drop once the body is normalised to call `code_coverage::{text,lcov}`
+// directly with `<ENABLE_ANSI_COLORS>`.
 mod coverage {
-    pub use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, ByteRangeMappingHashMap, Fraction, Report as CodeCoverageReport,
-        lcov as Lcov,
+    pub(super) use bun_sourcemap_jsc::code_coverage::{
+        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov as Lcov,
     };
 
-    /// `std.sort.pdq(..., isLessThan)` adapter — Rust `sort_by` wants `Ordering`.
+    /// Less-than predicate adapted to the `Ordering` shape `sort_by` wants.
     #[inline]
-    pub fn is_less_than_cmp(
+    pub(super) fn is_less_than_cmp(
         a: &&mut ByteRangeMapping,
         b: &&mut ByteRangeMapping,
     ) -> core::cmp::Ordering {
@@ -53,13 +48,13 @@ mod coverage {
     }
 
     #[allow(non_snake_case)]
-    pub mod Text {
+    pub(super) mod Text {
         use super::*;
         use bun_sourcemap_jsc::code_coverage::text;
 
         /// Runtime-bool → const-generic dispatch for `text::write_format`.
         #[inline]
-        pub fn write_format(
+        pub(crate) fn write_format(
             report: &CodeCoverageReport,
             max_filename_length: usize,
             fraction: &mut Fraction,
@@ -82,7 +77,7 @@ mod coverage {
 
         /// Runtime-bool → const-generic dispatch for `text::write_format_with_values`.
         #[inline]
-        pub fn write_format_with_values(
+        pub(crate) fn write_format_with_values(
             filename: &[u8],
             max_filename_length: usize,
             vals: Fraction,
@@ -118,52 +113,40 @@ mod coverage {
 }
 use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 
-// ─── un-gate: map Phase-A draft paths onto the now-real test_runner crate ────
-// The Phase-A body was written against `bun_jsc::jest::{bun_test, Snapshots,
+// ─── compat shim: map legacy paths onto the test_runner crate ────────────────
+// The body was originally written against `bun_jsc::jest::{bun_test, Snapshots,
 // TestRunner}` before `crate::test_runner` existed. Those types now live under
 // `crate::test_runner::*`; the façade below adapts the body's nested-path
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
 // 2k-line body rewrite.
-use crate::test_runner::bun_test as bun_test_mod;
 use crate::test_runner::jest::{self, FileColumns as _, FileId, Summary, TestRunner};
-use crate::test_runner::snapshot::{self, InlineSnapshotToWrite, Snapshots};
+use crate::test_runner::snapshot::{InlineSnapshotToWrite, Snapshots};
 
 /// Re-export for `bunfig.rs` (`crate::test_command::CoverageReporters { .. }`).
 pub use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 
 #[allow(non_snake_case)]
 mod bun_test {
-    //! Façade over `crate::test_runner` that preserves the Zig-shaped paths
+    //! Façade over `crate::test_runner` that preserves the legacy paths
     //! the body uses (`bun_test::Execution::Result`, `bun_test::BasicResult`,
     //! `bun_test::DescribeScope`, …). Drop once the body is normalised.
-    /// Zig nests `FirstLast` under `BunTestRoot`; the Rust port hoisted it to
-    /// module scope. Alias here so `bun_test::FirstLast` paths in
-    /// the body resolve without a 2k-line rewrite. Phase B may collapse the
-    /// alias back into an inherent associated type once the body is normalised.
-    pub use crate::test_runner::bun_test::FirstLast as BunTestRootFirstLast;
-    /// `add_result()` queue payload — Zig spells it `bun_test.ResultMsg.start`;
-    /// Rust port collapsed it into `RefDataValue`.
-    pub use crate::test_runner::bun_test::RefDataValue as ResultMsg;
-    pub use crate::test_runner::bun_test::*;
-    pub use crate::test_runner::execution::{
+
+    /// `add_result()` queue payload.
+    pub(super) use crate::test_runner::bun_test::RefDataValue as ResultMsg;
+    pub(super) use crate::test_runner::bun_test::*;
+    pub(super) use crate::test_runner::execution::{
         Basic as BasicResult, ExpectAssertions, PendingIs as PendingMode,
     };
     #[allow(non_snake_case)]
-    pub mod Execution {
-        pub use crate::test_runner::execution::*;
+    pub(super) mod Execution {
+        pub(crate) use crate::test_runner::execution::*;
     }
 }
 
-// TODO(port): module-level static `var path_buf: bun.PathBuffer = undefined;` — these are
-// process-wide mutable buffers. PORTING.md §Global mutable state: single-thread
-// CLI scratch → RacyCell. Currently unused (Zig parity placeholders).
-#[allow(dead_code)]
-static PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
-#[allow(dead_code)]
-static PATH_BUF2: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
-
-pub fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
+pub(crate) fn escape_xml(
+    str_: &[u8],
+    writer: &mut impl bun_io::Write,
+) -> Result<(), bun_core::Error> {
     let mut last: usize = 0;
     let mut i: usize = 0;
     let len = str_.len();
@@ -220,9 +203,6 @@ pub fn write_test_status_line(
     status: bun_test::Execution::Result,
     writer: &mut impl bun_io::Write,
 ) {
-    // PORT NOTE: was `comptime status` in Zig; `Execution::Result` lacks
-    // `ConstParamTy`, so this is a runtime arg.
-    // PERF(port): was comptime monomorphization — profile in Phase B.
     if Output::enable_ansi_colors_stderr() {
         let _ = writer.write_all(&fmt_status_text_line(status, true));
     } else {
@@ -237,6 +217,7 @@ pub fn write_test_status_line(
 // Remaining TODOs:
 // - Add stdout/stderr to the JUnit report
 // - Add timestamp field to the JUnit report
+#[derive(Default)]
 pub struct JunitReporter {
     pub contents: Vec<u8>,
     pub total_metrics: Metrics,
@@ -252,23 +233,7 @@ pub struct JunitReporter {
     pub hostname_value: Option<Box<[u8]>>,
 }
 
-impl Default for JunitReporter {
-    fn default() -> Self {
-        Self {
-            contents: Vec::new(),
-            total_metrics: Metrics::default(),
-            testcases_metrics: Metrics::default(),
-            offset_of_testsuites_value: 0,
-            offset_of_testsuite_value: 0,
-            current_file: Box::default(),
-            properties_list_to_repeat_in_every_test_suite: None,
-            suite_stack: Vec::new(),
-            current_depth: 0,
-            hostname_value: None,
-        }
-    }
-}
-
+#[derive(Default)]
 pub struct SuiteInfo {
     pub name: Box<[u8]>,
     pub offset_of_attributes: usize,
@@ -277,21 +242,8 @@ pub struct SuiteInfo {
     pub line_number: u32,
 }
 
-impl Default for SuiteInfo {
-    fn default() -> Self {
-        Self {
-            name: Box::default(),
-            offset_of_attributes: 0,
-            metrics: Metrics::default(),
-            is_file_suite: false,
-            line_number: 0,
-        }
-    }
-}
-
-// PORT NOTE: SuiteInfo::deinit only freed `name` when !is_file_suite. With Box<[u8]> the
-// drop is unconditional but harmless (file-suite case stored a borrowed slice in Zig — we
-// dupe it now in begin_test_suite_with_line). // TODO(port): revisit ownership of file name.
+// We dupe the name unconditionally in begin_test_suite_with_line, so the
+// unconditional drop is correct.
 
 #[derive(Default, Clone, Copy)]
 pub struct Metrics {
@@ -303,7 +255,7 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    pub fn add(&mut self, other: &Metrics) {
+    pub(crate) fn add(&mut self, other: &Metrics) {
         self.test_cases += other.test_cases;
         self.assertions += other.assertions;
         self.failures += other.failures;
@@ -350,14 +302,13 @@ impl JunitReporter {
         Box::new(JunitReporter::default())
     }
 
-    // PORT NOTE: `pub const new = bun.TrivialNew(JunitReporter);` → Box::new
+    // `pub const new = bun.TrivialNew(JunitReporter);` → Box::new
 
     fn generate_properties_list(&mut self) -> Result<(), bun_core::Error> {
         struct PropertiesList<'a> {
             ci: &'a [u8],
             commit: &'a [u8],
         }
-        // PERF(port): was arena bulk-free + stack-fallback alloc — profile in Phase B
 
         let ci_buf: Vec<u8>;
         let ci: &[u8] = 'brk: {
@@ -369,7 +320,7 @@ impl JunitReporter {
                             && !github_repository.is_empty()
                         {
                             let mut v = Vec::new();
-                            // PORT NOTE: std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
+                            // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
                             let _ = write!(
                                 &mut v,
                                 "{}/{}/actions/runs/{}",
@@ -483,14 +434,14 @@ impl JunitReporter {
             self.contents.extend_from_slice(b"\"");
         } else if !self.current_file.is_empty() {
             self.contents.extend_from_slice(b" file=\"");
-            // PORT NOTE: reshaped for borrowck — clone current_file slice before mutable borrow of contents
+            // Reshaped for borrowck — clone current_file slice before mutable borrow of contents
             let cf = self.current_file.clone();
             escape_xml(&cf, &mut self.contents)?;
             self.contents.extend_from_slice(b"\"");
         }
 
         if line_number > 0 {
-            // PORT NOTE: std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
+            // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
             let _ = write!(&mut self.contents, " line=\"{}\"", line_number);
         }
 
@@ -512,7 +463,6 @@ impl JunitReporter {
 
         self.suite_stack.push(SuiteInfo {
             name: Box::<[u8]>::from(name),
-            // TODO(port): Zig stored borrowed `name` for file suites; we dupe always.
             offset_of_attributes,
             metrics: Metrics::default(),
             is_file_suite,
@@ -534,19 +484,17 @@ impl JunitReporter {
         self.current_depth -= 1;
         let suite_info = self.suite_stack.swap_remove(self.suite_stack.len() - 1);
 
-        // PERF(port): was arena bulk-free + stack-fallback alloc — profile in Phase B
-
         let elapsed_time_ms = suite_info.metrics.elapsed_time;
         let elapsed_time_ms_f64: f64 = elapsed_time_ms as f64;
         let elapsed_time_seconds = elapsed_time_ms_f64 / bun::time::MS_PER_S as f64;
 
-        // PORT NOTE: reshaped for borrowck — get hostname first
+        // Reshaped for borrowck — get hostname first
         let hostname = self.get_hostname().map(|h| h.to_vec()).unwrap_or_default();
 
         // Insert the summary attributes
         let mut summary = Vec::new();
         {
-            // PORT NOTE: std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
+            // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
             let _ = write!(
                 &mut summary,
                 "tests=\"{}\" assertions=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\" hostname=\"{}\"",
@@ -587,7 +535,7 @@ impl JunitReporter {
         elapsed_ns: u64,
         line_number: u32,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
+        // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
         let elapsed_ns_f64: f64 = elapsed_ns as f64;
         let elapsed_ms = elapsed_ns_f64 / bun::time::NS_PER_MS as f64;
 
@@ -658,9 +606,9 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(
+                let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"test marked with .failing() did not throw\" type=\"AssertionError\"/>\n"
+                    "  <failure message=\"test marked with .failing() did not throw\" type=\"AssertionError\"/>"
                 );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
@@ -672,9 +620,9 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(
+                let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"Expected more assertions, but only received {}\" type=\"AssertionError\"/>\n",
+                    "  <failure message=\"Expected more assertions, but only received {}\" type=\"AssertionError\"/>",
                     assertions
                 );
                 self.contents.extend_from_slice(indent);
@@ -687,9 +635,9 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(
+                let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"TODO passed\" type=\"AssertionError\"/>\n"
+                    "  <failure message=\"TODO passed\" type=\"AssertionError\"/>"
                 );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
@@ -701,9 +649,9 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(
+                let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"Expected to have assertions, but none were run\" type=\"AssertionError\"/>\n"
+                    "  <failure message=\"Expected to have assertions, but none were run\" type=\"AssertionError\"/>"
                 );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
@@ -761,13 +709,12 @@ impl JunitReporter {
         }
 
         {
-            // PERF(port): was arena bulk-free + stack-fallback alloc — profile in Phase B
             let metrics = self.total_metrics;
             let elapsed_time = (bun::time::nano_timestamp() - bun::start_time()) as f64
                 / bun::time::NS_PER_S as f64;
             let mut summary = Vec::new();
             {
-                // PORT NOTE: std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
+                // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
                 let _ = write!(
                     &mut summary,
                     "tests=\"{}\" assertions=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\"",
@@ -805,35 +752,31 @@ impl JunitReporter {
                     (bstr::BStr::new(path), err),
                 );
             }
-            bun_sys::Result::Ok(fd) => {
-                let _close_fd = bun_sys::CloseOnDrop::file(&fd);
-                match File::write_all(&fd, &self.contents) {
-                    bun_sys::Result::Ok(()) => {}
-                    bun_sys::Result::Err(err) => {
-                        Output::err(
-                            bun_core::err!("JUnitReportFailed"),
-                            "Failed to write JUnit report to {}\n{}",
-                            (bstr::BStr::new(path), err),
-                        );
-                    }
+            bun_sys::Result::Ok(fd) => match File::write_all(&fd, &self.contents) {
+                bun_sys::Result::Ok(()) => {}
+                bun_sys::Result::Err(err) => {
+                    Output::err(
+                        bun_core::err!("JUnitReportFailed"),
+                        "Failed to write JUnit report to {}\n{}",
+                        (bstr::BStr::new(path), err),
+                    );
                 }
-            }
+            },
         }
         Ok(())
     }
 }
 
 pub struct CommandLineReporter {
-    // TODO(port): `TestRunner<'a>` borrows `TestOptions`/regex from the CLI
-    // ctx; the reporter is held in a `Box` local to `TestCommand::exec` which
-    // never returns before process exit, so `'static` is sound here. Revisit
-    // if the reporter ever becomes scoped.
+    // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
+    // reporter is held in a `Box` local to `TestCommand::exec` which never
+    // returns before process exit, so `'static` is sound here. Revisit if the
+    // reporter ever becomes scoped.
     pub jest: TestRunner<'static>,
     pub last_dot: u32,
     pub prev_file: u64,
     pub repeat_count: u32,
     /// Interior-mut: written from `BunTestRoot::on_before_print` via `&CommandLineReporter`
-    /// (Zig stores `?*CommandLineReporter` and freely mutates; Rust holds `&'a CommandLineReporter`).
     pub last_printed_dot: core::cell::Cell<bool>,
 
     /// When running as a `--parallel` worker, this is the coordinator-assigned
@@ -856,16 +799,7 @@ pub struct ReportersConfig {
     pub junit: Option<Box<JunitReporter>>,
 }
 
-// TODO(port): DotColorMap (std.EnumMap<TestRunner.Test.Status, &str>) and `dots` const
-// initialization — port once Output::RESET / ED / color_map are available in bun_core.
-// type DotColorMap = enum_map::EnumMap<TestRunner::Test::Status, Option<&'static [u8]>>;
-
 impl CommandLineReporter {
-    // TODO(port): Zig `TestRunner.Callback` was a vtable struct; not yet
-    // ported. These hooks are no-ops in the Zig source too — keep the
-    // signature shape but take `&mut Self` until the callback type lands.
-    pub fn handle_update_count(_: &mut Self, _: u32, _: u32) {}
-
     pub fn handle_test_start(_: &mut Self, _: /* TestRunner.Test.ID */ u32) {}
 
     fn print_test_line<const DIM: bool>(
@@ -875,7 +809,6 @@ impl CommandLineReporter {
         elapsed_ns: u64,
         writer: &mut impl bun_io::Write,
     ) {
-        // PERF(port): was comptime monomorphization on `status` — profile in Phase B
         let initial_retry_count = test_entry.retry_count;
         let attempts = (initial_retry_count - sequence.remaining_retry_count) + 1;
         let initial_repeat_count = test_entry.repeat_count;
@@ -898,10 +831,10 @@ impl CommandLineReporter {
 
         // Quieter output when claude code is in use.
         if !Output::is_ai_agent() || !status.is_pass(bun_test::PendingMode::PendingIsFail) {
-            // PORT NOTE: Zig comptime `color_code`/`line_color_code` literals are inlined at use
-            // sites below via `if DIM { ... } else { ... }` to avoid runtime `format!`.
+            // `color_code`/`line_color_code` literals are inlined at use sites
+            // below via `if DIM { ... } else { ... }` to avoid runtime `format!`.
 
-            // PORT NOTE: `switch (Output.enable_ansi_colors_stderr) { inline else => |_| ... }` — the
+            // `switch (Output.enable_ansi_colors_stderr) { inline else => |_| ... }` — the
             // captured bool was unused except for monomorphization; collapsed to runtime.
             match status {
                 bun_test::Execution::Result::FailBecauseExpectedAssertionCount => {
@@ -1004,27 +937,21 @@ impl CommandLineReporter {
 
             // Print attempt count if test was retried (attempts > 1)
             if attempts > 1 {
-                let _ = write!(
+                let _ = bun_core::write_pretty!(
                     writer,
-                    "{}",
-                    Output::pretty_fmt_args(
-                        " <d>(attempt {d})<r>",
-                        Output::enable_ansi_colors_stderr(),
-                        (attempts,)
-                    ),
+                    Output::enable_ansi_colors_stderr(),
+                    " <d>(attempt {d})<r>",
+                    attempts,
                 );
             }
 
             // Print repeat count if test failed on a repeat (repeats > 1)
             if repeats > 1 {
-                let _ = write!(
+                let _ = bun_core::write_pretty!(
                     writer,
-                    "{}",
-                    Output::pretty_fmt_args(
-                        " <d>(run {d})<r>",
-                        Output::enable_ansi_colors_stderr(),
-                        (repeats,)
-                    ),
+                    Output::enable_ansi_colors_stderr(),
+                    " <d>(run {d})<r>",
+                    repeats,
                 );
             }
 
@@ -1042,48 +969,54 @@ impl CommandLineReporter {
             let _ = writer.write_all(b"\n");
 
             let colors = Output::enable_ansi_colors_stderr();
-            // PERF(port): was comptime bool dispatch — profile in Phase B
             use bun_test::Execution::Result as R;
             match status {
                 R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => {}
 
                 R::FailBecauseFailingTestPassed => {
-                    let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n", colors));
+                    let _ = bun_core::write_pretty!(
+                        writer,
+                        colors,
+                        "  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n"
+                    );
                 }
                 R::FailBecauseTodoPassed => {
-                    let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors));
+                    let _ = bun_core::write_pretty!(
+                        writer,
+                        colors,
+                        "  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n"
+                    );
                 }
                 R::FailBecauseExpectedAssertionCount | R::FailBecauseExpectedHasAssertions => {} // printed above
                 R::FailBecauseTimeout => {
-                    let _ = write!(
+                    let _ = bun_core::write_pretty!(
                         writer,
-                        "{}",
-                        Output::pretty_fmt_args(
-                            "  <d>^<r> <red>this test timed out after {}ms.<r>\n",
-                            colors,
-                            (test_entry.timeout,)
-                        )
+                        colors,
+                        "  <d>^<r> <red>this test timed out after {d}ms.<r>\n",
+                        test_entry.timeout
                     );
                 }
                 R::FailBecauseHookTimeout => {
-                    let _ = writer.write_all(&Output::pretty_fmt_rt(
-                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n",
+                    let _ = bun_core::write_pretty!(
+                        writer,
                         colors,
-                    ));
+                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n"
+                    );
                 }
                 R::FailBecauseTimeoutWithDoneCallback => {
-                    let _ = write!(
+                    let _ = bun_core::write_pretty!(
                         writer,
-                        "{}",
-                        Output::pretty_fmt_args(
-                            "  <d>^<r> <red>this test timed out after {}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n",
-                            colors,
-                            (test_entry.timeout,)
-                        )
+                        colors,
+                        "  <d>^<r> <red>this test timed out after {d}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n",
+                        test_entry.timeout
                     );
                 }
                 R::FailBecauseHookTimeoutWithDoneCallback => {
-                    let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n", colors));
+                    let _ = bun_core::write_pretty!(
+                        writer,
+                        colors,
+                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n"
+                    );
                 }
             }
         }
@@ -1096,14 +1029,12 @@ impl CommandLineReporter {
         test_entry: &mut bun_test::ExecutionEntry,
         elapsed_ns: u64,
     ) {
-        // PERF(port): was comptime monomorphization on `status` — profile in Phase B
         let Some(cmd_reporter) = buntest.reporter else {
             return;
         };
         // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
         // provenance from `enter_file`'s `&mut`; single-threaded test runner,
-        // exclusive access for the duration of this callback (mirrors Zig
-        // `?*CommandLineReporter`).
+        // exclusive access for the duration of this callback.
         let cmd_reporter: &mut CommandLineReporter = unsafe { &mut *cmd_reporter.as_ptr() };
         let Some(junit) = cmd_reporter.reporters.junit.as_mut() else {
             return;
@@ -1207,13 +1138,11 @@ impl CommandLineReporter {
                     let needed_name =
                         unsafe { (*needed_scope).base.name.as_deref() }.unwrap_or(b"");
                     if !strings::eql(&suite_info.name, needed_name) {
-                        suites_to_close = u32::try_from(current_suite_depth).unwrap()
-                            - u32::try_from(suite_index).unwrap();
+                        suites_to_close = current_suite_depth - u32::try_from(suite_index).unwrap();
                         break;
                     }
                 } else {
-                    suites_to_close = u32::try_from(current_suite_depth).unwrap()
-                        - u32::try_from(suite_index).unwrap();
+                    suites_to_close = current_suite_depth - u32::try_from(suite_index).unwrap();
                     break;
                 }
                 suite_index += 1;
@@ -1224,7 +1153,6 @@ impl CommandLineReporter {
                     && !junit.suite_stack[junit.suite_stack.len() - 1].is_file_suite
                 {
                     junit.end_test_suite().expect("oom");
-                    current_suite_depth -= 1;
                     suites_to_close -= 1;
                 } else {
                     break;
@@ -1253,7 +1181,6 @@ impl CommandLineReporter {
                 describe_suite_index += 1;
             }
 
-            // PERF(port): was arena bulk-free + stack-fallback alloc — profile in Phase B
             let mut concatenated_describe_scopes: Vec<u8> = Vec::new();
 
             {
@@ -1315,16 +1242,13 @@ impl CommandLineReporter {
         let initial_length = output_buf.len();
         let writer = &mut output_buf;
 
-        // PORT NOTE: `switch (sequence.result) { inline else => |result| ... }` — Zig comptime
-        // dispatch on enum value. Demoted to runtime match.
-        // PERF(port): was comptime monomorphization — profile in Phase B
         let result = sequence.result;
         if result != bun_test::Execution::Result::SkippedBecauseLabel {
             // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
             // provenance from `enter_file`'s `&mut`; single-threaded; reporter outlives
             // every BunTest. Scoped to this block so the SharedReadOnly tag is dead
             // before `maybe_print_junit_line` derives `&mut` from the same `NonNull`
-            // (stacked-borrows hygiene — Zig re-reads `buntest.reporter.?` per site).
+            // (stacked-borrows hygiene).
             let reporter_ref: Option<&CommandLineReporter> =
                 buntest.reporter.map(|p| unsafe { &*p.as_ptr() });
             let basic = result.basic_result();
@@ -1338,23 +1262,21 @@ impl CommandLineReporter {
                 );
             if dots_branch {
                 let colors = Output::enable_ansi_colors_stderr();
-                // PERF(port): was comptime bool dispatch — profile in Phase B
                 match basic {
                     bun_test::BasicResult::Pass => {
-                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><green>.<r>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><green>.<r>");
                     }
                     bun_test::BasicResult::Skip => {
-                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><yellow>.<d>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><yellow>.<d>");
                     }
                     bun_test::BasicResult::Todo => {
-                        let _ =
-                            writer.write_all(&Output::pretty_fmt_rt("<r><magenta>.<r>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><magenta>.<r>");
                     }
                     bun_test::BasicResult::Pending => {
-                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><d>.<r>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><d>.<r>");
                     }
                     bun_test::BasicResult::Fail => {
-                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><red>.<r>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><red>.<r>");
                     }
                 }
                 reporter_ref.unwrap().last_printed_dot.set(true);
@@ -1365,7 +1287,6 @@ impl CommandLineReporter {
             } else {
                 buntest.bun_test_root.on_before_print();
 
-                // TODO(port): write_test_status_line takes comptime status in Zig
                 if Output::enable_ansi_colors_stderr() {
                     let _ = writer.write_all(&fmt_status_text_line(result, true));
                 } else {
@@ -1398,7 +1319,7 @@ impl CommandLineReporter {
         let formatted_line = &output_buf[initial_length..];
         // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>`; re-derived
         // here (not held across `maybe_print_junit_line`'s `&mut`) per stacked
-        // borrows. Mirrors Zig's per-site `buntest.reporter.?` deref.
+        // borrows.
         let worker_idx = buntest
             .reporter
             .and_then(|p| unsafe { (*p.as_ptr()).worker_ipc_file_idx });
@@ -1508,8 +1429,6 @@ impl CommandLineReporter {
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): Zig used `comptime reporters: TestCommand.Reporters` (a struct value).
-        // Split into two const-generic bools here. Phase B may use a const-param struct.
         if !REPORTERS_TEXT && !REPORTERS_LCOV {
             return Ok(());
         }
@@ -1520,14 +1439,12 @@ impl CommandLineReporter {
         // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
-        // PORT NOTE: Zig bitwise-copied each `ByteRangeMapping` out of the map
-        // (`entry.*`). The Rust struct owns a `MultiArrayList` and is not
-        // `Copy`, so collect mutable borrows into the thread-local map instead
-        // — same observable behaviour, no double-free risk.
+        // `ByteRangeMapping` owns a `MultiArrayList` and is not `Copy`, so
+        // collect mutable borrows into the thread-local map instead — no
+        // double-free risk.
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
         for entry in map.values_mut() {
             byte_ranges.push(entry);
-            // PERF(port): was assume_capacity
         }
 
         if byte_ranges.is_empty() {
@@ -1557,11 +1474,10 @@ impl CommandLineReporter {
         // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
-        // PORT NOTE: see `generate_code_coverage` — collect borrows, not bitwise copies.
+        // See `generate_code_coverage` — collect borrows, not bitwise copies.
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
         for entry in map.values_mut() {
             byte_ranges.push(entry);
-            // PERF(port): was assume_capacity
         }
         if byte_ranges.is_empty() {
             return Ok(());
@@ -1585,10 +1501,7 @@ impl CommandLineReporter {
             }
             bun_sys::Result::Ok(f) => f,
         };
-        let _close_file = bun_sys::CloseOnDrop::file(&file); // close error is non-actionable (Zig parity: discarded)
-        // TODO(port): file.writer().adaptToNewApi(buf) — Zig's buffered writer adapter
-        // not present on `bun_sys::File`; buffer in a Vec (impl `bun_io::Write`) and
-        // write through in one shot below.
+        // Buffer in a Vec (impl `bun_io::Write`) and write through in one shot below.
         let mut buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
         let writer = &mut buffered;
 
@@ -1606,7 +1519,7 @@ impl CommandLineReporter {
                     continue;
                 }
             }
-            let Some(mut report) =
+            let Some(report) =
                 CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap)
             else {
                 continue;
@@ -1634,7 +1547,7 @@ impl CommandLineReporter {
         opts: &mut CodeCoverageOptions,
         byte_ranges: &mut [&mut ByteRangeMapping],
     ) -> Result<(), bun_core::Error> {
-        // `perf::Ctx` ends its span on Drop — Zig's `defer trace.end()` is the binding itself.
+        // `perf::Ctx` ends its span on Drop.
         let _trace = if REPORTERS_TEXT && REPORTERS_LCOV {
             bun::perf::trace("TestCommand.printCodeCoverageLCovAndText")
         } else if REPORTERS_TEXT {
@@ -1642,7 +1555,7 @@ impl CommandLineReporter {
         } else if REPORTERS_LCOV {
             bun::perf::trace("TestCommand.printCodeCoverageLCov")
         } else {
-            // TODO(port): @compileError("No reporters enabled") — Phase B can enforce via const assert
+            // Unreachable by construction.
             unreachable!("No reporters enabled")
         };
 
@@ -1720,7 +1633,6 @@ impl CommandLineReporter {
             {
                 return Ok(());
             }
-            // writer.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Blocks <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
             if console
                 .write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
                     " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n",
@@ -1752,7 +1664,6 @@ impl CommandLineReporter {
         }
 
         let mut console_buffer: Vec<u8> = Vec::new();
-        // TODO(port): std.Io.Writer.Allocating → Vec<u8> + adapter
         let console_writer = &mut console_buffer;
 
         let mut avg = Fraction {
@@ -1766,9 +1677,6 @@ impl CommandLineReporter {
 
         // --- LCOV ---
         let mut lcov_name_buf = PathBuffer::uninit();
-        // TODO(port): the Zig code uses tuple destructuring with comptime branching to make
-        // lcov_file/lcov_name/lcov_buffered_writer be `void` when !REPORTERS_LCOV. We use
-        // Option here.
         let mut lcov_state: Option<(File, &bun_core::ZStr, /*buffered*/ Vec<u8>)> =
             if REPORTERS_LCOV {
                 'brk: {
@@ -1787,8 +1695,7 @@ impl CommandLineReporter {
                     let mut base64_bytes = [0u8; 8];
                     let mut shortname_buf = [0u8; 512];
                     bun_core::csprng(&mut base64_bytes);
-                    // Spec: `std.fmt.bufPrintZ(..., ".lcov.info.{x}.tmp", .{&base64_bytes})`
-                    // — Zig `{x}` on `*[8]u8` prints contiguous lowercase hex.
+                    // Temp name: `.lcov.info.<lowercase hex of 8 random bytes>.tmp`.
                     let tmpname = {
                         use std::io::Write as _;
                         let mut cursor = &mut shortname_buf[..];
@@ -1825,10 +1732,9 @@ impl CommandLineReporter {
                             Global::exit(1);
                         }
                         bun_sys::Result::Ok(f) => {
-                            // TODO(port): Zig used `f.writer().adaptToNewApi(buf)` (64 KB
-                            // buffered file writer). `bun_sys::File` has no `writer()` yet;
-                            // accumulate in a `Vec<u8>` (impl `bun_io::Write`) and flush to
-                            // the fd via `write_all` on success below.
+                            // Accumulate in a `Vec<u8>` (impl `bun_io::Write`)
+                            // and flush to the fd via `write_all` on success
+                            // below.
                             let buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
                             break 'brk Some((f, path, buffered));
                         }
@@ -1837,13 +1743,12 @@ impl CommandLineReporter {
             } else {
                 None
             };
-        // TODO(port): errdefer lcov cleanup — using scopeguard with disarm on success
         let mut lcov_guard = scopeguard::guard(
             &mut lcov_state,
             |s: &mut Option<(File, &bun_core::ZStr, Vec<u8>)>| {
                 if REPORTERS_LCOV {
                     if let Some((file, name, _)) = s.take() {
-                        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+                        let _ = file.close(); // close error is non-actionable
                         let _ = bun_sys::unlink(name);
                     }
                 }
@@ -1870,7 +1775,7 @@ impl CommandLineReporter {
                 }
             }
 
-            let Some(mut report) =
+            let Some(report) =
                 CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap)
             else {
                 continue;
@@ -1949,12 +1854,10 @@ impl CommandLineReporter {
                 console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d> |<r>\n"))?;
             }
 
-            // TODO(port): console_writer.flush() — Vec<u8> has nothing to flush
             console.write_all(&console_buffer)?;
             console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>"))?;
-            // Spec uses `catch return` (NOT `try`) — Zig's `errdefer` does not
-            // fire on a success-return, so disarm the lcov cleanup guard before
-            // the early `Ok(())` (matches Zig: temp file is left for the OS).
+            // Disarm the lcov cleanup guard before the early `Ok(())`; the
+            // temp file is left for the OS.
             if console
                 .splat_byte_all(b'-', max_filepath_length + 2)
                 .is_err()
@@ -1981,8 +1884,7 @@ impl CommandLineReporter {
             // write so an error here still closes + unlinks the temp file.
             if let Some((lcov_file, _, buffered)) = &mut **lcov_guard {
                 if let bun_sys::Result::Err(e) = lcov_file.write_all(buffered) {
-                    // `lcov_guard` drops on this early return → close + unlink
-                    // (mirrors Zig's `errdefer`).
+                    // `lcov_guard` drops on this early return → close + unlink.
                     return Err(bun_core::Error::from(e));
                 }
             }
@@ -2012,7 +1914,9 @@ impl CommandLineReporter {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_core::String) -> bool {
+pub(crate) extern "C" fn BunTest__shouldGenerateCodeCoverage(
+    test_name_str: bun_core::String,
+) -> bool {
     let zig_slice = test_name_str.to_utf8();
     // In this particular case, we don't actually care about non-ascii latin1 characters.
     // so we skip the ascii check
@@ -2025,7 +1929,6 @@ pub extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_core::S
     }
 
     let ext = bun_path::extension(slice);
-    // TODO(port): std.fs.path.extension — using bun_path equivalent
     // SAFETY: `VirtualMachine::get()` returns the process-lifetime VM pointer; only
     // called from the JS thread once a VM exists.
     let loader_by_ext = VirtualMachine::get()
@@ -2053,20 +1956,17 @@ pub extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_core::S
     true
 }
 
-pub struct TestCommand;
+pub(crate) struct TestCommand;
 
 impl TestCommand {
-    pub const NAME: &'static str = "test";
     // pub use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
-    // PORT NOTE: re-exports moved to top-level `use` per crate map.
+    // Re-exports moved to top-level `use` per crate map.
 
-    pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
         Output::IS_GITHUB_ACTION.store(
             Output::is_github_action(),
             core::sync::atomic::Ordering::Relaxed,
         );
-        // PORT NOTE: Zig `Output.is_github_action = Output.isGithubAction()` — Rust uses an
-        // AtomicBool global; `is_github_action()` performs the env-based detection.
 
         if !ctx.test_options.test_worker {
             // print the version so you know its doing stuff if it takes a sec
@@ -2100,8 +2000,8 @@ impl TestCommand {
             Output::flush();
         }
 
-        // PORT NOTE: Zig used `ctx.allocator.create` with no destroy. `exec()` never
-        // returns before process exit, so the heap allocation outlives all observers.
+        // `exec()` never returns before process exit, so the heap allocation
+        // outlives all observers.
         // `Loader::init` borrows the map; erase to `'static` via raw pointer round-trip
         // (the map is never freed — process-lifetime singleton).
         let env_map: *mut DotEnv::Map = bun_core::heap::into_raw(Box::new(DotEnv::Map::init()));
@@ -2125,8 +2025,8 @@ impl TestCommand {
         if enable_random {
             ctx.test_options.seed = Some(seed);
         }
-        // PORT NOTE: Zig threads a `std.Random` vtable; Rust `DefaultPrng` is `Copy`, so
-        // pass the prng by value to TestRunner and keep a local copy for shuffling.
+        // `DefaultPrng` is `Copy`, so pass the prng by value to TestRunner
+        // and keep a local copy for shuffling.
         let random_instance: Option<bun::rand::DefaultPrng> = if enable_random {
             Some(bun::rand::DefaultPrng::init(seed as u64))
         } else {
@@ -2134,9 +2034,8 @@ impl TestCommand {
         };
 
         let mut snapshot_file_buf: Vec<u8> = Vec::new();
-        // TODO(port): `Snapshots::ValuesHashMap` is an inherent associated
-        // type alias (unstable); spell out the underlying map until that
-        // stabilises or the alias is hoisted to module scope.
+        // `Snapshots::ValuesHashMap` would be an inherent associated type alias
+        // (unstable in Rust); spell out the underlying map instead.
         let mut snapshot_values: bun_collections::HashMap<u64, Box<[u8]>> =
             bun_collections::HashMap::new();
         let mut snapshot_counts: StringHashMap<usize> = StringHashMap::new();
@@ -2152,9 +2051,15 @@ impl TestCommand {
         let concurrent_test_glob_view: Option<Vec<&'static [u8]>> =
             ctx.test_options.concurrent_test_glob.as_ref().map(|v| {
                 v.iter()
-                    .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
+                    .map(|b| {
+                        // SAFETY: backing bytes are owned by `ctx.test_options`
+                        // (process-lifetime) and `exec()` never returns.
+                        unsafe { bun_ptr::detach_lifetime::<u8>(b) }
+                    })
                     .collect()
             });
+        // SAFETY: backing bytes are owned by `ctx.test_options` (process-lifetime)
+        // and `exec()` never returns, so detaching to `'static` is sound.
         let path_ignore_patterns_view: Vec<&'static [u8]> = ctx
             .test_options
             .path_ignore_patterns
@@ -2162,10 +2067,9 @@ impl TestCommand {
             .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
             .collect();
 
-        // PORT NOTE: Zig used `ctx.allocator.create` with no destroy. PORTING.md
-        // §Forbidden bans leaking; keep an owned `Box` local — `exec()` never
-        // returns before process exit, so the heap allocation outlives all
-        // raw-pointer observers (e.g. `Jest::RUNNER` below).
+        // Keep an owned `Box` local — `exec()` never returns before process
+        // exit, so the heap allocation outlives all raw-pointer observers
+        // (e.g. `Jest::RUNNER` below).
         let mut reporter: Box<CommandLineReporter> = Box::new(CommandLineReporter {
             jest: TestRunner {
                 default_timeout_ms: ctx.test_options.default_timeout_ms,
@@ -2198,21 +2102,24 @@ impl TestCommand {
                     failed: 0,
                     // SAFETY: lifetime-erase to `'static`; the backing locals are
                     // declared in this never-returning frame (`exec()` only exits
-                    // via process exit), mirroring Zig's stack-address capture.
-                    file_buf: unsafe { &mut *(&raw mut snapshot_file_buf) },
-                    values: unsafe { &mut *(&raw mut snapshot_values) },
-                    counts: unsafe { &mut *(&raw mut snapshot_counts) },
+                    // via process exit).
+                    file_buf: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_file_buf) },
+                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
+                    values: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_values) },
+                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
+                    counts: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_counts) },
                     _current_file: None,
                     snapshot_dir_path: None,
+                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
                     inline_snapshots_to_write: unsafe {
-                        &mut *(&raw mut inline_snapshots_to_write)
+                        bun_ptr::detach_lifetime_mut(&mut inline_snapshots_to_write)
                     },
                     last_error_snapshot_name: None,
                 },
                 bun_test_root: bun_test::BunTestRoot::init(),
-                // PORT NOTE: Zig zero-init defaults; `TestRunner` cannot derive
-                // `Default` because of the `&'a TestOptions` field, so spell the
-                // remaining fields out explicitly.
+                // `TestRunner` cannot derive `Default` because of the
+                // `&'a TestOptions` field, so spell the remaining fields out
+                // explicitly.
                 current_file: jest::CurrentFile::default(),
                 files: jest::FileList::default(),
                 index: jest::FileMap::default(),
@@ -2222,7 +2129,7 @@ impl TestCommand {
                 default_timeout_override: u32::MAX,
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
-                test_options: unsafe { &*(&raw const ctx.test_options) },
+                test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
             },
@@ -2236,7 +2143,7 @@ impl TestCommand {
             todos_to_repeat_buf: Vec::new(),
             reporters: ReportersConfig::default(),
         });
-        // PORT NOTE: `defer { if (reporter.reporters.junit) |fr| fr.deinit() }` — handled by Drop.
+        // `defer { if (reporter.reporters.junit) |fr| fr.deinit() }` — handled by Drop.
         reporter.repeat_count = ctx.test_options.repeat_count.max(1);
         // SAFETY: single-threaded CLI startup; `reporter` is a `Box` that lives
         // until `exec()` exits the process, so `&mut reporter.jest` remains
@@ -2244,7 +2151,7 @@ impl TestCommand {
         unsafe {
             jest::Jest::RUNNER.write(Some(core::ptr::NonNull::from(&mut reporter.jest)));
         }
-        // PORT NOTE: `reporter.jest.test_options` is initialised in the struct
+        // `reporter.jest.test_options` is initialised in the struct
         // literal above (lifetime-erased); the post-init assignment is dropped.
 
         if ctx.test_options.reporters.junit {
@@ -2267,7 +2174,7 @@ impl TestCommand {
                 // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
                 // main_fields,extension_order,env_files,feature_flags,preserve_symlinks,
                 // allow_addons,disable_default_env_files,jsx} after this point to forward
-                // them to workers. Zig spec passes ctx.args by value-copy here.
+                // them to workers.
                 transform_options: ctx.args.clone(),
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),
@@ -2347,6 +2254,8 @@ impl TestCommand {
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.
+            // SAFETY: `vm` is the live per-thread VM; `reporter`/`ctx` outlive
+            // this never-returning call.
             ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
         }
 
@@ -2354,7 +2263,7 @@ impl TestCommand {
         // But, don't block the main thread waiting if they used --inspect-wait.
         vm.ensure_debugger(false)?;
 
-        let mut scanner = Scanner::init(&mut vm.transpiler, ctx.positionals.len()).expect("oom");
+        let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
         // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
         // frame, underlying bytes live in `ctx` (process-lifetime).
         scanner.path_ignore_patterns =
@@ -2400,6 +2309,9 @@ impl TestCommand {
                             vm.exit_handler.exit_code = 1;
                             vm.is_shutting_down = true;
                             let vm_ptr: *mut VirtualMachine = vm;
+                            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+                            // `run_with_api_lock` takes `&self` only and `global_exit()`
+                            // diverges, so the closure is the sole mutator.
                             vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
                         }
                     }
@@ -2415,18 +2327,20 @@ impl TestCommand {
             } else {
                 ctx.positionals[1..]
                     .iter()
-                    .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(&**b) })
+                    .map(|b| {
+                        // SAFETY: bytes live in `ctx.positionals` (process-lifetime)
+                        // and this frame never returns.
+                        unsafe { bun_ptr::detach_lifetime::<u8>(&**b) }
+                    })
                     .collect()
             };
             #[cfg(windows)]
             let filter_names: &[&[u8]] = &filter_names_owned;
 
-            // PORT NOTE: on Windows the Zig duped+mutated each filter to swap
-            // `/`→`\` and stored the dup; on POSIX it borrowed straight from
-            // `ctx.positionals`. Rust unifies on a `Vec<&[u8]>` view either
-            // way (already built above as `filter_names_owned`); the Windows
-            // branch additionally needs an owned backing `Vec<Box<[u8]>>` for
-            // the rewritten bytes plus a second view vec over those boxes.
+            // Both platforms use a `Vec<&[u8]>` view (already built above as
+            // `filter_names_owned`); the Windows branch additionally needs an
+            // owned backing `Vec<Box<[u8]>>` for the `/`→`\`-rewritten bytes
+            // plus a second view vec over those boxes.
             #[cfg(windows)]
             let filter_names_normalized_storage: Vec<Box<[u8]>> = {
                 let mut normalized = Vec::with_capacity(filter_names.len());
@@ -2449,9 +2363,8 @@ impl TestCommand {
                 .collect();
             #[cfg(not(windows))]
             let filter_names_normalized: &Vec<&'static [u8]> = &filter_names_owned;
-            // PORT NOTE: Zig's `defer free` on Windows maps to Drop of the
-            // `Vec<Box<[u8]>>` storage above — but Drop never actually runs
-            // here (frame never returns); the storage simply outlives use.
+            // Drop of the `Vec<Box<[u8]>>` storage above never actually runs
+            // (frame never returns); the storage simply outlives use.
             // SAFETY: lifetime-erase the outer borrow; the view vec and (on
             // Windows) its backing storage live in this never-returning frame,
             // and the underlying bytes are either in `ctx` (process-lifetime)
@@ -2459,21 +2372,19 @@ impl TestCommand {
             scanner.filter_names =
                 unsafe { bun_ptr::detach_lifetime(&filter_names_normalized[..]) };
 
-            // PORT NOTE: Zig used `vm.allocator.dupe` (arena-scoped). PORTING.md
-            // §Forbidden bans leaking to satisfy a borrow — own the joined
-            // path in a hoisted buffer and borrow from it.
+            // Own the joined path in a hoisted buffer and borrow from it.
             let dir_to_scan_owned: Vec<u8>;
             let dir_to_scan: &[u8] = 'brk: {
                 if !ctx.debug.test_directory.is_empty() {
                     dir_to_scan_owned = resolve_path::join_abs::<bun_path::platform::Auto>(
-                        scanner.fs.top_level_dir,
+                        scanner.fs().top_level_dir,
                         &ctx.debug.test_directory,
                     )
                     .into();
                     break 'brk &dir_to_scan_owned;
                 }
 
-                break 'brk scanner.fs.top_level_dir;
+                break 'brk scanner.fs().top_level_dir;
             };
 
             match scanner.scan(dir_to_scan) {
@@ -2495,6 +2406,9 @@ impl TestCommand {
                     vm.exit_handler.exit_code = 1;
                     vm.is_shutting_down = true;
                     let vm_ptr: *mut VirtualMachine = vm;
+                    // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+                    // `run_with_api_lock` takes `&self` only and `global_exit()`
+                    // diverges, so the closure is the sole mutator.
                     vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
                 }
             }
@@ -2513,9 +2427,8 @@ impl TestCommand {
         // is not a misconfiguration.
         let mut pass_with_no_tests_from_filter = false;
         let mut changed_module_graph_files: Vec<Box<[u8]>> = Vec::new();
-        // PORT NOTE: defer free handled by Drop.
-        let mut test_files: &mut [PathString] = if let Some(changed_since) =
-            &ctx.test_options.changed
+        // Defer free handled by Drop.
+        let mut test_files: &mut [Interned] = if let Some(changed_since) = &ctx.test_options.changed
         {
             'brk: {
                 // If the Scanner found nothing, fall through to the existing
@@ -2524,8 +2437,6 @@ impl TestCommand {
                 if all_test_files.is_empty() {
                     break 'brk &mut all_test_files[..];
                 }
-                // TODO(port): borrowck — all_test_files ownership vs slicing; Phase B reshape
-
                 let result = match ChangedFilesFilter::filter(
                     &ctx,
                     vm,
@@ -2565,9 +2476,6 @@ impl TestCommand {
         } else {
             &mut all_test_files[..]
         };
-        // TODO(port): test_files type — Zig is `[]PathString` slice into all_test_files or
-        // result.test_files; ownership in Rust needs reshaping. Using &mut [PathString] here.
-
         // --shard=M/N: sort the test files for determinism, then keep only
         // every Nth file starting at M-1. This round-robin distribution
         // keeps shards roughly balanced regardless of how many files there
@@ -2580,7 +2488,7 @@ impl TestCommand {
         // printing a confusing "running 0/0 test files".
         if let Some(shard) = &ctx.test_options.shard {
             if !test_files.is_empty() {
-                test_files.sort_by(|a, b| strings::order(a.slice(), b.slice()));
+                test_files.sort_by(|a, b| strings::order(a.as_bytes(), b.as_bytes()));
 
                 let mut write: usize = 0;
                 let total = test_files.len();
@@ -2634,16 +2542,24 @@ impl TestCommand {
 
             match vm.hot_reload {
                 jsc::virtual_machine::HOT_RELOAD_HOT => {
-                    jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                        std::ptr::from_mut::<VirtualMachine>(vm),
-                        None,
-                    );
+                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
+                    // outlives the leaked reloader.
+                    unsafe {
+                        jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
+                            std::ptr::from_mut::<VirtualMachine>(vm),
+                            None,
+                        );
+                    }
                 }
                 jsc::virtual_machine::HOT_RELOAD_WATCH => {
-                    jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                        std::ptr::from_mut::<VirtualMachine>(vm),
-                        None,
-                    );
+                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
+                    // outlives the leaked reloader.
+                    unsafe {
+                        jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
+                            std::ptr::from_mut::<VirtualMachine>(vm),
+                            None,
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -2655,12 +2571,12 @@ impl TestCommand {
         if !test_files.is_empty() {
             // Randomize the order of test files if --randomize flag is set
             if let Some(mut rand) = random_instance {
-                // PORT NOTE: `std.Random.shuffle` → Fisher–Yates over `DefaultPrng::next_u64`.
+                // `std.Random.shuffle` → Fisher–Yates over `DefaultPrng::next_u64`.
                 let n = test_files.len();
                 if n > 1 {
                     let mut i = n - 1;
                     while i > 0 {
-                        // Unbiased range via 128-bit mul (Lemire); matches Zig `Random.uintLessThan`.
+                        // Unbiased range via 128-bit mul (Lemire).
                         let j = ((rand.next_u64() as u128 * (i as u128 + 1)) >> 64) as usize;
                         test_files.swap(i, j);
                         i -= 1;
@@ -2700,9 +2616,7 @@ impl TestCommand {
         if ctx.test_options.changed.is_some() && vm.is_watcher_enabled() {
             // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
             // `enable_hot_module_reloading`; non-null because
-            // `is_watcher_enabled()` checked it. The `c_void` type is a
-            // b2-cycle erasure (see field comment in VirtualMachine.rs); the
-            // cast recovers the concrete type.
+            // `is_watcher_enabled()` checked it.
             let watcher =
                 unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
             for path in &changed_module_graph_files {
@@ -2834,8 +2748,7 @@ impl TestCommand {
             pretty_error!("\n");
 
             if coverage_options.enabled && !ran_parallel {
-                // PORT NOTE: nested `switch ... inline else` over 3 runtime bools → 8-way dispatch.
-                // PERF(port): was comptime bool dispatch — profile in Phase B
+                // 8-way dispatch over 3 runtime bools.
                 match (
                     Output::enable_ansi_colors_stderr(),
                     coverage_options.reporters.text,
@@ -2858,7 +2771,7 @@ impl TestCommand {
                     (false, false, false) => reporter
                         .generate_code_coverage::<false, false, false>(vm, &mut coverage_options)?,
                 }
-                // TODO(port): generic param order is <TEXT, LCOV, COLORS>; verify mapping in Phase B
+                // Generic param order is <TEXT, LCOV, COLORS>; the match tuple is (colors, text, lcov).
             }
 
             // `Summary` is `Copy`; take a value snapshot so the `&mut` from
@@ -2968,7 +2881,6 @@ impl TestCommand {
 
                         if failed > 0 {
                             if first {
-                                first = false;
                                 pretty_error!("<red>{} failed<r>", failed);
                             } else {
                                 pretty_error!(", <red>{} failed<r>", failed);
@@ -3008,6 +2920,9 @@ impl TestCommand {
 
         if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
             let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+            // `run_with_api_lock` takes `&self` only, so the closure holds the
+            // unique mutable access on this single-threaded path.
             vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
         }
         let summary = reporter.summary();
@@ -3020,17 +2935,30 @@ impl TestCommand {
                 && coverage_options.fractions.failing
                 && coverage_options.fail_on_low_coverage)
             || !write_snapshots_success
+            || reporter.jest.unhandled_errors_between_tests > 0
         {
-            vm.exit_handler.exit_code = 1;
-        } else if reporter.jest.unhandled_errors_between_tests > 0 {
             vm.exit_handler.exit_code = 1;
         }
         vm.is_shutting_down = true;
+        // Release `bun:test` GC roots before `global_exit()` so
+        // `destructOnExit()`'s `collectNow()` can reach the closures they pin
+        // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`
+        // before dropping `reporter` so finalizers running inside the GC can't
+        // observe a dangling `TestRunner`.
+        reporter.jest.bun_test_root.deinit_for_exit();
+        // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
+        // no concurrent reader exists on this shutdown path.
+        unsafe {
+            jest::Jest::RUNNER.write(None);
+        }
+        drop(reporter);
         {
             let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+            // `run_with_api_lock` takes `&self` only and `global_exit()`
+            // diverges, so the closure is the sole mutator.
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
         }
-        #[allow(unreachable_code)]
         Ok(())
     }
 
@@ -3047,18 +2975,18 @@ impl TestCommand {
         }
     }
 
-    pub fn run_all_tests(
+    pub(crate) fn run_all_tests(
         reporter_: &mut CommandLineReporter,
         vm_: &mut VirtualMachine,
-        files_: &[PathString],
+        files_: &[Interned],
     ) {
         struct Context<'a> {
             reporter: &'a mut CommandLineReporter,
             vm: &'a mut VirtualMachine,
-            files: &'a [PathString],
+            files: &'a [Interned],
         }
         impl<'a> Context<'a> {
-            pub fn begin(&mut self) {
+            pub(crate) fn begin(&mut self) {
                 let reporter = &mut *self.reporter;
                 let vm = &mut *self.vm;
                 let files = self.files;
@@ -3071,7 +2999,7 @@ impl TestCommand {
                         if let Err(err) = TestCommand::run(
                             reporter,
                             vm,
-                            file_name.slice(),
+                            file_name.as_bytes(),
                             bun_test::FirstLast {
                                 first: isolate || i == 0,
                                 last: isolate,
@@ -3082,6 +3010,7 @@ impl TestCommand {
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
                         if isolate {
+                            crate::jsc_hooks::close_isolation_handles(vm);
                             vm.swap_global_for_test_isolation();
                             reporter
                                 .jest
@@ -3094,7 +3023,7 @@ impl TestCommand {
                 if let Err(err) = TestCommand::run(
                     reporter,
                     vm,
-                    files[files.len() - 1].slice(),
+                    files[files.len() - 1].as_bytes(),
                     bun_test::FirstLast {
                         first: isolate || files.len() == 1,
                         last: true,
@@ -3105,9 +3034,9 @@ impl TestCommand {
             }
         }
 
-        // PERF(port): was MimallocArena bulk-free — profile in Phase B
-        // TODO(port): vm_.arena = &arena; vm_.allocator = arena.arena(); — arena threading
-        // dropped here. Phase B should reintroduce a bun_alloc::Arena and assign to vm.
+        // No MimallocArena is wired through `vm.arena` on this serial run
+        // path; the parallel worker path in runner.rs does wire one.
+        // Reintroduce here if it shows up in profiles.
         vm_.event_loop_ref().ensure_waker();
         // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the
         // closure; ctx holds the unique &mut to the same VM and is the sole mutator.
@@ -3117,12 +3046,12 @@ impl TestCommand {
             vm: vm_,
             files: files_,
         };
+        // SAFETY: `vm_ptr` was derived from `vm_` above; `ctx` holds the unique
+        // `&mut VirtualMachine` and `run_with_api_lock(&self)` only acquires the JSC lock.
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
 
-    extern "C" fn timer_noop(_: *mut uws::Timer) {}
-
-    pub fn run(
+    pub(crate) fn run(
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,
         file_name: &[u8],
@@ -3151,7 +3080,7 @@ impl TestCommand {
         let prev_only = reporter.jest.only;
         let reporter_ptr: *mut CommandLineReporter = reporter;
         // SAFETY: `reporter` is caller-owned and outlives this guard; raw-ptr
-        // escape mirrors Zig's `defer` so the closure does not hold a borrowck
+        // escape so the closure does not hold a borrowck
         // lock on `reporter` for the entire function body.
         scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
 
@@ -3159,7 +3088,7 @@ impl TestCommand {
         vm.clear_entry_point()?;
 
         // `append_slice` interns into the process-static `FilenameStore` and
-        // returns `&'static [u8]`, matching Zig's `FilenameStore.append`.
+        // returns `&'static [u8]`.
         let file_path: &'static [u8] = FileSystem::instance()
             .filename_store
             .append_slice(resolution.path_pair.primary.text)
@@ -3201,14 +3130,14 @@ impl TestCommand {
             bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
             // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
-            // raw-ptr escape mirrors Zig `defer bun_test_root.exitFile()` so the
-            // closure does not hold a borrowck lock on it for the loop body.
+            // raw-ptr escape so the closure does not hold a borrowck lock on
+            // it for the loop body.
             scopeguard::defer! { unsafe { (*bun_test_root_ptr).exit_file(); } }
 
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr
-            // split (not the defer-captured `reporter_ptr`) mirrors Zig's
-            // freely-aliasing `*CommandLineReporter` without tripping borrowck.
+            // split (not the defer-captured `reporter_ptr`) keeps the borrows
+            // disjoint without tripping borrowck.
             unsafe {
                 let rp: *mut CommandLineReporter = reporter;
                 (*rp).jest.current_file.set(
@@ -3225,7 +3154,7 @@ impl TestCommand {
                 "loadEntryPointForTestRunner(\"{}\")",
                 bstr::BStr::new(file_path)
             );
-            // PORT NOTE: bun.jsc.Jest.bun_test.debug.group.log → local declare_scope!(bun_test).
+            // Bun.jsc.Jest.bun_test.debug.group.log → local declare_scope!(bun_test).
 
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
@@ -3257,9 +3186,21 @@ impl TestCommand {
 
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;
-                        // SAFETY: global_exit diverges; raw-ptr reborrow mirrors Zig
-                        // runWithAPILock(*VM, vm, globalExit).
+                        // `global_exit()` diverges, so the `exit_file()` defer
+                        // above never fires. Release the active file's
+                        // `Strong`s and the preload-hook scope here so
+                        // `destructOnExit()`'s `collectNow()` can reclaim them,
+                        // then clear `RUNNER` so finalizers can't observe a
+                        // partially-torn-down `TestRunner`.
+                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
+                        // defer's escape.
+                        unsafe {
+                            (*bun_test_root_ptr).deinit_for_exit();
+                            jest::Jest::RUNNER.write(None);
+                        }
                         let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
+                        // SAFETY: global_exit diverges; `vm_ptr` is a fresh
+                        // raw-ptr reborrow of the exclusive `vm` borrow.
                         unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
                     }
 
@@ -3284,8 +3225,8 @@ impl TestCommand {
                 }
                 // `BunTestPtr` is `Rc<BunTestCell>`; clone (refcount++) so the
                 // local `buntest_strong` survives for the post-run drain loop and
-                // the explicit `drop` below (Zig's `defer buntest_strong.deinit()`).
-                bun_test::BunTest::run(buntest_strong.clone(), vm.global())?;
+                // the explicit `drop` below.
+                bun_test::BunTest::run(&buntest_strong, vm.global())?;
 
                 // Process event loop while bun_test tests are running
                 vm.event_loop_ref().tick();
@@ -3310,7 +3251,7 @@ impl TestCommand {
 
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
-                unsafe { (*el).tick_immediate_tasks(std::ptr::from_mut::<VirtualMachine>(vm)) };
+                unsafe { (*el).tick_immediate_tasks(vm) };
                 drop(buntest_strong);
             }
 
@@ -3335,7 +3276,7 @@ impl TestCommand {
     }
 }
 
-pub fn handle_top_level_test_error_before_javascript_start(err: bun_core::Error) -> ! {
+pub(crate) fn handle_top_level_test_error_before_javascript_start(err: bun_core::Error) -> ! {
     if cfg!(debug_assertions) {
         if err != bun_core::err!("ModuleNotFound") {
             bun_core::debug_warn!("Unhandled error: {}", err.name());
@@ -3343,13 +3284,3 @@ pub fn handle_top_level_test_error_before_javascript_start(err: bun_core::Error)
     }
     Global::exit(1);
 }
-
-pub fn export() {
-    // PORT NOTE: force-reference for linkage. In Rust, #[unsafe(no_mangle)] on
-    // BunTest__shouldGenerateCodeCoverage above is sufficient. Kept as no-op.
-    let _ = BunTest__shouldGenerateCodeCoverage;
-    // TODO(port): Zig referenced Scanner.BunTest__shouldGenerateCodeCoverage — verify the
-    // export lives here vs in Scanner module.
-}
-
-// ported from: src/cli/test_command.zig

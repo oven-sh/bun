@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use bun_core::strings;
 
-// PORT NOTE (cyclebreak): `by_loader` needs `bun_ast::Loader`, but
+// Cyclebreak: `by_loader` needs `bun_ast::Loader`, but
 // adding that dep creates a cargo cycle
 // (http_types → options_types → zlib → io → uws_sys → http_types). The Loader
 // enum is `#[repr(u8)]` with stable discriminants (pinned by
@@ -21,16 +21,17 @@ mod loader_disc {
 // ───────────────────────────────────────────────────────────────────────────
 // `Table` (= generated `mime_type_list_enum::MimeTypeList`). The Rust side is a
 // hand-rolled stand-in (`&'static str` newtype) until
-// `src/codegen/generate-compact-string-table.ts` emits `.rs`. See PERF(port)
+// `src/codegen/generate-compact-string-table.ts` emits `.rs`. See the
 // note at the top of `mime_type_list_enum.rs`.
 // ───────────────────────────────────────────────────────────────────────────
 pub use super::mime_type_list_enum::MimeTypeList as Table;
 use bun_collections::StringHashMap;
 
-// PORT NOTE: `Table` variant names in Zig are raw MIME-type strings
-// (e.g. `@"application/json"`), which are not valid Rust identifiers.
-// `mime_type_list_enum.rs` exposes `const fn from_mime_literal(&'static str)`;
-// `t!("...")` resolves to the corresponding `Table` value at compile time.
+// `mime_type_list_enum.rs` exposes `const fn from_mime_literal(&'static str)`,
+// an UNCHECKED literal wrapper: a typo'd literal still compiles and simply
+// never matches anything at runtime (comparison is string equality, not an
+// enum compare). The checked, packed-enum form is pending the codegen `.rs`
+// backend — see the header of `mime_type_list_enum.rs`.
 macro_rules! t {
     ($s:literal) => {
         Table::from_mime_literal($s)
@@ -39,7 +40,6 @@ macro_rules! t {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct MimeType {
-    // Zig `deinit` frees `value` via allocator → owning type per §Type-map.
     // `Cow` so the `pub const` items below stay `Borrowed` and const-constructible.
     pub value: Cow<'static, [u8]>,
     pub category: Category,
@@ -58,22 +58,18 @@ impl Compact {
     }
 
     pub fn to_mime_type(self) -> MimeType {
-        #[cfg(feature = "ci_assert")]
-        {
-            if !strings::eql(
+        assert!(
+            strings::eql(
                 self.value.slice(),
                 <&'static str>::from(self.value).as_bytes(),
-            ) {
-                bun_core::Output::panic(format_args!(
-                    "{} != {}. Code generation is broken.",
-                    bstr::BStr::new(self.value.slice()),
-                    <&'static str>::from(self.value),
-                ));
-            }
-        }
+            ),
+            "{} != {}. Code generation is broken.",
+            bstr::BStr::new(self.value.slice()),
+            <&'static str>::from(self.value),
+        );
 
-        // TODO(port): Zig matches on `Table` enum variants directly; we compare against
-        // `t!` placeholders because variant idents are not yet defined (see top-of-file note).
+        // `t!` wraps an unchecked `&'static str` literal and the compares are
+        // runtime string equality (see the macro definition above for the caveats).
         let v = self.value;
         if v == t!("application/webassembly") {
             return WASM;
@@ -119,37 +115,18 @@ impl Compact {
 pub fn create_hash_table() -> Result<Map, bun_alloc::AllocError> {
     let mut map = Map::default();
     map.reserve(Table::ALL.len() as u32 as usize);
-    // PERF(port): was put_assume_capacity_no_clobber + borrowed-key map — Rust
-    // `StringHashMap` boxes the key. Profile in Phase B.
+    // `StringHashMap` boxes the key.
     for entry in Table::ALL {
-        #[cfg(feature = "ci_assert")]
-        {
-            if !strings::eql(entry.slice(), <&'static str>::from(*entry).as_bytes()) {
-                bun_core::Output::panic(format_args!(
-                    "{} != {}. Code generation is broken.",
-                    bstr::BStr::new(entry.slice()),
-                    <&'static str>::from(*entry),
-                ));
-            }
-        }
+        assert!(
+            strings::eql(entry.slice(), <&'static str>::from(*entry).as_bytes()),
+            "{} != {}. Code generation is broken.",
+            bstr::BStr::new(entry.slice()),
+            <&'static str>::from(*entry),
+        );
         map.put(entry.slice(), *entry)?;
     }
 
     Ok(map)
-}
-
-impl MimeType {
-    pub fn can_open_in_editor(&self) -> bool {
-        if self.category == Category::Text || self.category.is_code() {
-            return true;
-        }
-
-        if self.category == Category::Image {
-            return self.value.as_ref() == b"image/svg+xml";
-        }
-
-        false
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
@@ -180,36 +157,30 @@ pub enum Category {
 
 impl Category {
     pub fn from_table(entry: Table) -> Category {
-        // TODO(port): see top-of-file note re: Table variant idents.
-        if entry == t!("text/javascript")
-            || entry == t!("application/javascript")
-            || entry == t!("application/javascript; charset=utf-8")
-        {
-            return Category::Javascript;
+        bun_core::comptime_string_map! {
+            static CATEGORY_OVERRIDES: Category = {
+                b"text/javascript" => Category::Javascript,
+                b"application/javascript" => Category::Javascript,
+                b"application/javascript; charset=utf-8" => Category::Javascript,
+                b"text/css" => Category::Css,
+                b"text/css;charset=utf-8" => Category::Css,
+                b"text/css; charset=utf-8" => Category::Css,
+                b"text/css; charset=utf8" => Category::Css,
+                b"text/css;charset=utf8" => Category::Css,
+                b"text/html" => Category::Html,
+                b"text/html;charset=utf-8" => Category::Html,
+                b"text/html; charset=utf-8" => Category::Html,
+                b"text/html; charset=utf8" => Category::Html,
+                b"text/html;charset=utf8" => Category::Html,
+                b"application/json" => Category::Json,
+                b"application/json;charset=utf-8" => Category::Json,
+                b"application/json; charset=utf-8" => Category::Json,
+                b"application/json; charset=utf8" => Category::Json,
+                b"application/json;charset=utf8" => Category::Json,
+            };
         }
-        if entry == t!("text/css")
-            || entry == t!("text/css;charset=utf-8")
-            || entry == t!("text/css; charset=utf-8")
-            || entry == t!("text/css; charset=utf8")
-            || entry == t!("text/css;charset=utf8")
-        {
-            return Category::Css;
-        }
-        if entry == t!("text/html")
-            || entry == t!("text/html;charset=utf-8")
-            || entry == t!("text/html; charset=utf-8")
-            || entry == t!("text/html; charset=utf8")
-            || entry == t!("text/html;charset=utf8")
-        {
-            return Category::Html;
-        }
-        if entry == t!("application/json")
-            || entry == t!("application/json;charset=utf-8")
-            || entry == t!("application/json; charset=utf-8")
-            || entry == t!("application/json; charset=utf8")
-            || entry == t!("application/json;charset=utf8")
-        {
-            return Category::Json;
+        if let Some(&category) = CATEGORY_OVERRIDES.get(entry.slice()) {
+            return category;
         }
         Category::init(entry.slice())
     }
@@ -269,55 +240,26 @@ impl Category {
                 return Category::Application;
             }
 
-            if category == b"image" {
-                return Category::Image;
+            bun_core::comptime_string_map! {
+                static CATEGORY_BY_NAME: Category = {
+                    b"image" => Category::Image,
+                    b"video" => Category::Video,
+                    b"audio" => Category::Audio,
+                    b"font" => Category::Font,
+                    b"multipart" => Category::Multipart,
+                    b"model" => Category::Model,
+                    b"message" => Category::Message,
+                    b"x-conference" => Category::XConference,
+                    b"x-shader" => Category::XShader,
+                    b"chemical" => Category::Chemical,
+                };
             }
-
-            if category == b"video" {
-                return Category::Video;
-            }
-
-            if category == b"audio" {
-                return Category::Audio;
-            }
-
-            if category == b"font" {
-                return Category::Font;
-            }
-
-            if category == b"multipart" {
-                return Category::Multipart;
-            }
-
-            if category == b"model" {
-                return Category::Model;
-            }
-
-            if category == b"message" {
-                return Category::Message;
-            }
-
-            if category == b"x-conference" {
-                return Category::XConference;
-            }
-
-            if category == b"x-shader" {
-                return Category::XShader;
-            }
-
-            if category == b"chemical" {
-                return Category::Chemical;
+            if let Some(&matched) = CATEGORY_BY_NAME.get(category) {
+                return matched;
             }
         }
 
         Category::Other
-    }
-
-    pub fn is_code(self) -> bool {
-        matches!(
-            self,
-            Category::Wasm | Category::Json | Category::Css | Category::Html | Category::Javascript
-        )
     }
 
     pub fn is_text_like(self) -> bool {
@@ -349,12 +291,12 @@ pub const OTHER: MimeType = MimeType::init_comptime(b"application/octet-stream",
 pub const CSS: MimeType = MimeType::init_comptime(b"text/css;charset=utf-8", Category::Css);
 pub const JAVASCRIPT: MimeType =
     MimeType::init_comptime(b"text/javascript;charset=utf-8", Category::Javascript);
-pub const ICO: MimeType = MimeType::init_comptime(b"image/vnd.microsoft.icon", Category::Image);
+pub(crate) const ICO: MimeType =
+    MimeType::init_comptime(b"image/vnd.microsoft.icon", Category::Image);
 pub const HTML: MimeType = MimeType::init_comptime(b"text/html;charset=utf-8", Category::Html);
 // we transpile json to javascript so that it is importable without import assertions.
 pub const JSON: MimeType =
     MimeType::init_comptime(b"application/json;charset=utf-8", Category::Json);
-pub const TRANSPILED_JSON: MimeType = JAVASCRIPT;
 pub const TEXT: MimeType = MimeType::init_comptime(b"text/plain;charset=utf-8", Category::Html);
 pub const WASM: MimeType = MimeType::init_comptime(b"application/wasm", Category::Wasm);
 
@@ -367,8 +309,6 @@ impl MimeType {
     }
 
     pub fn init(str_: &[u8], dupe: bool, allocated: Option<&mut bool>) -> MimeType {
-        // PORT NOTE: Zig signature is `(str_, ?Allocator param, allocated: ?*bool)`.
-        // Allocator presence == "dupe the input"; replaced with `dupe: bool` (see §Allocators).
         let mut str = str_;
         if let Some(slash) = str.iter().position(|&b| b == b'/') {
             let category_ = &str[0..slash];
@@ -503,20 +443,16 @@ impl MimeType {
     }
 
     #[inline]
-    fn maybe_dupe(s: &[u8], dupe: bool) -> Cow<'static, [u8]> {
-        if dupe {
-            Cow::Owned(s.to_vec())
-        } else {
-            // TODO(port): Zig borrows the input slice here (zero-copy). A non-'static
-            // borrow needs a struct lifetime param, forbidden in Phase A — copying for now.
-            // PERF(port): was zero-copy borrow — profile in Phase B
-            Cow::Owned(s.to_vec())
-        }
+    fn maybe_dupe(s: &[u8], _dupe: bool) -> Cow<'static, [u8]> {
+        // Borrowing the input slice in the no-dupe case (zero-copy) would need
+        // a lifetime parameter on `MimeType`, so
+        // both cases copy here; never launder the borrow to 'static instead.
+        Cow::Owned(s.to_vec())
     }
 }
 
 // TODO: improve this
-// PORT NOTE (cyclebreak): takes the `#[repr(u8)]` discriminant of
+// Cyclebreak: takes the `#[repr(u8)]` discriminant of
 // `bun_ast::Loader` to avoid a same-tier cargo cycle (see
 // `loader_disc` at top of file). Callers: `by_loader(loader as u8, ext)`.
 pub fn by_loader(loader: u8, ext: &[u8]) -> MimeType {
@@ -542,16 +478,17 @@ pub fn by_extension_no_default(ext_without_leading_dot: &[u8]) -> Option<MimeTyp
 // this is partially auto-generated
 pub use super::mime_type_list_enum::ALL;
 
-// TODO: do a comptime static hash map for this
+// TODO: use a precomputed static hash map for this
 // its too many branches to use ComptimeStringMap
 pub fn by_name(name: &[u8]) -> MimeType {
     MimeType::init(name, false, None)
 }
 
-// PORT NOTE: phf_map! rejects duplicate keys at compile time. The Zig source
-// contained duplicate entries for "tsx", "yaml", "yml" (Zig ComptimeStringMap
-// silently kept the first occurrence) — later duplicates dropped below.
-pub static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
+// Duplicate keys are rejected at compile time. The original table
+// contained duplicate entries for "tsx", "yaml", "yml" — only the first
+// occurrence is kept; later duplicates dropped below.
+bun_core::comptime_string_map! {
+    pub(crate) static EXTENSIONS: Table = {
     b"123" => t!("application/vnd.lotus-1-2-3"),
     b"1km" => t!("application/vnd.1000minds.decision-model+xml"),
     b"3dml" => t!("text/vnd.in3d.3dml"),
@@ -1521,7 +1458,7 @@ pub static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"tsx" => t!("application/javascript"),
     b"tsd" => t!("application/timestamped-data"),
     b"tsv" => t!("text/tab-separated-values"),
-    // (dup "tsx" dropped — phf rejects, Zig kept first occurrence above)
+    // (dup "tsx" dropped — duplicate keys rejected; first occurrence above wins)
     b"ttc" => t!("font/collection"),
     b"ttf" => t!("font/ttf"),
     b"ttl" => t!("text/turtle"),
@@ -1721,10 +1658,10 @@ pub static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"xwd" => t!("image/x-xwindowdump"),
     b"xyz" => t!("chemical/x-xyz"),
     b"xz" => t!("application/x-xz"),
-    // (dup "yaml" dropped — phf rejects, Zig kept first occurrence above)
+    // (dup "yaml" dropped — duplicate keys rejected; first occurrence above wins)
     b"yang" => t!("application/yang"),
     b"yin" => t!("application/yin+xml"),
-    // (dup "yml" dropped — phf rejects, Zig kept first occurrence above)
+    // (dup "yml" dropped — duplicate keys rejected; first occurrence above wins)
     b"ymp" => t!("text/x-suse-ymp"),
     b"z1" => t!("application/x-zmachine"),
     b"z2" => t!("application/x-zmachine"),
@@ -1739,7 +1676,8 @@ pub static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"zir" => t!("application/vnd.zul"),
     b"zirz" => t!("application/vnd.zul"),
     b"zmm" => t!("application/vnd.handheld-entertainment+xml"),
-};
+    };
+}
 
 const IMAGES_HEADERS: &[(&[u8], Table)] = &[
     (&[0x42, 0x4d], t!("image/bmp")),
@@ -1758,7 +1696,6 @@ pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
         return None;
     }
 
-    // PERF(port): was `inline for` over heterogeneous-length tuples — profile in Phase B
     for (header, table) in IMAGES_HEADERS {
         if bytes.len() >= header.len() && &bytes[0..header.len()] == *header {
             return Some(Compact::from(*table).to_mime_type());
@@ -1766,5 +1703,3 @@ pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
     }
     None
 }
-
-// ported from: src/http_types/MimeType.zig

@@ -1,5 +1,3 @@
-use core::marker::{PhantomData, PhantomPinned};
-
 use bun_core::{String as BunString, ZigString};
 
 use crate::{JSGlobalObject, JSHostFn, JSValue};
@@ -20,14 +18,14 @@ pub enum ImplementationVisibility {
 
 /// In WebKit: Intrinsic.h
 //
-// Zig: `enum(u8) { none, _ }` — non-exhaustive; any u8 is a valid bit pattern,
-// so a Rust `#[repr(u8)] enum` would be UB for unknown values. Use a newtype.
+// Non-exhaustive — any u8 is a valid bit pattern, so a Rust `#[repr(u8)]`
+// enum would be UB for unknown values. Use a newtype.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Intrinsic(u8);
 
 impl Intrinsic {
-    pub const NONE: Intrinsic = Intrinsic(0);
+    pub(crate) const NONE: Intrinsic = Intrinsic(0);
 }
 
 impl Default for Intrinsic {
@@ -36,15 +34,13 @@ impl Default for Intrinsic {
     }
 }
 
-#[derive(Default)]
+#[derive(Copy, Clone, Default)]
 pub struct CreateJSFunctionOptions {
     pub implementation_visibility: ImplementationVisibility,
     pub intrinsic: Intrinsic,
     pub constructor: Option<JSHostFn>,
 }
 
-// TODO(port): move to jsc_sys
-//
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; the remaining
 // params are by-value scalars / `#[repr(C)]` PODs / fn-ptrs, so all three
 // shims are declared `safe fn`. `getSourceCode` writes a `ZigString` view into
@@ -61,16 +57,12 @@ unsafe extern "C" {
         constructor: Option<JSHostFn>,
     ) -> JSValue;
 
-    pub safe fn JSC__JSFunction__optimizeSoon(value: JSValue);
+    pub(crate) safe fn JSC__JSFunction__optimizeSoon(value: JSValue);
 
     safe fn JSC__JSFunction__getSourceCode(value: JSValue, out: &mut ZigString) -> bool;
 }
 
 impl JSFunction {
-    // TODO(port): Zig accepted `implementation` as either `JSHostFnZig` (safe) or
-    // `JSHostFn` (raw ABI) via comptime `@TypeOf` dispatch, calling `jsc.toJSHostFn`
-    // for the safe form. In Rust, callers produce a `JSHostFn` via `#[bun_jsc::host_fn]`,
-    // so we take the raw fn pointer type directly.
     pub fn create(
         global: &JSGlobalObject,
         fn_name: impl Into<BunString>,
@@ -103,5 +95,3 @@ impl JSFunction {
         }
     }
 }
-
-// ported from: src/jsc/JSFunction.zig

@@ -8,15 +8,13 @@ use bun_url::URL as ZigURL;
 
 use crate::module_loader::ModuleLoader;
 use crate::virtual_machine::VirtualMachine;
-use crate::{
-    Exception, JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, ZigStackFrame, ZigStackTrace,
-};
+use crate::{JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, ZigStackFrame, ZigStackTrace};
 
 // SAFETY (safe fn): `JSValue` is a by-value scalar; `JSGlobalObject` is an
 // opaque `UnsafeCell`-backed handle (`&` is ABI-identical to non-null `*mut`);
 // `ZigException` is a `#[repr(C)]` out-param the C++ side fills in-place.
 unsafe extern "C" {
-    pub safe fn ZigException__collectSourceLines(
+    pub(crate) safe fn ZigException__collectSourceLines(
         js_value: JSValue,
         global: &JSGlobalObject,
         exception: &mut ZigException,
@@ -56,7 +54,7 @@ impl ZigException {
         ZigException__collectSourceLines(value, global, self);
     }
 
-    // PORT NOTE: kept as explicit `deinit` (not `Drop`) — this is a #[repr(C)] FFI
+    // Kept as explicit `deinit` (not `Drop`) — this is a #[repr(C)] FFI
     // payload whose lifetime is gated by `Holder.loaded`; C++ constructs/populates it.
     pub fn deinit(&mut self) {
         self.syscall.deref();
@@ -81,10 +79,10 @@ impl ZigException {
         }
     }
 
-    // PORT NOTE: `ZigException__fromException` is declared in headers.h but
-    // has no C++ body (bindings.cpp dropped it; the only producer is
-    // `JSC__JSValue__toZigException` which writes through an out-param). The
-    // Zig `fromException` re-export is dead code; do not port it.
+    // `ZigException__fromException` is declared in headers.h but has no C++
+    // body (bindings.cpp dropped it; the only producer is
+    // `JSC__JSValue__toZigException` which writes through an out-param), so
+    // there is intentionally no `from_exception` here.
 
     pub fn add_to_error_list(
         &mut self,
@@ -97,20 +95,17 @@ impl ZigException {
 
         let name = name_slice.slice();
         let message = message_slice.slice();
-        // PORT NOTE: `defer name_slice.deinit()` / `defer message_slice.deinit()` —
-        // `ZigStringSlice` drops at scope exit.
 
         let mut is_empty = true;
         let mut api_exception = api::JsException {
-            // PORT NOTE: `@intFromEnum` — JSRuntimeType/JSErrorCode are
-            // transparent newtypes over u16/u8 (non-exhaustive Zig enums).
+            // JSRuntimeType/JSErrorCode are transparent newtypes over u16/u8
+            // (non-exhaustive enums).
             runtime_type: self.runtime_type.0,
             code: u16::from(self.r#type.0),
             ..Default::default()
         };
 
         if !name.is_empty() {
-            // PORT NOTE: `error_list.allocator.dupe(u8, _name)` → Box<[u8]> (global mimalloc).
             api_exception.name = Box::<[u8]>::from(name);
             is_empty = false;
         }
@@ -139,8 +134,8 @@ pub struct Holder {
     pub source_lines: [String; Self::SOURCE_LINES_COUNT],
     pub frames: [ZigStackFrame; Self::FRAME_COUNT],
     pub loaded: bool,
-    // PORT NOTE: Zig had `= undefined` (never read until `loaded` flips and
-    // `zig_exception()` writes it). Use MaybeUninit and gate access on `loaded`.
+    // Never read until `loaded` flips and `zig_exception()` writes it;
+    // all access must be gated on `loaded`.
     pub zig_exception: MaybeUninit<ZigException>,
     pub need_to_clear_parser_arena_on_deinit: bool,
 }
@@ -149,12 +144,8 @@ impl Holder {
     const FRAME_COUNT: usize = 32;
     pub const SOURCE_LINES_COUNT: usize = 6;
 
-    // PORT NOTE: Zig had `pub const Zero: Holder`; Rust const requires every
-    // initializer to be const-evaluable. Using a fn instead.
     pub fn zero() -> Self {
         Self {
-            // PORT NOTE: `[ZigStackFrame::ZERO; N]` would require `Copy`;
-            // mirror the Zig `@memset` via from_fn.
             frames: core::array::from_fn(|_| ZigStackFrame::ZERO),
             source_line_numbers: [-1; Self::SOURCE_LINES_COUNT],
             source_lines: core::array::from_fn(|_| String::EMPTY),
@@ -168,11 +159,11 @@ impl Holder {
         Self::zero()
     }
 
-    // PORT NOTE: not just `Drop` — takes `vm` parameter for `reset_arena`. Zig
-    // callers all `defer holder.deinit(vm)`; Rust callers should still call this
-    // explicitly at the tail (it does the arena reset which `Drop` cannot), but
-    // the string-ref release half is also covered by `Drop` below so an early
-    // `?`/return between population and the tail call won't leak WTF string refs.
+    // Not just `Drop` — takes the `vm` parameter for `reset_arena`. Callers
+    // should call this explicitly at the tail (it does the arena reset which
+    // `Drop` cannot), but the string-ref release half is also covered by
+    // `Drop` below so an early `?`/return between population and the tail
+    // call won't leak WTF string refs.
     pub fn deinit(&mut self, vm: &mut VirtualMachine) {
         if self.loaded {
             // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.
@@ -181,9 +172,6 @@ impl Holder {
             self.loaded = false;
         }
         if self.need_to_clear_parser_arena_on_deinit {
-            // PORT NOTE: reshaped for borrowck — Zig `vm.module_loader.resetArena(vm)`
-            // would borrow `vm` twice; the Rust port made `reset_arena` an
-            // associated fn on `ModuleLoader` taking only `&mut VirtualMachine`.
             ModuleLoader::reset_arena(vm);
         }
     }
@@ -191,8 +179,6 @@ impl Holder {
     pub fn zig_exception(&mut self) -> &mut ZigException {
         if !self.loaded {
             self.zig_exception.write(ZigException {
-                // Zig: `@as(JSErrorCode, @enumFromInt(255))` — non-exhaustive
-                // enum(u8) → transparent newtype, so just construct directly.
                 r#type: JSErrorCode(255),
                 runtime_type: JSRuntimeType::NOTHING,
                 name: String::EMPTY,
@@ -226,10 +212,10 @@ impl Holder {
 }
 
 impl Drop for Holder {
-    // PORT NOTE: restores the string-ref-release half of Zig's
-    // `defer holder.deinit(vm)`. The explicit `deinit(&mut self, vm)` clears
-    // `loaded` after running, so this is a no-op on the happy path; it only
-    // fires when an early-return/`?`/panic skips the tail `deinit` call.
+    // Covers the string-ref-release half of cleanup. The explicit
+    // `deinit(&mut self, vm)` clears `loaded` after running, so this is a
+    // no-op on the happy path; it only fires when an early-return/`?`/panic
+    // skips the tail `deinit` call.
     fn drop(&mut self) {
         if self.loaded {
             // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.
@@ -238,5 +224,3 @@ impl Drop for Holder {
         }
     }
 }
-
-// ported from: src/jsc/ZigException.zig

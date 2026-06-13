@@ -55,8 +55,7 @@ impl OutputFileList {
         let (length, supplementary_file_count) =
             OutputFileList::calculate_output_file_list_capacity(c, chunks);
         let mut output_files: Vec<options::OutputFile> = Vec::with_capacity(length as usize);
-        // PERF(port): was appendNTimesAssumeCapacity — profile in Phase B
-        output_files.resize_with(length as usize, || OutputFile::zero_value());
+        output_files.resize_with(length as usize, OutputFile::zero_value);
 
         Ok(Self {
             output_files,
@@ -64,7 +63,7 @@ impl OutputFileList {
             index_for_sourcemaps_and_bytecode: if supplementary_file_count == 0 {
                 None
             } else {
-                Some(chunks.len() as u32) // @truncate
+                Some(chunks.len() as u32)
             },
             additional_output_files_start: u32::try_from(chunks.len()).expect("int cast")
                 + supplementary_file_count,
@@ -195,8 +194,8 @@ impl OutputFileList {
             self.index_for_sourcemaps_and_bytecode.unwrap_or(0),
             self.additional_output_files_start,
         );
-        // PORT NOTE: Zig did bitwise memcpy (ownership move). `OutputFile` is not
-        // `Clone`, so drain by value into the target window.
+        // Ownership move: `OutputFile` is not `Clone`, so drain by value into
+        // the target window.
         let len = additional_output_files.len();
         let dest = self.get_mutable_additional_output_files();
         for (i, of) in additional_output_files.drain(..).enumerate() {
@@ -221,5 +220,3 @@ impl OutputFileList {
         Some(result)
     }
 }
-
-// ported from: src/bundler/linker_context/OutputFileListBuilder.zig

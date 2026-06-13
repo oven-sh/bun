@@ -1,9 +1,6 @@
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
-#[allow(unused_imports)]
-use std::sync::Arc;
 
-#[allow(unused_imports)]
 use bun_sys::FdExt as _;
 
 use bun_core::String as BunString;
@@ -39,10 +36,8 @@ impl AdditionalOnAbortCallback {
     }
 }
 
-// PORT NOTE (transport selection): Zig `NewRequestContext` is a comptime
-// type-function over `(ssl_enabled, debug_mode, ThisServer, http3)` and picks
-// `Resp = uws.H3.Response | uws.NewApp(ssl).Response` / `Req = uws.H3.Request |
-// uws.Request` at comptime. Stable Rust cannot drive an associated type from a
+// NOTE (transport selection): the response/request handle types vary with
+// `(ssl_enabled, http3)`. Stable Rust cannot drive an associated type from a
 // const-generic `bool` without specialization, and an early `Transport`
 // helper-trait approach forced `where TransportFor<SSL,H3>: Transport` bounds
 // onto every generic that named `RequestContext` (which Rust then *cannot*
@@ -106,7 +101,6 @@ impl AnyResponseExt for uws::AnyResponse {
 /// frame unwinds), so reads/writes are safe `Cell` ops — no raw `*mut bool`.
 pub type DeferDeinitFlag = bun_ptr::BackRef<core::cell::Cell<bool>>;
 
-// `jsc.WebCore.HTTPServerWritable(ssl_enabled, http3)` — comptime type fn.
 pub type ResponseStream<const SSL_ENABLED: bool, const HTTP3: bool> =
     crate::webcore::streams::HTTPServerWritable<SSL_ENABLED, HTTP3>;
 pub type ResponseStreamJSSink<const SSL_ENABLED: bool, const HTTP3: bool> =
@@ -114,20 +108,22 @@ pub type ResponseStreamJSSink<const SSL_ENABLED: bool, const HTTP3: bool> =
 
 /// This pre-allocates up to 2,048 RequestContext structs.
 /// It costs about 655,632 bytes.
-// TODO(port): bun.HiveArray(RequestContext, if (bun.heap_breakdown.enabled) 0 else 2048).Fallback
+// Capacity 0 when heap-breakdown is enabled routes every allocation through
+// the fallback heap path so the per-type malloc zones can attribute them.
+pub const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
+    0
+} else {
+    2048
+};
 pub type RequestContextStackAllocator<
     ThisServer,
     const SSL: bool,
     const DBG: bool,
     const H3: bool,
-> = bun_collections::hive_array::Fallback<RequestContext<ThisServer, SSL, DBG, H3>, 2048>;
-
-thread_local! {
-    // TODO(port): Zig `pub threadlocal var pool: ?*RequestContextStackAllocator = null;` is
-    // per-monomorphization. Rust thread_local! cannot be generic; Phase B: move into ThisServer
-    // or use a per-instantiation static via macro.
-    static POOL: core::cell::Cell<*mut c_void> = const { core::cell::Cell::new(core::ptr::null_mut()) };
-}
+> = bun_collections::hive_array::Fallback<
+    RequestContext<ThisServer, SSL, DBG, H3>,
+    REQUEST_CONTEXT_POOL_CAPACITY,
+>;
 
 pub struct RequestContext<
     ThisServer,
@@ -140,12 +136,9 @@ pub struct RequestContext<
     /// pointee is live for the holder's entire lifetime. `None` once detached.
     pub server: Option<bun_ptr::BackRef<ThisServer>>,
     pub resp: Option<uws::AnyResponse>,
-    /// thread-local default heap allocator
-    /// this prevents an extra pthread_getspecific() call which shows up in profiling
-    // TODO(port): allocator field deleted — global mimalloc per PORTING.md §Allocators.
     pub req: Option<*mut Req<SSL_ENABLED, HTTP3>>,
     pub request_weakref: request::WeakRef,
-    // PORT NOTE: Zig `?*AbortSignal`. `Arc<AbortSignal>` was wrong —
+    // NOTE: `Arc<AbortSignal>` was wrong —
     // `AbortSignal` is an opaque ZST FFI handle; an `Arc` of a ZST never owns
     // the C++ allocation. Store the raw pointer. The request holds TWO counts:
     // the intrusive C++ `RefPtr` (+1 from `AbortSignal::new()`/`ref_()`) and a
@@ -163,8 +156,11 @@ pub struct RequestContext<
 
     /// We can only safely free once the request body promise is finalized
     /// and the response is rejected
-    // TODO(port): bare JSValue heap field — kept alive via manual protect()/unprotect()
-    // (response_protected flag); revisit bun_jsc::Strong in Phase B.
+    // Deliberately a bare JSValue with manual protect()/unprotect() gated by
+    // the `response_protected` flag: plain Blob/InternalBlob
+    // bodies intentionally leave the value unprotected on the hot path and
+    // fall back to `response_weakref` (see its doc below), so a `Strong`
+    // here would root the Response unconditionally and change GC behavior.
     pub response_jsvalue: JSValue,
     pub ref_count: u8,
 
@@ -182,11 +178,15 @@ pub struct RequestContext<
     pub range: RangeRequest::Raw,
 
     pub request_body_readable_stream_ref: readable_stream::Strong,
-    // TODO(b2-blocked): `WebCore::body::value::HiveRef` — webcore gates the
-    // HiveArray pool. Raw ptr to the pooled `Body::Value` slot until that lands.
-    pub request_body: Option<NonNull<body::Value>>,
+    /// Owning `+1` handle into the per-VM `Body::Value` hive pool. Shared with
+    /// `Request.body` (each holds its own `+1`). `Drop` releases the count.
+    pub request_body: Option<body::BodyHiveHandle>,
     pub request_body_buf: Vec<u8>,
     pub request_body_content_len: usize,
+    /// Total bytes forwarded to the request-body `ReadableStream`. The
+    /// up-front `maxRequestBodySize` check only sees Content-Length, so
+    /// chunked / H3 bodies consumed as a stream are capped against this.
+    pub request_body_streamed_len: usize,
 
     pub sink: Option<NonNull<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>>,
     pub byte_stream: Option<NonNull<ByteStream>>,
@@ -243,7 +243,7 @@ where
 // Everything below until the helper structs at the bottom is the request
 // state machine: render(), on_abort(), on_resolve(), do_render_*, sendfile,
 // stream handling, error handling.
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 use bun_core::Output;
 use bun_http_types as HTTP;
 use bun_http_types::MimeType::MimeType;
@@ -256,14 +256,17 @@ use std::io::Write as _;
 mod NativePromiseContext {
     use super::{JSGlobalObject, JSValue};
     use crate::api::native_promise_context as npc;
-    pub use npc::NativePromiseContextType;
+    pub(super) use npc::NativePromiseContextType;
 
     #[inline]
-    pub fn create<T: NativePromiseContextType>(global: &JSGlobalObject, ctx: *mut T) -> JSValue {
+    pub(super) fn create<T: NativePromiseContextType>(
+        global: &JSGlobalObject,
+        ctx: *mut T,
+    ) -> JSValue {
         npc::create(global, ctx)
     }
     #[inline]
-    pub fn take<T>(cell: JSValue) -> Option<&'static mut T> {
+    pub(super) fn take<T>(cell: JSValue) -> Option<&'static mut T> {
         // SAFETY: the cell carried a +1 ref on `ctx`; ownership transfers back
         // to the caller, who immediately scopes it with a deref-on-drop guard.
         npc::take::<T>(cell).map(|p| unsafe { &mut *p.as_ptr() })
@@ -275,12 +278,11 @@ use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::{Blob, ReadableStream, body as Body, s3 as S3};
 use bun_jsc::SysErrorJsc as _;
-use bun_jsc::event_loop::EventLoop;
 
 /// RAII: releases one intrusive ref on a [`RequestContext`] at scope exit.
 ///
-/// Replaces the Zig `defer ctx.deref()` pattern in promise-callback host
-/// functions — `NativePromiseContext::take` hands back a +1 ref, and the
+/// In promise-callback host
+/// functions, `NativePromiseContext::take` hands back a +1 ref, and the
 /// callback must drop it on every exit path. Holds the raw pointer (not
 /// `&mut`) so the body can keep using its own `&mut Self` view without
 /// borrowck conflict; the `&mut` is formed only at drop time.
@@ -311,15 +313,17 @@ where
 /// `from_js` returns the C++-owned cell pointer for `value`. The caller must
 /// guarantee that:
 /// - no other Rust `&mut Response` aliasing this cell is live for the
-///   lifetime of the returned reference (the .zig spec returns a raw
-///   `?*Response` with no exclusivity claim — the `&mut` here is a port-side
-///   upgrade), and
+///   lifetime of the returned reference, and
 /// - `value` is kept GC-rooted (ensure_still_alive / protect()) for as long
 ///   as the returned reference is used, so the JSC-owned allocation outlives
 ///   the borrow.
 #[inline]
 unsafe fn as_response(value: JSValue) -> Option<&'static mut Response> {
-    response::from_js(value).map(|p| unsafe { &mut *p.cast::<Response>() })
+    response::from_js(value).map(|p| {
+        // SAFETY: see the fn-level safety doc — caller guarantees no live
+        // aliasing `&mut Response` and keeps `value` GC-rooted for the borrow.
+        unsafe { &mut *p.cast::<Response>() }
+    })
 }
 
 // ─── sibling-subtree shims ───────────────────────────────────────────────────
@@ -330,34 +334,40 @@ mod shim {
     use super::*;
 
     #[inline]
-    pub fn response_body_stream(r: &mut Response, g: &JSGlobalObject) -> Option<ReadableStream> {
+    pub(super) fn response_body_stream(
+        r: &mut Response,
+        g: &JSGlobalObject,
+    ) -> Option<ReadableStream> {
         r.get_body_readable_stream(g)
     }
     #[inline]
-    pub fn response_detach_stream(r: &mut Response, g: &JSGlobalObject) {
+    pub(super) fn response_detach_stream(r: &mut Response, g: &JSGlobalObject) {
         r.detach_readable_stream(g)
     }
     #[inline]
-    pub fn signal_aborted(s: &NonNull<AbortSignal>) -> bool {
+    pub(super) fn signal_aborted(s: NonNull<AbortSignal>) -> bool {
         // `signal` is kept alive by the intrusive C++ refcount (+1 from
         // `AbortSignal::new()` / `ref_()`) plus `pending_activity_ref()` until
         // `signal_release` drops both — satisfies the `BackRef` outlives-holder
         // invariant for the duration of this call.
-        bun_ptr::BackRef::from(*s).aborted()
+        bun_ptr::BackRef::from(s).aborted()
     }
     #[inline]
-    pub fn signal_fire(s: &NonNull<AbortSignal>, g: &JSGlobalObject, r: jsc::CommonAbortReason) {
+    pub(super) fn signal_fire(
+        s: NonNull<AbortSignal>,
+        g: &JSGlobalObject,
+        r: jsc::CommonAbortReason,
+    ) {
         // See `signal_aborted` — counted ref keeps pointee live.
-        bun_ptr::BackRef::from(*s).signal(g, r)
+        bun_ptr::BackRef::from(s).signal(g, r)
     }
-    /// Release BOTH refcounts the request holds on its AbortSignal, mirroring
-    /// the Zig `defer { signal.pendingActivityUnref(); signal.unref(); }` pair.
+    /// Release BOTH refcounts the request holds on its AbortSignal.
     /// `pending_activity_unref()` drops the GC-visibility count and `unref()`
     /// drops the intrusive C++ `RefPtr` count taken at creation. `s` must not
     /// be dereferenced after this call.
     #[inline]
-    pub fn signal_release(s: NonNull<AbortSignal>) {
-        // See `signal_aborted`. Order matches Zig: pending-activity first,
+    pub(super) fn signal_release(s: NonNull<AbortSignal>) {
+        // See `signal_aborted`. Order: pending-activity first,
         // then the owning intrusive ref (which may free). `BackRef` is dropped
         // before `unref()` returns, so no dangling deref.
         let signal = bun_ptr::BackRef::from(s);
@@ -365,7 +375,7 @@ mod shim {
         signal.unref();
     }
     #[inline]
-    pub fn iec_trigger(
+    pub(super) fn iec_trigger(
         cb: &bun_jsc::JsCell<request::InternalJSEventCallback>,
         ev: request::EventType,
         g: &JSGlobalObject,
@@ -373,41 +383,37 @@ mod shim {
         cb.with_mut(|cb| cb.trigger(ev, g))
     }
     #[inline]
-    pub fn iec_deinit(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) {
+    pub(super) fn iec_deinit(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) {
         cb.with_mut(|cb| cb.deinit())
     }
     #[inline]
-    pub fn iec_has_callback(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) -> bool {
+    pub(super) fn iec_has_callback(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) -> bool {
         cb.get().has_callback()
     }
     /// `Blob::is_s3()` / `Blob::needs_to_read_file()` have duplicate impls
     /// (E0034); inline the body here.
     #[inline]
-    pub fn blob_is_s3(b: &Blob) -> bool {
+    pub(super) fn blob_is_s3(b: &Blob) -> bool {
         b.store
             .get()
             .as_ref()
             .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::S3(_)))
     }
     #[inline]
-    pub fn blob_needs_to_read_file(b: &Blob) -> bool {
+    pub(super) fn blob_needs_to_read_file(b: &Blob) -> bool {
         b.store
             .get()
             .as_ref()
             .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
     }
     #[inline]
-    pub fn byte_stream_unpipe(s: NonNull<ByteStream>) {
+    pub(super) fn byte_stream_unpipe(s: NonNull<ByteStream>) {
         // The lone caller has just `take()`n the pointer out of
         // `self.byte_stream`; the allocation is kept alive by
         // `response_body_readable_stream_ref` (BackRef invariant: pointee
         // outlives this temporary). R-2: `unpipe_without_deref` takes `&self`
         // (interior-mutable `JsCell<Pipe>`), so shared deref is sufficient.
         bun_ptr::BackRef::from(s).unpipe_without_deref()
-    }
-    #[inline]
-    pub fn request_ensure_url(r: &Request) -> Result<(), bun_alloc::AllocError> {
-        r.ensure_url()
     }
 }
 // `Api::FallbackMessageContainer`/`JsException`/`Problems`/`Fallback::render_backend`
@@ -419,12 +425,11 @@ use bun_options_types::schema::api as Api;
 
 use bun_js_parser::parser::Runtime::Fallback;
 
-/// PORT NOTE: `Api.JsException` is split across two crates in the Rust port —
+/// NOTE: `Api.JsException` is split across two crates —
 /// `bun_jsc::schema_api::JsException` (carries `stack`, used by
 /// `VirtualMachine::run_error_handler`) and `bun_options_types::schema::api::
-/// JsException` (peechy-encodable, `stack` omitted to break the dep cycle). In
-/// Zig these are the *same* struct, so `runErrorHandler` populates the list and
-/// `Problems.exceptions` consumes it directly. Bridge the two here so the
+/// JsException` (peechy-encodable, `stack` omitted to break the dep cycle).
+/// Bridge the two here so the
 /// fallback page actually carries the captured exceptions instead of an empty
 /// array (react-response.test.ts asserts `exceptions[0].message`).
 fn jsc_exceptions_to_api(list: jsc::ExceptionList) -> Vec<Api::JsException> {
@@ -446,18 +451,17 @@ macro_rules! ctx_log { ($($t:tt)*) => { bun_core::scoped_log!(RequestContext, $(
 macro_rules! stream_log { ($($t:tt)*) => { bun_core::scoped_log!(ReadableStream, $($t)*) }; }
 
 /// Per-monomorphization C-ABI shim table for the four promise-reaction host
-/// fns. Zig's `toJSHostFn(onResolve)` mints a fresh `extern fn` per comptime
-/// instantiation **and `@export`s the same pointer**, so the value passed to
-/// `then_with_value` is identical to the `Bun__HTTPRequestContext*__on*`
-/// symbol that C++'s `GlobalObject::promiseHandlerID` compares against.
+/// fns. The value passed to `then_with_value` must be identical to the
+/// `Bun__HTTPRequestContext*__on*` symbol that C++'s
+/// `GlobalObject::promiseHandlerID` compares against.
 ///
-/// In Rust the `#[no_mangle]` exports cannot live on a generic fn, so they are
+/// The `#[no_mangle]` exports cannot live on a generic fn, so they are
 /// emitted as concrete wrappers by `request_ctx_exports!` below. The trait
 /// impls — also emitted by that macro — point at those *exported* wrappers
 /// (not the inner generic shims), so `Self::ON_RESOLVE` and the C++ side agree
 /// on the function-pointer identity and `promiseHandlerID` resolves.
 ///
-/// PORT NOTE (layering): expressed as a trait (not inherent consts) so
+/// NOTE (layering): expressed as a trait (not inherent consts) so
 /// downstream `where`-clauses that already name it keep type-checking.
 pub trait RequestContextHostFns {
     const ON_RESOLVE: bun_jsc::JSHostFn;
@@ -541,8 +545,7 @@ where
     // `host_on_*::<..>` shims: the function-pointer value is what C++'s
     // `GlobalObject::promiseHandlerID` compares against (ZigGlobalObject.cpp),
     // and the exported wrapper has a different address from the generic it
-    // forwards to. The Zig spec gets this for free because `@export` re-labels
-    // the existing fn; in Rust we route through a const-fn lookup keyed on the
+    // forwards to. We route through a const-fn lookup keyed on the
     // (SSL, DEBUG, H3) tuple so the blanket impl can name concrete exports.
     const ON_RESOLVE: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, H3).0;
     const ON_REJECT: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, H3).1;
@@ -574,8 +577,7 @@ where
         // the pointee `NewServer` outlives this context (it owns the pool).
         // `'r` may exceed `&self` because the server is not borrowed from
         // `*self`; it lives independently and outlives every context.
-        let p = self.server.expect("infallible: server bound").as_ptr();
-        unsafe { &*p }
+        unsafe { &*self.server.expect("infallible: server bound").as_ptr() }
     }
 
     /// Mutably borrow the pooled request-body slot, if attached.
@@ -583,21 +585,14 @@ where
     /// Returns an unbounded `&'r mut` because the slot is a separate
     /// `HiveArray` allocation, **not** a sub-field of `*self`, so callers may
     /// hold it across disjoint `&self`/`&mut self` reborrows of other
-    /// `RequestContext` fields (same pattern as [`server()`]). Replaces the
-    /// per-site raw `NonNull::as_mut` deref at each state-machine site.
-    ///
-    /// # Safety (encapsulated)
-    /// While `Some`, `request_body` points to a pooled `HiveRef<Body::Value>`
-    /// slot whose lifetime is governed by the intrusive ref this context holds
-    /// (released via [`request_body_take_unref`] in `deinit()` /
-    /// `on_buffered_body_chunk` last-chunk path). The slot is single-threaded
-    /// and never aliased from outside this `RequestContext`, so forming a
-    /// unique `&mut` for the duration of the caller's use is sound.
+    /// `RequestContext` fields (same pattern as [`server()`]).
     #[inline]
     fn request_body_mut<'r>(&mut self) -> Option<&'r mut Body::Value> {
-        // SAFETY: see fn doc — pooled HiveRef slot live while `Some`,
-        // unaliased, single-threaded.
-        self.request_body.map(|mut p| unsafe { p.as_mut() })
+        // SAFETY: R-2 invariant — the slot is shared with `Request.body` but
+        // never `&mut`-borrowed concurrently (single-threaded event loop).
+        self.request_body
+            .as_ref()
+            .map(|h| unsafe { &mut (*h.as_ptr()).value })
     }
 
     /// Exclusive borrow of the heap [`ResponseStreamJSSink`] this context owns.
@@ -619,19 +614,11 @@ where
         self.sink.map(|p| unsafe { &mut *p.as_ptr() })
     }
 
-    /// Take the pooled request-body slot out of `self` and release the
-    /// intrusive ref this context held on it (returns it to the hive when
-    /// last). Mirrors the Zig `body.unref()` on `deinit` / final body chunk.
+    /// Take the pooled request-body slot out of `self`; the handle's `Drop`
+    /// releases the `+1`.
     #[inline]
     fn request_body_take_unref(&mut self) {
-        if let Some(mut p) = self.request_body.take() {
-            // SAFETY: pointee is the pooled `HiveRef` slot allocated by
-            // `init_request_body_value`; live until this `unref()` drops the
-            // last count. `Body::Value` reachable from `request_body` is
-            // always the `.value` field of a hive slot, satisfying `unref`'s
-            // container-of precondition.
-            let _ = unsafe { p.as_mut().unref() };
-        }
+        self.request_body.take();
     }
 
     pub fn set_signal_aborted(&mut self, reason: jsc::CommonAbortReason) {
@@ -639,7 +626,7 @@ where
             if let Some(server) = self.server {
                 // server is a BACKREF — valid while this RequestContext is alive
                 let global = server.global_this();
-                shim::signal_fire(signal, global, reason);
+                shim::signal_fire(*signal, global, reason);
             }
         }
     }
@@ -651,7 +638,7 @@ where
         if let Some(server) = self.server {
             // SAFETY: BACKREF. `ServerLike::vm()` returns `&VirtualMachine`
             // but `drain_microtasks` needs `&mut`; cast through the raw
-            // pointer (Zig held a `*VirtualMachine`).
+            // pointer.
             unsafe {
                 let vm = std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut();
                 (*vm).drain_microtasks();
@@ -666,7 +653,7 @@ where
         if let Some(resp) = self.resp {
             self.flags.set_has_abort_handler(true);
             // SAFETY: FFI handle valid while resp is Some
-            resp.on_aborted(Self::on_abort, self);
+            resp.on_aborted(|this, resp| Self::on_abort(this, resp), self);
         }
     }
 
@@ -685,7 +672,7 @@ where
         if let Some(resp) = self.resp {
             self.flags.set_has_timeout_handler(true);
             // SAFETY: FFI handle valid while resp is Some
-            resp.on_timeout(Self::on_timeout, self);
+            resp.on_timeout(|this, resp| Self::on_timeout(this, resp), self);
         }
     }
 
@@ -722,22 +709,34 @@ where
                     "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
                 );
             } else if !value.is_empty() && !global_this.has_exception() {
-                // TODO(port): jsc::ConsoleObject::Formatter has no Default;
-                // JSValue::to_fmt lives on a trait not in scope here. Fall back
-                // to the generic message until those land.
-                let _ = value;
-                bun_core::err_generic!("Expected a Response object");
+                let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
+                formatter.quote_strings = true;
+                bun_core::err_generic!(
+                    "Expected a Response object, but received '{}'",
+                    jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value),
+                );
+                // `formatter` drops here.
             } else {
                 bun_core::err_generic!("Expected a Response object");
             }
 
             Output::flush();
             if !global_this.has_exception() {
-                let _ = writer;
-                // TODO(port): write_trace wants `impl bun_io::Write`; Output::error_writer()
-                // returns a raw `*mut Writer`. Skip the JS stack trace for now.
+                jsc::ConsoleObject::write_trace(writer, global_this);
             }
             Output::flush();
+        }
+        // The formatter and `write_trace` above re-enter JS (getters, proxy
+        // traps, Error.prepareStackTrace), which can synchronously abort or
+        // end this request (e.g. AbortController.abort() inside a getter).
+        // We hold `&mut self` for the whole call, matching the rest of this
+        // promise-resolve path (`on_resolve` → `handle_resolve` also re-enter
+        // JS through `&mut`).
+        // The `RequestContextRef` guard taken in `on_resolve` keeps the
+        // allocation alive across the re-entry; re-check the request state so
+        // we never render onto a response that was ended underneath us.
+        if self.is_aborted_or_ended() {
+            return;
         }
         self.render_missing();
     }
@@ -845,11 +844,8 @@ where
             return false;
         }
         // check if the body is Locked (streaming)
-        if let Some(body) = self.request_body {
-            // Pooled HiveRef slot is live while held (see deinit()) — satisfies
-            // the `BackRef` outlives-holder invariant for this read.
-            let body = bun_ptr::BackRef::from(body);
-            if matches!(&*body, Body::Value::Locked(_)) {
+        if let Some(body) = &self.request_body {
+            if matches!(&**body, Body::Value::Locked(_)) {
                 return false;
             }
         }
@@ -858,8 +854,6 @@ where
     }
 
     /// destroy RequestContext, should be only called by deref or if defer_deinit_until_callback_completes is ref is set to true
-    // TODO(port): named `deinit` (not Drop) because RequestContext is pool-allocated and
-    // explicitly returned to a HiveArray; Drop semantics don't apply.
     pub fn deinit(&mut self) {
         ctx_log!("deinit");
         self.detach_response();
@@ -914,7 +908,6 @@ where
         self.ref_count += 1;
     }
 
-    // TODO(port): #[bun_jsc::host_fn] — see note on `on_resolve`.
     pub fn on_reject(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onReject");
 
@@ -985,12 +978,15 @@ where
 
     pub fn render_missing(&mut self) {
         if let Some(resp) = self.resp {
-            resp.run_corked_with_type(Self::render_missing_corked, self);
+            resp.run_corked_with_type(|ctx| Self::render_missing_corked(ctx), self);
         }
     }
 
-    pub fn render_missing_corked(ctx: *mut Self) {
-        // SAFETY: ctx is the live RequestContext threaded through cork user-data.
+    /// # Safety
+    /// `ctx` must point to a live `RequestContext` threaded through cork user-data.
+    pub(crate) fn render_missing_corked(ctx: *mut Self) {
+        // SAFETY: caller upholds the fn-level contract — `ctx` is the live
+        // `RequestContext` threaded through cork user-data.
         let ctx = unsafe { &mut *ctx };
         if let Some(resp) = ctx.resp {
             if !DEBUG_MODE {
@@ -1027,27 +1023,18 @@ where
         }
     }
 
-    // TODO(b2-blocked): `Api::FallbackMessageContainer` + `Fallback::render_backend`
-    // (bun_options_types::schema::api / bun_ast::runtime) — debug-only HTML
-    // error page. Production hits `render_production_error` instead.
-
     pub fn render_default_error(
         &mut self,
-        // TODO(port): arena_allocator param dropped; this is a non-AST crate, allocations use global mimalloc.
-        // PERF(port): was arena bulk-free — profile in Phase B
         log: &mut bun_ast::Log,
         err: bun_core::Error,
         exceptions: &[Api::JsException],
-        fmt: core::fmt::Arguments<'_>, // TODO(port): Zig `comptime fmt: string, args: anytype`
+        fmt: core::fmt::Arguments<'_>,
     ) {
         if !self.flags.has_written_status() {
             self.flags.set_has_written_status(true);
             if let Some(resp) = self.resp {
-                // SAFETY: FFI handle
-                unsafe {
-                    resp.write_status(b"500 Internal Server Error");
-                    resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
-                }
+                resp.write_status(b"500 Internal Server Error");
+                resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
             }
         }
 
@@ -1060,7 +1047,6 @@ where
             reason: Some(Api::FallbackStep::fetch_event_handler),
             cwd: Some(cwd.to_vec().into_boxed_slice()),
             problems: Some(Api::Problems {
-                // Zig: `@truncate(@intFromError(err))`.
                 code: err.as_u16(),
                 name: err.name().as_bytes().to_vec().into_boxed_slice(),
                 exceptions: exceptions.to_vec(),
@@ -1076,8 +1062,12 @@ where
             }),
         });
 
-        // TODO(port): `if (comptime fmt.len > 0)` — fmt::Arguments has no const len; always print.
-        Output::pretty_errorln(fmt);
+        // `fmt::Arguments` has no const len, but an empty format string is
+        // detectable at runtime via `as_str() == Some("")`.
+        if fmt.as_str() != Some("") {
+            #[allow(clippy::disallowed_methods)] // fmt is a caller-provided Arguments parameter
+            Output::pretty_errorln(fmt);
+        }
         Output::flush();
 
         // Explicitly use the global allocator and *not* the arena
@@ -1086,10 +1076,7 @@ where
         Fallback::render_backend(&fallback_container, &mut bb).expect("unreachable");
         let try_end_ok = match self.resp {
             None => true,
-            Some(resp) => unsafe {
-                // SAFETY: FFI handle
-                resp.try_end(&bb, bb.len(), self.should_close_connection())
-            },
+            Some(resp) => resp.try_end(&bb, bb.len(), self.should_close_connection()),
         };
         if try_end_ok {
             drop(bb);
@@ -1105,14 +1092,20 @@ where
 
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            resp.on_writable(Self::on_writable_complete_response_buffer, self);
+            resp.on_writable(
+                |this, off, resp| Self::on_writable_complete_response_buffer(this, off, resp),
+                self,
+            );
         }
     }
 
     pub fn render_response_buffer(&mut self) {
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            resp.on_writable(Self::on_writable_response_buffer, self);
+            resp.on_writable(
+                |this, off, resp| Self::on_writable_response_buffer(this, off, resp),
+                self,
+            );
         }
     }
 
@@ -1153,11 +1146,8 @@ where
             // This will send a terminating 0\r\n\r\n chunk to the client
             // We only want to do that if they're still expecting a body
             // We cannot call this function if the Content-Length header was previously set
-            // SAFETY: FFI handle
-            unsafe {
-                if resp.state().is_response_pending() {
-                    resp.end_stream(close_connection);
-                }
+            if resp.state().is_response_pending() {
+                resp.end_stream(close_connection);
             }
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
@@ -1190,13 +1180,16 @@ where
         }
     }
 
-    pub fn on_writable_response_buffer(
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub(crate) fn on_writable_response_buffer(
         this: *mut Self,
         _write_offset: u64,
         _resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableResponseBuffer");
-        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
+        // SAFETY: caller upholds the fn-level contract — `this` is the live
+        // `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
@@ -1206,57 +1199,22 @@ where
         false
     }
 
-    // TODO: should we cork?
-    pub fn on_writable_complete_response_buffer_and_metadata(
-        this: *mut Self,
-        write_offset: u64,
-        resp: uws::AnyResponse,
-    ) -> bool {
-        ctx_log!("onWritableCompleteResponseBufferAndMetadata");
-        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
-        let this = unsafe { &mut *this };
-        debug_assert!(this.resp.is_some());
-
-        if this.is_aborted_or_ended() {
-            return false;
-        }
-
-        if !this.flags.has_written_status() {
-            this.render_metadata();
-        }
-
-        if this.method == Method::HEAD {
-            this.end_without_body(this.should_close_connection());
-            return false;
-        }
-
-        this.send_writable_bytes_for_complete_response_buffer(write_offset, resp)
-    }
-
-    pub fn on_writable_complete_response_buffer(
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub(crate) fn on_writable_complete_response_buffer(
         this: *mut Self,
         write_offset: u64,
         resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableCompleteResponseBuffer");
-        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
+        // SAFETY: caller upholds the fn-level contract — `this` is the live
+        // `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
             return false;
         }
         this.send_writable_bytes_for_complete_response_buffer(write_offset, resp)
-    }
-
-    #[inline]
-    fn any_response(r: *mut Resp<SSL_ENABLED, HTTP3>) -> uws::AnyResponse {
-        if HTTP3 {
-            uws::AnyResponse::H3(r.cast::<bun_uws_sys::h3::Response>())
-        } else if SSL_ENABLED {
-            uws::AnyResponse::SSL(r.cast::<bun_uws_sys::NewAppResponse<true>>())
-        } else {
-            uws::AnyResponse::TCP(r.cast::<bun_uws_sys::NewAppResponse<false>>())
-        }
     }
 
     #[inline]
@@ -1281,19 +1239,6 @@ where
         }
     }
 
-    #[inline]
-    fn req_url(r: *mut Req<SSL_ENABLED, HTTP3>) -> &'static [u8] {
-        // SAFETY: see `req_method`.
-        unsafe {
-            if HTTP3 {
-                (*r.cast::<bun_uws_sys::h3::Request>()).url()
-            } else {
-                (*r.cast::<bun_uws_sys::Request>()).url()
-            }
-        }
-    }
-
-    // TODO(port): in-place init — `this` is a pre-allocated slot in a HiveArray pool.
     pub fn create(
         this: &mut core::mem::MaybeUninit<Self>,
         server: *const ThisServer,
@@ -1328,6 +1273,7 @@ where
                 request_body: None,
                 request_body_buf: Vec::new(),
                 request_body_content_len: 0,
+                request_body_streamed_len: 0,
                 sink: None,
                 byte_stream: None,
                 response_body_readable_stream_ref: readable_stream::Strong::default(),
@@ -1340,8 +1286,11 @@ where
         ctx_log!("create<d> ({:p})<r>", this.as_ptr());
     }
 
-    pub fn on_timeout(this: *mut Self, _resp: uws::AnyResponse) {
-        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub(crate) fn on_timeout(this: *mut Self, _resp: uws::AnyResponse) {
+        // SAFETY: caller upholds the fn-level contract — `this` is the live
+        // `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         debug_assert!(this.server.is_some());
@@ -1370,9 +1319,12 @@ where
         }
     }
 
-    pub fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub(crate) fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
         ctx_log!("onAbort");
-        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
+        // SAFETY: caller upholds the fn-level contract — `this` is the live
+        // `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         // An HTTP/3 stream is destroyed once both sides FIN, so this also
@@ -1403,8 +1355,7 @@ where
         let vm = std::ptr::from_ref::<VirtualMachine>(server.vm()).cast_mut();
         let global_this = server.global_this();
         // Drop one ref on every exit path. Declared before the microtask drain
-        // so it runs *after* (LIFO) — matches Zig `defer this.deref()` ordered
-        // after `defer drainMicrotasks()`.
+        // so it runs *after* (LIFO).
         let _ref = RequestContextRef(std::ptr::from_mut::<Self>(this));
         // This is a task in the event loop.
         // If we called into JavaScript, we must drain the microtask queue.
@@ -1430,9 +1381,9 @@ where
         }
         // if signal is not aborted, abort the signal
         if let Some(signal) = this.signal.take() {
-            if !shim::signal_aborted(&signal) {
+            if !shim::signal_aborted(signal) {
                 shim::signal_fire(
-                    &signal,
+                    signal,
                     global_this,
                     jsc::CommonAbortReason::ConnectionClosed,
                 );
@@ -1509,9 +1460,9 @@ where
 
         // if signal is not aborted, abort the signal
         if let Some(signal) = self.signal.take() {
-            if self.flags.aborted() && !shim::signal_aborted(&signal) {
+            if self.flags.aborted() && !shim::signal_aborted(signal) {
                 shim::signal_fire(
-                    &signal,
+                    signal,
                     global_this,
                     jsc::CommonAbortReason::ConnectionClosed,
                 );
@@ -1561,9 +1512,16 @@ where
         Self::on_file_stream_complete(ctx, resp);
     }
 
-    pub fn on_writable_bytes(this: *mut Self, write_offset: u64, resp: uws::AnyResponse) -> bool {
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub(crate) fn on_writable_bytes(
+        this: *mut Self,
+        write_offset: u64,
+        resp: uws::AnyResponse,
+    ) -> bool {
         ctx_log!("onWritableBytes");
-        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
+        // SAFETY: caller upholds the fn-level contract — `this` is the live
+        // `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
@@ -1571,8 +1529,11 @@ where
         }
 
         // Copy to stack memory to prevent aliasing issues in release builds
-        // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
+        // NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
+        // SAFETY: `this.blob`'s backing bytes are owned by the context and
+        // outlive `send_writable_bytes_for_blob`; detaching the borrow lets
+        // `&mut *this` reborrow disjoint fields below without aliasing.
         let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(this.blob.slice()) };
 
         let _ = this.send_writable_bytes_for_blob(bytes, write_offset, resp);
@@ -1598,7 +1559,10 @@ where
         } else {
             self.flags.set_has_marked_pending(true);
             // SAFETY: FFI handle
-            resp.on_writable(Self::on_writable_bytes, self);
+            resp.on_writable(
+                |this, off, resp| Self::on_writable_bytes(this, off, resp),
+                self,
+            );
             true
         }
     }
@@ -1629,7 +1593,10 @@ where
         } else {
             self.flags.set_has_marked_pending(true);
             // SAFETY: FFI handle
-            resp.on_writable(Self::on_writable_complete_response_buffer, self);
+            resp.on_writable(
+                |this, off, resp| Self::on_writable_complete_response_buffer(this, off, resp),
+                self,
+            );
         }
 
         true
@@ -1683,15 +1650,13 @@ where
                 if auto_close {
                     fd.close();
                 }
-                // TODO(port): Zig `withPathLike(file.pathlike)` also sets
-                // `.fd` for the Fd arm; `bun_sys::Error` only carries a path
-                // slice, so render the fd as bytes for the error path.
+                // Attach the path for the Path arm and the fd for the Fd arm.
                 let js_err = match &file.pathlike {
                     crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
                         err.with_path(p.slice()).to_js(global_this)
                     }
-                    crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => {
-                        err.to_js(global_this)
+                    crate::webcore::node_types::PathOrFileDescriptor::Fd(pathlike_fd) => {
+                        err.with_fd(*pathlike_fd).to_js(global_this)
                     }
                 };
                 return self.run_error_handler(js_err);
@@ -1711,21 +1676,21 @@ where
                 if auto_close {
                     fd.close();
                 }
-                // TODO(port): Zig `withPathLike(file.pathlike)` also sets `.fd`
-                // for the Fd arm; `bun_sys::Error::with_path` only carries a
-                // path slice, so the fd arm gets no path attached.
-                let path_bytes: &[u8] = match &file.pathlike {
-                    crate::webcore::node_types::PathOrFileDescriptor::Path(p) => p.slice(),
-                    crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => b"",
-                };
-                let mut sys: jsc::SystemError = bun_sys::Error {
+                // Attach the path for the Path arm and the fd for the Fd arm.
+                let base_err = bun_sys::Error {
                     errno: bun_sys::E::EISDIR as _,
                     syscall: bun_sys::Tag::read,
                     ..Default::default()
-                }
-                .with_path(path_bytes)
-                .to_system_error()
-                .into();
+                };
+                let err = match &file.pathlike {
+                    crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
+                        base_err.with_path(p.slice())
+                    }
+                    crate::webcore::node_types::PathOrFileDescriptor::Fd(pathlike_fd) => {
+                        base_err.with_fd(*pathlike_fd)
+                    }
+                };
+                let mut sys: jsc::SystemError = err.to_system_error().into();
                 sys.message = BunString::static_("Cannot stream a directory as a response body");
                 return self.run_error_handler(sys.to_error_instance(global_this));
             }
@@ -1825,15 +1790,12 @@ where
                         RangeRequest::Result::Unsatisfiable,
                         Some(stat_size),
                     );
-                    // SAFETY: FFI handle
-                    unsafe {
-                        resp.write_header(b"content-range", cr);
-                        resp.write_header(b"accept-ranges", b"bytes");
-                        let close = resp.should_close_connection();
-                        self.detach_response();
-                        self.end_request_streaming_and_drain();
-                        resp.end(b"", close);
-                    }
+                    resp.write_header(b"content-range", cr);
+                    resp.write_header(b"accept-ranges", b"bytes");
+                    let close = resp.should_close_connection();
+                    self.detach_response();
+                    self.end_request_streaming_and_drain();
+                    resp.end(b"", close);
                     self.deref();
                     return;
                 }
@@ -1864,9 +1826,18 @@ where
         self.flags.set_has_abort_handler(true);
         self.flags.set_has_marked_pending(true);
 
+        if self.flags.is_waiting_for_request_body() {
+            self.flags.set_is_waiting_for_request_body(false);
+            resp.clear_on_data();
+        }
+        if self.flags.has_timeout_handler() {
+            resp.clear_timeout();
+            self.flags.set_has_timeout_handler(false);
+        }
+
         // SAFETY: BACKREF
         let server = self.server();
-        FileResponseStream::start(file_response_stream::StartOptions {
+        FileResponseStream::start(&file_response_stream::StartOptions {
             fd,
             auto_close,
             resp,
@@ -1887,8 +1858,11 @@ where
         });
     }
 
-    pub fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
-        // SAFETY: this is a *RequestContext registered as lock.task
+    /// # Safety
+    /// `this` must be a `*mut RequestContext` previously registered as `lock.task`.
+    pub(crate) fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
+        // SAFETY: caller upholds the fn-level contract — `this` is the
+        // `*mut RequestContext` previously registered as `lock.task`.
         Self::do_render_with_body(unsafe { bun_ptr::callback_ctx::<Self>(this) }, value, None);
     }
 
@@ -1926,13 +1900,12 @@ where
     }
 
     /// Tear down a heap `ResponseStreamJSSink` allocated by `do_render_stream`.
-    /// Mirrors Zig `response_stream.detach(); response_stream.sink.destroy()` —
     /// JSSink<T> is `repr(transparent)` so the inner-ptr free matches the
     /// outer allocation.
     fn destroy_sink(ptr: NonNull<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>) {
-        // SAFETY: `ptr` was `heap::alloc`'d in do_render_stream and is being
-        // consumed exactly once here. `JSSink<T>` is repr(transparent), so the
-        // inner `HTTPServerWritable` shares the allocation Layout.
+        // `ptr` was `heap::alloc`'d in do_render_stream and is being consumed
+        // exactly once here. `JSSink<T>` is repr(transparent), so the inner
+        // `HTTPServerWritable` shares the allocation Layout.
         ResponseStream::<SSL_ENABLED, HTTP3>::destroy(
             ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED, HTTP3>>(),
         );
@@ -1942,7 +1915,7 @@ where
         ctx_log!("doRenderStream");
         // SAFETY: pair is a stack local threaded through cork user-data.
         let pair = unsafe { &mut *pair };
-        // PORT NOTE: reshaped for borrowck — split the two fields up front so
+        // NOTE: reshaped for borrowck — split the two fields up front so
         // `this` and `stream` are independent borrows of `*pair`.
         let this: &mut Self = &mut *pair.this;
         let stream = &mut pair.stream;
@@ -1977,7 +1950,7 @@ where
                 ..Default::default()
             },
         });
-        // PORT NOTE: reshaped for borrowck — own via raw ptr so `this.sink` and the
+        // NOTE: reshaped for borrowck — own via raw ptr so `this.sink` and the
         // local `response_stream` view can coexist with `&mut *this` calls below.
         let response_stream_ptr = bun_core::heap::into_raw_nn(response_stream_box);
         this.sink = Some(response_stream_ptr);
@@ -2099,9 +2072,8 @@ where
                         stream_log!("promise Fulfilled");
                         let mut readable_ref =
                             core::mem::take(&mut this.response_body_readable_stream_ref);
-                        // PORT NOTE: reshaped for borrowck — Zig `defer` runs
-                        // after handle_resolve_stream; emulate by running the
-                        // body first then the deferred cleanup.
+                        // NOTE: cleanup runs after handle_resolve_stream:
+                        // body first, then the deferred cleanup.
                         Self::handle_resolve_stream(this);
                         stream.done(global_this);
                         readable_ref.deinit();
@@ -2286,20 +2258,17 @@ where
         self.request_body_buf = Vec::new();
 
         if let Some(resp) = self.resp.take() {
-            // SAFETY: FFI handle
-            unsafe {
-                if self.flags.is_waiting_for_request_body() {
-                    self.flags.set_is_waiting_for_request_body(false);
-                    resp.clear_on_data();
-                }
-                if self.flags.has_abort_handler() {
-                    resp.clear_aborted();
-                    self.flags.set_has_abort_handler(false);
-                }
-                if self.flags.has_timeout_handler() {
-                    resp.clear_timeout();
-                    self.flags.set_has_timeout_handler(false);
-                }
+            if self.flags.is_waiting_for_request_body() {
+                self.flags.set_is_waiting_for_request_body(false);
+                resp.clear_on_data();
+            }
+            if self.flags.has_abort_handler() {
+                resp.clear_aborted();
+                self.flags.set_has_abort_handler(false);
+            }
+            if self.flags.has_timeout_handler() {
+                resp.clear_timeout();
+                self.flags.set_has_timeout_handler(false);
             }
         }
     }
@@ -2313,10 +2282,13 @@ where
             || self.server().terminated()
     }
 
-    pub fn do_render_head_response_after_s3_size_resolved(
+    /// # Safety
+    /// `pair` must point to a live stack-local `HeaderResponseSizePair` threaded through cork user-data.
+    pub(crate) fn do_render_head_response_after_s3_size_resolved(
         pair: *mut HeaderResponseSizePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>,
     ) {
-        // SAFETY: pair is a stack local threaded through cork user-data.
+        // SAFETY: caller upholds the fn-level contract — `pair` points to a
+        // live stack-local `HeaderResponseSizePair` threaded through cork user-data.
         let pair = unsafe { &mut *pair };
         let this = &mut *pair.this;
         this.render_metadata();
@@ -2326,7 +2298,8 @@ where
             resp.write_header_int(b"content-length", pair.size as u64);
         }
         this.end_without_body(this.should_close_connection());
-        this.deref();
+        // `end_without_body` released the base ref; the caller
+        // (`on_s3_size_resolved`) releases the ref taken for the S3 stat.
     }
 
     /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsTerminatedResult<()>`.
@@ -2348,7 +2321,7 @@ where
             };
             let mut pair = HeaderResponseSizePair { this, size };
             resp.run_corked_with_type(
-                Self::do_render_head_response_after_s3_size_resolved,
+                |p| Self::do_render_head_response_after_s3_size_resolved(p),
                 &raw mut pair,
             );
         }
@@ -2398,10 +2371,7 @@ where
                     // the bytes outlive renderMetadata().
                     let transfer_encoding_str = transfer_encoding.to_slice_clone();
                     this.render_metadata();
-                    // SAFETY: FFI handle
-                    unsafe {
-                        resp.write_header(b"transfer-encoding", transfer_encoding_str.slice())
-                    };
+                    resp.write_header(b"transfer-encoding", transfer_encoding_str.slice());
                     this.end_without_body(this.should_close_connection());
                     return;
                 }
@@ -2429,13 +2399,10 @@ where
                 let size = blob.size();
                 this.render_metadata();
 
-                // SAFETY: FFI handle
-                unsafe {
-                    if size == crate::webcore::blob::MAX_SIZE {
-                        resp.write_header_int(b"content-length", 0);
-                    } else {
-                        resp.write_header_int(b"content-length", size as u64);
-                    }
+                if size == crate::webcore::blob::MAX_SIZE {
+                    resp.write_header_int(b"content-length", 0);
+                } else {
+                    resp.write_header_int(b"content-length", size as u64);
                 }
                 this.end_without_body(this.should_close_connection());
                 blob.detach();
@@ -2477,13 +2444,10 @@ where
                 this.render_metadata();
 
                 blob.resolve_size();
-                // SAFETY: FFI handle
-                unsafe {
-                    if blob.size.get() == crate::webcore::blob::MAX_SIZE {
-                        resp.write_header_int(b"content-length", 0);
-                    } else {
-                        resp.write_header_int(b"content-length", blob.size.get() as u64);
-                    }
+                if blob.size.get() == crate::webcore::blob::MAX_SIZE {
+                    resp.write_header_int(b"content-length", 0);
+                } else {
+                    resp.write_header_int(b"content-length", blob.size.get() as u64);
                 }
                 this.end_without_body(this.should_close_connection());
             }
@@ -2708,7 +2672,6 @@ where
         req.end_stream(req.should_close_connection());
     }
 
-    // TODO(port): #[bun_jsc::host_fn] — see note on `on_resolve`.
     pub fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         stream_log!("onResolveStream");
         let args = callframe.arguments_old::<2>();
@@ -2720,7 +2683,6 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(port): #[bun_jsc::host_fn] — see note on `on_resolve`.
     pub fn on_reject_stream(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -2766,9 +2728,8 @@ where
         }
 
         if let Some(resp) = req.response_weakref.get() {
-            // PORT NOTE: Zig captures `bodyValue` ptr first then derefs after
-            // the stream calls; reordered here for borrowck (semantically
-            // identical — the Zig check reads through the pointer post-detach).
+            // NOTE: the body value is read after the stream calls (the check
+            // observes the post-detach state).
             if let Some(stream) = resp.get_body_readable_stream(global_this) {
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
@@ -2792,9 +2753,6 @@ where
             req.render_metadata();
         }
 
-        // TODO(b2-blocked): DEBUG_MODE dev-server HTML fallback page — gated on
-        // `Api::FallbackMessageContainer`/`Fallback::render_backend`.
-
         if DEBUG_MODE {
             if let Some(server) = req.server {
                 if !err.is_empty_or_undefined_or_null() {
@@ -2813,14 +2771,11 @@ where
                         if !req.flags.has_written_status() {
                             req.flags.set_has_written_status(true);
                             if let Some(resp) = req.resp {
-                                // SAFETY: FFI handle
-                                unsafe {
-                                    resp.write_status(b"500 Internal Server Error");
-                                    resp.write_header(
-                                        b"content-type",
-                                        &bun_http_types::MimeType::HTML.value,
-                                    );
-                                }
+                                resp.write_status(b"500 Internal Server Error");
+                                resp.write_header(
+                                    b"content-type",
+                                    &bun_http_types::MimeType::HTML.value,
+                                );
                             }
                         }
 
@@ -2898,8 +2853,7 @@ where
                 let readable_stream: Option<WebCore::ReadableStream> = 'brk: {
                     if let Some(stream) = lock.readable.get(global_this) {
                         // we hold the stream alive until we're done with it
-                        // PORT NOTE: Zig `= lock.readable` is a bitwise struct copy (no
-                        // dtor); Rust `Strong` is move-only — take() transfers ownership.
+                        // NOTE: `Strong` is move-only — take() transfers ownership.
                         this.response_body_readable_stream_ref =
                             core::mem::take(&mut lock.readable);
                         break 'brk Some(stream);
@@ -3022,7 +2976,8 @@ where
                 }
 
                 // when there's no stream, we need to
-                lock.on_receive_value = Some(Self::do_render_with_body_locked);
+                lock.on_receive_value =
+                    Some(|ctx, value| Self::do_render_with_body_locked(ctx, value));
                 lock.task = Some(std::ptr::from_mut::<Self>(this).cast::<c_void>());
 
                 return;
@@ -3034,13 +2989,12 @@ where
     }
 
     pub fn on_pipe(this: &mut Self, mut stream: WebCore::streams::Result) {
-        // TODO(port): allocator param dropped — global mimalloc per §Allocators
         let stream_needs_deinit = matches!(
             stream,
             WebCore::streams::Result::Owned(_) | WebCore::streams::Result::OwnedAndDone(_)
         );
         let is_done = stream.is_done();
-        // PORT NOTE: reshaped for borrowck — the defer reads `stream` through a
+        // NOTE: reshaped for borrowck — the defer reads `stream` through a
         // raw ptr so the body below can keep borrowing it.
         let stream_ptr: *mut WebCore::streams::Result = &raw mut stream;
         // Drop one ref only when the stream signals completion.
@@ -3079,7 +3033,10 @@ where
             if is_done {
                 this.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
-                resp.on_writable(Self::on_writable_response_buffer, this);
+                resp.on_writable(
+                    |this, off, resp| Self::on_writable_response_buffer(this, off, resp),
+                    this,
+                );
             }
         }
     }
@@ -3092,15 +3049,18 @@ where
         // This is an important performance optimization
         if self.flags.has_abort_handler() && self.blob.fast_size() < 16384 - 1024 {
             if let Some(resp) = self.resp {
-                resp.run_corked_with_type(Self::do_render_blob_corked, self);
+                resp.run_corked_with_type(|ctx| Self::do_render_blob_corked(ctx), self);
             }
         } else {
             Self::do_render_blob_corked(std::ptr::from_mut::<Self>(self));
         }
     }
 
-    pub fn do_render_blob_corked(this: *mut Self) {
-        // SAFETY: this is the live RequestContext threaded through cork user-data.
+    /// # Safety
+    /// `this` must point to a live `RequestContext` threaded through cork user-data.
+    pub(crate) fn do_render_blob_corked(this: *mut Self) {
+        // SAFETY: caller upholds the fn-level contract — `this` points to a
+        // live `RequestContext` threaded through cork user-data.
         let this = unsafe { &mut *this };
         this.render_metadata();
         this.render_bytes();
@@ -3118,7 +3078,7 @@ where
         if self.is_aborted_or_ended() {
             return;
         }
-        // PORT NOTE: WeakPtr::get borrows `&mut self`, and `do_render_with_body`
+        // NOTE: WeakPtr::get borrows `&mut self`, and `do_render_with_body`
         // also needs `&mut self` plus a `&mut BodyValue` from the response. The
         // response lives in a separate allocation (held by the WeakRef) so the
         // borrows are disjoint at runtime; route through a raw ptr to express that.
@@ -3183,15 +3143,10 @@ where
         // SAFETY: BACKREF
         let server = &*server;
         let global_this = server.global_this();
-        // TODO(b2-blocked): DEBUG_MODE branch renders the HTML fallback page via
-        // `Api::JsException` + `render_default_error`; gated until bun_schema/
-        // bun_js_parser surfaces are in. Falls through to the production path.
-
         // `ServerLike::vm()` is the process-static VM `BackRef`; `as_mut()` is
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
         if DEBUG_MODE {
-            // PERF(port): was arena bulk-free — profile in Phase B
             let mut exception_list_upstream: jsc::ExceptionList = Vec::new();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
             vm.on_unhandled_rejection_exception_list =
@@ -3201,7 +3156,7 @@ where
 
             let exception_list = jsc_exceptions_to_api(exception_list_upstream);
             let log = vm.log_mut().unwrap();
-            // PORT NOTE: format eagerly so `format_args!` doesn't hold an
+            // NOTE: format eagerly so `format_args!` doesn't hold an
             // immutable borrow of `self` across the `&mut self` call.
             let msg = format!(
                 "<r><red>{:?}<r> - <b>{}<r> failed",
@@ -3339,10 +3294,8 @@ where
 
     pub fn run_error_handler_with_status_code(&mut self, value: JSValue, status: u16) {
         jsc::mark_binding!();
-        // SAFETY: FFI handle, just checked is_some()
-        if self.resp.is_none()
-            || unsafe { self.resp.expect("infallible: resp bound").has_responded() }
-        {
+        let Some(resp) = self.resp else { return };
+        if resp.has_responded() {
             return;
         }
 
@@ -3376,8 +3329,7 @@ where
 
         let (content_type, needs_content_type, content_type_needs_free) =
             get_content_type(response.get_init_headers_mut(), &self.blob);
-        // PORT NOTE: Zig `defer if (content_type_needs_free) content_type.deinit()`.
-        // `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
+        // NOTE: `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
         // Hold the value past all reads below, then let it drop at scope end.
         let _ct_guard = scopeguard::guard(content_type_needs_free, |_needs| {
             // Drop of `content_type` (moved into closure capture below would
@@ -3399,7 +3351,7 @@ where
 
             self.do_write_status(status);
             self.do_write_headers(&mut headers_);
-            // Zig: `defer headers_.deref()`. `HeadersRef` is RAII — its Drop
+            // `HeadersRef` is RAII — its Drop
             // already calls `WebCore__FetchHeaders__deref`, so an explicit
             // `.deref()` here would resolve (via DerefMut) to the inherent
             // `FetchHeaders::deref` and double-free the C++ object.
@@ -3430,6 +3382,10 @@ where
             // we may not know the content-type when streaming
             && (!self.blob.is_detached()
                 || content_type.value.as_ptr() != bun_http_types::MimeType::OTHER.value.as_ptr())
+            && !content_type
+                .value
+                .iter()
+                .any(|&b| matches!(b, b'\r' | b'\n' | 0))
         {
             resp.write_header(b"content-type", &content_type.value);
         }
@@ -3437,7 +3393,6 @@ where
         // Advertise the QUIC endpoint on H1/H2 responses so browsers can
         // discover it (RFC 7838). Multiple Alt-Svc fields are valid, so a
         // user-supplied one composes rather than conflicts.
-        // TODO(port): `@hasDecl(ThisServer, "h3AltSvc")` — model as optional trait method.
         if !HTTP3 {
             // SAFETY: BACKREF
             if let Some(alt) = self.server().h3_alt_svc() {
@@ -3454,16 +3409,23 @@ where
                 if !basename.is_empty() {
                     let mut filename_buf = [0u8; 1024];
                     let truncated = &basename[..basename.len().min(1024 - 32)];
-                    let header_value = {
-                        let mut w = &mut filename_buf[..];
-                        if write!(w, "filename=\"{}\"", bstr::BStr::new(truncated)).is_ok() {
-                            let written = 1024 - w.len();
-                            &filename_buf[..written]
-                        } else {
-                            &b""[..]
+                    if !truncated
+                        .iter()
+                        .any(|&b| matches!(b, b'\r' | b'\n' | 0 | b'"'))
+                    {
+                        let header_value = {
+                            let mut w = &mut filename_buf[..];
+                            if write!(w, "filename=\"{}\"", bstr::BStr::new(truncated)).is_ok() {
+                                let written = 1024 - w.len();
+                                &filename_buf[..written]
+                            } else {
+                                &b""[..]
+                            }
+                        };
+                        if !header_value.is_empty() {
+                            resp.write_header(b"content-disposition", header_value);
                         }
-                    };
-                    resp.write_header(b"content-disposition", header_value);
+                    }
                 }
             }
         }
@@ -3532,15 +3494,21 @@ where
 
     pub fn render_bytes(&mut self) {
         // copy it to stack memory to prevent aliasing issues in release builds
-        // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
+        // NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
+        // SAFETY: `self.blob`'s backing bytes are owned by the context and
+        // outlive the `try_end`/`on_writable` calls below; detaching the
+        // borrow lets `&mut *self` reborrow disjoint fields without aliasing.
         let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(self.blob.slice()) };
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
             if !resp.try_end(bytes, bytes.len(), self.should_close_connection()) {
                 self.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
-                resp.on_writable(Self::on_writable_bytes, self);
+                resp.on_writable(
+                    |this, off, resp| Self::on_writable_bytes(this, off, resp),
+                    self,
+                );
                 return;
             }
         }
@@ -3556,7 +3524,7 @@ where
         if self
             .response_weakref
             .get()
-            .map(|r| std::ptr::from_mut::<Response>(r))
+            .map(std::ptr::from_mut::<Response>)
             == Some(std::ptr::from_mut(response))
         {
             return;
@@ -3569,12 +3537,20 @@ where
         ctx_log!("render");
         self.set_response(response);
 
+        if matches!(response.status_code(), 101 | 103 | 204 | 205 | 304) {
+            self.do_render_blob();
+            return;
+        }
+
         self.do_render();
     }
 
-    pub fn on_buffered_body_chunk(this: *mut Self, chunk: &[u8], last: bool) {
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub(crate) fn on_buffered_body_chunk(this: *mut Self, chunk: &[u8], last: bool) {
         ctx_log!("onBufferedBodyChunk {} {}", chunk.len(), last);
-        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
+        // SAFETY: caller upholds the fn-level contract — `this` is the live
+        // `RequestContext` user-data pointer registered with uWS.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
 
@@ -3597,6 +3573,50 @@ where
         // we can no longer hold the strong reference from the body value ref.
         if let Some(readable) = this.request_body_readable_stream_ref.get(global_this) {
             debug_assert!(this.request_body_buf.is_empty());
+
+            // Cap streamed bytes against maxRequestBodySize too — the up-front
+            // check only sees Content-Length (see the buffering branch below).
+            this.request_body_streamed_len =
+                this.request_body_streamed_len.saturating_add(chunk.len());
+            if this.request_body_streamed_len > server.config().max_request_body_size {
+                this.resp.expect("infallible: resp bound").clear_on_data();
+                this.flags.set_is_waiting_for_request_body(false);
+
+                let _exit = vm.enter_event_loop_scope();
+
+                // Release the strong stream ref like the `last` arm does, then
+                // error the stream so a pending or future read rejects instead
+                // of hanging forever.
+                let _strong = core::mem::take(&mut this.request_body_readable_stream_ref);
+
+                readable.value.ensure_still_alive();
+                if let Some(bytes) = readable.ptr.bytes() {
+                    let mut err = Body::ValueError::Message(BunString::static_(
+                        "Request body exceeded maxRequestBodySize",
+                    ));
+                    let js_err = err.to_js(global_this);
+                    js_err.ensure_still_alive();
+                    // TODO: properly propagate exception upwards
+                    let _ = bytes.on_data(WebCore::streams::Result::Err(
+                        WebCore::streams::StreamError::JSValue(js_err),
+                    ));
+                    err.reset();
+                }
+
+                // Route through the normal end path so this.resp is detached
+                // and the base ref released (see the buffering branch below).
+                // SAFETY: FFI handle
+                if let Some(resp) = this.resp {
+                    if !resp.has_responded() {
+                        this.flags.set_has_written_status(true);
+                        // SAFETY: FFI handle
+                        resp.write_status(b"413 Payload Too Large");
+                    }
+                }
+                this.end_without_body(!HTTP3);
+                return;
+            }
+
             let _exit = vm.enter_event_loop_scope();
 
             // `RawSlice` is non-owning; ownership of `chunk` stays with the
@@ -3637,7 +3657,7 @@ where
 
         // This is the start of a task, so it's a good time to drain
         if let Some(body) = this.request_body_mut() {
-            // The up-front maxRequestBodySize check in server.zig only
+            // The up-front maxRequestBodySize check in the server only
             // sees Content-Length. HTTP/3 (and H1 chunked) bodies may
             // omit it, so cap accumulated bytes here too — otherwise a
             // single CL-less stream can grow request_body_buf without
@@ -3646,8 +3666,7 @@ where
                 > server.config().max_request_body_size
             {
                 this.request_body_buf = Vec::new();
-                // SAFETY: FFI handle
-                unsafe { this.resp.expect("infallible: resp bound").clear_on_data() };
+                this.resp.expect("infallible: resp bound").clear_on_data();
                 this.flags.set_is_waiting_for_request_body(false);
 
                 let _exit = vm.enter_event_loop_scope();
@@ -3689,16 +3708,9 @@ where
 
                 let total = bytes.len() + chunk.len();
                 'getter: {
-                    // if (total <= jsc.WebCore.InlineBlob.available_bytes) {
-                    //     if (total == 0) {
-                    //         body.value = .{ .Empty = {} };
-                    //         break :getter;
-                    //     }
-                    //
-                    //     body.value = .{ .InlineBlob = jsc.WebCore.InlineBlob.concat(bytes.items, chunk) };
-                    //     this.request_body_buf.clearAndFree(this.allocator);
-                    // } else {
-                    // TODO(port): ensureTotalCapacityPrecise can OOM in Zig; Rust Vec aborts.
+                    // TODO: small-body fast path via InlineBlob is not
+                    // implemented; always build an InternalBlob.
+                    // Vec aborts on OOM (repo-wide abort-on-OOM policy).
                     bytes.reserve_exact(total.saturating_sub(bytes.len()));
                     bytes.extend_from_slice(chunk);
                     debug_assert_eq!(bytes.len(), total);
@@ -3706,7 +3718,6 @@ where
                         bytes: core::mem::take(bytes),
                         was_string: false,
                     });
-                    // }
                     break 'getter;
                 }
                 this.request_body_buf = Vec::new();
@@ -3738,6 +3749,11 @@ where
         // This means we have received part of the body but not the whole thing
         if !self.request_body_buf.is_empty() {
             let emptied = core::mem::take(&mut self.request_body_buf);
+            // Count the drained pre-stream bytes against maxRequestBodySize so
+            // the streaming-path limit check sees the full body length, not
+            // just the chunks that arrive after the stream becomes active.
+            self.request_body_streamed_len =
+                self.request_body_streamed_len.saturating_add(emptied.len());
             let cap = emptied.capacity();
             return WebCore::DrainResult::Owned {
                 list: emptied,
@@ -3778,36 +3794,47 @@ where
         }
     }
 
-    pub fn on_request_body_readable_stream_available(
+    /// # Safety
+    /// `ptr` must be a `*mut RequestContext` previously registered as the body callback context.
+    pub(crate) fn on_request_body_readable_stream_available(
         ptr: *mut c_void,
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
     ) {
-        // SAFETY: ptr is a *RequestContext
+        // SAFETY: caller upholds the fn-level contract — `ptr` is the
+        // `*mut RequestContext` registered as the body callback context.
         let this = unsafe { bun_ptr::callback_ctx::<Self>(ptr) };
         debug_assert!(!this.request_body_readable_stream_ref.has());
         this.request_body_readable_stream_ref =
             readable_stream::Strong::init(readable, global_this);
     }
 
-    pub fn on_start_buffering_callback(this: *mut c_void) {
-        // SAFETY: this is a *RequestContext
+    /// # Safety
+    /// `this` must be a `*mut RequestContext` previously registered as the body callback context.
+    pub(crate) fn on_start_buffering_callback(this: *mut c_void) {
+        // SAFETY: caller upholds the fn-level contract — `this` is the
+        // `*mut RequestContext` registered as the body callback context.
         unsafe { bun_ptr::callback_ctx::<Self>(this) }.on_start_buffering();
     }
 
-    pub fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult {
-        // SAFETY: this is a *RequestContext
+    /// # Safety
+    /// `this` must be a `*mut RequestContext` previously registered as the body callback context.
+    pub(crate) fn on_start_streaming_request_body_callback(
+        this: *mut c_void,
+    ) -> WebCore::DrainResult {
+        // SAFETY: caller upholds the fn-level contract — `this` is the
+        // `*mut RequestContext` registered as the body callback context.
         unsafe { bun_ptr::callback_ctx::<Self>(this) }.on_start_streaming_request_body()
     }
 
     pub fn get_remote_socket_info(&self) -> Option<uws::SocketAddress> {
         let resp = self.resp?;
         // `AnyResponse::get_remote_socket_info` returns the uws_sys
-        // borrowed-slice variant; convert to the owned `bun_uws::SocketAddress`.
+        // variant; convert to the owned `bun_uws::SocketAddress`.
         // SAFETY: FFI handle
         let info = resp.get_remote_socket_info()?;
         Some(uws::SocketAddress {
-            ip: info.ip.to_vec().into_boxed_slice(),
+            ip: info.ip().to_vec().into_boxed_slice(),
             port: info.port,
             is_ipv6: info.is_ipv6,
         })
@@ -3838,11 +3865,11 @@ where
 
 const MAX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 1024 * 256;
 
-/// Trap host fn for the `(false, _, true)` arms of `exported_host_fns`. Those
-/// `RequestContext` monomorphs (plain-HTTP/3) are type-reachable via the
-/// blanket H3 impls but never serve requests at runtime — HTTP/3 always
-/// implies TLS. If a future refactor ever routes a promise reaction through
-/// one, fail loudly here instead of silently mismatching `promiseHandlerID`.
+// Trap host fn for the `(false, _, true)` arms of `exported_host_fns`. Those
+// `RequestContext` monomorphs (plain-HTTP/3) are type-reachable via the
+// blanket H3 impls but never serve requests at runtime — HTTP/3 always
+// implies TLS. If a future refactor ever routes a promise reaction through
+// one, fail loudly here instead of silently mismatching `promiseHandlerID`.
 bun_jsc::jsc_host_abi! {
     #[cold]
     unsafe fn unreachable_host_fn(_g: *mut JSGlobalObject, _f: *mut CallFrame) -> JSValue {
@@ -3851,13 +3878,13 @@ bun_jsc::jsc_host_abi! {
 }
 
 // ─── per-monomorphization C-ABI exports ──────────────────────────────────────
-// Zig: `comptime { @export(&jsc.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" }); ... }`
-// where `export_prefix = "Bun__HTTPRequestContext" ++ (debug ? "Debug" : "") ++ (h3 ? "H3" : ssl ? "TLS" : "")`.
+// The exported symbol name is "Bun__HTTPRequestContext" + (debug ? "Debug" : "")
+// + (h3 ? "H3" : ssl ? "TLS" : "") + "__on*".
 // Rust generics cannot own `#[no_mangle]` symbols, so each of the 6 concrete
 // instantiations × 4 callbacks is spelled out via `request_ctx_exports!`. The
 // generic body lives on the `impl<ThisServer, ..> RequestContext` block above
 // (`on_resolve` / `on_reject` / `on_resolve_stream` / `on_reject_stream`); each
-// shim is the `toJSHostFn` result-mapping (`JsResult<JSValue>` → raw `JSValue`,
+// shim is the result-mapping (`JsResult<JSValue>` → raw `JSValue`,
 // `.zero` on error) over the monomorphic associated fn.
 macro_rules! request_ctx_exports {
     ($(
@@ -3866,7 +3893,7 @@ macro_rules! request_ctx_exports {
     );* $(;)?) => {$(
         // Named C-ABI symbols for the C++ side. The bodies forward to the
         // generic `host_on_*` shims monomorphized at this tuple — `#[no_mangle]`
-        // pins the link name (Zig: `@export(&jsc.toJSHostFn(onResolve), …)`).
+        // pins the link name.
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
         pub fn $on_resolve(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
@@ -4042,9 +4069,8 @@ pub struct SendfileContext {
     pub total: BlobSizeType,
 }
 
-// `NewFlags(comptime debug_mode: bool)` — packed struct(u16). All fields are bool
-// (with two debug-conditional ones), so `bitflags!` over u16 works. The Zig void/padding
-// fields collapse to absent bits in release; here we keep all bits and just gate the
+// All flags are bool (with two debug-conditional ones), so `bitflags!` over u16
+// works. We keep all bits in every build and just gate the
 // `is_web_browser_navigation` / `has_finalized` accessors on the const params.
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
@@ -4150,7 +4176,7 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     );
 
     #[inline]
-    pub fn is_web_browser_navigation(&self) -> bool {
+    pub fn is_web_browser_navigation(self) -> bool {
         DEBUG_MODE && self.0.contains(FlagsBits::IS_WEB_BROWSER_NAVIGATION)
     }
     #[inline]
@@ -4161,7 +4187,7 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 
     #[inline]
-    pub fn has_finalized(&self) -> bool {
+    pub fn has_finalized(self) -> bool {
         cfg!(debug_assertions) && self.0.contains(FlagsBits::HAS_FINALIZED)
     }
     #[inline]
@@ -4183,8 +4209,7 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
                 needs_content_type = false;
 
                 let content_slice = content.to_slice();
-                // Zig: `if (content_slice.allocator.isNull()) null else allocator` —
-                // i.e. dupe only when the latin1/utf16 slice was heap-converted.
+                // Dupe only when the latin1/utf16 slice was heap-converted.
                 let dupe = matches!(content_slice, bun_core::ZigStringSlice::Owned(_));
                 let mt = MimeType::init(
                     content_slice.slice(),
@@ -4216,5 +4241,3 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
 // `NewServer` monomorphizations.
 
 static WELCOME_PAGE_HTML_GZ: &[u8] = include_bytes!("../api/welcome-page.html.gz");
-
-// ported from: src/runtime/server/RequestContext.zig

@@ -1,18 +1,10 @@
 //! CSS property definitions.
-//!
-//! Ported from `src/css/properties/properties.zig`.
 
-#![allow(unused_imports)]
 #![warn(unused_must_use)]
-use crate as css;
 
-// ─── B-2 round 7 status ────────────────────────────────────────────────────
-// `properties_generated.rs` is now un-gated: the 249-variant `Property` /
-// `PropertyId` / `PropertyIdTag` enums are real types referenced by
-// `declaration.rs`, `context.rs`, and `rules/`. The leaf property modules
-// (`align`, `background`, …) remain ``-gated — their handler
-// bodies and parse/to_css impls bottom out on Parser/Printer surface that
-// is still in flux — but every *value type* the `Property` enum names is
+// `properties_generated.rs` carries the 249-variant `Property` /
+// `PropertyId` / `PropertyIdTag` enums referenced by `declaration.rs`,
+// `context.rs`, and `rules/`. Every *value type* the `Property` enum names is
 // re-exposed below via `pub mod $name`. When a leaf .rs file un-gates, its
 // real type replaces the stub transparently (same path, same name).
 //
@@ -20,46 +12,8 @@ use crate as css;
 // `PropertyId::set_prefixes_for_targets` / `from_name_and_prefix` and the
 // `Property` payloads that name `css_values::*` resolve directly.
 
-/// Declares a property-handler ZST with the `handle_property` / `finalize`
-/// surface that `DeclarationHandler` (declaration.rs) composes over. The
-/// real handler bodies live in the gated leaf .rs files; until those
-/// un-gate, these no-op stubs keep `DeclarationHandler` compiling against
-/// the now-real `Property` enum.
-///
-/// PORT NOTE: Zig handlers are plain structs with `handleProperty(*Self,
-/// *const Property, *DeclarationList, *PropertyHandlerContext) bool` +
-/// `finalize(*Self, *DeclarationList, *PropertyHandlerContext) void`. Same
-/// shape here; lifetimes on `DeclarationList<'bump>` / context are erased
-/// behind anonymous lifetimes since the stub bodies touch neither.
-macro_rules! handler_stub {
-    ($($Handler:ident),+ $(,)?) => {$(
-        #[derive(Default)]
-        pub struct $Handler;
-        impl $Handler {
-            #[inline]
-            pub fn handle_property(
-                &mut self,
-                _property: &crate::properties::Property,
-                _dest: &mut crate::DeclarationList<'_>,
-                _context: &mut crate::PropertyHandlerContext<'_>,
-            ) -> bool {
-                false
-            }
-            #[inline]
-            pub fn finalize(
-                &mut self,
-                _dest: &mut crate::DeclarationList<'_>,
-                _context: &mut crate::PropertyHandlerContext<'_>,
-            ) {
-            }
-        }
-    )+};
-}
-
 // ─── Rect / Size shorthand impl + define macros ────────────────────────────
-// Shared by `border.rs` and `margin_padding.rs`. These are the Rust port of
-// Zig's `css.DefineRectShorthand` / `css.DefineSizeShorthand` comptime mixins
-// (src/css/css_parser.zig:502 / :532).
+// Shared by `border.rs` and `margin_padding.rs`.
 //
 // `impl_rect_shorthand!` / `impl_size_shorthand!` stamp out the inherent
 // `parse`/`to_css` pair (and the `generic::{Parse,ToCss}` forwarders) for a
@@ -125,8 +79,7 @@ macro_rules! define_rect_shorthand {
         }
 
         impl $name {
-            // TODO(port): bring this back
-            // (old using name space) css::DefineShorthand(@This(), PropertyIdTag::$shorthand_id);
+            // `PROPERTY_FIELD_MAP` records the shorthand field→property map.
 
             pub const PROPERTY_FIELD_MAP: &[(&str, $crate::properties::PropertyIdTag)] = &[
                 ("top", $crate::properties::PropertyIdTag::$top_id),
@@ -138,7 +91,7 @@ macro_rules! define_rect_shorthand {
         impl $crate::properties::margin_padding::RectShorthand for $name {
             type Value = $inner;
         }
-        // Zig `css.DefineRectShorthand(@This(), V)` — parse/to_css via `Rect<V>`.
+        // parse/to_css via `Rect<V>`.
         impl_rect_shorthand!($name, $inner);
     };
 }
@@ -157,7 +110,6 @@ macro_rules! impl_size_shorthand {
                 &self,
                 dest: &mut $crate::printer::Printer,
             ) -> ::core::result::Result<(), $crate::PrintErr> {
-                use $crate::generic::ToCss as _;
                 self.$start.to_css(dest)?;
                 if self.$start != self.$end {
                     dest.write_str(b" ")?;
@@ -171,14 +123,7 @@ macro_rules! impl_size_shorthand {
 }
 
 // ─── Submodule declarations ────────────────────────────────────────────────
-// (Zig: `pub const X = @import("./X.zig");`)
 //
-// B-2 round 8: the leaf property modules below are un-gated — their value
-// *types* (and handler ZSTs) compile for real and replace the former
-// `handler_stub!` placeholders. Heavy parse/to_css/
-// handle_property *bodies* that bottom out on still-unported Parser/
-// PropertyHandlerContext surface remain internally ``-gated
-// inside each leaf file (same pattern as `font.rs`).
 pub mod align;
 // `animation`: un-gated — real AnimationName / Animation / AnimationIterationCount /
 // AnimationDirection / AnimationPlayState / AnimationFillMode / AnimationTimeline /
@@ -199,7 +144,6 @@ pub mod border_radius;
 // `box_shadow`: un-gated — real BoxShadow + BoxShadowHandler live in
 // `box_shadow.rs`.
 pub mod box_shadow;
-pub mod contain;
 pub mod display;
 pub mod effects;
 pub mod flex;
@@ -212,7 +156,7 @@ pub mod font;
 pub mod grid;
 // `list`: un-gated — real ListStyleType / CounterStyle / Symbols / Symbol
 // live in `list.rs`. PredefinedCounterStyle / SymbolsType / ListStylePosition /
-// ListStyle / MarkerSide are uninhabited (Zig source is `@compileError`).
+// ListStyle / MarkerSide are uninhabited.
 pub mod list;
 pub mod margin_padding;
 pub mod masking;
@@ -253,8 +197,7 @@ pub use self::custom::CustomPropertyName;
 pub use self::properties_generated::{Property, PropertyId, PropertyIdTag};
 
 /// A [CSS-wide keyword](https://drafts.csswg.org/css-cascade-5/#defaulting-keywords).
-// Zig: `css.DefineEnumProperty(@This())` provides eql/hash/parse/toCss/deepClone via
-// comptime reflection over @tagName. The Rust derive emits `EnumProperty` +
+// The `DefineEnumProperty` derive emits `EnumProperty` +
 // `From<Self> for &'static str` + inherent `parse`/`to_css`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 pub enum CSSWideKeyword {
@@ -442,7 +385,7 @@ mod generic_registrations {
     /// Indirection so the `generic::{Parse,ToCss}` impls above don't have to
     /// repeat `GenericBorder`'s `S`-bounds (which name the same protocol
     /// traits and would otherwise create a coherence cycle).
-    pub trait GenericBorderImpl: Sized {
+    pub(crate) trait GenericBorderImpl: Sized {
         fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self>;
         fn to_css(
             &self,
@@ -451,12 +394,3 @@ mod generic_registrations {
     }
 }
 pub(crate) use generic_registrations::GenericBorderImpl;
-
-// ─── Dead code (not ported) ────────────────────────────────────────────────
-// The original Zig file contains ~1800 lines of commented-out code (lines 60–1876)
-// implementing the old `DefineProperties(...)` comptime-reflection approach that
-// predates `properties_generated.zig`. It is dead reference material and is
-// intentionally omitted here. See `src/css/properties/properties.zig` for the
-// historical block; the live definitions come from `properties_generated`.
-
-// ported from: src/css/properties/properties.zig

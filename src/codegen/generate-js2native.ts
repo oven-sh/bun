@@ -254,7 +254,7 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
 // the C++ side declares in GeneratedJS2Native.h. The C++ output is invariant;
 // only the implementer of the symbol changes.
 //
-// Two ABI shapes (mirroring the Zig output exactly):
+// Two ABI shapes:
 //   • nativeCalls (type "zig")  → `${sym}_workaround(global) -> JSValue`
 //   • wrapperCalls (type "zig") → `${sym}(global, callframe) -> JSValue`
 //
@@ -355,6 +355,7 @@ export function getJS2NativeRust() {
     `// Calling convention: \`jsc.conv\` is plain \`extern "C"\` on every target except`,
     `// Windows-x64 (\`extern "sysv64"\`); see generated_classes.rs for the same note.`,
     ``,
+    `#[allow(unused_imports)] // emitted for thunk shapes that vary per build`,
     `use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};`,
     ``,
     ...thunks,

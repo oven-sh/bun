@@ -1085,7 +1085,7 @@ impl<'a> JSON5Parser<'a> {
         let seq_len_usize = usize::from(seq_len);
         let mut bytes = [0u8; 4];
         bytes[..seq_len_usize].copy_from_slice(&self.source[self.pos..self.pos + seq_len_usize]);
-        let decoded = strings::decode_wtf8_rune_t(&bytes, seq_len, -1i32);
+        let decoded = strings::decode_wtf8_rune_t(bytes, seq_len, -1i32);
         if decoded < 0 {
             return Some(Codepoint {
                 cp: i32::from(first),
@@ -1118,5 +1118,3 @@ fn append_codepoint_to_utf8(buf: &mut BumpVec<'_, u8>, cp: i32) -> Result<(), Pa
 fn is_ident_continue_ascii(c: u8) -> bool {
     matches!(c, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
 }
-
-// ported from: src/interchange/json5.zig

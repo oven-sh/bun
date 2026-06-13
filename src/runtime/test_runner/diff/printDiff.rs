@@ -11,11 +11,9 @@ type Dmp = diff_match_patch::DiffMatchPatch<u8>;
 type DmpUsize = diff_match_patch::DiffMatchPatch<usize>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Mode {
-    BgAlways,
+pub enum Mode {
     BgDiffOnly,
     Fg,
-    FgDiff,
 }
 const MODE: Mode = Mode::BgDiffOnly;
 
@@ -28,12 +26,12 @@ pub struct DiffConfig {
 }
 
 impl DiffConfig {
-    pub fn default(is_agent: bool, enable_ansi_colors: bool) -> DiffConfig {
+    pub(crate) fn default(is_agent: bool, enable_ansi_colors: bool) -> DiffConfig {
         DiffConfig {
             min_bytes_before_chunking: if is_agent { 0 } else { 2 * 1024 }, // 2kb
             chunk_context_lines: if is_agent { 1 } else { 5 },
             enable_ansi_colors,
-            truncate_threshold: if is_agent { 1 * 1024 } else { 2 * 1024 }, // 2kb
+            truncate_threshold: if is_agent { 1024 } else { 2 * 1024 }, // 2kb
             truncate_context: if is_agent { 50 } else { 100 },
         }
     }
@@ -53,7 +51,6 @@ pub fn print_diff_main(
     writer: &mut impl Write,
     config: &DiffConfig,
 ) -> std::fmt::Result {
-    // PERF(port): was arena bulk-free — profile in Phase B (all intermediate Vecs below were arena-allocated in Zig)
     if not {
         match config.enable_ansi_colors {
             true => write!(
@@ -170,14 +167,14 @@ pub fn print_diff_main(
                     });
                 }
             } else {
-                new_diff_segments.push(diff_segment.clone());
+                new_diff_segments.push(*diff_segment);
             }
         }
 
         diff_segments = new_diff_segments;
 
         // Forward pass: unskip segments after non-equal segments
-        // PORT NOTE: reshaped for borrowck (capture len before mutable slice borrow)
+        // reshaped for borrowck (capture len before mutable slice borrow)
         let len = diff_segments.len();
         for i in 0..len {
             if diff_segments[i].mode != DiffSegmentMode::Equal {
@@ -225,38 +222,27 @@ pub fn print_diff_main(
     print_diff(writer, &diff_segments, config)
 }
 
-pub struct Diff<'a> {
-    pub operation: DiffOperation,
-    pub text: &'a [u8],
-}
-
-pub enum DiffOperation {
-    Insert,
-    Delete,
-    Equal,
-}
-
 use bun_core::output::ansi as colors;
 
 mod prefix_styles {
     use super::{PrefixStyle, colors};
-    pub const INSERTED: PrefixStyle = PrefixStyle {
+    pub(super) const INSERTED: PrefixStyle = PrefixStyle {
         msg: "+ ",
         color: colors::RED,
     };
-    pub const REMOVED: PrefixStyle = PrefixStyle {
+    pub(super) const REMOVED: PrefixStyle = PrefixStyle {
         msg: "- ",
         color: colors::GREEN,
     };
-    pub const EQUAL: PrefixStyle = PrefixStyle {
+    pub(super) const EQUAL: PrefixStyle = PrefixStyle {
         msg: "  ",
         color: "",
     };
-    pub const SINGLE_LINE_INSERTED: PrefixStyle = PrefixStyle {
+    pub(super) const SINGLE_LINE_INSERTED: PrefixStyle = PrefixStyle {
         msg: "Received: ",
         color: "",
     };
-    pub const SINGLE_LINE_REMOVED: PrefixStyle = PrefixStyle {
+    pub(super) const SINGLE_LINE_REMOVED: PrefixStyle = PrefixStyle {
         msg: "Expected: ",
         color: "",
     };
@@ -264,48 +250,37 @@ mod prefix_styles {
 
 mod base_styles {
     use super::{Style, colors, prefix_styles};
-    pub const RED_BG_INSERTED: Style = Style {
+    pub(super) const RED_BG_INSERTED: Style = Style {
         prefix: prefix_styles::INSERTED,
         text_color: const_format::concatcp!(colors::RED, colors::INVERT),
     };
-    pub const GREEN_BG_REMOVED: Style = Style {
+    pub(super) const GREEN_BG_REMOVED: Style = Style {
         prefix: prefix_styles::REMOVED,
         text_color: const_format::concatcp!(colors::GREEN, colors::INVERT),
     };
-    pub const DIM_EQUAL: Style = Style {
+    pub(super) const DIM_EQUAL: Style = Style {
         prefix: prefix_styles::EQUAL,
         text_color: colors::DIM,
     };
-    pub const RED_FG_INSERTED: Style = Style {
+    pub(super) const RED_FG_INSERTED: Style = Style {
         prefix: prefix_styles::INSERTED,
         text_color: colors::RED,
     };
-    pub const GREEN_FG_REMOVED: Style = Style {
+    pub(super) const GREEN_FG_REMOVED: Style = Style {
         prefix: prefix_styles::REMOVED,
         text_color: colors::GREEN,
     };
-    pub const DIM_INSERTED: Style = Style {
-        prefix: prefix_styles::INSERTED,
-        text_color: colors::DIM,
-    };
-    pub const DIM_REMOVED: Style = Style {
-        prefix: prefix_styles::REMOVED,
-        text_color: colors::DIM,
-    };
 }
 
-// TODO(port): Zig selects this namespace via `switch (mode)` at comptime. Since MODE is const
-// Mode::BgDiffOnly, only that arm is materialized here. The .bg_always and .fg_diff arms differ
-// only in inserted_equal/removed_equal; .fg omits inserted_diff/removed_diff entirely.
 mod styles {
     use super::{Style, base_styles};
-    pub const INSERTED_LINE: Style = base_styles::RED_FG_INSERTED;
-    pub const REMOVED_LINE: Style = base_styles::GREEN_FG_REMOVED;
-    pub const INSERTED_DIFF: Style = base_styles::RED_FG_INSERTED;
-    pub const REMOVED_DIFF: Style = base_styles::GREEN_FG_REMOVED;
-    pub const EQUAL: Style = base_styles::DIM_EQUAL;
-    pub const INSERTED_EQUAL: Style = base_styles::RED_FG_INSERTED;
-    pub const REMOVED_EQUAL: Style = base_styles::GREEN_FG_REMOVED;
+    pub(super) const INSERTED_LINE: Style = base_styles::RED_FG_INSERTED;
+    pub(super) const REMOVED_LINE: Style = base_styles::GREEN_FG_REMOVED;
+    pub(super) const INSERTED_DIFF: Style = base_styles::RED_FG_INSERTED;
+    pub(super) const REMOVED_DIFF: Style = base_styles::GREEN_FG_REMOVED;
+    pub(super) const EQUAL: Style = base_styles::DIM_EQUAL;
+    pub(super) const INSERTED_EQUAL: Style = base_styles::RED_FG_INSERTED;
+    pub(super) const REMOVED_EQUAL: Style = base_styles::GREEN_FG_REMOVED;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -316,9 +291,9 @@ pub enum DiffSegmentMode {
     Modified,
 }
 
-// TODO(port): lifetime — `removed`/`inserted` borrow from caller input and diff_match_patch output;
-// in Zig these were arena-backed slices. Revisit ownership in Phase B.
-#[derive(Clone)]
+// `removed`/`inserted` borrow from caller input and diff_match_patch output
+// (tracked by `'a`).
+#[derive(Copy, Clone)]
 pub struct DiffSegment<'a> {
     pub removed: &'a [u8],
     pub inserted: &'a [u8],
@@ -420,7 +395,7 @@ fn print_truncated_line(
     }
 
     if config.enable_ansi_colors {
-        writer.write_str(colors::BRIGHT_WHITE)?; // preserve SGR 97 — Zig printDiff.zig:177
+        writer.write_str(colors::BRIGHT_WHITE)?; // preserve SGR 97
     }
     // The context is shown on both sides, so we truncate line.len - 2 * context
     write!(
@@ -643,9 +618,9 @@ pub fn print_hunk_header(
     changed_line_count: usize,
 ) -> std::fmt::Result {
     if config.enable_ansi_colors {
-        write!(
+        writeln!(
             writer,
-            "{}@@ -{},{} +{},{} @@{}\n",
+            "{}@@ -{},{} +{},{} @@{}",
             colors::YELLOW,
             original_line_number,
             original_line_count,
@@ -654,9 +629,9 @@ pub fn print_hunk_header(
             colors::RESET
         )
     } else {
-        write!(
+        writeln!(
             writer,
-            "@@ -{},{} +{},{} @@\n",
+            "@@ -{},{} +{},{} @@",
             original_line_number, original_line_count, changed_line_number, changed_line_count
         )
     }
@@ -667,7 +642,6 @@ pub fn print_diff(
     diff_segments: &[DiffSegment<'_>],
     config: &DiffConfig,
 ) -> std::fmt::Result {
-    // PERF(port): was arena bulk-free — profile in Phase B
     let mut removed_line_number: usize = 1;
     let mut inserted_line_number: usize = 1;
     let mut removed_diff_lines: usize = 0;
@@ -677,8 +651,8 @@ pub fn print_diff(
 
     let mut was_skipped = false;
     for (i, segment) in diff_segments.iter().enumerate() {
-        // PORT NOTE: Zig `defer { removed_line_number += ...; inserted_line_number += ...; }` —
-        // applied at the end of the loop body and before `continue` below.
+        // `removed_line_number` / `inserted_line_number` are bumped at the end
+        // of the loop body and before `continue` below.
 
         if (was_skipped && !segment.skip) || (has_skipped_segments && i == 0 && !segment.skip) {
             // have to calculate the length of the non-skipped segment
@@ -706,7 +680,6 @@ pub fn print_diff(
             DiffSegmentMode::Equal => {
                 if segment.skip {
                     was_skipped = true;
-                    // defer:
                     removed_line_number += segment.removed_line_count;
                     inserted_line_number += segment.inserted_line_count;
                     continue;
@@ -739,7 +712,6 @@ pub fn print_diff(
             }
         }
 
-        // defer:
         removed_line_number += segment.removed_line_count;
         inserted_line_number += segment.inserted_line_count;
     }
@@ -748,5 +720,3 @@ pub fn print_diff(
 
     print_diff_footer(writer, config, removed_diff_lines, inserted_diff_lines)
 }
-
-// ported from: src/test_runner/diff/printDiff.zig

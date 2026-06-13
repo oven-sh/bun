@@ -13,7 +13,11 @@ name = "bun_rust"
 path = "lib.rs"
 crate-type = ["staticlib"]
 
+[lints]
+workspace = true
+
 [dependencies]
+bstr.workspace = true
 bun_io.workspace = true
 libc.workspace = true
 

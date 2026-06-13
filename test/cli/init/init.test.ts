@@ -296,6 +296,32 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
   }, 30_000);
 
+  test("nested `bun install` output is inherited", async () => {
+    // `bun init` spawns `bun install` via spawn_sync_inherit. The child must
+    // inherit stdout/stderr so its output reaches the parent's pipe — a
+    // previous regression left the child with closed fds 1/2 and the install
+    // output was silently dropped.
+    const temp = tempDirWithFiles("bun-init-inherits-install-output", {});
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("EBADF");
+    // `bun install` prints its own version header on startup; seeing it here
+    // proves the child's stdout reached us.
+    expect(stdout).toContain("bun install");
+    expect(stdout).toMatch(/\bpackages? installed\b/);
+    expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
   test("bun init --minimal only creates package.json and tsconfig.json", async () => {
     // Regression test for https://github.com/oven-sh/bun/issues/26050
     // --minimal should not create .cursor/, CLAUDE.md, .gitignore, or README.md

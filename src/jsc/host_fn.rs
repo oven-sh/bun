@@ -1,15 +1,12 @@
 //! Host function wrappers — the glue between Rust functions and JSC native callbacks.
 //!
-//! In the Zig source this module is almost entirely `comptime`/`@typeInfo` reflection
-//! that inspects a function's signature and emits an `extern callconv(jsc.conv)` shim.
-//! Rust has no equivalent runtime/const reflection, so per PORTING.md §"Comptime
-//! reflection" the wrapping machinery (`toJSHostFn`, `wrapN`, `wrapInstanceMethod`,
-//! `wrapStaticMethod`, `DOMCall`) becomes the `#[bun_jsc::host_fn]` / `#[bun_jsc::host_call]`
-//! proc-macro attributes. This file keeps:
+//! The fn-wrapping machinery lives in the `#[bun_jsc::host_fn]` /
+//! `#[bun_jsc::host_call]` proc-macro attributes. This file keeps:
 //!   - the runtime result-mapping helpers the macros call into,
 //!   - the FFI surface for `JSFunction` creation,
 //!   - `DomEffect` (plain data),
-//! and stubs the reflection-driven generators with `// TODO(port): proc-macro`.
+//! and stubs the reflection-driven generators (callers hand-write the
+//! equivalent decode/dispatch glue until the proc-macros grow those modes).
 
 use core::ffi::c_void;
 
@@ -28,7 +25,7 @@ use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 // across its public API, so there is no foreign unwind to catch either. The
 // closure-taking helpers below (`to_js_host_call`, `host_setter_result`,
 // `host_construct_result`, `host_fn_finalize`) therefore call the user body
-// directly — same end state as Zig `@panic` → `bun.crash_handler`.
+// directly.
 
 // ───────────────────────────── type aliases ──────────────────────────────
 
@@ -52,10 +49,8 @@ pub type JsHostFn = unsafe extern "C" fn(*mut JSGlobalObject, *mut CallFrame) ->
 /// wrap this type into a `JsHostFn`.
 pub type JsHostFnZig = fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
 
-// Zig: `pub fn JSHostFnZigWithContext(comptime ContextType: type) type`
 pub type JsHostFnZigWithContext<C> = fn(&mut C, &JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
 
-// Zig: `pub fn JSHostFunctionTypeWithContext(comptime ContextType: type) type`
 #[cfg(all(windows, target_arch = "x86_64"))]
 pub type JsHostFunctionTypeWithContext<C> =
     unsafe extern "sysv64" fn(*mut C, *mut JSGlobalObject, *mut CallFrame) -> JSValue;
@@ -86,33 +81,25 @@ macro_rules! jsc_host_abi {
     };
 }
 
-// Capitalized re-exports — Zig spells these `JSHostFn*` (acronym-caps); the
-// PORTING.md acronym rule lowercases to `Js…`, but enough call sites (and the
-// crate-root re-export in lib.rs) use the Zig spelling that both must resolve.
-#[allow(non_camel_case_types)]
+// Capitalized re-exports — enough call sites (and the crate-root re-export in
+// lib.rs) use the acronym-caps `JSHostFn*` spelling that both must resolve.
 pub use {
     JsHostFn as JSHostFn, JsHostFnZig as JSHostFnZig,
     JsHostFnZigWithContext as JSHostFnZigWithContext,
     JsHostFunctionTypeWithContext as JSHostFunctionTypeWithContext,
 };
 
-// ─────────────────────── comptime fn-wrapping → proc-macro ───────────────────────
+// ─────────────────────── host-fn wrapping (proc-macro) ───────────────────────
 
-// Zig: `pub fn toJSHostFn(comptime functionToWrap: JSHostFnZig) JSHostFn`
-//
-// In Zig this returns a freshly-monomorphized `extern fn` that closes over a
-// `comptime` function pointer. Rust cannot mint an `extern "C" fn` item from a
+// Rust cannot mint an `extern "C" fn` item from a
 // const fn pointer without a proc-macro (no `const fn` ABI thunks). Callers use
 // `#[bun_jsc::host_fn]` instead, which emits the shim and calls
 // `to_js_host_fn_result` for the body.
-// TODO(port): proc-macro — `#[bun_jsc::host_fn]` replaces `toJSHostFn`.
 #[doc(hidden)]
 pub const fn to_js_host_fn(_function_to_wrap: JsHostFnZig) -> ! {
     panic!("use #[bun_jsc::host_fn] instead of to_js_host_fn()");
 }
 
-// Zig: `pub fn toJSHostFnWithContext(comptime ContextType: type, comptime Function: ...) ...`
-// TODO(port): proc-macro — `#[bun_jsc::host_fn(method)]` replaces `toJSHostFnWithContext`.
 #[doc(hidden)]
 pub const fn to_js_host_fn_with_context<C>(_function: JsHostFnZigWithContext<C>) -> ! {
     panic!("use #[bun_jsc::host_fn(method)] instead of to_js_host_fn_with_context()");
@@ -121,7 +108,6 @@ pub const fn to_js_host_fn_with_context<C>(_function: JsHostFnZigWithContext<C>)
 /// Map a `JsResult<JSValue>` to the raw `JSValue` a host fn must return
 /// (`.zero` when an exception is pending).
 pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSValue>) -> JSValue {
-    // Zig: `if (Environment.allow_assert and Environment.is_canary)`
     if Environment::ALLOW_ASSERT && Environment::IS_CANARY {
         let value = match result {
             Ok(v) => v,
@@ -141,8 +127,7 @@ pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSVal
 }
 
 fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func: &'static str) {
-    // Zig passed `comptime func: anytype` and printed its address for `image lookup`.
-    // Rust passes the fn name string (the proc-macro supplies `stringify!(fn_name)`).
+    // `func` is the fn name string (the proc-macro supplies `stringify!(fn_name)`).
     if Environment::IS_DEBUG {
         if !value.is_empty() && global_this.has_exception() {
             let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
@@ -158,11 +143,11 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
                 ),
             );
             Output::flush();
-            // `formatter` drops here (Zig: `defer formatter.deinit()`).
+            // `formatter` drops here.
         }
     }
     let _ = func;
-    bun_core::assertf!(value.is_empty() == global_this.has_exception(), "host fn return/exception state mismatch");
+    assert!(value.is_empty() == global_this.has_exception(), "host fn return/exception state mismatch");
 }
 
 pub fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {
@@ -202,8 +187,8 @@ impl IntoHostFnReturn for JsResult<JSValue> {
     fn into_host_fn_return(self) -> JsResult<JSValue> { self }
 }
 
-/// Normalize a setter body's return type to `JsResult<()>`. Zig setters return
-/// `void` or `JSError!void`; both map to `bool` (true on success) at the ABI.
+/// Normalize a setter body's return type to `JsResult<()>`. Setter bodies
+/// return `()` or `JsResult<()>`; both map to `bool` (true on success) at the ABI.
 pub trait IntoHostSetterReturn {
     fn into_host_setter_return(self) -> JsResult<()>;
 }
@@ -215,10 +200,8 @@ impl IntoHostSetterReturn for JsResult<()> {
     #[inline]
     fn into_host_setter_return(self) -> JsResult<()> { self }
 }
-// Some Zig setters return `bool` directly (e.g. `Image.setBackend`): the
-// generated Zig thunk passes the bool through to C++ with no exception-scope
-// wrap, so `false` is the ABI signal for "exception already thrown" (the
-// `catch return false` idiom). The Rust thunk *does* wrap in an
+// Some setters return `bool` directly (e.g. `Image.setBackend`): at the ABI,
+// `false` is the signal for "exception already thrown". The Rust thunk wraps in an
 // `ExceptionValidationScope` and re-derives the ABI bool from `JsResult`, so
 // `false` must round-trip to `Err(Thrown)` here — discarding it (as `Ok(())`)
 // makes `host_setter_result` return `true` and trips
@@ -395,9 +378,13 @@ pub fn host_fn_static_passthrough(
 /// from the running VM and `callFrame` is the on-stack frame pointer — so the
 /// unchecked `_nn` variant is used to drop the two `testq; je <panic>` pairs
 /// from every `HOST_EXPORT` entry (`debug_assert!`ed in debug builds).
+///
+/// # Safety
+/// `global` and `callframe` must be non-null and valid for the duration of the
+/// call (guaranteed by the JSC host-function ABI for every `JsHostFn` thunk).
 #[track_caller]
 #[inline]
-pub fn host_fn_static_raw<R: IntoHostFnReturn>(
+pub unsafe fn host_fn_static_raw<R: IntoHostFnReturn>(
     global: *mut JSGlobalObject,
     callframe: *mut CallFrame,
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> R,
@@ -410,8 +397,12 @@ pub fn host_fn_static_raw<R: IntoHostFnReturn>(
 
 /// Raw-pointer entry for `host`-shape exports, no exception scope.
 /// See [`host_fn_static_raw`].
+///
+/// # Safety
+/// `global` and `callframe` must be non-null and valid for the duration of the
+/// call (guaranteed by the JSC host-function ABI for every `JsHostFn` thunk).
 #[inline]
-pub fn host_fn_static_passthrough_raw(
+pub unsafe fn host_fn_static_passthrough_raw(
     global: *mut JSGlobalObject,
     callframe: *mut CallFrame,
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JSValue,
@@ -618,8 +609,13 @@ pub fn host_fn_internal_props_shared<T, R: IntoHostFnReturn>(
 /// impl MUST `Box::leak`/`Box::into_raw` as its FIRST step (before any
 /// fallible work) so the allocation is not freed by Box drop on panic while
 /// other ref holders still alias it.
+///
+/// # Safety
+/// `this` must be the unique GC-owned `m_ctx` pointer originally produced by
+/// `Box::into_raw` in the construct path (`IntoHostConstructReturn`), valid
+/// and not concurrently accessed.
 #[inline]
-pub fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(alloc::boxed::Box<T>)) {
+pub unsafe fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(alloc::boxed::Box<T>)) {
     // SAFETY: `this` is the GC-owned `m_ctx` pointer, valid and not
     // concurrently accessed (mutator-thread sweep). It was produced by
     // `Box::into_raw` in the construct path (`IntoHostConstructReturn`).
@@ -667,12 +663,11 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
 
 /// Convert the return value of a function returning an error union into a maybe-empty `JSValue`.
 ///
-/// Zig signature took `comptime function: anytype` + an args tuple and `@call`'d it; in Rust the
-/// caller (the proc-macro expansion) passes a closure that performs the call, so this only handles
-/// the result mapping + exception-scope assertion.
+/// The caller (the proc-macro expansion) passes a closure that performs the call, so this only
+/// handles the result mapping + exception-scope assertion.
 ///
 /// `#[track_caller]` propagates the caller's `Location` through to
-/// `ExceptionValidationScope::init`, replacing Zig's explicit `@src()` argument.
+/// `ExceptionValidationScope::init`.
 #[track_caller]
 pub fn to_js_host_call(
     global_this: &JSGlobalObject,
@@ -698,15 +693,15 @@ pub fn to_js_host_call(
 /// `TopExceptionScope`.
 ///
 /// `#[track_caller]` propagates the caller's `Location` through to
-/// `ExceptionValidationScope::init`, replacing Zig's explicit `@src()` argument.
+/// `ExceptionValidationScope::init`.
 #[track_caller]
 #[inline]
 pub fn from_js_host_call(
     global_this: &JSGlobalObject,
     f: impl FnOnce() -> JSValue,
 ) -> Result<JSValue, JsError> {
-    // Zig: `if (@TypeOf(value) != JSValue) @compileError(...)` — enforced by the
-    // closure return type here. Body is the `[[ZIG_EXPORT(zero_is_throw)]]` shape.
+    // The JSValue-only constraint is enforced by the closure return type here.
+    // Body is the `[[ZIG_EXPORT(zero_is_throw)]]` shape.
     crate::call_zero_is_throw(global_this, f)
 }
 
@@ -714,7 +709,7 @@ pub fn from_js_host_call(
 /// whether an exception was thrown.
 ///
 /// `#[track_caller]` propagates the caller's `Location` through to
-/// `TopExceptionScope::init`, replacing Zig's explicit `@src()` argument.
+/// `TopExceptionScope::init`.
 #[track_caller]
 #[inline]
 pub fn from_js_host_call_generic<R>(
@@ -727,43 +722,13 @@ pub fn from_js_host_call_generic<R>(
     // from_js_host_call_generic is only for functions where the return value tells you nothing
     // about whether an exception was thrown.
     //
-    // TODO(port): static-assert `R != JSValue` (Zig used @compileError; Rust needs a
-    // negative trait bound or specialization — neither stable). Phase B: sealed trait trick.
+    // Statically rejecting `R == JSValue` would need a
+    // negative trait bound or specialization (neither stable), so this is enforced
+    // by convention only.
     crate::call_check_slow(global_this, f)
 }
 
-// ───────────────────────── error-set parsing (comptime) ─────────────────────────
-
-#[derive(Default, Clone, Copy)]
-struct ParsedHostFunctionErrorSet {
-    out_of_memory: bool,
-    js_error: bool,
-}
-
-// Zig: `inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ...`
-//
-// Zig iterated `@typeInfo(ErrorSet)` at comptime; Rust has no error-set reflection, so the
-// `#[bun_jsc::host_fn]` proc-macro supplies the variant names as string literals and this
-// helper validates them at const-eval time. An unknown name `panic!`s — the const-context
-// analogue of Zig's `@compileError`. The `T: type` parameter (used only for the diagnostic
-// string in Zig) is dropped; the macro embeds the function name in its own error message.
-#[allow(dead_code)]
-const fn parse_error_set(errors: &[&str]) -> ParsedHostFunctionErrorSet {
-    let mut errs = ParsedHostFunctionErrorSet { out_of_memory: false, js_error: false };
-    let mut i = 0;
-    while i < errors.len() {
-        if bun_collections::const_str_eq(errors[i], "OutOfMemory") {
-            errs.out_of_memory = true;
-        } else if bun_collections::const_str_eq(errors[i], "JSError") {
-            errs.js_error = true;
-        } else {
-            // Zig: @compileError("Return value from host function '...' can not contain error '...'")
-            panic!("Return value from host function can not contain this error");
-        }
-        i += 1;
-    }
-    errs
-}
+// ───────────────────────── error conversion helpers ─────────────────────────
 
 // For when bubbling up errors to functions that require a C ABI boundary
 // TODO: make this not need a 'global_this'
@@ -776,30 +741,14 @@ pub fn void_from_js_error(err: JsError, global_this: &JSGlobalObject) {
         JsError::Terminated => {}
     }
     // TODO: catch exception, declare throw scope, re-throw
-    // c++ needs to be able to see that zig functions can throw for BUN_JSC_validateExceptionChecks
+    // c++ needs to be able to see that these host functions can throw for BUN_JSC_validateExceptionChecks
 }
-
-// ───────────────────────────── wrapN family ──────────────────────────────
-//
-// Zig `wrap1`..`wrap5` / `wrap4v` each take a `comptime func: anytype`, reflect on
-// its parameter list with `@typeInfo`, and return a fresh `extern fn` of matching
-// arity that forwards through `toJSHostCall`. This is signature reflection —
-// `// TODO(port): proc-macro`. The Rust replacement is a single attribute:
-//
-//     #[bun_jsc::host_call(wrap)]       // -> extern "C"   (wrap1..wrap5)
-//     #[bun_jsc::host_call(wrap, sysv)] // -> jsc.conv ABI (wrap4v)
-//
-// `checkWrapParams` (arity + first-arg-is-*JSGlobalObject assertion) is enforced by
-// the macro at expansion time.
-// TODO(port): proc-macro — `wrap1`..`wrap5`, `wrap4v`, `checkWrapParams`.
 
 // ───────────────────────────── FFI: JSFunction creation ──────────────────────────────
 
 mod private {
     use super::*;
 
-    // TODO(port): move to jsc_sys
-    //
     // safe fn: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&`
     // is ABI-identical to non-null `*mut`); `Option<&ZigString>` is ABI-identical
     // to a nullable `*const ZigString` via the guaranteed null-pointer
@@ -808,17 +757,17 @@ mod private {
     // the JSFunction's private slot (never dereferenced as Rust data) — same
     // contract as `Bun__FFIFunction_setDataPtr` below.
     unsafe extern "C" {
-        pub safe fn Bun__CreateFFIFunctionWithDataValue(
+        pub(super) safe fn Bun__CreateFFIFunctionWithDataValue(
             global: &JSGlobalObject,
             symbol_name: Option<&ZigString>,
             arg_count: u32,
-            // Zig `*const JSHostFn` is a fn *pointer*; `JsHostFn` in Rust is already
-            // `unsafe extern "C" fn(...)`, i.e. the pointer type.
+            // `JsHostFn` is already `unsafe extern "C" fn(...)`, i.e. the
+            // fn-pointer type.
             function: JsHostFn,
             data: *mut c_void,
         ) -> JSValue;
 
-        pub safe fn Bun__CreateFFIFunctionValue(
+        pub(super) safe fn Bun__CreateFFIFunctionValue(
             global_object: &JSGlobalObject,
             symbol_name: Option<&ZigString>,
             arg_count: u32,
@@ -830,8 +779,8 @@ mod private {
         // safe: `JSValue` is a by-value tagged i64; `data` is an opaque
         // round-trip pointer the C++ side stores in the JSFunction's private
         // slot without dereferencing it as Rust data.
-        pub safe fn Bun__FFIFunction_getDataPtr(value: JSValue) -> *mut c_void;
-        pub safe fn Bun__FFIFunction_setDataPtr(value: JSValue, data: *mut c_void);
+        pub(super) safe fn Bun__FFIFunction_getDataPtr(value: JSValue) -> *mut c_void;
+        pub(super) safe fn Bun__FFIFunction_setDataPtr(value: JSValue, data: *mut c_void);
     }
 }
 
@@ -877,9 +826,7 @@ pub fn new_function_with_data(
     data: *mut c_void,
 ) -> JSValue {
     jsc::mark_binding();
-    // Zig: `toJSHostFn(function)` wrapped a `comptime JSHostFnZig` here. In Rust the
-    // caller passes an already-wrapped `JsHostFn` (produced by `#[bun_jsc::host_fn]`).
-    // TODO(port): proc-macro — callers must apply `#[bun_jsc::host_fn]` themselves.
+    // The caller passes an already-wrapped `JsHostFn` (produced by `#[bun_jsc::host_fn]`).
     private::Bun__CreateFFIFunctionWithDataValue(
         global_object,
         symbol_name,
@@ -899,7 +846,7 @@ pub struct DomEffect {
 
 impl Default for DomEffect {
     fn default() -> Self {
-        // Zig: `std.mem.zeroes([4]ID)` — ID(0) == InvalidAbstractHeap.
+        // All-zero: ID(0) == InvalidAbstractHeap.
         Self {
             reads: [DomEffectId::InvalidAbstractHeap; 4],
             writes: [DomEffectId::InvalidAbstractHeap; 4],
@@ -993,32 +940,18 @@ pub enum DomEffectId {
 
 // ───────────────────────── DOMCall codegen helpers ─────────────────────────
 //
-// `DOMCallArgumentType` / `DOMCallArgumentTypeWrapper` / `DOMCallResultType` map a
-// Zig type to a C++ spec-string at comptime. They feed the C++ codegen
-// (`generate-classes.ts`), not runtime. The proc-macro for `#[bun_jsc::dom_call]`
-// owns this mapping in Rust.
-// TODO(port): proc-macro — DOMCall type→spec-string tables move into the macro crate.
+// `DOMCallArgumentType` / `DOMCallArgumentTypeWrapper` / `DOMCallResultType`
+// feed the C++ codegen
+// (`generate-classes.ts`), not runtime — there is nothing for the Rust side to
+// hold; the spec-strings stay in the codegen script.
 
-// Zig: `pub fn DOMCall(comptime class_name, comptime Container, comptime functionName,
-//                      comptime dom_effect) type`
-//
-// Returns an `extern struct` that:
-//   - `@export`s `<class>__<fn>__slowpath` / `__fastpath` with `callconv(jsc.conv)`,
-//   - `@extern`s `<class>__<fn>__put`,
-//   - exposes `effect`, `put()`, and `Arguments`.
-//
-// This is link-name synthesis + signature reflection. Rust replacement:
-//
-//     #[bun_jsc::dom_call(class = "Foo", effect = DomEffect::PURE)]
-//     impl Foo { fn bar(...) -> ... { ... }  fn bar_without_type_checks(...) -> ... { ... } }
-//
-// TODO(port): proc-macro — `DOMCall` type-generator.
+// The hand-written [`DomCall`] descriptor below is the mechanism for DOMJIT
+// entries — call sites write the slow/fast paths and the
+// `<class>__<fn>__put` extern themselves.
 
-/// Runtime descriptor for a `DOMCall(...)`-generated DOMJIT entry.
+/// Runtime descriptor for a DOMJIT entry.
 ///
-/// In Zig `DOMCall` returns a comptime-generated `extern struct` type that
-/// `@export`s `<class>__<fn>__slowpath`/`__fastpath` and `@extern`s
-/// `<class>__<fn>__put`. Until the `#[bun_jsc::dom_call]` proc-macro lands,
+/// Until the `#[bun_jsc::dom_call]` proc-macro lands,
 /// callers (e.g. `bun:ffi`'s `FFIObject`) hand-write the slow/fast paths and
 /// declare the C++-side `*__put` extern themselves; this struct carries just
 /// enough to drive `to_js` (the `put(global, obj)` call that installs the
@@ -1033,44 +966,6 @@ pub struct DomCall {
 
 // ───────────────────────── instance/static method wrapping ─────────────────────────
 
-// Zig: `pub fn InstanceMethodType(comptime Container: type) type`
+// There is no generic argument-decoding wrapper: each call site hand-writes
+// its own argument decoding.
 pub type InstanceMethodType<C> = fn(&mut C, &JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
-
-// Zig: `pub fn wrapInstanceMethod(comptime Container, comptime name, comptime auto_protect)
-//          InstanceMethodType(Container)`
-//
-// This is the heaviest reflection in the file: it iterates `@typeInfo(Fn).params`,
-// pattern-matches each parameter TYPE (`*JSGlobalObject`, `ZigString`,
-// `?jsc.ArrayBuffer`, `*WebCore.Response`, `?HTMLRewriter.ContentOptions`, ...) and
-// emits per-param argument-decoding + error-throwing glue, then `@call`s the target.
-// There is no value-level translation; the entire body is a type-directed code
-// generator. Per PORTING.md §"Comptime reflection":
-//
-// TODO(port): proc-macro — `#[bun_jsc::host_fn(method, auto_protect)]` replaces
-// `wrapInstanceMethod`. The macro must reproduce the per-type decode table:
-//   *Container            -> `this`
-//   *JSGlobalObject       -> `global`
-//   *CallFrame            -> `frame`
-//   Node.StringOrBuffer   -> `StringOrBuffer::from_js(global, arena, arg)?` or throw
-//   ?Node.StringOrBuffer  -> optional of above (null/undefined -> None)
-//   ArrayBuffer           -> `arg.as_array_buffer(global)` or throw "expected TypedArray"
-//   ?ArrayBuffer          -> optional of above
-//   ZigString             -> `arg.get_zig_string(global)?` (throws on undefined/null)
-//   ?HTMLRewriter.ContentOptions -> `{ html: arg.get("html")?.to_boolean() }`
-//   *WebCore.Response     -> `arg.as::<Response>()` or throw "Expected Response object"
-//   *WebCore.Request      -> `arg.as::<Request>()` or throw "Expected Request object"
-//   JSValue               -> required arg or throw "Missing argument"
-//   ?JSValue              -> optional arg
-//   C.ExceptionRef        -> `&mut exception_slot` (and re-throw on return if set)
-//   <else>                -> compile_error!
-// `auto_protect` selects `ArgumentsSlice::protect_eat_next` vs `::next_eat`.
-
-// Zig: `pub fn wrapStaticMethod(comptime Container, comptime name, comptime auto_protect)
-//          jsc.JSHostFnZig`
-//
-// Same as `wrapInstanceMethod` minus the `*Container`/`*CallFrame`/`ExceptionRef`
-// arms, plus a `Node.BlobOrStringOrBuffer` arm.
-// TODO(port): proc-macro — `#[bun_jsc::host_fn(static, auto_protect)]` replaces
-// `wrapStaticMethod` (decode table as above + BlobOrStringOrBuffer).
-
-// ported from: src/jsc/host_fn.zig

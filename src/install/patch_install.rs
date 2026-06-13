@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use core::ptr;
 
 use bstr::BStr;
 
@@ -12,41 +11,32 @@ use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
 use bun_sys::{self as sys, Fd, FdExt};
 use bun_threading::IntrusiveWorkTask as _;
-use bun_threading::thread_pool::{
-    self as thread_pool, Batch, Node as ThreadPoolNode, Task as ThreadPoolTask,
-};
+use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 use bun_wyhash::Wyhash11;
 
 use crate::package_install::PackageInstall;
 use crate::package_manager;
 use crate::{
-    DependencyID, PackageID, PackageManager, bun_hash_tag, lockfile::Lockfile, lockfile::Package,
+    DependencyID, PackageID, PackageManager, bun_hash_tag, lockfile::Package,
     resolution::Resolution,
 };
 
-// Thin re-exports (mirroring Zig `pub const X = @import(...)` lines).
 pub use crate::lockfile::PatchedDep;
-pub use crate::resolution::Resolution as ResolutionExport;
-pub use crate::{
-    DependencyID as DependencyIDExport, PackageID as PackageIDExport,
-    PackageInstall as PackageInstallExport, bun_hash_tag as bun_hash_tag_export,
-};
-// TODO(port): the Zig file re-exports these under the same names; Rust cannot re-export and `use`
-// the same identifier twice in one module without aliasing. Phase B should collapse the duplicate
-// `*Export` aliases above once module layout is settled.
 
 bun_output::declare_scope!(InstallPatch, visible);
 
 /// Length of the hex representation of `u64::MAX` (i.e. 16).
-pub const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::MAX).len();
-pub const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len() + 1;
-pub type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
+pub(crate) const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::MAX).len();
+pub(crate) const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len() + 1;
+pub(crate) type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
-// `std.fs.Dir` → `bun_sys::Dir` (thin `Fd` wrapper, see sys/lib.rs).
-type StdFsDir = sys::Dir;
+// The directory handles on `PatchTask`/`ApplyPatch` are *borrowed views* of the
+// `PackageManager`-owned cache/temp directory descriptors. Store the raw `Fd`
+// so the task's drop never closes a descriptor it doesn't own. Use
+// `Dir::borrow(&fd)` where a `&Dir` is needed.
 
 pub struct PatchTask {
-    /// BACKREF (Zig: `*PackageManager`). Stored as `BackRef` because the task
+    /// BACKREF. Stored as `BackRef` because the task
     /// is held via raw pointer through the intrusive thread-pool queue while
     /// the manager is concurrently borrowed `&mut` on the main thread; a `&`
     /// reference here would alias that exclusive borrow under Stacked Borrows.
@@ -54,7 +44,8 @@ pub struct PatchTask {
     /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
     /// writes the event-loop wake flag.
     pub manager: bun_ptr::BackRef<PackageManager>,
-    pub tempdir: StdFsDir,
+    /// Borrowed view of the manager's temp directory fd (see comment at top of file).
+    pub tempdir: Fd,
     pub project_dir: &'static [u8],
     pub callback: Callback,
     pub task: ThreadPoolTask,
@@ -82,22 +73,21 @@ pub enum Callback {
 }
 
 impl Callback {
-    /// Zig: `@tagName(self.callback)`.
     #[inline]
-    pub fn tag_name(&self) -> &'static str {
+    pub(crate) fn tag_name(&self) -> &'static str {
         <&'static str>::from(self)
     }
     #[inline]
-    pub fn is_calc_hash(&self) -> bool {
+    pub(crate) fn is_calc_hash(&self) -> bool {
         matches!(self, Callback::CalcHash(_))
     }
     #[inline]
-    pub fn is_apply(&self) -> bool {
+    pub(crate) fn is_apply(&self) -> bool {
         matches!(self, Callback::Apply(_))
     }
-    /// Zig: `&self.callback.apply`. Panics if the active variant is not `Apply`.
+    /// Panics if the active variant is not `Apply`.
     #[inline]
-    pub fn apply_mut(&mut self) -> &mut ApplyPatch {
+    pub(crate) fn apply_mut(&mut self) -> &mut ApplyPatch {
         match self {
             Callback::Apply(a) => a,
             _ => unreachable!("PatchTask.callback is not .apply"),
@@ -130,7 +120,8 @@ pub struct ApplyPatch {
     pub patchfilepath: Box<[u8]>,
     pub pkgname: SemverString,
 
-    pub cache_dir: StdFsDir,
+    /// Borrowed view of the manager's cache directory fd (see comment at top of file).
+    pub cache_dir: Fd,
     pub cache_dir_subpath: ZBox,
     pub cache_dir_subpath_without_patch_hash: ZBox,
 
@@ -151,28 +142,26 @@ impl PatchTask {
     /// Destroy a heap-allocated `PatchTask` previously created by
     /// `new_calc_patch_hash` / `new_apply_patch_hash`.
     ///
-    /// PORT NOTE: Zig `deinit` freed each owned field then `bun.destroy(this)`. In Rust the
-    /// owned fields (`Box<[u8]>`, `Vec<u8>`, `Log`, `Option<...>`) drop automatically, so no
-    /// `impl Drop` body is needed. Per PORTING.md, `deinit` is never exposed as the public API;
-    /// because `PatchTask` is held via raw pointer through the intrusive `next`/thread-pool
-    /// queue, the named reclaim point is `unsafe fn destroy`. Cross-file callers map
-    /// `pt.deinit()` → `unsafe { PatchTask::destroy(pt) }`.
+    /// The owned fields (`Box<[u8]>`, `Vec<u8>`, `Log`, `Option<...>`) drop automatically, so no
+    /// `impl Drop` body is needed. Because `PatchTask` is held via raw pointer through the
+    /// intrusive `next`/thread-pool queue, the named reclaim point is `unsafe fn destroy`.
     ///
     /// # Safety
     /// `this` must have been produced by `heap::alloc` in the `new_*` constructors below and
     /// ownership must be returned here exactly once.
     pub unsafe fn destroy(this: *mut Self) {
-        // TODO: how to deinit `this.callback.calc_hash.network_task` (carried over from Zig)
+        // TODO: how to deinit `this.callback.calc_hash.network_task`
+        // SAFETY: caller contract — `this` was produced by `heap::into_raw` in
+        // `new_calc_patch_hash`/`new_apply_patch_hash` and is reclaimed exactly once.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    // Safe-fn: only ever invoked by `ThreadPool` via the `callback` fn-pointer
-    // with the `*mut ThreadPoolTask` we registered in `new_calc_patch_hash` /
-    // `new_apply_patch_hash`. The thread-pool contract — not the Rust caller —
-    // guarantees `task` is live and points at `PatchTask.task`, so the
-    // precondition is discharged locally. Safe `fn` coerces to the
-    // `unsafe fn(*mut Task)` field type.
-    pub fn run_from_thread_pool(task: *mut ThreadPoolTask) {
+    /// # Safety
+    /// Only invoked by `ThreadPool` via the `callback` fn-pointer registered in
+    /// `new_calc_patch_hash` / `new_apply_patch_hash`. `task` must be live and
+    /// point at the `task` field of a heap-allocated `PatchTask`, with the pool
+    /// granting exclusive access for the duration of the call.
+    pub unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
         // SAFETY: thread-pool callback contract — `task` points to the `task`
         // field of a live `PatchTask` (set at construction); the pool runs
         // each task at most once with exclusive access for the call.
@@ -186,15 +175,15 @@ impl PatchTask {
             "runFromThreadPoolImpl {}",
             <&'static str>::from(&self.callback)
         );
-        // PORT NOTE: Zig used nested `defer { defer wake(); push(this); }`. There are no early
-        // returns in the body, so the equivalent ordering (body → push → wake) is inlined below.
+        // There are no early returns in the body, so the ordering
+        // (body → push → wake) is inlined below.
         match &mut self.callback {
             Callback::CalcHash(_) => {
                 let result = self.calc_hash();
                 if let Callback::CalcHash(ch) = &mut self.callback {
                     ch.result = result;
                 }
-                // PORT NOTE: reshaped for borrowck — `calc_hash` borrows `&mut self`, so we
+                // Reshaped for borrowck — `calc_hash` borrows `&mut self`, so we
                 // cannot hold a `&mut ch` across the call.
             }
             Callback::Apply(_) => {
@@ -202,15 +191,15 @@ impl PatchTask {
                 self.apply().expect("OOM");
             }
         }
-        // SAFETY: `self.manager` is a long-lived BACKREF (Zig `*PackageManager`);
+        let mgr = self.manager.as_ptr();
+        // SAFETY: `self.manager` is a long-lived BACKREF;
         // the worker thread only touches the lock-free `patch_task_queue` and the
         // event-loop wake atomics, neither of which alias data the main thread
         // holds an exclusive borrow on.
-        let mgr = self.manager.as_ptr();
         unsafe {
             (*mgr)
                 .patch_task_queue
-                .push(std::ptr::from_mut::<Self>(self));
+                .push(core::ptr::NonNull::from(&mut *self));
             PackageManager::wake_raw(mgr);
         }
     }
@@ -220,7 +209,6 @@ impl PatchTask {
         manager: &mut PackageManager,
         log_level: LogLevel,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         bun_output::scoped_log!(
             InstallPatch,
             "runFromThreadMainThread {}",
@@ -262,11 +250,6 @@ impl PatchTask {
             let _ = apply
                 .logger
                 .print(std::ptr::from_mut(Output::error_writer()));
-            // PORT NOTE: Zig called `apply.logger.deinit()` here under `defer`. The `Log` is a
-            // field and will be dropped with the task; explicit early drop is skipped to avoid
-            // double-drop. If `Log::deinit` is reset-to-empty (idempotent), Phase B can restore
-            // an explicit `apply.logger.clear()` here.
-            // TODO(port): confirm Log drop semantics
         }
     }
 
@@ -275,7 +258,6 @@ impl PatchTask {
         manager: &mut PackageManager,
         log_level: LogLevel,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // TODO only works for npm package
         // need to switch on version.tag and handle each case appropriately
         let Callback::CalcHash(calc_hash) = &mut self.callback else {
@@ -315,9 +297,8 @@ impl PatchTask {
             let dep_id = state.dependency_id;
 
             let pkg: Package = *manager.lockfile.packages.get(pkg_id as usize);
-            // PORT NOTE: `Package` is not `Copy` in the Rust port; capture the
-            // scalar fields we need after `determine_preinstall_state` consumes
-            // it (Zig's `packages.get()` returns by-value-copy).
+            // `Package` is not `Copy`; capture the scalar fields we need
+            // after `determine_preinstall_state` consumes it.
             let pkg_meta_id = pkg.meta.id;
             let pkg_name = pkg.name;
             let pkg_resolution_tag = pkg.resolution.tag;
@@ -346,10 +327,14 @@ impl PatchTask {
                         BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
                     );
 
-                    // SAFETY: this arm is the `.npm` extract path; the
-                    // resolution union's active variant is `npm` (see the
-                    // `pkg_resolution_tag` switch below — Zig only reads
-                    // `pkg.resolution.value.npm.version` here, line 183).
+                    // SAFETY: every `Resolution` `Value` payload is `Copy`
+                    // POD and the union is zero-initialized (see the union
+                    // accessors in resolution.rs), so reading `.npm.version`
+                    // yields initialized bytes even when the active variant
+                    // is not `npm` — possibly stale, never uninit. This arm
+                    // is reachable for non-npm resolutions too (git/github/
+                    // tarball; see the TODO below), which then read garbage
+                    // version bytes into the task id, not UB.
                     let pkg_npm_version = unsafe {
                         manager.lockfile.packages.items_resolution()[pkg_id as usize]
                             .value
@@ -372,7 +357,7 @@ impl PatchTask {
                             url,
                             is_required,
                             dep_id,
-                            pkg_again,
+                            &pkg_again,
                             Some(name_and_version_hash),
                             match pkg_resolution_tag {
                                 crate::resolution_real::Tag::Npm => {
@@ -401,7 +386,9 @@ impl PatchTask {
                     );
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
-                        package_manager::enqueue_patch_task(manager, patch_task);
+                        // SAFETY: `patch_task` is a fresh `heap::alloc` from
+                        // `new_apply_patch_hash`; ownership transfers to the fifo.
+                        unsafe { package_manager::enqueue_patch_task(manager, patch_task) };
                     }
                 }
                 _ => {}
@@ -443,8 +430,6 @@ impl PatchTask {
                     return Ok(());
                 }
             };
-        // PORT NOTE: `defer this.manager.allocator.free(patchfile_txt)` — `patchfile_txt` is owned
-        // (`Vec<u8>`/`Box<[u8]>`) and drops at end of scope.
         let patchfile = match bun_patch::parse_patch_file(&patchfile_txt) {
             Ok(p) => p,
             Err(e) => {
@@ -455,7 +440,6 @@ impl PatchTask {
                 return Ok(());
             }
         };
-        // PORT NOTE: `defer patchfile.deinit(bun.default_allocator)` — handled by Drop.
 
         // 2. Create temp dir to do all the modifications
         let mut tmpname_buf = [0u8; 1024];
@@ -477,9 +461,9 @@ impl PatchTask {
 
         let (resolution_label, resolution_tag) = {
             // TODO: fix this threadsafety issue.
-            // PORT NOTE: not `self.manager()` — `&mut self.callback` is live.
+            // Not `self.manager()` — `&mut self.callback` is live.
             // BACKREF; the lockfile is read-only while apply tasks run
-            // off-thread (same contract as the Zig pointer dereference here).
+            // off-thread.
             let manager = self.manager.get();
             let resolution: &Resolution =
                 &manager.lockfile.packages.items_resolution()[patch.pkg_id as usize];
@@ -496,25 +480,23 @@ impl PatchTask {
             .expect("OOM");
             (label, resolution.tag)
         };
-        // PORT NOTE: `defer allocator.free(resolution_label)` — Vec drops at scope end.
 
         // 3. copy the unpatched files into temp dir
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath_without_patch_hash.as_zstr();
-        // PORT NOTE: borrowck — `tempdir_name` borrows `tmpname_buf` mutably, but
+        // Borrowck — `tempdir_name` borrows `tmpname_buf` mutably, but
         // `PackageInstall` also wants `&mut tmpname_buf[..]` for
-        // `destination_dir_subpath_buf`. Zig aliased the two; `PackageInstall`
-        // assumes `destination_dir_subpath` is a prefix slice *into*
+        // `destination_dir_subpath_buf`. `PackageInstall` assumes
+        // `destination_dir_subpath` is a prefix slice *into*
         // `destination_dir_subpath_buf` (see `verifyGitResolution` /
-        // `verifyPackageJSONNameAndVersion`). Rust can't express that aliasing
-        // with `&ZStr` + `&mut [u8]`, so use a separate buffer but mirror the
-        // prefix bytes so the invariant holds for any future call that reaches
-        // those paths.
+        // `verifyPackageJSONNameAndVersion`), and that aliasing can't be
+        // expressed with `&ZStr` + `&mut [u8]`, so use a separate buffer but
+        // mirror the prefix bytes so the invariant holds for any future call
+        // that reaches those paths.
         let mut dest_subpath_buf = [0u8; 1024];
         dest_subpath_buf[..tempdir_name.len() + 1]
             .copy_from_slice(tempdir_name.as_bytes_with_nul());
-        // PORT NOTE: not `self.manager()` — `&mut self.callback` is live.
-        // BACKREF — read-only lockfile access; same contract as the Zig
-        // pointer dereference here.
+        // Not `self.manager()` — `&mut self.callback` is live.
+        // BACKREF — read-only lockfile access while the task runs off-thread.
         let lockfile = &self.manager.get().lockfile;
         let mut pkg_install = PackageInstall {
             cache_dir: patch.cache_dir,
@@ -531,7 +513,12 @@ impl PatchTask {
             lockfile,
         };
 
-        match pkg_install.install(true, system_tmpdir, InstallMethod::Copyfile, resolution_tag) {
+        match pkg_install.install(
+            true,
+            sys::Dir::borrow(&system_tmpdir),
+            InstallMethod::Copyfile,
+            resolution_tag,
+        ) {
             InstallResult::Success => {}
             InstallResult::Failure(reason) => {
                 log.add_error_fmt_opts(
@@ -548,7 +535,7 @@ impl PatchTask {
 
         {
             let patch_pkg_dir = match sys::openat(
-                system_tmpdir.fd,
+                system_tmpdir,
                 tempdir_name,
                 sys::O::RDONLY | sys::O::DIRECTORY,
                 0,
@@ -613,9 +600,9 @@ impl PatchTask {
 
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath.as_zstr();
         if let Err(e) = sys::renameat_concurrently(
-            system_tmpdir.fd,
+            system_tmpdir,
             path_in_tmpdir,
-            patch.cache_dir.fd,
+            patch.cache_dir,
             cache_dir_subpath_z,
             sys::RenameOptions {
                 move_fallback: true,
@@ -653,9 +640,8 @@ impl PatchTask {
         let stat: sys::Stat = match sys::stat(absolute_patchfile_path) {
             sys::Result::Err(e) => {
                 if e.get_errno() == sys::Errno::ENOENT {
-                    // PORT NOTE: not `self.manager()` — `&mut self.callback` is live.
-                    // BACKREF — read-only lockfile access on the worker thread;
-                    // same contract as the Zig pointer dereference here.
+                    // Not `self.manager()` — `&mut self.callback` is live.
+                    // BACKREF — read-only lockfile access on the worker thread.
                     let manager = self.manager.get();
                     log.add_error_fmt(
                         None,
@@ -712,7 +698,6 @@ impl PatchTask {
             }
             sys::Result::Ok(f) => f,
         };
-        let _close_guard = sys::CloseOnDrop::file(&file);
 
         let mut hasher = Wyhash11::init(0);
 
@@ -747,14 +732,14 @@ impl PatchTask {
     }
 
     pub fn notify(&mut self) {
-        // PORT NOTE: Zig `defer this.manager.wake()` then `push`. No early returns; inline order.
-        // SAFETY: `self.manager` is a long-lived BACKREF (Zig `*PackageManager`);
-        // only touches the lock-free queue and event-loop wake atomics.
+        // Push, then wake. No early returns.
         let mgr = self.manager.as_ptr();
+        // SAFETY: `self.manager` is a long-lived BACKREF;
+        // only touches the lock-free queue and event-loop wake atomics.
         unsafe {
             (*mgr)
                 .patch_task_queue
-                .push(std::ptr::from_mut::<Self>(self));
+                .push(core::ptr::NonNull::from(&mut *self));
             PackageManager::wake_raw(mgr);
         }
     }
@@ -775,10 +760,10 @@ impl PatchTask {
             .unwrap_or_else(|| panic!("This is a bug"));
         let patchfile_path: Box<[u8]> =
             Box::from(patchdep.path.slice(&manager.lockfile.buffers.string_bytes));
-        // TODO(port): Zig used `dupeZ` (NUL-terminated). The field is typed `[]const u8` and only
-        // used as a byte slice, so `Box<[u8]>` without trailing NUL should be equivalent. Verify.
+        // The field is only ever consumed as a byte slice (`join_z_buf` input,
+        // log formatting), so no trailing NUL is needed.
 
-        let tempdir = manager.get_temporary_directory().handle;
+        let tempdir = manager.get_temporary_directory().handle.fd();
         let pt = Box::new(PatchTask {
             tempdir,
             callback: Callback::CalcHash(CalcPatchHash {
@@ -809,13 +794,13 @@ impl PatchTask {
     ) -> *mut PatchTask {
         let pkg_name = pkg_manager.lockfile.packages.items_name()[pkg_id as usize];
 
-        // PORT NOTE: borrowck — `compute_cache_dir_and_subpath` borrows `&mut PackageManager`
+        // Borrowck — `compute_cache_dir_and_subpath` borrows `&mut PackageManager`
         // while `pkg_name.slice(..)` and `resolution` borrow `pkg_manager.lockfile` immutably.
         // Clone the slice/resolution out first.
         let pkg_name_slice = pkg_name
             .slice(&pkg_manager.lockfile.buffers.string_bytes)
             .to_vec();
-        // PORT NOTE: `Resolution` is `Copy`; copy out so the lockfile borrow ends
+        // `Resolution` is `Copy`; copy out so the lockfile borrow ends
         // before `compute_cache_dir_and_subpath` reborrows `pkg_manager` mutably.
         let resolution_clone: Resolution =
             pkg_manager.lockfile.packages.items_resolution()[pkg_id as usize];
@@ -850,7 +835,7 @@ impl PatchTask {
             ZBox::from_bytes(&cache_dir_subpath_bytes[..patch_hash_idx]);
         let cache_dir = stuff.cache_dir;
 
-        let tempdir = pkg_manager.get_temporary_directory().handle;
+        let tempdir = pkg_manager.get_temporary_directory().handle.fd();
         let pt = Box::new(PatchTask {
             tempdir,
             callback: Callback::Apply(ApplyPatch {
@@ -880,12 +865,8 @@ impl PatchTask {
     }
 }
 
-// TODO(port): these enum/type references are placeholders for cross-file types that live in
-// `bun_install`. Phase B should replace with the real paths once those modules are ported.
 use crate::PreinstallState;
 use crate::network_task::Authorization;
 use crate::package_install::{InstallResult, Method as InstallMethod};
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager_task::Id as TaskId;
-
-// ported from: src/install/patch_install.zig

@@ -1,13 +1,5 @@
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
-// AUTOGEN: mod declarations only — real exports added in B-1.
-#![warn(unreachable_pub)]
 pub mod AnyTask;
 pub mod AnyTaskWithExtraContext;
 pub mod AutoFlusher;
@@ -17,13 +9,12 @@ pub mod EventLoopTimer;
 pub mod ManagedTask;
 
 // ────────────────────────────────────────────────────────────────────────────
-// B-2 un-gated: AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop compile.
-// All `` gates removed this pass — bun_uws_sys::Loop and
-// bun_core::Timespec are now real types. `InternalLoopData::set_parent_event_loop`
+// AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop.
+// `InternalLoopData::set_parent_event_loop`
 // is reached via the lower-tier `set_parent_raw(tag, ptr)` +
-// `EventLoopHandle::into_tag_ptr()`. Windows-only `MiniVM::platform_event_loop`
-// (`uws::Loop::uv_loop`) remains `#[cfg(windows)]`-guarded with a
-// `TODO(b2-blocked)` marker; the POSIX build is gate-free.
+// `EventLoopHandle::into_tag_ptr()`. The Windows-only `uv_loop` projection
+// lives on `EventLoopHandle::uv_loop` (`#[cfg(windows)]`); the POSIX build is
+// gate-free.
 // ────────────────────────────────────────────────────────────────────────────
 
 #[path = "MiniEventLoop.rs"]
@@ -73,7 +64,7 @@ bun_dispatch::link_interface! {
         fn enter();
         fn exit();
         fn enqueue_task(task: Task);
-        fn enqueue_task_concurrent(task: *mut ConcurrentTask::ConcurrentTask);
+        fn enqueue_task_concurrent(task: core::ptr::NonNull<ConcurrentTask::ConcurrentTask>);
         fn env() -> *mut bun_dotenv::Loader<'static>;
         fn top_level_dir() -> *const [u8];
         fn create_null_delimited_env_map() -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError>;

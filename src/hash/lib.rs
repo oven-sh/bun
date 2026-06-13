@@ -1,10 +1,9 @@
 //! Non-cryptographic hash functions for `Bun.hash` (`HashObject`).
 //!
-//! Each algorithm is a 1:1 port of the version Bun's Zig runtime uses
-//! (`std.hash.*` from `vendor/zig/lib/std/hash/` plus `bun.deprecated.RapidHash`),
-//! so JS-visible output stays bit-identical across the Zig→Rust boundary.
+//! JS-visible output is bit-identical to the reference implementation of each
+//! algorithm.
 //!
-//! Surface mirrored from `src/runtime/api/HashObject.zig`:
+//! Surface exposed by `src/runtime/api/HashObject.rs`:
 //!
 //! | JS name        | Rust entry point                              | seed → output |
 //! |----------------|-----------------------------------------------|---------------|
@@ -22,7 +21,6 @@
 //! `wyhash` lives in `bun_wyhash`; `crc32` is provided by `bun_zlib`.
 
 #![allow(clippy::many_single_char_names)]
-#![warn(unreachable_pub)]
 pub mod adler32;
 pub mod cityhash;
 pub mod murmur;
@@ -35,11 +33,9 @@ pub use murmur::{Murmur2_32, Murmur2_64, Murmur3_32};
 pub use rapidhash::RapidHash;
 pub use xxhash::{XxHash3, XxHash32, XxHash64, XxHash64Streaming};
 
-// ported from: src/runtime/api/HashObject.zig
-
 #[cfg(test)]
 pub(crate) mod verify {
-    //! SMHasher verification routine — mirrors `vendor/zig/lib/std/hash/verify.zig`.
+    //! SMHasher verification routine.
     //!
     //! Fill `buf[i] = i`; hash each prefix with `seed = 256 - i`; concat the
     //! little-endian bytes; hash the concat with `seed = 0`; truncate to u32.

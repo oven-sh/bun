@@ -19,7 +19,6 @@ impl HeaderBuilder {
 
     pub fn allocate(&mut self) -> Result<(), AllocError> {
         self.content.allocate()?;
-        // TODO(port): narrow error set
         self.entries
             .ensure_total_capacity(self.header_count as usize)?;
         Ok(())
@@ -40,7 +39,6 @@ impl HeaderBuilder {
             length: value.len() as u32,
         };
         let _ = self.content.append(value);
-        // PERF(port): was assume_capacity
         self.entries.append_assume_capacity(Entry {
             name: name_ptr,
             value: value_ptr,
@@ -81,7 +79,7 @@ impl HeaderBuilder {
 
         let _ = self.content.append(name);
 
-        // PORT NOTE: reshaped for borrowck — `fmt` returns a borrow into the
+        // Note: reshaped for borrowck — `fmt` returns a borrow into the
         // builder buffer; capture its length, then re-read `content.len`.
         let value_len = self.content.fmt(args).len();
 
@@ -90,7 +88,6 @@ impl HeaderBuilder {
             length: value_len as u32,
         };
 
-        // PERF(port): was assume_capacity
         self.entries.append_assume_capacity(Entry {
             name: name_ptr,
             value: value_ptr,
@@ -99,9 +96,9 @@ impl HeaderBuilder {
 
     pub fn apply(&mut self, client: &mut crate::HTTPClient) {
         client.header_entries = core::mem::take(&mut self.entries);
-        // TODO(port): lifetime — header_buf borrows from self.content's allocation; in Zig this
-        // is a non-owning slice into the StringBuilder's buffer. Phase B must decide whether
-        // HttpClient takes ownership of the buffer or borrows it.
+        // header_buf is a non-owning slice into self.content's
+        // allocation; the builder's owner must
+        // keep `self.content` alive for as long as the client uses the slice.
         // SAFETY: content.ptr was set by allocate() and exactly content.len bytes have been written.
         // Cannot use `written_slice()` here — the borrow must outlive `&self` (`HTTPClient<'a>`
         // holds it past this call); the lifetime is intentionally unbound.
@@ -109,5 +106,3 @@ impl HeaderBuilder {
             unsafe { bun_core::ffi::slice(self.content.ptr.unwrap().as_ptr(), self.content.len) };
     }
 }
-
-// ported from: src/http/HeaderBuilder.zig

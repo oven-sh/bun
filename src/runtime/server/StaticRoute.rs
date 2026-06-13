@@ -11,18 +11,17 @@ use bun_http::{Headers, Method};
 use bun_http_types::ETag;
 
 use bun_http_types::MimeType::MimeType;
-use bun_jsc::{HTTPHeaderName, JsClass};
+use bun_jsc::HTTPHeaderName;
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::server::{AnyServer, write_status};
-use crate::webcore::BlobExt as _;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
 // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — single-thread refcount.
-// PORT NOTE (§Pointers): `*StaticRoute` is also passed as uws onAborted/
+// `*StaticRoute` is also passed as uws onAborted/
 // onWritable userdata; the intrusive `ref_count` Cell + `*mut Self` receivers
 // preserve write provenance through the FFI userdata round-trip so the eventual
 // `heap::take` in `deref_` is sound.
@@ -30,8 +29,7 @@ use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 pub struct StaticRoute {
     // TODO: Remove optional. StaticRoute requires a server object or else it will
     // not ensure it is alive while sending a large blob.
-    // `pub(super)` so sibling route modules (HTMLBundle) can construct directly
-    // (Zig `bun.new(StaticRoute, .{ .ref_count = .init(), ... })`).
+    // `pub(super)` so sibling route modules (HTMLBundle) can construct directly.
     pub(super) ref_count: Cell<u32>,
     pub server: Cell<Option<AnyServer>>,
     pub status_code: u16,
@@ -41,6 +39,7 @@ pub struct StaticRoute {
     pub headers: Headers,
 }
 
+#[derive(Clone, Copy)]
 pub struct InitFromBytesOptions<'a> {
     pub server: Option<AnyServer>,
     pub mime_type: Option<&'a MimeType>,
@@ -62,7 +61,7 @@ impl<'a> Default for InitFromBytesOptions<'a> {
 impl StaticRoute {
     // pub const ref / deref — intrusive refcount accessors.
     // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`; `deref_`
-    // is kept as a thin alias so existing call sites (and Zig parity) keep
+    // is kept as a thin alias so existing call sites keep
     // working without renaming.
     /// # Safety
     /// `this` must have been produced by `heap::alloc` in one of the
@@ -76,8 +75,7 @@ impl StaticRoute {
     }
 
     /// Ownership of `blob` is transferred to this function.
-    // PORT NOTE: Zig takes `*const AnyBlob` and bit-copies (`blob.*`) into the
-    // route, relying on no-auto-drop. Rust `AnyBlob` has drop glue (e.g.
+    // `AnyBlob` has drop glue (e.g.
     // `InternalBlob.bytes: Vec<u8>`), so a `&AnyBlob` + `ptr::read` would alias
     // and double-free when the caller's value drops. Take by value instead.
     pub fn init_from_any_blob(
@@ -164,7 +162,7 @@ impl StaticRoute {
             let was_string = body_value.was_string();
             body_value.to_blob_if_possible();
 
-            let mut blob: AnyBlob = 'brk: {
+            let blob: AnyBlob = 'brk: {
                 match body_value {
                     BodyValue::Used => {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -188,7 +186,7 @@ impl StaticRoute {
                                     .throw_todo(b"TODO: support Bun.file(path) in static routes"));
                             }
                         }
-                        let mut blob = body_value.use_();
+                        let blob = body_value.use_();
                         blob.global_this
                             .set(std::ptr::from_ref::<JSGlobalObject>(global_this));
                         debug_assert!(
@@ -251,7 +249,7 @@ impl StaticRoute {
     // HEAD requests have no body.
     /// # Safety
     /// `this` must point to a live heap-allocated `StaticRoute` produced by one of
-    /// the constructors (write provenance intact). Mirrors Zig `*StaticRoute` receiver.
+    /// the constructors (write provenance intact).
     pub unsafe fn on_head_request(this: *mut Self, mut req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
@@ -468,7 +466,6 @@ impl StaticRoute {
                 &buf[value.offset as usize..][..value.length as usize],
             );
         }
-        // Zig: `if (comptime tag != .H3) ... s.writeHeader("alt-svc", alt)`.
         if !matches!(resp, AnyResponse::H3(_)) {
             if let Some(srv) = self.server.get() {
                 if let Some(alt) = srv.h3_alt_svc() {
@@ -554,7 +551,6 @@ impl StaticRoute {
 
 impl Drop for StaticRoute {
     fn drop(&mut self) {
-        // Zig deinit: blob.detach() + headers.deinit() + bun.destroy(this).
         // Box drop handles the dealloc; Headers has its own Drop.
         self.blob.detach();
     }

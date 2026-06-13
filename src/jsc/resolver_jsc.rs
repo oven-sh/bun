@@ -1,5 +1,5 @@
-//! Host fns / C++ exports for `node:module` `_nodeModulePaths`. Extracted from
-//! `resolver/resolver.zig` so `resolver/` has no JSC references.
+//! Host fns / C++ exports for `node:module` `_nodeModulePaths`. Lives here so
+//! `resolver/` has no JSC references.
 
 use bstr::BStr;
 
@@ -9,7 +9,10 @@ use bun_paths::resolve_path;
 use bun_paths::{Platform, SEP, SEP_STR};
 
 #[crate::host_fn(export = "Resolver__nodeModulePathsForJS")]
-pub fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn node_module_paths_for_js(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     crate::mark_binding!();
     let argument: JSValue = frame.argument(0);
 
@@ -22,22 +25,22 @@ pub fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> J
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSValue {
+pub(crate) extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSValue {
     crate::mark_binding!();
 
     let in_str = BunString::static_(b".");
     node_module_paths_js_value(in_str, global, false)
 }
 
-// TODO(port): C++ callers pass `in_str` by value without transferring a ref; verify
-// `bun_core::String` Drop semantics match (Zig callee did not `deref`).
+// C++ callers pass `in_str` by value without transferring a ref:
+// `bun_core::String` is `Copy` with no `Drop` impl, so receiving it by value
+// never releases the caller's ref.
 #[unsafe(export_name = "Resolver__nodeModulePathsJSValue")]
-pub extern "C" fn node_module_paths_js_value(
+pub(crate) extern "C" fn node_module_paths_js_value(
     in_str: BunString,
     global: &JSGlobalObject,
     use_dirname: bool,
 ) -> JSValue {
-    // PERF(port): was ArenaAllocator + stackFallback(1024) bulk-free — profile in Phase B
     let mut list: Vec<BunString> = Vec::new();
 
     let sliced = in_str.to_utf8();
@@ -65,9 +68,8 @@ pub extern "C" fn node_module_paths_js_value(
     };
     let mut root_path: &[u8] = &full_path[0..root_index];
     if full_path.len() > root_path.len() {
-        // PORT NOTE: reshaped for borrowck — `std.mem.splitBackwardsScalar` exposes
-        // `.buffer` and `.index`, which Rust's `rsplit` does not. Manual iteration
-        // mirrors the Zig SplitBackwardsIterator state machine exactly.
+        // Manual backwards-split iteration: we need both the remaining buffer
+        // and the split index, which Rust's `rsplit` does not expose.
         let suffix: &[u8] = &full_path[root_index..];
         let mut index: Option<usize> = Some(suffix.len());
         while let Some(end) = index {
@@ -114,8 +116,7 @@ pub extern "C" fn node_module_paths_js_value(
     list.as_slice().to_js_array(global).unwrap_or(JSValue::ZERO)
 }
 
-/// `[bun.String]::to_js_array` lives on the `StringArrayJsc` ext trait below
-/// (mirrors `bun_string_jsc.zig`'s `BunString__createArray`).
+/// `[bun.String]::to_js_array` lives on the `StringArrayJsc` ext trait below.
 trait StringArrayJsc {
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
 }
@@ -128,10 +129,10 @@ impl StringArrayJsc for [BunString] {
                 len: usize,
             ) -> JSValue;
         }
+        // SAFETY: `self` is a live slice, so `self.as_ptr()` is valid for `self.len()`
+        // reads of `BunString` for the duration of the FFI call.
         crate::host_fn::from_js_host_call(global, || unsafe {
             BunString__createArray(global, self.as_ptr(), self.len())
         })
     }
 }
-
-// ported from: src/jsc/resolver_jsc.zig

@@ -11,10 +11,10 @@ use crate::crypto::evp;
 use crate::node::Encoding as NodeEncoding;
 
 // ── local shims ──────────────────────────────────────────────────────────
-// `bun.ComptimeStringMap.fromJSCaseInsensitive` — the upstream
+// The upstream
 // `bun_jsc::comptime_string_map_jsc` only exposes the case-sensitive `from_js`;
 // the case-insensitive variant is still cfg-gated. Map keys are all lower-case
-// ASCII, so lower the probe and do a direct phf lookup (mirrors PBKDF2.rs).
+// ASCII, so lower the probe and do a direct lookup (mirrors PBKDF2.rs).
 fn algorithm_from_js_case_insensitive(
     global: &JSGlobalObject,
     input: JSValue,
@@ -23,8 +23,8 @@ fn algorithm_from_js_case_insensitive(
     Ok(evp::lookup_ignore_case(slice.slice()))
 }
 
-/// `JSValue.getOptional(_, _, ZigString.Slice)` — local shim until `bun_jsc`
-/// grows a typed `get_optional`. Returns `None` for missing/null/undefined.
+/// Local shim until `bun_jsc` grows a typed `get_optional`.
+/// Returns `None` for missing/null/undefined.
 fn get_optional_slice(
     target: JSValue,
     global: &JSGlobalObject,
@@ -44,10 +44,9 @@ fn get_optional_slice(
     }
 }
 
-/// `JSValue.getOptionalInt(_, _, u64)` — local shim. Spec (`JSValue.zig:1896`)
-/// delegates to `validateIntegerRange` with `[0, MAX_SAFE_INTEGER]`; that
-/// helper is defined on the cfg-gated `JSGlobalObject` impl, so inline the
-/// minimal u64 path here.
+/// Local shim: validates an integer in `[0, MAX_SAFE_INTEGER]`.
+/// `validateIntegerRange` is defined on the cfg-gated `JSGlobalObject` impl,
+/// so inline the minimal u64 path here.
 fn get_optional_int_u64(
     target: JSValue,
     global: &JSGlobalObject,
@@ -75,7 +74,7 @@ fn get_optional_int_u64(
 /// JS binding function for generating CSRF tokens
 /// First argument is secret (required), second is options (optional)
 #[bun_jsc::host_fn]
-pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_analytics::features::csrf_generate.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
     // We should have at least one argument (secret)
@@ -94,12 +93,11 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
         }
         secret = Some(js_secret.to_slice(global)?);
     }
-    // `defer if (secret) |s| s.deinit();` — handled by Drop on ZigStringSlice
-
     // Default values
     let mut expires_in: u64 = csrf::DEFAULT_EXPIRATION_MS;
     let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64Url;
     let mut algorithm: EvpAlgorithm = csrf::DEFAULT_ALGORITHM;
+    let mut session_id: Option<ZigStringSlice> = None;
 
     // Check if we have options object
     if args.len() > 1 && args[1].is_object() {
@@ -108,6 +106,16 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
         // Extract expiresIn (optional)
         if let Some(expires_in_js) = get_optional_int_u64(options_value, global, "expiresIn")? {
             expires_in = expires_in_js;
+        }
+
+        // Extract sessionId (optional)
+        if let Some(session_id_slice) = get_optional_slice(options_value, global, b"sessionId")? {
+            if session_id_slice.slice().is_empty() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "sessionId must be a non-empty string"
+                )));
+            }
+            session_id = Some(session_id_slice);
         }
 
         // Extract encoding (optional)
@@ -167,13 +175,14 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 
     // Generate the token
     let token_bytes = match csrf::generate(
-        csrf::GenerateOptions {
+        &csrf::GenerateOptions {
             secret: match &secret {
                 Some(s) => s.slice(),
                 // SAFETY: `bun_vm()` never returns null for a Bun-owned global; we are
                 // on the JS thread so the VM singleton is exclusively reachable here.
                 None => global.bun_vm().as_mut().rare_data().default_csrf_secret(),
             },
+            session_id: session_id.as_ref().map(|s| s.slice()).unwrap_or(b""),
             expires_in_ms: expires_in,
             encoding,
             algorithm,
@@ -206,7 +215,7 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 /// JS binding function for verifying CSRF tokens
 /// First argument is token (required), second is options (optional)
 #[bun_jsc::host_fn]
-pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_analytics::features::csrf_verify.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // We should have at least one argument (token)
     let args = frame.arguments();
@@ -226,13 +235,13 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         );
     }
     let token = js_token.to_slice(global)?;
-    // `defer token.deinit();` — handled by Drop on ZigStringSlice
 
     // Default values
     let mut secret: Option<ZigStringSlice> = None;
-    // `defer if (secret) |s| s.deinit();` — handled by Drop
+    // `secret` is freed by Drop.
     let mut max_age: u64 = csrf::DEFAULT_EXPIRATION_MS;
     let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64Url;
+    let mut session_id: Option<ZigStringSlice> = None;
 
     let mut algorithm: EvpAlgorithm = csrf::DEFAULT_ALGORITHM;
 
@@ -247,6 +256,16 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     .throw_invalid_arguments(format_args!("Secret must be a non-empty string")));
             }
             secret = Some(secret_slice);
+        }
+
+        // Extract sessionId (optional)
+        if let Some(session_id_slice) = get_optional_slice(options_value, global, b"sessionId")? {
+            if session_id_slice.slice().is_empty() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "sessionId must be a non-empty string"
+                )));
+            }
+            session_id = Some(session_id_slice);
         }
 
         // Extract maxAge (optional)
@@ -305,7 +324,7 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         }
     }
     // Verify the token
-    let is_valid = csrf::verify(csrf::VerifyOptions {
+    let is_valid = csrf::verify(&csrf::VerifyOptions {
         token: token.slice(),
         secret: match &secret {
             Some(s) => s.slice(),
@@ -313,6 +332,7 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             // on the JS thread so the VM singleton is exclusively reachable here.
             None => global.bun_vm().as_mut().rare_data().default_csrf_secret(),
         },
+        session_id: session_id.as_ref().map(|s| s.slice()).unwrap_or(b""),
         max_age_ms: max_age,
         encoding,
         algorithm,
@@ -320,5 +340,3 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
     Ok(JSValue::from(is_valid))
 }
-
-// ported from: src/runtime/api/csrf_jsc.zig

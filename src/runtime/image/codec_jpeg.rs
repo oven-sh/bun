@@ -1,7 +1,7 @@
 //! libjpeg-turbo (TurboJPEG 3 API) decode/encode for `Bun.Image`.
 //! Dispatch lives in codecs.rs; this file is the codec body.
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use super::codecs;
@@ -10,14 +10,13 @@ use crate::encoded_wrap_free;
 #[allow(non_camel_case_types)]
 type tjhandle = *mut c_void;
 
-// TODO(port): move to libjpeg_turbo_sys (or runtime_sys) crate
 // TJINIT_COMPRESS=0, TJINIT_DECOMPRESS=1.
 unsafe extern "C" {
-    pub fn tj3Init(init_type: c_int) -> tjhandle;
-    pub fn tj3Destroy(h: tjhandle);
+    pub(crate) fn tj3Init(init_type: c_int) -> tjhandle;
+    pub(crate) fn tj3Destroy(h: tjhandle);
     fn tj3Set(h: tjhandle, param: c_int, value: c_int) -> c_int;
-    pub fn tj3Get(h: tjhandle, param: c_int) -> c_int;
-    pub fn tj3DecompressHeader(h: tjhandle, buf: *const u8, len: usize) -> c_int;
+    pub(crate) fn tj3Get(h: tjhandle, param: c_int) -> c_int;
+    pub(crate) fn tj3DecompressHeader(h: tjhandle, buf: *const u8, len: usize) -> c_int;
     fn tj3Decompress8(
         h: tjhandle,
         buf: *const u8,
@@ -39,9 +38,7 @@ unsafe extern "C" {
     fn tj3SetScalingFactor(h: tjhandle, sf: ScalingFactor) -> c_int;
     fn tj3SetCroppingRegion(h: tjhandle, r: CropRegion) -> c_int;
     fn tj3GetScalingFactors(n: *mut c_int) -> *const ScalingFactor;
-    pub fn tj3Free(ptr: *mut c_void);
-    #[allow(dead_code)]
-    fn tj3GetErrorStr(h: tjhandle) -> *const c_char;
+    pub(crate) fn tj3Free(ptr: *mut c_void);
     // ICC profile transport: the APP2 ICC_PROFILE marker carries the source's
     // colour space (sRGB implicit when absent; Display-P3 / Adobe RGB / Jpegli
     // XYB / … explicit when present). tj3GetICCProfile reads the decoded
@@ -54,18 +51,18 @@ unsafe extern "C" {
 }
 
 /// RAII owner for a TurboJPEG handle — `tj3Destroy` on drop.
-pub struct Handle(NonNull<c_void>);
+pub(crate) struct Handle(NonNull<c_void>);
 
 impl Handle {
     /// `init_type`: `0` = compress, `1` = decompress.
     #[inline]
-    pub fn init(init_type: c_int) -> Option<Self> {
+    pub(crate) fn init(init_type: c_int) -> Option<Self> {
         // SAFETY: FFI — tj3Init has no preconditions; returns null on failure.
         NonNull::new(unsafe { tj3Init(init_type) }).map(Self)
     }
 
     #[inline]
-    pub fn as_ptr(&self) -> tjhandle {
+    pub(crate) fn as_ptr(&self) -> tjhandle {
         self.0.as_ptr()
     }
 }
@@ -108,8 +105,8 @@ fn scaled(dim: u32, sf: ScalingFactor) -> u32 {
 // tjparam / tjpf enum values from turbojpeg.h.
 const TJPARAM_QUALITY: c_int = 3;
 const TJPARAM_SUBSAMP: c_int = 4;
-pub const TJPARAM_JPEGWIDTH: c_int = 5;
-pub const TJPARAM_JPEGHEIGHT: c_int = 6;
+pub(crate) const TJPARAM_JPEGWIDTH: c_int = 5;
+pub(crate) const TJPARAM_JPEGHEIGHT: c_int = 6;
 const TJPARAM_PROGRESSIVE: c_int = 12;
 const TJPARAM_MAXPIXELS: c_int = 24;
 /// `2` = save only APP2/ICC_PROFILE markers (enough for colour management,
@@ -232,7 +229,6 @@ pub fn decode(
             },
         );
     }
-    // PERF(port): was uninitialized `allocator.alloc(u8, n)` — zero-init here; profile in Phase B
     let mut out = vec![0u8; w as usize * ht as usize * 4];
     // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]`; dst is the
     // exclusive `out` buffer sized `w*ht*4` and the explicit pitch + cropping
@@ -251,9 +247,7 @@ pub fn decode(
         return Err(codecs::Error::DecodeFailed);
     }
     // SAFETY: `h` is live; tj3Get only reads handle state.
-    if unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) } != rw
-        || unsafe { tj3Get(h, TJPARAM_JPEGHEIGHT) } != rh
-    {
+    if unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) != rw || tj3Get(h, TJPARAM_JPEGHEIGHT) != rh } {
         return Err(codecs::Error::DecodeFailed);
     }
 
@@ -297,7 +291,7 @@ pub fn decode(
     })
 }
 
-pub fn encode(
+pub(crate) fn encode(
     rgba: &[u8],
     w: u32,
     ht: u32,
@@ -374,5 +368,3 @@ pub fn encode(
         free: encoded_wrap_free!(tj3Free),
     })
 }
-
-// ported from: src/runtime/image/codec_jpeg.zig

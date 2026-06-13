@@ -10,7 +10,7 @@ use core::ptr::NonNull;
 use bun_alloc::Arena; // = bumpalo::Bump
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
 // peechy batch 2 landed: `bun_options_types::schema::api` now provides
 // {StringMap, LoaderMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
 // Alias as `bun_schema` so existing field paths resolve unchanged.
@@ -21,21 +21,21 @@ use bun_paths::{self as paths, PathBuffer};
 // `jsc.API.JSBundler.Plugin` — opaque FFI handle for the C++ JSBundlerPlugin.
 // Re-exported from `crate::api::js_bundler` so `SplitBundlerOptions.plugin`
 // shares the same type the bundler pipeline uses.
-pub use crate::api::js_bundler::Plugin;
+pub(crate) use crate::api::js_bundler::Plugin;
 use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 
-// PORT NOTE: parent `mod.rs` already declares `dev_server` / `framework_router`
+// Note: parent `mod.rs` already declares `dev_server` / `framework_router`
 // as sibling modules of this file; pull them in instead of re-declaring (which
 // would duplicate the module tree and fail on `framework_router` having no
 // matching filename).
 use super::{dev_server, framework_router};
 
-// PORT NOTE: `pub use dev_server as DevServer` / `framework_router as
+// Note: `pub use dev_server as DevServer` / `framework_router as
 // FrameworkRouter` are already provided by the parent `mod.rs` (lines 349/369);
 // re-exporting here triggers E0365 because `bake_body` is a private module.
 
-/// `JSValue.getOptional(ZigString.Slice, ..)` — local shim until `bun_jsc`
-/// grows a typed `get_optional`. Returns `None` for missing/null/undefined.
+/// Local shim until `bun_jsc` grows a typed `get_optional`.
+/// Returns `None` for missing/null/undefined.
 fn get_optional_slice(
     target: JSValue,
     global: &JSGlobalObject,
@@ -98,16 +98,15 @@ fn get_function(
 use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
 
 /// Convert a `bun_core::Error` into a thrown JS exception in a `JsResult`
-/// context. Mirrors Zig `globalThis.throwError(err, msg)`.
+/// context.
 #[inline]
 fn throw_core_error(global: &JSGlobalObject, e: bun_core::Error, ctx: &'static str) -> JsError {
     global.throw_error(e, ctx)
 }
 
-/// Erase the `'bump` lifetime of an arena-backed slice. Phase-A convention
-/// (see file-level TODO(port)): `UserOptions.arena` outlives every borrower,
-/// so the bytes are valid for the program-relevant lifetime; Phase B threads
-/// a real `'bump` parameter through `Framework`/`FileSystemRouterType`.
+/// Erase the `'bump` lifetime of an arena-backed slice. Arena-erasure
+/// convention (see file-level TODO(lifetime)): `UserOptions.arena` outlives every
+/// borrower, so the bytes are valid for the program-relevant lifetime.
 #[inline(always)]
 pub(crate) fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
     // SAFETY: arena-backed; UserOptions owns the bump and is dropped last.
@@ -116,35 +115,35 @@ pub(crate) fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
     unsafe { bun_ptr::detach_ref(r) }
 }
 
-/// `arena.dupeZ(u8, bytes)` — copy `bytes` + trailing NUL into the bump arena.
-/// Returns `&'static ZStr` per the file-level Phase-A `'static` convention
-/// (arena-backed; lifetime erased — see TODO(port) at top of file).
+/// Copy `bytes` plus a trailing NUL into the bump arena.
+/// Returns `&'static ZStr` per the file-level `'static` convention
+/// (arena-backed; lifetime erased — see TODO(lifetime) at top of file).
 pub(crate) fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
     let buf: &mut [u8] = arena.alloc_slice_fill_default(bytes.len() + 1);
     buf[..bytes.len()].copy_from_slice(bytes);
     buf[bytes.len()] = 0;
     // SAFETY: buf is NUL-terminated; arena outlives all borrowers per the
     // self-referential UserOptions pattern. Not `from_buf`: the `'static`
-    // return type intentionally erases the arena lifetime — Phase B threads
-    // `'bump` and replaces this with `from_buf`.
+    // return type intentionally erases the arena lifetime; threading a real
+    // `'bump` would replace this with `from_buf`.
     unsafe { ZStr::from_raw(buf.as_ptr(), bytes.len()) }
 }
 
 /// export default { app: ... };
-pub const API_NAME: &str = "app";
+pub(crate) const API_NAME: &str = "app";
 
-// TODO(port): lifetime — many `&'static [u8]` fields below are actually backed
+// TODO(lifetime): many `&'static [u8]` fields below are actually backed
 // by `UserOptions.arena` (bumpalo::Bump) or `UserOptions.allocations`
-// (StringRefList). Phase A uses `&'static` to avoid struct lifetime params per
-// PORTING.md; Phase B should thread `'bump` or introduce `ArenaStr`.
+// (StringRefList). `&'static` is used to avoid struct lifetime params per
+// PORTING.md; could thread `'bump` or introduce `ArenaStr`.
 
-/// Zig version of the TS definition 'Bake.Options' in 'bake.d.ts'
+/// Rust version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub struct UserOptions {
     /// This arena contains some miscellaneous allocations at startup
     pub arena: Arena,
     pub allocations: StringRefList,
 
-    pub root: &'static ZStr, // TODO(port): arena-owned, self-referential with .arena
+    pub root: &'static ZStr, // TODO(lifetime): arena-owned, self-referential with .arena
     pub framework: Framework,
     pub bundler_options: SplitBundlerOptions,
 }
@@ -165,7 +164,6 @@ impl Drop for UserOptions {
 
 impl UserOptions {
     /// Currently, this function must run at the top of the event loop.
-    // TODO(port): narrow error set
     pub fn from_js(config: JSValue, global: &JSGlobalObject) -> JsResult<UserOptions> {
         let arena = Arena::new();
         // errdefer arena.deinit() — handled by Drop
@@ -177,7 +175,7 @@ impl UserOptions {
         if !config.is_object() {
             // Allow users to do `export default { app: 'react' }` for convenience
             if config.is_string() {
-                let bunstr = config.to_bun_string(global)?;
+                let bunstr = bun_core::OwnedString::new(config.to_bun_string(global)?);
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.slice(), b"react") {
@@ -195,7 +193,7 @@ impl UserOptions {
                         .map_err(|e| throw_core_error(global, e, "Framework::react"))?;
 
                     return Ok(UserOptions {
-                        // TODO(port): self-referential — `root`/`framework` borrow `arena`
+                        // TODO(lifetime): self-referential — `root`/`framework` borrow `arena`
                         root,
                         framework,
                         bundler_options,
@@ -276,25 +274,25 @@ impl StringRefList {
         strings: Vec::new(),
     };
 
-    // PORT NOTE: returned slice borrows JSC-owned storage kept alive by the
+    // Note: returned slice borrows JSC-owned storage kept alive by the
     // `ZigStringSlice` now stored in `self.strings`; it is valid only for as
     // long as `self` is. Callers that store the result in `Framework` /
     // `FileSystemRouterType` / `ServerComponents` fields must thread a `'bump`
     // lifetime (or switch those fields to `Box<[u8]>` / `ArenaStr`) — see the
-    // file-level TODO(port) above. Do NOT paper over this with a `'static`
+    // file-level TODO(lifetime) above. Do NOT paper over this with a `'static`
     // transmute (forbidden per PORTING.md §Forbidden — lifetime extension).
     pub fn track(&mut self, str: ZigStringSlice) -> &'static [u8] {
         self.strings.push(str);
         let slice = self.strings.last().unwrap().slice();
-        // SAFETY (`Interned::assume` — Population B, holder-backed): the
+        // SAFETY: (`Interned::assume` — Population B, holder-backed) the
         // `ZigStringSlice` is now owned by `self.strings` and lives exactly as
         // long as the `StringRefList`, which is owned by `UserOptions` and
         // dropped only when bake teardown runs (`UserOptions::deinit`). The
         // returned slice is stored only in `Framework` / `FileSystemRouterType`
         // / `ServerComponents` fields that are themselves owned by the same
         // `UserOptions`, so no read outlives the holder. NOT process-lifetime
-        // — Phase B must re-thread a real `'bump` lifetime here (see file-level
-        // TODO(port)); `assume` makes the lie grep-able until then.
+        // — a real `'bump` lifetime should eventually be threaded here (see
+        // file-level TODO(lifetime)); `assume` makes the lie grep-able until then.
         unsafe { bun_ptr::Interned::assume(slice) }.as_bytes()
     }
 }
@@ -308,18 +306,17 @@ pub struct SplitBundlerOptions {
 }
 
 impl SplitBundlerOptions {
-    // PORT NOTE: was `pub const EMPTY` — `ArrayHashMap::new()` (inside
+    // Note: was `pub const EMPTY` — `ArrayHashMap::new()` (inside
     // `BuildConfigSubset`) is not `const fn`, so this is now a fn-backed
     // default. Callers updated to `SplitBundlerOptions::default()`.
 
-    pub fn parse_plugin_array(
+    pub(crate) fn parse_plugin_array(
         &mut self,
         plugin_array: JSValue,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
-        // Spec (bake.zig:149-150): create the Plugin and assign it to
-        // `opts.plugin` BEFORE iterating, so `plugins: []` still leaves
-        // `self.plugin = Some(_)`.
+        // Create the Plugin and assign it to `opts.plugin` BEFORE iterating,
+        // so `plugins: []` still leaves `self.plugin = Some(_)`.
         let plugin: NonNull<Plugin> = match self.plugin {
             Some(p) => p,
             None => {
@@ -456,7 +453,7 @@ impl BuildConfigSubset {
 
 impl Default for BuildConfigSubset {
     fn default() -> Self {
-        // PORT NOTE: was `pub const DEFAULT` — `ArrayHashMap::new()` is not
+        // Note: was `pub const DEFAULT` — `ArrayHashMap::new()` is not
         // `const fn`, so this lives behind `Default` instead.
         BuildConfigSubset {
             loader: None,
@@ -483,10 +480,9 @@ impl Default for BuildConfigSubset {
 /// Full documentation on these fields is located in the TypeScript definitions.
 pub struct Framework {
     pub is_built_in_react: bool,
-    /// Spec (bake.zig:248) is `[]FileSystemRouterType` — a *mutable*
-    /// arena-owned slice that `resolve()` rewrites in place. Stored as an
-    /// owned `Vec` so `#[derive(Clone)]` deep-copies (a shared `&[T]` would
-    /// alias and make `resolve()`'s mutation UB).
+    /// `resolve()` rewrites this in place. Stored as an owned `Vec` so
+    /// `#[derive(Clone)]` deep-copies (a shared `&[T]` would alias and make
+    /// `resolve()`'s mutation UB).
     pub file_system_router_types: Vec<FileSystemRouterType>,
     // static_routers: &'static [&'static [u8]],
     pub server_components: Option<ServerComponents>,
@@ -549,7 +545,7 @@ impl Framework {
             }],
             // .static_routers = arena.alloc_slice_copy(&[b"public"]),
             built_in_modules: {
-                // PORT NOTE: was `ArrayHashMap::from_entries(arena, keys, vals)`;
+                // Note: was `ArrayHashMap::from_entries(arena, keys, vals)`;
                 // that constructor doesn't exist on the heap-backed
                 // `ArrayHashMap` — build it imperatively. `bun.handleOom`.
                 let keys: [&'static [u8]; 3] = [
@@ -607,7 +603,7 @@ impl Framework {
         Ok(fw)
     }
 
-    /// Unopinionated default. PORT NOTE: was `pub const NONE` —
+    /// Unopinionated default. Note: was `pub const NONE` —
     /// `ArrayHashMap::new()` is not `const fn`.
     pub fn none() -> Framework {
         Framework {
@@ -625,8 +621,8 @@ impl Framework {
         Framework {
             is_built_in_react: self.is_built_in_react,
             file_system_router_types: self.file_system_router_types.clone(),
-            server_components: self.server_components.clone(),
-            react_fast_refresh: self.react_fast_refresh.clone(),
+            server_components: self.server_components,
+            react_fast_refresh: self.react_fast_refresh,
             built_in_modules: bun_core::handle_oom(self.built_in_modules.clone()),
         }
     }
@@ -762,13 +758,13 @@ impl Framework {
         arena: &Arena,
     ) -> JsResult<Framework> {
         if opts.is_string() {
-            let str = opts.to_bun_string(global)?;
+            let str = bun_core::OwnedString::new(opts.to_bun_string(global)?);
 
             // Deprecated
             if str.eql_comptime("react-server-components") {
-                Output::warn(format_args!(
+                bun_core::warn!(
                     "deprecation notice: 'react-server-components' will be renamed to 'react'"
-                ));
+                );
                 return Ok(Framework::react(arena)?);
             }
 
@@ -782,14 +778,14 @@ impl Framework {
         }
 
         if opts.get(global, "serverEntryPoint")?.is_some() {
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "deprecation notice: 'framework.serverEntryPoint' has been replaced with 'fileSystemRouterTypes[n].serverEntryPoint'"
-            ));
+            );
         }
         if opts.get(global, "clientEntryPoint")?.is_some() {
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "deprecation notice: 'framework.clientEntryPoint' has been replaced with 'fileSystemRouterTypes[n].clientEntryPoint'"
-            ));
+            );
         }
 
         let react_fast_refresh: Option<ReactFastRefresh> = 'brk: {
@@ -819,7 +815,7 @@ impl Framework {
                 }
             };
 
-            let str = prop.to_bun_string(global)?;
+            let str = bun_core::OwnedString::new(prop.to_bun_string(global)?);
 
             Some(ReactFastRefresh {
                 import_source: refs.track(str.to_utf8()),
@@ -899,7 +895,7 @@ impl Framework {
                     )));
                 }
 
-                let path = match get_optional_string(file, global, b"import", refs, arena)? {
+                let path = match get_optional_string(file, global, b"import", refs)? {
                     Some(p) => p,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -909,20 +905,18 @@ impl Framework {
                     }
                 };
 
-                let value: BuiltInModule = if let Some(str) =
-                    get_optional_string(file, global, b"path", refs, arena)?
-                {
-                    BuiltInModule::Import(str)
-                } else if let Some(str) = get_optional_string(file, global, b"code", refs, arena)? {
-                    BuiltInModule::Code(str)
-                } else {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "'builtInModules[{}]' needs either 'path' or 'code'",
-                        i
-                    )));
-                };
+                let value: BuiltInModule =
+                    if let Some(str) = get_optional_string(file, global, b"path", refs)? {
+                        BuiltInModule::Import(str)
+                    } else if let Some(str) = get_optional_string(file, global, b"code", refs)? {
+                        BuiltInModule::Code(str)
+                    } else {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "'builtInModules[{}]' needs either 'path' or 'code'",
+                            i
+                        )));
+                    };
 
-                // PERF(port): was assume_capacity
                 files.put_assume_capacity(path, value);
                 i += 1;
             }
@@ -944,15 +938,16 @@ impl Framework {
                     "Framework can only define up to 256 file-system router types"
                 )));
             }
-            // PORT NOTE: reshaped alloc+index → Vec::push (owned; deep-cloned with Framework)
+            // Note: reshaped alloc+index → Vec::push (owned; deep-cloned with Framework)
             let mut file_system_router_types = Vec::with_capacity(len as usize);
 
             let mut it = array.array_iterator(global)?;
             let mut i: usize = 0;
-            // TODO(port): errdefer for (file_system_router_types[0..i]) |*fsr| fsr.style.deinit();
-            // — Style should impl Drop; bumpalo Vec drop will handle this if so.
+            // On the error path, dropping the `Vec` drops each `Style`, which
+            // releases the `Strong` held by its `JavascriptDefined` arm (the
+            // only owning variant; the named styles are unit-like).
             while let Some(fsr_opts) = it.next()? {
-                let root = match get_optional_string(fsr_opts, global, b"root", refs, arena)? {
+                let root = match get_optional_string(fsr_opts, global, b"root", refs)? {
                     Some(r) => r,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -961,25 +956,20 @@ impl Framework {
                         )));
                     }
                 };
-                let server_entry_point = match get_optional_string(
-                    fsr_opts,
-                    global,
-                    b"serverEntryPoint",
-                    refs,
-                    arena,
-                )? {
-                    Some(s) => s,
-                    None => {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "'fileSystemRouterTypes[{}]' is missing 'serverEntryPoint'",
-                            i
-                        )));
-                    }
-                };
+                let server_entry_point =
+                    match get_optional_string(fsr_opts, global, b"serverEntryPoint", refs)? {
+                        Some(s) => s,
+                        None => {
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "'fileSystemRouterTypes[{}]' is missing 'serverEntryPoint'",
+                                i
+                            )));
+                        }
+                    };
                 let client_entry_point =
-                    get_optional_string(fsr_opts, global, b"clientEntryPoint", refs, arena)?;
+                    get_optional_string(fsr_opts, global, b"clientEntryPoint", refs)?;
                 let prefix =
-                    get_optional_string(fsr_opts, global, b"prefix", refs, arena)?.unwrap_or(b"/");
+                    get_optional_string(fsr_opts, global, b"prefix", refs)?.unwrap_or(b"/");
                 let ignore_underscores =
                     get_boolean_strict(fsr_opts, global, b"ignoreUnderscores")?.unwrap_or(false);
                 let layouts = get_boolean_strict(fsr_opts, global, b"layouts")?.unwrap_or(false);
@@ -1031,7 +1021,7 @@ impl Framework {
                                 extensions.push(if slice[0] == b'.' {
                                     slice
                                 } else {
-                                    // PERF(port): std.mem.concat into arena
+                                    // Concatenate "." + slice into the arena.
                                     let mut v = bun_alloc::ArenaVec::<u8>::with_capacity_in(
                                         1 + slice.len(),
                                         arena,
@@ -1113,10 +1103,9 @@ impl Framework {
     }
 
     /// Project the fields the bundler reads into the lower-tier
-    /// `bun_bundler::bake_types::Framework` view. Spec bake.zig stores the
-    /// `bake.Framework` pointer directly on `BundleOptions.framework`; in the
-    /// Rust port the bundler crate cannot name `bun_runtime::bake::Framework`
-    /// so it carries a TYPE_ONLY subset that we populate here.
+    /// `bun_bundler::bake_types::Framework` view. The bundler crate cannot
+    /// name `bun_runtime::bake::Framework`, so it carries a TYPE_ONLY subset
+    /// that we populate here.
     pub(crate) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
         use bun_bundler::bake_types as bt;
         let mut built_in_modules = bun_collections::StringArrayHashMap::new();
@@ -1196,25 +1185,19 @@ impl Framework {
         minify_syntax: Option<bool>,
         minify_identifiers: Option<bool>,
     ) -> Result<(), bun_core::Error> {
-        use bun_js_parser as ast;
+        // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop`
+        // runs `exit()` at end-of-fn.
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+        let _ast_scope = ast_memory_allocator.enter();
 
-        // PORT NOTE: Zig built `ASTMemoryAllocator.Scope` by hand and called
-        // `enter`/`exit`; the Rust port collapses that to `ASTMemoryAllocator::enter`
-        // returning the RAII `Scope`. `defer ast_scope.exit()` is the explicit
-        // exit at end-of-fn (the Scope has no Drop yet).
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new_without_stack(arena);
-        let ast_scope = ast_memory_allocator.enter();
-        let _guard = scopeguard::guard(ast_scope, |s| s.exit());
-
-        // PORT NOTE: Zig passed `out: *Transpiler` pointing at `= undefined`
-        // memory and assigned `out.* = try Transpiler.init(...)`. In Rust the
-        // caller (`DevServer::init`) hands us an uninitialized slot, so use
-        // `MaybeUninit::write` (no drop of prior bytes) then reborrow as
+        // The caller (`DevServer::init`) hands us an uninitialized slot, so
+        // use `MaybeUninit::write` (no drop of prior bytes) then reborrow as
         // `&mut Transpiler` for the field assignments below.
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
-            // TODO(port): std.mem.zeroes(TransformOptions) — verify all-zero is valid
+            // `TransformOptions::default()`: every `Option` is `None`, every
+            // slice empty, every scalar zero/false.
             bun_schema::api::TransformOptions::default(),
             None,
         )?);
@@ -1271,11 +1254,10 @@ impl Framework {
         out.options.minify_identifiers = minify_identifiers.unwrap_or(mode != Mode::Development);
         out.options.minify_whitespace = minify_whitespace.unwrap_or(mode != Mode::Development);
         out.options.css_chunking = true;
-        // Spec bake.zig:778 `out.options.framework = framework` stores a borrowed
-        // `*bake.Framework`. The bundler crate (lower tier) carries a TYPE_ONLY
-        // projection (`bake_types::Framework`); construct it here and give it
-        // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        // PERF(port): interior `Box<[u8]>` in the projection are not dropped by
+        // The bundler crate (lower tier) carries a TYPE_ONLY projection
+        // (`bake_types::Framework`); construct it here and give it arena
+        // lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
+        // NOTE: interior `Box<[u8]>` in the projection are not dropped by
         // bumpalo — bounded per-session, revisit when `bake_types::BuiltInModule`
         // is reshaped to `&'a [u8]`.
         out.options.framework = Some(&*arena.alloc(self.as_bundler_view()));
@@ -1289,9 +1271,9 @@ impl Framework {
             out.options.env.behavior = bundler_options.env;
             out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"").into();
         }
-        // Spec bake.zig:788 `out.resolver.opts = out.options` (struct copy). The
-        // resolver crate carries a FORWARD_DECL subset of `BundleOptions`, so
-        // re-project via the dedicated helper rather than `Clone`.
+        // The resolver crate carries a FORWARD_DECL subset of
+        // `BundleOptions`, so re-project via the dedicated helper rather than
+        // `Clone`.
         out.sync_resolver_opts();
 
         out.configure_linker();
@@ -1313,7 +1295,7 @@ impl Framework {
                 bundler_options.define.keys.len(),
                 bundler_options.define.values.len()
             );
-            use bun_bundler::{DefineDataExt, DefineExt};
+            use bun_bundler::DefineDataExt;
             for (k, v) in bundler_options
                 .define
                 .keys
@@ -1342,8 +1324,8 @@ impl Framework {
             out.options.asset_naming = b"_bun/[hash].[ext]".as_slice().into();
         }
 
-        // Spec bake.zig:821 — re-sync after define/naming mutations so the
-        // resolver sees the final option set.
+        // Re-sync after define/naming mutations so the resolver sees the
+        // final option set.
         out.sync_resolver_opts();
         Ok(())
     }
@@ -1368,7 +1350,7 @@ pub enum BuiltInModule {
     Code(&'static [u8]),
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct ServerComponents {
     pub separate_ssr_graph: bool,
     pub server_runtime_import: &'static [u8],
@@ -1390,7 +1372,7 @@ impl Default for ServerComponents {
     }
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct ReactFastRefresh {
     pub import_source: &'static [u8],
 }
@@ -1417,10 +1399,8 @@ fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'stat
     }
 }
 
-/// `FrameworkRouter.Style.fromJS` (FrameworkRouter.zig:159-181). Thin
-/// forwarding shim — the real impl lives on `framework_router::Style::from_js`
-/// now that `FrameworkRouter.rs` is un-gated; kept so the call site in
-/// `Framework::from_js` reads the same as the Zig spec.
+/// Thin forwarding shim — the real impl lives on
+/// `framework_router::Style::from_js`.
 #[inline]
 fn style_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<framework_router::Style> {
     framework_router::Style::from_js(value, global)
@@ -1431,7 +1411,6 @@ fn get_optional_string(
     global: &JSGlobalObject,
     property: &[u8],
     allocations: &mut StringRefList,
-    arena: &Arena,
 ) -> JsResult<Option<&'static [u8]>> {
     let Some(value) = target.get(global, property)? else {
         return Ok(None);
@@ -1439,15 +1418,14 @@ fn get_optional_string(
     if value.is_undefined_or_null() {
         return Ok(None);
     }
-    let str = value.to_bun_string(global)?;
-    let _ = arena; // TODO(port): arena param unused after to_utf8() drops allocator
+    let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
     Ok(Some(allocations.track(str.to_utf8())))
 }
 
-// PORT NOTE: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`
+// Note: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`
 // (struct with `code: &'static ZStr` + `line_count`); re-export so callers
 // using `bake_body::HmrRuntime` see the same nominal type.
-pub use super::HmrRuntime;
+pub(crate) use super::HmrRuntime;
 
 fn hmr_runtime_init(code: &'static ZStr) -> HmrRuntime {
     HmrRuntime {
@@ -1458,17 +1436,13 @@ fn hmr_runtime_init(code: &'static ZStr) -> HmrRuntime {
 
 #[inline(always)]
 pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
-    // `runtime_embed_file!` returns `&'static str` (no NUL). The Zig
-    // `runtimeEmbedFile` (bun.zig:2938) returns `[:0]const u8` from a
-    // `bun.once`-guarded static — read once per process, never freed.
-    // Mirror that with a per-side `OnceLock` holding the NUL-terminated
-    // copy. PORTING.md §Forbidden bans leaking for `&'static`; this is the
+    // `runtime_embed_file!` returns `&'static str` (no NUL). Use a per-side
+    // `OnceLock` holding the NUL-terminated copy — read once per process,
+    // never freed. PORTING.md §Forbidden bans leaking for `&'static`; this is the
     // sanctioned process-lifetime-singleton pattern instead. (Under
     // `cfg(bun_codegen_embed)` the macro expands to `include_str!`, so this
     // costs one extra copy at first call; the cost is negligible vs. keeping
     // a per-call-site `#[cfg]` pair in sync.)
-    // TODO(port): add a `runtime_embed_file_z!` to bun_core that yields
-    // `&'static ZStr` directly so the second copy goes away.
     use std::sync::OnceLock;
     fn nul_terminate(s: &'static str, cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
         let buf = cell.get_or_init(|| {
@@ -1495,21 +1469,21 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
     })
 }
 
-// PORT NOTE: `Mode`/`Side`/`Graph` are defined canonically in the parent
+// Note: `Mode`/`Side`/`Graph` are defined canonically in the parent
 // `bake/mod.rs` (which itself re-exports `Side`/`Graph` from
 // `bun_bundler::bake_types`). Re-export here so `bake_body::Mode` ≡
 // `crate::bake::Mode` and downstream callers (production.rs, build_command.rs,
 // IncrementalGraph.rs) see one nominal type.
-pub use super::Mode;
-pub use bun_bundler::bake_types::{Graph, Side};
+pub(crate) use super::Mode;
+pub(crate) use bun_bundler::bake_types::{Graph, Side};
 
-pub fn add_import_meta_defines(
+pub(crate) fn add_import_meta_defines(
     define: &mut bun_bundler::options::Define,
     mode: Mode,
     side: Side,
 ) -> Result<(), bun_core::Error> {
     use bun_ast::E::EString;
-    use bun_bundler::DefineExt;
+
     use bun_bundler::defines::DefineData;
 
     static MODE_DEVELOPMENT: EString = EString::from_static(b"development");
@@ -1548,56 +1522,11 @@ pub fn add_import_meta_defines(
     Ok(())
 }
 
-// PORT NOTE: `bun_paths::fs::Path<'static>` (the minimal type `bun_ast::Source` actually
-// stores) has no `init_for_kit_built_in`; that constructor lives on the
-// richer `bun_resolver::fs::Path` (a different nominal type) and is not
-// `const fn`. Mirror what `bun_bundler::bundle_v2` does and build the
-// virtual sources lazily.
-// TODO(port): once the two `fs::Path` types are unified, restore the static
-// initializers from bake.zig:976-984.
-pub fn server_virtual_source() -> bun_ast::Source {
-    bun_ast::Source {
-        // = bun.fs.Path.initForKitBuiltIn("bun", "bake/server")
-        path: bun_paths::fs::Path {
-            pretty: b"bun:bake/server",
-            text: b"_bun/bake/server",
-            namespace: b"bun",
-            name: bun_paths::fs::PathName::init(b"bake/server"),
-            is_symlink: true,
-            is_disabled: false,
-        },
-        contents: bun_ptr::Cow::Borrowed(b""), // Virtual
-        // = bun.ast.Index.bake_server_data (=1). bundle_v2 asserts on this; the
-        // `..Default::default()` would silently zero it.
-        index: bun_ast::Index::source(1),
-        ..Default::default()
-    }
-}
-
-pub fn client_virtual_source() -> bun_ast::Source {
-    bun_ast::Source {
-        // = bun.fs.Path.initForKitBuiltIn("bun", "bake/client")
-        path: bun_paths::fs::Path {
-            pretty: b"bun:bake/client",
-            text: b"_bun/bake/client",
-            namespace: b"bun",
-            name: bun_paths::fs::PathName::init(b"bake/client"),
-            is_symlink: true,
-            is_disabled: false,
-        },
-        contents: bun_ptr::Cow::Borrowed(b""), // Virtual
-        // = bun.ast.Index.bake_client_data (=2).
-        index: bun_ast::Index::source(2),
-        ..Default::default()
-    }
-}
-
 /// Stack-allocated structure that is written to from end to start.
 /// Used as a staging area for building pattern strings.
 pub struct PatternBuffer {
     pub bytes: PathBuffer,
-    // Zig: std.math.IntFittingRange(0, @sizeOf(bun.PathBuffer)) — smallest int
-    // fitting MAX_PATH_BYTES. On Windows MAX_PATH_BYTES = 32767*3+1 = 98302
+    // On Windows MAX_PATH_BYTES = 32767*3+1 = 98302
     // (> u16::MAX), so u32 is required; u16 would truncate the initial index
     // to 32766 and `slice()` would return ~64 KiB of trailing zero bytes.
     pub i: u32,
@@ -1605,7 +1534,7 @@ pub struct PatternBuffer {
 
 impl PatternBuffer {
     pub const EMPTY: PatternBuffer = PatternBuffer {
-        bytes: PathBuffer::ZEROED, // TODO(port): Zig used `undefined`; uninit not const-safe
+        bytes: PathBuffer::ZEROED,
         i: core::mem::size_of::<PathBuffer>() as u32,
     };
 
@@ -1647,14 +1576,12 @@ pub fn print_warning() {
         .get()
         .is_none()
     {
-        Output::warn(format_args!(
+        bun_core::warn!(
             "Be advised that Bun Bake is highly experimental, and its API\n\
              will have breaking changes. Join the <magenta>#bake<r> Discord\n\
              channel to help us find bugs: <blue>https://bun.com/discord<r>\n\
              \n"
-        ));
+        );
         Output::flush();
     }
 }
-
-// ported from: src/bake/bake.zig

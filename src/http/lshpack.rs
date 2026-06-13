@@ -30,8 +30,8 @@ pub struct HPACK {
 }
 
 pub struct DecodeResult {
-    // TODO(port): lifetime — name/value point into an FFI thread_local shared buffer,
-    // valid only until the next decode/encode call. Phase B: consider `DecodeResult<'a>`.
+    // TODO: lifetime — name/value point into an FFI thread_local shared buffer,
+    // valid only until the next decode/encode call. Consider `DecodeResult<'a>`.
     pub name: &'static [u8],
     pub value: &'static [u8],
     pub never_index: bool,
@@ -49,25 +49,10 @@ pub enum HpackError {
     #[error("UnableToEncode")]
     UnableToEncode,
 }
-// TODO(port): impl From<HpackError> for bun_core::Error
+bun_core::named_error_set!(HpackError);
 
 impl HPACK {
     pub const LSHPACK_MAX_HEADER_SIZE: usize = 65536;
-
-    pub fn init(max_capacity: u32) -> *mut HPACK {
-        // `lshpack_wrapper_init` is `safe fn`: its only precondition is non-null
-        // alloc/free callbacks, which the bare (non-Option) fn-ptr types enforce.
-        let ptr = lshpack_wrapper_init(
-            bun_alloc::mimalloc::mi_malloc,
-            bun_alloc::mimalloc::mi_free,
-            max_capacity as usize,
-        );
-        if ptr.is_null() {
-            bun_core::out_of_memory();
-        }
-        ptr
-        // TODO(port): wrap in an owning newtype with Drop instead of returning a raw *mut HPACK
-    }
 
     /// DecodeResult name and value uses a thread_local shared buffer and should be copy/cloned before the next decode/encode call
     pub fn decode(&mut self, src: &[u8]) -> Result<DecodeResult, HpackError> {
@@ -131,7 +116,6 @@ impl HPACK {
                 dst_buffer_offset,
             )
         };
-        // PORT NOTE: Zig compared `offset <= 0` on a usize; only `== 0` is reachable.
         if offset == 0 {
             return Err(HpackError::UnableToEncode);
         }
@@ -146,14 +130,14 @@ impl HPACK {
         lshpack_wrapper_enc_set_max_capacity(self, max_capacity as c_uint);
     }
 
-    // PORT NOTE: Zig `destroy` (raw `*mut HPACK` teardown) is subsumed by the
-    // safe [`HpackHandle`] RAII wrapper below — every Rust owner holds an
+    // Raw `*mut HPACK` teardown is subsumed by the
+    // safe [`HpackHandle`] RAII wrapper below — every owner holds an
     // `HpackHandle`, so the raw destructor is private to `HpackHandle::drop`.
 }
 
-/// Owning handle for an `HPACK` instance returned by [`HPACK::init`].
+/// Owning handle for an `HPACK` instance.
 ///
-/// `HPACK::init` allocates via the C wrapper (`lshpack_wrapper_init`, which
+/// The instance is allocated via the C wrapper (`lshpack_wrapper_init`, which
 /// `mi_malloc`s the struct and `lshpack_{enc,dec}_init`s its internals). The
 /// matching teardown is `lshpack_wrapper_deinit`, which runs the lshpack
 /// cleanup hooks before freeing — **not** a bare `mi_free`. Wrapping the raw
@@ -164,11 +148,17 @@ pub struct HpackHandle(core::ptr::NonNull<HPACK>);
 impl HpackHandle {
     #[inline]
     pub fn new(max_capacity: u32) -> Self {
-        // `HPACK::init` already panics (out_of_memory) on null.
-        Self(
-            core::ptr::NonNull::new(HPACK::init(max_capacity))
-                .expect("lshpack_wrapper_init returned null"),
-        )
+        // `lshpack_wrapper_init` is `safe fn`: its only precondition is non-null
+        // alloc/free callbacks, which the bare (non-Option) fn-ptr types enforce.
+        let ptr = lshpack_wrapper_init(
+            bun_alloc::mimalloc::mi_malloc,
+            bun_alloc::mimalloc::mi_free,
+            max_capacity as usize,
+        );
+        let Some(ptr) = core::ptr::NonNull::new(ptr) else {
+            bun_core::out_of_memory();
+        };
+        Self(ptr)
     }
 }
 
@@ -192,8 +182,8 @@ impl core::ops::DerefMut for HpackHandle {
 impl Drop for HpackHandle {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: `self.0` came from `lshpack_wrapper_init` (via `HPACK::init`)
-        // and `HpackHandle` is its unique owner, so this is the first and only
+        // SAFETY: `self.0` came from `lshpack_wrapper_init` and `HpackHandle`
+        // is its unique owner, so this is the first and only
         // teardown — runs `lshpack_{enc,dec}_cleanup` then frees.
         unsafe { lshpack_wrapper_deinit(self.0.as_ptr()) };
     }
@@ -210,14 +200,13 @@ unsafe impl Send for HpackHandle {}
 // pointer type is safe; `free` retains a caller contract because `mi_free`
 // requires "ptr is mimalloc-owned or null" — discharged by the C wrapper,
 // not by Rust's type system.
-type lshpack_wrapper_alloc = extern "C" fn(size: usize) -> *mut c_void;
-type lshpack_wrapper_free = unsafe extern "C" fn(ptr: *mut c_void);
+type LshpackWrapperAlloc = extern "C" fn(size: usize) -> *mut c_void;
+type LshpackWrapperFree = unsafe extern "C" fn(ptr: *mut c_void);
 
-// TODO(port): move to bun_http_sys
 unsafe extern "C" {
     safe fn lshpack_wrapper_init(
-        alloc: lshpack_wrapper_alloc,
-        free: lshpack_wrapper_free,
+        alloc: LshpackWrapperAlloc,
+        free: LshpackWrapperFree,
         capacity: usize,
     ) -> *mut HPACK;
     // Only precondition is a valid non-null `*HPACK`; `&mut HPACK` (ABI-identical
@@ -251,5 +240,3 @@ unsafe extern "C" {
         buffer_offset: usize,
     ) -> usize;
 }
-
-// ported from: src/http/lshpack.zig

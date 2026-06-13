@@ -2,7 +2,6 @@ use bun_core::strings;
 
 bun_core::declare_scope!(Postgres, visible);
 
-// TODO(port): lifetime — `Other` borrows from the input `tag` slice passed to `init`.
 pub enum CommandTag<'a> {
     // For an INSERT command, the tag is INSERT oid rows, where rows is the
     // number of rows inserted. oid used to be the object ID of the inserted
@@ -50,49 +49,23 @@ enum KnownCommand {
     Copy,
 }
 
+bun_core::comptime_string_map! {
+    static KNOWN_COMMANDS: KnownCommand = {
+        b"COPY" => KnownCommand::Copy,
+        b"MOVE" => KnownCommand::Move,
+        b"FETCH" => KnownCommand::Fetch,
+        b"MERGE" => KnownCommand::Merge,
+        b"SELECT" => KnownCommand::Select,
+        b"INSERT" => KnownCommand::Insert,
+        b"UPDATE" => KnownCommand::Update,
+        b"DELETE" => KnownCommand::Delete,
+    };
+}
+
 impl KnownCommand {
-    // Zig: bun.ComptimeEnumMap(KnownCommand) — comptime perfect hash over
-    // @tagName bytes. 8 keys is too small for `phf` to pay for itself (its
-    // SipHash + double indirect dominate); a length-gated byte compare is
-    // branch-predictable and lets LLVM lower each arm to a single wide
-    // integer compare. Within every length bucket the first byte is already
-    // unique, so each `==` short-circuits on the first word anyway.
     #[inline]
     fn from_bytes(bytes: &[u8]) -> Option<KnownCommand> {
-        match bytes.len() {
-            4 => {
-                if bytes == b"COPY" {
-                    Some(KnownCommand::Copy)
-                } else if bytes == b"MOVE" {
-                    Some(KnownCommand::Move)
-                } else {
-                    None
-                }
-            }
-            5 => {
-                if bytes == b"FETCH" {
-                    Some(KnownCommand::Fetch)
-                } else if bytes == b"MERGE" {
-                    Some(KnownCommand::Merge)
-                } else {
-                    None
-                }
-            }
-            6 => {
-                if bytes == b"SELECT" {
-                    Some(KnownCommand::Select)
-                } else if bytes == b"INSERT" {
-                    Some(KnownCommand::Insert)
-                } else if bytes == b"UPDATE" {
-                    Some(KnownCommand::Update)
-                } else if bytes == b"DELETE" {
-                    Some(KnownCommand::Delete)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
+        KNOWN_COMMANDS.get(bytes).copied()
     }
 }
 
@@ -116,7 +89,7 @@ impl<'a> CommandTag<'a> {
                     let second_space = second_space as usize;
                     remaining = &remaining[(second_space + 1).min(remaining.len())..];
                     // Postgres wire is pure base-10 ASCII so radix-0/`_`/sign
-                    // widening is unreachable; @errorName parity via .name().
+                    // widening is unreachable.
                     match bun_core::fmt::parse_int::<u64>(remaining, 0) {
                         Ok(n) => break 'brk n,
                         Err(err) => {
@@ -158,5 +131,3 @@ impl<'a> CommandTag<'a> {
         }
     }
 }
-
-// ported from: src/sql/postgres/CommandTag.zig

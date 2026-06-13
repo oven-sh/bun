@@ -1876,6 +1876,79 @@ describe("bundler", () => {
       `,
     },
   });
+  // https://github.com/oven-sh/bun/issues/31755
+  // An object literal whose computed keys are inlined enum members (e.g.
+  // `{ [A.FOO]: ... }`) has no side effects, so when the binding is unused it
+  // must be tree-shaken along with everything it references. The enum-member
+  // key is wrapped in an inlined-enum node; the side-effect check must look
+  // through that wrapper just like it does for a bare numeric-literal key.
+  itBundled("edgecase/TsEnumKeyedObjectTreeShaking#31755", {
+    files: {
+      "/entry.ts": `
+        import { A } from './lib';
+        console.log(JSON.stringify(A));
+      `,
+      "/lib.ts": `
+        export enum A { FOO, BAR }
+        export function fooFunctionREMOVE() {}
+        export const fooArrowFunctionREMOVE = () => {};
+        export const unusedObjectREMOVE = { [A.FOO]: fooFunctionREMOVE, [A.BAR]: fooArrowFunctionREMOVE };
+      `,
+    },
+    dce: true,
+    dceKeepMarkerCount: false,
+    assertNotPresent: {
+      "/out.js": ["fooFunctionREMOVE", "fooArrowFunctionREMOVE", "unusedObjectREMOVE"],
+    },
+    run: {
+      stdout: `{"0":"FOO","1":"BAR","FOO":0,"BAR":1}`,
+    },
+  });
+  // Same as above but with primitive-literal values, isolating the computed
+  // enum-member key as the thing that previously blocked removal.
+  itBundled("edgecase/TsEnumKeyedLiteralObjectTreeShaking#31755", {
+    files: {
+      "/entry.ts": `
+        import { A } from './lib';
+        console.log(JSON.stringify(A));
+      `,
+      "/lib.ts": `
+        export enum A { FOO, BAR }
+        export const unusedObjectREMOVE = { [A.FOO]: 1, [A.BAR]: 2 };
+      `,
+    },
+    dce: true,
+    dceKeepMarkerCount: false,
+    assertNotPresent: {
+      "/out.js": ["unusedObjectREMOVE"],
+    },
+    run: {
+      stdout: `{"0":"FOO","1":"BAR","FOO":0,"BAR":1}`,
+    },
+  });
+  // Guard against over-eager removal: a computed key that actually has side
+  // effects must keep the object alive even when the binding is unused. The
+  // side effect is observed at runtime (the flag it sets is printed) so the
+  // test fails if the computed-key call is tree-shaken away.
+  itBundled("edgecase/ComputedKeyWithSideEffectsNotTreeShaken#31755", {
+    files: {
+      "/entry.ts": `
+        import './lib';
+        console.log(globalThis.hit === true ? 'side-effect-ran' : 'side-effect-missing');
+      `,
+      "/lib.ts": `
+        function sideEffectKept() { globalThis.hit = true; return 'k'; }
+        const unusedObject = { [sideEffectKept()]: 1 };
+      `,
+    },
+    onAfterBundle(api) {
+      // The side-effecting key call must survive tree-shaking.
+      api.expectFile("/out.js").toContain("sideEffectKept");
+    },
+    run: {
+      stdout: `side-effect-ran`,
+    },
+  });
   itBundled("edgecase/ImportMetaMain", {
     files: {
       "/entry.ts": /* js */ `
@@ -2203,16 +2276,6 @@ describe("bundler", () => {
     },
     run: true,
   });
-
-  // TODO(@paperclover): test every case of this. I had already tested it manually, but it may break later
-  const requireTranspilationListESM = [
-    // input, output:bun, output:node
-    ["require", "import.meta.require", "__require"],
-    ["typeof require", "import.meta.require", "typeof __require"],
-    ["typeof require", "import.meta.require", "typeof __require"],
-  ];
-
-  // // itBundled('edgecase/RequireTranspilation')
 
   itBundled("edgecase/TSConfigPathsConfigDir", {
     files: {

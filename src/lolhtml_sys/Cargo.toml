@@ -6,6 +6,9 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 bun_opaque.workspace = true
 # The C-API crate is pulled in as an rlib path dep so its `#[no_mangle]`
@@ -17,7 +20,6 @@ bun_opaque.workspace = true
 # `scripts/build/deps/lolhtml.ts` before the workspace cargo build runs.
 lolhtml = { package = "lol_html_c_api", path = "../../vendor/lolhtml/c-api" }
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true

@@ -93,5 +93,3 @@ impl ResourceUsage {
         ctx
     }
 }
-
-// ported from: src/runtime/api/bun/subprocess/ResourceUsage.zig

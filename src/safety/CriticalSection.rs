@@ -1,4 +1,4 @@
-//! This type helps detect race conditions in debug/`ci_assert` builds.
+//! This type helps detect race conditions in debug builds.
 //!
 //! Store an instance of this type in or alongside shared data. Then, add the following to any
 //! block of code that accesses the shared data:
@@ -26,41 +26,39 @@
 //! mutex, won't cause an error, but an `ArrayList` used by multiple threads concurrently without
 //! synchronization, assuming at least one thread is modifying the data, will cause an error.
 
+#[cfg(debug_assertions)]
 use core::fmt;
+#[cfg(debug_assertions)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
+#[cfg(debug_assertions)]
 use bun_core::StoredTrace;
 
-// TODO(port): `ThreadId` / `INVALID_THREAD_ID` / `current_thread_id()` come from the sibling
-// `src/safety/thread_id.zig` port + Zig's `std.Thread`. Phase B: confirm the concrete integer
-// width and atomic type (Zig's `std.Thread.Id` is platform-dependent).
+#[cfg(debug_assertions)]
 use super::thread_id::{
     AtomicThreadId, INVALID as INVALID_THREAD_ID, ThreadId, current as current_thread_id,
 };
 
-// TODO(port): `bun.Environment.ci_assert` — map to the correct cfg gate in Phase B.
-#[cfg(feature = "ci_assert")]
-pub const ENABLED: bool = true;
-#[cfg(not(feature = "ci_assert"))]
-pub(crate) const ENABLED: bool = false;
-
 #[derive(Default)]
 pub struct CriticalSection {
-    #[cfg(feature = "ci_assert")]
+    #[cfg(debug_assertions)]
     internal_state: State,
-    // When not enabled, this is a zero-sized type (Zig: `void`).
+    // When not enabled, this is a zero-sized type.
 }
 
+#[cfg(debug_assertions)]
 struct OptionalThreadId {
     inner: ThreadId,
 }
 
+#[cfg(debug_assertions)]
 impl OptionalThreadId {
     pub(crate) fn init(id: ThreadId) -> OptionalThreadId {
         OptionalThreadId { inner: id }
     }
 }
 
+#[cfg(debug_assertions)]
 impl fmt::Display for OptionalThreadId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.inner == INVALID_THREAD_ID {
@@ -73,6 +71,7 @@ impl fmt::Display for OptionalThreadId {
 
 /// A reentrant lock that prevents multiple threads from accessing data at the same time,
 /// except if all threads' use of the data is read-only.
+#[cfg(debug_assertions)]
 struct State {
     /// The ID of the thread that first acquired the lock (the "owner thread").
     thread_id: AtomicThreadId,
@@ -81,7 +80,7 @@ struct State {
     /// the owner).
     #[cfg(debug_assertions)]
     owner_trace: StoredTrace,
-    // When traces are disabled, this is a zero-sized type (Zig: `void`).
+    // When traces are disabled, this is a zero-sized type.
     /// Number of nested calls to `lockShared`/`lockExclusive` performed on the owner thread.
     /// Only accessed on the owner thread.
     owned_count: u32,
@@ -91,6 +90,7 @@ struct State {
     count: AtomicU32,
 }
 
+#[cfg(debug_assertions)]
 impl Default for State {
     fn default() -> Self {
         Self {
@@ -103,6 +103,7 @@ impl Default for State {
     }
 }
 
+#[cfg(debug_assertions)]
 impl State {
     /// If `count` is set to this value, it indicates that a thread has requested exclusive
     /// (read/write) access.
@@ -121,8 +122,7 @@ impl State {
             Ok(_) => {
                 #[cfg(debug_assertions)]
                 {
-                    // PORT NOTE: Zig passes `@returnAddress()` here; no stable Rust
-                    // equivalent. `None` lets capture() use the current frame.
+                    // `None` lets capture() use the current frame.
                     self.owner_trace = StoredTrace::capture(None);
                 }
                 current_id
@@ -241,22 +241,20 @@ impl CriticalSection {
     /// Marks the beginning of a critical section which accesses (and potentially modifies) shared data.
     /// Calls to this function can be nested; each must be paired with a call to `end`.
     pub fn begin(&mut self) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(debug_assertions)]
         self.internal_state.lock_exclusive();
     }
 
     /// Marks the beginning of a critical section which performs read-only accesses on shared data.
     /// Calls to this function can be nested; each must be paired with a call to `end`.
     pub fn begin_read_only(&mut self) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(debug_assertions)]
         self.internal_state.lock_shared();
     }
 
     /// Marks the end of a critical section started by `begin` or `begin_read_only`.
     pub fn end(&mut self) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(debug_assertions)]
         self.internal_state.unlock();
     }
 }
-
-// ported from: src/safety/CriticalSection.zig

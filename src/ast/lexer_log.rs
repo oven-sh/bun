@@ -3,9 +3,8 @@
 //! js_parser, json, and toml lexers each carried a near-identical 50-line block
 //! of `{syntax_error, add_error, add_range_error, add_default_error,
 //! add_syntax_error}` that gate on `is_log_disabled`, dedup against
-//! `prev_error_loc`, push into `Log`, then record the loc. Zig has two copies
-//! (the comptime-generic `NewLexer` covers JS+JSON, toml is hand-duplicated);
-//! Rust grew a third when json was split out. This trait collapses all three.
+//! `prev_error_loc`, push into `Log`, then record the loc. This trait
+//! collapses all three.
 //!
 //! The trait carries a `'s` lifetime so `source()` can hand back the lexer's
 //! stored `&'s Source` *without* borrowing `self` — that is what lets the
@@ -14,7 +13,7 @@
 
 use core::fmt;
 
-use crate::{usize2loc, AddErrorOptions, Loc, Log, Range, Source};
+use crate::{AddErrorOptions, Loc, Log, Range, Source, usize2loc};
 
 pub trait LexerLog<'s> {
     /// Per-lexer error variant returned from the `*_error` family

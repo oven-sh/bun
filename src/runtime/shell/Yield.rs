@@ -18,6 +18,9 @@ use crate::shell::states::pipeline::Pipeline;
 /// up the node and matches on its kind (hoisted dispatch — see
 /// `Interpreter::next_node`).
 #[derive(strum::IntoStaticStr)]
+// OnIoWriterChunk's `err` is constructed inline at several sites in IOWriter.rs;
+// boxing it would add an allocation to the synchronous-write fast path for no win.
+#[allow(clippy::large_enum_variant)]
 pub enum Yield {
     /// Step the node at this id (`Interpreter::next_node`).
     Next(NodeId),
@@ -29,7 +32,9 @@ pub enum Yield {
     OnIoWriterChunk {
         child: crate::shell::io_writer::ChildPtr,
         written: usize,
-        // TODO(b2-blocked): bun_jsc::SystemError — opaque until jsc compiles.
+        // `bun_sys::SystemError`, consistent with the rest of the shell
+        // subsystem (IOWriter/IOReader/Builtin); converted to a JS error at
+        // the throw boundary.
         err: Option<bun_sys::SystemError>,
     },
     /// Execution is waiting on async IO (epoll/kqueue/uv). The caller's task
@@ -60,7 +65,7 @@ impl Yield {
 }
 
 thread_local! {
-    /// Debug-only re-entrancy guard. See Zig `_dbg_catch_exec_within_exec`.
+    /// Debug-only re-entrancy guard.
     static DBG_CATCH_EXEC_WITHIN_EXEC: Cell<usize> = const { Cell::new(0) };
 }
 
@@ -105,12 +110,11 @@ impl Yield {
         // We start cmd1, return to the pipeline, start cmd2, etc. — so we keep
         // a small stack of pipeline NodeIds to resume.
         //
-        // PERF(port): was stack-fallback alloc (4 inline) — profile in Phase B;
-        // smallvec::SmallVec<[NodeId; 4]> is the right shape.
+        // PERF: profile if hot; smallvec::SmallVec<[NodeId; 4]> would avoid
+        // the heap allocation.
         let mut pipeline_stack: Vec<NodeId> = Vec::with_capacity(4);
 
-        // Zig used a labelled `state: switch` as a tail-call trampoline. Rust
-        // lowers it to `loop { state = match state { ... } }`.
+        // Tail-call trampoline: `loop { state = match state { ... } }`.
         let mut state = self;
         loop {
             state = match state {
@@ -159,5 +163,3 @@ impl Yield {
         None
     }
 }
-
-// ported from: src/shell/Yield.zig

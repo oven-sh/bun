@@ -1,14 +1,16 @@
 #![allow(
-    unused,
     non_snake_case,
     non_camel_case_types,
     non_upper_case_globals,
-    clippy::all
+    // *_sys FFI bindings: every fn body is `unsafe { ffi_call(args) }`; the
+    // safety contract is documented at each body and identical whether the
+    // wrapper is `unsafe fn` or not.
+    clippy::not_unsafe_ptr_arg_deref
 )]
 #![warn(unused_must_use)]
 //! Low-level FFI bindings for uSockets / uWebSockets as used by Bun.
 //!
-//! B-2: un-gated module bodies. Each `*.rs` file is mapped to a snake_case
+//! Each `*.rs` file is mapped to a snake_case
 //! module name (the names downstream `bun_uws` expects). Crate-root re-exports
 //! flatten the common handle types.
 
@@ -34,7 +36,7 @@ pub type SslCtx = bun_boringssl_sys::SSL_CTX;
 
 /// `struct us_bun_verify_error_t` — TLS handshake verification result.
 ///
-/// Field is named `error_no` (mirrors the Zig `error_no`) so the Node-compat
+/// Field is named `error_no` so the Node-compat
 /// `verifyError`/`authorizationError` paths read naturally; the C struct's
 /// first member is `int error` and the layout is identical.
 #[repr(C)]
@@ -137,7 +139,7 @@ impl Opcode {
     pub const Close: Opcode = Opcode(8);
     pub const Ping: Opcode = Opcode(9);
     pub const Pong: Opcode = Opcode(10);
-    // Upper-case aliases for callers that ported the Zig screaming-snake names
+    // Upper-case aliases for callers that use the screaming-snake names
     // (`uWS::OpCode::TEXT` etc.). Same bit values; both spellings are accepted
     // so the merge of `bun_uws::Opcode` into this type doesn't ripple.
     pub const CONTINUATION: Opcode = Opcode(0);
@@ -177,7 +179,7 @@ bun_core::opaque_extern!(
 // `extern "C"` symbols which the runtime crate exports with `#[no_mangle]`.
 // This is the same link-time-dispatch pattern as other `*_sys` crates use for
 // their C backends — only here the "backend" is Rust in a higher tier.
-// PORT NOTE: signatures mirror `src/runtime/socket/UpgradedDuplex.rs`.
+// Signatures must stay in sync with `src/runtime/socket/UpgradedDuplex.rs`.
 // SAFETY (safe fn): `UpgradedDuplex` is an `opaque_extern!` ZST handle (`!Freeze`
 // via `UnsafeCell`), so `&`/`&mut` carry no `readonly`/`noalias` and are
 // ABI-identical to non-null `*const`/`*mut`. Shims taking only the handle +
@@ -232,10 +234,16 @@ impl UpgradedDuplex {
     }
     #[inline]
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
+        // the call, and `(data.as_ptr(), data.len())` is a valid readable region
+        // borrowed for the call's duration; the callee only reads from it.
         unsafe { UpgradedDuplex__encode_and_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
     pub fn raw_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
+        // the call, and `(data.as_ptr(), data.len())` is a valid readable region
+        // borrowed for the call's duration; the callee only reads from it.
         unsafe { UpgradedDuplex__raw_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
@@ -256,7 +264,7 @@ impl UpgradedDuplex {
 // Same link-time-dispatch as `UpgradedDuplex` above: the real
 // `WindowsNamedPipe` lives in `bun_runtime::socket`; this opaque handle
 // forwards to `extern "C"` symbols that the runtime crate exports with
-// `#[no_mangle]`. Surface mirrors `src/jsc/api/bun/socket.zig WindowsNamedPipe`.
+// `#[no_mangle]`.
 #[cfg(windows)]
 unsafe extern "C" {
     safe fn WindowsNamedPipe__ssl_error(this: &WindowsNamedPipe) -> us_bun_verify_error_t;
@@ -341,7 +349,7 @@ impl WindowsNamedPipe {
 
 // ───────────────────────────── module map ────────────────────────────────────
 // Snake-case names are what `bun_uws` imports; `#[path]` points at the
-// PascalCase Phase-A drafts kept on disk.
+// PascalCase source files on disk.
 
 #[path = "App.rs"]
 pub mod app;
@@ -412,7 +420,7 @@ pub use socket_group::SocketGroup;
 pub use us_socket::{CloseCode, us_socket_stream_buffer_t, us_socket_t};
 pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
 
-/// Zig `NewApp(ssl)` / `NewApp(ssl).Response` aliases.
+/// Legacy aliases for `App<SSL>` / `Response<SSL>`.
 pub type NewApp<const SSL: bool> = app::App<SSL>;
 pub type NewAppResponse<const SSL: bool> = response::Response<SSL>;
 pub type Socket = us_socket::us_socket_t;

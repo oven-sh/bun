@@ -12,8 +12,8 @@ use crate::windows;
 use bun_core::string::immutable as strings;
 use bun_core::{WStr, ZStr};
 
-// Generic code-unit bound for fns that operate over both u8 and u16 paths.
-// Zig used `comptime T: type`; bound on `crate::PathChar` (provides
+// Generic code-unit bound for fns that operate over both u8 and u16 paths:
+// `crate::PathChar` (provides
 // `from_u8`/`IS_U16`) plus `Into<u32>` + `NoUninit` for `strings::contains_char_t`.
 pub trait Ch: PathChar + Into<u32> + bun_core::NoUninit {}
 impl Ch for u8 {}
@@ -24,8 +24,8 @@ impl Ch for u16 {}
 /// stack `WPathBuffer` filled to `len` with a NUL written at `wbuf[len]`.
 /// The slice borrow proves `wbuf[..=len]` lies in one allocation and ties the
 /// returned lifetime to it; the NUL is debug-asserted (release relies on the
-/// caller upholding the documented `wbuf[len] == 0` precondition — same
-/// contract as Zig `[:0]const u16` slicing). Mirrors [`ZStr::from_buf`].
+/// caller upholding the documented `wbuf[len] == 0` precondition).
+/// Mirrors [`ZStr::from_buf`].
 #[inline(always)]
 pub(crate) fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)
@@ -56,7 +56,7 @@ fn has_prefix_ascii_t<T: Ch>(s: &[T], prefix: &[u8]) -> bool {
 /// an absolute path contain a drive letter.
 ///
 /// Thin wrapper over the canonical [`crate::strings`] impl that additionally
-/// debug-asserts the Zig precondition `Platform.windows.isAbsoluteT(chars)`
+/// debug-asserts the precondition `Platform.windows.isAbsoluteT(chars)`
 /// (bun_core can't, as `bun_paths` would be a tier-0 cycle there).
 #[inline]
 pub fn is_windows_absolute_path_missing_drive_letter<T: Ch + From<u8>>(chars: &[T]) -> bool {
@@ -79,8 +79,8 @@ pub fn without_nt_prefix<T: Ch>(path: &[T]) -> &[T] {
     if !cfg!(windows) {
         return path;
     }
-    // PORT NOTE: Zig dispatched hasPrefixComptime vs hasPrefixComptimeUTF16 on T;
-    // collapsed to a local `has_prefix_ascii_t` (widens each ASCII byte via T::from_u8).
+    // A local `has_prefix_ascii_t` covers both widths (widens each ASCII byte
+    // via T::from_u8).
     if has_prefix_ascii_t(path, &windows::NT_OBJECT_PREFIX_U8) {
         return &path[windows::NT_OBJECT_PREFIX.len()..];
     }
@@ -160,17 +160,9 @@ pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
     wstr_in_buf(wbuf, total)
 }
 
-pub fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
+pub(crate) fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
     let plen = windows::NT_OBJECT_PREFIX.len();
     wbuf[..plen].copy_from_slice(&windows::NT_OBJECT_PREFIX);
-    wbuf[plen..plen + utf16.len()].copy_from_slice(utf16);
-    wbuf[utf16.len() + plen] = 0;
-    wstr_in_buf(wbuf, utf16.len() + plen)
-}
-
-pub fn add_long_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
-    let plen = windows::LONG_PATH_PREFIX.len();
-    wbuf[..plen].copy_from_slice(&windows::LONG_PATH_PREFIX);
     wbuf[plen..plen + utf16.len()].copy_from_slice(utf16);
     wbuf[utf16.len() + plen] = 0;
     wstr_in_buf(wbuf, utf16.len() + plen)
@@ -215,6 +207,14 @@ pub fn to_w_path_normalize_auto_extend<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> 
 pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     let mut renormalized = crate::path_buffer_pool::get();
 
+    // Longer than the pooled scratch buffer (and than any path the OS can
+    // address) — fail-safe to "" like `to_w_path_maybe_dir` does, instead of
+    // panicking in the `normalize_slashes_only` copy below.
+    if utf8.len() > renormalized.len() {
+        wbuf[0] = 0;
+        return wstr_in_buf(wbuf, 0);
+    }
+
     let mut path_to_use = normalize_slashes_only(&mut renormalized[..], utf8, b'\\');
 
     // is there a trailing slash? Let's remove it before converting to UTF-16
@@ -225,9 +225,17 @@ pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path(wbuf, path_to_use)
 }
 
-pub fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
-    // PORT NOTE: reshaped for borrowck — Zig wrote into wbuf and then re-sliced wbuf;
-    // here we capture the length and re-derive the mutable slice.
+pub(crate) fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
+    // Input (plus the NUL) doesn't fit in `wbuf` — fail-safe to "" like
+    // `to_w_path_maybe_dir` does, instead of panicking in the
+    // `normalize_slashes_only_t` copy below.
+    if path.len() >= wbuf.len() {
+        wbuf[0] = 0;
+        return wstr_in_buf(wbuf, 0);
+    }
+
+    // Capture the length and re-derive the mutable slice (borrowck-friendly
+    // alternative to writing into wbuf and re-slicing it).
     let len = {
         let mut path_to_use = normalize_slashes_only_t::<u16, b'\\', true>(wbuf, path);
 
@@ -245,24 +253,16 @@ pub fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr
     wstr_in_buf(wbuf, len)
 }
 
-pub fn to_path_normalized<'a>(buf: &'a mut [u8], utf8: &[u8]) -> &'a ZStr {
-    let mut renormalized = crate::path_buffer_pool::get();
-
-    let mut path_to_use = normalize_slashes_only(&mut renormalized[..], utf8, b'\\');
-
-    // is there a trailing slash? Let's remove it before converting to UTF-16
-    if path_to_use.len() > 3 && resolve_path::is_sep_any(path_to_use[path_to_use.len() - 1]) {
-        path_to_use = &path_to_use[..path_to_use.len() - 1];
-    }
-
-    to_path(buf, path_to_use)
-}
-
-pub fn normalize_slashes_only_t<'a, T: Ch, const DESIRED_SLASH: u8, const ALWAYS_COPY: bool>(
+pub(crate) fn normalize_slashes_only_t<
+    'a,
+    T: Ch,
+    const DESIRED_SLASH: u8,
+    const ALWAYS_COPY: bool,
+>(
     buf: &'a mut [T],
     path: &'a [T],
 ) -> &'a [T] {
-    // PORT NOTE: was `const _: () = assert!(..)` but Rust forbids const items
+    // Was `const _: () = assert!(..)` but Rust forbids const items
     // referencing outer const-generic params (E0401). Debug-assert instead.
     debug_assert!(DESIRED_SLASH == b'/' || DESIRED_SLASH == b'\\');
     let undesired_slash: u8 = if DESIRED_SLASH == b'/' { b'\\' } else { b'/' };
@@ -284,9 +284,9 @@ pub fn normalize_slashes_only_t<'a, T: Ch, const DESIRED_SLASH: u8, const ALWAYS
     path
 }
 
-// TODO(port): `desired_slash` was `comptime u8` in Zig; kept as runtime arg here since
+// `desired_slash` is a runtime arg (not a const generic) since a
 // const-generic value can't be forwarded from a runtime call site without duplication.
-// PERF(port): was comptime monomorphization — profile in Phase B.
+// PERF: profile if it shows up on a hot path.
 pub fn normalize_slashes_only<'a>(
     buf: &'a mut [u8],
     utf8: &'a [u8],
@@ -312,12 +312,35 @@ pub fn to_w_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path_maybe_dir::<false>(wbuf, utf8)
 }
 
-pub fn to_path<'a>(buf: &'a mut [u8], utf8: &[u8]) -> &'a mut ZStr {
-    to_path_maybe_dir::<false>(buf, utf8)
-}
-
 pub fn to_w_dir_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path_maybe_dir::<true>(wbuf, utf8)
+}
+
+/// Can `utf8`'s UTF-16 form fit a `WPathBuffer` (`PATH_MAX_WIDE` units, the
+/// NT maximum path length), leaving room for the longest prefix any converter
+/// prepends (`\??\UNC\`, 8 units), a trailing slash, and the NUL? Paths that
+/// fail this cannot exist on disk; callers surface `false`/`ENAMETOOLONG`
+/// instead of converting (see oven-sh/bun#27775).
+///
+/// UTF-8 → UTF-16 never expands the unit count, so the byte count fitting
+/// already proves the fit; the unit count (simdutf, SIMD) is only computed
+/// for longer inputs. The byte length is bounded as well: a converted unit
+/// consumes at least a third of a byte triple, so any input past 3×
+/// `MAX_UNITS` bytes cannot fit regardless of content — and the cap also
+/// bounds the u8-space path copies this check guards.
+///
+/// simdutf's length is exact for valid WTF-8; on malformed bytes it is an
+/// estimate (stray continuation bytes count zero yet convert to one U+FFFD
+/// unit each), so a malformed over-long path can pass this check. That is
+/// fine: the bounds-checked conversion downstream never overflows and fails
+/// safe to an empty path — such input merely gets a generic syscall error
+/// instead of the precise `ENAMETOOLONG`.
+pub fn fits_in_wide_path_buffer(utf8: &[u8]) -> bool {
+    const OVERHEAD: usize = windows::NT_UNC_OBJECT_PREFIX.len() + 2;
+    const MAX_UNITS: usize = crate::PATH_MAX_WIDE - OVERHEAD;
+    utf8.len() <= MAX_UNITS
+        || (utf8.len() <= 3 * MAX_UNITS
+            && strings::element_length_utf8_into_utf16(utf8) <= MAX_UNITS)
 }
 
 pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
@@ -341,25 +364,33 @@ pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path(wbuf, path)
 }
 
-fn is_unc_path<T: Ch>(path: &[T]) -> bool {
-    path.len() >= 3
-        && crate::Platform::Windows.is_separator_t(path[0])
-        && crate::Platform::Windows.is_separator_t(path[1])
-        && !crate::Platform::Windows.is_separator_t(path[2])
-        && path[2] != ch(b'.')
-}
-
-pub fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
+pub(crate) fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     wbuf: &'a mut [u16],
     utf8: &[u8],
 ) -> &'a WStr {
     debug_assert!(!wbuf.is_empty());
 
     let cap = wbuf.len().saturating_sub(1 + (ADD_TRAILING_LASH as usize));
-    // PORT NOTE: Zig used `bun.simdutf.convert.utf8.to.utf16.le.with_errors`;
-    // route through `crate::strings::convert_utf8_to_utf16_in_buffer` (same
-    // simdutf primitive + WTF-8 fallback) to avoid a `bun_simdutf` crate dep.
-    let mut count = crate::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf[..cap], utf8).len();
+    // Route through the checked `try_convert_utf8_to_utf16_in_buffer`
+    // (simdutf + WTF-8 fallback) to avoid a `bun_simdutf` crate dep.
+    //
+    // Over-long input is fail-safed to "" instead of overflowing: handing
+    // simdutf a buffer it could write past would silently
+    // corrupt the stack once a path's UTF-16 form exceeded the wide
+    // buffer (32767 units for `WPathBuffer`, i.e. longer than any path NT
+    // can address). The empty result makes the consuming syscall fail
+    // cleanly; JS-facing paths are rejected with `false`/ENAMETOOLONG before
+    // they get here (`PathLikeExt::{slice_w, os_path, os_path_kernel32}` in
+    // `runtime/node/types.rs`, via `fits_in_wide_path_buffer`). Prefixing
+    // wrappers (`to_kernel32_path`, `to_nt_path`, …) may then yield just
+    // their prefix, which likewise fails at the syscall.
+    let Some(converted) =
+        crate::strings::try_convert_utf8_to_utf16_in_buffer(&mut wbuf[..cap], utf8)
+    else {
+        wbuf[0] = 0;
+        return wstr_in_buf(wbuf, 0);
+    };
+    let mut count = converted.len();
 
     // Many Windows APIs expect normalized path slashes, particularly when the
     // long path prefix is added or the nt object prefix. To make this easier,
@@ -379,23 +410,6 @@ pub fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     wstr_in_buf(wbuf, count)
 }
 
-pub fn to_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
-    buf: &'a mut [u8],
-    utf8: &[u8],
-) -> &'a mut ZStr {
-    debug_assert!(!buf.is_empty());
-
-    let mut len = utf8.len();
-    buf[..len].copy_from_slice(&utf8[..len]);
-
-    if ADD_TRAILING_LASH && len > 0 && buf[len - 1] != b'\\' {
-        buf[len] = b'\\';
-        len += 1;
-    }
-    buf[len] = 0;
-    ZStr::from_buf_mut(buf, len)
-}
-
 pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
     // remove duplicate slashes in the file path
     let base = without_trailing_slash(input);
@@ -406,7 +420,7 @@ pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
     if base[0] == crate::SEP {
         buf[0] = crate::SEP;
     }
-    // PORT NOTE: reshaped for borrowck — track index instead of moving slice ptr.
+    // Reshaped for borrowck — track index instead of moving slice ptr.
     let mut i: usize = (base[0] == crate::SEP) as usize;
 
     for token in base.split(|b| *b == crate::SEP).filter(|s| !s.is_empty()) {
@@ -495,4 +509,243 @@ pub fn basename<T: Ch>(input: &[T]) -> &[T] {
     }
 }
 
-// ported from: src/string/immutable/paths.zig
+// Run with `cargo test -p bun_paths` (also the Miri lane,
+// `bun run rust:miri -p bun_paths`). simdutf's C++ implementation is only
+// linked into the full binary, so the two externs the conversion path uses
+// are satisfied below with faithful pure-Rust scalar stubs — which is also
+// what keeps these tests runnable under Miri (no foreign code).
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use bun_simdutf_sys::simdutf::{SIMDUTFResult, Status};
+
+    /// Scalar `simdutf::convert::utf8::to::utf16::with_errors::le`: writes
+    /// the UTF-16LE form of the valid prefix to `utf16_output` and returns
+    /// SUCCESS + units written, or a nonzero status + the input position of
+    /// the first invalid sequence. Mirrors the semantics
+    /// `try_convert_utf8_to_utf16_in_buffer` relies on: the output buffer
+    /// length is never communicated, and on error only the valid prefix's
+    /// units (≤ the `utf16_length_from_utf8` estimate) have been written.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__convert_utf8_to_utf16le_with_errors(
+        buf: *const u8,
+        len: usize,
+        utf16_output: *mut u16,
+    ) -> SIMDUTFResult {
+        // SAFETY: test stub; callers pass a valid (ptr, len) input pair.
+        let input = unsafe { core::slice::from_raw_parts(buf, len) };
+        let mut written = 0usize;
+        let mut i = 0usize;
+        while i < len {
+            let b = input[i];
+            let cont = |off: usize| i + off < len && input[i + off] & 0xC0 == 0x80;
+            let (cp, adv): (u32, usize) = if b < 0x80 {
+                (b as u32, 1)
+            } else if (0xC2..0xE0).contains(&b) && cont(1) {
+                (
+                    (u32::from(b & 0x1F) << 6) | u32::from(input[i + 1] & 0x3F),
+                    2,
+                )
+            } else if (0xE0..0xF0).contains(&b) && cont(1) && cont(2) {
+                let cp = (u32::from(b & 0x0F) << 12)
+                    | (u32::from(input[i + 1] & 0x3F) << 6)
+                    | u32::from(input[i + 2] & 0x3F);
+                if (0xD800..=0xDFFF).contains(&cp) {
+                    return SIMDUTFResult {
+                        status: Status::SURROGATE,
+                        count: i,
+                    };
+                }
+                (cp, 3)
+            } else if (0xF0..0xF5).contains(&b) && cont(1) && cont(2) && cont(3) {
+                (
+                    (u32::from(b & 0x07) << 18)
+                        | (u32::from(input[i + 1] & 0x3F) << 12)
+                        | (u32::from(input[i + 2] & 0x3F) << 6)
+                        | u32::from(input[i + 3] & 0x3F),
+                    4,
+                )
+            } else {
+                return SIMDUTFResult {
+                    status: Status::TOO_SHORT,
+                    count: i,
+                };
+            };
+            // SAFETY: test stub mirroring simdutf — the caller guarantees
+            // capacity for the full conversion before calling (that is the
+            // invariant under test).
+            unsafe {
+                if cp <= 0xFFFF {
+                    utf16_output.add(written).write(cp as u16);
+                    written += 1;
+                } else {
+                    let v = cp - 0x10000;
+                    utf16_output.add(written).write(0xD800 + (v >> 10) as u16);
+                    utf16_output
+                        .add(written + 1)
+                        .write(0xDC00 + (v & 0x3FF) as u16);
+                    written += 2;
+                }
+            }
+            i += adv;
+        }
+        SIMDUTFResult {
+            status: Status::SUCCESS,
+            count: written,
+        }
+    }
+
+    /// Scalar `simdutf::length::utf16::from::utf8`: one unit per
+    /// non-continuation byte plus one more per 4-byte lead — including the
+    /// real implementation's undercount on invalid input (stray continuation
+    /// bytes count zero), which `to_w_path_overlong_invalid_utf8` depends on.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__utf16_length_from_utf8(input: *const u8, length: usize) -> usize {
+        // SAFETY: test stub; callers pass a valid (ptr, len) input pair.
+        let input = unsafe { core::slice::from_raw_parts(input, length) };
+        input
+            .iter()
+            .map(|&b| {
+                if b & 0xC0 == 0x80 {
+                    0
+                } else if b >= 0xF0 {
+                    2
+                } else {
+                    1
+                }
+            })
+            .sum()
+    }
+
+    /// The u16 length of the buffer `PathLike::os_path_kernel32` uses on
+    /// Windows: the 98302-byte (3 × PATH_MAX_WIDE + 1) `PathBuffer`
+    /// reinterpreted as `[u16]`.
+    const KERNEL32_WIDE_LEN: usize = (3 * crate::PATH_MAX_WIDE + 1) / 2;
+
+    #[test]
+    fn to_w_path_fills_to_capacity() {
+        // cap = wbuf.len() - 1 (NUL); an input of exactly `cap` units fits.
+        let mut wbuf = [0u16; 9];
+        let result = to_w_path(&mut wbuf, b"abcdefgh");
+        assert_eq!(result.len(), 8);
+        assert_eq!(wbuf[8], 0);
+    }
+
+    #[test]
+    fn to_w_path_overlong_yields_empty() {
+        // Used to hand simdutf a buffer it would write past (then panic
+        // slicing the result); must fail safe to "" instead.
+        let mut wbuf = [1u16; 32];
+        let result = to_w_path(&mut wbuf, &[b'a'; 64]);
+        assert_eq!(result.len(), 0);
+        assert_eq!(wbuf[0], 0);
+    }
+
+    #[test]
+    fn to_w_path_overlong_invalid_utf8_yields_empty() {
+        // Stray continuation bytes defeat the simdutf length estimate (they
+        // count as zero units) but each becomes one U+FFFD in the WTF-8
+        // fallback — the bounded fallback must still refuse to write past
+        // the buffer.
+        let mut wbuf = [1u16; 32];
+        let result = to_w_path(&mut wbuf, &[0x80u8; 64]);
+        assert_eq!(result.len(), 0);
+        assert_eq!(wbuf[0], 0);
+    }
+
+    #[test]
+    fn to_w_path_multibyte_longer_in_bytes_than_buffer_fits() {
+        // 20 × U+4E16 = 60 UTF-8 bytes but only 20 UTF-16 units; must
+        // convert even though the byte length exceeds the buffer length.
+        let input: Vec<u8> = "世".repeat(20).into_bytes();
+        let mut wbuf = [0u16; 32];
+        let result = to_w_path(&mut wbuf, &input);
+        assert_eq!(result.len(), 20);
+        assert!(result.as_slice().iter().all(|&u| u == 0x4E16));
+    }
+
+    #[test]
+    fn to_kernel32_path_adds_long_prefix() {
+        let mut wbuf = [0u16; 16];
+        let result = to_kernel32_path(&mut wbuf, b"C:\\foo");
+        let expected: Vec<u16> = "\\\\?\\C:\\foo".encode_utf16().collect();
+        assert_eq!(result.as_slice(), &expected[..]);
+    }
+
+    #[test]
+    fn to_kernel32_path_overlong_windows_sized_buffer() {
+        // The exact shape of the crash seen in production (and of
+        // oven-sh/bun#20258): `PathLike::os_path_kernel32` reinterprets the
+        // 98302-byte Windows `PathBuffer` as 49151 u16s; a drive-letter path
+        // longer than that in UTF-16 units used to write past the buffer
+        // inside simdutf and panic slicing the result. It must now fail safe
+        // (prefix-only output, which the consuming syscall rejects) — and
+        // `PathLikeExt` rejects such paths with NameTooLong before this
+        // conversion is even reached.
+        let mut wbuf = vec![0u16; KERNEL32_WIDE_LEN];
+        let mut path = b"C:\\".to_vec();
+        path.resize(3 + KERNEL32_WIDE_LEN, b'a');
+        let result = to_kernel32_path(&mut wbuf, &path);
+        assert_eq!(result.as_slice(), &windows::LONG_PATH_PREFIX[..]);
+
+        // Without the drive-letter prefix it degrades to "".
+        let result = to_w_path(&mut wbuf, &path[3..]);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn to_kernel32_path_just_under_the_buffer_converts() {
+        // One unit of headroom below the prefix + NUL overhead: must still
+        // convert (guards against over-rejection at the boundary).
+        let mut wbuf = vec![0u16; KERNEL32_WIDE_LEN];
+        let mut path = b"C:\\".to_vec();
+        path.resize(KERNEL32_WIDE_LEN - 5, b'a');
+        let result = to_kernel32_path(&mut wbuf, &path);
+        assert_eq!(result.len(), path.len() + 4);
+        assert_eq!(&result.as_slice()[..4], &windows::LONG_PATH_PREFIX[..]);
+    }
+
+    #[test]
+    fn convert_z_bounds() {
+        // The NUL-terminating conversion (used by the Windows profilers'
+        // path widening) shares the checked core: exact fit converts with
+        // the NUL in the reserved slot, over-long fails safe to "".
+        let mut wbuf = [1u16; 9];
+        let result = bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut wbuf, b"abcdefgh");
+        assert_eq!(result.len(), 8);
+        assert_eq!(wbuf[8], 0);
+
+        let result = bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut wbuf, &[b'a'; 16]);
+        assert_eq!(result.len(), 0);
+        assert_eq!(wbuf[0], 0);
+    }
+
+    #[test]
+    fn fits_in_wide_path_buffer_bounds() {
+        // PATH_MAX_WIDE (32767) minus the 10-unit overhead (`\??\UNC\` +
+        // trailing slash + NUL) = 32757 is the largest accepted size.
+        assert!(fits_in_wide_path_buffer(&vec![b'a'; 32757]));
+        assert!(!fits_in_wide_path_buffer(&vec![b'a'; 32758]));
+
+        // Long in bytes but short in UTF-16 units: 3-byte chars count once,
+        // so the exact length must be computed, not the byte length.
+        let cjk: Vec<u8> = "世".repeat(20000).into_bytes(); // 60000 B, 20000 u16
+        assert!(fits_in_wide_path_buffer(&cjk));
+        let cjk_long: Vec<u8> = "世".repeat(32758).into_bytes();
+        assert!(!fits_in_wide_path_buffer(&cjk_long));
+        // The largest fitting valid path in bytes: 32757 3-byte units.
+        let cjk_max: Vec<u8> = "世".repeat(32757).into_bytes(); // 98271 B
+        assert!(fits_in_wide_path_buffer(&cjk_max));
+
+        // Malformed bytes: simdutf's length is an estimate there (stray
+        // continuation bytes count zero yet convert to one U+FFFD unit
+        // each), so the check stays permissive for such input and the
+        // bounds-checked conversion fails safe downstream instead
+        // (`to_w_path_overlong_invalid_utf8_yields_empty`). The byte cap
+        // still rejects anything no fitting path could occupy.
+        assert!(!fits_in_wide_path_buffer(&vec![0x80u8; 98300]));
+        assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32758]));
+        assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32757]));
+    }
+}

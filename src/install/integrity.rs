@@ -4,7 +4,7 @@ use bun_base64::zig_base64::STANDARD_NO_PAD as base64;
 use bun_core::strings;
 use bun_sha_hmac::sha as Crypto;
 
-// Digest lengths (bytes). Mirrors std.crypto.hash.* digest_length.
+// Digest lengths (bytes).
 const SHA1_DIGEST_LEN: usize = 20;
 const SHA256_DIGEST_LEN: usize = 32;
 const SHA384_DIGEST_LEN: usize = 48;
@@ -33,7 +33,7 @@ impl Default for Integrity {
 
 const EMPTY_DIGEST_BUF: [u8; DIGEST_BUF_LEN] = [0u8; DIGEST_BUF_LEN];
 
-pub const DIGEST_BUF_LEN: usize = {
+pub(crate) const DIGEST_BUF_LEN: usize = {
     let mut m = SHA1_DIGEST_LEN;
     if SHA512_DIGEST_LEN > m {
         m = SHA512_DIGEST_LEN;
@@ -48,7 +48,6 @@ pub const DIGEST_BUF_LEN: usize = {
 };
 
 impl Integrity {
-    // TODO(port): narrow error set (Zig: `!Integrity` inferred — only error.InvalidCharacter)
     pub fn parse_sha_sum(buf: &[u8]) -> Result<Integrity, bun_core::Error> {
         if buf.is_empty() {
             return Ok(Integrity {
@@ -65,7 +64,7 @@ impl Integrity {
         let end: usize = b"3cd0599b099384b815c10f7fa7df0092b62d534f"
             .len()
             .min(buf.len());
-        if end % 2 != 0 {
+        if !end.is_multiple_of(2) {
             return Err(bun_core::err!("InvalidCharacter"));
         }
         let mut out_i: usize = 0;
@@ -116,7 +115,7 @@ impl Integrity {
         }
 
         let input = {
-            // std.mem.trimRight(u8, buf[offset..], "=")
+            // trim trailing '=' padding
             let s = &buf[offset..];
             let mut end = s.len();
             while end > 0 && s[end - 1] == b'=' {
@@ -162,13 +161,16 @@ impl Integrity {
     pub fn for_bytes(bytes: &[u8]) -> Integrity {
         const LEN: usize = SHA512_DIGEST_LEN;
         let mut value: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
-        Crypto::SHA512::hash(
-            bytes,
-            (&mut value[0..LEN])
-                .try_into()
-                .expect("infallible: size matches"),
-            core::ptr::null_mut(),
-        );
+        // SAFETY: engine is null (default).
+        unsafe {
+            Crypto::SHA512::hash(
+                bytes,
+                (&mut value[0..LEN])
+                    .try_into()
+                    .expect("infallible: size matches"),
+                core::ptr::null_mut(),
+            )
+        };
         Integrity {
             tag: Tag::SHA512,
             value,
@@ -177,7 +179,6 @@ impl Integrity {
 
     #[inline]
     pub fn verify(&self, bytes: &[u8]) -> bool {
-        // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
         Self::verify_by_tag(self.tag, bytes, &self.value)
     }
 
@@ -190,7 +191,8 @@ impl Integrity {
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                Crypto::SHA1::hash(bytes, ptr, core::ptr::null_mut());
+                // SAFETY: engine is null (default).
+                unsafe { Crypto::SHA1::hash(bytes, ptr, core::ptr::null_mut()) };
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA512 => {
@@ -198,7 +200,8 @@ impl Integrity {
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                Crypto::SHA512::hash(bytes, ptr, core::ptr::null_mut());
+                // SAFETY: engine is null (default).
+                unsafe { Crypto::SHA512::hash(bytes, ptr, core::ptr::null_mut()) };
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA256 => {
@@ -206,7 +209,8 @@ impl Integrity {
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                Crypto::SHA256::hash(bytes, ptr, core::ptr::null_mut());
+                // SAFETY: engine is null (default).
+                unsafe { Crypto::SHA256::hash(bytes, ptr, core::ptr::null_mut()) };
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA384 => {
@@ -214,7 +218,8 @@ impl Integrity {
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                Crypto::SHA384::hash(bytes, ptr, core::ptr::null_mut());
+                // SAFETY: engine is null (default).
+                unsafe { Crypto::SHA384::hash(bytes, ptr, core::ptr::null_mut()) };
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             _ => false,
@@ -248,10 +253,9 @@ impl fmt::Display for Integrity {
     }
 }
 
-// PORT NOTE: Zig `enum(u8) { ..., _ }` is non-exhaustive (any u8 is a valid bit
-// pattern, since this is read from on-disk lockfiles). A Rust `#[repr(u8)] enum`
-// would be UB for unknown discriminants, so we use a transparent newtype with
-// associated consts instead.
+// Any u8 must be a valid bit pattern, since this is read from on-disk
+// lockfiles. A `#[repr(u8)] enum` would be UB for unknown discriminants, so we
+// use a transparent newtype with associated consts instead.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Tag(pub u8);
@@ -276,8 +280,6 @@ impl Tag {
     }
 
     pub fn parse(buf: &[u8]) -> (Tag, usize) {
-        // PORT NOTE: Zig used strings.ExactSizeMatcher(8); a byte-slice match is
-        // equivalent and const-propagated.
         let Some(i) = strings::index_of_char(&buf[0..buf.len().min(7)], b'-') else {
             return (Tag::UNKNOWN, 0);
         };
@@ -316,12 +318,12 @@ impl Tag {
 /// algorithm so `verify()` can compare against the lockfile value. When
 /// there is no expected value yet (first install of a GitHub/remote
 /// tarball) we default to SHA-512 to match `for_bytes`.
-pub struct Streaming {
+pub(crate) struct Streaming {
     pub expected: Integrity,
     pub hasher: Hasher,
 }
 
-pub enum Hasher {
+pub(crate) enum Hasher {
     None,
     Sha1(Crypto::SHA1),
     Sha256(Crypto::SHA256),
@@ -330,9 +332,9 @@ pub enum Hasher {
 }
 
 impl Streaming {
-    pub fn init(expected: Integrity, compute_if_missing: bool) -> Streaming {
+    pub(crate) fn init(expected: &Integrity, compute_if_missing: bool) -> Streaming {
         Streaming {
-            expected,
+            expected: *expected,
             hasher: match expected.tag {
                 Tag::SHA1 => Hasher::Sha1(Crypto::SHA1::init()),
                 Tag::SHA256 => Hasher::Sha256(Crypto::SHA256::init()),
@@ -349,7 +351,7 @@ impl Streaming {
         }
     }
 
-    pub fn update(&mut self, bytes: &[u8]) {
+    pub(crate) fn update(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
         }
@@ -362,7 +364,7 @@ impl Streaming {
         }
     }
 
-    pub fn final_(&mut self) -> Integrity {
+    pub(crate) fn final_(&mut self) -> Integrity {
         let mut out: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
         match &mut self.hasher {
             Hasher::None => Integrity::default(),
@@ -416,7 +418,7 @@ impl Streaming {
     /// Returns true if the computed digest matches `expected`, or if no
     /// expected value was supplied. Callers that need to persist the
     /// computed value should call `final_()` instead.
-    pub fn verify(&mut self) -> bool {
+    pub(crate) fn verify(&mut self) -> bool {
         if !self.expected.tag.is_supported() {
             return true;
         }
@@ -429,7 +431,7 @@ impl Streaming {
     }
 }
 
-// Zig had a `comptime` block asserting Integrity::default().value is all-zero.
+// Assert Integrity::default().value is all-zero.
 const _: () = {
     let buf = EMPTY_DIGEST_BUF;
     let mut i = 0;
@@ -438,5 +440,3 @@ const _: () = {
         i += 1;
     }
 };
-
-// ported from: src/install/integrity.zig

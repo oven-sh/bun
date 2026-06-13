@@ -16,7 +16,7 @@ use crate::package_manager::workspace_package_json_cache::{
 
 bun_output::declare_scope!(Lockfile, hidden);
 
-pub struct WorkspaceMap {
+pub(crate) struct WorkspaceMap {
     map: Map,
 }
 
@@ -30,31 +30,31 @@ pub struct Entry {
 }
 
 impl WorkspaceMap {
-    pub fn init() -> WorkspaceMap {
+    pub(crate) fn init() -> WorkspaceMap {
         WorkspaceMap {
             map: Map::default(),
         }
     }
 
-    pub fn keys(&self) -> &[Box<[u8]>] {
+    pub(crate) fn keys(&self) -> &[Box<[u8]>] {
         self.map.keys()
     }
 
-    pub fn values(&self) -> &[Entry] {
+    pub(crate) fn values(&self) -> &[Entry] {
         self.map.values()
     }
 
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.map.count()
     }
 
     #[inline]
-    pub fn get(&self, key: &[u8]) -> Option<&Entry> {
+    pub(crate) fn get(&self, key: &[u8]) -> Option<&Entry> {
         self.map.get(key)
     }
 
-    pub fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
-        // Zig has a debug-only `bun.sys.exists(key)` check here, but `key` is
+    pub(crate) fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
+        // No `bun.sys.exists(key)` debug check here: `key` is
         // relative to the workspace root while `exists` resolves against process
         // cwd — false positive whenever the two differ (e.g. `bun unlink` from a
         // workspace package). Existence is already verified by the caller via
@@ -70,12 +70,6 @@ impl WorkspaceMap {
             name_loc: value.name_loc,
         };
         Ok(())
-    }
-
-    pub fn sort(&mut self, mut sort_ctx: impl FnMut(usize, usize) -> bool) {
-        // ArrayHashMap::sort hands us key/value slices; this wrapper exposes the
-        // Zig-shaped (a_idx, b_idx) -> bool surface.
-        self.map.sort(|_keys, _values, a, b| sort_ctx(a, b));
     }
 }
 
@@ -99,17 +93,17 @@ fn process_workspace_name(
         )
         .unwrap()?;
 
-    // Scratch arena for `as_string_cloned` (Zig threaded the heap allocator);
+    // Scratch arena for `as_string_cloned`;
     // results are immediately boxed so the bump can drop at scope exit.
     let scratch = Arena::new();
 
     let name_expr = workspace_json
         .root
         .get(b"name")
-        .ok_or(bun_core::err!("MissingPackageName"))?;
+        .ok_or_else(|| bun_core::err!("MissingPackageName"))?;
     let name = name_expr
         .as_string_cloned(&scratch)?
-        .ok_or(bun_core::err!("MissingPackageName"))?;
+        .ok_or_else(|| bun_core::err!("MissingPackageName"))?;
 
     let entry = Entry {
         name: Box::<[u8]>::from(name),
@@ -134,7 +128,7 @@ fn process_workspace_name(
 }
 
 impl WorkspaceMap {
-    pub fn process_names_array(
+    pub(crate) fn process_names_array(
         &mut self,
         json_cache: &mut WorkspacePackageJSONCache,
         log: &mut bun_ast::Log,
@@ -152,10 +146,10 @@ impl WorkspaceMap {
 
         let mut workspace_globs: Vec<Box<[u8]>> = Vec::new();
         let mut filepath_buf_os: Box<PathBuffer> = Box::new(PathBuffer::uninit());
-        // PERF(port): Zig used allocator.create(PathBuffer) to avoid large stack frame
+        // Boxed to avoid a large stack frame.
         let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
 
-        // Scratch arena for `as_string_z` (Zig threaded the heap allocator).
+        // Scratch arena for `as_string_z`.
         let scratch = Arena::new();
 
         for item in arr.slice() {
@@ -186,7 +180,7 @@ impl WorkspaceMap {
 
             let abs_package_json_path: &ZStr =
                 resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                    source.path.name.dir,
+                    source.path.name().dir,
                     filepath_buf,
                     &[input_path.as_bytes(), b"package.json"],
                 );
@@ -194,7 +188,7 @@ impl WorkspaceMap {
             // skip root package.json
             if strings::eql_long(
                 resolve_path::dirname::<path::platform::Auto>(abs_package_json_path.as_bytes()),
-                source.path.name.dir,
+                source.path.name().dir,
                 true,
             ) {
                 continue;
@@ -204,7 +198,6 @@ impl WorkspaceMap {
                 match process_workspace_name(json_cache, abs_package_json_path, log) {
                     Ok(e) => e,
                     Err(err) => {
-                        // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent (Zig error return traces)
                         if err == bun_core::err!("EISNOTDIR")
                             || err == bun_core::err!("EISDIR")
                             || err == bun_core::err!("EACCESS")
@@ -252,7 +245,7 @@ impl WorkspaceMap {
             }
 
             let rel_input_path = resolve_path::relative_platform::<path::platform::Auto, true>(
-                source.path.name.dir,
+                source.path.name().dir,
                 strings::without_suffix_comptime(
                     abs_package_json_path.as_bytes(),
                     const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
@@ -298,13 +291,11 @@ impl WorkspaceMap {
 
         if workspace_globs.len() > 0 {
             let mut arena = Arena::new();
-            // PERF(port): was arena bulk-free per-iteration via reset(.retain_capacity)
             for (i, user_pattern) in workspace_globs.iter().enumerate() {
-                // PORT NOTE: Zig `defer arena.reset()` ran *after* iter.deinit()/walker.deinit() at
-                // end of each iter. In Rust, walker/iter borrow `&arena` and Drop at scope exit,
+                // walker/iter borrow `&arena` and Drop at scope exit,
                 // so resetting here (top of next iter) ensures they drop before invalidation.
                 // Last iter's allocs are freed when `arena` itself drops after the loop.
-                // Spec is `.reset(.retain_capacity)` — keep the `mi_heap` warm
+                // Capacity is retained to keep the `mi_heap` warm
                 // across glob patterns × matched dirs.
                 arena.reset_retain_with_limit(8 * 1024 * 1024);
                 let glob_pattern: &[u8] = if user_pattern.len() == 0 {
@@ -314,13 +305,13 @@ impl WorkspaceMap {
                     arena.alloc_slice_copy(resolve_path::join::<path::platform::Auto>(&parts))
                 };
 
-                let mut cwd = resolve_path::dirname::<path::platform::Auto>(&source.path.text);
+                let mut cwd = resolve_path::dirname::<path::platform::Auto>(source.path.text);
                 if cwd.is_empty() {
                     cwd = bun_resolver::fs::FileSystem::instance().top_level_dir();
                 }
-                // PORT NOTE: GlobWalker::init_with_cwd is now an associated constructor
-                // returning `Result<Maybe<Self>>`; arena param dropped (Phase A: heap-backed),
-                // ignore filter supplied as final arg (was comptime fn param in Zig).
+                // GlobWalker::init_with_cwd is now an associated constructor
+                // returning `Result<Maybe<Self>>`; arena param dropped (heap-backed),
+                // ignore filter supplied as final arg.
                 let mut walker = match GlobWalker::init_with_cwd(
                     glob_pattern,
                     cwd,
@@ -345,8 +336,8 @@ impl WorkspaceMap {
                         return Err(bun_core::err!("GlobError"));
                     }
                 };
-                // walker dropped at end of loop iter (Drop impl handles deinit(false))
-                // TODO(port): GlobWalker::deinit(false) — Drop cannot take params; assume default Drop matches `false`
+                // walker dropped at end of loop iter; GlobWalker is heap-backed with no
+                // arena, and its Drop only logs + frees owned Vec/Box fields.
 
                 let mut iter = glob::walk::Iterator::new(&mut walker);
                 if let Err(e) = iter.init()? {
@@ -438,8 +429,6 @@ impl WorkspaceMap {
                     ) {
                         Ok(e) => e,
                         Err(err) => {
-                            // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent
-
                             let entry_base: &[u8] = path::basename(matched_path);
                             if err == bun_core::err!("FileNotFound")
                                 || err == bun_core::err!("PermissionDenied")
@@ -450,7 +439,6 @@ impl WorkspaceMap {
                                     Some(source),
                                     bun_ast::Loc::EMPTY,
                                     format_args!(
-                                        // TODO(port): comptime concat with sep_str — using runtime sep
                                         "Missing \"name\" from package.json in {}{}{}",
                                         BStr::new(entry_dir),
                                         SEP_STR,
@@ -480,7 +468,7 @@ impl WorkspaceMap {
 
                     let workspace_path: &[u8] =
                         resolve_path::relative_platform::<path::platform::Auto, true>(
-                            source.path.name.dir,
+                            source.path.name().dir,
                             abs_workspace_dir_path,
                         );
                     #[cfg(windows)]
@@ -530,8 +518,7 @@ impl WorkspaceMap {
         }
 
         // Sort the names for determinism
-        // PORT NOTE: reshaped for borrowck — Zig captured `values()` slice in sort ctx;
-        // here ArrayHashMap::sort provides values internally to the comparator.
+        // ArrayHashMap::sort provides values internally to the comparator.
         workspace_names
             .map
             .sort(|_keys, values: &[Entry], a: usize, b: usize| {
@@ -553,10 +540,7 @@ fn ignored_workspace_paths(path: &[u8]) -> bool {
     false
 }
 
-// PORT NOTE: Zig `glob.GlobWalker(ignoredWorkspacePaths, glob.walk.SyscallAccessor, false)` —
-// the comptime ignore-filter fn param was lowered to a runtime fn-pointer field on
+// The ignore-filter is a runtime fn-pointer field on
 // `bun_glob::GlobWalker` (const-generic fn ptrs are unstable). Supplied via
 // `init_with_cwd(..., Some(ignored_workspace_paths))`.
 type GlobWalker = glob::GlobWalker<glob::walk::SyscallAccessor, false>;
-
-// ported from: src/install/lockfile/Package/WorkspaceMap.zig

@@ -1,6 +1,6 @@
 //! Valkey/Redis client — JSC bindings.
 //!
-//! Module layout mirrors `src/runtime/valkey_jsc/index.zig`: the protocol
+//! Module layout: the protocol
 //! state machine lives in [`valkey`] (`ValkeyClient`), the `.classes.ts`
 //! wrapper in [`js_valkey`] (`JSValkeyClient`), and the ~200 prototype
 //! methods in [`js_valkey_functions`]. RESP wire-format parsing is in the
@@ -31,12 +31,10 @@ pub mod protocol_jsc; // RESPValue → JSValue, RedisError → JS Error
 #[path = "index.rs"]
 pub mod index;
 
-// ─── Phase-B back-compat aliases ─────────────────────────────────────────────
-// Earlier passes mounted the bodies under `*_body` to keep the inline stub
-// modules compiling alongside them. The stubs are now dissolved; keep the
-// `*_body` names as aliases so sibling files (`valkey.rs` imports
-// `super::js_valkey_body`, `js_valkey.rs` imports `super::valkey_command_body`)
-// don't churn in this pass.
+// ─── back-compat aliases ─────────────────────────────────────────────────────
+// Sibling files were written against `*_body` module names (`valkey.rs`
+// imports `super::js_valkey_body`, `js_valkey.rs` imports
+// `super::valkey_command_body`); keep the aliases so they don't need to churn.
 pub use self::js_valkey as js_valkey_body;
 pub use self::valkey as valkey_body;
 
@@ -49,10 +47,10 @@ pub use valkey::{Options, Protocol, Status, ValkeyClient};
 pub use valkey_context::ValkeyContext;
 
 // ── ValkeyCommand ────────────────────────────────────────────────────────────
-// Zig's `ValkeyCommand.zig` is a file-as-struct: it is both the namespace
+// `ValkeyCommand` is both a namespace
 // *and* the `Command` type. Expose a `valkey_command` module that re-exports
 // the body's items so `command::PromisePair` / `command::Entry` resolve, and
-// alias it as `ValkeyCommand` for callers that match the Zig spelling.
+// alias it as `ValkeyCommand` for callers that use that spelling.
 pub mod valkey_command {
     pub use super::valkey_command_body::{Entry, Meta, Promise, PromisePair, entry, promise_pair};
     // `index.rs` re-exports `super::valkey_command::ValkeyCommand`.

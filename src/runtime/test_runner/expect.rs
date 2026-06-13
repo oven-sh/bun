@@ -5,7 +5,7 @@ use core::fmt;
 use bun_core::Output;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
-    ConsoleObject, JSFunction, JSPropertyIterator, JSArrayIterator, JSString,
+    ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
 use bun_core::ZigString;
@@ -13,38 +13,19 @@ use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::strings;
 
-use super::bun_test::{self, DescribeScope};
+use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
-#[allow(unused_imports)]
-use super::expect::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, make_formatter};
+use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 
 use bun_jsc::js_error_to_write_error;
 
 // Matcher submodules are declared in `super::expect` (mod.rs); this file
 // provides only the `Expect` payload + helpers they extend.
 
-#[derive(Default, Clone, Copy)]
-pub struct Counter {
-    pub expected: u32,
-    pub actual: u32,
-}
 
-/// Helper to retrieve matcher flags from a jsvalue of a class like ExpectAny, ExpectStringMatching, etc.
-pub fn get_matcher_flags<T: FlagsGetCached>(value: JSValue) -> Flags {
-    if let Some(flags_value) = T::flags_get_cached(value) {
-        if !flags_value.is_empty() {
-            return Flags::from_bitset(flags_value.to_int32());
-        }
-    }
-    Flags::default()
-}
 
-// TODO(port): trait stub for `flagsGetCached` codegen accessor used by get_matcher_flags
-pub trait FlagsGetCached {
-    fn flags_get_cached(value: JSValue) -> Option<JSValue>;
-}
 
 /// https://jestjs.io/docs/expect
 // To support async tests, we need to track the test ID
@@ -61,14 +42,9 @@ pub struct Expect {
     pub custom_label: bun_core::String,
 }
 
-pub struct TestScope<'a> {
-    // Zig: `TestRunner.Test.ID = u32`
-    pub test_id: u32,
-    pub describe: &'a DescribeScope,
-}
 
-// PORT NOTE: Zig `enum(u2)`; Rust has no `u2`. Stored packed inside `Flags(u8)`
-// bits 0..2, so `repr(u8)` here only governs the standalone discriminant size.
+// Stored packed inside `Flags(u8)` bits 0..2, so `repr(u8)` here only
+// governs the standalone discriminant size.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum Promise {
@@ -78,7 +54,7 @@ pub enum Promise {
     Rejects = 2,
 }
 
-#[repr(u8)] // TODO(port): Zig used u5; encoded inside Flags packed repr
+#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum AsymmetricMatcherConstructorType {
     #[default]
@@ -94,7 +70,6 @@ pub enum AsymmetricMatcherConstructorType {
     InstanceOf = 9,
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn AsymmetricMatcherConstructorType__fromJS(
         global_object: *const JSGlobalObject,
@@ -103,11 +78,11 @@ unsafe extern "C" {
 }
 
 impl AsymmetricMatcherConstructorType {
-    pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+    pub(crate) fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
         // C++ side opens `DECLARE_THROW_SCOPE` and returns -1 ⟺ threw; under
         // `BUN_JSC_validateExceptionChecks=1` its dtor sets `m_needExceptionCheck`, so
         // open a validation scope here and assert the sentinel/exception biconditional
-        // (Zig: `bun.cpp.AsymmetricMatcherConstructorType__fromJS` is `zero_is_throw`-shaped
+        // (`AsymmetricMatcherConstructorType__fromJS` is `zero_is_throw`-shaped
         // with -1 as the sentinel).
         bun_jsc::validation_scope!(scope, global_object);
         // SAFETY: FFI call with valid &JSGlobalObject; JSValue is Copy/repr(transparent)
@@ -132,12 +107,12 @@ impl AsymmetricMatcherConstructorType {
 }
 
 /// note: keep this struct in sync with C++ implementation (at bindings.cpp)
-// Zig: packed struct(u8) { promise: u2, not: bool, asymmetric_matcher_constructor_type: u5 }
+// Bit layout: promise (bits 0..2), not (bit 2), asymmetric_matcher_constructor_type (bits 3..8).
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct Flags(pub u8);
 
-pub type FlagsCppType = u8;
+pub(crate) type FlagsCppType = u8;
 const _: () = assert!(core::mem::size_of::<Flags>() == core::mem::size_of::<FlagsCppType>());
 
 impl Flags {
@@ -147,9 +122,8 @@ impl Flags {
 
     #[inline]
     pub fn promise(self) -> Promise {
-        // PORT NOTE: Zig `enum(u2)` tolerates the unused bit pattern 3 inside a
-        // packed struct; Rust does not — transmuting an out-of-range
-        // discriminant is instant UB. `Flags` is fed from C++ via
+        // The unused bit pattern 3 is representable in the packed bits but
+        // is not a valid discriminant — transmuting it would be instant UB. `Flags` is fed from C++ via
         // `from_bitset`/`decode`, so the bits are not statically constrained.
         match self.0 & Self::PROMISE_MASK {
             1 => Promise::Resolves,
@@ -172,9 +146,8 @@ impl Flags {
     }
     #[inline]
     pub fn asymmetric_matcher_constructor_type(self) -> AsymmetricMatcherConstructorType {
-        // PORT NOTE: Zig `enum(u5)` with 10 variants — values 10..=31 are
-        // representable in the packed bits but are not valid Rust
-        // discriminants, and `Flags` arrives from C++ via `from_bitset`, so
+        // Values 10..=31 are representable in the packed bits but are not
+        // valid discriminants, and `Flags` arrives from C++ via `from_bitset`, so
         // a checked match is required (transmute would be UB).
         match self.0 >> Self::AMCT_SHIFT {
             0 => AsymmetricMatcherConstructorType::None,
@@ -220,7 +193,7 @@ impl Expect {
 
     pub fn increment_expect_call_counter(&self) {
         let Some(parent) = self.parent.as_ref() else { return }; // not in bun:test
-        let Some(mut buntest_strong) = parent.bun_test() else { return }; // the test file this expect() call was for is no longer
+        let Some(buntest_strong) = parent.bun_test() else { return }; // the test file this expect() call was for is no longer
         let buntest = buntest_strong.get();
         if let Some(sequence) = parent.phase.sequence(buntest) {
             // found active sequence
@@ -228,10 +201,9 @@ impl Expect {
         } else {
             // in concurrent group or otherwise failed to get the sequence; increment the expect call count in the reporter directly
             if let Some(reporter) = buntest.reporter {
-                // SAFETY: Zig source mutates `reporter.summary()` directly; the
-                // field is `Option<NonNull<CommandLineReporter>>` (Zig
-                // `?*CommandLineReporter`), owned by `test_command` for the
-                // process lifetime, never aliased mutably elsewhere here.
+                // SAFETY: `reporter` is `Option<NonNull<CommandLineReporter>>`,
+                // owned by `test_command` for the process lifetime, never
+                // aliased mutably elsewhere here.
                 unsafe {
                     let s = (*reporter.as_ptr()).summary();
                     s.expectations = s.expectations.saturating_add(1);
@@ -250,16 +222,14 @@ impl Expect {
         args: &'static str,
         not: bool,
     ) -> &'static str {
-        // .zig:103-109 comptime-concats `received ++ [not.] ++ matcher_name ++ (args)`
-        // into rodata. Rust has no comptime string concat across runtime call
-        // sites (all ~188 callers pass literals, but the `not` bool is runtime
+        // Rust has no compile-time string concat across runtime call sites (all ~188 callers pass literals, but the `not` bool is runtime
         // in some), so emulate via a process-lifetime intern table: each
         // unique (matcher, args, not) triple is rendered exactly once and the
-        // boxed str is owned by the static `CACHE` for the rest of the process
-        // — same lifetime semantics as the Zig comptime result. Returning
+        // boxed str is owned by the static `CACHE` for the rest of the
+        // process. Returning
         // `&'static str` keeps the ~188 call sites and `throw()`'s `signature:
         // &'static str` parameter unchanged.
-        use std::collections::HashMap;
+        use bun_collections::HashMap;
         use std::sync::OnceLock;
         type Key = (&'static str, &'static str, bool);
         static CACHE: OnceLock<bun_threading::Guarded<HashMap<Key, Box<str>>>> = OnceLock::new();
@@ -290,47 +260,55 @@ impl Expect {
         matcher_name: impl fmt::Display,
         matcher_params: impl fmt::Display,
         flags: Flags,
-        // PORT NOTE: Zig took `comptime message_fmt: string` + `message_args` and
-        // concatenated `message_fmt` onto the signature template before
-        // substitution. Rust can't splice runtime args into a const format
+        // Rust can't splice runtime args into a const format
         // string, so callers pre-render the message body (prose + args) into a
         // single `fmt::Arguments` here. `<tag>` markers in the rendered body
         // are still rewritten by `throw_pretty`'s post-render `pretty_fmt_rt`
         // pass, so the prose may contain `<r>`/`<red>`/etc.
         message: fmt::Arguments<'_>,
     ) -> JsError {
-        // PERF(port): was comptime bool dispatch on Output.enable_ansi_colors_stderr — profile in Phase B
         let colors = Output::enable_ansi_colors_stderr();
-        let chain = match flags.promise() {
+        let chain: &'static str = match flags.promise() {
             Promise::Resolves => {
                 if flags.not() {
-                    Output::pretty_fmt_rt("resolves<d>.<r>not<d>.<r>", colors)
+                    if colors {
+                        bun_core::pretty_fmt!("resolves<d>.<r>not<d>.<r>", true)
+                    } else {
+                        bun_core::pretty_fmt!("resolves<d>.<r>not<d>.<r>", false)
+                    }
+                } else if colors {
+                    bun_core::pretty_fmt!("resolves<d>.<r>", true)
                 } else {
-                    Output::pretty_fmt_rt("resolves<d>.<r>", colors)
+                    bun_core::pretty_fmt!("resolves<d>.<r>", false)
                 }
             }
             Promise::Rejects => {
                 if flags.not() {
-                    Output::pretty_fmt_rt("rejects<d>.<r>not<d>.<r>", colors)
+                    if colors {
+                        bun_core::pretty_fmt!("rejects<d>.<r>not<d>.<r>", true)
+                    } else {
+                        bun_core::pretty_fmt!("rejects<d>.<r>not<d>.<r>", false)
+                    }
+                } else if colors {
+                    bun_core::pretty_fmt!("rejects<d>.<r>", true)
                 } else {
-                    Output::pretty_fmt_rt("rejects<d>.<r>", colors)
+                    bun_core::pretty_fmt!("rejects<d>.<r>", false)
                 }
             }
             Promise::None => {
                 if flags.not() {
-                    Output::pretty_fmt_rt("not<d>.<r>", colors)
+                    if colors {
+                        bun_core::pretty_fmt!("not<d>.<r>", true)
+                    } else {
+                        bun_core::pretty_fmt!("not<d>.<r>", false)
+                    }
                 } else {
-                    bun_core::output::PrettyBuf(Vec::new())
+                    ""
                 }
             }
         };
-        // PERF(port): was comptime bool dispatch on use_default_label — profile in Phase B
-        // PORT NOTE: expect.zig:119-128 binds `use_default_label = !custom_label.isEmpty()`
-        // and so prints the *signature* when a custom label is present and the
-        // (empty) `{custom_label}` when it is absent — a misnamed variable in
-        // the Zig spec. The condition below intentionally matches the correct
-        // semantics of `Expect.throw` (expect.zig:373-379) instead: empty label
-        // → default signature header, non-empty label → user's label header.
+        // Matches the semantics of `Expect.throw`: empty label → default
+        // signature header, non-empty label → user's label header.
         if custom_label.is_empty() {
             global_this.throw_pretty(format_args!(
                 "<d>expect(<r><red>received<r><d>).<r>{chain}{matcher_name}<d>(<r>{matcher_params}<d>)<r>\n\n{message}",
@@ -340,7 +318,7 @@ impl Expect {
         }
     }
 
-    // PORT NOTE: `host_fn(getter)` shim passes `(&Self, &JSGlobalObject)` only,
+    // `host_fn(getter)` shim passes `(&Self, &JSGlobalObject)` only,
     // but these getters also need `this_value` (returned to JS for chaining).
     // The shim is omitted (codegen owns the actual link name). R-2: mutation
     // of `flags` goes through `Cell` so the receiver is `&Self`.
@@ -349,7 +327,7 @@ impl Expect {
         this_value
     }
 
-    // PORT NOTE: see `get_not` — `host_fn(getter)` shim signature mismatch.
+    // see `get_not` — `host_fn(getter)` shim signature mismatch.
     pub fn get_resolves(
         this: &Self,
         this_value: JSValue,
@@ -364,7 +342,7 @@ impl Expect {
         Ok(this_value)
     }
 
-    // PORT NOTE: see `get_not` — `host_fn(getter)` shim signature mismatch.
+    // see `get_not` — `host_fn(getter)` shim signature mismatch.
     pub fn get_rejects(
         this: &Self,
         this_value: JSValue,
@@ -383,8 +361,8 @@ impl Expect {
         &self,
         global_this: &JSGlobalObject,
         this_value: JSValue,
-        // PORT NOTE: Zig took `[]const u8`; every caller passes a string literal,
-        // so accept `&str` (BStr::new below takes `AsRef<[u8]>`, so no copy).
+        // Every caller passes a string literal, so accept `&str`
+        // (BStr::new below takes `AsRef<[u8]>`, so no copy).
         matcher_name: &str,
         matcher_params_fmt: &'static str,
     ) -> JsResult<JSValue> {
@@ -396,7 +374,7 @@ impl Expect {
         };
         value.ensure_still_alive();
 
-        // PERF(port): was comptime bool dispatch — profile in Phase B
+        #[allow(clippy::disallowed_methods)] // template is a runtime parameter
         let matcher_params = Output::pretty_fmt_rt(matcher_params_fmt, Output::enable_ansi_colors_stderr());
         Self::process_promise(
             self.custom_label.clone(),
@@ -421,7 +399,6 @@ impl Expect {
         matcher_params: impl fmt::Display,
         silent: bool,
     ) -> JsResult<JSValue> {
-        // PERF(port): was comptime monomorphization on `silent` and `resolution` — profile in Phase B
         match flags.promise() {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
                 if let Some(promise) = value.as_any_promise() {
@@ -515,8 +492,12 @@ impl Expect {
     }
 
     /// Called by C++ when matching with asymmetric matchers
+    ///
+    /// # Safety
+    /// `out_flags`, `value`, and `any_constructor_type` must be valid, properly
+    /// aligned pointers for the duration of the call.
     #[unsafe(no_mangle)]
-    pub extern "C" fn Expect_readFlagsAndProcessPromise(
+    pub unsafe extern "C" fn Expect_readFlagsAndProcessPromise(
         instance_value: JSValue,
         global_this: &JSGlobalObject,
         out_flags: *mut FlagsCppType,
@@ -566,14 +547,13 @@ impl Expect {
     }
 
     pub fn get_snapshot_name(&self, hint: &[u8]) -> Result<Vec<u8>, bun_core::Error> {
-        // TODO(port): narrow error set
-        let parent = self.parent.as_ref().ok_or(bun_core::err!("NoTest"))?;
-        let mut buntest_strong = parent.bun_test().ok_or(bun_core::err!("TestNotActive"))?;
+        let parent = self.parent.as_ref().ok_or_else(|| bun_core::err!("NoTest"))?;
+        let buntest_strong = parent.bun_test().ok_or_else(|| bun_core::err!("TestNotActive"))?;
         let buntest = buntest_strong.get();
         let execution_entry = parent
             .phase
             .entry(buntest)
-            .ok_or(bun_core::err!("SnapshotInConcurrentGroup"))?;
+            .ok_or_else(|| bun_core::err!("SnapshotInConcurrentGroup"))?;
 
         let test_name: &[u8] = execution_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 
@@ -625,9 +605,12 @@ impl Expect {
         Ok(buf)
     }
 
+    // Codegen's `host_fn_finalize` calls this via `|b| Expect::finalize(b)`
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(mut self: Box<Self>) {
         self.custom_label.deref();
-        // .zig:331 `if (this.parent) |parent| parent.deref();`
         // RefDataPtr = RefPtr<RefData> has NO `Drop` impl (src/ptr/ref_count.rs)
         // so the Box drop below would leak the +1 — release explicitly.
         if let Some(parent) = self.parent.take() {
@@ -635,7 +618,7 @@ impl Expect {
         }
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments_ = callframe.arguments_old::<2>();
         let arguments = arguments_.slice();
@@ -653,15 +636,16 @@ impl Expect {
         }
 
         let active_execution_entry_ref = if let Some(buntest_strong_) = bun_test::clone_active_strong() {
-            let mut buntest_strong = buntest_strong_;
+            let buntest_strong = buntest_strong_;
             let state = buntest_strong.get().get_current_state_data();
             Some(bun_test::BunTest::ref_(&buntest_strong, state))
         } else {
             None
         };
-        // errdefer: scopeguard would deinit active_execution_entry_ref on error;
-        // here ownership moves into Expect on success, and Box drop handles error path.
-        // TODO(port): errdefer — verify no leak path between here and to_js()
+        // The ref
+        // moves into `Expect` below and `to_js()` is infallible, so there is no
+        // error path between ref creation and the wrapper taking ownership; from
+        // then on `Expect::finalize` derefs `parent` (RefDataPtr has no Drop).
 
         let expect = Expect {
             flags: Cell::new(Flags::default()),
@@ -674,9 +658,9 @@ impl Expect {
         super::expect::js::captured_value_set_cached(expect_js_value, global_this, value);
         expect_js_value.ensure_still_alive();
 
-        // SAFETY: just-created wrapper; `from_js` returns the live m_ctx payload
-        // kept alive by `expect_js_value` (ensure_still_alive above).
         if let Some(expect_ptr) = Self::from_js(expect_js_value) {
+            // SAFETY: `expect_ptr` is the live `m_ctx` payload of the just-created
+            // wrapper, kept alive by `expect_js_value.ensure_still_alive()` above.
             unsafe { (*expect_ptr).post_match(global_this) };
         }
         Ok(expect_js_value)
@@ -692,10 +676,8 @@ impl Expect {
         signature: &'static str,
         args: fmt::Arguments<'_>,
     ) -> JsResult<JSValue> {
-        // TODO(port): Zig comptime-concats `signature ++ fmt` into a single
-        // pretty template; Rust has no comptime string concat across runtime
-        // call sites, so render at runtime. Revisit with const_format if the
-        // matcher set ever passes literal-only fmt strings.
+        // No compile-time string concat across runtime call sites, so
+        // render at runtime.
         Err(if self.custom_label.is_empty() {
             global_this.throw_pretty(format_args!("{signature}{args}"))
         } else {
@@ -704,7 +686,7 @@ impl Expect {
     }
 
     /// Legacy 4-arg form used by a handful of internal call sites in this file
-    /// (snapshot/mock helpers) that were ported with a separate `fmt` literal.
+    /// (snapshot/mock helpers) that take a separate `fmt` literal.
     /// Folds `fmt` into `args` and delegates.
     #[inline]
     pub fn throw_fmt(
@@ -714,10 +696,9 @@ impl Expect {
         _fmt: &'static str,
         args: fmt::Arguments<'_>,
     ) -> JsResult<JSValue> {
-        // `_fmt` was the Zig comptime template tail (e.g. "\n\n{s}\n"). Rust
-        // cannot interpolate a runtime-literal format string, so every caller
-        // bakes the rendered tail (literal text + substitutions) into `args`
-        // and passes the original Zig template here only for documentation.
+        // Rust cannot interpolate a runtime-literal format string, so every
+        // caller bakes the rendered tail (literal text + substitutions) into
+        // `args`; `_fmt` is kept only for documentation.
         // If `args` is empty but `_fmt` is not, a caller forgot to migrate.
         debug_assert!(
             _fmt.is_empty() || args.as_str() != Some(""),
@@ -726,7 +707,7 @@ impl Expect {
         self.throw(global_this, signature, args)
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn constructor(global_this: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Expect> {
         Err(global_this.throw(format_args!("expect() cannot be called with new")))
     }
@@ -738,7 +719,7 @@ impl Expect {
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: `defer this.postMatch(globalThis)` — guard owns the `&Self` and calls
+        // The guard owns the `&Self` and calls
         // post_match on drop so it runs on every exit path.
         let this = scopeguard::guard(self, |t| t.post_match(global_this));
 
@@ -785,7 +766,7 @@ impl Expect {
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: `defer this.postMatch(globalThis)` — guard owns the `&Self` borrow
+        // The guard owns the `&Self` borrow
         // so `post_match` runs on every exit.
         let this = scopeguard::guard(self, |t| t.post_match(global_this));
 
@@ -851,7 +832,7 @@ impl Expect {
         // Drain existing unhandled rejections
         vm.global().handle_rejected_promises();
 
-        let mut scope = vm.unhandled_rejection_scope();
+        let scope = vm.unhandled_rejection_scope();
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
         vm.unhandled_pending_rejection_to_capture = Some(&raw mut return_value);
         vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
@@ -920,7 +901,7 @@ impl Expect {
         trimmed_buf: &'a mut [u8],
     ) -> TrimResult<'a> {
         debug_assert!(trimmed_buf.len() == str_in.len());
-        // PORT NOTE: reshaped for borrowck — track dst as an index into trimmed_buf instead of a moving slice
+        // reshaped for borrowck — track dst as an index into trimmed_buf instead of a moving slice
         let mut src = str_in;
         let trimmed_buf_len = trimmed_buf.len();
         let mut dst_idx: usize = 0;
@@ -941,7 +922,6 @@ impl Expect {
             .position(|&ch| ch != b' ' && ch != b'\t')
             .unwrap_or(src.len());
         let indent_str = &src[..indent_len];
-        // TODO(port): give_up_2 borrows both str_in and indent_str; with dst_idx tracking we can rebuild it at each return site
         macro_rules! give_up_2 {
             () => {
                 TrimResult { trimmed: str_in, start_indent: Some(indent_str), end_indent: Some(indent_str) }
@@ -1007,11 +987,10 @@ impl Expect {
         // done
         TrimResult {
             trimmed: &trimmed_buf[..trimmed_buf_len - (trimmed_buf_len - dst_idx)],
-            // PORT NOTE: equivalent to trimmed_buf[0 .. trimmed_buf.len - dst.len]; with index tracking dst.len == trimmed_buf_len - dst_idx
+            // equivalent to trimmed_buf[0 .. trimmed_buf.len - dst.len]; with index tracking dst.len == trimmed_buf_len - dst_idx
             start_indent: Some(indent_str),
             end_indent: Some(&str_in[end_indent..]),
         }
-        // TODO(port): borrowck — returning slices of both str_in and trimmed_buf; verify lifetime 'a covers both
     }
 
     pub fn inline_snapshot(
@@ -1039,7 +1018,7 @@ impl Expect {
         }
 
         let update = runner.snapshots.update_snapshots;
-        let mut needs_write = false;
+        let needs_write;
 
         let mut pretty_value: Vec<u8> = Vec::new();
         this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
@@ -1061,7 +1040,6 @@ impl Expect {
             } else {
                 runner.snapshots.failed += 1;
                 let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
-                // TODO(port): comptime string concatenation signature ++ "\n\n{f}\n"
                 let diff_format = DiffFormatter {
                     received_string: Some(&pretty_value),
                     expected_string: Some(trim_res.trimmed),
@@ -1090,7 +1068,7 @@ impl Expect {
                     );
                 }
             }
-            let Some(mut buntest_strong) = this.bun_test() else {
+            let Some(buntest_strong) = this.bun_test() else {
                 let signature = Self::get_signature(fn_name, "", false);
                 return this.throw_fmt(global_this, signature, "", format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"));
             };
@@ -1098,12 +1076,12 @@ impl Expect {
 
             // 1. find the src loc of the snapshot
             let srcloc = call_frame.get_caller_src_loc(global_this);
-            // .zig:763 `defer srcloc.str.deref();` — bun_core::String is Copy
+            // bun_core::String is Copy
             // with no Drop, so wrap in the RAII guard to release the +1 on
             // every exit path (including the early returns below).
             let _srcloc_str_guard = bun_core::OwnedString::new(srcloc.str);
             let file_id = buntest.file_id;
-            // PORT NOTE: MultiArrayList::get requires MultiArrayElement (derive pending);
+            // MultiArrayList::get requires MultiArrayElement (derive pending);
             // use the column accessor which already compiles in jest.rs.
             let fget_source_path_text = runner.files.items_source()[file_id as usize].path.text;
 
@@ -1117,7 +1095,7 @@ impl Expect {
                         "\n\n<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:\n  Expected to be called from file: <green>{:?}<r>\n  {} called from file: <red>{:?}<r>\n",
                         bstr::BStr::new(fget_source_path_text),
                         fn_name,
-                        // TODO(port): std.zig.fmtString — escaped string display
+                        // `{:?}` on BStr renders a quoted, escaped string
                         bstr::BStr::new(srcloc.str.to_utf8().slice()),
                     ),
                 );
@@ -1158,7 +1136,6 @@ impl Expect {
             if !value.jest_deep_match(prop_matchers, global_this, true)? {
                 // TODO: print diff with properties from propertyMatchers
                 let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
-                // TODO(port): comptime string concatenation
                 let mut formatter = ConsoleObject::Formatter::new(global_this);
                 return Err(global_this.throw_pretty(format_args!(
                     "{signature}\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
@@ -1193,11 +1170,11 @@ impl Expect {
         let existing_value = match runner.snapshots.get_or_put(this, &pretty_value, hint) {
             Ok(v) => v,
             Err(err) => {
-                let Some(mut buntest_strong) = this.bun_test() else {
+                let Some(buntest_strong) = this.bun_test() else {
                     return Err(global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test")));
                 };
                 let buntest = buntest_strong.get();
-                // PORT NOTE: MultiArrayList::get requires MultiArrayElement (derive pending); use column accessor.
+                // MultiArrayList::get requires MultiArrayElement (derive pending); use column accessor.
                 let test_file_path = runner.files.items_source()[buntest.file_id as usize].path.text;
                 let test_file_path = bstr::BStr::new(test_file_path);
                 return Err(match err {
@@ -1243,7 +1220,7 @@ impl Expect {
         };
 
         if let Some(saved_value) = existing_value {
-            // PORT NOTE: clone to owned to release the &mut borrow on runner.snapshots
+            // clone to owned to release the &mut borrow on runner.snapshots
             // before mutating passed/failed counters below.
             let saved_value: Vec<u8> = saved_value.to_vec();
             if strings::eql_long(&pretty_value, &saved_value, true) {
@@ -1253,7 +1230,6 @@ impl Expect {
 
             runner.snapshots.failed += 1;
             let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
-            // TODO(port): comptime string concatenation signature ++ "\n\n{f}\n"
             let diff_format = DiffFormatter {
                 received_string: Some(&pretty_value),
                 expected_string: Some(&saved_value),
@@ -1266,7 +1242,7 @@ impl Expect {
         Ok(JSValue::UNDEFINED)
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen; static getter has no `&self`.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen; static getter has no `&self`.
     pub fn get_static_not(
         global_this: &JSGlobalObject,
         _: JSValue,
@@ -1277,7 +1253,7 @@ impl Expect {
         ExpectStatic::create(global_this, f)
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen; static getter has no `&self`.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen; static getter has no `&self`.
     pub fn get_static_resolves_to(
         global_this: &JSGlobalObject,
         _: JSValue,
@@ -1288,7 +1264,7 @@ impl Expect {
         ExpectStatic::create(global_this, f)
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen; static getter has no `&self`.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen; static getter has no `&self`.
     pub fn get_static_rejects_to(
         global_this: &JSGlobalObject,
         _: JSValue,
@@ -1299,43 +1275,43 @@ impl Expect {
         ExpectStatic::create(global_this, f)
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn any(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectAny::call(global_this, call_frame)
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn anything(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectAnything::call(global_this, call_frame)
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn close_to(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectCloseTo::call(global_this, call_frame)
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn object_containing(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectObjectContaining::call(global_this, call_frame)
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn string_containing(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectStringContaining::call(global_this, call_frame)
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn string_matching(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectStringMatching::call(global_this, call_frame)
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn array_containing(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         ExpectArrayContaining::call(global_this, call_frame)
     }
 
     /// Implements `expect.extend({ ... })`
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn extend(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args_ = call_frame.arguments_old::<1>();
         let args = args_.slice();
@@ -1386,9 +1362,8 @@ impl Expect {
                 // Even though they point to the same native functions for all matchers,
                 // multiple instances are created because each instance will hold the matcher_fn as a property
 
-                // PORT NOTE: Zig used `toJSHostFn(applyCustomMatcher)` (comptime fn-ptr
-                // wrapping). Rust's `to_js_host_fn` returns an opaque closure, so emit
-                // an explicit C-ABI shim and pass its address.
+                // `to_js_host_fn` returns an opaque closure, so emit an
+                // explicit C-ABI shim and pass its address.
                 bun_jsc::jsc_host_abi! {
                     unsafe fn __apply_custom_matcher_shim(
                         g: *mut bun_jsc::JSGlobalObject,
@@ -1402,9 +1377,8 @@ impl Expect {
                 let host_fn_ptr: bun_jsc::JSHostFn = __apply_custom_matcher_shim;
                 // SAFETY: FFI call with valid global, &bun_core::String, host-fn ptr, and JSValue.
                 // C++ takes the function pointer **by value** (`NativeFunctionPtr`), not a
-                // pointer-to-function-pointer — the Zig `*const jsc.JSHostFn` is itself the
-                // function-pointer type (Zig fn types aren't pointers), whereas Rust's
-                // `JSHostFn` already is, so pass it directly.
+                // pointer-to-function-pointer — `JSHostFn` already is the
+                // function-pointer type, so pass it directly.
                 let wrapper_fn = unsafe {
                     Bun__JSWrappingFunction__create(
                         global_this,
@@ -1435,8 +1409,7 @@ impl Expect {
     ) -> JsError {
         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
 
-        // PERF(port): was comptime bool dispatch on `Output.enable_ansi_colors_stderr` —
-        // template has no `<tag>` markers so the runtime branch is a no-op anyway.
+        // The template has no `<tag>` markers so the colors branch is a no-op anyway.
         let err = global_this.create_error_instance(format_args!(
             "Unexpected return from matcher function `{}`.\n\
              Matcher functions should return an object in the following format:\n  \
@@ -1445,12 +1418,12 @@ impl Expect {
             matcher_name,
             result.to_fmt(&mut formatter),
         ));
-        // TODO(port): handle JsResult from toJS in throw path
-        err.put(
-            global_this,
-            b"name",
-            bun_core::String::static_("InvalidMatcherError").to_js(global_this).unwrap_or(JSValue::UNDEFINED),
-        );
+        match bun_core::String::static_("InvalidMatcherError").to_js(global_this) {
+            Ok(name) => err.put(global_this, b"name", name),
+            // An exception (e.g. OOM) is already pending from to_js; propagate it
+            // instead of throwing the partially-constructed error.
+            Err(js_err) => return js_err,
+        }
         global_this.throw_value(err)
     }
 
@@ -1466,7 +1439,7 @@ impl Expect {
         silent: bool,
     ) -> JsResult<bool> {
         // prepare the this object
-        // PORT NOTE: JsClass::to_js takes `self` by value and boxes internally.
+        // JsClass::to_js takes `self` by value and boxes internally.
         let matcher_context_jsvalue = ExpectMatcherContext { flags }.to_js(global_this);
         matcher_context_jsvalue.ensure_still_alive();
 
@@ -1527,7 +1500,6 @@ impl Expect {
         if pass || silent { return Ok(pass); }
 
         // handle failure
-        // .zig:1100-1101 `var message_text = bun.String.dead; defer message_text.deref();`
         // bun_core::String is Copy with no Drop, so wrap in OwnedString to
         // release the +1 returned by to_bun_string/from_js on scope exit.
         let message_text: bun_core::OwnedString = if message.is_undefined() {
@@ -1539,7 +1511,7 @@ impl Expect {
                 debug_assert!(message.is_callable()); // checked above
             }
 
-            // .zig:1112 `callWithGlobalThis` — pass the global object itself as `this`.
+            // Pass the global object itself as `this`.
             let message_result = message.call_with_global_this(global_this, &[])?;
             bun_core::OwnedString::new(bun_core::String::from_js(message_result, global_this)?)
         };
@@ -1561,14 +1533,14 @@ impl Expect {
 
     /// Function that is run for either `expect.myMatcher()` call or `expect().myMatcher` call,
     /// and we can known which case it is based on if the `callFrame.this()` value is an instance of Expect
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn apply_custom_matcher(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
         // retrieve the user-provided matcher function (matcher_fn)
         let func: JSValue = call_frame.callee();
-        let mut matcher_fn: JSValue = get_custom_matcher_fn(func, global_this).unwrap_or(JSValue::UNDEFINED);
+        let matcher_fn: JSValue = get_custom_matcher_fn(func, global_this).unwrap_or(JSValue::UNDEFINED);
         if !matcher_fn.js_type().is_function() {
             return Err(global_this.throw2(
                 "Internal consistency error: failed to retrieve the matcher function for a custom matcher!",
@@ -1612,7 +1584,7 @@ impl Expect {
             expect.flags.get(),
             global_this,
             value,
-            &matcher_name,
+            matcher_name,
             &matcher_params,
             false,
         )?;
@@ -1622,8 +1594,7 @@ impl Expect {
 
         // prepare the args array
         let args = call_frame.arguments();
-        // PERF(port): was stack-fallback allocator — profile in Phase B
-        // PORT NOTE: MarkedArgumentBuffer::new is scoped (closure-borrow); collect into a Vec
+        // MarkedArgumentBuffer::new is scoped (closure-borrow); collect into a Vec
         // since execute_custom_matcher takes &[JSValue].
         let mut matcher_args: Vec<JSValue> = Vec::with_capacity(args.len() + 1);
         matcher_args.push(value);
@@ -1636,19 +1607,19 @@ impl Expect {
         Ok(this_value)
     }
 
-    // Zig: `pub const addSnapshotSerializer = notImplementedStaticFn;` — Rust has no associated
-    // const-fn aliases that satisfy `Expect::add_snapshot_serializer(..)` UFCS, so forward.
+    // Rust has no associated const-fn aliases that satisfy
+    // `Expect::add_snapshot_serializer(..)` UFCS, so forward.
     #[inline]
     pub fn add_snapshot_serializer(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         Self::not_implemented_static_fn(global_this, call_frame)
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn has_assertions(global_this: &JSGlobalObject, _call_frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
-        let Some(mut buntest_strong) = bun_test::clone_active_strong() else {
+        let Some(buntest_strong) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
         };
         let buntest = buntest_strong.get();
@@ -1663,7 +1634,7 @@ impl Expect {
         Ok(JSValue::UNDEFINED)
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn assertions(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
@@ -1701,7 +1672,7 @@ impl Expect {
 
         let unsigned_expected_assertions: u32 = expected_assertions as u32;
 
-        let Some(mut buntest_strong) = bun_test::clone_active_strong() else {
+        let Some(buntest_strong) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
         };
         let buntest = buntest_strong.get();
@@ -1719,7 +1690,7 @@ impl Expect {
         Err(global_this.throw(format_args!("Not implemented")))
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn not_implemented_static_fn(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Err(global_this.throw(format_args!("Not implemented")))
     }
@@ -1729,7 +1700,7 @@ impl Expect {
         Err(global_this.throw(format_args!("Not implemented")))
     }
 
-    // PORT NOTE: Zig `notImplementedStaticProp` is a static-prop getter
+    // `not_implemented_static_prop` is a static-prop getter
     // (`(globalThis, JSValue, JSValue)`, no `*Expect` receiver). The
     // `host_fn(getter)` shape was wrong (it injects `&Self`). Unreferenced by
     // codegen today, so kept as a plain assoc fn matching the static ABI.
@@ -1738,12 +1709,10 @@ impl Expect {
     }
 
     pub fn post_match(&self, global_this: &JSGlobalObject) {
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
     }
 
-    /// RAII for Zig's `defer this.postMatch(globalThis)`. The returned guard holds the
+    /// The returned guard holds the
     /// `&Expect` borrow, re-lends it via `Deref`, and calls `post_match` on drop so every
     /// exit path (success, `?`, explicit `return Err`) triggers the GC sweep.
     pub fn post_match_guard<'a>(&'a self, global: &'a JSGlobalObject) -> PostMatchGuard<'a> {
@@ -1778,7 +1747,7 @@ impl Expect {
         Ok((this, value, not))
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn do_unreachable(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arg = callframe.arguments_old::<1>().ptr[0];
 
@@ -1799,8 +1768,8 @@ impl Expect {
 }
 
 /// RAII guard returned by [`Expect::post_match_guard`]. Holds an `&Expect` for the
-/// duration of a matcher body and runs `post_match` on drop — the Rust shape of Zig's
-/// `defer this.postMatch(globalThis)` shared by every `expect().toX()` matcher.
+/// duration of a matcher body and runs `post_match` on drop —
+/// shared by every `expect().toX()` matcher.
 /// R-2: shared borrow only (no `DerefMut`); all `Expect` methods reachable from a
 /// matcher body take `&self`.
 pub struct PostMatchGuard<'a> {
@@ -1870,8 +1839,7 @@ impl fmt::Display for CustomMatcherParamsFormatter<'_> {
         }
 
         // fallback
-        // PERF(port): was comptime bool dispatch — profile in Phase B
-        write!(writer, "{}", Output::pretty_fmt_rt("<green>...args<r>", self.colors))
+        bun_core::write_pretty!(writer, self.colors, "<green>...args<r>")
     }
 }
 
@@ -1889,9 +1857,9 @@ impl ExpectStatic {
         Ok(value)
     }
 
-    // PORT NOTE: codegen passes `(&mut *this, this_value, global)` for `this: true` getters
+    // codegen passes `(&mut *this, this_value, global)` for `this: true` getters
     // (jest.classes.ts); the `#[host_fn(getter)]` proc-macro emits a 2-arg shim, so we drop
-    // it here and match the generated signature directly. `this_value` is unused (Zig ignores it).
+    // it here and match the generated signature directly. `this_value` is unused.
     pub fn get_not(this: &Self, _this_value: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let mut flags = this.flags;
         flags.set_not(!this.flags.not());
@@ -1987,7 +1955,7 @@ impl ExpectStatic {
 // per-matcher inherent `call()` and post-hoc patch `flags`. The trait method is
 // named `invoke` (not `call`) to avoid E0034 ambiguity with each matcher's
 // inherent `fn call`.
-pub trait AsymmetricMatcherClass {
+pub(crate) trait AsymmetricMatcherClass {
     fn invoke(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue>;
     fn from_js_ptr(value: JSValue) -> Option<*mut Self>;
     /// R-2: each asymmetric-matcher payload exposes its `Cell<Flags>` so
@@ -2028,8 +1996,8 @@ impl_asymmetric_matcher_class!(
 
 // ─── unary-predicate matcher scaffold ────────────────────────────────────
 // Dedups the 22 hand-rolled `expect/toBe*.rs` files (~1270 LOC → ~300 LOC) and
-// fixes two latent port bugs (throw_fmt wrapper drop; post_match-before-throw
-// ordering). Mirrors the Zig per-file scaffold exactly.
+// fixes two latent bugs (throw_fmt wrapper drop; post_match-before-throw
+// ordering).
 impl Expect {
     /// Shared scaffold for zero-arg `expect(v).toBeX()` matchers whose pass/fail
     /// is a pure infallible predicate on the received `JSValue` and whose failure
@@ -2070,7 +2038,7 @@ impl Expect {
     /// `increment_expect_call_counter`, UTF-8 slice + predicate, `not`-xor, dual
     /// formatter, `get_signature`, `throw`.
     ///
-    /// Normalizes the inherited Zig inconsistency where `toInclude` passed `""`
+    /// Normalizes an inherited inconsistency where `toInclude` passed `""`
     /// to `get_value`'s `matcher_params` while the other two passed
     /// `"<green>expected<r>"` — all three now use the latter (matches the
     /// signature already used in their failure messages).
@@ -2145,14 +2113,15 @@ impl Expect {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Shared skeleton for the 8 jest-extended `toContain{Key,Keys,AllKeys,AnyKeys,
-// Value,Values,AllValues,AnyValues}` matchers. ~70% of each Zig body was the
+// Value,Values,AllValues,AnyValues}` matchers. ~70% of each matcher body was the
 // same boilerplate (post_match defer, arg-count check, expect-counter,
 // get_value, `.not` flip, dual-formatter failure throw); only the pass-loop
 // differs. Sibling to `run_unary_predicate` / `run_string_affix_matcher`.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Where `expected.is_array()` runs relative to `get_value` — observable when
-/// both would throw (Keys-family Zig validates *after*, Values-family *before*).
+/// both would throw (Keys-family validates *after*, Values-family *before*).
+#[derive(Clone, Copy)]
 pub enum ExpectedArray {
     /// `toContainKey` / `toContainValue`: scalar `expected`, no array check.
     None,
@@ -2166,13 +2135,14 @@ pub enum ExpectedArray {
 /// reads `"Expected to not {not_verb}: …"`, the plain arm `"Expected to
 /// {verb}: …"`. For most matchers both are `"contain"`; the All/Any variants
 /// override to `"contain all keys"` etc.
+#[derive(Clone, Copy)]
 pub struct ContainMsgs {
     pub verb: &'static str,
     pub not_verb: &'static str,
 }
 impl ContainMsgs {
     /// `"Expected to [not ]contain: …"` — toContainKey(s)/AnyKeys/Value(s).
-    pub const CONTAIN: Self = Self { verb: "contain", not_verb: "contain" };
+    pub(crate) const CONTAIN: Self = Self { verb: "contain", not_verb: "contain" };
 }
 
 /// Result of a [`Expect::contain_matcher`] body closure: the pass/fail bit and
@@ -2184,7 +2154,7 @@ pub struct ContainOutcome {
 }
 impl ContainOutcome {
     #[inline]
-    pub fn pass(pass: bool) -> Self {
+    pub(crate) fn pass(pass: bool) -> Self {
         Self { pass, received_override: None }
     }
 }
@@ -2197,8 +2167,7 @@ impl Expect {
     /// [`ExpectedArray`]), `.not` flip, and the dual-formatter failure throw —
     /// and delegates only the per-matcher pass-loop to `body`.
     ///
-    /// On pass, returns `frame.this()` (the original Zig matchers all returned
-    /// `thisValue`, not `undefined`).
+    /// On pass, returns `frame.this()` (`thisValue`, not `undefined`).
     pub fn contain_matcher(
         &self,
         global: &JSGlobalObject,
@@ -2280,8 +2249,8 @@ impl Expect {
 // The generate-classes.ts Rust emitter calls every prototype matcher as
 // `Expect::to_*(&mut *this, global, callframe)`. Roughly half the
 // `expect/to*.rs` files already attach via `impl Expect { .. }`; the rest are
-// free `pub fn to_*(this: &mut Expect, ..)` functions (Phase-A drafts couldn't
-// open `impl Expect` from a sibling crate-module without seeing the struct
+// free `pub fn to_*(this: &mut Expect, ..)` functions (those sibling
+// crate-modules can't open `impl Expect` without seeing the struct
 // definition first). Those modules are mounted under the `super::expect`
 // façade (mod.rs `matchers!`), so we add inherent forwarders here — the real
 // bodies stay in their per-matcher files, this is the layering bridge.
@@ -2365,14 +2334,12 @@ pub struct ExpectAnything {
 }
 
 impl ExpectAnything {
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let anything_js_value = ExpectAnything { flags: Cell::new(Flags::default()) }.to_js(global_this);
         anything_js_value.ensure_still_alive();
 
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
 
         Ok(anything_js_value)
     }
@@ -2384,7 +2351,7 @@ pub struct ExpectStringMatching {
 }
 
 impl ExpectStringMatching {
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments();
 
@@ -2398,9 +2365,7 @@ impl ExpectStringMatching {
         let string_matching_js_value = ExpectStringMatching { flags: Cell::new(Flags::default()) }.to_js(global_this);
         expect_string_matching_js::test_value_set_cached(string_matching_js_value, global_this, test_value);
 
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
         Ok(string_matching_js_value)
     }
 }
@@ -2411,7 +2376,7 @@ pub struct ExpectCloseTo {
 }
 
 impl ExpectCloseTo {
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args_buf = call_frame.arguments_old::<2>();
         let args = args_buf.slice();
@@ -2439,9 +2404,7 @@ impl ExpectCloseTo {
         expect_close_to_js::number_value_set_cached(instance_jsvalue, global_this, number_value);
         expect_close_to_js::digits_value_set_cached(instance_jsvalue, global_this, precision_value);
 
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
         Ok(instance_jsvalue)
     }
 }
@@ -2452,7 +2415,7 @@ pub struct ExpectObjectContaining {
 }
 
 impl ExpectObjectContaining {
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args_buf = call_frame.arguments_old::<1>();
         let args = args_buf.slice();
@@ -2467,9 +2430,7 @@ impl ExpectObjectContaining {
         let instance_jsvalue = ExpectObjectContaining { flags: Cell::new(Flags::default()) }.to_js(global_this);
         expect_object_containing_js::object_value_set_cached(instance_jsvalue, global_this, object_value);
 
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
         Ok(instance_jsvalue)
     }
 }
@@ -2480,7 +2441,7 @@ pub struct ExpectStringContaining {
 }
 
 impl ExpectStringContaining {
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args_buf = call_frame.arguments_old::<1>();
         let args = args_buf.slice();
@@ -2495,9 +2456,7 @@ impl ExpectStringContaining {
         let string_containing_js_value = ExpectStringContaining { flags: Cell::new(Flags::default()) }.to_js(global_this);
         expect_string_containing_js::string_value_set_cached(string_containing_js_value, global_this, string_value);
 
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
         Ok(string_containing_js_value)
     }
 }
@@ -2508,7 +2467,7 @@ pub struct ExpectAny {
 }
 
 impl ExpectAny {
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let _arguments = call_frame.arguments_old::<1>();
         let arguments: &[JSValue] = &_arguments.ptr[.._arguments.len];
@@ -2542,9 +2501,7 @@ impl ExpectAny {
         expect_any_js::constructor_value_set_cached(any_js_value, global_this, constructor);
         any_js_value.ensure_still_alive();
 
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
 
         Ok(any_js_value)
     }
@@ -2556,7 +2513,7 @@ pub struct ExpectArrayContaining {
 }
 
 impl ExpectArrayContaining {
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args_buf = call_frame.arguments_old::<1>();
         let args = args_buf.slice();
@@ -2571,9 +2528,7 @@ impl ExpectArrayContaining {
         let array_containing_js_value = ExpectArrayContaining { flags: Cell::new(Flags::default()) }.to_js(global_this);
         expect_array_containing_js::array_value_set_cached(array_containing_js_value, global_this, array_value);
 
-        let vm = global_this.bun_vm();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        unsafe { (*vm).auto_garbage_collect() };
+        global_this.bun_vm().auto_garbage_collect();
         Ok(array_containing_js_value)
     }
 }
@@ -2661,10 +2616,8 @@ impl ExpectCustomAsymmetricMatcher {
 
         // prepare the args array as `[received, ...captured_args]`
         let args_count = captured_args.get_length(global_this)?;
-        // PERF(port): was stack-fallback allocator — profile in Phase B
         let mut matcher_args: Vec<JSValue> = Vec::with_capacity((args_count as usize).saturating_add(1));
         matcher_args.push(received);
-        // PERF(port): was assume_capacity
         for i in 0..args_count {
             matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
@@ -2673,8 +2626,12 @@ impl ExpectCustomAsymmetricMatcher {
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
+    ///
+    /// # Safety
+    /// `this` must point to a live `Self` and `global_this` must point to a live
+    /// `JSGlobalObject` for the duration of the call.
     #[unsafe(no_mangle)]
-    pub extern "C" fn ExpectCustomAsymmetricMatcher__execute(
+    pub unsafe extern "C" fn ExpectCustomAsymmetricMatcher__execute(
         this: *mut Self,
         this_value: JSValue,
         global_this: *const JSGlobalObject,
@@ -2697,7 +2654,6 @@ impl ExpectCustomAsymmetricMatcher {
             global_this.clear_exception();
             return Ok(false);
         }
-        // TODO(port): narrow error set (JsError → bun_core::Error mapping)
         match err {
             JsError::OutOfMemory => Err(bun_core::Error::OUT_OF_MEMORY),
             _ => Err(bun_core::Error::UNEXPECTED),
@@ -2712,7 +2668,6 @@ impl ExpectCustomAsymmetricMatcher {
         writer: &mut (impl bun_io::Write + ?Sized),
         dont_throw: bool,
     ) -> Result<bool, bun_core::Error> {
-        // TODO(port): narrow error set (mixes JsError and io::Error)
         let Some(matcher_fn) = expect_custom_asymmetric_matcher_js::matcher_fn_get_cached(this_value) else { return Ok(false) };
         let fn_value = match matcher_fn.get(global_this, "toAsymmetricMatcher") {
             Ok(v) => v,
@@ -2721,7 +2676,6 @@ impl ExpectCustomAsymmetricMatcher {
         if let Some(fn_value) = fn_value {
             if fn_value.js_type().is_function() {
                 let Some(captured_args) = expect_custom_asymmetric_matcher_js::captured_args_get_cached(this_value) else { return Ok(false) };
-                // PERF(port): was stack-fallback allocator — profile in Phase B
                 let args_len = match captured_args.get_length(global_this) {
                     Ok(n) => n,
                     Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
@@ -2733,7 +2687,7 @@ impl ExpectCustomAsymmetricMatcher {
                 };
                 loop {
                     match iter.next() {
-                        Ok(Some(arg)) => args.push(arg), // PERF(port): was assume_capacity
+                        Ok(Some(arg)) => args.push(arg),
                         Ok(None) => break,
                         Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
                     }
@@ -2743,10 +2697,10 @@ impl ExpectCustomAsymmetricMatcher {
                     Ok(r) => r,
                     Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
                 };
-                let s = match result.to_bun_string(global_this) {
+                let s = bun_core::OwnedString::new(match result.to_bun_string(global_this) {
                     Ok(s) => s,
                     Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
-                };
+                });
                 write!(writer, "{}", s)?;
             }
         }
@@ -2755,11 +2709,9 @@ impl ExpectCustomAsymmetricMatcher {
 
     #[bun_jsc::host_fn(method)]
     pub fn to_asymmetric_matcher(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        // PERF(port): was stack-fallback allocator — profile in Phase B
         let mut mutable_string = bun_core::MutableString::init_2048()?;
 
-        // PORT NOTE: Zig call site (expect.zig:1772) omits the `comptime dontThrow`
-        // arg — dead/ill-typed in the spec. With `false`, JS exceptions surface
+        // With `false`, JS exceptions surface
         // through `maybe_clear` as `Error::UNEXPECTED` while remaining set on
         // the VM; only allocation failures map to OOM. Propagate accordingly
         // instead of clobbering with a fresh OutOfMemory throw.
@@ -2777,9 +2729,7 @@ impl ExpectCustomAsymmetricMatcher {
             let slice: &[u8] = mutable_string.slice();
             return bun_core::String::init(slice).to_js(global_this);
         }
-        // PORT NOTE: Zig (expect.zig:1776) passes `this: *ExpectCustomAsymmetricMatcher`
-        // where `printValue` expects a `JSValue` — dead/ill-typed in the spec.
-        // The intent is to pretty-print the matcher instance itself, available
+        // Pretty-print the matcher instance itself, available
         // here as `callframe.this()`.
         ExpectMatcherUtils::print_value(global_this, callframe.this(), None)
     }
@@ -2848,11 +2798,10 @@ impl ExpectMatcherUtils {
         color_or_null: Option<&'static str>,
     ) -> JsResult<JSValue> {
         use std::io::Write as _;
-        // TODO(port): narrow error set
-        // PERF(port): was stack-fallback allocator — profile in Phase B
         let mut mutable_string = bun_core::MutableString::init_2048()?;
 
-        // TODO(port): BufferedWriter wrapper
+        // MutableString already writes to an in-memory Vec, so no extra
+        // buffering layer is needed.
         let writer = mutable_string.writer();
 
         if let Some(color) = color_or_null {
@@ -2921,7 +2870,7 @@ impl ExpectMatcherUtils {
                 (),
             ));
         }
-        // .zig:1907 `defer matcher_name.deref();` — `to_bun_string` returns +1;
+        // `to_bun_string` returns +1;
         // bun_core::String is `Copy` with no `Drop`, so wrap in `OwnedString`.
         let matcher_name = bun_core::OwnedString::new(arguments[0].to_bun_string(global_this)?);
 
@@ -2969,19 +2918,34 @@ impl ExpectMatcherUtils {
             not: is_not,
         };
 
-        // .zig:1948-1955 builds `getSignature("{f}", "<green>expected<r>", is_not) ++ "\n\n{f}\n"`
+        // Builds `getSignature("{f}", "<green>expected<r>", is_not) ++ "\n\n{f}\n"`
         // and substitutes `(matcher_name, diff_formatter)` into the two `{f}`
         // slots, then runs `Output.prettyFmt` over the *template* before
-        // substitution. `pretty_fmt_rt` rewrites only the `<tag>` markers in
+        // substitution. `pretty_fmt!` rewrites only the `<tag>` markers in
         // the static `RECEIVED`/`expected` literals — `matcher_name` and
         // `diff_formatter` are spliced in afterwards (matches `throw_pretty`'s
         // render-then-rewrite ordering, since Display output here contains no
         // `<tag>` literals).
-        // PERF(port): Zig used a 2048-byte stack-fallback MutableString — profile in Phase B.
         let colors = Output::enable_ansi_colors_stderr();
-        let head = Output::pretty_fmt_rt("<d>expect(<r><red>received<r><d>).<r>", colors);
-        let not = if is_not { Output::pretty_fmt_rt("not<d>.<r>", colors) } else { bun_core::output::PrettyBuf(Vec::new()) };
-        let expected_hint = Output::pretty_fmt_rt("<d>(<r><green>expected<r><d>)<r>", colors);
+        let head: &'static str = if colors {
+            bun_core::pretty_fmt!("<d>expect(<r><red>received<r><d>).<r>", true)
+        } else {
+            bun_core::pretty_fmt!("<d>expect(<r><red>received<r><d>).<r>", false)
+        };
+        let not: &'static str = if is_not {
+            if colors {
+                bun_core::pretty_fmt!("not<d>.<r>", true)
+            } else {
+                bun_core::pretty_fmt!("not<d>.<r>", false)
+            }
+        } else {
+            ""
+        };
+        let expected_hint: &'static str = if colors {
+            bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", true)
+        } else {
+            bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", false)
+        };
         let buf = format!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n");
         bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
     }
@@ -3011,11 +2975,11 @@ impl ExpectTypeOf {
         Self::create(global_this)
     }
 
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn constructor(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<*mut ExpectTypeOf> {
         Err(global_this.throw(format_args!("expectTypeOf() cannot be called with new")))
     }
-    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
+    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Self::create(global_this)
     }
@@ -3025,7 +2989,6 @@ pub mod mock {
     use super::*;
     use bun_jsc::ComptimeStringMapExt as _;
 
-    // TODO(port): move to <area>_sys
     // C++: `JSC::EncodedJSValue JSMockFunction__get{Calls,Returns}(
     //         JSC::JSGlobalObject*, EncodedJSValue)` — `[[ZIG_EXPORT(zero_is_throw)]]`.
     // The leading `globalThis` parameter is load-bearing: the body opens a
@@ -3046,7 +3009,7 @@ pub mod mock {
     #[allow(non_snake_case)]
     #[track_caller]
     #[inline]
-    pub fn JSMockFunction__getCalls(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn JSMockFunction__getCalls(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
         // SAFETY: `global` is live; JSValue is repr(transparent) i64.
         bun_jsc::call_zero_is_throw(global, || unsafe {
             JSMockFunction__getCalls_raw(global.as_ptr(), value)
@@ -3057,7 +3020,7 @@ pub mod mock {
     #[allow(non_snake_case)]
     #[track_caller]
     #[inline]
-    pub fn JSMockFunction__getReturns(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn JSMockFunction__getReturns(global: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
         // SAFETY: `global` is live; JSValue is repr(transparent) i64.
         bun_jsc::call_zero_is_throw(global, || unsafe {
             JSMockFunction__getReturns_raw(global.as_ptr(), value)
@@ -3126,10 +3089,10 @@ pub mod mock {
         }
     }
 
-    pub fn jest_mock_return_object_type(global_this: &JSGlobalObject, value: JSValue) -> JsResult<ReturnStatus> {
+    pub(crate) fn jest_mock_return_object_type(global_this: &JSGlobalObject, value: JSValue) -> JsResult<ReturnStatus> {
         if let Some(type_string) = value.fast_get(global_this, bun_jsc::BuiltinName::Type)? {
             if type_string.is_string() {
-                if let Some(val) = ReturnStatus::MAP.from_js(global_this, type_string)? {
+                if let Some(val) = RETURN_STATUS_MAP.from_js(global_this, type_string)? {
                     return Ok(val);
                 }
             }
@@ -3141,18 +3104,18 @@ pub mod mock {
         )))
     }
 
-    pub fn jest_mock_return_object_value(global_this: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn jest_mock_return_object_value(global_this: &JSGlobalObject, value: JSValue) -> JsResult<JSValue> {
         Ok(value.get(global_this, "value")?.unwrap_or(JSValue::UNDEFINED))
     }
 
-    // PORT NOTE: split lifetimes — `&'a mut Formatter<'a>` is the invariant-borrow trap
+    // split lifetimes — `&'a mut Formatter<'a>` is the invariant-borrow trap
     // (forces the &mut to live as long as the Formatter's own param, which outlives the
     // local). `'g` tracks the JSGlobalObject borrow inside Formatter; `'a` is the short
     // &mut borrow held by this struct.
-    pub struct AllCallsWithArgsFormatter<'a, 'g> {
+    pub(crate) struct AllCallsWithArgsFormatter<'a, 'g> {
         pub global_this: &'g JSGlobalObject,
         pub calls: JSValue,
-        // PORT NOTE: reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
+        // reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
         pub formatter: core::cell::RefCell<&'a mut ConsoleObject::Formatter<'g>>,
     }
 
@@ -3188,7 +3151,7 @@ pub mod mock {
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
-    pub enum ReturnStatus {
+    pub(crate) enum ReturnStatus {
         #[strum(serialize = "throw")]
         Throw,
         #[strum(serialize = "return")]
@@ -3197,24 +3160,24 @@ pub mod mock {
         Incomplete,
     }
 
-    impl ReturnStatus {
-        // Zig: bun.ComptimeEnumMap(ReturnStatus)
-        pub const MAP: phf::Map<&'static [u8], ReturnStatus> = phf::phf_map! {
+    bun_core::comptime_string_map! {
+        /// JS string extraction + lookup is provided by `ComptimeStringMapExt::from_js`
+        /// (see `jest_mock_return_object_type`).
+        pub(crate) static RETURN_STATUS_MAP: ReturnStatus = {
             b"throw" => ReturnStatus::Throw,
             b"return" => ReturnStatus::Return,
             b"incomplete" => ReturnStatus::Incomplete,
         };
-        // TODO(port): ComptimeEnumMap.fromJS — wrap phf lookup with JS string extraction
     }
 
     // Formatter for when there are multiple returns or errors
-    // PORT NOTE: split lifetimes — `&'f mut Formatter<'g>` instead of `&'a mut Formatter<'a>`.
+    // split lifetimes — `&'f mut Formatter<'g>` instead of `&'a mut Formatter<'a>`.
     // The single-lifetime form makes the mut-borrow invariant in `'a` and forces the borrow to
     // last for the Formatter's whole lifetime, tripping dropck (E0597) at the call site.
-    pub struct AllCallsFormatter<'g, 'f> {
+    pub(crate) struct AllCallsFormatter<'g, 'f> {
         pub global_this: &'g JSGlobalObject,
         pub returns: JSValue,
-        // PORT NOTE: reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
+        // reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
         pub formatter: core::cell::RefCell<&'f mut ConsoleObject::Formatter<'g>>,
     }
 
@@ -3261,12 +3224,12 @@ pub mod mock {
         }
     }
 
-    // PORT NOTE: split lifetimes — see AllCallsFormatter above for rationale (avoids the
+    // split lifetimes — see AllCallsFormatter above for rationale (avoids the
     // `&'a mut T<'a>` invariance trap that locks the Formatter borrow for its entire life).
     pub struct SuccessfulReturnsFormatter<'g, 'f> {
         pub global_this: &'g JSGlobalObject,
         pub successful_returns: &'f Vec<JSValue>,
-        // PORT NOTE: reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
+        // reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
         pub formatter: core::cell::RefCell<&'f mut ConsoleObject::Formatter<'g>>,
     }
 
@@ -3299,14 +3262,12 @@ fn get_custom_matcher_fn(this_value: JSValue, global_this: &JSGlobalObject) -> O
     if matcher_fn.is_empty() { None } else { Some(matcher_fn) }
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn Bun__JSWrappingFunction__create(
         global_this: *const JSGlobalObject,
         symbol_name: *const bun_core::String,
         // C++: `Bun::NativeFunctionPtr` — a bare `EncodedJSValue (*)(JSGlobalObject*, CallFrame*)`.
-        // Zig spells this `*const jsc.JSHostFn` because Zig fn types need a `*const` to
-        // become pointers; Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
+        // Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
         function_pointer: bun_jsc::JSHostFn,
         wrapped_fn: JSValue,
         strong: bool,
@@ -3385,8 +3346,4 @@ mod tests {
             "\n\"æ™\n\n!!!!*5897yhduN\"'\\`Il\"\n".as_bytes(),
         );
     }
-
-    // TODO(port): fuzz test — std.testing.fuzz(testOne, .{})
 }
-
-// ported from: src/test_runner/expect.zig

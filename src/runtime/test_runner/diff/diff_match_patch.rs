@@ -71,7 +71,7 @@ impl Default for Config {
 /// Marker trait for the element type a diff operates over (`u8` or `usize`).
 /// `Pod` lets the `Unit == u8` fast paths reinterpret `&[Unit]` as `&[u8]`
 /// via `bytemuck::cast_slice` instead of raw `from_raw_parts`.
-pub trait DiffUnit: Copy + Eq + bytemuck::Pod + 'static {}
+pub(crate) trait DiffUnit: Copy + Eq + bytemuck::Pod + 'static {}
 impl DiffUnit for u8 {}
 impl DiffUnit for usize {}
 
@@ -83,15 +83,9 @@ pub enum Operation {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct Diff<Unit: DiffUnit> {
+pub(crate) struct Diff<Unit: DiffUnit> {
     pub operation: Operation,
     pub text: Box<[Unit]>,
-}
-
-impl<Unit: DiffUnit> Diff<Unit> {
-    pub fn eql(&self, b: &Diff<Unit>) -> bool {
-        self.operation == b.operation && self.text[..] == b.text[..]
-    }
 }
 
 impl fmt::Display for Diff<u8> {
@@ -101,25 +95,21 @@ impl fmt::Display for Diff<u8> {
             Operation::Insert => "+",
             Operation::Delete => "-",
         };
-        // TODO(port): Zig used `{s}` on `[]const Unit`; bytes may not be valid UTF-8.
         write!(f, "({}, \"{}\")", op, bstr::BStr::new(&self.text))
     }
 }
 
-/// Zig: `pub fn DMP(comptime Unit: type) type { return struct { ... } }`
 #[derive(Clone, Copy)]
-pub struct DiffMatchPatch<Unit: DiffUnit> {
+pub(crate) struct DiffMatchPatch<Unit: DiffUnit> {
     pub config: Config,
     _unit: core::marker::PhantomData<Unit>,
 }
 
-pub type DiffList<Unit> = Vec<Diff<Unit>>;
+pub(crate) type DiffList<Unit> = Vec<Diff<Unit>>;
 
-/// Zig: `pub const DiffError = error{OutOfMemory};`
-pub type DiffError = AllocError;
+pub(crate) type DiffError = AllocError;
 
-/// Zig: `const DMPUsize = DMP(usize);`
-pub type DmpUsize = DiffMatchPatch<usize>;
+pub(crate) type DmpUsize = DiffMatchPatch<usize>;
 
 impl<Unit: DiffUnit> Default for DiffMatchPatch<Unit> {
     fn default() -> Self {
@@ -131,29 +121,6 @@ impl<Unit: DiffUnit> Default for DiffMatchPatch<Unit> {
 }
 
 impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
-    /// DMP with default configuration options
-    pub const DEFAULT: Self = Self {
-        // TODO(port): `Config::default()` is not const; Phase B may need a `Config::DEFAULT`.
-        config: Config {
-            diff_timeout: 1000,
-            diff_edit_cost: 4,
-            diff_check_lines_over: 100,
-            match_threshold: 0.5,
-            match_distance: 1000,
-            match_max_bits: 32,
-            patch_delete_threshold: 0.5,
-            patch_margin: 4,
-        },
-        _unit: core::marker::PhantomData,
-    };
-
-    pub fn new(config: Config) -> Self {
-        Self {
-            config,
-            _unit: core::marker::PhantomData,
-        }
-    }
-
     /// Find the differences between two texts.
     /// @param before Old string to be diffed.
     /// @param after New string to be diffed.
@@ -161,7 +128,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
     ///     line-level diff first to identify the changed areas.
     ///     If true, then run a faster slightly less optimal diff.
     /// @return List of Diff objects.
-    pub fn diff(
+    pub(crate) fn diff(
         &self,
         before: &[Unit],
         after: &[Unit],
@@ -178,9 +145,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         self.diff_internal(before, after, check_lines, deadline)
     }
 
-    // Zig `deinitDiffList` / `freeRangeDiffList` deleted: bodies only freed owned
-    // `Box<[Unit]>` fields (now handled by `Drop`); range-free callsites inlined as `drain`.
-
     fn diff_internal(
         &self,
         before: &[Unit],
@@ -195,7 +159,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
                 let mut diffs: DiffList<Unit> = Vec::new();
                 if !before.is_empty() {
                     diffs.reserve(1);
-                    // PERF(port): was assume_capacity
                     diffs.push(Diff {
                         operation: Operation::Equal,
                         text: dupe(before),
@@ -223,7 +186,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
 
         if !common_prefix.is_empty() {
             diffs.reserve(1);
-            // PERF(port): was insertAssumeCapacity
             diffs.insert(
                 0,
                 Diff {
@@ -234,7 +196,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         }
         if !common_suffix.is_empty() {
             diffs.reserve(1);
-            // PERF(port): was assume_capacity
             diffs.push(Diff {
                 operation: Operation::Equal,
                 text: dupe(common_suffix),
@@ -263,24 +224,18 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
     ) -> Result<DiffList<Unit>, DiffError> {
         if before.is_empty() {
             // Just add some text (speedup).
-            let mut diffs: DiffList<Unit> = Vec::with_capacity(1);
-            // PERF(port): was assume_capacity
-            diffs.push(Diff {
+            return Ok(vec![Diff {
                 operation: Operation::Insert,
                 text: dupe(after),
-            });
-            return Ok(diffs);
+            }]);
         }
 
         if after.is_empty() {
             // Just delete some text (speedup).
-            let mut diffs: DiffList<Unit> = Vec::with_capacity(1);
-            // PERF(port): was assume_capacity
-            diffs.push(Diff {
+            return Ok(vec![Diff {
                 operation: Operation::Delete,
                 text: dupe(before),
-            });
-            return Ok(diffs);
+            }]);
         }
 
         let long_text = if before.len() > after.len() {
@@ -302,7 +257,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
             } else {
                 Operation::Insert
             };
-            // PERF(port): was assume_capacity
             diffs.push(Diff {
                 operation: op,
                 text: dupe(&long_text[0..index]),
@@ -321,17 +275,16 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         if short_text.len() == 1 {
             // Single character string.
             // After the previous speedup, the character can't be an equality.
-            let mut diffs: DiffList<Unit> = Vec::with_capacity(2);
-            // PERF(port): was assume_capacity
-            diffs.push(Diff {
-                operation: Operation::Delete,
-                text: dupe(before),
-            });
-            diffs.push(Diff {
-                operation: Operation::Insert,
-                text: dupe(after),
-            });
-            return Ok(diffs);
+            return Ok(vec![
+                Diff {
+                    operation: Operation::Delete,
+                    text: dupe(before),
+                },
+                Diff {
+                    operation: Operation::Insert,
+                    text: dupe(after),
+                },
+            ]);
         }
 
         // Check to see if the problem can be split in two.
@@ -353,7 +306,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
 
             // Merge the results.
             diffs.reserve(1);
-            // PERF(port): was assume_capacity
             diffs.push(Diff {
                 operation: Operation::Equal,
                 text: half_match.common_middle,
@@ -405,28 +357,24 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
 
         // First check if the second quarter is the seed for a half-match.
         let half_match_1 =
-            self.diff_half_match_internal(long_text, short_text, (long_text.len() + 3) / 4)?;
+            self.diff_half_match_internal(long_text, short_text, long_text.len().div_ceil(4))?;
         // Check again based on the third quarter.
         let half_match_2 =
-            self.diff_half_match_internal(long_text, short_text, (long_text.len() + 1) / 2)?;
+            self.diff_half_match_internal(long_text, short_text, long_text.len().div_ceil(2))?;
 
-        let half_match: HalfMatchResult<Unit>;
-        if half_match_1.is_none() && half_match_2.is_none() {
-            return Ok(None);
-        } else if half_match_2.is_none() {
-            half_match = half_match_1.unwrap();
-        } else if half_match_1.is_none() {
-            half_match = half_match_2.unwrap();
-        } else {
-            // Both matched. Select the longest.
-            let hm1 = half_match_1.unwrap();
-            let hm2 = half_match_2.unwrap();
-            half_match = if hm1.common_middle.len() > hm2.common_middle.len() {
-                hm1
-            } else {
-                hm2
-            };
-        }
+        let half_match: HalfMatchResult<Unit> = match (half_match_1, half_match_2) {
+            (None, None) => return Ok(None),
+            (Some(hm1), None) => hm1,
+            (None, Some(hm2)) => hm2,
+            (Some(hm1), Some(hm2)) => {
+                // Both matched. Select the longest.
+                if hm1.common_middle.len() > hm2.common_middle.len() {
+                    hm1
+                } else {
+                    hm2
+                }
+            }
+        };
 
         // A half-match was found, sort out the return data.
         if before.len() > after.len() {
@@ -520,7 +468,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
     ) -> Result<DiffList<Unit>, DiffError> {
         let before_length: isize = isize::try_from(before.len()).unwrap();
         let after_length: isize = isize::try_from(after.len()).unwrap();
-        let max_d: isize = isize::try_from((before.len() + after.len() + 1) / 2).unwrap();
+        let max_d: isize = isize::try_from((before.len() + after.len()).div_ceil(2)).unwrap();
         let v_offset = max_d;
         let v_length = 2 * max_d;
 
@@ -548,8 +496,8 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
             }
 
             // Walk the front path one step.
-            // PERF(port): @intCast — bare `as usize` kept for v1/v2/before/after indexing
-            // in this hot Myers inner loop; profile in Phase B.
+            // Bare `as usize` kept for v1/v2/before/after indexing
+            // in this hot Myers inner loop.
             let mut k1 = -d + k1start;
             while k1 <= d - k1end {
                 let k1_offset = v_offset + k1;
@@ -591,8 +539,8 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
             }
 
             // Walk the reverse path one step.
-            // PERF(port): @intCast — bare `as usize` kept for v1/v2/before/after indexing
-            // in this hot Myers inner loop; profile in Phase B.
+            // Bare `as usize` kept for v1/v2/before/after indexing
+            // in this hot Myers inner loop.
             let mut k2: isize = -d + k2start;
             while k2 <= d - k2end {
                 let k2_offset = v_offset + k2;
@@ -639,17 +587,16 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         }
         // Diff took too long and hit the deadline or
         // number of diffs equals number of characters, no commonality at all.
-        let mut diffs: DiffList<Unit> = Vec::with_capacity(2);
-        // PERF(port): was assume_capacity
-        diffs.push(Diff {
-            operation: Operation::Delete,
-            text: dupe(before),
-        });
-        diffs.push(Diff {
-            operation: Operation::Insert,
-            text: dupe(after),
-        });
-        Ok(diffs)
+        Ok(vec![
+            Diff {
+                operation: Operation::Delete,
+                text: dupe(before),
+            },
+            Diff {
+                operation: Operation::Insert,
+                text: dupe(after),
+            },
+        ])
     }
 
     /// Given the location of the 'middle snake', split the diff in two parts
@@ -741,7 +688,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
                     // Upon reaching an equality, check for prior redundancies.
                     if count_delete >= 1 && count_insert >= 1 {
                         // Delete the offending records and add the merged ones.
-                        // PORT NOTE: Zig freeRangeDiffList + replaceRangeAssumeCapacity → drain
                         diffs.drain(
                             pointer - count_delete - count_insert
                                 ..pointer - count_delete - count_insert
@@ -752,9 +698,8 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
                         let sub_diff =
                             self.diff_internal(&text_delete, &text_insert, false, deadline)?;
                         let sub_len = sub_diff.len();
-                        // PERF(port): was ensureUnusedCapacity + addManyAtAssumeCapacity + @memcpy
                         diffs.splice(pointer..pointer, sub_diff);
-                        pointer = pointer + sub_len;
+                        pointer += sub_len;
                     }
                     count_insert = 0;
                     count_delete = 0;
@@ -768,108 +713,9 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
 
         Ok(diffs)
     }
-
-    /// Reduce the number of edits by eliminating operationally trivial
-    /// equalities.
-    pub fn diff_cleanup_efficiency(&self, diffs: &mut DiffList<Unit>) -> Result<(), DiffError> {
-        let mut changes = false;
-        // Stack of indices where equalities are found.
-        let mut equalities: Vec<usize> = Vec::new();
-        // Always equal to equalities[equalitiesLength-1][1]
-        // PORT NOTE: reshaped for borrowck — owned copy of last_equality
-        let mut last_equality: Box<[Unit]> = Box::default();
-        let mut ipointer: isize = 0; // Index of current position.
-        // Is there an insertion operation before the last equality.
-        let mut pre_ins = false;
-        // Is there a deletion operation before the last equality.
-        let mut pre_del = false;
-        // Is there an insertion operation after the last equality.
-        let mut post_ins = false;
-        // Is there a deletion operation after the last equality.
-        let mut post_del = false;
-        while usize::try_from(ipointer).unwrap() < diffs.len() {
-            let pointer: usize = usize::try_from(ipointer).unwrap();
-            if diffs[pointer].operation == Operation::Equal {
-                // Equality found.
-                if diffs[pointer].text.len() < usize::from(self.config.diff_edit_cost)
-                    && (post_ins || post_del)
-                {
-                    // Candidate found.
-                    equalities.push(pointer);
-                    pre_ins = post_ins;
-                    pre_del = post_del;
-                    last_equality = dupe(&diffs[pointer].text);
-                } else {
-                    // Not a candidate, and can never become one.
-                    equalities.clear();
-                    last_equality = Box::default();
-                }
-                post_ins = false;
-                post_del = false;
-            } else {
-                // An insertion or deletion.
-                if diffs[pointer].operation == Operation::Delete {
-                    post_del = true;
-                } else {
-                    post_ins = true;
-                }
-                // Five types to be split:
-                // <ins>A</ins><del>B</del>XY<ins>C</ins><del>D</del>
-                // <ins>A</ins>X<ins>C</ins><del>D</del>
-                // <ins>A</ins><del>B</del>X<ins>C</ins>
-                // <ins>A</del>X<ins>C</ins><del>D</del>
-                // <ins>A</ins><del>B</del>X<del>C</del>
-                if !last_equality.is_empty()
-                    && ((pre_ins && pre_del && post_ins && post_del)
-                        || (last_equality.len() < usize::from(self.config.diff_edit_cost / 2)
-                            && (pre_ins as u8 + pre_del as u8 + post_ins as u8 + post_del as u8
-                                == 3)))
-                {
-                    // Duplicate record.
-                    let eq_idx = equalities[equalities.len() - 1];
-                    // PERF(port): was ensureUnusedCapacity + insertAssumeCapacity
-                    diffs.insert(
-                        eq_idx,
-                        Diff {
-                            operation: Operation::Delete,
-                            text: dupe(&last_equality),
-                        },
-                    );
-                    // Change second copy to insert.
-                    diffs[eq_idx + 1].operation = Operation::Insert;
-                    equalities.pop(); // Throw away the equality we just deleted.
-                    last_equality = Box::default();
-                    if pre_ins && pre_del {
-                        // No changes made which could affect previous entry, keep going.
-                        post_ins = true;
-                        post_del = true;
-                        equalities.clear();
-                    } else {
-                        if !equalities.is_empty() {
-                            equalities.pop();
-                        }
-                        ipointer = if !equalities.is_empty() {
-                            isize::try_from(equalities[equalities.len() - 1]).unwrap()
-                        } else {
-                            -1
-                        };
-                        post_ins = false;
-                        post_del = false;
-                    }
-                    changes = true;
-                }
-            }
-            ipointer += 1;
-        }
-
-        if changes {
-            diff_cleanup_merge(diffs)?;
-        }
-        Ok(())
-    }
 }
 
-pub struct HalfMatchResult<Unit: DiffUnit> {
+pub(crate) struct HalfMatchResult<Unit: DiffUnit> {
     pub prefix_before: Box<[Unit]>,
     pub suffix_before: Box<[Unit]>,
     pub prefix_after: Box<[Unit]>,
@@ -878,12 +724,11 @@ pub struct HalfMatchResult<Unit: DiffUnit> {
 }
 // `deinit` → Drop handles `Box<[Unit]>` fields automatically.
 
-pub struct LinesToCharsResult<Unit: DiffUnit> {
+pub(crate) struct LinesToCharsResult<'a, Unit: DiffUnit> {
     pub chars_1: Box<[usize]>,
     pub chars_2: Box<[usize]>,
-    // TODO(port): lifetime — borrows slices from the input texts; raw ptr in Phase A
-    // (no struct lifetime params), Phase B may promote to BORROW_PARAM in LIFETIMES.tsv.
-    pub line_array: Vec<*const [Unit]>,
+    /// Borrows line slices from the input texts.
+    pub line_array: Vec<&'a [Unit]>,
 }
 // `deinit` → Drop handles all fields automatically.
 
@@ -894,20 +739,20 @@ pub struct LinesToCharsResult<Unit: DiffUnit> {
 /// @return Three element Object array, containing the encoded text1, the
 ///     encoded text2 and the List of unique strings.  The zeroth element
 ///     of the List of unique strings is intentionally blank.
-pub fn diff_lines_to_chars<Unit: DiffUnit>(
-    text1: &[Unit],
-    text2: &[Unit],
-) -> Result<LinesToCharsResult<Unit>, DiffError> {
-    let mut line_array: Vec<*const [Unit]> = Vec::new();
-    // TODO(port): `bun.StringHashMapUnmanaged(usize)` keyed by borrowed `&[u8]` —
-    // `bun_collections::StringHashMap` may need a `&[u8]`-borrowing variant.
+pub(crate) fn diff_lines_to_chars<'a, Unit: DiffUnit>(
+    text1: &'a [Unit],
+    text2: &'a [Unit],
+) -> Result<LinesToCharsResult<'a, Unit>, DiffError> {
+    let mut line_array: Vec<&'a [Unit]> = Vec::new();
+    // `bun_collections::StringHashMap` copies each key into an owned
+    // `Box<[u8]>` (one allocation per unique line).
     let mut line_hash: StringHashMap<usize> = StringHashMap::default();
     // e.g. line_array[4] == "Hello\n"
     // e.g. line_hash.get("Hello\n") == 4
 
     // "\x00" is a valid character, but various debuggers don't like it.
     // So we'll insert a junk entry to avoid generating a null character.
-    line_array.push(std::ptr::from_ref::<[Unit]>(&[]));
+    line_array.push(&[]);
 
     // Allocate 2/3rds of the space for text1, the rest for text2.
     let chars1 = diff_lines_to_chars_munge(text1, &mut line_array, &mut line_hash)?;
@@ -926,12 +771,11 @@ pub fn diff_lines_to_chars<Unit: DiffUnit>(
 /// @param lineHash Map of strings to indices.
 /// @param maxLines Maximum length of lineArray.
 /// @return Encoded string.
-fn diff_lines_to_chars_munge<Unit: DiffUnit>(
-    text: &[Unit],
-    line_array: &mut Vec<*const [Unit]>,
+fn diff_lines_to_chars_munge<'a, Unit: DiffUnit>(
+    text: &'a [Unit],
+    line_array: &mut Vec<&'a [Unit]>,
     line_hash: &mut StringHashMap<usize>,
 ) -> Result<Box<[usize]>, DiffError> {
-    // TODO(port): comptime `if (Unit != u8) @panic` → runtime TypeId check.
     if TypeId::of::<Unit>() != TypeId::of::<u8>() {
         panic!("Unit must be u8");
     }
@@ -962,10 +806,10 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
                 line = &text[usize::try_from(line_start).unwrap()..];
                 line_end = isize::try_from(text.len()).unwrap();
             }
-            line_array.push(std::ptr::from_ref::<[Unit]>(line));
+            line_array.push(line);
             // Unit == u8 verified above; bytemuck statically checks the layout.
             let line_u8: &[u8] = bytemuck::cast_slice::<Unit, u8>(line);
-            // TODO(port): StringHashMap key ownership — Zig stored a borrowed slice.
+            // `put_assume_capacity` copies the key into an owned `Box<[u8]>`.
             line_hash.put_assume_capacity(line_u8, line_array.len() - 1);
             chars.push(line_array.len() - 1);
         }
@@ -978,9 +822,9 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
 /// of text.
 /// @param diffs List of Diff objects.
 /// @param lineArray List of unique strings.
-pub fn diff_chars_to_lines<Unit: DiffUnit>(
+pub(crate) fn diff_chars_to_lines<Unit: DiffUnit>(
     char_diffs: &DiffList<usize>,
-    line_array: &[*const [Unit]],
+    line_array: &[&[Unit]],
 ) -> Result<DiffList<Unit>, DiffError> {
     let mut diffs: DiffList<Unit> = Vec::with_capacity(char_diffs.len());
     let mut text: Vec<Unit> = Vec::new();
@@ -988,11 +832,9 @@ pub fn diff_chars_to_lines<Unit: DiffUnit>(
     for d in char_diffs.iter() {
         let mut j: usize = 0;
         while j < d.text.len() {
-            // SAFETY: line_array entries borrow from input texts which outlive this call.
-            text.extend_from_slice(unsafe { &*line_array[d.text[j]] });
+            text.extend_from_slice(line_array[d.text[j]]);
             j += 1;
         }
-        // PERF(port): was assume_capacity
         diffs.push(Diff {
             operation: d.operation,
             text: core::mem::take(&mut text).into_boxed_slice(),
@@ -1004,7 +846,9 @@ pub fn diff_chars_to_lines<Unit: DiffUnit>(
 /// Reorder and merge like edit sections.  Merge equalities.
 /// Any edit section can move as long as it doesn't cross an equality.
 /// @param diffs List of Diff objects.
-pub fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<(), DiffError> {
+pub(crate) fn diff_cleanup_merge<Unit: DiffUnit>(
+    diffs: &mut DiffList<Unit>,
+) -> Result<(), DiffError> {
     // Add a dummy entry at the end.
     diffs.push(Diff {
         operation: Operation::Equal,
@@ -1048,7 +892,6 @@ pub fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<
                                 nt.extend_from_slice(&text_insert[0..common_length]);
                                 diffs[ii].text = nt.into_boxed_slice();
                             } else {
-                                // PERF(port): was ensureUnusedCapacity + insertAssumeCapacity
                                 diffs.insert(
                                     0,
                                     Diff {
@@ -1062,7 +905,7 @@ pub fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<
                             text_delete.drain(0..common_length);
                         }
                         // Factor out any common suffixies.
-                        // @ZigPort this seems very wrong
+                        // TODO: this seems very wrong
                         common_length = diff_common_suffix(&text_insert, &text_delete);
                         if common_length != 0 {
                             diffs[pointer].text = concat(&[
@@ -1076,12 +919,10 @@ pub fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<
                     // Delete the offending records and add the merged ones.
                     pointer -= count_delete + count_insert;
                     if count_delete + count_insert > 0 {
-                        // PORT NOTE: freeRangeDiffList + replaceRangeAssumeCapacity → drain
                         diffs.drain(pointer..pointer + count_delete + count_insert);
                     }
 
                     if !text_delete.is_empty() {
-                        // PERF(port): was ensureUnusedCapacity + insertAssumeCapacity
                         diffs.insert(
                             pointer,
                             Diff {
@@ -1092,7 +933,6 @@ pub fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<
                         pointer += 1;
                     }
                     if !text_insert.is_empty() {
-                        // PERF(port): was ensureUnusedCapacity + insertAssumeCapacity
                         diffs.insert(
                             pointer,
                             Diff {
@@ -1148,7 +988,6 @@ pub fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<
                 diffs[pointer].text = pt;
                 let p1t = concat(&[&diffs[pointer - 1].text, &diffs[pointer + 1].text]);
                 diffs[pointer + 1].text = p1t;
-                // PORT NOTE: freeRangeDiffList + replaceRangeAssumeCapacity → remove
                 diffs.remove(pointer - 1);
                 changes = true;
             } else if diffs[pointer].text.starts_with(&diffs[pointer + 1].text) {
@@ -1157,7 +996,6 @@ pub fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<
                 let next_len = diffs[pointer + 1].text.len();
                 let pt = concat(&[&diffs[pointer].text[next_len..], &diffs[pointer + 1].text]);
                 diffs[pointer].text = pt;
-                // PORT NOTE: freeRangeDiffList + replaceRangeAssumeCapacity → remove
                 diffs.remove(pointer + 1);
                 changes = true;
             }
@@ -1174,12 +1012,14 @@ pub fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<
 /// Reduce the number of edits by eliminating semantically trivial
 /// equalities.
 /// @param diffs List of Diff objects.
-pub fn diff_cleanup_semantic<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<(), DiffError> {
+pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
+    diffs: &mut DiffList<Unit>,
+) -> Result<(), DiffError> {
     let mut changes = false;
     // Stack of indices where equalities are found.
     let mut equalities: Vec<isize> = Vec::new();
     // Always equal to equalities[equalitiesLength-1][1]
-    // PORT NOTE: reshaped for borrowck — owned copy of last_equality
+    // reshaped for borrowck — owned copy of last_equality
     let mut last_equality: Option<Box<[Unit]>> = None;
     let mut pointer: isize = 0; // Index of current position.
     // Number of characters that changed prior to the equality.
@@ -1213,7 +1053,6 @@ pub fn diff_cleanup_semantic<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Resu
                 {
                     let eq_idx = usize::try_from(equalities[equalities.len() - 1]).unwrap();
                     // Duplicate record.
-                    // PERF(port): was ensureUnusedCapacity + insertAssumeCapacity
                     diffs.insert(
                         eq_idx,
                         Diff {
@@ -1261,7 +1100,7 @@ pub fn diff_cleanup_semantic<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Resu
     while usize::try_from(pointer).unwrap() < diffs.len() {
         let p = usize::try_from(pointer).unwrap();
         if diffs[p - 1].operation == Operation::Delete && diffs[p].operation == Operation::Insert {
-            // PORT NOTE: reshaped for borrowck — take owned copies of deletion/insertion
+            // reshaped for borrowck — take owned copies of deletion/insertion
             let deletion: Box<[Unit]> = core::mem::take(&mut diffs[p - 1].text);
             let insertion: Box<[Unit]> = core::mem::take(&mut diffs[p].text);
             let overlap_length1: usize = diff_common_overlap(&deletion, &insertion);
@@ -1272,7 +1111,6 @@ pub fn diff_cleanup_semantic<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Resu
                 {
                     // Overlap found.
                     // Insert an equality and trim the surrounding edits.
-                    // PERF(port): was ensureUnusedCapacity + insertAssumeCapacity
                     diffs.insert(
                         p,
                         Diff {
@@ -1284,7 +1122,7 @@ pub fn diff_cleanup_semantic<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Resu
                     diffs[p + 1].text = dupe(&insertion[overlap_length1..]);
                     pointer += 1;
                 } else {
-                    // PORT NOTE: restore taken values (no-op in Zig).
+                    // restore taken values.
                     diffs[p - 1].text = deletion;
                     diffs[p].text = insertion;
                 }
@@ -1294,7 +1132,6 @@ pub fn diff_cleanup_semantic<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Resu
                 {
                     // Reverse overlap found.
                     // Insert an equality and swap and trim the surrounding edits.
-                    // PERF(port): was ensureUnusedCapacity + insertAssumeCapacity
                     diffs.insert(
                         p,
                         Diff {
@@ -1310,7 +1147,7 @@ pub fn diff_cleanup_semantic<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Resu
                     diffs[p + 1].text = new_plus;
                     pointer += 1;
                 } else {
-                    // PORT NOTE: restore taken values (no-op in Zig).
+                    // restore taken values.
                     diffs[p - 1].text = deletion;
                     diffs[p].text = insertion;
                 }
@@ -1325,7 +1162,7 @@ pub fn diff_cleanup_semantic<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Resu
 /// Look for single edits surrounded on both sides by equalities
 /// which can be shifted sideways to align the edit to a word boundary.
 /// e.g: The c<ins>at c</ins>ame. -> The <ins>cat </ins>came.
-pub fn diff_cleanup_semantic_lossless<Unit: DiffUnit>(
+pub(crate) fn diff_cleanup_semantic_lossless<Unit: DiffUnit>(
     diffs: &mut DiffList<Unit>,
 ) -> Result<(), DiffError> {
     let mut pointer: usize = 1;
@@ -1359,7 +1196,6 @@ pub fn diff_cleanup_semantic_lossless<Unit: DiffUnit>(
                 edit.extend_from_slice(&common_string);
                 edit.extend_from_slice(&not_common);
 
-                // Zig: equality_2.insertSlice(0, common_string)
                 equality_2.splice(0..0, common_string.iter().copied());
             }
 
@@ -1432,7 +1268,6 @@ fn diff_cleanup_semantic_score<Unit: DiffUnit>(one: &[Unit], two: &[Unit]) -> us
         return 6;
     }
 
-    // TODO(port): comptime `if (Unit != u8) return 5;` → runtime TypeId check.
     if TypeId::of::<Unit>() != TypeId::of::<u8>() {
         return 5;
     }
@@ -1570,7 +1405,6 @@ fn diff_common_suffix<Unit: DiffUnit>(before: &[Unit], after: &[Unit]) -> usize 
     n
 }
 
-// TODO(port): replace with bun_core time source. `std::time` not on the I/O ban list.
 fn milli_timestamp() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1640,15 +1474,6 @@ mod tests {
             diff_common_overlap::<u8>(b"fi", "\u{fb01}".as_bytes())
         ); // Unicode
     }
-
-    // TODO(port): the Zig source has ~1400 lines of additional tests for
-    // diffHalfMatch, diffLinesToChars, diffCharsToLines, diffCleanupMerge,
-    // diffCleanupSemanticLossless, rebuildtexts, diffBisect, diff,
-    // diffLineMode, diffCleanupSemantic, diffCleanupEfficiency. They were
-    // wrapped in `checkAllAllocationFailures` (Zig OOM-injection harness)
-    // which has no Rust equivalent (global allocator aborts on OOM). Port
-    // the assertions directly in Phase B; the test data is preserved in the
-    // .zig source.
 
     fn rebuildtexts(diffs: &DiffList<u8>) -> [Box<[u8]>; 2] {
         let mut text: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
@@ -1727,11 +1552,4 @@ mod tests {
             diffs
         );
     }
-
-    // TODO(port): `checkAllAllocationFailures` / `CheckAllAllocationFailuresTuples`
-    // are Zig comptime-reflection helpers wrapping `std.testing.checkAllAllocationFailures`.
-    // Rust's global allocator aborts on OOM; there is no analogous fallible-alloc
-    // injection harness in this codebase. Dropped.
 }
-
-// ported from: src/test_runner/diff/diff_match_patch.zig

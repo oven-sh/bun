@@ -21,15 +21,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-use core::ffi::c_int;
-
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, AutoBitSet};
+use bun_collections::AutoBitSet;
 use bun_core::Error;
-use bun_core::env::IS_WINDOWS;
-use bun_core::strings::{self, UnsignedCodepointIterator as CodepointIterator};
-use bun_core::{String as BunString, ZStr};
+use bun_core::ZStr;
 use bun_core::define_scoped_log;
+use bun_core::env::IS_WINDOWS;
+use bun_core::strings;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, resolve_path};
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self as Syscall, E, Error as SysError, Fd, FdExt, O, Result as Maybe, S, Stat};
@@ -38,78 +36,8 @@ use bun_sys::{self as Syscall, E, Error as SysError, Fd, FdExt, O, Result as May
 
 define_scoped_log!(log, Glob, visible);
 
-type Cursor = strings::Cursor;
-// PORT NOTE: Zig's `CodepointIterator.Cursor.CodePointType` is `u32` (UnsignedCodepointIterator).
 // The bun_string Cursor stores `c: i32`; cast at the assignment sites.
 type Codepoint = u32;
-
-#[derive(Clone, Copy, Default)]
-struct CursorState {
-    cursor: Cursor,
-    // The index in terms of codepoints
-    // cp_idx: usize,
-}
-
-impl CursorState {
-    fn init(iterator: &CodepointIterator) -> CursorState {
-        let mut this_cursor = Cursor::default();
-        let _ = iterator.next(&mut this_cursor);
-        CursorState {
-            // cp_idx: 0,
-            cursor: this_cursor,
-        }
-    }
-
-    /// Return cursor pos of next codepoint without modifying the current.
-    ///
-    /// NOTE: If there is no next codepoint (cursor is at the last one), then
-    /// the returned cursor will have `c` as zero value and `i` will be >=
-    /// sourceBytes.len
-    fn peek(&self, iterator: &CodepointIterator) -> CursorState {
-        let mut cpy = *self;
-        // If outside of bounds
-        if !iterator.next(&mut cpy.cursor) {
-            // This will make `i >= sourceBytes.len`
-            cpy.cursor.i += u32::from(cpy.cursor.width);
-            cpy.cursor.width = 1;
-            cpy.cursor.c = CodepointIterator::ZERO_VALUE;
-        }
-        // cpy.cp_idx += 1;
-        cpy
-    }
-
-    fn bump(&mut self, iterator: &CodepointIterator) {
-        if !iterator.next(&mut self.cursor) {
-            self.cursor.i += u32::from(self.cursor.width);
-            self.cursor.width = 1;
-            self.cursor.c = CodepointIterator::ZERO_VALUE;
-        }
-        // self.cp_idx += 1;
-    }
-
-    #[inline]
-    fn manual_bump_ascii(&mut self, i: u32, next_cp: Codepoint) {
-        self.cursor.i += i;
-        self.cursor.c = next_cp as _;
-        self.cursor.width = 1;
-    }
-
-    #[inline]
-    fn manual_peek_ascii(&self, i: u32, next_cp: Codepoint) -> CursorState {
-        CursorState {
-            cursor: Cursor {
-                i: self.cursor.i + i,
-                c: next_cp as _, // @truncate
-                width: 1,
-            },
-        }
-    }
-}
-
-fn dummy_filter_true(_val: &[u8]) -> bool {
-    true
-}
-
 fn dummy_filter_false(_val: &[u8]) -> bool {
     false
 }
@@ -117,11 +45,9 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
 #[cfg(windows)]
 pub fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
     use bun_paths::resolve_path::{self, platform};
-    // Zig uses a SINGLE stack `bun.PathBuffer` for both `getFdPath` and
-    // `joinZBuf` (the join assembles parts into a temp scratch first, so the
-    // in/out alias is benign there). Rust's `&mut`/`&` aliasing rules forbid
+    // Rust's `&mut`/`&` aliasing rules forbid
     // passing the same buffer as both `join_z_buf`'s output and an input part,
-    // so we still need two buffers — but on Windows `PathBuffer` is ~96 KB,
+    // so we need two buffers — but on Windows `PathBuffer` is ~96 KB,
     // and this is called from deep inside `Iterator::next()` (via `lstatat`
     // for `FileKind::Unknown`), so two stack `PathBuffer`s (~192 KB, zero-
     // initialized by `PathBuffer::uninit()`) risk overflowing the smaller
@@ -141,7 +67,7 @@ pub fn statat_windows(_fd: Fd, _path: &ZStr) -> Maybe<Stat> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Accessor trait — Zig passed `comptime Accessor: type` and duck-typed on it.
+// Accessor trait
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub trait AccessorHandle: Copy {
@@ -169,8 +95,7 @@ pub trait AccessorDirIter {
     type Entry: AccessorDirEntry;
     fn next(&mut self) -> Maybe<Option<Self::Entry>>;
     fn iterate(dir: Self::Handle) -> Self;
-    #[allow(unused_variables)]
-    fn set_name_filter(&mut self, filter: Option<&[u16]>) {
+    fn set_name_filter(&mut self, _filter: Option<&[u16]>) {
         // default: no-op (only SyscallAccessor on Windows uses this)
     }
 }
@@ -265,7 +190,6 @@ impl Accessor for SyscallAccessor {
     }
 
     fn close(handle: SyscallHandle) -> Option<SysError> {
-        // TODO(port): @returnAddress() — Rust has no stable equivalent; pass None.
         handle.value.close_allowing_bad_file_descriptor(None)
     }
 
@@ -290,16 +214,12 @@ impl Accessor for SyscallAccessor {
 // GlobWalker_
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Zig: fn GlobWalker_(comptime ignore_filter_fn, comptime Accessor: type, comptime sentinel: bool) type
-//
 // `ignore_filter_fn` is lowered to a runtime fn-pointer field because Rust
 // const-generic fn pointers are unstable.
-// PERF(port): was comptime monomorphization (ignore_filter_fn) — profile in Phase B
 //
 // `MatchedPath` was `[]const u8` or `[:0]const u8` depending on `sentinel`.
 // Without the arena, matched paths are heap-owned; we use `Box<[u8]>` and
 // include a trailing NUL byte when `SENTINEL == true`.
-// TODO(port): MatchedPath sentinel typing — Phase B may want a dedicated owned ZStr type.
 pub type MatchedPath = Box<[u8]>;
 
 pub type IgnoreFilterFn = fn(&[u8]) -> bool;
@@ -314,9 +234,8 @@ pub type IgnoreFilterFn = fn(&[u8]) -> bool;
 pub type ComponentSet = AutoBitSet;
 
 pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
-    // PERF(port): was arena bulk-free — Zig used std.heap.ArenaAllocator for all
-    // per-walk allocations (paths, workbuf, matchedPaths). Phase A uses the
-    // global allocator; profile in Phase B.
+    // PERF: per-walk allocations (paths, workbuf, matchedPaths) use the
+    // global allocator; an arena could bulk-free them — profile if hot.
     /// not owned by this struct
     pub pattern: Box<[u8]>,
 
@@ -352,12 +271,7 @@ pub type Result_ = Maybe<()>;
 /// Array hashmap used as a set (values are the keys)
 /// to store matched paths and prevent duplicates
 ///
-/// BunString is used so that we can call BunString.toJSArray()
-/// on the result of `.keys()` to give the result back to JS
-///
-/// The only type of string impl we use is ZigString since
-/// all matched paths are UTF-8 (DirIterator converts them on
-/// windows) and allocated on the arena
+/// All matched paths are UTF-8 (DirIterator converts them on windows)
 ///
 /// Multiple patterns are not supported so right now this is
 /// only possible when running a pattern like:
@@ -365,34 +279,19 @@ pub type Result_ = Maybe<()>;
 /// `foo/**/*`
 ///
 /// Use `.keys()` to get the matched paths
-// PORT NOTE: Zig keys this on `BunString` so `.keys()` can hand a slice
-// straight to `BunString.toJSArray`. `to_js_array` lives in a `*_jsc` crate
+// `to_js_array` lives in a `*_jsc` crate
 // (per PORTING.md §Strings, `.toJS` is only callable there), so the JS-array
 // fast path moves up-tier anyway and there's no win keeping `BunString` keys
 // here. Use `StringArrayHashMap<()>` (boxed `[u8]` keys); the JSC consumer
-// rebuilds `BunString`s from `.keys()`.
-// TODO(port): Phase B — wire `MatchedMapContext` as a `StringArrayHashMap`
-// custom context once SENTINEL-aware hashing matters (currently the trailing
-// NUL is part of the key so dedupe is still exact).
+// rebuilds `BunString`s from `.keys()`. Default hashing includes the trailing
+// NUL when `SENTINEL == true`. For keys produced by `join` (the
+// `prepare_matched_path` path) probe and stored key both carry the NUL, so
+// dedupe is exact there. The symlink path is the exception:
+// `prepare_matched_path_symlink` probes with `ZStr::as_bytes()` (NUL-less)
+// while its stored keys come from `dupe_z` (NUL included), so in SENTINEL
+// mode symlink-match probes never hit and symlink dedupe silently misses —
+// a known quirk deliberately left as-is.
 pub type MatchedMap = bun_collections::StringArrayHashMap<()>;
-
-pub struct MatchedMapContext;
-// TODO(port): ArrayHashMap context trait shape — Phase B wires the actual trait.
-impl MatchedMapContext {
-    pub fn hash(&self, this: &BunString) -> u32 {
-        debug_assert!(this.tag() == bun_core::Tag::ZigString);
-        let slice = this.byte_slice();
-        // For SENTINEL the slice includes trailing NUL; hash excludes it.
-        // TODO(port): const-generic SENTINEL not reachable here; Zig branched at comptime.
-        // Phase B: thread `SENTINEL` through `MatchedMapContext` (or strip the NUL at
-        // insert time so the key never carries it).
-        bun_collections::array_hash_map::hash_string(slice)
-    }
-
-    pub fn eql(&self, this: &BunString, other: &BunString, _idx: usize) -> bool {
-        this.eql(other)
-    }
-}
 
 /// The glob walker references the .directory.path so its not safe to
 /// copy/move this
@@ -422,9 +321,8 @@ pub struct Directory<A: Accessor> {
     pub fd: A::Handle,
     pub iter: A::DirIter,
     pub path: Box<PathBuffer>,
-    // Zig: `dir_path: [:0]const u8` is a slice into `path` (self-referential).
+    // The dir path is a prefix of `path` (self-referential).
     // Store the length and reconstruct on demand.
-    // TODO(port): self-referential dir_path; Phase B may need Pin or raw-ptr slice.
     pub dir_path_len: usize,
 
     /// Active component indices. Multiple indices mean one readdir
@@ -458,7 +356,7 @@ pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
     #[cfg(debug_assertions)]
     pub fds_open: usize,
     #[cfg(not(debug_assertions))]
-    pub fds_open: u8, // u0 in Zig; smallest Rust int
+    pub fds_open: u8, // unused in release; smallest Rust int
 
     #[cfg(windows)]
     pub nt_filter_buf: [u16; 256],
@@ -533,8 +431,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 //
                 // In that case we don't need to do any walking and can just open up the FS entry
                 if starting_component_idx as usize >= self.walker.pattern_components.len() {
-                    // Matched-path payload must respect SENTINEL (Zig: MatchedPath
-                    // = if (sentinel) [:0]const u8 else []const u8). The open()
+                    // Matched-path payload must respect SENTINEL. The open()
                     // probe always needs a NUL — use a separate dupeZ for it so
                     // SENTINEL=false matched paths don't carry a spurious 0x00.
                     let path = dupe_matched::<SENTINEL>(path_without_special_syntax);
@@ -579,7 +476,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             )
         };
 
-        // PORT NOTE: reshaped for borrowck — `path_buf` aliases `self.walker.path_buf`;
+        // Note: reshaped for borrowck — `path_buf` aliases `self.walker.path_buf`;
         // capture the raw ptr+len up front so the &mut borrow ends before
         // `handle_sys_err_with_path` re-borrows `self.walker`.
         let root_path = &root_work_item.path;
@@ -600,11 +497,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         let root_path_z = unsafe { ZStr::from_raw(path_buf_ptr, root_path_len) };
         let cwd_fd = match A::open(root_path_z)? {
             Err(err) => {
-                let len = root_path_len + 1;
                 return Ok(Err(self.walker.handle_sys_err_with_path(
-                    err,
-                    // SAFETY: NUL at index len-1 written above
-                    unsafe { ZStr::from_raw(path_buf_ptr, len) },
+                    &err,
+                    // SAFETY: NUL at index `root_path_len` written above.
+                    unsafe { ZStr::from_raw(path_buf_ptr, root_path_len) },
                 )));
             }
             Ok(fd) => fd,
@@ -676,9 +572,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // NUL in their `.len()`; the logical path drops it (see `work_item_logical_path`).
         let work_item_path: &[u8] = work_item_logical_path(&work_item.path);
         log!("transition => {}", bstr::BStr::new(work_item_path));
-        // PORT NOTE: reshaped for borrowck — Zig set `iter_state = .{ .directory = .{...} }`
-        // up front and then mutated `this.iter_state.directory.*` while also borrowing
-        // `this.walker`. Build the Directory in a local and assign at the end.
+        // Build the Directory in a local and assign at the end (borrowck:
+        // mutating `iter_state` in place would overlap the `self.walker` borrow).
         let mut dir_path_buf = Box::new(PathBuffer::uninit());
         let mut dir_path_len: usize = 'dir_path: {
             if ROOT {
@@ -750,7 +645,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 if had_dot_dot {
                     break 'fd match A::openat(self.cwd_fd, dir_path)? {
                         Err(err) => {
-                            return Ok(Err(self.walker.handle_sys_err_with_path(err, dir_path)));
+                            return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
                         }
                         Ok(fd_) => {
                             self.bump_open_fds();
@@ -765,7 +660,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
             match A::openat(self.cwd_fd, dir_path)? {
                 Err(err) => {
-                    return Ok(Err(self.walker.handle_sys_err_with_path(err, dir_path)));
+                    return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
                 }
                 Ok(fd_) => {
                     self.bump_open_fds();
@@ -782,10 +677,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             if idx as usize == self.walker.pattern_components.len().saturating_sub(1)
                 && self.walker.pattern_components[idx as usize].syntax_hint == SyntaxHint::Literal
             {
-                // Zig: `defer this.closeDisallowingCwd(fd)` — covered explicitly on
+                // `close_disallowing_cwd(fd)` is covered explicitly on
                 // both exit paths below (Err arm and post-Ok); no `?` between here
                 // and those calls, so a scopeguard is unnecessary.
-                // PERF(port): was stack-fallback (stackFallback(256, arena))
                 let pat_slice = self.walker.pattern_components[idx as usize]
                     .pattern_slice(&self.walker.pattern)
                     .to_vec();
@@ -834,7 +728,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             active.count()
         );
 
-        let mut iterator = A::DirIter::iterate(fd);
+        let iterator = A::DirIter::iterate(fd);
+        #[cfg(windows)]
+        let mut iterator = iterator;
         #[cfg(windows)]
         {
             // computeNtFilter operates on a single pattern component.
@@ -842,7 +738,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             // kernel filter could hide entries needed by other indices,
             // so skip it. The filter is purely an optimization;
             // matchPatternImpl still runs for correctness.
-            // TODO(port): @hasDecl(Accessor.DirIter, "setNameFilter") — trait default method covers this
             let filter: Option<&[u16]> = if active.count() == 1 {
                 self.compute_nt_filter(
                     u32::try_from(active.find_first_set().unwrap()).expect("int cast"),
@@ -902,15 +797,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         Some(wide)
     }
 
-    #[cfg(not(windows))]
-    #[allow(dead_code)]
-    fn compute_nt_filter(&mut self, _component_idx: u32) -> Option<&[u16]> {
-        None
-    }
-
     pub fn next(&mut self) -> Result<Maybe<Option<MatchedPath>>, Error> {
         'outer: loop {
-            // PORT NOTE: reshaped for borrowck — take/replace iter_state where needed.
+            // Note: reshaped for borrowck — take/replace iter_state where needed.
             match &mut self.iter_state {
                 IterState::Matched(_) => {
                     let IterState::Matched(path) =
@@ -947,13 +836,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 )
                                 .with_path(work_item_path)));
                             }
-                            // PORT NOTE: reshaped for borrowck — Zig used `self.path_buf`
-                            // both as the scratch buffer here and from inside
-                            // `collapseDots`/`handleSysErrWithPath`. In Rust we split-borrow
+                            // Note: we split-borrow
                             // `path_buf` and `pattern_components` (disjoint fields) for the
                             // write+normalize, then drop the &mut and read via `self.walker`.
                             let mut symlink_full_path_len = work_item_path.len();
-                            // PORT NOTE: reshaped for borrowck — entry_name is a sub-slice
+                            // Note: reshaped for borrowck — entry_name is a sub-slice
                             // of symlink_full_path; capture range and re-slice later.
                             let entry_start = work_item.entry_start as usize;
 
@@ -991,8 +878,14 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
                             // Buffer is read-only from here on; read via &self.walker.
                             let scratch_ptr = self.walker.path_buf.as_ptr();
+                            // SAFETY: scratch_ptr is self.walker.path_buf (boxed, outlives this
+                            // borrow); the write block above NUL-terminated it at index
+                            // symlink_full_path_len and skip_special_components_disjoint preserves that.
                             let symlink_full_path_z =
                                 unsafe { ZStr::from_raw(scratch_ptr, symlink_full_path_len) };
+                            // SAFETY: entry_start is the entry-name offset within the path written
+                            // above, so [entry_start..symlink_full_path_len] lies inside the
+                            // initialized region of self.walker.path_buf.
                             let entry_name: &[u8] = unsafe {
                                 core::slice::from_raw_parts(
                                     scratch_ptr.add(entry_start),
@@ -1009,7 +902,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         }
                                         if self.walker.error_on_broken_symlinks {
                                             return Ok(Err(self.walker.handle_sys_err_with_path(
-                                                err,
+                                                &err,
                                                 symlink_full_path_z,
                                             )));
                                         }
@@ -1077,8 +970,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let dir_fd = dir.fd;
                             let at_cwd = dir.at_cwd;
                             let dir_path = dir.dir_path();
-                            // PORT NOTE: reshaped for borrowck
-                            let err = self.walker.handle_sys_err_with_path(err, dir_path);
+                            // Note: reshaped for borrowck
+                            let err = self.walker.handle_sys_err_with_path(&err, dir_path);
                             if !at_cwd {
                                 self.close_disallowing_cwd(dir_fd);
                             }
@@ -1154,13 +1047,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 }
 
                                 let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
-                                let entry_start: u32 = u32::try_from(if dir_dir_path.is_empty() {
-                                    0
-                                } else {
-                                    dir_dir_path.len() + 1
-                                })
-                                .unwrap();
                                 let subdir_entry_name = self.walker.join(subdir_parts)?;
+                                let joined = work_item_logical_path(&subdir_entry_name);
+                                let entry_start: u32 =
+                                    u32::try_from(joined.len() - strings::basename(joined).len())
+                                        .unwrap();
 
                                 self.walker.workbuf.push(WorkItem::new_symlink(
                                     subdir_entry_name,
@@ -1189,13 +1080,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 continue;
                             }
 
-                            // PERF(port): was stack-fallback (stackFallback(256, arena))
                             let name_z = dupe_z(entry_name);
                             // SAFETY: dupe_z NUL-terminates
                             let name_z_ref = ZStr::from_slice_with_nul(&name_z[..]);
                             let stat_result = A::lstatat(dir_fd, name_z_ref);
                             let real_kind = match stat_result {
-                                Ok(st) => bun_sys::kind_from_mode(st.st_mode as u32),
+                                Ok(st) => bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode),
                                 Err(_) => continue,
                             };
 
@@ -1241,14 +1131,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 bun_sys::FileKind::SymLink => {
                                     if self.walker.follow_symlinks {
                                         let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
-                                        let entry_start: u32 =
-                                            u32::try_from(if dir_dir_path.is_empty() {
-                                                0
-                                            } else {
-                                                dir_dir_path.len() + 1
-                                            })
-                                            .unwrap();
                                         let subdir_entry_name = self.walker.join(subdir_parts)?;
+                                        let joined = work_item_logical_path(&subdir_entry_name);
+                                        let entry_start: u32 = u32::try_from(
+                                            joined.len() - strings::basename(joined).len(),
+                                        )
+                                        .unwrap();
                                         self.walker.workbuf.push(WorkItem::new_symlink(
                                             subdir_entry_name,
                                             active,
@@ -1282,7 +1170,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
 impl<'a, A: Accessor, const SENTINEL: bool> Drop for Iterator<'a, A, SENTINEL> {
     fn drop(&mut self) {
-        // Zig: pub fn deinit(this: *Iterator)
         self.close_cwd_fd();
         if let IterState::Directory(dir) = &self.iter_state {
             if !dir.iter_closed {
@@ -1309,7 +1196,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Drop for Iterator<'a, A, SENTINEL> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub struct WorkItem<A: Accessor> {
-    // Zig: `path: []const u8` — arena-owned slice. Now heap-owned.
     pub path: Box<[u8]>,
     /// Bitmask of active component indices.
     pub active: ComponentSet,
@@ -1430,7 +1316,7 @@ impl SyntaxHint {
 
 impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// The arena parameter is dereferenced and copied if all allocations go well and nothing goes wrong
-    // PORT NOTE: out-param constructor reshaped to return Self.
+    // Note: out-param constructor reshaped to return Self.
     pub fn init(
         pattern: &[u8],
         dot: bool,
@@ -1476,7 +1362,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     /// `cwd` should be allocated with the arena
     /// The arena parameter is dereferenced and copied if all allocations go well and nothing goes wrong
-    // PORT NOTE: out-param constructor reshaped to return Self.
+    // Note: out-param constructor reshaped to return Self.
     pub fn init_with_cwd(
         pattern: &[u8],
         cwd: &[u8],
@@ -1517,7 +1403,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         )?;
 
         // copy arena after all allocations are successful
-        // PERF(port): was arena bulk-free — arena field removed.
 
         if cfg!(debug_assertions) {
             this.debug_pattern_components();
@@ -1526,15 +1411,15 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Ok(Ok(this))
     }
 
-    pub fn handle_sys_err_with_path(&mut self, err: SysError, path_buf: &ZStr) -> SysError {
+    pub fn handle_sys_err_with_path(&mut self, err: &SysError, path_buf: &ZStr) -> SysError {
         let src = path_buf.as_bytes();
         let copy_len = src.len().min(self.path_buf.len());
         // Several callers pass a `path_buf` that is itself a slice of
         // `self.path_buf` (e.g. Iterator::init error path, next() symlink
         // openat error path). When src and dst alias the same range,
         // `copy_from_slice` is UB (its safety contract requires
-        // non-overlapping). Zig's `bun.copy` is memmove. Match that:
-        // short-circuit identical-range, otherwise use overlap-safe ptr::copy.
+        // non-overlapping).
+        // Short-circuit identical-range, otherwise use overlap-safe ptr::copy.
         let dst = self.path_buf.as_mut_ptr();
         if src.as_ptr() != dst.cast_const() {
             // SAFETY: copy_len ≤ both src and dst capacity; ptr::copy is memmove
@@ -1569,29 +1454,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Ok(Ok(()))
     }
 
-    // NOTE you must check that the pattern at `idx` has `syntax_hint == .Dot` or
-    // `syntax_hint == .DotBack` first
-    //
-    // PORT NOTE: reshaped for borrowck — Zig passed `dir_path: *[:0]u8` (a fat
-    // slice into `path_buf`). Rust passes `dir_path_len: &mut usize` instead.
-    fn collapse_dots(
-        &self,
-        idx: u32,
-        dir_path_len: &mut usize,
-        path_buf: &mut PathBuffer,
-        encountered_dot_dot: &mut bool,
-    ) -> Maybe<u32> {
-        Self::collapse_dots_disjoint(
-            &self.pattern_components,
-            idx,
-            dir_path_len,
-            path_buf,
-            encountered_dot_dot,
-        )
-    }
-
-    // PORT NOTE: associated fn taking `pattern_components` so callers can
-    // split-borrow it from `&mut self.path_buf` (Zig freely aliased; Rust
+    // Note: associated fn taking `pattern_components` so callers can
+    // split-borrow it from `&mut self.path_buf` (Rust
     // forbids `&mut self` + `&mut self.path_buf`). Error path builds SysError
     // directly from `path_buf` (which is already `self.path_buf` for the
     // symlink caller) instead of routing through `handle_sys_err_with_path`.
@@ -1698,18 +1562,13 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         if (component_idx as usize) < pattern_components.len() {
             // Skip `.` and `..` while also appending them to `dir_path`
             component_idx = match pattern_components[component_idx as usize].syntax_hint {
-                SyntaxHint::Dot | SyntaxHint::DotBack => {
-                    match Self::collapse_dots_disjoint(
-                        pattern_components,
-                        component_idx,
-                        dir_path_len,
-                        scratch_path_buf,
-                        encountered_dot_dot,
-                    ) {
-                        Err(e) => return Err(e),
-                        Ok(i) => i,
-                    }
-                }
+                SyntaxHint::Dot | SyntaxHint::DotBack => Self::collapse_dots_disjoint(
+                    pattern_components,
+                    component_idx,
+                    dir_path_len,
+                    scratch_path_buf,
+                    encountered_dot_dot,
+                )?,
                 _ => component_idx,
             };
         }
@@ -1854,7 +1713,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     /// Create an empty ComponentSet sized for this pattern.
     fn make_set(&self) -> ComponentSet {
-        // Zig wrapped in handleOom; Rust aborts on OOM.
         ComponentSet::init_empty(self.pattern_components.len())
             .expect("OOM: ComponentSet::init_empty")
     }
@@ -1945,20 +1803,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         idx
     }
 
-    #[inline]
-    fn matched_path_to_bun_string(matched_path: &[u8]) -> BunString {
-        // PORT NOTE: in Zig, MatchedPath is `[:0]const u8` (len excludes NUL) and
-        // this fn re-slices `[0..len+1]` to include it. In the port, MatchedPath is
-        // `Box<[u8]>` and join()/dupe_z() already include the trailing NUL when
-        // SENTINEL is true, so callers pass the full slice and no `+1` is needed.
-        BunString::from_bytes(matched_path)
-    }
-
     fn prepare_matched_path_symlink(
         &mut self,
         symlink_full_path: &[u8],
     ) -> Result<Option<MatchedPath>, AllocError> {
-        // PERF(port): was getOrPut single-probe — two lookups here; profile in Phase B
+        // PERF: two lookups here (contains_key + insert); profile if hot.
         if self.matched_paths.contains_key(symlink_full_path) {
             log!(
                 "(dupe) prepared match: {}",
@@ -1983,7 +1832,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     ) -> Result<Option<MatchedPath>, AllocError> {
         let subdir_parts: &[&[u8]] = &[&dir_name[0..dir_name.len()], entry_name];
         let name_matched_path = self.join(subdir_parts)?;
-        // PERF(port): was getOrPutValue single-probe — two lookups here; profile in Phase B
+        // PERF: two lookups here (contains_key + insert); profile if hot.
         if self.matched_paths.contains_key(&name_matched_path) {
             log!(
                 "(dupe) prepared match: {}",
@@ -1995,30 +1844,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         // if SENTINEL { return name[0..name.len()-1 :0]; }
         log!("prepared match: {}", bstr::BStr::new(&name_matched_path));
         Ok(Some(name_matched_path))
-    }
-
-    fn append_matched_path(
-        &mut self,
-        entry_name: &[u8],
-        dir_name: &ZStr,
-    ) -> Result<(), AllocError> {
-        let subdir_parts: &[&[u8]] = &[dir_name.as_bytes(), entry_name];
-        let name_matched_path = self.join(subdir_parts)?;
-        // PERF(port): was getOrPut single-probe — two lookups here; profile in Phase B
-        if self.matched_paths.contains_key(&name_matched_path) {
-            log!(
-                "(dupe) prepared match: {}",
-                bstr::BStr::new(&name_matched_path)
-            );
-            return Ok(());
-        }
-        self.matched_paths.insert(&name_matched_path, ());
-        Ok(())
-    }
-
-    fn append_matched_path_symlink(&mut self, symlink_full_path: &[u8]) -> Result<(), AllocError> {
-        self.matched_paths.insert(symlink_full_path, ());
-        Ok(())
     }
 
     #[inline]
@@ -2189,11 +2014,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         let mut width: u32 = 0;
         while (i as usize) < pattern.len() {
             let c = pattern[i as usize];
-            // PORT NOTE: Zig calls bun.strings.utf8ByteSequenceLength; same table as wtf8.
             width = u32::from(strings::wtf8_byte_sequence_length(c));
 
-            // PORT NOTE: GlobWalker.zig duplicates this block across the '\\' (Windows) and '/'
-            // arms because Zig has no or-pattern with a comptime guard; merged here.
             if bun_core::path_sep::is_sep_native(c) {
                 let mut end_byte = i;
                 // is last char
@@ -2238,24 +2060,20 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             if !saw_special {
                 *basename_excluding_special_syntax_component_idx =
                     u32::try_from(pattern_components.len()).expect("int cast");
-                *end_byte_of_basename_excluding_special_syntax =
-                    (i + width).min(pattern_len);
+                *end_byte_of_basename_excluding_special_syntax = (i + width).min(pattern_len);
             }
             pattern_components.push(component);
         } else if !saw_special {
             *basename_excluding_special_syntax_component_idx =
                 u32::try_from(pattern_components.len()).expect("int cast");
-            *end_byte_of_basename_excluding_special_syntax =
-                (i + width).min(pattern_len);
+            *end_byte_of_basename_excluding_special_syntax = (i + width).min(pattern_len);
         }
 
         Ok(())
     }
 }
 
-/// NOTE This also calls deinit on the arena, if you don't want to do that then
-// Zig: pub fn deinit(this: *GlobWalker, comptime clear_arena: bool)
-// PERF(port): was arena bulk-free — Drop frees Vec/Box fields automatically.
+// Drop frees Vec/Box fields automatically.
 impl<A: Accessor, const SENTINEL: bool> Drop for GlobWalker<A, SENTINEL> {
     fn drop(&mut self) {
         log!("GlobWalker.deinit");
@@ -2274,44 +2092,6 @@ pub fn is_separator(c: Codepoint) -> bool {
     c <= 0xFF && bun_paths::is_sep_native(c as u8)
 }
 
-#[inline]
-fn unescape(c: &mut u32, glob: &[u32], glob_index: &mut u32) -> bool {
-    if *c == u32::from(b'\\') {
-        *glob_index += 1;
-        if *glob_index as usize >= glob.len() {
-            return false; // Invalid pattern!
-        }
-
-        *c = match glob[*glob_index as usize] {
-            x if x == u32::from(b'a') => 0x61,
-            x if x == u32::from(b'b') => 0x08,
-            x if x == u32::from(b'n') => u32::from(b'\n'),
-            x if x == u32::from(b'r') => u32::from(b'\r'),
-            x if x == u32::from(b't') => u32::from(b'\t'),
-            cc => cc,
-        };
-    }
-
-    true
-}
-
-const GLOB_STAR_MATCH_STR: &[u32] = &[b'/' as u32, b'*' as u32, b'*' as u32];
-
-// src/**/**/foo.ts
-#[inline]
-fn skip_globstars(glob: &[u32], glob_index: &mut u32) {
-    *glob_index += 2;
-
-    // Coalesce multiple ** segments into one.
-    while (*glob_index + 3) as usize <= glob.len()
-        && &glob[*glob_index as usize..(*glob_index + 3) as usize] == GLOB_STAR_MATCH_STR
-    {
-        *glob_index += 3;
-    }
-
-    *glob_index -= 2;
-}
-
 pub fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
     let needle = &glob[1..];
     let needle_len: u32 = u32::try_from(needle.len()).expect("int cast");
@@ -2326,7 +2106,7 @@ pub fn match_wildcard_literal(literal: &[u8], path: &[u8]) -> bool {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Port helpers (no Zig equivalent — replaces arena.dupeZ / std/bun join dispatch)
+// Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// `allocator.dupeZ(u8, s)` — returns owned bytes with trailing NUL included
@@ -2338,8 +2118,7 @@ fn dupe_z(s: &[u8]) -> Box<[u8]> {
 }
 
 /// Allocate a matched-path payload: when `SENTINEL` is true the box has a
-/// trailing NUL at `len()-1` (Zig `[:0]const u8`); when false it does not (Zig
-/// `[]const u8`). Mirrors `MatchedPath = if (sentinel) [:0]const u8 else []const u8`.
+/// trailing NUL at `len()-1`; when false it does not.
 #[inline]
 fn dupe_matched<const SENTINEL: bool>(s: &[u8]) -> Box<[u8]> {
     if SENTINEL {
@@ -2363,12 +2142,11 @@ fn matched_as_slice<const SENTINEL: bool>(p: &[u8]) -> &[u8] {
 /// The logical path stored in a [`WorkItem`], excluding any trailing NUL.
 ///
 /// For `SENTINEL == true`, `MatchedPath` boxes produced by [`GlobWalker::join`]
-/// carry a trailing NUL inside their `.len()` — Zig models the same value as
-/// `[:0]const u8`, which coerces to a `[]const u8` whose `.len` *excludes* the
-/// NUL. Root `WorkItem`s (and `SENTINEL == false` walks) instead hold a plain
+/// carry a trailing NUL inside their `.len()`.
+/// Root `WorkItem`s (and `SENTINEL == false` walks) instead hold a plain
 /// path with no NUL. A real filesystem path can never contain (let alone end
 /// in) a NUL byte, so a single trailing NUL is unambiguously the sentinel; we
-/// strip it here to recover the logical length, mirroring the Zig coercion.
+/// strip it here to recover the logical length.
 /// Without this, the NUL would be copied into the directory-path buffer and end
 /// up *embedded* in every path joined onto it (e.g. `assets/*` matching as
 /// `assets\0/file-1`, which truncates to `assets` when used as a C string).
@@ -2386,7 +2164,7 @@ fn bun_join<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
     use bun_paths::platform;
     if SENTINEL {
         let s = resolve_path::join_z::<platform::Auto>(parts);
-        // include trailing NUL in the owned box (Zig: out[0..out.len-1 :0])
+        // include trailing NUL in the owned box
         let mut v = s.as_bytes().to_vec();
         v.push(0);
         v.into_boxed_slice()
@@ -2397,7 +2175,7 @@ fn bun_join<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
 
 impl AccessorDirEntry for DirIterator::IteratorResult {
     fn name_slice(&self) -> &[u8] {
-        // Zig `entry.name.slice()` is always `[]const u8`: on Windows the `.u8`
+        // On Windows the `.u8`
         // NewWrappedIterator transcodes via `strings.fromWPath` at iteration
         // time. `Name::slice_u8()` exposes that cached transcode (or the native
         // slice on POSIX) so this is uniformly `&[u8]`.
@@ -2407,5 +2185,3 @@ impl AccessorDirEntry for DirIterator::IteratorResult {
         self.kind
     }
 }
-
-// ported from: src/glob/GlobWalker.zig

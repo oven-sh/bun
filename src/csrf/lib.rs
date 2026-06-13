@@ -2,9 +2,7 @@
 //! It provides protection against Cross-Site Request Forgery attacks
 //! by generating and validating tokens using HMAC signatures
 
-#![allow(unused, nonstandard_style)]
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 use bun_boringssl_sys as boring;
 use bun_core::strings;
 use bun_sha_hmac::hmac;
@@ -19,7 +17,6 @@ pub const DEFAULT_EXPIRATION_MS: u64 = 24 * 60 * 60 * 1000;
 pub const DEFAULT_ALGORITHM: Algorithm = Algorithm::Sha256;
 
 /// Error types for CSRF operations
-// TODO(b1): thiserror not in deps — manual Display/Error impl for now
 #[derive(strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     InvalidToken,
@@ -31,11 +28,14 @@ bun_core::impl_tag_error!(Error);
 
 bun_core::named_error_set!(Error);
 
-/// Options for generating CSRF tokens
-// TODO(port): Zig has per-field defaults; Rust callers must specify all fields
+/// Options for generating CSRF tokens. Defaults are noted on
+/// each field; callers must specify all fields.
 pub struct GenerateOptions<'a> {
     /// Secret key to use for signing
     pub secret: &'a [u8],
+    /// Per-principal associated data mixed into the HMAC; an empty slice
+    /// means the token is not bound to any principal
+    pub session_id: &'a [u8],
     /// How long the token should be valid (in milliseconds)
     pub expires_in_ms: u64, // = DEFAULT_EXPIRATION_MS
     /// Format to encode the token in
@@ -44,13 +44,16 @@ pub struct GenerateOptions<'a> {
     pub algorithm: Algorithm, // = DEFAULT_ALGORITHM
 }
 
-/// Options for validating CSRF tokens
-// TODO(port): Zig has per-field defaults; Rust callers must specify all fields
+/// Options for validating CSRF tokens. Defaults are noted on
+/// each field; callers must specify all fields.
 pub struct VerifyOptions<'a> {
     /// The token to verify
     pub token: &'a [u8],
     /// Secret key used to sign the token
     pub secret: &'a [u8],
+    /// Per-principal associated data mixed into the HMAC; an empty slice
+    /// means the token is not bound to any principal
+    pub session_id: &'a [u8],
     /// Maximum age of the token in milliseconds
     pub max_age_ms: u64, // = DEFAULT_EXPIRATION_MS
     /// Encoding to use for the token
@@ -85,7 +88,7 @@ impl TokenFormat {
 ///
 /// Returns: A slice into `out_buffer` containing the raw token
 pub fn generate<'a>(
-    options: GenerateOptions<'_>,
+    options: &GenerateOptions<'_>,
     out_buffer: &'a mut [u8; 512],
 ) -> Result<&'a mut [u8], Error> {
     // Generate nonce from entropy
@@ -107,14 +110,24 @@ pub fn generate<'a>(
     payload_buf[8..24].copy_from_slice(&nonce);
     payload_buf[24..32].copy_from_slice(&expires_in_bytes);
 
-    // Sign the payload
+    // Sign the payload. A session id is mixed into the HMAC input as
+    // `payload || session_id` but never written to the token; the fixed
+    // 32-byte payload prefix keeps the concatenation unambiguous.
     let mut digest_buf = [0u8; boring::EVP_MAX_MD_SIZE as usize];
-    let digest = match hmac::generate(
-        options.secret,
-        &payload_buf,
-        options.algorithm,
-        &mut digest_buf,
-    ) {
+    let digest = if options.session_id.is_empty() {
+        hmac::generate(
+            options.secret,
+            &payload_buf,
+            options.algorithm,
+            &mut digest_buf,
+        )
+    } else {
+        let mut msg = Vec::with_capacity(payload_buf.len() + options.session_id.len());
+        msg.extend_from_slice(&payload_buf);
+        msg.extend_from_slice(options.session_id);
+        hmac::generate(options.secret, &msg, options.algorithm, &mut digest_buf)
+    };
+    let digest = match digest {
         Some(d) => d,
         None => return Err(Error::TokenCreationFailed),
     };
@@ -136,7 +149,7 @@ pub fn generate<'a>(
 /// - options: Configuration for token validation
 ///
 /// Returns: true if valid, false if invalid
-pub fn verify(options: VerifyOptions<'_>) -> bool {
+pub fn verify(options: &VerifyOptions<'_>) -> bool {
     // Detect the encoding format
     let encoding: TokenFormat = options.encoding;
 
@@ -148,9 +161,9 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
         token = &token[0..token.len() - 1];
     }
 
-    // PORT NOTE: reshaped for borrowck — compute decoded_len, then borrow buf immutably afterward
+    // Reshaped for borrowck — compute decoded_len, then borrow buf immutably afterward
     let decoded_len: usize = match encoding {
-        // shares same decoder but encoder is different see encoding.zig
+        // base64 and base64url share the same decoder, but the encoders differ
         TokenFormat::Base64Url | TokenFormat::Base64 => {
             // do the same as Buffer.from(token, "base64url" | "base64")
             // "\r\n\t " ++ VT (0x0b)
@@ -163,11 +176,11 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
             if outlen > buf.len() {
                 return false;
             }
-            let wrote = bun_base64::decode(&mut buf[0..outlen], slice).count;
-            wrote
+
+            bun_base64::decode(&mut buf[0..outlen], slice).count
         }
         TokenFormat::Hex => {
-            if token.len() % 2 != 0 {
+            if !token.len().is_multiple_of(2) {
                 return false;
             }
             // decoded len
@@ -235,12 +248,25 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
 
     // Verify the signature
     let mut expected_signature = [0u8; boring::EVP_MAX_MD_SIZE as usize];
-    let signature = match hmac::generate(
-        options.secret,
-        payload,
-        options.algorithm,
-        &mut expected_signature,
-    ) {
+    let signature = if options.session_id.is_empty() {
+        hmac::generate(
+            options.secret,
+            payload,
+            options.algorithm,
+            &mut expected_signature,
+        )
+    } else {
+        let mut msg = Vec::with_capacity(payload.len() + options.session_id.len());
+        msg.extend_from_slice(payload);
+        msg.extend_from_slice(options.session_id);
+        hmac::generate(
+            options.secret,
+            &msg,
+            options.algorithm,
+            &mut expected_signature,
+        )
+    };
+    let signature = match signature {
         Some(s) => s,
         None => return false,
     };
@@ -249,8 +275,4 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
     boring::constant_time_eq(received_signature, signature)
 }
 
-// NOTE: the Zig file re-exports csrf__generate / csrf__verify from
-// ../runtime/api/csrf_jsc.zig — per PORTING.md these *_jsc aliases are
-// deleted; JS bindings live in the *_jsc crate as extension methods.
-
-// ported from: src/csrf/csrf.zig
+// NOTE: JS bindings live in the *_jsc crate as extension methods.

@@ -1,7 +1,5 @@
-//! JSON serialization for the shell AST, matching Zig `std.json.fmt(v, .{})`.
+//! JSON serialization for the shell AST.
 //!
-//! Port of the implicit serialization the Zig side gets for free via
-//! `std.json.Stringify.write` reflection (vendor/zig/lib/std/json/Stringify.zig).
 //! Only the testing APIs (`shellInternals.lex` / `.parse`) consume this, so the
 //! shape is dictated by `test/js/bun/shell/{lex,parse}.test.ts`:
 //!   - struct           → `{"field":value,...}` in field-declaration order
@@ -18,8 +16,8 @@ use core::fmt::{self, Write};
 
 use super::parse::SmolList;
 use super::parse::ast::{
-    Assign, Atom, Binary, BinaryOp, Cmd, CmdSubst, CompoundAtom, CondExpr, CondExprOp, Expr, If,
-    JSBuf, Pipeline, PipelineItem, Redirect, RedirectFlags, Script, SimpleAtom, Stmt, Subshell,
+    Assign, Atom, Binary, BinaryOp, Cmd, CmdSubst, CompoundAtom, CondExpr, Expr, If, JSBuf,
+    Pipeline, PipelineItem, Redirect, RedirectFlags, Script, SimpleAtom, Stmt, Subshell,
 };
 
 // ───────────────────────────── primitives ─────────────────────────────
@@ -48,7 +46,7 @@ fn write_array<W: Write, T>(
 }
 
 // ───────────────────────────── RedirectFlags ──────────────────────────
-// Zig: `packed struct(u8)` → struct serialization in field-declaration order.
+// Struct serialization in field-declaration order.
 
 pub fn write_redirect_flags(w: &mut impl Write, r: RedirectFlags) -> fmt::Result {
     w.write_str("{\"stdin\":")?;
@@ -233,13 +231,13 @@ fn write_redirect(w: &mut impl Write, r: &Redirect<'_>) -> fmt::Result {
         }
         Redirect::JsBuf(j) => {
             w.write_str("{\"jsbuf\":")?;
-            write_jsbuf(w, j)?;
+            write_jsbuf(w, *j)?;
         }
     }
     w.write_char('}')
 }
 
-fn write_jsbuf(w: &mut impl Write, j: &JSBuf) -> fmt::Result {
+fn write_jsbuf(w: &mut impl Write, j: JSBuf) -> fmt::Result {
     write!(w, "{{\"idx\":{}}}", j.idx)
 }
 
@@ -305,7 +303,7 @@ fn write_compound_atom(w: &mut impl Write, c: &CompoundAtom<'_>) -> fmt::Result 
 
 // ───────────────────────────── Display adapters ──────────────────────────
 
-/// `Display` adapter mirroring Zig's `std.json.fmt(script_ast, .{})`.
+/// `Display` adapter that JSON-serializes a `Script` AST.
 pub fn script_json_fmt<'a, 'b>(script: &'b Script<'a>) -> impl fmt::Display + 'b {
     ScriptJsonFmt(script)
 }

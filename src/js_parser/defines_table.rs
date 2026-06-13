@@ -18,7 +18,7 @@ use crate::defines;
 use bun_ast::ExprData;
 use std::sync::OnceLock;
 
-// Zig: `string = []const u8`; each entry is a property-access chain (`&[_]string{...}`).
+// Each entry is a property-access chain.
 pub static GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES: &[&[&[u8]]] = &[
     // Array: Static methods
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array#Static_methods
@@ -191,8 +191,7 @@ pub static GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING: &[&[&[u8]]] 
     // Haven't seen a bundle size improvement from adding more to this list yet.
 ];
 
-// PORTING.md §Concurrency: `OnceLock` for lazily-initialised statics (Zig used
-// const struct literals; `DefineData` is not const-constructible in Rust).
+// `OnceLock` for lazily-initialised statics (`DefineData` is not const-constructible).
 //
 // `DefineData` is not `Send`/`Sync` in general (it carries `ExprData`, whose
 // boxed variants hold `NonNull<_>`). The four instances stored here only ever
@@ -232,7 +231,7 @@ mod identifiers {
     };
 
     // Step 2. Swap in certain literal values because those can be constant folded
-    pub fn undefined() -> &'static defines::IdentifierDefine {
+    pub(super) fn undefined() -> &'static defines::IdentifierDefine {
         static CELL: OnceLock<SyncDefineData> = OnceLock::new();
         &CELL
             .get_or_init(|| {
@@ -244,7 +243,7 @@ mod identifiers {
             })
             .0
     }
-    pub fn nan() -> &'static defines::IdentifierDefine {
+    pub(super) fn nan() -> &'static defines::IdentifierDefine {
         static CELL: OnceLock<SyncDefineData> = OnceLock::new();
         &CELL
             .get_or_init(|| {
@@ -255,7 +254,7 @@ mod identifiers {
             })
             .0
     }
-    pub fn infinity() -> &'static defines::IdentifierDefine {
+    pub(super) fn infinity() -> &'static defines::IdentifierDefine {
         static CELL: OnceLock<SyncDefineData> = OnceLock::new();
         &CELL
             .get_or_init(|| {
@@ -269,16 +268,15 @@ mod identifiers {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum PureGlobalIdentifierValue {
+pub(crate) enum PureGlobalIdentifierValue {
     NaN,
     Infinity,
-    /// Zig: `@"strict undefined"`
     StrictUndefined,
     Other,
 }
 
 impl PureGlobalIdentifierValue {
-    pub fn value(self) -> &'static defines::IdentifierDefine {
+    pub(crate) fn value(self) -> &'static defines::IdentifierDefine {
         match self {
             PureGlobalIdentifierValue::NaN => identifiers::nan(),
             PureGlobalIdentifierValue::Infinity => identifiers::infinity(),
@@ -289,5 +287,3 @@ impl PureGlobalIdentifierValue {
 }
 
 include!("defines_table.generated.rs");
-
-// ported from: src/bundler/defines-table.zig

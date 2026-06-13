@@ -1,5 +1,4 @@
 use core::ffi::{c_char, c_int, c_long, c_void};
-use std::ffi::CStr;
 
 use bun_boringssl_sys as boringssl;
 use bun_core::{String as BunString, ZigString, strings};
@@ -8,52 +7,48 @@ use bun_jsc::{
 };
 
 use crate::api::bun_x509 as X509;
-use crate::webcore::blob::ZigStringBlobExt as _;
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local BoringSSL FFI surface not yet in bun_boringssl_sys.
 // Declared here per port rules (call the linked C symbol directly); migrate
 // into `bun_boringssl_sys` once the bindgen pass covers them.
 // ──────────────────────────────────────────────────────────────────────────
-#[allow(non_camel_case_types, non_upper_case_globals, dead_code)]
-pub mod ffi {
-    use super::boringssl::{SSL, SSL_CTX, X509, X509_STORE_CTX, struct_stack_st_X509};
+#[allow(non_camel_case_types, non_upper_case_globals)]
+pub(super) mod ffi {
+    use super::boringssl::{SSL, SSL_CTX, X509, struct_stack_st_X509};
     use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 
     // Re-export the one decl whose `*const c_char` NUL-terminated arg keeps a
     // genuine caller precondition; the rest are re-declared `safe fn` below.
-    pub use super::boringssl::SSL_set_tlsext_host_name;
+    pub(crate) use super::boringssl::SSL_set_tlsext_host_name;
 
     // Opaque handles missing from boringssl_sys.
     bun_opaque::opaque_ffi! {
-        pub struct SSL_SESSION;
-        pub struct SSL_CIPHER;
-        pub struct EVP_PKEY;
-        pub struct EC_KEY;
-        pub struct EC_GROUP;
+        pub(crate) struct SSL_SESSION;
+        pub(crate) struct SSL_CIPHER;
+        pub(crate) struct EVP_PKEY;
+        pub(crate) struct EC_KEY;
+        pub(crate) struct EC_GROUP;
     }
 
-    pub type ssl_renegotiate_mode_t = c_int;
-
     // ssl.h
-    pub const TLSEXT_NAMETYPE_host_name: c_int = 0;
+    pub(crate) const TLSEXT_NAMETYPE_host_name: c_int = 0;
 
     // evp.h key types (NID values)
-    pub const EVP_PKEY_RSA: c_int = 6;
-    pub const EVP_PKEY_RSA_PSS: c_int = 912;
-    pub const EVP_PKEY_DSA: c_int = 116;
-    pub const EVP_PKEY_EC: c_int = 408;
-    pub const EVP_PKEY_DH: c_int = 28;
-    pub const EVP_PKEY_X25519: c_int = 948;
-    pub const EVP_PKEY_X448: c_int = 961;
+    pub(crate) const EVP_PKEY_RSA: c_int = 6;
+    pub(crate) const EVP_PKEY_RSA_PSS: c_int = 912;
+    pub(crate) const EVP_PKEY_DSA: c_int = 116;
+    pub(crate) const EVP_PKEY_EC: c_int = 408;
+    pub(crate) const EVP_PKEY_DH: c_int = 28;
+    pub(crate) const EVP_PKEY_X25519: c_int = 948;
+    pub(crate) const EVP_PKEY_X448: c_int = 961;
 
     // obj_mac.h
-    pub const NID_ED25519: c_int = 949;
-    pub const NID_ED448: c_int = 960;
-    pub const NID_id_GostR3410_2001: c_int = 811;
-    pub const NID_id_GostR3410_2012_256: c_int = 979;
-    pub const NID_id_GostR3410_2012_512: c_int = 980;
+    pub(crate) const NID_ED25519: c_int = 949;
+    pub(crate) const NID_ED448: c_int = 960;
+    pub(crate) const NID_id_GostR3410_2001: c_int = 811;
+    pub(crate) const NID_id_GostR3410_2012_256: c_int = 979;
+    pub(crate) const NID_id_GostR3410_2012_512: c_int = 980;
 
     // ffi-safe-fn: every handle type below (`SSL`, `X509`, `SSL_CIPHER`,
     // `EVP_PKEY`, `EC_KEY`, `EC_GROUP`) is an `opaque_ffi!` ZST — `&T`
@@ -67,18 +62,22 @@ pub mod ffi {
     // caller-owned buffers / +1 ownership pointers keep `unsafe fn`.
     unsafe extern "C" {
         // ── SSL session/handshake info ───────────────────────────────────
-        pub safe fn SSL_get_version(ssl: &SSL) -> *const c_char;
-        pub safe fn SSL_get_peer_certificate(ssl: &SSL) -> *mut X509;
-        pub safe fn SSL_get_certificate(ssl: &SSL) -> *mut X509;
-        pub safe fn SSL_set_max_send_fragment(ssl: &SSL, max_send_fragment: usize) -> c_int;
+        pub(crate) safe fn SSL_get_version(ssl: &SSL) -> *const c_char;
+        pub(crate) safe fn SSL_get_peer_certificate(ssl: &SSL) -> *mut X509;
+        pub(crate) safe fn SSL_get_certificate(ssl: &SSL) -> *mut X509;
+        pub(crate) safe fn SSL_set_max_send_fragment(ssl: &SSL, max_send_fragment: usize) -> c_int;
         // SAFETY (unsafe fn): `buf` must be writable for `count` bytes.
-        pub fn SSL_get_finished(ssl: *const SSL, buf: *mut c_void, count: usize) -> usize;
+        pub(crate) fn SSL_get_finished(ssl: *const SSL, buf: *mut c_void, count: usize) -> usize;
         // SAFETY (unsafe fn): `buf` must be writable for `count` bytes.
-        pub fn SSL_get_peer_finished(ssl: *const SSL, buf: *mut c_void, count: usize) -> usize;
+        pub(crate) fn SSL_get_peer_finished(
+            ssl: *const SSL,
+            buf: *mut c_void,
+            count: usize,
+        ) -> usize;
         // Opaque-ZST `&SSL` + `Option<&mut _>` out-params (NPO ⇒ ABI-identical
         // to nullable `*mut _`); BoringSSL writes each non-null slot in place.
         // No remaining caller-side precondition.
-        pub safe fn SSL_get_shared_sigalgs(
+        pub(crate) safe fn SSL_get_shared_sigalgs(
             ssl: &SSL,
             idx: c_int,
             psign: Option<&mut c_int>,
@@ -88,7 +87,7 @@ pub mod ffi {
             rhash: Option<&mut u8>,
         ) -> c_int;
         // SAFETY (unsafe fn): `out`/`label`/`context` must be valid for the given lengths.
-        pub fn SSL_export_keying_material(
+        pub(crate) fn SSL_export_keying_material(
             ssl: *mut SSL,
             out: *mut u8,
             out_len: usize,
@@ -98,40 +97,40 @@ pub mod ffi {
             context_len: usize,
             use_context: c_int,
         ) -> c_int;
-        pub safe fn SSL_session_reused(ssl: &SSL) -> c_int;
-        pub safe fn SSL_get_privatekey(ssl: &SSL) -> *mut EVP_PKEY;
+        pub(crate) safe fn SSL_session_reused(ssl: &SSL) -> c_int;
+        pub(crate) safe fn SSL_get_privatekey(ssl: &SSL) -> *mut EVP_PKEY;
 
         // ── SSL_SESSION ───────────────────────────────────────────────────
-        pub safe fn SSL_get_session(ssl: &SSL) -> *mut SSL_SESSION;
+        pub(crate) safe fn SSL_get_session(ssl: &SSL) -> *mut SSL_SESSION;
         // Both handles are opaque-ZST refs (`UnsafeCell` body); BoringSSL bumps
         // `session`'s refcount internally — no caller-side precondition.
-        pub safe fn SSL_set_session(ssl: &SSL, session: &SSL_SESSION) -> c_int;
+        pub(crate) safe fn SSL_set_session(ssl: &SSL, session: &SSL_SESSION) -> c_int;
         // SAFETY (unsafe fn): consumes a +1 reference; `session` must be uniquely owned or null.
-        pub fn SSL_SESSION_free(session: *mut SSL_SESSION);
+        pub(crate) fn SSL_SESSION_free(session: *mut SSL_SESSION);
         // Opaque-ZST `&SSL_SESSION` + `&mut` out-params (FFI-nonnull) ⇒ no
         // caller-side precondition; BoringSSL writes a borrowed ptr/len pair.
-        pub safe fn SSL_SESSION_get0_ticket(
+        pub(crate) safe fn SSL_SESSION_get0_ticket(
             session: &SSL_SESSION,
             out_ticket: &mut *const u8,
             out_len: &mut usize,
         );
         // SAFETY (unsafe fn): `pp` (when non-null) must point to a buffer with capacity for the encoded session.
-        pub fn i2d_SSL_SESSION(session: *mut SSL_SESSION, pp: *mut *mut u8) -> c_int;
+        pub(crate) fn i2d_SSL_SESSION(session: *mut SSL_SESSION, pp: *mut *mut u8) -> c_int;
         // SAFETY (unsafe fn): `*pp` must be readable for `length` bytes.
-        pub fn d2i_SSL_SESSION(
+        pub(crate) fn d2i_SSL_SESSION(
             a: *mut *mut SSL_SESSION,
             pp: *mut *const u8,
             length: c_long,
         ) -> *mut SSL_SESSION;
 
         // ── SSL_CIPHER ────────────────────────────────────────────────────
-        pub safe fn SSL_get_current_cipher(ssl: &SSL) -> *const SSL_CIPHER;
-        pub safe fn SSL_CIPHER_get_name(cipher: &SSL_CIPHER) -> *const c_char;
-        pub safe fn SSL_CIPHER_standard_name(cipher: &SSL_CIPHER) -> *const c_char;
-        pub safe fn SSL_CIPHER_get_version(cipher: &SSL_CIPHER) -> *const c_char;
+        pub(crate) safe fn SSL_get_current_cipher(ssl: &SSL) -> *const SSL_CIPHER;
+        pub(crate) safe fn SSL_CIPHER_get_name(cipher: &SSL_CIPHER) -> *const c_char;
+        pub(crate) safe fn SSL_CIPHER_standard_name(cipher: &SSL_CIPHER) -> *const c_char;
+        pub(crate) safe fn SSL_CIPHER_get_version(cipher: &SSL_CIPHER) -> *const c_char;
 
         // ── X509 ─────────────────────────────────────────────────────────
-        pub safe fn X509_up_ref(x: &X509) -> c_int;
+        pub(crate) safe fn X509_up_ref(x: &X509) -> c_int;
         // ffi-safe-fn: BoringSSL's `sk_value` takes `const OPENSSL_STACK *` and
         // returns the element at `i` (or NULL if out-of-range — see
         // `crypto/stack/stack.cc`); it never dereferences past the header it
@@ -142,24 +141,24 @@ pub mod ffi {
         // precondition; convert via `struct_stack_st_X509::opaque_ref` (panics
         // on null, which both call sites already guard).
         #[link_name = "sk_value"]
-        pub safe fn sk_X509_value(sk: &struct_stack_st_X509, i: usize) -> *mut X509;
+        pub(crate) safe fn sk_X509_value(sk: &struct_stack_st_X509, i: usize) -> *mut X509;
 
         // ── EVP / EC ──────────────────────────────────────────────────────
-        pub safe fn EVP_PKEY_id(pkey: &EVP_PKEY) -> c_int;
-        pub safe fn EVP_PKEY_bits(pkey: &EVP_PKEY) -> c_int;
-        // Returns a +1 `EC_KEY*` (caller owns; the sole call site mirrors the
-        // Zig spec and intentionally leaks it). The only pointer arg is an
+        pub(crate) safe fn EVP_PKEY_id(pkey: &EVP_PKEY) -> c_int;
+        pub(crate) safe fn EVP_PKEY_bits(pkey: &EVP_PKEY) -> c_int;
+        // Returns a +1 `EC_KEY*` (caller owns; the sole call site
+        // intentionally leaks it). The only pointer arg is an
         // opaque-ZST `&EVP_PKEY`, so the call itself has no precondition.
-        pub safe fn EVP_PKEY_get1_EC_KEY(pkey: &EVP_PKEY) -> *mut EC_KEY;
+        pub(crate) safe fn EVP_PKEY_get1_EC_KEY(pkey: &EVP_PKEY) -> *mut EC_KEY;
         // Result is borrowed from `key`; opaque-ZST ref ⇒ no caller precondition.
-        pub safe fn EC_KEY_get0_group(key: &EC_KEY) -> *const EC_GROUP;
-        pub safe fn EC_GROUP_get_curve_name(group: &EC_GROUP) -> c_int;
+        pub(crate) safe fn EC_KEY_get0_group(key: &EC_KEY) -> *const EC_GROUP;
+        pub(crate) safe fn EC_GROUP_get_curve_name(group: &EC_GROUP) -> c_int;
 
         // ── OBJ ──────────────────────────────────────────────────────────
         // Pure NID→short-name lookup; takes a by-value int and returns a
         // pointer into BoringSSL's static OID table (or null). No pointer
         // precondition, so declare `safe fn`.
-        pub safe fn OBJ_nid2sn(nid: c_int) -> *const c_char;
+        pub(crate) safe fn OBJ_nid2sn(nid: c_int) -> *const c_char;
 
         // ── Safe re-declarations of upstream `bun_boringssl_sys` symbols ──
         // Upstream still takes raw `*const/*mut SSL`; the opaque-ZST `&SSL`
@@ -167,37 +166,34 @@ pub mod ffi {
         // scalars / `&mut` out-params leave no caller-side precondition, so
         // declare them `safe fn` here and route callers through
         // `SSL::opaque_ref` (panics on null, which every site already guards).
-        pub safe fn SSL_get_servername(ssl: &SSL, ty: c_int) -> *const c_char;
-        pub safe fn SSL_is_init_finished(ssl: &SSL) -> c_int;
-        pub safe fn SSL_get_peer_cert_chain(ssl: &SSL) -> *mut struct_stack_st_X509;
-        pub safe fn SSL_get0_alpn_selected(
+        pub(crate) safe fn SSL_get_servername(ssl: &SSL, ty: c_int) -> *const c_char;
+        pub(crate) safe fn SSL_is_init_finished(ssl: &SSL) -> c_int;
+        pub(crate) safe fn SSL_get_peer_cert_chain(ssl: &SSL) -> *mut struct_stack_st_X509;
+        pub(crate) safe fn SSL_get0_alpn_selected(
             ssl: &SSL,
             out_data: &mut *const u8,
             out_len: &mut c_uint,
         );
-        pub safe fn SSL_get_ex_data(ssl: &SSL, idx: c_int) -> *mut c_void;
-        pub safe fn SSL_renegotiate(ssl: &SSL) -> c_int;
-        pub safe fn SSL_set_renegotiate_mode(
+        pub(crate) safe fn SSL_get_ex_data(ssl: &SSL, idx: c_int) -> *mut c_void;
+        pub(crate) safe fn SSL_renegotiate(ssl: &SSL) -> c_int;
+        pub(crate) safe fn SSL_set_renegotiate_mode(
             ssl: &SSL,
             mode: super::boringssl::ssl_renegotiate_mode_t,
         );
-        pub safe fn SSL_set_verify(
+        pub(crate) safe fn SSL_set_verify(
             ssl: &SSL,
             mode: c_int,
             callback: super::boringssl::SSL_verify_cb,
         );
         // Opaque-ZST `&SSL` + opaque `*mut c_void` payload (BoringSSL stores
         // it verbatim, never derefs) ⇒ no caller-side precondition.
-        pub safe fn SSL_set_ex_data(ssl: &SSL, idx: c_int, data: *mut c_void) -> c_int;
+        pub(crate) safe fn SSL_set_ex_data(ssl: &SSL, idx: c_int, data: *mut c_void) -> c_int;
         // Returns the borrowed parent CTX (always non-null for a live `SSL*`).
-        pub safe fn SSL_get_SSL_CTX(ssl: &SSL) -> *mut SSL_CTX;
-        // Atomic refcount bump on a live `SSL_CTX*`; opaque-ZST ref ⇒ no
-        // caller-side precondition (route via `SSL_CTX::opaque_ref`).
-        pub safe fn SSL_CTX_up_ref(ctx: &SSL_CTX) -> c_int;
+        pub(crate) safe fn SSL_get_SSL_CTX(ssl: &SSL) -> *mut SSL_CTX;
         // Stores `cb`/`arg` opaquely on the CTX (BoringSSL never derefs `arg`
         // outside the callback). Opaque-ZST `&SSL_CTX` + by-value fn-ptr +
         // opaque `*mut c_void` ⇒ no caller-side precondition.
-        pub safe fn SSL_CTX_set_alpn_select_cb(
+        pub(crate) safe fn SSL_CTX_set_alpn_select_cb(
             ctx: &SSL_CTX,
             cb: Option<
                 unsafe extern "C" fn(
@@ -215,17 +211,16 @@ pub mod ffi {
 }
 use crate::node::StringOrBuffer;
 
-// In Zig this file is a mixin of free functions over `jsc.API.TLSSocket`.
 // The `#[bun_jsc::host_fn]` shims live on `NewSocket<SSL>` in `socket_body.rs`
 // and forward into these free helpers — keep them as plain `fn`s.
-// PORT NOTE: this file is `mod`-included from BOTH `socket/mod.rs` and
+// this file is `mod`-included from BOTH `socket/mod.rs` and
 // `socket/socket_body.rs`; `super::TLSSocket` resolves to the parent's
 // `NewSocket<true>` in either compilation, whereas the absolute path
 // `crate::api::TLSSocket` always picked the `mod.rs` shape and broke the
 // `socket_body` instance.
 type This = super::TLSSocket;
 
-pub fn get_servername(
+pub(super) fn get_servername(
     this: &This,
     global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -246,7 +241,7 @@ pub fn get_servername(
     Ok(ZigString::from_utf8(slice).to_js(global))
 }
 
-pub fn set_servername(
+pub(super) fn set_servername(
     this: &This,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -271,7 +266,7 @@ pub fn set_servername(
         .get_zig_string(global)?
         .to_owned_slice()
         .into_boxed_slice();
-    // Drop replaces the old value (Zig manually freed `old`).
+    // Drop replaces the old value.
     this.server_name.set(Some(slice));
 
     let host = this.server_name.get().as_deref().unwrap();
@@ -292,7 +287,7 @@ pub fn set_servername(
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn get_peer_x509_certificate(
+pub(super) fn get_peer_x509_certificate(
     this: &This,
     global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -307,7 +302,7 @@ pub fn get_peer_x509_certificate(
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn get_x509_certificate(
+pub(super) fn get_x509_certificate(
     this: &This,
     global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -324,7 +319,7 @@ pub fn get_x509_certificate(
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn get_tls_version(
+pub(super) fn get_tls_version(
     this: &This,
     global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -346,7 +341,7 @@ pub fn get_tls_version(
     Ok(ZigString::from_utf8(slice).to_js(global))
 }
 
-pub fn set_max_send_fragment(
+pub(super) fn set_max_send_fragment(
     this: &This,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -382,7 +377,7 @@ pub fn set_max_send_fragment(
     ))
 }
 
-pub fn get_peer_certificate(
+pub(super) fn get_peer_certificate(
     this: &This,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -455,7 +450,7 @@ pub fn get_peer_certificate(
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn get_certificate(
+pub(super) fn get_certificate(
     this: &This,
     global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -471,7 +466,7 @@ pub fn get_certificate(
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn get_tls_finished_message(
+pub(super) fn get_tls_finished_message(
     this: &This,
     global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -497,7 +492,7 @@ pub fn get_tls_finished_message(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let buffer_size = usize::try_from(size).expect("int cast");
+    let buffer_size = size;
     let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
@@ -507,7 +502,7 @@ pub fn get_tls_finished_message(
     Ok(buffer)
 }
 
-pub fn get_shared_sigalgs(
+pub(super) fn get_shared_sigalgs(
     this: &This,
     global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -533,7 +528,7 @@ pub fn get_shared_sigalgs(
     for i in 0..usize::try_from(nsig).expect("int cast") {
         let mut hash_nid: c_int = 0;
         let mut sign_nid: c_int = 0;
-        let mut sig_with_md: &[u8] = b"";
+        let sig_with_md: &[u8];
 
         ffi::SSL_get_shared_sigalgs(
             boringssl::SSL::opaque_ref(ssl_ptr),
@@ -610,7 +605,11 @@ pub fn get_shared_sigalgs(
     Ok(array)
 }
 
-pub fn get_cipher(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(super) fn get_cipher(
+    this: &This,
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -659,7 +658,7 @@ pub fn get_cipher(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> J
     Ok(result)
 }
 
-pub fn get_tls_peer_finished_message(
+pub(super) fn get_tls_peer_finished_message(
     this: &This,
     global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -685,7 +684,7 @@ pub fn get_tls_peer_finished_message(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let buffer_size = usize::try_from(size).expect("int cast");
+    let buffer_size = size;
     let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
@@ -695,7 +694,7 @@ pub fn get_tls_peer_finished_message(
     Ok(buffer)
 }
 
-pub fn export_keying_material(
+pub(super) fn export_keying_material(
     this: &This,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -732,7 +731,6 @@ pub fn export_keying_material(
     if args.len > 2 {
         let context_arg = args.ptr[2];
 
-        // PERF(port): was arena bulk-free — profile in Phase B
         if let Some(sb) = StringOrBuffer::from_js(global, context_arg)? {
             let context_slice = sb.slice();
 
@@ -793,7 +791,7 @@ pub fn export_keying_material(
     }
 }
 
-pub fn get_ephemeral_key_info(
+pub(super) fn get_ephemeral_key_info(
     this: &This,
     global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -867,7 +865,7 @@ pub fn get_ephemeral_key_info(
     Ok(result)
 }
 
-pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
+pub(super) fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
     let mut alpn_proto: *const u8 = core::ptr::null();
     let mut alpn_proto_len: u32 = 0;
 
@@ -895,7 +893,11 @@ pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSVal
     Ok(ZigString::from_utf8(slice).to_js(global))
 }
 
-pub fn get_session(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(super) fn get_session(
+    this: &This,
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -919,7 +921,11 @@ pub fn get_session(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> 
     Ok(buffer)
 }
 
-pub fn set_session(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(super) fn set_session(
+    this: &This,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     if this.socket.get().is_detached() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -933,7 +939,6 @@ pub fn set_session(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> J
     }
 
     let session_arg = args.ptr[0];
-    // PERF(port): was arena bulk-free — profile in Phase B
 
     if let Some(sb) = StringOrBuffer::from_js(global, session_arg)? {
         let session_slice = sb.slice();
@@ -971,7 +976,7 @@ pub fn set_session(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> J
     }
 }
 
-pub fn get_tls_ticket(
+pub(super) fn get_tls_ticket(
     this: &This,
     global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -1001,7 +1006,11 @@ pub fn get_tls_ticket(
     jsc::ArrayBuffer::create_buffer(global, slice)
 }
 
-pub fn renegotiate(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(super) fn renegotiate(
+    this: &This,
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -1012,7 +1021,7 @@ pub fn renegotiate(this: &This, global: &JSGlobalObject, _frame: &CallFrame) -> 
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn disable_renegotiation(
+pub(super) fn disable_renegotiation(
     this: &This,
     _global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -1027,7 +1036,7 @@ pub fn disable_renegotiation(
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn is_session_reused(
+pub(super) fn is_session_reused(
     this: &This,
     _global: &JSGlobalObject,
     _frame: &CallFrame,
@@ -1040,7 +1049,7 @@ pub fn is_session_reused(
     ))
 }
 
-pub fn set_verify_mode(
+pub(super) fn set_verify_mode(
     this: &This,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -1098,6 +1107,13 @@ extern "C" fn always_allow_ssl_verify_callback(
 #[inline(never)]
 fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue {
     let mut zig_str = ZigString::init(b"");
+    // Backing storage for the formatted "OpenSSL ..." message. Declared at
+    // function scope so it outlives `to_error_instance` below. The string is
+    // tagged UTF-8 (`init_utf8`) so that `to_error_instance` takes the copying
+    // path (`fromUTF8ReplacingInvalidSequences`); an UNTAGGED ZigString would
+    // be wrapped with `StringImpl::createWithoutCopying` and the JS Error's
+    // message would dangle into this freed Vec.
+    let mut formatted: Vec<u8> = Vec::new();
     let mut output_buf: [u8; 4096] = [0; 4096];
 
     output_buf[0] = 0;
@@ -1150,24 +1166,17 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
 
     if written > 0 {
         let message = &output_buf[0..written];
-        let mut formatted: Vec<u8> = Vec::with_capacity(b"OpenSSL ".len() + message.len());
+        formatted.reserve(b"OpenSSL ".len() + message.len());
         {
             use std::io::Write;
             let _ = write!(&mut formatted, "OpenSSL {}", ::bstr::BStr::new(message));
         }
-        // TODO(port): Zig leaks `formatted` into a global-marked ZigString; ownership semantics unclear.
-        // `Interned::leak_vec` makes the process-lifetime leak explicit (the
-        // bytes are never reclaimed). NOTE: `mark_global()` below tells JSC the
-        // bytes are mimalloc-owned and may be freed via `mi_free`, but
-        // `leak_vec` allocates with Rust's global allocator — allocator
-        // mismatch if JSC ever adopts the buffer. `to_error_instance` clones
-        // the string, so today the leaked bytes are simply never freed; the
-        // `mark_global` is dead weight matching Zig 1:1 (see TODO below).
-        zig_str = ZigString::init(bun_ptr::Interned::leak_vec(formatted).as_bytes());
-        let mut encoded_str = zig_str.with_encoding();
-        encoded_str.mark_global();
-        // TODO(port): Zig discards encoded_str and continues using zig_str — possible upstream bug; matching Zig 1:1.
-        let _ = encoded_str;
+        // `zig_str` borrows `formatted`, which lives until this function
+        // returns. The UTF-8 tag is what makes `to_error_instance` clone the
+        // bytes (untagged strings are wrapped without copying — see
+        // Zig::toString in src/jsc/bindings/helpers.h), matching the
+        // "Ensure we clone it" pattern in JSGlobalObject::create_error_instance.
+        zig_str = ZigString::init_utf8(&formatted);
 
         // We shouldn't *need* to do this but it's not entirely clear.
         boringssl::ERR_clear_error();
@@ -1178,7 +1187,9 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
     }
 
     // store the exception in here
-    // toErrorInstance clones the string
+    // (UTF-8-tagged strings are cloned by toErrorInstance; the untagged
+    // `default_message` fallback is wrapped without copying, which is safe
+    // because callers pass static literals)
     let exception = zig_str.to_error_instance(global);
 
     // reference it in stack memory
@@ -1186,5 +1197,3 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
 
     exception
 }
-
-// ported from: src/runtime/socket/tls_socket_functions.zig

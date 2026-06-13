@@ -1,8 +1,7 @@
 //! Zero-cost, zero-alloc FFI bindings for libuv on **Windows**.
 //!
-//! Field-accurate `#[repr(C)]` mirrors of every `uv_*_t` Bun touches, ported
-//! directly from `src/libuv_sys/libuv.zig` (itself `translate-c` of
-//! `vendor/libuv/include/uv.h` + `uv/win.h`). All structs are POD (`Copy` where
+//! Field-accurate `#[repr(C)]` mirrors of every `uv_*_t` Bun touches, derived
+//! from `vendor/libuv/include/uv.h` + `uv/win.h`. All structs are POD (`Copy` where
 //! `union`s permit), all-zero is a valid bit-pattern (libuv expects callers to
 //! `memset(0)` before `uv_*_init`), and no method allocates.
 //!
@@ -63,8 +62,7 @@ pub use bun_windows_sys::{
 // • NTSTATUS: libuv wants plain i32, `bun_windows_sys::NTSTATUS` is a newtype.
 pub type CHAR = u8;
 pub type NTSTATUS = i32;
-/// Win32 `SOCKET` is `UINT_PTR` (an integer), not a pointer; matches Zig's
-/// `std.os.windows.ws2_32.SOCKET = usize`. A raw-pointer type would give
+/// Win32 `SOCKET` is `UINT_PTR` (an integer), not a pointer. A raw-pointer type would give
 /// `Option<SOCKET>` an unwanted niche (None ↔ 0 collides with socket 0) and
 /// force int-to-ptr provenance for `INVALID_SOCKET`.
 pub type SOCKET = usize;
@@ -155,8 +153,7 @@ impl uv_buf_t {
     }
     #[inline]
     pub fn slice(&self) -> &[u8] {
-        // Zig `this.base[0..this.len]` is well-defined for `(null, 0)`; Rust's
-        // `from_raw_parts` is not (requires non-null, aligned even for len==0).
+        // `from_raw_parts` requires non-null, aligned even for len==0.
         // libuv routinely hands back `{len:0, base:NULL}` (declined alloc_cb,
         // `uv_buf_init(NULL,0)`), so guard the empty/null case explicitly.
         if self.len == 0 || self.base.is_null() {
@@ -165,8 +162,7 @@ impl uv_buf_t {
         // SAFETY: caller-supplied (base, len); valid for the buffer's lifetime.
         unsafe { core::slice::from_raw_parts(self.base, self.len as usize) }
     }
-    /// Mutable view of the buffer (Zig `uv_buf_t::slice` returned `[]u8`, which
-    /// carries no exclusivity invariant — Rust `&mut [u8]` does).
+    /// Mutable view of the buffer.
     ///
     /// SAFETY: caller asserts that `(base, len)` came from a writeable
     /// allocation and that no other `&mut`/`&` to that storage is live for the
@@ -396,8 +392,7 @@ const _: () = assert!(!core::mem::needs_drop::<Loop>());
 const _: () = assert!(!core::mem::needs_drop::<UnsafeCell<MaybeUninit<Loop>>>());
 
 thread_local! {
-    /// `threadlocal var threadlocal_loop_data: Loop = undefined` — static TLS
-    /// storage (zero-alloc; mirrors Zig). `MaybeUninit` because the slot is
+    /// Static TLS storage (zero-alloc). `MaybeUninit` because the slot is
     /// only valid after `uv_loop_init`.
     static THREADLOCAL_LOOP_DATA: UnsafeCell<MaybeUninit<Loop>> =
         const { UnsafeCell::new(MaybeUninit::uninit()) };
@@ -407,7 +402,7 @@ thread_local! {
 }
 
 impl Loop {
-    /// `bun.windows.libuv.Loop.get()` (libuv.zig:733). Returns this thread's
+    /// Returns this thread's
     /// libuv loop, lazily `uv_loop_init`ing it on first call. Each thread owns
     /// its own loop; sharing `uv_default_loop()` across worker threads is
     /// unsound for the per-worker shutdown path.
@@ -432,7 +427,7 @@ impl Loop {
         })
     }
 
-    /// `bun.windows.libuv.Loop.shutdown()` (libuv.zig:714). Closes this
+    /// Closes this
     /// thread's libuv loop. Called from `WebWorker::shutdown`.
     pub fn shutdown() {
         THREADLOCAL_LOOP.with(|slot| {
@@ -442,15 +437,15 @@ impl Loop {
             }
             // SAFETY: `loop_` is the live per-thread loop initialized in `get()`.
             if let Some(err) = unsafe { uv_loop_close(loop_) }.raw_errno() {
-                // Zig: `if (err == .BUSY)` — only EBUSY means handles are
+                // Only EBUSY means handles are
                 // still open; walk + close them, run once to flush close
                 // callbacks, then close again (must succeed). `uv_loop_close`
                 // documents no other failure code.
                 if err == (UV_EBUSY as c_int).unsigned_abs() as u16 {
                     unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
                     let _ = unsafe { uv_run(loop_, RunMode::Default) };
-                    // NOTE the call is unconditional (Zig `bun.debugAssert`
-                    // evaluates its argument in release too).
+                    // NOTE the call is unconditional — the close must run in
+                    // release builds too.
                     let rc = unsafe { uv_loop_close(loop_) };
                     debug_assert_eq!(rc, ReturnCode::ZERO);
                 }
@@ -482,7 +477,7 @@ impl Loop {
         log!("dec");
         self.active_handles = self.active_handles.saturating_sub(1);
     }
-    /// Aliases matching Zig's `pub const ref = inc`.
+    /// `ref`/`unref` aliases for `inc`/`dec`.
     #[inline]
     pub fn ref_(&mut self) {
         self.inc();
@@ -494,10 +489,9 @@ impl Loop {
     #[inline]
     pub fn unref_count(&mut self, count: i32) {
         log!("unrefCount({})", count);
-        // Zig: `-|= @as(u32, @intCast(count))` — `@intCast` is safety-checked
-        // (panics on negative). A bare `count as u32` would silently wrap a
-        // negative to ~4 billion and zero out `active_handles`. Mirror the
-        // checked cast: assert in debug, clamp in release so we never wrap.
+        // A bare `count as u32` would silently wrap a
+        // negative to ~4 billion and zero out `active_handles`:
+        // assert in debug, clamp in release so we never wrap.
         debug_assert!(count >= 0, "unref_count: count must be non-negative");
         self.active_handles = self.active_handles.saturating_sub(count.max(0) as u32);
     }
@@ -546,7 +540,7 @@ unsafe extern "C" fn close_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `HandleMixin` (libuv.zig:437) — Rust ports this as a generic trait every
+// Handle mixin — a generic trait every
 // handle type opts into. All methods are `#[inline]` zero-cost casts.
 // ──────────────────────────────────────────────────────────────────────────
 /// Marker for `#[repr(C)]` structs whose first fields are exactly
@@ -583,7 +577,7 @@ pub unsafe trait UvHandle: Sized {
     /// Ownership of `data` transfers to the handle; reclaim with
     /// [`take_owned_data`](UvHandle::take_owned_data) (typically in the
     /// `uv_close_cb`). This is the centralized `Box::into_raw` for the
-    /// `handle.data = bun.new(T, ..)` Zig pattern — callers never spell the
+    /// owned-`handle->data` pattern — callers never spell the
     /// raw round-trip themselves.
     #[inline]
     fn set_owned_data<T>(&mut self, data: Box<T>) {
@@ -722,15 +716,14 @@ pub unsafe trait UvStream: UvHandle {
         // SAFETY: stream prefix invariant.
         unsafe { uv_is_writable((self as *const Self).cast()) != 0 }
     }
-    /// Port of `StreamMixin::readStart` (libuv.zig:3067) — high-level wrapper
+    /// High-level wrapper
     /// over `uv_read_start` that thunks Rust callbacks through a monomorphised
     /// `extern "C"` trampoline. `context` is stashed in `handle.data` and
     /// recovered in the trampoline; the three callbacks are baked into the
-    /// monomorphisation via the [`StreamReader`] trait (Zig captures them as
-    /// `comptime` fn pointers — Rust expresses that as associated fns so the
+    /// monomorphisation via the [`StreamReader`] trait (associated fns, so the
     /// trampoline stays zero-alloc and `Handle` needs no spare storage).
     ///
-    /// Unlike Zig (`error_cb` takes `bun.sys.E`), the Rust binding passes the
+    /// `error_cb` receives the
     /// raw negative libuv errno (`c_int`); this crate is layered below
     /// `bun_sys` so it can't name `E`. Callers map via
     /// `bun_sys::windows::translate_uv_error_to_e`. Returns the raw
@@ -791,11 +784,10 @@ pub unsafe trait UvStream: UvHandle {
     }
 }
 
-/// Callback bundle for [`UvStream::read_start_ctx`]. Port of the three
-/// `comptime` fn-pointer parameters on Zig's `StreamMixin::readStart`
-/// (libuv.zig:3070-3072): Rust monomorphises the `extern "C"` trampolines over
+/// Callback bundle for [`UvStream::read_start_ctx`].
+/// The `extern "C"` trampolines are monomorphised over
 /// this trait so the callbacks are baked into the codegen (zero-alloc, no
-/// per-handle storage) exactly as in Zig.
+/// per-handle storage).
 pub trait StreamReader: Sized {
     fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8];
     /// `err` is the raw negative libuv errno (e.g. `UV_EOF`). Map via
@@ -946,16 +938,12 @@ impl uv_write_t {
         // SAFETY: caller initialized `self`; `stream` is a live stream handle.
         unsafe { uv_write(self, stream, input, 1, cb) }
     }
-    /// Context-aware `uv_write` (Zig libuv.zig:1327 `uv_write_t::write` with
-    /// `context: anytype, comptime onWrite`). Stores `context` in `req.data`;
+    /// Context-aware `uv_write`. Stores `context` in `req.data`;
     /// the trampoline recovers it and dispatches to `on_write` as a plain Rust
     /// `&mut`. Generic monomorphisation gives one `extern "C"` thunk per `<T>`.
     ///
-    /// PORT NOTE: Zig captures `onWrite` at *comptime* (one thunk per
-    /// callsite, direct call) and returns `Maybe(void)` with the
-    /// `.toError(.write)` already applied. The Rust port can do neither
-    /// without a `bun_sys` dependency / unstable const-generic fn pointers, so
-    /// it (a) keeps `on_write` runtime-dispatched but stashes it as a `usize`
+    /// Without a `bun_sys` dependency / unstable const-generic fn pointers,
+    /// this (a) keeps `on_write` runtime-dispatched but stashes it as a `usize`
     /// (fn-ptr ↔ integer is well-defined; fn-ptr ↔ data-ptr is not — Miri
     /// rejects the latter), and (b) returns the raw [`ReturnCode`]; callers
     /// apply `.to_error(Tag::write)` themselves. The `bun.sys.syslog` line is
@@ -979,8 +967,7 @@ impl uv_write_t {
             // `uv_write` below; libuv invokes this exactly once with the same
             // `req` pointer. The `usize` → `fn` cast round-trips the address
             // written by `on_write as usize` above (Win64: same width).
-            // Pass the raw `*mut T` straight through (matches Zig's
-            // `uvWriteCb`: `callback(@ptrCast(@alignCast(handler.data)), status)`)
+            // Pass the raw `*mut T` straight through
             // — callers commonly free the `T` allocation inside the callback,
             // so materialising `&mut T` here would leave that reference
             // dangling across the dealloc (UB).
@@ -1181,7 +1168,7 @@ pub struct Pipe {
 pub type uv_pipe_t = Pipe;
 
 impl Pipe {
-    /// `uv_pipe_init` (libuv.zig:1419). Returns the raw `ReturnCode`; callers
+    /// `uv_pipe_init` wrapper. Returns the raw `ReturnCode`; callers
     /// in higher tiers map to `bun_sys::Result` themselves so this crate stays
     /// free of `bun_sys`.
     #[inline]
@@ -1199,7 +1186,7 @@ impl Pipe {
         // SAFETY: pipe was `init`ed; libuv copies the name.
         unsafe { uv_pipe_bind2(self, named_pipe.as_ptr(), named_pipe.len(), flags) }
     }
-    /// `StreamMixin::listen` (libuv.zig:3047). Caller supplies a plain
+    /// Caller supplies a plain
     /// `uv_connection_cb` and recovers its context from `handle.data` itself.
     #[inline]
     pub fn listen(
@@ -1262,7 +1249,7 @@ impl Pipe {
     pub fn as_stream_ptr(&mut self) -> *mut uv_stream_t {
         self.as_stream()
     }
-    /// `Pipe::closeAndDestroy` (libuv.zig:1471) — close the pipe handle (if
+    /// Close the pipe handle (if
     /// needed) and then `Box::from_raw`-drop it. Handles all states:
     /// never-initialized (`loop_ == null`), already closing, or active. After
     /// `uv_pipe_init` the handle is in the event loop's `handle_queue`;
@@ -1274,8 +1261,8 @@ impl Pipe {
     /// never-initialized branch deallocates the pointee — holding a live
     /// `&mut self` across that drop would dangle. In the already-closing
     /// branch the allocation is *not* reclaimed here: the previously
-    /// registered `uv_close` callback is assumed to free the box (matches
-    /// Zig); if a non-freeing callback was registered, the pipe leaks.
+    /// registered `uv_close` callback is assumed to free the box;
+    /// if a non-freeing callback was registered, the pipe leaks.
     pub unsafe fn close_and_destroy(this: *mut Pipe) {
         unsafe extern "C" fn on_close_destroy(handle: *mut Pipe) {
             // SAFETY: handle was Box-allocated; callback fires exactly once.
@@ -1666,7 +1653,7 @@ impl uv_fs_event_t {
         !self.dirw.is_null()
     }
 
-    /// Port of `uv_fs_event_t.hash` (libuv.zig:1750) — `std.hash.Wyhash` over
+    /// Wyhash over
     /// `path ?? "null"`, `events` bytes, `filename`, `status` bytes.
     pub fn hash(&self, filename: &[u8], events: c_int, status: ReturnCode) -> u64 {
         let mut hasher = bun_wyhash::Wyhash::init(0);
@@ -1852,7 +1839,7 @@ impl uv_stat_t {
         self.birthtim
     }
     // Un-prefixed accessors so cross-platform code that pattern-matches on
-    // POSIX `stat.mode`/`stat.size` (Zig: `st.mode`, `st.size`) can call
+    // POSIX `stat.mode`/`stat.size` can call
     // through without `cfg` arms.
     #[inline]
     pub fn mode(&self) -> u64 {
@@ -1936,14 +1923,15 @@ pub type uv_fs_t = fs_t;
 pub type uv_fs_s = fs_t;
 
 impl fs_t {
+    #[cfg(debug_assertions)]
     const UV_FS_CLEANEDUP: c_int = 0x0010;
 
     /// Debug sentinel: `loop_` is poisoned so `deinit()` can assert that libuv
     /// actually wrote the request before we try to clean it up.
-    /// Zig: `pub const uninitialized: fs_t` — kept as a fn (raw-pointer fields
+    /// Kept as a fn rather than a `const` (raw-pointer fields
     /// in nested unions block a true `const`); `#[inline(always)]` so the
-    /// ~440-byte zero-fill on every sync `uv_fs_*` call optimises identically
-    /// to the Zig `.rodata` value.
+    /// ~440-byte zero-fill on every sync `uv_fs_*` call optimises to a
+    /// `.rodata` copy.
     #[inline(always)]
     pub fn uninitialized() -> fs_t {
         let mut v: fs_t = bun_core::ffi::zeroed();
@@ -1985,7 +1973,7 @@ impl fs_t {
         self.assert_initialized();
         self.ptr.cast::<T>()
     }
-    /// `req.file.fd` (Zig: `union(.{ pathw, fd })` arm). The union is private
+    /// `req.file.fd` union arm. The union is private
     /// because the active variant is path-dependent (`uv_fs_open` writes `fd`;
     /// path-taking ops write `pathw`); callers reading the wrong arm get UB.
     /// SAFETY: only valid after a `uv_fs_*` call that populated the `fd` arm.
@@ -2136,14 +2124,12 @@ pub struct uv_thread_options_t {
 /// Map a negative `UV_E*` libuv error code to the stable `bun.sys.E` /
 /// `bun_errno::E` discriminant (e.g. `UV_ENOENT (-4058)` → `2`).
 ///
-/// This is the leaf-crate copy of Zig `ReturnCode.errno()`'s switch
-/// (libuv.zig:2888-2970). Layering forbids depending on `bun_errno` here, so
+/// Layering forbids depending on `bun_errno` here, so
 /// the integer discriminants are inlined; they are ABI-stable POSIX values
 /// plus a fixed Bun-assigned tail (`UNKNOWN=134`..`FTYPE=137`). Unmapped
-/// codes return `None`, matching Zig's `else => null`.
+/// codes return `None`.
 ///
-/// Keep in sync with `bun_errno::E` (src/errno/windows_errno.rs) and the Zig
-/// switch in `libuv.zig`.
+/// Keep in sync with `bun_errno::E` (src/errno/windows_errno.rs).
 #[inline]
 pub const fn uv_err_to_e_discriminant(code: c_int) -> Option<u16> {
     Some(match code {
@@ -2247,8 +2233,7 @@ pub struct ReturnCode(pub c_int);
 // above is `#[repr(C)]` POD whose fields are integers, raw pointers,
 // `Option<extern fn>` callbacks, nested POD unions, or `HandleType` (a
 // `#[repr(C)]` enum with `Unknown = 0`). The all-zero bit pattern is therefore
-// a valid pre-`uv_*_init` state — exactly what `std::mem::zeroes` produced in
-// the Zig original. Auditing the bound once per type here lets every
+// a valid pre-`uv_*_init` state. Auditing the bound once per type here lets every
 // `Box::new(zeroed())` / stack out-param site drop its `unsafe` block.
 //
 // SAFETY (per type): audited against the field list in this file — no
@@ -2284,7 +2269,7 @@ impl ReturnCode {
     }
     /// `Some(|UV_E*|)` when negative — the **raw** libuv error magnitude
     /// (e.g. 4082 for `UV_EBUSY`). Use [`errno`] for the translated POSIX
-    /// `bun.sys.E` value (e.g. 16 for `BUSY`) that Zig's `errno()` returns.
+    /// `bun.sys.E` value (e.g. 16 for `BUSY`).
     #[inline]
     pub const fn raw_errno(self) -> Option<u16> {
         if self.0 < 0 {
@@ -2293,10 +2278,10 @@ impl ReturnCode {
             None
         }
     }
-    /// Zig `ReturnCode.errno()` (libuv.zig:2888-2970): when negative, map the
+    /// When negative, map the
     /// `UV_E*` code to the small POSIX `bun.sys.E` discriminant (e.g.
     /// `UV_ENOENT (-4058)` → `2`). Returns `None` for non-negative *or*
-    /// unmapped negative codes (Zig: `else => null`). Downstream callers
+    /// unmapped negative codes. Downstream callers
     /// (`node_fs`, `sys::Fd`, `write_file`, …) store this directly into
     /// `bun_sys::Error.errno`, so it MUST be the translated value, not the raw
     /// `|UV_E*|` magnitude — see [`raw_errno`] for the latter.
@@ -2308,14 +2293,14 @@ impl ReturnCode {
             None
         }
     }
-    /// Zig `errEnum()` (libuv.zig:2975-2979) — same translated value as
+    /// Same translated value as
     /// [`errno`]; for the typed `bun_sys::E` use
     /// `bun_sys::ReturnCodeExt::err_enum_e` (layering: `E` lives upstream).
     #[inline]
     pub const fn err_enum(self) -> Option<u16> {
         self.errno()
     }
-    /// Layer-free `< 0` check (Zig: `Maybe(void).isErr()` after `.toError`).
+    /// Layer-free `< 0` check.
     /// For the tagged `bun_sys::Error` use [`ReturnCodeExt::to_error`].
     #[inline]
     pub const fn is_err(self) -> bool {
@@ -2353,7 +2338,7 @@ impl ReturnCodeI64 {
             None
         }
     }
-    /// Zig `errEnum()` (libuv.zig:3022-3027) — translated `bun_sys::E`
+    /// Translated `bun_sys::E`
     /// discriminant via [`uv_err_to_e_discriminant`] (matching
     /// [`ReturnCode::err_enum`]). For the typed `bun_sys::E` use
     /// `bun_sys::ReturnCodeExt::err_enum_e` (layering: `E` lives upstream).
@@ -2365,7 +2350,7 @@ impl ReturnCodeI64 {
             None
         }
     }
-    /// Zig: `toFD()` — `req.result` after a successful `uv_fs_open` is the
+    /// `req.result` after a successful `uv_fs_open` is the
     /// CRT fd. Returns the raw `uv_file`; caller wraps with `Fd::from_uv`
     /// (`bun_core::Fd` is a higher-tier type).
     #[inline]
@@ -2381,10 +2366,10 @@ impl fmt::Display for ReturnCodeI64 {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `O` — `UV_FS_O_*` flag namespace + `from_bun_o`/`to_bun_o` translation
-// (libuv.zig:170-254). The `bun.O.*` POSIX-like values are passed in by the
-// caller as a raw `i32` (per **Zig** `bun.O` on Windows — sys.zig:188-213 —
-// which normalises to Linux-style octal constants, NOT MSVC `libc::O_*`);
+// `O` — `UV_FS_O_*` flag namespace + `from_bun_o`/`to_bun_o` translation.
+// The `bun.O.*` POSIX-like values are passed in by the
+// caller as a raw `i32` (Bun's `O` on Windows normalises to Linux-style
+// octal constants, NOT MSVC `libc::O_*`);
 // these fns map to/from libuv's MSVC `_O_*` values that `uv_fs_open` expects.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod O {
@@ -2414,27 +2399,23 @@ pub mod O {
 
     // `bun.O.*` — POSIX-shaped flag values Bun normalises to internally.
     //
-    // ⚠ These match **Zig `bun.O` on Windows** (src/sys/sys.zig:188-213),
-    // which hard-codes Linux-style octal constants. They do **NOT** match
+    // ⚠ These are hard-coded Linux-style octal constants. They do **NOT** match
     // `bun_sys::O` if that crate is built against MSVC `libc::O_*`
     // (CREAT=0x100, EXCL=0x400, APPEND=0x8). `bun_sys::O` on Windows must
-    // mirror sys.zig — cross-crate static asserts live in `bun_sys` (this
-    // crate stays leaf). libuv.zig pulls these from `bun.O`; the constants
-    // are stable.
+    // mirror these values — cross-crate static asserts live in `bun_sys` (this
+    // crate stays leaf). The constants are stable.
     mod bun_o {
-        pub const WRONLY: i32 = 0o1;
-        pub const RDWR: i32 = 0o2;
-        pub const CREAT: i32 = 0o100;
-        pub const EXCL: i32 = 0o200;
-        // sys.zig:195 `.windows => { NOCTTY = 0 }` — meaningless on Windows.
-        pub const NOCTTY: i32 = 0;
-        pub const TRUNC: i32 = 0o1000;
-        pub const APPEND: i32 = 0o2000;
-        pub const NONBLOCK: i32 = 0o4000;
-        pub const DSYNC: i32 = 0o10000;
-        pub const DIRECT: i32 = 0o40000;
-        pub const NOFOLLOW: i32 = 0o400000;
-        pub const SYNC: i32 = 0o4010000;
+        pub(super) const WRONLY: i32 = 0o1;
+        pub(super) const RDWR: i32 = 0o2;
+        pub(super) const CREAT: i32 = 0o100;
+        pub(super) const EXCL: i32 = 0o200;
+        pub(super) const TRUNC: i32 = 0o1000;
+        pub(super) const APPEND: i32 = 0o2000;
+        pub(super) const NONBLOCK: i32 = 0o4000;
+        pub(super) const DSYNC: i32 = 0o10000;
+        pub(super) const DIRECT: i32 = 0o40000;
+        pub(super) const NOFOLLOW: i32 = 0o400000;
+        pub(super) const SYNC: i32 = 0o4010000;
     }
 
     /// Convert from internal `bun.O` flags to libuv/Windows flags.
@@ -2464,9 +2445,8 @@ pub mod O {
         // SYNC and DSYNC must be mutually exclusive for libuv on Windows.
         // `bun.O.SYNC` (0o4010000) is a superset of `DSYNC` (0o10000), so check
         // SYNC first to emit only `UV_FS_O_SYNC` when both bits are present.
-        // NOTE: `& != 0` (any-overlap) matches the Zig spec verbatim
-        // (libuv.zig:213); a DSYNC-only input also takes this branch — if that
-        // is wrong it is wrong upstream too.
+        // NOTE: `& != 0` is an any-overlap check;
+        // a DSYNC-only input also takes this branch.
         if c_flags & bun_o::SYNC != 0 {
             flags |= SYNC;
         } else if c_flags & bun_o::DSYNC != 0 {
@@ -2617,7 +2597,7 @@ pub const UV_EUNATCH: c_int = -4023;
 pub const UV_ENOEXEC: c_int = -4022;
 pub const UV_ERRNO_MAX: c_int = -4096;
 
-// `uv_dirent_type_t` discriminants (libuv.zig:2497-2504) — compared against
+// `uv_dirent_type_t` discriminants — compared against
 // `uv_dirent_t.type_` by Windows `fs.readdir`.
 pub const UV_DIRENT_UNKNOWN: c_int = 0;
 pub const UV_DIRENT_FILE: c_int = 1;
@@ -2682,9 +2662,8 @@ pub mod StdioFlags {
     pub const writable_pipe: super::c_uint = super::UV_WRITABLE_PIPE;
     pub const nonblock_pipe: super::c_uint = super::UV_NONBLOCK_PIPE;
     pub const overlapped_pipe: super::c_uint = super::UV_OVERLAPPED_PIPE;
-    // SCREAMING_CASE aliases — Zig exposes both via the implicit
-    // tag↔int coercion; downstream `bun_spawn` was authored against the
-    // upper-case form (process.zig:1261 `StdioFlags.INHERIT_FD`).
+    // SCREAMING_CASE aliases — downstream `bun_spawn` was authored against the
+    // upper-case form (`StdioFlags.INHERIT_FD`).
     pub const IGNORE: super::c_uint = super::UV_IGNORE;
     pub const CREATE_PIPE: super::c_uint = super::UV_CREATE_PIPE;
     pub const INHERIT_FD: super::c_uint = super::UV_INHERIT_FD;
@@ -2743,14 +2722,14 @@ pub const UV_FS_O_SYNC: i32 = O::SYNC;
 
 pub const UV_HANDLE_CLOSED: c_uint = 0x0000_0002;
 
-/// Non-ABI helper (libuv.zig:2772): `flags & UV_HANDLE_CLOSED != 0`.
+/// Non-ABI helper: `flags & UV_HANDLE_CLOSED != 0`.
 #[inline]
 pub fn uv_is_closed(handle: &uv_handle_t) -> bool {
     handle.flags & UV_HANDLE_CLOSED != 0
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// extern "C" — full surface from libuv.zig:2191-2767.
+// extern "C" — full libuv surface Bun uses.
 // ──────────────────────────────────────────────────────────────────────────
 unsafe extern "C" {
     // version / loop
@@ -3597,5 +3576,3 @@ const _: () = {
     assert_offset!(uv_poll_t, data, 0);
     assert_offset!(uv_udp_t, data, 0);
 };
-
-// ported from: src/libuv_sys/libuv.zig

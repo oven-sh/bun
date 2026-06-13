@@ -6,13 +6,16 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 bytemuck = "1"
 bun_dispatch.workspace = true
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
+smallvec.workspace = true
 const_format.workspace = true
 enum-map.workspace = true
 enumset.workspace = true
@@ -36,9 +39,8 @@ bun_wyhash.workspace = true
 
 [dev-dependencies]
 criterion = "0.5"
-phf = { workspace = true }
 regex = "1"
 
 [[bench]]
-name = "string_map_vs_phf"
+name = "string_map_vs_hashmap"
 harness = false

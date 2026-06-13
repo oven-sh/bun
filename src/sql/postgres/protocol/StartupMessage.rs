@@ -1,8 +1,8 @@
 use core::mem::size_of;
 
 use super::new_writer::NewWriter;
-use super::write_wrap::WriteWrap;
 use super::z_helpers::z_field_count;
+use crate::postgres::AnyPostgresError;
 use crate::postgres::types::int_types::{int4, int32};
 use crate::shared::Data;
 
@@ -23,11 +23,10 @@ impl Default for StartupMessage {
 }
 
 impl StartupMessage {
-    // TODO(port): narrow error set
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyPostgresError> {
         let user = self.user.slice();
         let database = self.database.slice();
         let options = self.options.slice();
@@ -65,13 +64,10 @@ impl StartupMessage {
         Ok(())
     }
 
-    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyPostgresError> {
         self.write_internal(writer)
     }
 }
-
-// ported from: src/sql/postgres/protocol/StartupMessage.zig

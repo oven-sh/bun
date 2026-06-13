@@ -1,24 +1,22 @@
-//! Generated for B-2 from `mime_type_list.txt` (hand-rolled stand-in until
+//! Generated from `mime_type_list.txt` (hand-rolled stand-in until
 //! `src/codegen/generate-compact-string-table.ts` learns `.rs` output).
 //!
-//! PERF(port): Zig emits a packed `enum(u14)` (length-group:7 + position:7)
-//! indexing into one contiguous byte blob - 2 bytes/entry. This stand-in
+//! PERF: a packed `enum(u14)` (length-group:7 + position:7)
+//! indexing into one contiguous byte blob would be 2 bytes/entry. This stand-in
 //! stores a `&'static str` per entry (16 bytes on 64-bit). Swap for the
 //! packed encoding when the codegen script grows a Rust backend.
 //
-// To regenerate: see `src/http_types/mime_type_list_enum.zig` header for the
-// canonical command; the `.rs` path is not wired into codegen yet.
+// The `.rs` path is not wired into codegen yet.
 
 /// Compact handle to one of the 2310 known MIME-type strings.
 ///
-/// Zig: `enum(u14)` with `@"<mime>"` variant idents. Rust idents cannot
+/// Rust idents cannot
 /// contain `/`, so we wrap the literal instead and compare by string.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct MimeTypeList(pub &'static str);
 
 impl MimeTypeList {
-    /// Const-construct from a MIME-type string literal. Mirrors
-    /// Zig `.@"<mime>"` variant syntax (used by the `t!` macro).
+    /// Const-construct from a MIME-type string literal (used by the `t!` macro).
     #[inline]
     pub const fn from_mime_literal(s: &'static str) -> Self {
         MimeTypeList(s)

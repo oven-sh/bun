@@ -10,7 +10,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, Stro
 
 use crate::api::bun::subprocess::Subprocess;
 
-// PORT NOTE: struct moved to `bun_jsc::ipc` (cycle-break per docs/PORTING.md) —
+// Struct moved to `bun_jsc::ipc` (cycle-break per docs/PORTING.md) —
 // `SendQueue` stores one inline so it must live at that tier. Re-exported here so
 // existing `bun_runtime` paths (`node_cluster_binding::InternalMsgHolder`) keep working.
 pub use bun_jsc::ipc::InternalMsgHolder;
@@ -23,16 +23,14 @@ bun_output::declare_scope!(IPC, visible);
 // lives in the type signature.
 unsafe extern "C" {
     pub safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, f: JSValue, arg: JSValue);
-    pub safe fn Process__emitErrorEvent(global: &JSGlobalObject, value: JSValue);
+    pub(crate) safe fn Process__emitErrorEvent(global: &JSGlobalObject, value: JSValue);
 }
 
-// TODO(port): `pub var` mutable global with !Sync fields (Strong). Only ever accessed on the
-// JS thread. Phase B: wrap in a JS-thread-local cell or assert const-init of fields.
-// PORT NOTE: ArrayHashMap::new() is not const, so the global is lazily seeded on first
+// ArrayHashMap::new() is not const, so the global is lazily seeded on first
 // access via `child_singleton()`.
 // PORTING.md §Global mutable state: JS-thread-only singleton with `!Sync`
 // fields (`Strong`). RacyCell — single-thread access is the contract.
-pub static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
+pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
     bun_core::RacyCell::new(None);
 
 /// `&mut` to the (lazily-initialized) JS-thread singleton.
@@ -43,8 +41,8 @@ pub static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>> =
 /// must not hold the borrow across a re-entrant `child_singleton()` call.
 #[inline]
 fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
-    // SAFETY: only called on the single JS thread; mirrors Zig `pub var`
-    // access. `RacyCell::get` returns `*mut Option<_>`; the `Option` lives in
+    // SAFETY: only called on the single JS thread.
+    // `RacyCell::get` returns `*mut Option<_>`; the `Option` lives in
     // `'static` storage so the returned `&mut` is valid for any caller-chosen
     // `'a`. Aliasing: each of the three callers borrows for a single
     // statement/block with no nested call to this fn.
@@ -52,7 +50,7 @@ fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
 }
 
 #[bun_jsc::host_fn]
-pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "sendHelperChild");
 
     let arguments = frame.arguments_old::<3>().ptr;
@@ -141,7 +139,10 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 }
 
 #[bun_jsc::host_fn]
-pub fn on_internal_message_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_internal_message_child(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
     let arguments = frame.arguments_old::<2>().ptr;
     let singleton = child_singleton();
@@ -152,14 +153,17 @@ pub fn on_internal_message_child(global: &JSGlobalObject, frame: &CallFrame) -> 
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn handle_internal_message_child(global: &JSGlobalObject, message: JSValue) -> JsResult<()> {
+pub(crate) fn handle_internal_message_child(
+    global: &JSGlobalObject,
+    message: JSValue,
+) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
 
     child_singleton().dispatch(message, global)
 }
 
 #[bun_jsc::host_fn]
-pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "sendHelperPrimary");
 
     let arguments = frame.arguments_old::<4>().ptr;
@@ -217,7 +221,7 @@ pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 }
 
 #[bun_jsc::host_fn]
-pub fn on_internal_message_primary(
+pub(crate) fn on_internal_message_primary(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -233,7 +237,7 @@ pub fn on_internal_message_primary(
     Ok(JSValue::UNDEFINED)
 }
 
-pub fn handle_internal_message_primary(
+pub(crate) fn handle_internal_message_primary(
     global: &JSGlobalObject,
     subprocess: &Subprocess<'_>,
     message: JSValue,
@@ -242,16 +246,18 @@ pub fn handle_internal_message_primary(
         return Ok(());
     };
 
+    if !ipc_data.internal_msg_queue.is_ready() {
+        return Ok(());
+    }
+
     let event_loop = global.bun_vm().event_loop_mut();
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
     if let Some(p) = message.get(global, "ack")? {
         if !p.is_undefined() {
             let ack = p.to_int32();
-            // PORT NOTE: reshaped for borrowck — Zig copied the Strong out of the
-            // entry, then `defer deinit()` + swapRemove. Here we peek the JSValue
-            // first (ending the immutable borrow), then swap_remove (which drops the
-            // Strong == `defer cbstrong.deinit()`).
+            // Peek the JSValue first (ending the immutable borrow), then
+            // swap_remove (which drops the Strong).
             let entry = ipc_data
                 .internal_msg_queue
                 .callbacks
@@ -291,7 +297,7 @@ pub fn handle_internal_message_primary(
 //
 
 #[bun_jsc::host_fn]
-pub fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<1>().ptr;
 
     if arguments.len() == 0 {
@@ -329,7 +335,7 @@ pub fn unref_channel_unless_overridden(global: &JSGlobalObject) {
 }
 
 #[bun_jsc::host_fn]
-pub fn channel_ignore_one_disconnect_event_listener(
+pub(crate) fn channel_ignore_one_disconnect_event_listener(
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -343,5 +349,3 @@ pub fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> b
     let vm = global.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
 }
-
-// ported from: src/runtime/node/node_cluster_binding.zig

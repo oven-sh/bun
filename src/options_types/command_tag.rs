@@ -3,7 +3,7 @@
 //! switch on which command is running without importing `cli/`.
 //!
 //! Heavy methods that reference `Arguments`/`HelpCommand`/`clap` (`params()`,
-//! `printHelp()`) live in `src/cli/cli.zig` as free fns; only the pure enum,
+//! `printHelp()`) live in the CLI crate as free fns; only the pure enum,
 //! `char()`, classifier predicates, and the `EnumArray` flag tables are here.
 
 use enum_map::Enum;
@@ -87,58 +87,53 @@ impl Tag {
     }
 
     pub fn read_global_config(self) -> bool {
-        match self {
+        matches!(
+            self,
             Tag::BunxCommand
-            | Tag::PackageManagerCommand
-            | Tag::InstallCommand
-            | Tag::AddCommand
-            | Tag::RemoveCommand
-            | Tag::UpdateCommand
-            | Tag::PatchCommand
-            | Tag::PatchCommitCommand
-            | Tag::OutdatedCommand
-            | Tag::PublishCommand
-            | Tag::AuditCommand => true,
-            _ => false,
-        }
+                | Tag::PackageManagerCommand
+                | Tag::InstallCommand
+                | Tag::AddCommand
+                | Tag::RemoveCommand
+                | Tag::UpdateCommand
+                | Tag::PatchCommand
+                | Tag::PatchCommitCommand
+                | Tag::OutdatedCommand
+                | Tag::PublishCommand
+                | Tag::AuditCommand
+        )
     }
 
     pub fn is_npm_related(self) -> bool {
-        match self {
+        matches!(
+            self,
             Tag::BunxCommand
-            | Tag::LinkCommand
-            | Tag::UnlinkCommand
-            | Tag::PackageManagerCommand
-            | Tag::InstallCommand
-            | Tag::AddCommand
-            | Tag::RemoveCommand
-            | Tag::UpdateCommand
-            | Tag::PatchCommand
-            | Tag::PatchCommitCommand
-            | Tag::OutdatedCommand
-            | Tag::PublishCommand
-            | Tag::AuditCommand => true,
-            _ => false,
-        }
+                | Tag::LinkCommand
+                | Tag::UnlinkCommand
+                | Tag::PackageManagerCommand
+                | Tag::InstallCommand
+                | Tag::AddCommand
+                | Tag::RemoveCommand
+                | Tag::UpdateCommand
+                | Tag::PatchCommand
+                | Tag::PatchCommitCommand
+                | Tag::OutdatedCommand
+                | Tag::PublishCommand
+                | Tag::AuditCommand
+        )
     }
 
     /// Number of variants. Mirrors `enum_map::Enum::LENGTH` so const-array
     /// tables below can size themselves without naming the trait at every use.
     pub const COUNT: usize = <Self as Enum>::LENGTH;
 
-    // Heavy methods that pull in `Arguments` / help text live in `cli/cli.zig`.
-    // In Zig these were aliased here (`params`, `printHelp`) relying on lazy
-    // decl resolution so `options_types/` did not compile-depend on `cli/`
-    // unless invoked. Rust has no lazy decl resolution; re-exporting
+    // Heavy methods that pull in `Arguments` / help text live in the CLI crate.
+    // Re-exporting
     // `bun_runtime::cli::Command::{tag_params, tag_print_help}` here would create a
     // crate cycle (cli → options_types → cli).
-    // TODO(port): call sites of `cmd.params()` / `cmd.printHelp()` must call
-    // `bun_runtime::cli::Command::tag_params(cmd)` / `tag_print_help(cmd)` directly.
 }
 
-/// `.rodata` flag table indexed by [`Tag`] discriminant. Replaces the
-/// `LazyLock<EnumMap<Tag, _>>` Phase-A scaffolding so these tables cost zero
-/// init code on the startup path (matches Zig `std.EnumArray.initDefault`).
+/// `.rodata` flag table indexed by [`Tag`] discriminant. These tables cost zero
+/// init code on the startup path.
 #[repr(transparent)]
 pub struct TagTable<V: 'static>(pub [V; Tag::COUNT]);
 
@@ -211,5 +206,3 @@ pub static USES_GLOBAL_OPTIONS: TagTable<bool> = TagTable({
     a[Tag::UpdateCommand as usize] = false;
     a
 });
-
-// ported from: src/options_types/CommandTag.zig

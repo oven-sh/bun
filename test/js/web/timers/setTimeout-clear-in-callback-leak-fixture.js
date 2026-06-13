@@ -9,6 +9,10 @@ if (mode !== "clear" && mode !== "refresh" && mode !== "repeat") {
   throw new Error("usage: <clear|refresh|repeat>");
 }
 
+// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
+// run far higher under bun-asan; widen the threshold to avoid false positives.
+const isASAN = process.execPath.includes("bun-asan");
+
 const BATCH = 2_000;
 
 function gc() {
@@ -76,6 +80,6 @@ if (globalThis.Bun) {
 
 // Before the fix, 100 * 2_000 leaked TimeoutObjects (~100 bytes each) ≈ 20 MB.
 // After the fix the delta is ~0 MB (noise).
-if (deltaMB > 10) {
+if (deltaMB > (isASAN ? 128 : 10)) {
   throw new Error("Memory leak detected: RSS grew by " + deltaMB.toFixed(1) + " MB");
 }

@@ -7,7 +7,7 @@ use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
-use bun_install::lockfile::package::{PackageColumns as _};
+use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
     self, LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
@@ -19,7 +19,7 @@ use bun_wyhash::hash;
 
 use crate::Command;
 
-pub struct OutdatedCommand;
+pub(crate) struct OutdatedCommand;
 
 #[derive(Clone, Copy)]
 struct OutdatedInfo {
@@ -33,8 +33,6 @@ struct GroupedOutdatedInfo {
     package_id: PackageID,
     dep_id: DependencyID,
     workspace_pkg_id: PackageID,
-    #[allow(dead_code)]
-    is_catalog: bool,
     grouped_workspace_names: Option<Box<[u8]>>,
 }
 
@@ -42,28 +40,26 @@ struct GroupedOutdatedInfo {
 enum FilterType<'a> {
     All,
     Name(&'a [u8]),
-    #[allow(dead_code)]
-    Path(&'a [u8]),
+    Path,
 }
 
 impl<'a> FilterType<'a> {
     fn init(pattern: &'a [u8], is_path: bool) -> Self {
         if is_path {
-            FilterType::Path(pattern)
+            FilterType::Path
         } else {
             FilterType::Name(pattern)
         }
     }
-    // *NOTE*: Currently `deinit` does nothing since name and path are not
-    // allocated (Zig `deinit` was a no-op → no Drop impl needed).
+    // *NOTE*: name and path are not allocated → no Drop impl needed.
 }
 
 impl OutdatedCommand {
-    pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
-        Output::prettyln(format_args!(
+    pub(crate) fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+        bun_core::prettyln!(
             "<r><b>bun outdated <r><d>v{}<r>",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
 
         let cli = CommandLineArguments::parse(Subcommand::Outdated)?;
@@ -93,9 +89,8 @@ impl OutdatedCommand {
         original_cwd: &[u8],
         manager: &mut PackageManager,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — Zig calls
-        // `manager.lockfile.loadFromCwd(manager, alloc, manager.log, true)` which
-        // aliases `*PackageManager` with its `*Lockfile` field. Project disjoint
+        // Reshaped for borrowck — `load_from_cwd` would otherwise alias
+        // `PackageManager` with its `lockfile` field. Project disjoint
         // raw pointers from the singleton first; `load_from_cwd` only reads
         // `manager.options` / migration helpers and never re-borrows
         // `manager.lockfile` through the `pm` argument.
@@ -109,8 +104,8 @@ impl OutdatedCommand {
         // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
         let log = unsafe { &mut *log_ptr };
         match lockfile.load_from_cwd::<true>(
-            // SAFETY: see PORT NOTE above — `load_from_cwd` accesses `manager`
-            // fields disjoint from `lockfile` (Zig invariant).
+            // SAFETY: see comment above — `load_from_cwd` accesses `manager`
+            // fields disjoint from `lockfile`.
             Some(unsafe { &mut *pm_ptr }),
             log,
         ) {
@@ -151,8 +146,7 @@ impl OutdatedCommand {
                 Global::crash();
             }
             LoadResult::Ok(_) => {
-                // PORT NOTE: Zig reassigns `manager.lockfile = ok.lockfile`
-                // (pointer field). `load_from_cwd(&mut self, ..)` populates the
+                // `load_from_cwd(&mut self, ..)` populates the
                 // lockfile in place, so the `ok.lockfile: &mut Lockfile` reborrow
                 // is the same storage and no reassignment is needed.
             }
@@ -249,7 +243,7 @@ impl OutdatedCommand {
         // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
 
         // SAFETY: `FileSystem::init` runs during `PackageManager::init` so the
-        // process-singleton is populated; mirrors Zig `FileSystem.instance.top_level_dir`.
+        // process-singleton is populated.
         let top_level_dir = FileSystem::get().top_level_dir;
 
         // move all matched workspaces to front of array
@@ -331,8 +325,8 @@ impl OutdatedCommand {
             catalog_name_hash: u64,
             behavior: Behavior,
         }
-        let mut catalog_map: std::collections::HashMap<CatalogKey, Vec<PackageID>> =
-            std::collections::HashMap::new();
+        let mut catalog_map: bun_collections::HashMap<CatalogKey, Vec<PackageID>> =
+            bun_collections::HashMap::new();
 
         for item in outdated_items {
             if item.is_catalog {
@@ -355,7 +349,6 @@ impl OutdatedCommand {
                     package_id: item.package_id,
                     dep_id: item.dep_id,
                     workspace_pkg_id: item.workspace_pkg_id,
-                    is_catalog: false,
                     grouped_workspace_names: None,
                 });
             }
@@ -408,7 +401,6 @@ impl OutdatedCommand {
                 package_id: item.package_id,
                 dep_id: item.dep_id,
                 workspace_pkg_id: item.workspace_pkg_id,
-                is_catalog: true,
                 grouped_workspace_names: Some(workspace_names.into_boxed_slice()),
             });
         }
@@ -459,8 +451,8 @@ impl OutdatedCommand {
         let mut max_workspace: usize = 0;
         let mut has_filtered_versions: bool = false;
 
-        // PORT NOTE: reshaped for borrowck — Zig threads `*PackageManager`
-        // into `manifests.byNameAllowExpired`, freely aliasing the receiver.
+        // Reshaped for borrowck — `manifests.byNameAllowExpired` would
+        // otherwise alias the receiver.
         // Hoist the four scalars that path reads into a by-value
         // `DiskCacheCtx` so the loop body holds only disjoint field borrows
         // (`&mut manager.manifests` against `&manager.lockfile` /
@@ -503,7 +495,7 @@ impl OutdatedCommand {
                     let matched = 'match_: {
                         for pattern in patterns {
                             match pattern {
-                                FilterType::Path(_) => unreachable!(),
+                                FilterType::Path => unreachable!(),
                                 FilterType::Name(name_pattern) => {
                                     if name_pattern.is_empty() {
                                         continue;
@@ -705,7 +697,6 @@ impl OutdatedCommand {
         table.print_column_names();
 
         // Print grouped items sorted by behavior type
-        // PERF(port): was `inline for` over a comptime tuple — profile in Phase B.
         for group_behavior in [
             Behavior::PROD,
             Behavior::DEV,
@@ -776,104 +767,100 @@ impl OutdatedCommand {
                         ""
                     };
 
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
-                    Output::pretty(format_args!(
-                        "{}<d>{}<r>",
-                        BStr::new(package_name),
-                        behavior_str
-                    ));
+                    bun_core::pretty!("{}<d>{}<r>", BStr::new(package_name), behavior_str);
                     for _ in package_name.len() + behavior_str.len()
                         ..package_column_inside_length + COLUMN_RIGHT_PAD
                     {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                 }
 
                 {
                     // current version
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     version_buf.clear();
                     write!(version_buf, "{}", current_version.fmt(string_buf))
                         .expect("OOM writing version");
-                    Output::pretty(format_args!("{}", version_buf));
+                    bun_core::pretty!("{}", version_buf);
                     for _ in version_buf.len()..current_column_inside_length + COLUMN_RIGHT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     version_buf.clear();
                 }
 
                 {
                     // update version
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     let update_filtered = update.latest_is_filtered();
                     if let Some(uv) = update.unwrap() {
                         write!(version_buf, "{}", uv.version.fmt(&manifest.string_buf))
                             .expect("OOM writing version");
-                        Output::pretty(format_args!(
+                        bun_core::pretty!(
                             "{}",
                             uv.version
                                 .diff_fmt(current_version, &manifest.string_buf, string_buf)
-                        ));
+                        );
                     } else {
                         write!(version_buf, "{}", current_version.fmt(string_buf))
                             .expect("OOM writing version");
-                        Output::pretty(format_args!("<d>{}<r>", version_buf));
+                        bun_core::pretty!("<d>{}<r>", version_buf);
                     }
                     let mut update_version_len = version_buf.len();
                     if update_filtered {
-                        Output::pretty(format_args!(" <blue>*<r>"));
+                        bun_core::pretty!(" <blue>*<r>");
                         update_version_len += " *".len();
                     }
                     for _ in update_version_len..update_column_inside_length + COLUMN_RIGHT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     version_buf.clear();
                 }
 
                 {
                     // latest version
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     let latest_filtered = latest.latest_is_filtered();
                     if let Some(lv) = latest.unwrap() {
                         write!(version_buf, "{}", lv.version.fmt(&manifest.string_buf))
                             .expect("OOM writing version");
-                        Output::pretty(format_args!(
+                        bun_core::pretty!(
                             "{}",
                             lv.version
                                 .diff_fmt(current_version, &manifest.string_buf, string_buf)
-                        ));
+                        );
                     } else {
                         write!(version_buf, "{}", current_version.fmt(string_buf))
                             .expect("OOM writing version");
-                        Output::pretty(format_args!("<d>{}<r>", version_buf));
+                        bun_core::pretty!("<d>{}<r>", version_buf);
                     }
                     let mut latest_version_len = version_buf.len();
                     if latest_filtered {
-                        Output::pretty(format_args!(" <blue>*<r>"));
+                        bun_core::pretty!(" <blue>*<r>");
                         latest_version_len += " *".len();
                     }
                     for _ in latest_version_len..latest_column_inside_length + COLUMN_RIGHT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     version_buf.clear();
                 }
 
                 if show_workspace_column {
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
 
                     let workspace_name: &[u8] = if let Some(names) = &item.grouped_workspace_names {
@@ -882,35 +869,32 @@ impl OutdatedCommand {
                         manager.lockfile.packages.items_name()[item.workspace_pkg_id as usize]
                             .slice(string_buf)
                     };
-                    Output::pretty(format_args!("{}", BStr::new(workspace_name)));
+                    bun_core::pretty!("{}", BStr::new(workspace_name));
 
                     for _ in workspace_name.len()..workspace_column_inside_length + COLUMN_RIGHT_PAD
                     {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                 }
 
-                Output::pretty(format_args!("{}\n", symbols.vertical_edge()));
+                bun_core::pretty!("{}\n", symbols.vertical_edge());
             }
         }
 
         table.print_bottom_line_separator();
 
         if has_filtered_versions {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<d><b>Note:<r> <d>The <r><blue>*<r><d> indicates that version isn't true latest due to minimum release age<r>"
-            ));
+            );
         }
 
         Ok(())
     }
 }
 
-#[allow(dead_code)]
 type _AssertImports = (
     package_manager::WorkspaceFilter,
     package_manager::ManifestCacheOptions<'static>,
     bun_install::package_manifest_map::CacheBehavior,
 );
-
-// ported from: src/cli/outdated_command.zig

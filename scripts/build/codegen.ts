@@ -38,6 +38,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
+import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
 import type { Config } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -285,6 +286,13 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
 
   const ctx: Ctx = { n, cfg, sources, o, dirStamp };
 
+  // Configure-time write (not a ninja edge — it's a constant manifest like
+  // depVersionsHeader). Pushed into rustInputs so the cargo edge implicit-deps
+  // on it; bun_core/build.rs emits the matching `rerun-if-changed`.
+  const buildOptionsRs = generateBuildOptionsRs(cfg);
+  o.all.push(buildOptionsRs);
+  o.rustInputs.push(buildOptionsRs);
+
   emitBunError(ctx);
   emitStringMaps(ctx);
   emitFallbackDecoder(ctx);
@@ -477,8 +485,11 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const installStamp = emitBunInstall(n, cfg, sourceDir);
 
   const outDir = resolve(cfg.codegenDir, "node-fallbacks");
-  // One output per source, same basename.
-  const outputs = sources.nodeFallbacks.map(s => resolve(outDir, basename(s)));
+  // Two outputs per source: the bundled `.js` (read at runtime by debug
+  // builds) and its zstd-compressed `.js.zst` twin (embedded by release
+  // builds — see src/resolver/node_fallbacks.rs).
+  const jsOutputs = sources.nodeFallbacks.map(s => resolve(outDir, basename(s)));
+  const outputs = [...jsOutputs, ...jsOutputs.map(o => `${o}.zst`)];
 
   // The script (build-fallbacks.ts) reads its args as [outdir, ...sources]
   // but actually ignores the sources — it does readdirSync(".") to discover
@@ -764,7 +775,6 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "InternalModuleRegistry+enum.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistry+numberOfModules.h"),
     resolve(cfg.codegenDir, "NativeModuleImpl.h"),
-    resolve(cfg.codegenDir, "ResolvedSourceTag.zig"),
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
     js2nativeZig,
@@ -772,6 +782,10 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     // a declared output so the cargo edge re-invokes when bundle-modules.ts /
     // generate-js2native.ts changes — the includer shim's mtime never moves.
     resolve(cfg.codegenDir, "generated_js2native.rs"),
+    // Specifier → module-ID tag table: include!()'d by the
+    // `resolved_source_tag` module in src/jsc/lib.rs. Declared for the same
+    // reason as generated_js2native.rs.
+    resolve(cfg.codegenDir, "generated_resolved_source_tag.rs"),
   ];
 
   n.build({

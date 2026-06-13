@@ -3,26 +3,29 @@ use core::ffi::{CStr, c_char};
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_collections::VecExt;
-use bun_core::{self as strings_mod, String as BunString, ZStr, ZigString, strings};
-use bun_core::{Output, StackCheck, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
+#[cfg(not(windows))]
+use bun_core::StackCheck;
+use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
+use bun_core::{String as BunString, ZStr, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
 use bun_jsc::ipc as IPC;
 use bun_jsc::{
-    self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
-    JsError, JsResult, SystemError,
+    self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
+    JsResult, SystemError,
 };
-use bun_jsc::{JsCell, JsClass as _, SysErrorJsc as _};
-use bun_paths::PathBuffer;
+use bun_jsc::{JsCell, SysErrorJsc as _};
+#[cfg(unix)]
+use bun_sys::Fd;
 use bun_sys::UV_E;
-use bun_sys::{self as sys, Fd, FdExt as _, SignalCode};
+use bun_sys::{self as sys, FdExt as _, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
-use crate::api::bun_process::{
-    self as spawn, CStrPtr, ExtraPipe, Process, Rusage, SpawnOptions, SpawnProcessResult,
-    SpawnResultExt as _,
-};
+#[cfg(unix)]
+use crate::api::bun_process::ExtraPipe;
+#[cfg(not(windows))]
+use crate::api::bun_process::SpawnResultExt as _;
+use crate::api::bun_process::{self as spawn, CStrPtr, Process, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::{
@@ -34,48 +37,13 @@ use crate::api::bun_terminal_body::{
 use crate::webcore as WebCore;
 
 // ── local extension shims (real-body wrappers, not stubs) ───────────────────
-// `JSValue::withAsyncContextIfNeeded` (Zig) — wraps a callback so its
-// AsyncLocalStorage context is restored at fire-time. The C-ABI symbol lives in
-// `src/jsc/bindings/AsyncContextFrame.cpp`; matches the per-callsite FFI used
-// by Timer.rs / udp_socket.rs / node_crypto_binding.rs.
-unsafe extern "C" {
-    safe fn AsyncContextFrame__withAsyncContextIfNeeded(
-        global: &JSGlobalObject,
-        callback: JSValue,
-    ) -> JSValue;
-}
 trait JSValueSpawnExt {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
     fn is_finite(self) -> bool;
 }
 impl JSValueSpawnExt for JSValue {
     #[inline]
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
-        AsyncContextFrame__withAsyncContextIfNeeded(global, self)
-    }
-    #[inline]
     fn is_finite(self) -> bool {
         self.is_number() && self.as_number().is_finite()
-    }
-}
-
-/// `bun.String.indexOfAsciiChar` — encoding-aware ASCII-char search over the
-/// string's storage code units (Latin-1 bytes or UTF-16 u16s). Matches Zig
-/// `bun.String.indexOfAsciiChar` exactly; `bun_core::String` does not expose it
-/// inherently yet.
-trait BunStringSpawnExt {
-    fn index_of_ascii_char(&self, chr: u8) -> Option<usize>;
-}
-impl BunStringSpawnExt for BunString {
-    #[inline]
-    fn index_of_ascii_char(&self, chr: u8) -> Option<usize> {
-        debug_assert!(chr < 128);
-        if self.is_utf16() {
-            self.utf16().iter().position(|&c| c == u16::from(chr))
-        } else {
-            // Latin-1 / ASCII: 1 byte == 1 code unit.
-            strings::index_of_char(self.latin1(), chr).map(|i| i as usize)
-        }
     }
 }
 
@@ -87,7 +55,7 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
 
 /// Convert a `bun_sys::SystemError` (T1 stub shape) into the C-ABI
 /// `bun_jsc::SystemError` and materialize a JS Error instance.
-fn sys_system_error_to_js(err: bun_sys::SystemError, global: &JSGlobalObject) -> JSValue {
+fn sys_system_error_to_js(err: &bun_sys::SystemError, global: &JSGlobalObject) -> JSValue {
     let jsc_err = SystemError {
         errno: err.errno,
         code: err.code,
@@ -104,7 +72,7 @@ fn sys_system_error_to_js(err: bun_sys::SystemError, global: &JSGlobalObject) ->
 /// `Terminal.CreateResult` — local mirror that flattens `IntrusiveRc<Terminal>`
 /// to a `BackRef<Terminal>` used by `Subprocess.terminal`, so the scopeguard /
 /// field-assignment paths share one pointer type with `existing_terminal`.
-pub struct TerminalCreateResult {
+pub(crate) struct TerminalCreateResult {
     /// BACKREF — the `IntrusiveRc<Terminal>` pointer leaked via `into_raw()`
     /// when this struct was populated; the +1 ref is held until
     /// `Subprocess::finalize` (or the spawn-error scopeguard's
@@ -117,7 +85,7 @@ impl TerminalCreateResult {
     /// Shared borrow of the held `Terminal` (BackRef invariant: +1-ref'd
     /// IntrusiveRc, live while this struct is held).
     #[inline]
-    pub fn term(&self) -> &Terminal {
+    pub(crate) fn term(&self) -> &Terminal {
         self.terminal.get()
     }
 }
@@ -134,7 +102,7 @@ impl IPC::SendQueueOwner for SubprocessT<'static> {
         SubprocessT::handle_ipc_close(self)
     }
     fn handle_ipc_message(&mut self, msg: IPC::DecodedIPCMessage, handle: JSValue) {
-        SubprocessT::handle_ipc_message(self, msg, handle)
+        SubprocessT::handle_ipc_message(self, &msg, handle)
     }
     fn this_jsvalue(&self) -> JSValue {
         self.this_value.get().try_get().unwrap_or(JSValue::ZERO)
@@ -155,15 +123,13 @@ fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> *mut dyn IPC::SendQueueOwn
 
 bun_output::declare_scope!(Subprocess, hidden);
 
-// `SpawnOptions.Stdio` in Zig is a platform-dependent nested decl. Rust enums
-// cannot nest type decls, so process.rs defines `PosixStdio` / `WindowsStdio`
+// Stdio is platform-dependent: process.rs defines `PosixStdio` / `WindowsStdio`
 // as siblings; alias the active one here so the body stays platform-neutral.
 #[cfg(not(windows))]
 type SpawnOptionsStdio = spawn::PosixStdio;
 #[cfg(windows)]
 type SpawnOptionsStdio = spawn::WindowsStdio;
 
-// TODO(port): move to runtime_sys
 // Reading the symbol address has no precondition (the value itself is a
 // rodata `const char*`); kept `safe` to match the identical declaration in
 // `runtime/shell/subproc.rs` so the two extern blocks don't diverge.
@@ -207,8 +173,6 @@ fn get_argv0(
     let mut path_buf: Box<bun_core::PathBuffer> = Box::default();
     // drops at scope exit (was `defer bun.default_allocator.destroy(path_buf)`).
 
-    let actual_argv0: ZBox;
-
     let argv0_to_use: &[u8] = arg0.slice();
 
     // This mimicks libuv's behavior, which mimicks execvpe
@@ -227,14 +191,14 @@ fn get_argv0(
         b""
     };
 
-    if path_to_use.is_empty() {
-        actual_argv0 = ZBox::from_bytes(argv0_to_use);
+    let actual_argv0: ZBox = if path_to_use.is_empty() {
+        ZBox::from_bytes(argv0_to_use)
     } else {
         let Some(resolved) = bun_which::which(&mut path_buf, path_to_use, cwd, argv0_to_use) else {
             return Err(throw_command_not_found(global_this, argv0_to_use));
         };
-        actual_argv0 = ZBox::from_bytes(resolved.as_bytes());
-    }
+        ZBox::from_bytes(resolved.as_bytes())
+    };
 
     Ok(Argv0Result {
         argv0: actual_argv0,
@@ -249,9 +213,8 @@ fn get_argv0(
 /// `argv` for `Bun.spawn` & `Bun.spawnSync`
 ///
 /// `storage` receives ownership of every NUL-terminated string whose pointer is
-/// pushed into `argv` / `argv0`. The Zig original used a bump arena freed at the
-/// end of `spawnMaybeSync`; here the caller's `Vec<ZBox>` plays the same role
-/// and is dropped after `spawn_process` returns.
+/// pushed into `argv` / `argv0`; the caller's `Vec<ZBox>`
+/// is dropped after `spawn_process` returns.
 fn get_argv(
     global_this: &JSGlobalObject,
     args: JSValue,
@@ -291,17 +254,34 @@ fn get_argv(
         cmds_array.next()?.unwrap(),
     )?;
 
+    // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
+    // re-tokenizes the command line with shell metacharacter rules
+    // (BatBadBut, CVE-2024-24576 / CVE-2024-27980). libuv's MSVCRT-style
+    // quoting cannot make that safe, so reject arguments that cmd.exe would
+    // reinterpret.
+    let is_batch_file = cfg!(windows) && bun_which::is_batch_file(argv0_result.argv0.as_bytes());
+    if is_batch_file && bun_which::batch_arg_has_cmd_metachars(argv0_result.arg0.as_bytes()) {
+        return Err(global_this
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "The command name contains a cmd.exe special character and cannot be safely passed to a .bat/.cmd file. Received {}",
+                    bun_fmt::quote(argv0_result.arg0.as_bytes())
+                ),
+            )
+            .throw());
+    }
+
     *argv0 = Some(argv0_result.argv0.as_ptr());
     argv.push(argv0_result.arg0.as_ptr());
     // Transfer ownership to the caller's backing store so the pointers above
-    // stay valid past `spawn_process` (Zig used a bump arena freed at fn exit).
+    // stay valid past `spawn_process`.
     storage.push(argv0_result.argv0);
     storage.push(argv0_result.arg0);
 
     let mut arg_index: usize = 1;
     while let Some(value) = cmds_array.next()? {
-        let arg = value.to_bun_string(global_this)?;
-        // `arg` derefs on drop (was `defer arg.deref()`).
+        let arg = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
 
         // Check for null bytes in argument (security: prevent null byte injection)
         if arg.index_of_ascii_char(0).is_some() {
@@ -318,6 +298,18 @@ fn get_argv(
         }
 
         let owned = arg.to_owned_slice_z();
+        if is_batch_file && bun_which::batch_arg_has_cmd_metachars(owned.as_bytes()) {
+            return Err(global_this
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The argument 'args[{}]' contains a cmd.exe special character and cannot be safely passed to a .bat/.cmd file. Received {}",
+                        arg_index,
+                        bun_fmt::quote(owned.as_bytes())
+                    ),
+                )
+                .throw());
+        }
         argv.push(owned.as_ptr());
         storage.push(owned);
         arg_index += 1;
@@ -349,7 +341,7 @@ pub fn spawn_sync(
     spawn_maybe_sync::<true>(global_this, args, secondary_args_value)
 }
 
-pub fn spawn_maybe_sync<const IS_SYNC: bool>(
+pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     global_this: &JSGlobalObject,
     args_: JSValue,
     secondary_args_value: Option<JSValue>,
@@ -365,10 +357,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    // PERF(port): was arena bulk-free — argv/env strings allocated per-iteration; profile in Phase B.
+    // PERF: argv/env strings are allocated per-iteration; profile if hot.
     // Backing store for every NUL-terminated string whose `*const c_char` is
-    // pushed into `argv` / `argv0` / `env_array` below. Zig used a bump arena
-    // (`arena.deinit()` at fn exit); this `Vec` is the Rust equivalent and
+    // pushed into `argv` / `argv0` / `env_array` below. This `Vec`
     // drops after `spawn_process` returns, freeing all argv/env allocations.
     let mut cstr_storage: Vec<ZBox> = Vec::new();
 
@@ -393,11 +384,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // (process-lifetime; centralised non-null deref in `VirtualMachine`).
     let mut path: &[u8] = jsc_vm.env_loader().get(b"PATH").unwrap_or(b"");
     let mut argv: Vec<CStrPtr> = Vec::new();
-    let mut cmd_value = JSValue::ZERO;
+    let cmd_value: JSValue;
     let mut detached = false;
     let mut args = args_;
-    // TODO(port): Zig used `if (is_sync) void else ?IPC.Mode`; Rust const-generic bool
-    // can't gate field type. Always Option<IPC::Mode>; IS_SYNC branches never read it.
     let mut maybe_ipc_mode: Option<IPC::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
@@ -407,14 +396,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut kill_signal: SignalCode = SignalCode::DEFAULT;
     let mut max_buffer: Option<i64> = None;
 
+    #[cfg(windows)]
     let mut windows_hide: bool = false;
+    #[cfg(windows)]
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<*mut WebCore::AbortSignal> = None;
     let mut terminal_info: Option<TerminalCreateResult> = None;
     let mut existing_terminal: Option<bun_ptr::BackRef<Terminal>> = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
-    // TODO(port): the Zig `defer` block at function end (abort_signal.unref + terminal cleanup)
-    // is implemented via scopeguard below; disarmed where the Zig set the locals to null.
     let mut defer_guard = scopeguard::guard(
         (&mut abort_signal, &mut terminal_info),
         |(abort_signal, terminal_info): (
@@ -439,12 +428,12 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
         },
     );
-    // PORT NOTE: reshaped for borrowck — re-borrow through the guard tuple.
+    // Note: reshaped for borrowck — re-borrow through the guard tuple.
     let (abort_signal, terminal_info) = &mut *defer_guard;
 
     // Owned ZBox for `cwd` held here so the `&[u8]` borrow stays valid until
-    // `spawn_process` returns (Zig used the bump arena).
-    let mut cwd_owned: Option<ZBox> = None;
+    // `spawn_process` returns.
+    let cwd_owned: ZBox;
     {
         if args.is_empty_or_undefined_or_null() {
             return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array")));
@@ -476,10 +465,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(cwd_) = args.get_truthy(global_this, "cwd")? {
                 let cwd_str = cwd_.get_zig_string(global_this)?;
                 if cwd_str.len > 0 {
-                    cwd_owned = Some(cwd_str.to_owned_slice_z());
+                    cwd_owned = cwd_str.to_owned_slice_z();
                     // `cwd_owned` is never mutated again, so this borrow is valid
                     // for every read of `cwd` below.
-                    cwd = cwd_owned.as_ref().unwrap().as_bytes();
+                    cwd = cwd_owned.as_bytes();
                 }
             }
         }
@@ -699,11 +688,6 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             break 'brk;
                         }
 
-                        // TODO(port): `JSGlobalObject::validate_integer_range` lives in
-                        // a sibling impl block currently behind a different `mod` re-export;
-                        // route through the `bun_sql_jsc` extension trait until the
-                        // inherent method is re-exported from `bun_jsc::JSGlobalObject`.
-                        use bun_sql_jsc::jsc::JSGlobalObjectSqlExt as _;
                         let timeout_int = global_this.validate_integer_range::<u64>(
                             timeout_value,
                             0,
@@ -718,7 +702,6 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 i32::try_from((timeout_int as u32) & 0x7FFF_FFFF)
                                     .expect("int cast"),
                             );
-                            // PORT NOTE: Zig `@intCast(@as(u31, @truncate(timeout_int)))` — truncate to u31 then widen to i32.
                         }
                     }
                 }
@@ -859,8 +842,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     bun_output::scoped_log!(Subprocess, "spawn maxBuffer: {:?}", max_buffer);
 
-    // Owns the `K=V\0` storage when inheriting the parent env (Zig used the
-    // bump arena; here the struct is the arena and lives until spawn returns).
+    // Owns the `K=V\0` storage when inheriting the parent env; the struct
+    // lives until spawn returns.
     let mut inherited_env_storage: Option<bun_dotenv::NullDelimitedEnvMap> = None;
     if !override_env && env_array.is_empty() {
         // `Transpiler::env_mut()` is the audited safe `&mut Loader` accessor
@@ -875,17 +858,15 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             Ok(m) => m,
             Err(_) => return Err(global_this.throw_out_of_memory()),
         };
-        // PORT NOTE: Zig assigned `env_array.items = envp` (sentinel slice — the
-        // trailing `null` lives at `[len]`, outside `.items`). The Rust port's
-        // `as_slice()` *includes* the trailing null, so strip it; the common
-        // tail below re-appends one after the optional NODE_CHANNEL_* entries.
+        // Note: `as_slice()` *includes* the trailing null, so strip it; the
+        // common tail below re-appends one after the optional NODE_CHANNEL_*
+        // entries.
         let entries = envmap.as_slice();
         env_array.extend_from_slice(&entries[..entries.len().saturating_sub(1)]);
         inherited_env_storage = Some(envmap);
     }
     let _ = &inherited_env_storage;
 
-    // PORT NOTE: Zig `inline for (0..stdio.len)` — unrolled here as a regular for; const N=3.
     for fd_index in 0..stdio.len() {
         if stdio[fd_index].can_use_memfd(IS_SYNC, fd_index > 0 && max_buffer.is_some()) {
             if stdio[fd_index].use_memfd(fd_index as u32) {
@@ -901,11 +882,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             if *should_close_memfd {
                 for fd_index in 0..stdio.len() {
                     if matches!(stdio[fd_index], Stdio::Memfd(_)) {
-                        // PORT NOTE: Zig closes the fd then writes
-                        // `stdio[i] = .ignore`. In Rust that assignment would
+                        // Note: closing the fd first and then assigning would
                         // Drop the old `Stdio::Memfd` and re-close the same fd
                         // (EBADF → fd.rs debug_assert). `Stdio`'s Drop already
-                        // closes a Memfd, so just replace with `.ignore` and
+                        // closes a Memfd, so just replace with `Ignore` and
                         // let Drop perform the single close.
                         drop(core::mem::replace(&mut stdio[fd_index], Stdio::Ignore));
                     }
@@ -913,10 +893,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
         },
     );
-    // PORT NOTE: reshaped for borrowck — re-borrow through the guard tuple so the guard
+    // Note: reshaped for borrowck — re-borrow through the guard tuple so the guard
     // stays armed (runs on every early return) until disarmed by `**should_close_memfd = false` below.
-    // TODO(port): errdefer — if borrowck rejects the double-&mut reborrow at later use sites,
-    // Phase B may need to move stdio into the guard by value and reborrow via DerefMut.
     let (should_close_memfd, stdio) = &mut *memfd_guard;
 
     // "NODE_CHANNEL_FD=" is 16 bytes long, 15 bytes for the number, and 1 byte for the null terminator should be enough/safe
@@ -953,7 +931,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     }
                     break 'brk fd;
                 } else {
-                    break 'brk i32::try_from(ipc_channel + 3).expect("int cast");
+                    break 'brk ipc_channel + 3;
                 }
             };
 
@@ -968,18 +946,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     Err(_) => return Err(global_this.throw_out_of_memory()),
                 }
             };
-            // PERF(port): was assume_capacity
             env_array.push(pipe_env.as_ptr().cast::<c_char>());
 
-            // PERF(port): was assume_capacity
             env_array.push(match ipc_mode {
-                // PORT NOTE: Zig `inline else => |t| "..." ++ @tagName(t)` — written out per variant.
-                IPC::Mode::Json => b"NODE_CHANNEL_SERIALIZATION_MODE=json\0"
-                    .as_ptr()
-                    .cast::<c_char>(),
-                IPC::Mode::Advanced => b"NODE_CHANNEL_SERIALIZATION_MODE=advanced\0"
-                    .as_ptr()
-                    .cast::<c_char>(),
+                IPC::Mode::Json => c"NODE_CHANNEL_SERIALIZATION_MODE=json".as_ptr(),
+                IPC::Mode::Advanced => c"NODE_CHANNEL_SERIALIZATION_MODE=advanced".as_ptr(),
             });
         }
     }
@@ -1026,17 +997,16 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // For spawnSync, use an isolated event loop to prevent JavaScript timers from firing
     // and to avoid interfering with the main event loop.
     //
-    // PORT NOTE: borrowck — `rare_data()` borrows `jsc_vm` mutably and the
+    // Note: borrowck — `rare_data()` borrows `jsc_vm` mutably and the
     // returned `&mut SpawnSyncEventLoop` keeps that borrow alive, so we cannot
     // also pass `jsc_vm` into `spawn_sync_event_loop`/`prepare`/`cleanup` while
     // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
     let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
     // For IS_SYNC, use the isolated loop's `event_loop` (created by
     // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it
-    // instead of the main loop — matches Zig
-    // `&jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).event_loop`.
+    // instead of the main loop.
     let event_loop: *mut jsc::event_loop::EventLoop = if IS_SYNC {
-        // SAFETY: see PORT NOTE above; `spawn_sync_event_loop` re-borrows the
+        // SAFETY: see note above; `spawn_sync_event_loop` re-borrows the
         // same VM via the raw pointer for its `vm` arg.
         unsafe {
             let sync_loop = (*jsc_vm_ptr)
@@ -1055,7 +1025,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         jsc_vm.event_loop()
     };
 
-    // PORT NOTE: reshaped for borrowck — `defer!` is non-`move`, so the closure
+    // Note: reshaped for borrowck — `defer!` is non-`move`, so the closure
     // would capture the *place* `*jsc_vm_ptr` and conflict with later
     // `&mut *jsc_vm_ptr` re-borrows below. Copy the raw pointer into a sibling
     // local so the closure's captured place is disjoint.
@@ -1115,15 +1085,17 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         ..Default::default()
     };
 
-    let mut spawned = match spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
-    {
+    // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
+    // with argv[0] non-null; valid for this call.
+    let mut spawned = match unsafe {
+        spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
+    } {
         Err(err) if err == bun_core::err!("EMFILE") || err == bun_core::err!("ENFILE") => {
             // Windows: close+free the heap `uv::Pipe` handles that
             // `as_spawn_option` allocated and `spawn_process_windows` may have
             // `uv_pipe_init`-registered on the spawn-sync loop. Skipping this
             // leaks them and trips `assert(err == 0)` in `uv_loop_delete` at
-            // `SpawnSyncEventLoop::Drop`. POSIX: no-op. (Zig spec
-            // js_bun_spawn_bindings.zig:627 — `spawn_options.deinit()`.)
+            // `SpawnSyncEventLoop::Drop`. POSIX: no-op.
             spawn_options.deinit();
             let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                 // SAFETY: argv[0] is non-null and points at a NUL-terminated
@@ -1147,17 +1119,17 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 -UV_E::NFILE
             };
-            return Err(global_this.throw_value(sys_system_error_to_js(systemerror, global_this)));
+            return Err(global_this.throw_value(sys_system_error_to_js(&systemerror, global_this)));
         }
         Err(err) => {
-            // See EMFILE arm above — Zig spec js_bun_spawn_bindings.zig:637.
+            // See EMFILE arm above.
             spawn_options.deinit();
             let _ = global_this.throw_error(err, ": failed to spawn process");
             return Ok(JSValue::ZERO);
         }
         Ok(maybe) => match maybe {
             sys::Result::Err(err) => {
-                // See EMFILE arm above — Zig spec js_bun_spawn_bindings.zig:642.
+                // See EMFILE arm above.
                 spawn_options.deinit();
                 match err.get_errno() {
                     errno @ (sys::Errno::EACCES
@@ -1178,7 +1150,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 systemerror.errno = -UV_E::NOENT;
                             }
                             return Err(global_this
-                                .throw_value(sys_system_error_to_js(systemerror, global_this)));
+                                .throw_value(sys_system_error_to_js(&systemerror, global_this)));
                         }
                     }
                     _ => {}
@@ -1192,17 +1164,17 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // Use the isolated loop for spawnSync operations
     //
-    // PORT NOTE: `PosixSpawnResult::to_process` consumes `self` but only reads
-    // `pid`/`pidfd`/`has_exited`. Zig kept using `spawned.stdin/stdout/stderr/
-    // extra_pipes` afterward; in Rust, take those fields out first so the
-    // partial move is explicit.
+    // Note: `PosixSpawnResult::to_process` consumes `self` but only reads
+    // `pid`/`pidfd`/`has_exited`. `stdin/stdout/stderr/extra_pipes` are still
+    // needed afterward, so take those fields out first so the partial move is
+    // explicit.
     let spawned_stdin = spawned.stdin.take();
     let spawned_stdout = spawned.stdout.take();
     let spawned_stderr = spawned.stderr.take();
     let mut spawned_extra_pipes = core::mem::take(&mut spawned.extra_pipes);
     // `to_process` returns a freshly Box-allocated `Process` carrying an
     // intrusive `ThreadSafeRefCount` initialized to 1. `Subprocess.process`
-    // stores it as `*mut Process` (Zig: `*Process`); the matching `deref()` in
+    // stores it as `*mut Process`; the matching `deref()` in
     // `Subprocess::finalize` (or the error path below) frees the Box when the
     // refcount reaches zero.
     let process: *mut Process = spawned.to_process(loop_handle, IS_SYNC);
@@ -1216,11 +1188,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // When run synchronously, subprocess isn't garbage collected.
     //
-    // PORT NOTE: Zig built a placeholder struct, took its address for
-    // `MaxBuf::create_for_subprocess`, then overwrote `subprocess.*` with the
-    // real aggregate. In Rust that whole-struct reassignment would (a) move
-    // `process` twice and (b) run Drop on every field of the placeholder. Build
-    // the struct once with its final field values instead, then fill in the
+    // Note: build
+    // the struct once with its final field values, then fill in the
     // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
     let subprocess_ptr = bun_core::heap::into_raw(Box::new(SubprocessT {
         global_this: bun_ptr::BackRef::new(global_this),
@@ -1232,17 +1201,17 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
         // `subprocess.flags`, and calls `subprocess.ref()` for `.pipe` /
         // `.readable_stream` stdin; if called from inside this aggregate
-        // initializer those writes are clobbered by `.ref_count =
-        // .initExactRefs(2)`, `.flags = .{...}`, and the default
-        // `weak_file_sink_stdin_ptr = null` below. stdout/stderr are deferred
+        // initializer those writes are clobbered by the `ref_count`, `flags`,
+        // and default `weak_file_sink_stdin_ptr` initializers below.
+        // stdout/stderr are deferred
         // so that if `Writable.init()` fails the catch block doesn't have to
         // tear down unstarted `PipeReader`s (whose `deinit()` asserts
         // `isDone()`).
         stdin: JsCell::new(Writable::Ignore),
         stdout: JsCell::new(Readable::Ignore),
         stderr: JsCell::new(Readable::Ignore),
-        // 1. JavaScript.
-        // 2. Process.
+        // 1=JS (released in Subprocess::finalize), 2=Process exit handler
+        // (released in Subprocess::on_process_exit; stranded if child outlives VM teardown).
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
         ipc_data: JsCell::new(None),
@@ -1347,7 +1316,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
             subprocess.finalize_streams();
             subprocess.process_mut().detach();
-            // Zig: `subprocess.process.deref()` releases the intrusive ref
+            // Release the intrusive ref
             // (finalize() won't run on this error path).
             // SAFETY: this error path returns without ever reading `process` again.
             unsafe { Process::deref(subprocess.process.as_ptr()) };
@@ -1359,8 +1328,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             subprocess.stderr_maxbuf.set(mb);
             subprocess.deref();
             subprocess.deref();
-            // PORT NOTE: Zig returned `err` directly (`bun.JSError` or
-            // `error.OutOfMemory`); the Rust port's `Writable::init` returns
+            // Note: `Writable::init` returns
             // `bun_core::Error`. Map non-thrown to OOM.
             if global_this.has_exception() {
                 return Err(JsError::Thrown);
@@ -1370,7 +1338,6 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    // PORT NOTE: Zig passed `allocator` (unused/autofix) — dropped in Rust port of Readable::init.
     // event_loop points to the live JSC EventLoop for this thread.
     let event_loop_nn = NonNull::new(event_loop).expect("event_loop is null");
     subprocess.stdout.set(Readable::init(
@@ -1432,8 +1399,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         return Err(global_this.throw_value(err));
     }
 
-    // PORT NOTE: Zig left this `undefined` and only read it on the assigned path; Rust uses
-    // Option since `IPC::Socket` is a tagged union (zeroed enum is UB).
+    // Note: Option (rather than an uninitialized value) since `IPC::Socket`
+    // is a tagged union (zeroed enum is UB) and it is only read on the
+    // assigned path.
     #[cfg(unix)]
     let mut posix_ipc_info: Option<IPC::Socket> = None;
     #[cfg(unix)]
@@ -1486,8 +1454,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         {
             use crate::node::MaybeExt as _;
             let idx = usize::try_from(ipc_channel).expect("int cast");
-            // Zig: `stdio_pipes.items[ipc_channel].buffer` — direct union-field
-            // access (the IPC channel is always a `buffer` pipe on Windows).
+            // The IPC channel is always a `buffer` pipe on Windows.
             // Ownership of the heap `uv::Pipe` transfers to `ipc_data.socket`;
             // neutralize the slot up front so `finalizeStreams` can't
             // double-close it (the Box would otherwise drop on reassignment).
@@ -1497,9 +1464,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     other => {
                         // Restore the slot before panicking so the
                         // `Subprocess` finalizer still sees the original
-                        // variant. Zig's `.buffer` field access is
-                        // safety-checked in ReleaseSafe and panics on a
-                        // non-`.buffer` variant; mirror that with
+                        // variant. Use
                         // `unreachable!` (NOT `debug_assert!` — that would
                         // compile out in release and feed null to
                         // `windows_configure_server`, which immediately
@@ -1531,9 +1496,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if matches!(subprocess.stdin.get(), Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
-        // PORT NOTE: Zig writes `subprocess.stdin.pipe.signal =
-        // Signal.init(&subprocess.stdin)` and the callback `@fieldParentPtr`s
-        // back to the `Subprocess`. In Rust the SignalHandler impl is on
+        // Note: the SignalHandler impl is on
         // `Subprocess` and the stored back-pointer is the `*mut Subprocess`
         // (whole-allocation provenance), so `Writable::on_close` can raw-project
         // `stdin` instead of doing out-of-provenance pointer arithmetic. The
@@ -1557,9 +1520,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let out = if !IS_SYNC {
         // `subprocess_ptr` came from `heap::alloc` above and has not yet been
         // wrapped; ownership transfers to the C++ JS cell (released via
-        // `SubprocessClass__finalize`). Zig's `subprocess.toJS(globalThis)` did
-        // not re-allocate, so use the raw-ptr entrypoint instead of the
-        // by-value `JsClass::to_js` (which would re-box).
+        // `SubprocessClass__finalize`). Use the raw-ptr entrypoint instead of
+        // the by-value `JsClass::to_js` (which would re-box).
         SubprocessT::to_js_from_ptr(subprocess_ptr, global_this)
     } else {
         JSValue::ZERO
@@ -1578,7 +1540,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         if let Some(timeout_val) = timeout {
             let ts =
                 Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(timeout_val));
-            // PORT NOTE: `EventLoopTimer.next` is a local-stub Timespec until
+            // Note: `EventLoopTimer.next` is a local-stub Timespec until
             // `bun_event_loop` switches to `bun_core::Timespec`; copy fieldwise.
             subprocess.event_loop_timer.with_mut(|t| {
                 t.next = crate::timer::ElTimespec {
@@ -1586,7 +1548,6 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     nsec: ts.nsec,
                 };
             });
-            // Zig: `globalThis.bunVM().timer.insert(&subprocess.event_loop_timer)`.
             // `Timer::All` lives in `bun_runtime`; reach it via the
             // `RuntimeHooks` dispatch (`VirtualMachineRef::timer_insert`) which
             // forwards to `crate::timer::All::insert`.
@@ -1636,7 +1597,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    // PORT NOTE: reshaped for borrowck — copy `subprocess_ptr` so the
+    // Note: reshaped for borrowck — copy `subprocess_ptr` so the
     // non-`move` `defer!` closure captures a disjoint place from the
     // `(*subprocess_ptr).abort_signal = …` writes that follow.
     let subprocess_ptr_exit = subprocess_ptr;
@@ -1666,7 +1627,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-        // PORT NOTE: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
+        // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
         if let Err(err) = Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn) {
@@ -1682,7 +1643,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-        // PORT NOTE: see stdout arm above — avoid aliased &mut.
+        // Note: see stdout arm above — avoid aliased &mut.
         if let Err(err) = Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn) {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
@@ -1716,14 +1677,18 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if !IS_SYNC {
         if !subprocess.has_exited() {
-            // SAFETY: jsc_vm_ptr points to the live thread VM.
-            unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process.as_ptr());
+            // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
+            // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
+            unsafe {
+                (*jsc_vm_ptr)
+                    .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
+            };
         }
         return Ok(out);
     }
 
-    // PORT NOTE: Zig `comptime bun.assert(is_sync)` — anonymous const items cannot capture
-    // const-generic params, so use a runtime debug_assert (the !IS_SYNC path returned above).
+    // Note: anonymous const items cannot capture const-generic params, so use
+    // a runtime debug_assert (the !IS_SYNC path returned above).
     debug_assert!(IS_SYNC);
 
     if can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
@@ -1759,8 +1724,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if !subprocess.has_exited() {
-        // SAFETY: jsc_vm_ptr points to the live thread VM.
-        unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process.as_ptr());
+        // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
+        // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
+        unsafe {
+            (*jsc_vm_ptr).on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
+        };
     }
 
     let mut did_timeout = false;
@@ -1781,7 +1749,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // This does mean if an AbortSignal times out it will throw
         if let Some(signal) = subprocess.abort_signal_ref() {
             if let Some(abort_signal_timeout) = signal.get_timeout() {
-                // PORT NOTE: `AbortSignal::Timeout.event_loop_timer` uses the
+                // Note: `AbortSignal::Timeout.event_loop_timer` uses the
                 // bun_event_loop-local `Timespec` stub; convert fieldwise.
                 if abort_signal_timeout.event_loop_timer.state
                     == crate::timer::EventLoopTimerState::ACTIVE
@@ -1849,9 +1817,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 None
             }) {
-                TickState::Completed => {
-                    now = Timespec::now(TimespecMockMode::AllowMockedTime);
-                }
+                TickState::Completed => {}
                 TickState::Timeout => {
                     now = Timespec::now(TimespecMockMode::AllowMockedTime);
                     let did_user_timeout = has_user_timespec
@@ -1882,13 +1848,13 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 .unwrap()
                                 .remove_active_timeout(unsafe { &mut *jsc_vm_ptr });
 
-                            // This might internally call `std.c.kill` on this
+                            // This might internally call `kill(2)` on this
                             // spawnSync process. Even if we do that, we still
                             // need to reap the process. So we may go through
                             // the event loop again, but it should wake up
                             // ~instantly so we can drain the events.
                             crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
-                                taken_active_file,
+                                &taken_active_file,
                                 &absolute_timespec,
                                 // SAFETY: jsc_vm_ptr is the live thread VM.
                                 unsafe { &*jsc_vm_ptr },
@@ -1969,7 +1935,6 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 }
 
 fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsError {
-    // Zig returns `bun.JSError` (the error value itself); callers wrap in `Err(...)`.
     let err = SystemError {
         message: BunString::create_format(format_args!(
             "Executable not found in $PATH: \"{}\"",
@@ -1987,10 +1952,9 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
 }
 
 /// `storage` receives ownership of every `K=V\0` line whose pointer is pushed
-/// into `envp` (and, for `PATH=`, sliced into `*path`). The Zig original used a
-/// bump arena freed at the end of `spawnMaybeSync`; the caller's `Vec<ZBox>`
-/// plays the same role and is dropped after `spawn_process` returns.
-pub fn append_envp_from_js(
+/// into `envp` (and, for `PATH=`, sliced into `*path`); the caller's
+/// `Vec<ZBox>` is dropped after `spawn_process` returns.
+pub(crate) fn append_envp_from_js(
     global_this: &JSGlobalObject,
     object: &JSObject,
     envp: &mut Vec<CStrPtr>,
@@ -2021,8 +1985,7 @@ pub fn append_envp_from_js(
             continue;
         }
 
-        let value_bunstr = value.to_bun_string(global_this)?;
-        // derefs on drop (was `defer value_bunstr.deref()`).
+        let value_bunstr = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
 
         // Check for null bytes in env key and value (security: prevent null byte injection)
         if key.index_of_ascii_char(0).is_some() {
@@ -2050,8 +2013,7 @@ pub fn append_envp_from_js(
                 .throw());
         }
 
-        // PORT NOTE: Zig `std.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{key, value}, 0)`
-        // PERF(port): was arena bulk-free — profile in Phase B.
+        // PERF: per-entry allocation — profile if it shows up on a hot path.
         let line: ZBox = {
             let mut buf: Vec<u8> = Vec::new();
             write!(&mut buf, "{}={}", key, value_bunstr.to_zig_string())
@@ -2071,5 +2033,3 @@ pub fn append_envp_from_js(
     }
     Ok(())
 }
-
-// ported from: src/runtime/api/bun/js_bun_spawn_bindings.zig

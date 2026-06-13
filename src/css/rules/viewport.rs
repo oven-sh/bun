@@ -6,8 +6,8 @@ pub struct ViewportRule {
     /// The vendor prefix for this rule, e.g. `@-ms-viewport`.
     pub vendor_prefix: VendorPrefix,
     /// The declarations within the `@viewport` rule.
-    // PORT NOTE: `DeclarationBlock<'bump>` borrows the parser arena; lifetime
-    // erased to `'static` here per the rules/mod.rs `CssRule<R>` PORT NOTE
+    // `DeclarationBlock<'bump>` borrows the parser arena; the lifetime is
+    // erased to `'static` here, matching `CssRule<R>` in rules/mod.rs
     // (the `'bump` arena lifetime is re-threaded crate-wide in one pass).
     pub declarations: DeclarationBlock<'static>,
     /// The location of the rule in the source file.
@@ -15,7 +15,7 @@ pub struct ViewportRule {
 }
 
 impl ViewportRule {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         dest.write_char(b'@')?;
@@ -26,9 +26,7 @@ impl ViewportRule {
 }
 
 impl ViewportRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `VendorPrefix` is a
-        // `Copy` bitflag (generics.zig "simple copy types" → identity).
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             vendor_prefix: self.vendor_prefix,
             declarations: super::dc::decl_block_static(&self.declarations, bump),
@@ -36,5 +34,3 @@ impl ViewportRule {
         }
     }
 }
-
-// ported from: src/css/rules/viewport.zig

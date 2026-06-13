@@ -6,18 +6,14 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
-[lints.rust]
-# `bun_asan` is set via RUSTFLAGS (`--cfg=bun_asan` + `--check-cfg=cfg(bun_asan)`)
-# by scripts/build/rust.ts for asan builds; register it here so a plain
-# `cargo build` / `cargo check` (without those flags) doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)'] }
+[lints]
+workspace = true
 
 [dependencies]
 bytemuck = "1"
 itoa.workspace = true
 bun_opaque.workspace = true
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
 const_format.workspace = true
 libc.workspace = true

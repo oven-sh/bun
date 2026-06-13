@@ -1,5 +1,4 @@
 //! MOVE-IN: ssl_config (MOVE_DOWN bun_runtime::socket::SSLConfig → bun_http)
-//! Ground truth: src/runtime/socket/SSLConfig.zig
 //! JSC-dependent constructors (from_js / from_generated / read_from_blob /
 //! handle_path / handle_file*) stay in bun_runtime (tier-6, Pass C).
 
@@ -8,15 +7,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
 use bun_uws as uws;
-// Zig: `std.hash.Wyhash` (final4 variant). NOT `Wyhash11`.
-use bun_wyhash::Wyhash;
+// Wyhash final4 variant. NOT `Wyhash11`.
 use bun_threading::Guarded as Mutex;
+use bun_wyhash::Wyhash;
 
-/// Owned, NUL-terminated C-string slice (`?[*:0]const u8` in Zig). The
+/// Owned, NUL-terminated C-string slice. The
 /// pointer is heap-owned (allocated via `dupeZ`); freed via
 /// `free_sensitive` in `deinit`.
 type CStrPtr = *const c_char;
-/// Owned slice of owned C strings (`?[][*:0]const u8` in Zig).
+/// Owned slice of owned C strings.
 type CStrSlice = Option<Box<[CStrPtr]>>;
 
 pub struct SSLConfig {
@@ -46,8 +45,7 @@ pub struct SSLConfig {
     pub low_memory_mode: bool,
     /// Memoized `content_hash()`. Interior-mutable because it's lazily filled
     /// through `Arc<SSLConfig>` (shared ref) by the intern registry's hash
-    /// context. Zig used a plain `u64` mutated via `*SSLConfig` (Zig pointers
-    /// freely alias); Rust needs `UnsafeCell`-backed storage here.
+    /// context.
     pub cached_hash: AtomicU64,
 }
 
@@ -56,8 +54,7 @@ pub type SslConfig = SSLConfig;
 
 /// Atomic shared pointer with weak support. Refcounting and allocation are
 /// managed non-intrusively by `Arc`; the `SSLConfig` struct itself has no
-/// refcount field. Mirrors `bun.ptr.shared.WithOptions(*SSLConfig,
-/// .{ .atomic = true, .allow_weak = true })`.
+/// refcount field.
 #[derive(Clone)]
 #[repr(transparent)]
 pub struct SharedPtr(Arc<SSLConfig>);
@@ -381,10 +378,13 @@ impl SSLConfig {
         }
         let p = core::mem::replace(&mut self.protos, core::ptr::null());
         let bytes = cstr_bytes(p);
-        // TODO(port): bun.memory.dropSentinel — reuses the allocation in
-        // place; here we copy. PERF(port).
+        // Copy rather than reuse the allocation in place:
+        // `Box<[u8]>` must own a global-allocator allocation of exactly `len`
+        // bytes, which the NUL-terminated `dupe_z` allocation is not.
         let owned = bytes.to_vec().into_boxed_slice();
-        bun_core::free_sensitive(p);
+        // SAFETY: `p` was `dupe_z`-allocated when this config was built and
+        // taken (replaced with null) above — sole owner, NUL-terminated.
+        unsafe { bun_core::free_sensitive(p) };
         Some(owned)
     }
 
@@ -395,7 +395,9 @@ impl SSLConfig {
         let p = core::mem::replace(&mut self.server_name, core::ptr::null());
         let bytes = cstr_bytes(p);
         let owned = bytes.to_vec().into_boxed_slice();
-        bun_core::free_sensitive(p);
+        // SAFETY: `p` was `dupe_z`-allocated when this config was built and
+        // taken (replaced with null) above — sole owner, NUL-terminated.
+        unsafe { bun_core::free_sensitive(p) };
         Some(owned)
     }
 }
@@ -442,6 +444,9 @@ impl Drop for SSLConfig {
 // SAFETY: all raw pointers are heap-owned C strings with no interior
 // shared mutable state; cross-thread transfer is safe.
 unsafe impl Send for SSLConfig {}
+// SAFETY: the raw-pointer fields are only read (never written) through `&self`
+// and point to heap-owned immutable C strings; the sole interior-mutable field
+// (`cached_hash`) is an `AtomicU64`, which is itself `Sync`.
 unsafe impl Sync for SSLConfig {}
 
 /// Borrow a non-null, heap-owned, NUL-terminated C string field as bytes.
@@ -469,7 +474,9 @@ fn cstr_eq(a: CStrPtr, b: CStrPtr) -> bool {
 fn free_strings(slice: &mut CStrSlice) {
     if let Some(inner) = slice.take() {
         for s in inner.iter() {
-            bun_core::free_sensitive(*s);
+            // SAFETY: each entry is a `dupe_z` allocation owned by this config;
+            // the slice was `take`n so this is the final owner.
+            unsafe { bun_core::free_sensitive(*s) };
         }
     }
 }
@@ -478,7 +485,9 @@ fn free_string(s: &mut CStrPtr) {
     if s.is_null() {
         return;
     }
-    bun_core::free_sensitive(core::mem::replace(s, core::ptr::null()));
+    // SAFETY: `*s` is a `dupe_z` allocation owned by this config; replaced with
+    // null so no alias remains.
+    unsafe { bun_core::free_sensitive(core::mem::replace(s, core::ptr::null())) };
 }
 
 fn clone_strings(slice: &CStrSlice) -> CStrSlice {
@@ -506,16 +515,14 @@ fn clone_string(s: CStrPtr) -> CStrPtr {
 pub mod global_registry {
     use super::*;
 
-    // PORT NOTE: Zig used `ArrayHashMapUnmanaged<*SSLConfig, WeakPtr, MapContext>`
-    // where `MapContext` hashes/compares by *content* through the raw-pointer
-    // key. That shape is UB in Rust: when an interned `Arc`'s strong count hits
+    // The registry must not hash/compare by *content* through a raw-pointer
+    // key: that shape is UB. When an interned `Arc`'s strong count hits
     // 0, std `Arc` materializes a `&mut SSLConfig` (via `drop_in_place`)
     // *before* `Drop::drop` reaches `remove()`'s mutex; a concurrent `intern()`
     // probing the map would then form a `&SSLConfig` to the same allocation via
-    // the raw key, aliasing that live `&mut`. Zig's model tolerates
-    // read-while-deinit-blocked (.zig:336-341/.zig:356); Rust's does not.
+    // the raw key, aliasing that live `&mut`.
     //
-    // The Rust shape stores `(u64 content_hash, Weak)` and probes by:
+    // So the registry stores `(u64 content_hash, Weak)` and probes by:
     //   1. fast u64 hash filter,
     //   2. `Weak::upgrade()` (so the comparand is a fresh strong `Arc`),
     //   3. `is_same()` on the upgraded value.
@@ -524,7 +531,6 @@ pub mod global_registry {
     // Backed by a flat `Vec` (linear scan): the number of distinct SSL configs
     // per process is tiny (typically <16) and `ArrayHashMap` is also linear
     // for `eql` collisions, so this is the same complexity class.
-    // PERF(port): was ArrayHashMapUnmanaged — profile in Phase B.
     static REGISTRY: Mutex<Vec<(u64, WeakPtr)>> = Mutex::new(Vec::new());
 
     /// Takes a by-value SSLConfig, wraps it in a `SharedPtr` (strong=1), and
@@ -541,13 +547,12 @@ pub mod global_registry {
         let mut dispose_new: Option<SharedPtr> = None;
         let mut dispose_old_weak: Option<WeakPtr> = None;
 
-        // PORT NOTE: reshaped for borrowck — Zig returned directly while holding
-        // the mutex, then ran `defer`s. We compute `result` in a block, drop
+        // Compute `result` in a block, drop
         // the guard, then dispose deferred values.
         let result = {
             let mut configs = REGISTRY.lock();
 
-            // Zig: `getOrPutContext` — probe by content hash + content equality.
+            // Probe by content hash + content equality.
             let mut found_idx: Option<usize> = None;
             for (i, (h, weak)) in configs.iter().enumerate() {
                 if *h != hash {
@@ -609,7 +614,7 @@ pub mod global_registry {
         if configs.is_empty() {
             return;
         }
-        // Zig: `getIndexContext` then pointer-identity check. We never
+        // We never
         // dereference stored weaks here — only compare `Weak::as_ptr`.
         let Some(idx) = configs.iter().position(|(h, weak)| {
             // Hash filter only applies if this config was hashed (interned
@@ -621,13 +626,11 @@ pub mod global_registry {
             return;
         };
         let (_, weak) = configs.swap_remove(idx);
-        // Drop the weak after unlock isn't strictly necessary (Weak::drop
-        // doesn't re-enter), but matches Zig ordering.
+        // Dropping the weak after unlock isn't strictly necessary (Weak::drop
+        // doesn't re-enter).
         drop(configs);
         drop(weak);
     }
 }
 
 pub use global_registry as GlobalRegistry;
-
-// ported from: src/runtime/socket/SSLConfig.zig

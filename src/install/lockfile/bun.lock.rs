@@ -1,13 +1,13 @@
-//! Port of `src/install/lockfile/bun.lock.zig` — text lockfile (bun.lock) stringifier and parser.
+//! Text lockfile (bun.lock) stringifier and parser.
 
 use bun_collections::VecExt;
 use core::fmt::Write as _;
 
 use crate::bun_json as JSON;
 use bun_ast::{Expr, expr::Data as ExprData};
-use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
+use bun_collections::{HashMap, StringHashMap};
 use bun_core::strings;
-use bun_core::{self, OOM};
+use bun_core::{self};
 use bun_paths::PathBuffer;
 use bun_semver::semver_string::{
     Buf as StringBuf, Builder as StringBuilder, JsonFormatterOptions as JsonOpts,
@@ -15,30 +15,29 @@ use bun_semver::semver_string::{
 use bun_semver::{self as Semver, ExternalString, String};
 
 use crate::{
-    self as Install, DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash,
-    Repository, Resolution, TruncatedPackageNameHash,
+    DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
+    TruncatedPackageNameHash,
     bin::{Bin, Tag as BinTag},
     dependency,
     dependency::{
         Behavior, Dependency, Value as DependencyVersionValue, Version as DependencyVersion,
     },
     invalid_package_id,
-    resolution::{Tag as ResolutionTag, Value as ResolutionValue},
+    resolution::Tag as ResolutionTag,
 };
-// Canonical `Dependency.Version.Tag` — `crate::dependency::Tag` is a Phase-A
-// duplicate enum (different nominal type) that does not unify with the
+// Canonical `Dependency.Version.Tag` — `crate::dependency::Tag` is a duplicate
+// enum (different nominal type) that does not unify with the
 // `bun_install_types::DependencyVersion::tag` field; use the install_types one
 // so assignments at the two `.tag = Workspace` sites type-check.
 use crate::bin_real::ToJsonStyle;
 use crate::config_version::ConfigVersion;
-use crate::dependency::DependencyExt as _;
 use crate::extract_tarball as ExtractTarball;
 use crate::integrity::Integrity;
 use crate::npm::Negatable;
 use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::repository::RepositoryExt as _;
 use bun_install_types::DependencyVersionTag;
-// PORT NOTE: this file is `crate::lockfile_real::bun_lock`; `super` is the
+// this file is `crate::lockfile_real::bun_lock`; `super` is the
 // real `Lockfile` module, distinct from the `crate::lockfile` stub.
 use super::PackageIDSlice;
 use super::package::{Meta, PackageColumns as _};
@@ -49,8 +48,7 @@ use super::{
 
 use bun_io::AsFmt;
 
-/// `Bin::to_json` indent callback typed against `AsFmt` (Zig passed
-/// `Stringifier.writeIndent` directly; here the writer types differ).
+/// `Bin::to_json` indent callback typed against `AsFmt`.
 fn write_indent_fmt(w: &mut AsFmt<'_>, indent: &mut u32) -> core::fmt::Result {
     for _ in 0..*indent {
         w.write_str("  ")?;
@@ -58,7 +56,7 @@ fn write_indent_fmt(w: &mut AsFmt<'_>, indent: &mut u32) -> core::fmt::Result {
     Ok(())
 }
 
-/// Zig `String.arrayHashContext(lockfile, null)` — both arg and existing keys
+/// Both arg and existing keys
 /// resolve against the lockfile's string buffer.
 #[inline]
 fn string_array_hash_context(buf: &[u8]) -> bun_semver::string::ArrayHashContext<'_> {
@@ -68,9 +66,18 @@ fn string_array_hash_context(buf: &[u8]) -> bun_semver::string::ArrayHashContext
     }
 }
 
-// PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
-// lockfile.stringBuf()` for the whole parser, but in Rust that locks out every
-// other `lockfile.*` access (the `string_buf()` method borrows the whole
+/// `true` if `url` points at a resource under `registry`: the registry href
+/// (sans trailing slash) must be an exact prefix and the byte after it must be
+/// a path separator, so `https://registry.example.com.evil.com/x.tgz` does not
+/// count as being under a `https://registry.example.com` registry.
+pub(crate) fn url_is_under_registry(url: &[u8], registry: &[u8]) -> bool {
+    let registry = strings::without_trailing_slash(registry);
+    strings::has_prefix(url, registry)
+        && (url.len() == registry.len() || url[registry.len()] == b'/')
+}
+
+// A single `lockfile.string_buf()` held for the whole parser would lock out
+// every other `lockfile.*` access (the `string_buf()` method borrows the whole
 // receiver). Construct a fresh `Buf` at each append site so the disjoint
 // `buffers.string_bytes` / `string_pool` borrows end immediately and the
 // borrow checker can see that catalog/workspace/package mutations touch
@@ -84,9 +91,7 @@ macro_rules! sbuf {
     };
 }
 
-// TODO(port): narrow to a concrete byte-writer trait once bun_io stabilizes.
-// PERF(port): anytype → dyn dispatch — profile in Phase B (Zig used `writer: anytype`;
-// PORTING.md prefers `impl Trait`, but the trait shape is unsettled so dyn for now).
+// Dyn dispatch for now — the trait shape is unsettled.
 type Writer = dyn bun_io::Write;
 // `bun_io::Write` returns `core::result::Result<_, bun_core::Error>` (see
 // `bun_io::write::Result`), so the writer error is just the global `bun_core::Error`.
@@ -99,10 +104,20 @@ pub enum Version {
 
     /// fixed unnecessary listing of workspace dependencies
     V1 = 1,
+
+    /// Stricter parsing that rejects, rather than accepts, lockfiles the
+    /// earlier versions tolerated. Gated here so an already-written v0/v1
+    /// lockfile keeps loading:
+    /// - an npm package resolved to a tarball URL outside the configured
+    ///   registry must carry a supported integrity hash
+    /// - a git `.bun-tag` must be a safe path/checkout component (the same
+    ///   check on a `github` tag is enforced at every version, since its
+    ///   download path has no checkout-time re-validation)
+    V2 = 2,
 }
 
 impl Version {
-    pub const CURRENT: Version = Version::V1;
+    pub const CURRENT: Version = Version::V2;
 
     #[inline]
     pub const fn current() -> Version {
@@ -113,8 +128,16 @@ impl Version {
         match n {
             0 => Some(Version::V0),
             1 => Some(Version::V1),
+            2 => Some(Version::V2),
             _ => None,
         }
+    }
+
+    /// `true` when this lockfile version is at least `other`. Used to gate
+    /// strict parse-time checks introduced in a later version.
+    #[inline]
+    pub const fn at_least(self, other: Version) -> bool {
+        (self as u32) >= (other as u32)
     }
 }
 
@@ -126,18 +149,18 @@ struct TreeDepsSortCtx<'a> {
 }
 
 impl<'a> TreeDepsSortCtx<'a> {
-    pub fn is_less_than(&self, lhs: DependencyID, rhs: DependencyID) -> bool {
+    pub(crate) fn is_less_than(&self, lhs: DependencyID, rhs: DependencyID) -> bool {
         let l = &self.deps_buf[lhs as usize];
         let r = &self.deps_buf[rhs as usize];
         strings::cmp_strings_asc(
-            &(),
+            (),
             l.name.slice(self.string_buf),
             r.name.slice(self.string_buf),
         )
     }
 }
 
-pub struct Stringifier;
+pub(crate) struct Stringifier;
 
 impl Stringifier {
     const INDENT_SCALAR: usize = 2;
@@ -146,7 +169,7 @@ impl Stringifier {
     //     let _ = this;
     // }
 
-    pub fn save_from_binary(
+    pub(crate) fn save_from_binary(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
         options: &PackageManagerOptions,
@@ -156,20 +179,127 @@ impl Stringifier {
         Self::save_from_binary_inner(lockfile, load_result, options, writer)
     }
 
-    pub fn save_from_binary_inner(
+    /// Pick the `lockfileVersion` to stamp. A lockfile loaded from disk keeps
+    /// the version it already carried — re-saving never silently upgrades an
+    /// existing `bun.lock` to a newer format. `text_lockfile_version` holds the
+    /// parsed version when the lockfile was loaded from text, and defaults to
+    /// `Version::CURRENT` otherwise (a fresh install, or a migration from
+    /// another lockfile format), which is the "no version previously" case that
+    /// does get the current version.
+    ///
+    /// The one version that is *not* preserved is v0: v0→v1 was a content-format
+    /// change (v1 stopped listing a workspace package's dependencies as a
+    /// trailing object), and the writer only ever emits the v1+ single-element
+    /// `["name@workspace:path"]` form. Stamping v0 on that output would make the
+    /// next parse fail ("Missing dependencies object"), so a v0 lockfile is
+    /// floored to v1 — the lowest version whose content matches what we write.
+    /// v1→v2, by contrast, only added parse-time strictness on identical
+    /// content, so v1 is preserved as-is.
+    ///
+    /// When the target is the current version (v2), it is stamped only if every
+    /// serialized package satisfies the v2 invariants. v2 added parse-time
+    /// checks that reject entries older versions tolerated: an off-registry npm
+    /// tarball without a supported integrity hash, and an unsafe git `.bun-tag`.
+    /// The writer emits those fields verbatim (no backfill), so stamping v2 on a
+    /// lockfile that still carries such an entry — possible for a migrated
+    /// lockfile — would make the *next* parse reject it. Those stay at v1 so the
+    /// file round-trips (load → save → load) cleanly, across machines too, since
+    /// a lockfile is committed and shared. That decision is made without
+    /// consulting the writer's registry config: whether the *reader* will accept
+    /// the file must not depend on the writer's `~/.npmrc` / scoped registries.
+    ///
+    /// Walks the package tree the same way the writer does — only packages that
+    /// are actually serialized are considered, not every entry in the in-memory
+    /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
+    /// there that never reach the written `packages` object).
+    fn version_to_write(lockfile: &BinaryLockfile) -> Version {
+        // An older on-disk lockfile keeps its version; only a no-prior-version
+        // lockfile (the `Version::CURRENT` default) is a candidate for v2. v0 is
+        // the exception: the writer can't emit v0-format workspace entries, so a
+        // v0 lockfile is upgraded to v1 rather than preserved verbatim.
+        let loaded = lockfile.text_lockfile_version;
+        if !loaded.at_least(Version::CURRENT) {
+            return if loaded.at_least(Version::V1) {
+                loaded
+            } else {
+                Version::V1
+            };
+        }
+
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let deps_buf = lockfile.buffers.dependencies.as_slice();
+        let resolution_buf = lockfile.buffers.resolutions.as_slice();
+        let pkgs = lockfile.packages.slice();
+        let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
+        let pkg_metas: &[Meta] = pkgs.items_meta();
+
+        let mut iter = tree::Iterator::<'_, { tree::IteratorPathStyle::PkgPath }>::from_slices(
+            lockfile.buffers.trees.as_slice(),
+            lockfile.buffers.hoisted_dependencies.as_slice(),
+            deps_buf,
+            buf,
+        );
+
+        while let Some(node) = iter.next(None) {
+            for &dep_id in node.dependencies {
+                let pkg_id = resolution_buf[dep_id as usize];
+                if pkg_id == invalid_package_id {
+                    continue;
+                }
+                let i = pkg_id as usize;
+                let res = &pkg_resolutions[i];
+                match res.tag {
+                    ResolutionTag::Npm => {
+                        if pkg_metas[i].integrity.tag.is_supported() {
+                            continue;
+                        }
+                        // No supported integrity: only v2-clean if the tarball
+                        // URL is under the *default* registry, the one case the
+                        // writer normalizes to `""` (see the npm URL
+                        // serialization in `save_from_binary_inner`). An empty
+                        // URL never sets the parser's `npm_url_needs_integrity`,
+                        // so that round-trips for any reader. A URL under a
+                        // configured-but-not-default scope is written verbatim,
+                        // and the parser's integrity check is evaluated against
+                        // the *reader's* scope config, so it is not
+                        // config-independent: a writer with a private `@scope`
+                        // registry could stamp v2 on a lockfile a teammate
+                        // without that scope then fails to parse. Stay at v1 for
+                        // those so the file keeps loading everywhere.
+                        let url = res.npm().url.slice(buf);
+                        if !url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
+                            return Version::V1;
+                        }
+                    }
+                    ResolutionTag::Git => {
+                        // An unsafe git `.bun-tag` is only rejected at v2, so
+                        // staying at v1 keeps it loading. (A `github` tag is
+                        // rejected at every version, so no lockfile version can
+                        // round-trip an unsafe one — nothing to gate here.)
+                        if !crate::repository::is_safe_resolved_tag(
+                            res.repository().resolved.slice(buf),
+                        ) {
+                            return Version::V1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Version::CURRENT
+    }
+
+    pub(crate) fn save_from_binary_inner(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
         options: &PackageManagerOptions,
         writer: &mut Writer,
     ) -> Result<(), WriteError> {
-        // TODO(port): narrow error set
         let buf = lockfile.buffers.string_bytes.as_slice();
         let extern_strings = lockfile.buffers.extern_strings.as_slice();
         let deps_buf = lockfile.buffers.dependencies.as_slice();
         let resolution_buf = lockfile.buffers.resolutions.as_slice();
         let pkgs = lockfile.packages.slice();
-        // PORT NOTE: Zig `pkgs.items(.field)` → derive(MultiArrayElement)-generated
-        // `items_<field>()` column accessors on `Slice<Package>`.
         let pkg_dep_lists: &[DependencySlice] = pkgs.items_dependencies();
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
         let pkg_names: &[String] = pkgs.items_name();
@@ -181,17 +311,17 @@ impl Stringifier {
 
         let mut found_trusted_dependencies: HashMap<u64, String> = HashMap::default();
         if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-            found_trusted_dependencies.reserve(trusted_dependencies.count() as usize);
+            found_trusted_dependencies.reserve(trusted_dependencies.count());
         }
 
         let mut found_patched_dependencies: HashMap<u64, (Box<[u8]>, String)> = HashMap::default();
-        found_patched_dependencies.reserve(lockfile.patched_dependencies.count() as usize);
+        found_patched_dependencies.reserve(lockfile.patched_dependencies.count());
 
         let mut optional_peers_buf: Vec<String> = Vec::new();
 
         let mut pkg_map: PkgMap<()> = PkgMap::init();
 
-        // PORT NOTE: `from_slices` (vs `init(lockfile)`) is used so the iterator
+        // `from_slices` (vs `init(lockfile)`) is used so the iterator
         // borrows only `buffers.{trees,hoisted_dependencies,dependencies,string_bytes}`;
         // `overrides`/`catalogs` are mutated below while the iterator is still live.
         let mut pkgs_iter = tree::Iterator::<'_, { tree::IteratorPathStyle::PkgPath }>::from_slices(
@@ -235,17 +365,14 @@ impl Stringifier {
         writer.write_all(b"{\n")?;
         Self::inc_indent(writer, indent)?;
         {
-            write!(
-                writer,
-                "\"lockfileVersion\": {},\n",
-                Version::CURRENT as u32
-            )?;
-            Self::write_indent(writer, indent)?;
+            let lockfile_version = Self::version_to_write(lockfile);
+            writeln!(writer, "\"lockfileVersion\": {},", lockfile_version as u32)?;
+            Self::write_indent(writer, *indent)?;
 
             let config_version: ConfigVersion =
                 options.config_version.unwrap_or(ConfigVersion::CURRENT);
-            write!(writer, "\"configVersion\": {},\n", config_version as u32)?;
-            Self::write_indent(writer, indent)?;
+            writeln!(writer, "\"configVersion\": {},", config_version as u32)?;
+            Self::write_indent(writer, *indent)?;
 
             writer.write_all(b"\"workspaces\": {\n")?;
             Self::inc_indent(writer, indent)?;
@@ -284,18 +411,17 @@ impl Stringifier {
                 workspace_sort_buf.sort_by(|&l, &r| {
                     let l_res = &pkg_resolutions[l as usize];
                     let r_res = &pkg_resolutions[r as usize];
-                    l_res.workspace().order(r_res.workspace(), buf, buf)
+                    l_res.workspace().order(*r_res.workspace(), buf, buf)
                 });
-                // PERF(port): std.sort.pdq — Rust sort_by is also pattern-defeating quicksort
 
                 for &workspace_pkg_id in &workspace_sort_buf {
                     let res = &pkg_resolutions[workspace_pkg_id as usize];
                     writer.write_all(b"\n")?;
-                    Self::write_indent(writer, indent)?;
+                    Self::write_indent(writer, *indent)?;
                     Self::write_workspace_deps(
                         writer,
                         indent,
-                        u32::try_from(workspace_pkg_id).expect("int cast"),
+                        workspace_pkg_id,
                         // SAFETY: `workspace_sort_buf` only contains pkgs whose
                         // resolution `tag == Workspace`.
                         *res.workspace(),
@@ -389,10 +515,12 @@ impl Stringifier {
 
                     // intentionally not checking default trusted dependencies
                     if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-                        if trusted_dependencies
-                            .contains(&(dep.name_hash as TruncatedPackageNameHash))
+                        if let Some(trusted_name) =
+                            trusted_dependencies.get(&(dep.name_hash as TruncatedPackageNameHash))
                         {
-                            found_trusted_dependencies.insert(dep.name_hash, dep.name);
+                            if **trusted_name == *dep.name.slice(buf) {
+                                found_trusted_dependencies.insert(dep.name_hash, dep.name);
+                            }
                         }
                     }
                 }
@@ -401,15 +529,14 @@ impl Stringifier {
             pkgs_iter.reset();
 
             tree_sort_buf.sort_by(tree_sort_is_less_than);
-            // PERF(port): std.sort.pdq
 
             if found_trusted_dependencies.len() > 0 {
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 writer.write_all(b"\"trustedDependencies\": [\n")?;
                 *indent += 1;
                 for dep_name in found_trusted_dependencies.values() {
-                    Self::write_indent(writer, indent)?;
-                    write!(writer, "\"{}\",\n", bstr::BStr::new(dep_name.slice(buf)))?;
+                    Self::write_indent(writer, *indent)?;
+                    writeln!(writer, "\"{}\",", bstr::BStr::new(dep_name.slice(buf)))?;
                 }
 
                 Self::dec_indent(writer, indent)?;
@@ -417,15 +544,15 @@ impl Stringifier {
             }
 
             if found_patched_dependencies.len() > 0 {
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 writer.write_all(b"\"patchedDependencies\": {\n")?;
                 *indent += 1;
                 for value in found_patched_dependencies.values() {
                     let (name_and_version, patch_path) = value;
-                    Self::write_indent(writer, indent)?;
-                    write!(
+                    Self::write_indent(writer, *indent)?;
+                    writeln!(
                         writer,
-                        "{}: {},\n",
+                        "{}: {},",
                         bun_core::fmt::format_json_string_utf8(
                             name_and_version,
                             Default::default()
@@ -443,14 +570,14 @@ impl Stringifier {
                     .overrides
                     .sort(lockfile.buffers.string_bytes.as_slice());
 
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 writer.write_all(b"\"overrides\": {\n")?;
                 *indent += 1;
                 for override_dep in lockfile.overrides.map.values() {
-                    Self::write_indent(writer, indent)?;
-                    write!(
+                    Self::write_indent(writer, *indent)?;
+                    writeln!(
                         writer,
-                        "{}: {},\n",
+                        "{}: {},",
                         override_dep.name.fmt_json(buf, Default::default()),
                         override_dep
                             .version
@@ -470,14 +597,14 @@ impl Stringifier {
             }
 
             if lockfile.catalogs.default.count() > 0 {
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 writer.write_all(b"\"catalog\": {\n")?;
                 *indent += 1;
                 for catalog_dep in lockfile.catalogs.default.values() {
-                    Self::write_indent(writer, indent)?;
-                    write!(
+                    Self::write_indent(writer, *indent)?;
+                    writeln!(
                         writer,
-                        "{}: {},\n",
+                        "{}: {},",
                         catalog_dep.name.fmt_json(buf, Default::default()),
                         catalog_dep
                             .version
@@ -491,25 +618,24 @@ impl Stringifier {
             }
 
             if lockfile.catalogs.groups.count() > 0 {
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 writer.write_all(b"\"catalogs\": {\n")?;
                 *indent += 1;
 
-                let mut iter = lockfile.catalogs.groups.iter();
-                while let Some((catalog_name, catalog_deps)) = iter.next() {
-                    Self::write_indent(writer, indent)?;
-                    write!(
+                for (catalog_name, catalog_deps) in lockfile.catalogs.groups.iter() {
+                    Self::write_indent(writer, *indent)?;
+                    writeln!(
                         writer,
-                        "{}: {{\n",
+                        "{}: {{",
                         catalog_name.fmt_json(buf, Default::default())
                     )?;
                     *indent += 1;
 
                     for catalog_dep in catalog_deps.values() {
-                        Self::write_indent(writer, indent)?;
-                        write!(
+                        Self::write_indent(writer, *indent)?;
+                        writeln!(
                             writer,
-                            "{}: {},\n",
+                            "{}: {},",
                             catalog_dep.name.fmt_json(buf, Default::default()),
                             catalog_dep
                                 .version
@@ -529,7 +655,7 @@ impl Stringifier {
             let mut tree_deps_sort_buf: Vec<DependencyID> = Vec::new();
             let mut pkg_deps_sort_buf: Vec<DependencyID> = Vec::new();
 
-            Self::write_indent(writer, indent)?;
+            Self::write_indent(writer, *indent)?;
             writer.write_all(b"\"packages\": {")?;
             let mut first = true;
             for item in &tree_sort_buf {
@@ -551,7 +677,6 @@ impl Stringifier {
                             core::cmp::Ordering::Equal
                         }
                     });
-                    // PERF(port): std.sort.pdq with isLessThan
                 }
 
                 for &dep_id in &tree_deps_sort_buf {
@@ -583,7 +708,7 @@ impl Stringifier {
                         Self::inc_indent(writer, indent)?;
                     } else {
                         writer.write_all(b",\n\n")?;
-                        Self::write_indent(writer, indent)?;
+                        Self::write_indent(writer, *indent)?;
                     }
 
                     writer.write_byte(b'"')?;
@@ -621,8 +746,7 @@ impl Stringifier {
                     pkg_deps_sort_buf.clear();
                     pkg_deps_sort_buf.reserve(pkg_deps_list.len as usize);
                     for pkg_dep_id in pkg_deps_list.begin()..pkg_deps_list.end() {
-                        pkg_deps_sort_buf.push(u32::try_from(pkg_dep_id).expect("int cast"));
-                        // PERF(port): was assume_capacity
+                        pkg_deps_sort_buf.push(pkg_dep_id);
                     }
 
                     // there might be duplicate names due to dependency behaviors,
@@ -813,17 +937,16 @@ impl Stringifier {
                             write!(
                                 writer,
                                 "\"{}\", ",
-                                bstr::BStr::new(
-                                    if strings::has_prefix(
+                                bun_core::fmt::format_json_string_utf8(
+                                    if url_is_under_registry(
                                         url_slice,
-                                        strings::without_trailing_slash(
-                                            Npm::Registry::DEFAULT_URL.as_bytes()
-                                        ),
+                                        Npm::Registry::DEFAULT_URL.as_bytes(),
                                     ) {
                                         b"" as &[u8]
                                     } else {
                                         url_slice
-                                    }
+                                    },
+                                    bun_core::fmt::JSONFormatterUTF8Options { quote: false }
                                 ),
                             )?;
 
@@ -860,12 +983,20 @@ impl Stringifier {
                             } else {
                                 "github:"
                             };
+                            {
+                                use std::io::Write;
+                                write!(&mut temp_buf, "{}", repo.fmt(prefix, buf)).ok();
+                            }
                             write!(
                                 writer,
                                 "[\"{}@{}\", ",
                                 pkg_name.fmt_json(buf, JsonOpts { quote: false }),
-                                repo.fmt(prefix, buf),
+                                bun_core::fmt::format_json_string_utf8(
+                                    temp_buf.as_slice(),
+                                    bun_core::fmt::JSONFormatterUTF8Options { quote: false }
+                                ),
                             )?;
+                            temp_buf.clear();
 
                             Self::write_package_info_object(
                                 writer,
@@ -930,8 +1061,7 @@ impl Stringifier {
         relative_path: &[u8],
         path_buf: &mut [u8],
     ) -> Result<(), WriteError> {
-        // TODO(port): narrow error set to { OutOfMemory, WriteFailed }
-        // PORT NOTE: Zig `defer optional_peers_buf.clearRetainingCapacity()` moved to fn tail.
+        // `optional_peers_buf` is cleared at the fn tail.
         // Error path (`?` on writer) aborts the whole save in the caller, so skipping the
         // clear on early-return cannot leak stale entries into a subsequent call.
 
@@ -939,7 +1069,6 @@ impl Stringifier {
 
         let mut any = false;
         for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
-            // PERF(port): was `inline for` — profile in Phase B
             let mut first = true;
             for &dep_id in pkg_dep_ids {
                 let dep = &deps_buf[dep_id as usize];
@@ -1108,8 +1237,7 @@ impl Stringifier {
         relative_path: &[u8],
         path_buf: &mut [u8],
     ) -> Result<(), WriteError> {
-        // TODO(port): narrow error set to { OutOfMemory, WriteFailed }
-        // PORT NOTE: Zig `defer optional_peers_buf.clearRetainingCapacity()` moved to fn tail.
+        // `optional_peers_buf` is cleared at the fn tail.
         // Error path (`?` on writer) aborts the whole save in the caller, so skipping the
         // clear on early-return cannot leak stale entries into a subsequent call.
 
@@ -1152,14 +1280,14 @@ impl Stringifier {
 
             if let Some(version) = workspace_versions.get(&pkg_name_hashes[pkg_id as usize]) {
                 writer.write_all(b",\n")?;
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 write!(writer, "\"version\": \"{}\"", version.fmt(buf))?;
             }
 
             if pkg_bins[pkg_id as usize].tag != BinTag::None {
                 let bin = &pkg_bins[pkg_id as usize];
                 writer.write_all(b",\n")?;
-                Self::write_indent(writer, indent)?;
+                Self::write_indent(writer, *indent)?;
                 if bin.tag == BinTag::Dir {
                     writer.write_all(b"\"binDir\": ")?;
                 } else {
@@ -1178,7 +1306,6 @@ impl Stringifier {
         }
 
         for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
-            // PERF(port): was `inline for` — profile in Phase B
             let mut first = true;
             for dep in pkg_deps[pkg_id as usize].get(deps_buf) {
                 if !dep.behavior.intersects(group_behavior) {
@@ -1199,7 +1326,7 @@ impl Stringifier {
                     }
                     writer.write_byte(b'\n')?;
                     if any {
-                        Self::write_indent(writer, indent)?;
+                        Self::write_indent(writer, *indent)?;
                     } else {
                         Self::inc_indent(writer, indent)?;
                     }
@@ -1211,7 +1338,7 @@ impl Stringifier {
                     first = false;
                 } else {
                     writer.write_all(b",\n")?;
-                    Self::write_indent(writer, indent)?;
+                    Self::write_indent(writer, *indent)?;
                 }
 
                 let name = dep.name.slice(buf);
@@ -1245,14 +1372,14 @@ impl Stringifier {
         if !optional_peers_buf.is_empty() {
             debug_assert!(any);
             writer.write_all(b",\n")?;
-            Self::write_indent(writer, indent)?;
+            Self::write_indent(writer, *indent)?;
             writer.write_all(b"\"optionalPeers\": [\n")?;
             *indent += 1;
             for optional_peer in optional_peers_buf.iter() {
-                Self::write_indent(writer, indent)?;
-                write!(
+                Self::write_indent(writer, *indent)?;
+                writeln!(
                     writer,
-                    "{},\n",
+                    "{},",
                     bun_core::fmt::format_json_string_utf8(
                         optional_peer.slice(buf),
                         Default::default()
@@ -1273,10 +1400,10 @@ impl Stringifier {
         Ok(())
     }
 
-    fn write_indent(writer: &mut Writer, indent: &u32) -> Result<(), WriteError> {
+    fn write_indent(writer: &mut Writer, indent: u32) -> Result<(), WriteError> {
         const INDENT: &[u8] = b"  "; // " " ** indent_scalar (2)
         const _: () = assert!(INDENT.len() == Stringifier::INDENT_SCALAR);
-        for _ in 0..*indent {
+        for _ in 0..indent {
             writer.write_all(INDENT)?;
         }
         Ok(())
@@ -1339,23 +1466,23 @@ bun_core::oom_from_alloc!(ParseError);
 
 bun_core::named_error_set!(ParseError);
 
-pub type PkgPathSet = PkgMap<()>;
+pub(crate) type PkgPathSet = PkgMap<()>;
 
-pub struct PkgMap<T> {
+pub(crate) struct PkgMap<T> {
     pub map: StringHashMap<T>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, strum::IntoStaticStr)]
-pub enum ResolveError {
+pub(crate) enum ResolveError {
     InvalidPackageKey,
     Unresolvable,
 }
 
 impl<T> PkgMap<T> {
-    // PORT NOTE: Zig `pub const Entry = T;` — inherent associated types are
-    // unstable in Rust; callers name `T` directly.
+    // No `Entry` alias — inherent associated types are
+    // unstable; callers name `T` directly.
 
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self {
             map: StringHashMap::default(),
         }
@@ -1363,7 +1490,7 @@ impl<T> PkgMap<T> {
 
     // deinit → Drop (StringHashMap drops itself)
 
-    pub fn get_or_put(
+    pub(crate) fn get_or_put(
         &mut self,
         name: &[u8],
     ) -> Result<bun_collections::string_hash_map::GetOrPutResult<'_, T>, bun_alloc::AllocError>
@@ -1373,19 +1500,19 @@ impl<T> PkgMap<T> {
         self.map.get_or_put(name)
     }
 
-    pub fn put(&mut self, name: impl AsRef<[u8]>, value: T) {
+    pub(crate) fn put(&mut self, name: impl AsRef<[u8]>, value: T) {
         self.map.put_assume_capacity(name.as_ref(), value);
     }
 
-    pub fn get(&self, name: &[u8]) -> Option<&T> {
+    pub(crate) fn get(&self, name: &[u8]) -> Option<&T> {
         self.map.get(name)
     }
 
-    pub fn contains(&self, path: &[u8]) -> bool {
+    pub(crate) fn contains(&self, path: &[u8]) -> bool {
         self.map.contains_key(path)
     }
 
-    pub fn find_resolution(
+    pub(crate) fn find_resolution(
         &self,
         pkg_path: &[u8],
         dep: &Dependency,
@@ -1481,7 +1608,6 @@ pub fn parse_into_binary_lockfile(
                         break 'err;
                     }
 
-                    // std.math.divExact(f64, num.value, 1) catch break :err
                     if num.value.fract() != 0.0 {
                         break 'err;
                     }
@@ -1543,14 +1669,24 @@ pub fn parse_into_binary_lockfile(
             .items
             .slice()
         {
-            if !dep.is_string() {
+            let ExprData::EString(s) = &dep.data else {
                 log.add_error(Some(source), dep.loc, b"Expected a string");
                 return Err(ParseError::InvalidTrustedDependenciesSet);
-            }
+            };
+            // JSON-parsed strings are always UTF-8; the UTF-16 arm is kept for
+            // the unreachable branch so the stored name and the hash agree.
+            let name: Box<[u8]> = if s.is_utf8() {
+                Box::from(s.slice8())
+            } else {
+                debug_assert!(
+                    false,
+                    "trustedDependencies: UTF-16 EString from JSON parser"
+                );
+                strings::to_utf8_alloc(s.slice16()).into_boxed_slice()
+            };
             let name_hash: TruncatedPackageNameHash =
-                dep.as_string_hash_utf8(StringBuilder::string_hash)?
-                    .unwrap() as TruncatedPackageNameHash;
-            trusted_dependencies.insert(name_hash, ());
+                StringBuilder::string_hash(&name) as TruncatedPackageNameHash;
+            trusted_dependencies.insert(name_hash, name);
         }
 
         lockfile.trusted_dependencies = Some(trusted_dependencies);
@@ -1740,8 +1876,8 @@ pub fn parse_into_binary_lockfile(
             };
 
             let entry = lockfile.catalogs.default.get_or_put_adapted(
-                dep_name,
-                string_array_hash_context(lockfile.buffers.string_bytes.as_slice()),
+                &dep_name,
+                &string_array_hash_context(lockfile.buffers.string_bytes.as_slice()),
             )?;
 
             if entry.found_existing {
@@ -1861,8 +1997,8 @@ pub fn parse_into_binary_lockfile(
                 };
 
                 let entry = group.get_or_put_adapted(
-                    dep_name,
-                    string_array_hash_context(lockfile.buffers.string_bytes.as_slice()),
+                    &dep_name,
+                    &string_array_hash_context(lockfile.buffers.string_bytes.as_slice()),
                 )?;
 
                 if entry.found_existing {
@@ -2029,7 +2165,7 @@ pub fn parse_into_binary_lockfile(
 
     if lockfile_version != Version::V0 {
         // these are the `workspaceOnly` packages
-        // PORT NOTE: snapshot the workspace-path handles up front so the loop
+        // snapshot the workspace-path handles up front so the loop
         // body can take `&mut *lockfile` (`parse_append_dependencies`,
         // `append_package_dedupe`) without conflicting with the
         // `workspace_paths.values()` iterator borrow. `String` is `Copy`.
@@ -2055,11 +2191,12 @@ pub fn parse_into_binary_lockfile(
                     continue;
                 }
 
-                let mut pkg = Package::default();
-
-                pkg.resolution = Resolution::init(crate::resolution::TaggedValue::Workspace(
-                    sbuf!(lockfile).append(path)?,
-                ));
+                let mut pkg = Package {
+                    resolution: Resolution::init(crate::resolution::TaggedValue::Workspace(
+                        sbuf!(lockfile).append(path)?,
+                    )),
+                    ..Default::default()
+                };
 
                 let name_expr = value.get(b"name").unwrap();
                 let name = name_expr
@@ -2237,6 +2374,11 @@ pub fn parse_into_binary_lockfile(
                 }
             };
 
+            if !name_str.is_empty() && !dependency::is_safe_install_folder_name(name_str) {
+                log.add_error(Some(source), res_info.loc, b"Invalid package name");
+                return Err(ParseError::InvalidPackageResolution);
+            }
+
             let name_hash = StringBuilder::string_hash(name_str);
             let name = sbuf!(lockfile).append(name_str)?;
 
@@ -2263,6 +2405,7 @@ pub fn parse_into_binary_lockfile(
                 }
             };
 
+            let mut npm_url_needs_integrity = false;
             if res.tag == ResolutionTag::Npm {
                 if i >= (pkg_info.len_u32() as usize) {
                     log.add_error(Some(source), value.loc, b"Missing npm registry");
@@ -2293,8 +2436,19 @@ pub fn parse_into_binary_lockfile(
                         lockfile.buffers.string_bytes.as_slice(),
                     )?;
 
-                    res.npm_mut().url = sbuf!(lockfile).append(&url)?;
+                    res.npm_mut().url = sbuf!(lockfile).append(url)?;
                 } else {
+                    let configured_registry = if let Some(mgr) = manager.as_deref() {
+                        mgr.scope_for_package_name(name_str).url.href()
+                    } else {
+                        Npm::Registry::DEFAULT_URL.as_bytes()
+                    };
+                    npm_url_needs_integrity =
+                        !url_is_under_registry(registry_str, configured_registry)
+                            && !url_is_under_registry(
+                                registry_str,
+                                Npm::Registry::DEFAULT_URL.as_bytes(),
+                            );
                     res.npm_mut().url = sbuf!(lockfile).append(registry_str)?;
                 }
             }
@@ -2309,6 +2463,7 @@ pub fn parse_into_binary_lockfile(
                     }
 
                     let pkgs = lockfile.packages.slice();
+                    #[cfg(debug_assertions)]
                     let pkg_names = pkgs.items_name();
                     let pkg_resolutions = pkgs.items_resolution();
 
@@ -2316,8 +2471,7 @@ pub fn parse_into_binary_lockfile(
                     for _workspace_pkg_id in
                         workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len
                     {
-                        let workspace_pkg_id: PackageID =
-                            u32::try_from(_workspace_pkg_id).expect("int cast");
+                        let workspace_pkg_id: PackageID = _workspace_pkg_id;
                         if res.eql(
                             &pkg_resolutions[workspace_pkg_id as usize],
                             lockfile.buffers.string_bytes.as_slice(),
@@ -2482,13 +2636,44 @@ pub fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     }
                     let integrity_expr = pkg_info.at(i);
-                    i += 1;
                     let Some(integrity_str) = integrity_expr.as_utf8_string_literal() else {
                         log.add_error(Some(source), integrity_expr.loc, b"Expected a string");
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
                     pkg.meta.integrity = Integrity::parse(integrity_str);
+                    if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
+                        // Surface — don't fail — for npm parity (`npm install`
+                        // proceeds on a malformed lockfile integrity, treating
+                        // it as absent). The download path still applies any
+                        // registry-supplied integrity, so this only loses the
+                        // *lockfile* pin.
+                        log.add_warning(
+                            Some(source),
+                            integrity_expr.loc,
+                            b"Unsupported or malformed integrity hash; ignoring",
+                        );
+                        pkg.meta.integrity = Integrity::default();
+                    }
+
+                    // Fail closed: otherwise a tampered lockfile could redirect
+                    // the tarball URL off-registry and install arbitrary content
+                    // under a trusted package name with verification disabled.
+                    //
+                    // Only enforced for v2+. Older lockfiles predate this check
+                    // and may legitimately omit integrity for an off-registry
+                    // tarball; rejecting them would break existing installs.
+                    if lockfile_version.at_least(Version::V2)
+                        && npm_url_needs_integrity
+                        && !pkg.meta.integrity.tag.is_supported()
+                    {
+                        log.add_error(
+                            Some(source),
+                            integrity_expr.loc,
+                            b"Missing integrity hash for npm package resolved to a tarball URL outside the configured registry",
+                        );
+                        return Err(ParseError::InvalidPackageInfo);
+                    }
                 }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                     // integrity is optional for tarball deps (backward compat)
@@ -2496,7 +2681,14 @@ pub fn parse_into_binary_lockfile(
                         let integrity_expr = pkg_info.at(i);
                         if let Some(integrity_str) = integrity_expr.as_utf8_string_literal() {
                             pkg.meta.integrity = Integrity::parse(integrity_str);
-                            i += 1;
+                            if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
+                                log.add_warning(
+                                    Some(source),
+                                    integrity_expr.loc,
+                                    b"Unsupported or malformed integrity hash; ignoring",
+                                );
+                                pkg.meta.integrity = Integrity::default();
+                            }
                         }
                     }
                 }
@@ -2515,6 +2707,21 @@ pub fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
+                    // Reject an unsafe `.bun-tag`. For `git`, `Repository::checkout`
+                    // re-validates with the same guard before building any cache
+                    // path or invoking `git`, so this parse-time check is gated to
+                    // v2+ — older git lockfiles keep loading without reopening the
+                    // checkout hole. For `github` there is no such re-validation
+                    // (the tarball-download path feeds the tag straight into the
+                    // cache folder name), so the check must stay unconditional to
+                    // keep the path-traversal guard intact at every version.
+                    let enforce_safe_tag =
+                        tag == ResolutionTag::Github || lockfile_version.at_least(Version::V2);
+                    if enforce_safe_tag && !crate::repository::is_safe_resolved_tag(bun_tag_str) {
+                        log.add_error(Some(source), bun_tag.loc, b"Invalid git dependency tag");
+                        return Err(ParseError::InvalidPackageInfo);
+                    }
+
                     let resolved = sbuf!(lockfile).append(bun_tag_str)?;
                     if tag == ResolutionTag::Git {
                         res.git_mut().resolved = resolved;
@@ -2527,7 +2734,14 @@ pub fn parse_into_binary_lockfile(
                         let integrity_expr = pkg_info.at(i);
                         if let Some(integrity_str) = integrity_expr.as_utf8_string_literal() {
                             pkg.meta.integrity = Integrity::parse(integrity_str);
-                            i += 1;
+                            if !integrity_str.is_empty() && !pkg.meta.integrity.tag.is_supported() {
+                                log.add_warning(
+                                    Some(source),
+                                    integrity_expr.loc,
+                                    b"Unsupported or malformed integrity hash; ignoring",
+                                );
+                                pkg.meta.integrity = Integrity::default();
+                            }
                         }
                     }
                 }
@@ -2556,7 +2770,6 @@ pub fn parse_into_binary_lockfile(
                 .len()
                 .saturating_sub(lockfile.buffers.resolutions.len()),
         );
-        // Zig: ensureTotalCapacityPrecise → expandToCapacity → @memset(invalid_package_id).
         lockfile
             .buffers
             .resolutions
@@ -2567,9 +2780,7 @@ pub fn parse_into_binary_lockfile(
         // is chosen (dev -> optional -> prod -> peer)
         let mut seen_deps: bun_collections::StringArrayHashMap<()> = Default::default();
 
-        // PORT NOTE: Zig grabs `pkgs.items(.meta)` / `.items(.resolution)` as
-        // mutable column slices, writes index 0, then keeps the resolution slice
-        // for read-only lookups. In Rust the two `[0]` writes are done first via
+        // The two `[0]` writes are done first via
         // sequential `&mut` accessors so the loops can take all column views
         // immutably without overlapping exclusive borrows or `unsafe`.
         lockfile.packages.items_resolution_mut()[0] =
@@ -2583,8 +2794,7 @@ pub fn parse_into_binary_lockfile(
 
         // Disjoint-field split of `lockfile.buffers` so each loop body can hold
         // `&mut dependencies[i]` and `&mut resolutions[i]` together with a shared
-        // `string_bytes` view (Zig's `*Dependency` / `lockfile.buffers.*.items`
-        // accesses freely alias the same struct).
+        // `string_bytes` view.
         let buffers = &mut lockfile.buffers;
         let string_buf: &[u8] = buffers.string_bytes.as_slice();
         let dependencies: &mut [Dependency] = buffers.dependencies.as_mut_slice();
@@ -2593,7 +2803,7 @@ pub fn parse_into_binary_lockfile(
         {
             // first the root dependencies are resolved
             for _dep_id in pkg_deps[0].begin()..pkg_deps[0].end() {
-                let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
 
                 let Some(&res_id) = pkg_map.get(dep.name.slice(string_buf)) else {
@@ -2636,14 +2846,14 @@ pub fn parse_into_binary_lockfile(
         if lockfile_version != Version::V0 {
             // then workspace dependencies are resolved
             for _pkg_id in workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len {
-                let pkg_id: PackageID = u32::try_from(_pkg_id).expect("int cast");
+                let pkg_id: PackageID = _pkg_id;
                 let workspace_name = pkg_names[pkg_id as usize].slice(string_buf);
 
                 seen_deps.clear_retaining_capacity();
 
                 let deps = pkg_deps[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
-                    let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                    let dep_id: DependencyID = _dep_id;
                     let dep = &mut dependencies[dep_id as usize];
                     let dep_name = dep.name.slice(string_buf);
 
@@ -2731,7 +2941,7 @@ pub fn parse_into_binary_lockfile(
             // find resolutions. iterate up to root through the pkg path.
             let deps = pkg_deps[pkg_id as usize];
             'deps: for _dep_id in deps.begin()..deps.end() {
-                let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
 
                 let res_id =
@@ -2779,9 +2989,9 @@ pub fn parse_into_binary_lockfile(
     Ok(())
 }
 
-// PORT NOTE: Zig signature takes `*BinaryLockfile` plus a `*Dependency` that
-// points into `lockfile.buffers.dependencies` — fine in Zig, illegal aliasing in
-// Rust. The function only touches `buffers.resolutions[dep_id]` and reads
+// Taking `&mut BinaryLockfile` plus a `&mut Dependency` that
+// points into `lockfile.buffers.dependencies` would be illegal aliasing.
+// The function only touches `buffers.resolutions[dep_id]` and reads
 // `text_lockfile_version`, so accept those disjoint pieces directly and let the
 // caller split-borrow `lockfile.buffers`.
 fn map_dep_to_pkg(
@@ -2797,11 +3007,15 @@ fn map_dep_to_pkg(
     if text_lockfile_version != Version::V0 {
         let res = &pkg_resolutions[pkg_id as usize];
         if res.tag == ResolutionTag::Workspace {
-            dep.version.tag = DependencyVersionTag::Workspace;
-            // SAFETY: `res.tag == Workspace` was just checked, so the
-            // `workspace` arm of the `Resolution.value` union is the active one.
-            dep.version.value = DependencyVersionValue {
-                workspace: *res.workspace(),
+            // Whole-struct assign so `DependencyVersion::Drop` frees any prior
+            // npm chain. SAFETY: `res.tag == Workspace` checked above.
+            let literal = dep.version.literal;
+            dep.version = DependencyVersion {
+                tag: DependencyVersionTag::Workspace,
+                literal,
+                value: DependencyVersionValue {
+                    workspace: *res.workspace(),
+                },
             };
         }
     }
@@ -2852,10 +3066,9 @@ fn dependency_resolution_failure(
     Ok(())
 }
 
-// PORT NOTE: Zig threaded `string_buf: *String.Buf` separately from `lockfile`.
-// In Rust the `Buf` borrows the same `lockfile.buffers.string_bytes` /
-// `string_pool` fields, so the two parameters alias. The `buf` parameter is
-// dropped and each append constructs a fresh `sbuf!(lockfile)` so the borrow
+// A separate `string_buf` parameter would borrow the same
+// `lockfile.buffers.string_bytes` / `string_pool` fields and alias `lockfile`.
+// Instead each append constructs a fresh `sbuf!(lockfile)` so the borrow
 // checker can see the disjoint field accesses against `buffers.dependencies`
 // and `workspace_paths`.
 fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>(
@@ -2864,14 +3077,14 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
     optional_peers_buf: &mut HashMap<u64, ()>,
-    // Zig: `if (check_for_bundled) string else void` → carried as Option, gated by const generic
+    // Only meaningful when `CHECK_FOR_BUNDLED`; carried as Option.
     pkg_path: Option<&[u8]>,
     bundled_pkgs: Option<&PkgPathSet>,
     workspaces_obj: Option<&Expr>,
 ) -> Result<(u32, u32), ParseError> {
-    // PORT NOTE: defer optional_peers_buf.clearRetainingCapacity() moved to fn tail
-    // (and to each early-return path implicitly via clear-on-next-call semantics in caller).
-    // TODO(port): if exact defer semantics matter on error paths, wrap in scopeguard.
+    // Clearing on entry is equivalent to clearing on every exit path for all
+    // callers (none read the buf between calls) and also covers early-error exits.
+    optional_peers_buf.clear();
 
     if let Some(optional_peers) = obj.get(b"optionalPeers") {
         if !optional_peers.is_array() {
@@ -2903,7 +3116,6 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     let off = lockfile.buffers.dependencies.len();
     for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
-        // PERF(port): was `inline for` — profile in Phase B
         if let Some(deps) = obj.get(group_name.as_bytes()) {
             if !deps.is_object() {
                 log.add_error(Some(source), deps.loc, b"Expected an object");
@@ -3051,8 +3263,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     {
         let bytes = lockfile.buffers.string_bytes.as_slice();
-        // Zig: `std.sort.pdq(..., Dependency.isLessThan)`. `slice::sort_by` is
-        // also pattern-defeating quicksort; `Dependency::cmp` is the
+        // `slice::sort_by` is pattern-defeating quicksort; `Dependency::cmp` is the
         // total-order form of `isLessThan` (behavior group, then name ASC).
         lockfile.buffers.dependencies[off..].sort_by(|a, b| Dependency::cmp(bytes, a, b));
     }
@@ -3064,5 +3275,3 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
         u32::try_from(end - off).expect("int cast"),
     ))
 }
-
-// ported from: src/install/lockfile/bun.lock.zig

@@ -1,7 +1,7 @@
 use core::fmt;
 
 use bun_core::{OwnedString, String, ZigString};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
 
 use super::parse_args_utils::{
     OptionDefinition, OptionValueType, TokenSubtype, classify_token, find_option_by_short_name,
@@ -21,7 +21,7 @@ struct ArgsSlice {
 
 impl ArgsSlice {
     #[inline]
-    pub fn get(&self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
+    pub(crate) fn get(&self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
         self.array.get_index(global, self.start + i)
     }
 }
@@ -35,14 +35,14 @@ enum ValueRef {
 }
 
 impl ValueRef {
-    pub fn as_bun_string(&self, global: &JSGlobalObject) -> JsResult<String> {
+    pub(crate) fn as_bun_string(&self, global: &JSGlobalObject) -> JsResult<String> {
         match self {
             ValueRef::Jsvalue(str) => str.to_bun_string(global),
             ValueRef::Bunstr(str) => Ok(*str),
         }
     }
 
-    pub fn as_js_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn as_js_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             ValueRef::Jsvalue(str) => Ok(*str),
             ValueRef::Bunstr(str) => str.to_js(global),
@@ -171,7 +171,10 @@ impl OptionToken {
     }
 }
 
-pub fn find_option_by_long_name(long_name: String, options: &[OptionDefinition]) -> Option<usize> {
+pub(crate) fn find_option_by_long_name(
+    long_name: String,
+    options: &[OptionDefinition],
+) -> Option<usize> {
     for (i, option) in options.iter().enumerate() {
         if long_name.eql(&option.long_name) {
             return Some(i);
@@ -219,29 +222,28 @@ fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
 }
 
 /// In strict mode, throw for possible usage errors like "--foo --bar" where foo was defined as a string-valued arg
-fn check_option_like_value(global: &JSGlobalObject, token: OptionToken) -> JsResult<()> {
+fn check_option_like_value(global: &JSGlobalObject, token: &OptionToken) -> JsResult<()> {
     if !token.inline_value && is_option_like_value(&token.value.as_bun_string(global)?) {
         let raw = token.raw.as_bun_string(global)?;
-        let raw_name = RawNameFormatter { token, raw };
+        let raw_name = RawNameFormatter { token: *token, raw };
 
         // Only show short example if user used short option.
-        let err: JSValue;
-        if raw.has_prefix_comptime(b"--") {
-            err = global.to_type_error(
+        let err: JSValue = if raw.has_prefix_comptime(b"--") {
+            global.to_type_error(
                 bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
                 format_args!(
                     "Option '{raw_name}' argument is ambiguous.\nDid you forget to specify the option argument for '{raw_name}'?\nTo specify an option argument starting with a dash use '{raw_name}=-XYZ'.",
                 ),
-            );
+            )
         } else {
             let token_name = token.name.as_bun_string(global)?;
-            err = global.to_type_error(
+            global.to_type_error(
                 bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
                 format_args!(
                     "Option '{raw_name}' argument is ambiguous.\nDid you forget to specify the option argument for '{raw_name}'?\nTo specify an option argument starting with a dash use '--{token_name}=-XYZ' or '{raw_name}-XYZ'.",
                 ),
-            );
-        }
+            )
+        };
         return Err(global.throw_value(err));
     }
     Ok(())
@@ -252,7 +254,7 @@ fn check_option_usage(
     global: &JSGlobalObject,
     options: &[OptionDefinition],
     allow_positionals: bool,
-    token: OptionToken,
+    token: &OptionToken,
 ) -> JsResult<()> {
     if let Some(option_idx) = token.option_idx {
         let option = &options[option_idx];
@@ -263,7 +265,7 @@ fn check_option_usage(
                         // the option was found earlier because we trimmed 'no-' from the name, so we throw
                         // the expected unknown option error.
                         let raw_name = RawNameFormatter {
-                            token,
+                            token: *token,
                             raw: token.raw.as_bun_string(global)?,
                         };
                         let err = global.to_type_error(
@@ -319,7 +321,7 @@ fn check_option_usage(
         }
     } else {
         let raw_name = RawNameFormatter {
-            token,
+            token: *token,
             raw: token.raw.as_bun_string(global)?,
         };
 
@@ -371,7 +373,7 @@ fn store_option(
         value
     };
 
-    let is_multiple = option_idx.map_or(false, |idx| options[idx].multiple);
+    let is_multiple = option_idx.is_some_and(|idx| options[idx].multiple);
     if is_multiple {
         // Always store value in array, including for boolean.
         // values[long_option] starts out not present,
@@ -394,6 +396,7 @@ fn parse_option_definitions(
     global: &JSGlobalObject,
     options_obj: JSValue,
     option_definitions: &mut Vec<OptionDefinition>,
+    default_roots: &mut MarkedArgumentBuffer,
 ) -> JsResult<()> {
     validators::validate_object(global, options_obj, "options", Default::default())?;
 
@@ -493,6 +496,7 @@ fn parse_option_definitions(
                         }
                     }
                 }
+                default_roots.append(default_value);
                 option.default_value = Some(default_value);
             }
         }
@@ -550,11 +554,11 @@ fn tokenize_args(
             // Guideline 10 in https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap12.html
             TokenSubtype::OptionTerminator => {
                 // Everything after a bare '--' is considered a positional argument.
-                ctx.handle_token(Token::OptionTerminator { index })?;
+                ctx.handle_token(&Token::OptionTerminator { index })?;
                 index += 1;
 
                 while index < num_args {
-                    ctx.handle_token(Token::Positional {
+                    ctx.handle_token(&Token::Positional {
                         index,
                         value: ValueRef::Jsvalue(args.get(global, index)?),
                     })?;
@@ -581,7 +585,7 @@ fn tokenize_args(
                         "   (lone_short_option consuming next token as value)"
                     );
                 }
-                ctx.handle_token(Token::Option(OptionToken {
+                ctx.handle_token(&Token::Option(OptionToken {
                     index,
                     value,
                     inline_value: has_inline_value,
@@ -626,7 +630,7 @@ fn tokenize_args(
                                 "   (short_option_group short option consuming next token as value)"
                             );
                         }
-                        ctx.handle_token(Token::Option(OptionToken {
+                        ctx.handle_token(&Token::Option(OptionToken {
                             index: original_arg_idx,
                             optgroup_idx: Some(u32::try_from(idx_in_optgroup).expect("int cast")),
                             value,
@@ -649,7 +653,7 @@ fn tokenize_args(
                         // Expand -abfFILE to -a -b -fFILE
 
                         // Immediately process as a short_option_and_value
-                        ctx.handle_token(Token::Option(OptionToken {
+                        ctx.handle_token(&Token::Option(OptionToken {
                             index: original_arg_idx,
                             optgroup_idx: Some(u32::try_from(idx_in_optgroup).expect("int cast")),
                             value: ValueRef::Bunstr(arg.substring(idx_in_optgroup + 1)),
@@ -675,7 +679,7 @@ fn tokenize_args(
                 let option_idx = find_option_by_short_name(&short_option, options);
                 let value = arg.substring(2);
 
-                ctx.handle_token(Token::Option(OptionToken {
+                ctx.handle_token(&Token::Option(OptionToken {
                     index,
                     value: ValueRef::Bunstr(value),
                     inline_value: true,
@@ -713,7 +717,7 @@ fn tokenize_args(
                     bun_output::scoped_log!(parseArgs, "  (consuming next as value)");
                 }
 
-                ctx.handle_token(Token::Option(OptionToken {
+                ctx.handle_token(&Token::Option(OptionToken {
                     index,
                     value: ValueRef::Jsvalue(value.unwrap_or(JSValue::UNDEFINED)),
                     inline_value: value.is_none(),
@@ -736,7 +740,7 @@ fn tokenize_args(
                 let long_option = arg.substring_with_len(2, equal_index.unwrap());
                 let value = arg.substring(equal_index.unwrap() + 1);
 
-                ctx.handle_token(Token::Option(OptionToken {
+                ctx.handle_token(&Token::Option(OptionToken {
                     index,
                     value: ValueRef::Bunstr(value),
                     inline_value: true,
@@ -750,7 +754,7 @@ fn tokenize_args(
             }
 
             TokenSubtype::Positional => {
-                ctx.handle_token(Token::Positional {
+                ctx.handle_token(&Token::Positional {
                     index,
                     value: arg_ref,
                 })?;
@@ -780,14 +784,14 @@ struct ParseArgsState<'a> {
 }
 
 impl<'a> ParseArgsState<'a> {
-    pub fn handle_token(&mut self, token_generic: Token) -> JsResult<()> {
+    pub(crate) fn handle_token(&mut self, token_generic: &Token) -> JsResult<()> {
         let global = self.global;
 
         match &token_generic {
             Token::Option(token) => {
                 if self.strict {
-                    check_option_usage(global, self.option_defs, self.allow_positionals, *token)?;
-                    check_option_like_value(global, *token)?;
+                    check_option_usage(global, self.option_defs, self.allow_positionals, token)?;
+                    check_option_like_value(global, token)?;
                 }
                 store_option(
                     global,
@@ -904,6 +908,14 @@ impl<'a> ParseArgsState<'a> {
 
 #[bun_jsc::host_fn(export = "Bun__NodeUtil__jsParseArgs")]
 pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    MarkedArgumentBuffer::new(|default_roots| parse_args_impl(global, callframe, default_roots))
+}
+
+fn parse_args_impl(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+    default_roots: &mut MarkedArgumentBuffer,
+) -> JsResult<JSValue> {
     // jsc.markBinding(@src()) — debug-only, dropped
     let config_value = callframe.arguments_as_array::<1>()[0];
     //
@@ -944,7 +956,7 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     let mut config_allow_positionals: JSValue = match config {
         Some(c) => c
             .get_own(global, &String::static_("allowPositionals"))?
-            .unwrap_or(JSValue::from(!config_strict.to_boolean())),
+            .unwrap_or_else(|| JSValue::from(!config_strict.to_boolean())),
         None => JSValue::from(!config_strict.to_boolean()),
     };
     let config_return_tokens: JSValue = match config {
@@ -980,11 +992,10 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
 
     // Phase 0.C: Parse the options definitions
 
-    // PERF(port): was stack-fallback (std.heap.stackFallback(2048, ...)) — profile in Phase B
     let mut option_defs: Vec<OptionDefinition> = Vec::new();
 
     if !config_options.is_undefined_or_null() {
-        parse_option_definitions(global, config_options, &mut option_defs)?;
+        parse_option_definitions(global, config_options, &mut option_defs, default_roots)?;
     }
 
     //
@@ -1059,5 +1070,3 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     result.put(global, ZigString::static_("positionals"), state.positionals);
     Ok(result)
 }
-
-// ported from: src/runtime/node/util/parse_args.zig

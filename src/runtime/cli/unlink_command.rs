@@ -10,31 +10,28 @@ use bun_install::bin as stub_bin;
 use bun_install::bin_real as bin;
 use bun_install::lockfile_real::{Lockfile, package::Package};
 use bun_install::package_manager_real::{
-    self as pm, CommandLineArguments, PackageManager, Subcommand, attempt_to_create_package_json,
+    self as pm, CommandLineArguments, Subcommand, attempt_to_create_package_json,
     global_link_dir_path, options::LogLevel, package_manager_options, setup_global_dir,
 };
 
 use crate::command::ContextData;
 
-pub struct UnlinkCommand;
+pub(crate) struct UnlinkCommand;
 
 impl UnlinkCommand {
-    pub fn exec(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    pub(crate) fn exec(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         unlink(ctx)
     }
 }
 
 fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
     let cli = CommandLineArguments::parse(Subcommand::Unlink)?;
     let (manager, _original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Unlink) {
         Ok(v) => v,
         Err(e) if e == err!(MissingPackageJSON) => {
             attempt_to_create_package_json()?;
             // Re-parse argv: `CommandLineArguments` is not `Clone`, and `parse`
-            // is deterministic over process argv. Mirrors Zig passing the
-            // by-value `cli` struct to both `init` calls.
+            // is deterministic over process argv.
             let cli = CommandLineArguments::parse(Subcommand::Unlink)?;
             pm::init(&mut *ctx, cli, Subcommand::Unlink)?
         }
@@ -43,10 +40,10 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
     // `defer ctx.allocator.free(original_cwd)` — `_original_cwd: Box<[u8]>` drops at scope exit.
 
     if manager.options.should_print_command_name() {
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b>bun unlink <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
     }
 
@@ -91,25 +88,25 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             let name = lockfile.str(&package.name);
             if name.is_empty() {
                 if manager.options.log_level != LogLevel::Silent {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error:<r> package.json missing \"name\" <d>in \"{}\"<r>",
                         BStr::new(package_json_source.path.text),
-                    ));
+                    );
                 }
                 Global::crash();
             } else if !strings::is_npm_package_name(name) {
                 if manager.options.log_level != LogLevel::Silent {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error:<r> invalid package.json name \"{}\" <d>in \"{}\"<r>",
                         BStr::new(name),
                         BStr::new(package_json_source.path.text),
-                    ));
+                    );
                 }
                 Global::crash();
             }
         }
 
-        // PORT NOTE: reshaped for borrowck — `name` borrows `lockfile`; re-derive
+        // Reshaped for borrowck — `name` borrows `lockfile`; re-derive
         // it after the parse block so its lifetime is decoupled from
         // `package_json_source` (dropped above) while remaining a slice into
         // `lockfile.buffers.string_bytes`.
@@ -121,18 +118,18 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         )) {
             Ok(stat) => {
                 if !sys::S::ISLNK(stat.st_mode as _) {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><green>success:<r> package \"{}\" is not globally linked, so there's nothing to do.",
                         BStr::new(name),
-                    ));
+                    );
                     Global::exit(0);
                 }
             }
             Err(_) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><green>success:<r> package \"{}\" is not globally linked, so there's nothing to do.",
                     BStr::new(name),
-                ));
+                );
                 Global::exit(0);
             }
         }
@@ -152,16 +149,17 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
 
             match manager
                 .global_dir
+                .as_ref()
                 .unwrap()
                 .make_open_path(b"node_modules", Default::default())
             {
                 Ok(d) => break 'brk d,
                 Err(e) => {
                     if manager.options.log_level != LogLevel::Silent {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> failed to create node_modules in global dir due to error {}",
                             e.name(),
-                        ));
+                        );
                     }
                     Global::crash();
                 }
@@ -174,11 +172,10 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             let mut link_dest_buf = PathBuffer::uninit();
             let mut link_rel_buf = PathBuffer::uninit();
 
-            // PORT NOTE: Zig passed `&node_modules_path` for both
-            // `target_node_modules_path` (`*const`) and `node_modules_path`
-            // (`*mut`). Rust forbids `&` + `&mut` to the same value, so resolve
-            // the fd path twice (cheap: one `getFdPath` syscall) into two
-            // independent `AbsPath` buffers.
+            // `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`)
+            // cannot alias the same value, so resolve the fd path twice
+            // (cheap: one `getFdPath` syscall) into two independent `AbsPath`
+            // buffers.
             let mut node_modules_path =
                 match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
                     Ok(p) => p,
@@ -199,15 +196,11 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
                         Global::crash();
                     }
                 };
-            // `defer node_modules_path.deinit()` — handled by Drop.
 
             let mut bin_linker = bin::Linker {
                 target_node_modules_path: &raw const target_node_modules_path,
                 target_package_name: strings::StringOrTinyString::init(name),
-                // `package.bin` is the inline stub `bin::Bin` (struct `Value`);
-                // project to the real union-`Value` shape via the
-                // `From<bin::Bin> for bin_real::Bin` bridge in `bun_install::lib`.
-                bin: bin::Bin::from(package.bin),
+                bin: package.bin,
                 node_modules_path: &mut node_modules_path,
                 global_bin_path: manager.options.bin_path,
                 package_name: strings::StringOrTinyString::init(name),
@@ -226,25 +219,21 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         // delete it if it exists
         if let Err(e) = node_modules.delete_tree(name) {
             if manager.options.log_level != LogLevel::Silent {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error:<r> failed to unlink package in global dir due to error {}",
                     e.name(),
-                ));
+                );
             }
             Global::crash();
         }
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><green>success:<r> unlinked package \"{}\"",
             BStr::new(name),
-        ));
+        );
         Global::exit(0);
     } else {
-        Output::prettyln(format_args!(
-            "<r><red>error:<r> bun unlink {{packageName}} not implemented yet",
-        ));
+        bun_core::prettyln!("<r><red>error:<r> bun unlink {{packageName}} not implemented yet");
         Global::crash();
     }
 }
-
-// ported from: src/cli/unlink_command.zig

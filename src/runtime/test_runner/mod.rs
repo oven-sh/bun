@@ -4,8 +4,8 @@
 //! Module layout: every matcher resolves `Expect`, `get_signature`, `mock`,
 //! `DiffFormatter`, `ExpectAny` via `super::*` from the `expect` façade
 //! below. The `JSValueTestExt` / `JSGlobalObjectTestExt` extension traits are
-//! thin call-convention adapters (Phase-A drafts used a different argument
-//! order / arity than the `bun_jsc` inherents that have since landed); every
+//! thin call-convention adapters (the matcher modules were written against a
+//! different argument order / arity than the `bun_jsc` inherents that have since landed); every
 //! body forwards to the canonical `bun_jsc::JSValue` / `JSGlobalObject`
 //! inherent so there is exactly one FFI declaration per symbol.
 
@@ -91,18 +91,18 @@ pub mod expect {
     pub use super::expect_core::mock;
     pub use super::diff_format::DiffFormatter;
 
-    /// `Expect.js.*GetCached` / `*SetCached` accessors (Zig: `Expect.js.capturedValueGetCached`
-    /// etc., generate-classes.ts `cache: true` slots from jest.classes.ts:226). Exposed as a
+    /// `Expect.js.*GetCached` / `*SetCached` accessors (generate-classes.ts
+    /// `cache: true` slots from jest.classes.ts). Exposed as a
     /// sibling `js` module so matcher drafts can write `super::js::captured_value_get_cached(..)`
     /// — `Expect::js::..` does not resolve in Rust (no inherent associated modules).
     pub mod js {
         ::bun_jsc::codegen_cached_accessors!("Expect"; capturedValue, resultValue);
     }
 
-    /// Free-fn alias for `Expect::get_signature` — many Phase-A matcher
-    /// drafts imported it as a path item (`use super::get_signature`),
-    /// which Rust does not allow for associated fns. Thin shim keeps the
-    /// drafts unmodified.
+    /// Free-fn alias for `Expect::get_signature` — many matcher modules
+    /// import it as a path item (`use super::get_signature`),
+    /// which Rust does not allow for associated fns. Thin shim keeps those
+    /// modules unmodified.
     #[inline]
     pub fn get_signature(
         matcher_name: &'static str,
@@ -112,8 +112,7 @@ pub mod expect {
         Expect::get_signature(matcher_name, args, not)
     }
 
-    /// Const-context twin of `get_signature` — Zig's `getSignature` is a
-    /// `comptime` fn (.zig:103-109) that concatenates string literals. Rust
+    /// Const-context twin of `get_signature`. Rust
     /// has no const-fn string concat, so call sites that need a `&'static
     /// str` constant (e.g. inside `const_format::concatcp!`) use this macro
     /// instead. `use super::get_signature;` imports both the fn (value
@@ -136,7 +135,7 @@ pub mod expect {
     pub(crate) use __get_signature as get_signature;
 
     // ── call-convention adapters over `bun_jsc` inherents ────────────
-    // The Phase-A matcher drafts were written against a slightly different
+    // The matcher modules were written against a slightly different
     // `bun_jsc` surface (argument order, builder-style setters, two-arg
     // `throw_*`). Rather than touch 75 files we provide thin extension
     // traits / aliases here that forward to the now-landed inherents — no
@@ -146,8 +145,8 @@ pub mod expect {
     use bun_jsc::console_object::Formatter;
     use bun_jsc::console_object::formatter::ZigFormatter;
 
-    /// `value.to_fmt(&mut formatter)` → `Display` adapter (Zig
-    /// `value.toFmt(&formatter)`). Returns the `ZigFormatter` wrapper.
+    /// `value.to_fmt(&mut formatter)` → `Display` adapter. Returns the
+    /// `ZigFormatter` wrapper.
     pub trait JSValueTestExt {
         fn to_fmt<'a, 'b>(self, f: &'a mut Formatter<'b>) -> ZigFormatter<'a, 'b>;
         fn jest_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool>;
@@ -199,7 +198,6 @@ pub mod expect {
         }
         #[inline]
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
-            // Port of Zig `JSValue.jestSnapshotPrettyFormat` (JSValue.zig:562).
             use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
             let fmt_options = FormatOptions {
                 enable_colors: false,
@@ -215,12 +213,11 @@ pub mod expect {
                 out,
                 fmt_options,
             )?;
-            // Zig: `try out.flush()` — `FormatOptions.flush` is false, so the
-            // formatter does not flush internally; a buffered `out` would
-            // otherwise drop trailing snapshot bytes. Propagate the writer
-            // error as a thrown JS error so the caller's `.is_err()` branch
-            // (expect.rs `to_match_snapshot_value_kind`) fires, matching the
-            // Zig `!void` contract.
+            // `FormatOptions.flush` is false, so the formatter does not flush
+            // internally; a buffered `out` would otherwise drop trailing
+            // snapshot bytes. Propagate the writer error as a thrown JS error
+            // so the caller's `.is_err()` branch
+            // (expect.rs `to_match_snapshot_value_kind`) fires.
             out.flush().map_err(|e| global.throw_error(e, "snapshot writer flush failed"))?;
             Ok(())
         }
@@ -230,7 +227,7 @@ pub mod expect {
         }
         #[inline]
         fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare {
-            // Trait kept the Phase-A `(other, global)` ordering; the upstream
+            // Trait keeps the matcher modules' `(other, global)` ordering; the upstream
             // inherent is `(global, other)` — adapt here so 75 matcher
             // call-sites stay untouched.
             use bun_jsc::ComparisonResult as R;
@@ -310,13 +307,13 @@ pub mod expect {
         }
     }
 
-    /// Result of `JSValue::as_big_int_compare` (Zig `JSBigInt.CompareResult`).
+    /// Result of `JSValue::as_big_int_compare`.
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
 
-    /// Two-argument `throw_*` adapters — Phase-A matcher drafts called
-    /// `global.throw_pretty(FMT, format_args!(FMT, ..))` (Zig's `comptime fmt`
-    /// + `args`). Rust's `Arguments<'_>` already encloses the format string,
+    /// Two-argument `throw_*` adapters — matcher modules call
+    /// `global.throw_pretty(FMT, format_args!(FMT, ..))`.
+    /// Rust's `Arguments<'_>` already encloses the format string,
     /// so the leading `&str` is redundant; these shims drop it and forward to
     /// the bun_jsc inherents (`throw_pretty` runs the `<r>/<d>` → ANSI/strip
     /// pass at runtime; `throw`/`throw_invalid_arguments` do not).
@@ -352,9 +349,8 @@ pub mod expect {
     }
 
     // ── numeric ordering matchers (toBe{Greater,Less}Than[OrEqual]) ───────
-    // Four near-identical Zig matchers (toBeGreaterThan.zig:1-59 etc.) are
-    // copy-pasted upstream; collapse to one body parameterised by relation.
-    // Rust-side dedup, not a parity restore.
+    // The four matchers are near-identical; collapse to one body
+    // parameterised by relation.
 
     #[derive(Copy, Clone)]
     pub(super) enum OrderingRelation { Gt, Ge, Lt, Le }
@@ -393,7 +389,7 @@ pub mod expect {
             }
         }
         /// `other.asBigIntCompare(value)` arm — operands swapped, so the
-        /// relation is mirrored (Zig writes this out longhand per-matcher).
+        /// relation is mirrored.
         #[inline]
         fn cmp_bigint_rev(self, r: BigIntCompare) -> bool {
             use BigIntCompare::*;
@@ -408,7 +404,7 @@ pub mod expect {
 
     impl Expect {
         /// Shared body for `toBeGreaterThan` / `toBeGreaterThanOrEqual` /
-        /// `toBeLessThan` / `toBeLessThanOrEqual`. The four upstream Zig files
+        /// `toBeLessThan` / `toBeLessThanOrEqual`. The four matchers
         /// differ only in `name`, the `>`/`>=`/`<`/`<=` operator, and which
         /// `BigIntCompare` arms count as a pass — all of which `rel` encodes.
         pub(super) fn numeric_ordering_matcher(
@@ -487,7 +483,7 @@ pub mod expect {
 
     /// Builder-style `.with_quote_strings(bool)` shim — `bun_jsc::Formatter`
     /// exposes `quote_strings` as a public field, not a chained setter. A
-    /// handful of Phase-A matcher drafts wrote
+    /// handful of matcher modules write
     /// `Formatter::new(g).with_quote_strings(true)`.
     pub trait FormatterTestExt: Sized {
         fn with_quote_strings(self, b: bool) -> Self;
@@ -605,5 +601,3 @@ cfg_jsc! {
     pub use pretty_format::JestPrettyFormat;
     pub use snapshot::Snapshots;
 }
-
-// ported from: src/runtime/test_runner/

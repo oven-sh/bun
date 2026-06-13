@@ -1,5 +1,3 @@
-//! Port of `src/runtime/cli/run_command.zig`.
-//!
 //! `RunCommand::exec` classifies the first positional as a file path vs. a
 //! package.json script and either boots the JS VM directly (via `Run::boot` →
 //! `VirtualMachine::init` → `Run::start`) or spawns the script body through the
@@ -13,7 +11,6 @@ use std::io::Write as _;
 use bun_ast::Loader;
 use bun_bundler::Transpiler;
 use bun_collections::{ArrayHashMap, StringHashMap};
-use bun_core::MutableString;
 use bun_core::{self as core, Environment, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
@@ -26,14 +23,11 @@ use bun_options_types::schema::api;
 use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
-use bun_resolver::dir_info::DirInfo;
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd, FdExt as _};
-use bun_threading::Channel;
 use bun_which::which;
 
 use crate::cli;
-use crate::cli::Command;
 use crate::cli::arguments;
 use crate::cli::command::{ContextData, Tag as CommandTag};
 use crate::cli::shell_completions::ShellCompletions;
@@ -42,7 +36,7 @@ bun_core::declare_scope!(RUN_LOG, visible);
 
 use bun_core::UnwrapOrOom;
 
-/// Port of `bun.pathLiteral` — picks the POSIX or Windows literal at compile
+/// Picks the POSIX or Windows path literal at compile
 /// time. Local because `bun_paths` does not export a macro form yet.
 macro_rules! path_literal {
     ($posix:literal, $win:literal) => {{
@@ -57,8 +51,7 @@ macro_rules! path_literal {
     }};
 }
 
-/// Process-lifetime arena for the runner's `Transpiler`. Zig passed
-/// `ctx.allocator` (== `bun.default_allocator`); the Rust port threads an
+/// Process-lifetime arena for the runner's `Transpiler`; threads an
 /// `&'static Arena` per PORTING.md §AST crates. Route through the shared
 /// `cli::cli_arena()` (a `LazyLock` — `MimallocArena` is `Sync`).
 #[inline]
@@ -66,21 +59,21 @@ fn runner_arena() -> &'static bun_alloc::Arena {
     crate::cli::cli_arena()
 }
 
-// Passthrough-arg shell escaping (run_command.zig:233-239 → shell.zig
-// escape8Bit). The escape tables + helpers are the lower-tier
+// Passthrough-arg shell escaping. The escape tables + helpers are the lower-tier
 // `bun_shell_parser` crate's canonical copy — import them so future fixes to
 // the shell escaper cannot silently diverge.
 use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 
-pub struct NpmArgs;
+pub(crate) struct NpmArgs;
 impl NpmArgs {
     // https://github.com/npm/rfcs/blob/main/implemented/0021-reduce-lifecycle-script-environment.md#detailed-explanation
-    pub const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
-    pub const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
+    pub(crate) const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
+    pub(crate) const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
 }
 
-/// Runtime knobs `Command::start` passes through; mirrors the Zig
-/// `comptime`-tuple that selected the per-tag exec body.
+/// Runtime knobs `Command::start` passes through to select the per-tag exec
+/// behavior.
+#[derive(Clone, Copy)]
 pub struct ExecCfg {
     pub bin_dirs_only: bool,
     pub log_errors: bool,
@@ -102,10 +95,10 @@ pub struct RunCommand;
 impl RunCommand {
     /// `bun run --help` body.
     pub fn print_help(package_json: Option<&PackageJSON>) {
-        // PORT NOTE: templates are passed as *string literals* so the
+        // templates are passed as *string literals* so the
         // `pretty_fmt!` proc-macro rewrites the `<tag>` color markup at compile
-        // time. Routing them through a `const &str` + `{}` (as the original
-        // Phase-A draft did) prints the raw `<b>`/`<r>` tags verbatim.
+        // time. Routing them through a `const &str` + `{}` prints the raw
+        // `<b>`/`<r>` tags verbatim.
         pretty!("<b>Usage<r>: <b><green>bun run<r> <cyan>[flags]<r> \\<file or script\\>\n\n");
         pretty!("<b>Flags:<r>");
         bun_clap::simple_help(crate::cli::arguments::RUN_PARAMS);
@@ -128,7 +121,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if let Some(scripts) = pkg.scripts.as_deref() {
                 let mut display_name: &[u8] = &pkg.name;
                 if display_name.is_empty() {
-                    display_name = paths::basename(pkg.source.path.name.dir);
+                    display_name = paths::basename(pkg.source.path.name().dir);
                 }
                 let _ = display_name;
 
@@ -154,6 +147,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Output::flush();
     }
 
+    #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
     /// `findShell` — locate a POSIX shell on `$PATH`, falling back to a
@@ -202,9 +196,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// Find the "best" shell to use. Cached to only run once.
     pub fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static ZStr> {
-        // PORT NOTE: Zig used `bun.once` over a module-level `var shell_buf`
-        // (run_command.zig:73). Process-lifetime; written exactly once on the
-        // CLI thread. PORTING.md §Global mutable state: scratch buffer behind
+        // Process-lifetime; written exactly once on the CLI thread.
+        // PORTING.md §Global mutable state: scratch buffer behind
         // a `Once` gate → RacyCell.
         static SHELL_BUF: bun_core::RacyCell<PathBuffer> =
             bun_core::RacyCell::new(PathBuffer::ZEROED);
@@ -234,12 +227,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_install::lifecycle_script_runner::replace_package_manager_run(copy_script, script)
     }
 
-    /// Port of `runPackageScriptForeground` (run_command.zig:209). Spawns the
-    /// script body via the bun-shell or system shell and exits on non-zero.
+    /// Spawns the script body via the bun-shell or system shell and exits on
+    /// non-zero.
     ///
-    /// PORT NOTE: `allocator` parameter dropped (PORTING.md §Allocators —
-    /// always global mimalloc); `passthrough` is `&[Box<[u8]>]` to match
-    /// `ctx.passthrough` directly (Zig was `[]const string`).
+    /// `passthrough` is `&[Box<[u8]>]` to match `ctx.passthrough` directly.
     pub fn run_package_script_foreground(
         ctx: &mut ContextData,
         original_script: &[u8],
@@ -250,8 +241,35 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         silent: bool,
         use_system_shell: bool,
     ) -> Result<(), bun_core::Error> {
-        let shell_bin = Self::find_shell(env.get(b"PATH").unwrap_or(b""), cwd)
-            .ok_or(bun_core::err!("MissingShell"))?;
+        Self::run_package_script_foreground_with_shell_path(
+            ctx,
+            original_script,
+            name,
+            cwd,
+            env,
+            passthrough,
+            silent,
+            use_system_shell,
+            None,
+        )
+    }
+
+    /// Like [`Self::run_package_script_foreground`], but resolves the shell
+    /// interpreter from `shell_path` instead of the loader's `PATH`.
+    pub fn run_package_script_foreground_with_shell_path(
+        ctx: &mut ContextData,
+        original_script: &[u8],
+        name: &[u8],
+        cwd: &[u8],
+        env: &mut DotEnv::Loader<'_>,
+        passthrough: &[Box<[u8]>],
+        silent: bool,
+        use_system_shell: bool,
+        shell_path: Option<&[u8]>,
+    ) -> Result<(), bun_core::Error> {
+        let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
+        let shell_bin = Self::find_shell(shell_search_path, cwd)
+            .ok_or_else(|| bun_core::err!("MissingShell"))?;
         env.map
             .put(b"npm_lifecycle_event", name)
             .expect("unreachable");
@@ -290,7 +308,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
             // outlives the call (process-lifetime in `configure_env_for_run`).
             // Erase the loader's borrowed lifetime to `'static` for the
-            // singleton handoff (Zig passed a raw `*DotEnv.Loader`).
+            // singleton handoff.
             let mini = bun_event_loop::MiniEventLoop::init_global(
                 Some(unsafe {
                     &mut *std::ptr::from_mut::<DotEnv::Loader<'_>>(env)
@@ -299,7 +317,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Some(cwd),
             );
             // SAFETY: `init_global` returns the thread-local singleton as a raw
-            // pointer (Zig `*MiniEventLoop`); reborrow `&'static mut` for the
+            // pointer; reborrow `&'static mut` for the
             // duration of `init_and_run_from_source` — single-threaded mini loop,
             // no aliasing `&mut` exists across this call.
             let mini = unsafe { &mut *mini };
@@ -417,8 +435,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         match spawn_result.status {
             SpawnStatus::Exited(exit_code) => {
-                // Zig: `exit_code.signal.valid() && != .SIGINT` — `.signal` is a
-                // raw `u8` here; `signal_code()` range-checks 1..=31 (i.e. valid).
+                // `.signal` is a raw `u8` here; `signal_code()` range-checks
+                // 1..=31 (i.e. valid).
                 if let Some(sig) = spawn_result.status.signal_code() {
                     if sig != bun_core::SignalCode::SIGINT && !silent {
                         pretty_errorln!(
@@ -454,9 +472,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
 
             SpawnStatus::Signaled(_) => {
-                // Zig: only the *print* is gated on `signal.valid()`;
-                // `suppressReporting` + `raiseIgnoringPanicHandler(signal)`
-                // run unconditionally (run_command.zig:342-353).
+                // Only the *print* is gated on a valid signal code;
+                // `suppress_reporting` + `raise_ignoring_panic_handler`
+                // run unconditionally.
                 let signal_code = spawn_result.status.signal_code();
                 if let Some(sig) = signal_code {
                     if sig != bun_core::SignalCode::SIGINT && !silent {
@@ -479,7 +497,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     Global::raise_ignoring_panic_handler(sig);
                 }
                 // `.signaled` always carries 1..=31 in practice; fallback only
-                // for type-totality (Zig re-raised the raw u8 unconditionally).
+                // for type-totality.
                 Global::exit(1);
             }
 
@@ -502,13 +520,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Ok(())
     }
 
-    /// Port of `configureEnvForRun` (run_command.zig:772). Allocates a
+    /// Allocates a
     /// process-lifetime `Transpiler`, primes its resolver/env, reads the
     /// top-level `DirInfo`, configures the bundler linker / JSX runtime, and
     /// seeds the `npm_*` env vars.
     ///
     /// Returns a raw `*mut DirInfo` borrowed from the resolver's directory
-    /// cache (process-lifetime; Zig returned `*DirInfo`).
+    /// cache (process-lifetime).
     ///
     /// Hot-path note: the common `bun run <package.json script>` case never
     /// transpiles anything through this `Transpiler` (it shells out / boots a
@@ -537,7 +555,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         log_errors: bool,
         store_root_fd: bool,
     ) -> Result<bun_resolver::DirInfoRef, bun_core::Error> {
-        Self::configure_env_for_run_impl(ctx, this_transpiler, env, log_errors, store_root_fd, false)
+        Self::configure_env_for_run_impl(
+            ctx,
+            this_transpiler,
+            env,
+            log_errors,
+            store_root_fd,
+            false,
+        )
     }
 
     /// `configure_linker()` + `load_tsconfig_json` setup, factored into a
@@ -545,7 +570,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// not share `.text` pages with the hot `bun run <script>` dispatch path.
     #[cold]
     #[inline(never)]
-    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn configure_run_transpiler_linker(this_transpiler: &mut Transpiler<'static>) {
         this_transpiler.resolver.opts.load_tsconfig_json = true;
         this_transpiler.options.load_tsconfig_json = true;
@@ -562,15 +590,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     ) -> Result<bun_resolver::DirInfoRef, bun_core::Error> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
-        // PORT NOTE: process-lifetime arena singleton for the runner's
-        // transpiler. Zig passed `ctx.allocator` (== `bun.default_allocator`);
-        // the Rust port threads an `&'static Arena` per PORTING.md §AST crates.
-        // TODO(port): allocator — collapse once Transpiler::init drops the arena arg.
+        // Process-lifetime arena singleton for the runner's transpiler;
+        // threads an `&'static Arena` per PORTING.md §AST crates.
         let arena: &'static bun_alloc::Arena = runner_arena();
-        // PORT NOTE: out-param constructor — Zig: `var this_transpiler: Transpiler
-        // = undefined;` then `configureEnvForRun` writes the whole struct.
+        // Out-param constructor — `configure_env_for_run` writes the whole struct.
         // `Transpiler` holds `&Arena`/`Box`/enum fields (non-null invariants),
-        // so callers MUST pass a `MaybeUninit` slot (PORTING.md §std.mem.zeroes).
+        // so callers MUST pass a `MaybeUninit` slot.
         this_transpiler.write(Transpiler::init(arena, ctx.log, args, env)?);
         // SAFETY: fully written on the line above.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
@@ -587,8 +612,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // transpile through this `Transpiler` need it. `configure_linker`'s
         // auto-JSX step reads the cwd `DirInfo` (and, with `load_tsconfig_json`
         // on, its `tsconfig.json`) — keep it ahead of the `read_dir_info` below
-        // so that read populates/uses the same cache entry, matching Zig's
-        // `configureEnvForRun` ordering exactly.
+        // so that read populates/uses the same cache entry.
         if with_linker {
             Self::configure_run_transpiler_linker(this_transpiler);
         }
@@ -645,15 +669,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
 
             // Always skip default .env files for package.json script runner
-            // (see comment in env_loader.zig:542-548 - the script's own bun instance loads .env)
+            // (the script's own bun instance loads .env)
             let _ = this_transpiler.run_env_loader(true);
         }
 
         // Re-derive after `run_env_loader` — that call creates its own
         // `env_mut()` borrow, which under Stacked Borrows invalidates any
-        // `&mut Loader` derived before it. Zig spec run_command.zig:820-823
-        // re-dereferences `this_transpiler.env` per-statement; mirror that by
-        // taking a fresh borrow here for the remaining env-var seeding.
+        // `&mut Loader` derived before it. Take a fresh borrow here for the
+        // remaining env-var seeding.
         let env_loader = this_transpiler.env_mut();
 
         env_loader
@@ -734,7 +757,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 env_loader.map.ensure_unused_capacity(config.count())?;
                 for (k, v) in config.keys().iter().zip(config.values().iter()) {
                     let key = strings::concat(&[b"npm_package_config_", &k[..]]);
-                    // PERF(port): was assume_capacity
                     env_loader.map.put_assume_capacity(&key, *v);
                 }
             }
@@ -745,10 +767,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// Best-effort default-loader lookup by file extension. Thin forwarder to
     /// `bun_bundler::options::DEFAULT_LOADERS` (the *file-extension*→Loader map
-    /// at options.zig:1041 — NOT `Loader::NAMES`, which is the *loader-name*
+    /// — NOT `Loader::NAMES`, which is the *loader-name*
     /// table and has different membership, e.g. `.sh` is unconditional there
-    /// but Windows-only in `defaultLoaders`). Single source of truth so this
-    /// file cannot drift from options.zig.
+    /// but Windows-only in `DEFAULT_LOADERS`). Single source of truth.
     #[inline]
     fn default_loader_for(target: &[u8]) -> Option<Loader> {
         bun_bundler::options::DEFAULT_LOADERS
@@ -757,29 +778,25 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     }
 
     /// Shared ctx→transpiler/resolver option projection used by [`boot`] and
-    /// [`boot_standalone`] (bun.js.zig:64-98 / :247-275 — the two bodies are
-    /// byte-identical in Zig).
+    /// [`boot_standalone`].
     fn wire_transpiler_from_ctx(b: &mut Transpiler<'_>, ctx: &mut ContextData) {
         use bun_options_types::context::MacroOptions;
         use bun_options_types::offline_mode::OfflineMode;
 
-        // PORT NOTE: `BundleOptions::install` is a raw `NonNull` backref into
-        // the CLI's `Box<BunInstall>` (process-lifetime — Zig stored the raw
-        // `?*BunInstall`). `as_deref` yields `&BunInstall`, which
+        // `BundleOptions::install` is a raw `NonNull` backref into
+        // the CLI's `Box<BunInstall>` (process-lifetime).
+        // `as_deref` yields `&BunInstall`, which
         // `NonNull::from` converts without the lifetime tie.
         let install_ptr = ctx.install.as_deref().map(::core::ptr::NonNull::from);
         b.options.install = install_ptr;
-        // resolver's `BundleOptions.install` is the FORWARD_DECL `*const ()`
-        // (breaks the bun_install dep cycle) — erase the type.
-        b.resolver.opts.install =
-            install_ptr.map_or(::core::ptr::null(), |p| p.as_ptr().cast::<()>());
+        b.resolver.opts.install = install_ptr;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
         let offline = ctx
             .debug
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online);
         b.resolver.opts.prefer_offline_install = offline == OfflineMode::Offline;
-        // PORT NOTE: resolver's forward-decl `BundleOptions` lacks
+        // resolver's forward-decl `BundleOptions` lacks
         // `prefer_latest_install`; only the bundler-side mirror carries it.
         b.options.global_cache = ctx.debug.global_cache;
         b.options.prefer_offline_install = offline == OfflineMode::Offline;
@@ -789,14 +806,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
-        // PORT NOTE: resolver's forward-decl `BundleOptions` does not project
-        // `minify_*` (resolver never reads them); Zig assigned both because the
-        // resolver carried the full struct.
+        // resolver's forward-decl `BundleOptions` does not project
+        // `minify_*` (resolver never reads them).
 
         match &mut ctx.debug.macros {
             MacroOptions::Disable => b.options.no_macros = true,
             MacroOptions::Map(macros) => {
-                // PORT NOTE: `ContextData::MacroMap` and
+                // `ContextData::MacroMap` and
                 // `BundleOptions::macro_remap` are both
                 // `ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
                 // but with different hasher contexts (`Auto` vs
@@ -815,7 +831,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
     }
 
-    /// `Run.doPreconnect` (bun.js.zig:114) — kick off TCP preconnects for
+    /// Kick off TCP preconnects for
     /// `--preconnect <url>` before the entry module loads.
     fn do_preconnect(preconnect: &[Box<[u8]>]) {
         if preconnect.is_empty() {
@@ -858,17 +874,20 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
     }
 
-    /// Port of `bun_js.Run.bootBunShell` (src/bun.js.zig:142) — run a `.sh`
+    /// Run a `.sh`
     /// entry point through the bun-shell on a `MiniEventLoop` without ever
     /// initializing JSC.
     #[cold]
     #[inline(never)]
-    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn boot_bun_shell(
         ctx: &mut ContextData,
         entry_path: &[u8],
     ) -> Result<crate::shell::ExitCode, bun_core::Error> {
-        // Dummy transpiler so we can load .env (Zig: "this is a hack").
+        // Dummy transpiler so we can load .env.
         let mut args = ctx.args.clone();
         args.write = Some(false);
         args.resolve = Some(api::ResolveMode::Lazy);
@@ -895,15 +914,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         path_buf[entry_path.len()] = 0;
         // SAFETY: NUL-terminated above; `path_buf` outlives the call.
         let path_z = ZStr::from_buf(&path_buf[..], entry_path.len());
-        let src = match sys::File::read_from(Fd::cwd(), path_z) {
-            Ok(bytes) => bytes,
-            Err(err) => return Err(err.into()),
-        };
+        let src = sys::File::read_from(Fd::cwd(), path_z)?;
 
         crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
     }
 
-    /// Port of `bun_js.Run.boot` (src/bun.js.zig) — `VirtualMachine::init`,
+    /// `VirtualMachine::init`,
     /// hand off CLI state, then enter `Run::start` under the JSC API lock.
     pub(crate) fn boot(
         ctx: &mut ContextData,
@@ -925,9 +941,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Global::exit(exit_code as u32);
         }
 
-        // PORT NOTE: `jsc::initialize(false)` + `Expr/Stmt::Store::create()` +
-        // `MimallocArena::init()` precede VM init in Zig. `bun_jsc::initialize`
-        // is now real (calls `JSCInitialize` over `bun_sys::environ()`); the
+        // `bun_jsc::initialize`
+        // is real (calls `JSCInitialize` over `bun_sys::environ()`); the
         // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
         // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
         // a populated `RuntimeHooks` table.
@@ -947,31 +962,29 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: `init` returns the unique freshly-boxed VM on this thread.
         let vm = unsafe { &mut *vm_ptr };
 
-        // PORT NOTE: `vm.preload`/`vm.argv` are `Vec<Box<[u8]>>` on both sides;
+        // `vm.preload`/`vm.argv` are `Vec<Box<[u8]>>` on both sides;
         // hand the CLI's vectors over wholesale (process-lifetime, never freed).
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
-        // Zig passes `store_fd = ctx.debug.hot_reload != .none` to `init`;
-        // `InitOptions` lacks the field so set it on the resolver directly.
+        // `InitOptions` has no `store_fd` field, so set it on the resolver directly.
         vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
-        // PORT NOTE: `vm.dns_result_order` is a `u8` until the b2-cycle widens
-        // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is the
-        // exact `@intFromEnum` Zig would have done.
+        // `vm.dns_result_order` is a `u8` until the b2-cycle widens
+        // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
         vm.dns_result_order =
             bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8;
         // `vm.main` is a BACKREF into these bytes; convert the `Box` to a raw
-        // heap pointer now (Zig: `allocator.dupe` + never-free) so the address
+        // heap pointer now so the address
         // is stable for both `set_main` and the `RUN` write below. The runner
         // never returns, so the allocation is process-lifetime by construction.
         // `mut` because the cron-execution branch below may swap in a synthetic
-        // `cwd/[eval]` path (Zig: `run.entry_path = heap_entry_path`).
+        // `cwd/[eval]` path.
         let mut entry_ptr: *const [u8] = bun_core::heap::into_raw(entry_path);
         // SAFETY: freshly-allocated heap bytes, never freed (see above).
         let entry: &[u8] = unsafe { &*entry_ptr };
         vm.set_main(entry);
 
         if !ctx.runtime_options.eval.script.is_empty() {
-            // PORT NOTE: `ctx.runtime_options.eval.script` is process-lifetime
+            // SAFETY: `ctx.runtime_options.eval.script` is process-lifetime
             // (CLI argv); erase the borrow lifetime so the `Source` (stored in
             // the VM for the process duration) can backref into it.
             let script: &'static [u8] = unsafe {
@@ -988,7 +1001,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         } else if !ctx.runtime_options.cron_title.is_empty()
             && !ctx.runtime_options.cron_period.is_empty()
         {
-            // Cron execution mode (bun.js.zig:213-244): wrap the entry point in
+            // Cron execution mode: wrap the entry point in
             // a script that imports the module and calls
             // `default.scheduled(controller)`. The synthetic source is keyed at
             // `cwd/[eval]` so the module loader serves it from `eval_source`.
@@ -1003,10 +1016,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 path = bstr::BStr::new(&escaped_path),
                 period = bstr::BStr::new(&escaped_period),
             );
-            // PORT NOTE: process-lifetime (runner never returns) — store both
+            // process-lifetime (runner never returns) — store both
             // the script bytes and the synthetic entry path in the runner arena
-            // so the `Source` stored in the VM can backref into them (Zig:
-            // `allocPrint` + `dupe` + never-free).
+            // so the `Source` stored in the VM can backref into them.
             let cron_script: &'static [u8] =
                 runner_arena().alloc_slice_copy(cron_script.as_bytes());
 
@@ -1023,14 +1035,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 heap_entry,
                 cron_script,
             )));
-            // Zig: `run.entry_path = heap_entry_path` — override what
+            // Override what
             // `Run::start` will pass to `vm.load_entry_point`.
             entry_ptr = std::ptr::from_ref::<[u8]>(heap_entry);
             vm.set_main(heap_entry);
         }
 
-        // ctx → transpiler/resolver option mapping (bun.js.zig:247-275).
-        // PORT NOTE: reshaped for borrowck — `b` borrows `vm.transpiler`
+        // ctx → transpiler/resolver option mapping.
+        // reshaped for borrowck — `b` borrows `vm.transpiler`
         // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
         // capture the defines result, drop `b`, then branch.
         let defines_ok = {
@@ -1055,7 +1067,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
-        // Zig: `AsyncHTTP.loadEnv(allocator, vm.log, b.env)`.
         // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
         // `DotEnv::Loader` allocated/retained for the VM (never null after
         // `Transpiler::init`).
@@ -1077,15 +1088,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         );
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
-        // Zig: `vm.main_is_html_entrypoint = (loader orelse
-        //   vm.transpiler.options.loader(ext)) == .html`.
         vm.main_is_html_entrypoint = loader
             .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(entry)))
             == Loader::Html;
 
         // ── enter `Run::start` under the JSC API lock ──────────────────────
-        // Zig: `vm.global.vm().holdAPILock(&run, OpaqueWrap(Run, Run.start))`.
-        // SAFETY: `RUN` is the process-global singleton (Zig: `var run: Run`);
+        // SAFETY: `RUN` is the process-global singleton;
         // written exactly once here on the main thread before the API-lock
         // trampoline reads it, never freed (`global_exit` ends the process).
         unsafe {
@@ -1095,7 +1103,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 entry_path: entry_ptr,
             });
         }
-        // PORT NOTE: `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
+        // `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
         // b2-cycle widens it to `cli::HotReload`); `Run::start` re-reads it
         // from `self.ctx` to drive the hot-reloader enable.
         vm.hot_reload = ctx.debug.hot_reload as u8;
@@ -1120,7 +1128,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Ok(())
     }
 
-    /// Port of `bun_js.Run.bootStandalone` (src/bun.js.zig:27) — entry point for
+    /// Entry point for
     /// `bun build --compile` executables. Mirrors [`boot`] but routes through
     /// `VirtualMachine::init_with_module_graph` and applies the standalone
     /// runtime flags from the embedded graph before entering `Run::start`.
@@ -1146,7 +1154,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             )?;
         }
 
-        // PORT NOTE: layering — `Options::graph` is the resolver's trait object
+        // layering — `Options::graph` is the resolver's trait object
         // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the concrete
         // `bun_standalone_graph::Graph` implements it. The graph is the
         // process-global singleton (`StandaloneModuleGraph::set` in
@@ -1164,9 +1172,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             graph: Some(graph_dyn),
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
-            // PORT NOTE: `Options::dns_result_order` is `u8` until the
+            // `Options::dns_result_order` is `u8` until the
             // b2-cycle widens it to `bun_dns::Order`; the enum is
-            // `#[repr(u8)]` so `as u8` matches Zig's `@intFromEnum`.
+            // `#[repr(u8)]` so `as u8` is exact.
             dns_result_order: bun_dns::Order::from_string_or_die(
                 &ctx.runtime_options.dns_result_order,
             ) as u8,
@@ -1180,22 +1188,22 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.argv = std::mem::take(&mut ctx.passthrough);
 
         // `vm.main` is a BACKREF (`*const [u8]`) into `entry_path`'s heap
-        // buffer; convert the `Box` to a raw heap pointer now (Zig:
-        // `allocator.dupe` + never-free) so the address is stable for both
+        // buffer; convert the `Box` to a raw heap pointer now
+        // so the address is stable for both
         // `set_main` and the `RUN` write below. The runner never returns, so
         // the allocation is process-lifetime by construction.
         let entry_ptr: *const [u8] = bun_core::heap::into_raw(entry_path);
         // SAFETY: freshly-allocated heap bytes, never freed (see above).
         vm.set_main(unsafe { &*entry_ptr });
 
-        // PORT NOTE: reshaped for borrowck — `b` borrows `vm.transpiler`
+        // reshaped for borrowck — `b` borrows `vm.transpiler`
         // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
         // capture the defines result, drop `b`, then branch.
         let defines_ok = {
             let b = &mut vm.transpiler;
             Self::wire_transpiler_from_ctx(b, ctx);
 
-            // `serve_plugins` / `bunfig_path` (standalone-only; bun.js.zig:80).
+            // `serve_plugins` / `bunfig_path` (standalone-only).
             b.options.serve_plugins = ctx.args.serve_plugins.take().map(Vec::into_boxed_slice);
             b.options.bunfig_path = ::core::mem::take(&mut ctx.args.bunfig_path);
 
@@ -1207,7 +1215,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             crate::run_main::fail_with_build_error(vm);
         }
 
-        // Zig: `AsyncHTTP.loadEnv(allocator, vm.log, b.env)`.
         // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
         // `DotEnv::Loader` allocated/retained for the VM (never null after
         // `Transpiler::init`).
@@ -1227,7 +1234,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         );
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
-        // SAFETY: `RUN` is the process-global singleton (Zig: `var run: Run`);
+        // SAFETY: `RUN` is the process-global singleton;
         // written exactly once here on the main thread before the API-lock
         // trampoline reads it, never freed (`global_exit` ends the process).
         unsafe {
@@ -1257,29 +1264,27 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `Run` — port of `src/bun.js.zig` `Run`. The canonical (and only) Rust
+// `Run` — the canonical (and only)
 // definition lives here so the CLI dispatch path can drive the event loop
-// without a crate-cycle; `crate::run_main` re-exports it for callers that
-// expect the Zig `bun.js.Run` namespace.
+// without a crate-cycle; `crate::run_main` re-exports it.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct Run {
-    /// `Command.Context` (a `*ContextData` newtype in Zig). The CLI's
+    /// The CLI's
     /// `ContextData` is parse-once / process-lifetime; `boot()` writes the raw
     /// pointer here so [`Run::start`] can read profiler / preconnect /
     /// hot-reload flags under the API lock without re-threading every field.
     ctx: *mut ContextData,
     vm: *mut VirtualMachine,
-    /// Heap bytes (from `boot`'s `heap::alloc`, matching Zig's
-    /// `allocator.dupe` + never-free) or a borrow into the standalone graph's
+    /// Heap bytes (from `boot`'s `heap::alloc`) or a borrow into the standalone graph's
     /// `entryPoint().name` (from `boot_standalone`). Either way the bytes live
     /// for the process — `Run::start` never returns — so a raw `*const [u8]`
-    /// matches Zig's `entry_path: string` exactly without forcing a `'static`
+    /// works without forcing a `'static`
     /// borrow or a `MaybeUninit` static for `Box<[u8]>`.
     entry_path: *const [u8],
 }
 
-// Zig: `var run: Run = undefined;` — process-global, written once in `boot`.
+// Process-global, written once in `boot`.
 // PORTING.md §Global mutable state: `Run` is `!Sync` (raw ptrs); RacyCell so
 // `boot`/`boot_standalone` can `ptr::write` it on the single CLI thread and
 // the `holdAPILock` trampoline can re-derive `&mut Run` from the static.
@@ -1289,8 +1294,8 @@ static RUN: bun_core::RacyCell<Run> = bun_core::RacyCell::new(Run {
     entry_path: ::core::ptr::slice_from_raw_parts(::core::ptr::null(), 0),
 });
 
-// PORT NOTE: Zig writes `run.any_unhandled = true` from inside the
-// unhandled-rejection callback while `Run::start` holds `&mut self` (via the
+// The unhandled-rejection callback fires
+// while `Run::start` holds `&mut self` (via the
 // `holdAPILock` trampoline). Storing the flag on `Run` and writing through a
 // fresh `&raw mut RUN` would alias that exclusive borrow (PORTING.md
 // §Forbidden — Stacked Borrows UB). Keep it as a sibling static instead so the
@@ -1314,7 +1319,7 @@ impl Run {
         ANY_UNHANDLED.store(true, Ordering::Relaxed);
     }
 
-    /// `Run.addConditionalGlobals` (bun.js.zig:562) — wire `--eval`/`--print`
+    /// Wire `--eval`/`--print`
     /// node-module globals and `--expose-gc` into the JSC global object.
     fn add_conditional_globals(&mut self) {
         unsafe extern "C" {
@@ -1324,6 +1329,7 @@ impl Run {
         // SAFETY: `self.vm`/`self.ctx` are process-lifetime; written by
         // `boot()` before the API-lock trampoline runs.
         let vm = unsafe { &*self.vm };
+        // SAFETY: `self.ctx` is process-lifetime; see comment on `vm` above.
         let ro = unsafe { &(*self.ctx).runtime_options };
         if !ro.eval.script.is_empty() {
             // SAFETY: FFI; `vm.global` is live for the VM lifetime.
@@ -1338,14 +1344,14 @@ impl Run {
     /// `Run.start` — load the entry point, run the event loop until idle,
     /// fire `beforeExit`/`exit`, then `globalExit`. Called under the JSC API
     /// lock via `hold_api_lock`.
-    #[allow(unused_assignments)] // `printed_…` writes before `global_exit` are intentional Zig-shape.
     fn start(&mut self) -> ! {
-        // PORT NOTE: deref the raw VM/ctx pointers once so the rest of this
+        // deref the raw VM/ctx pointers once so the rest of this
         // body can borrow `vm` and `ctx` alongside `self.entry_path`.
         // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM; `self.ctx`
         // is the CLI's process-lifetime `ContextData`. Both are written by
         // `boot()`/`boot_standalone()` before the API-lock trampoline runs.
         let vm = unsafe { &mut *self.vm };
+        // SAFETY: `self.ctx` is process-lifetime; see comment on `vm` above.
         let ctx = unsafe { &*self.ctx };
         // SAFETY: `entry_path` is process-lifetime (heap from `heap::alloc`
         // or a borrow into the standalone graph); deref to a `'static` slice
@@ -1355,14 +1361,17 @@ impl Run {
         vm.hot_reload = ctx.debug.hot_reload as u8;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
-        // ── CPU profiler (bun.js.zig:316-331) ──────────────────────────────
+        // ── CPU profiler ────────────────────────────────────────────────────
         if ctx.runtime_options.cpu_prof.enabled {
             let opts = &ctx.runtime_options.cpu_prof;
             // SAFETY: `ctx` is process-lifetime; erase `Box<[u8]>` borrows to
-            // `'static` for `CPUProfilerConfig` (Zig stored borrowed slices).
+            // `'static` for `CPUProfilerConfig`.
+            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
+            // SAFETY: same process-lifetime erasure as `name` above.
+            let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
             vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
-                name: unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) },
-                dir: unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) },
+                name,
+                dir,
                 md_format: opts.md_format,
                 json_format: opts.json_format,
                 interval: opts.interval,
@@ -1373,13 +1382,16 @@ impl Run {
             bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
         }
 
-        // ── Heap profiler (bun.js.zig:333-342) ─────────────────────────────
+        // ── Heap profiler ───────────────────────────────────────────────────
         if ctx.runtime_options.heap_prof.enabled {
             let opts = &ctx.runtime_options.heap_prof;
             // SAFETY: `ctx` is process-lifetime; see CPU-profiler note above.
+            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
+            // SAFETY: same process-lifetime erasure as `name` above.
+            let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
             vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
-                name: unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) },
-                dir: unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) },
+                name,
+                dir,
                 text_format: opts.text_format,
             });
             bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
@@ -1456,24 +1468,31 @@ impl Run {
             }
         }
 
-        // ── hot-reloader enable (bun.js.zig:390-394) ───────────────────────
+        // ── hot-reloader enable ─────────────────────────────────────────────
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
-                bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                    self.vm,
-                    Some(entry),
-                )
+                // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
+                // (process-lifetime); it outlives the leaked reloader.
+                unsafe {
+                    bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
+                        self.vm,
+                        Some(entry),
+                    )
+                }
             }
             cli::command::HotReload::Watch => {
-                bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                    self.vm,
-                    Some(entry),
-                )
+                // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
+                // (process-lifetime); it outlives the leaked reloader.
+                unsafe {
+                    bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
+                        self.vm,
+                        Some(entry),
+                    )
+                }
             }
             _ => {}
         }
 
-        // Zig: `if entry_path == "." { entry_path = fs.top_level_dir }`.
         if entry == b"." {
             // SAFETY: `vm.transpiler.fs` is the process-static `FileSystem`
             // singleton (set in `Transpiler::init`).
@@ -1496,7 +1515,7 @@ impl Run {
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
-                    // Spec bun.js.zig:407: when --hot/--watch is on (or a user
+                    // When --hot/--watch is on (or a user
                     // `uncaughtException` handler swallowed the error), keep the
                     // process alive instead of hard-exiting on a rejected entry.
                     if vm.hot_reload != 0 || handled {
@@ -1520,16 +1539,15 @@ impl Run {
                     log_clear_msgs(vm);
                 }
             }
-            Err(err) => entry_point_load_failed(vm, &err),
+            Err(err) => entry_point_load_failed(vm, err),
         }
 
         // don't run the GC if we don't actually need to
         if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
             vm.global().vm().release_weak_refs();
-            // PERF(port): `vm.arena.gc()` — Zig's `MimallocArena.gc()` is
-            // `mi_heap_collect`; `bun_alloc::Arena = bumpalo::Bump` has no
-            // per-heap collect, so this is a no-op until Phase B swaps the
-            // arena type. Semantically a memory-usage hint, not correctness.
+            // `bun_alloc::Arena = bumpalo::Bump` has no
+            // per-heap collect, so this is a no-op unless the arena type
+            // changes. Semantically a memory-usage hint, not correctness.
             let _ = vm.global().vm().run_gc(false);
             vm.tick();
         }
@@ -1555,7 +1573,7 @@ impl Run {
                 vm.report_exception_in_hot_reloaded_module_if_needed();
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across
-                // reloads (bun.js.zig `start` watcher loop).
+                // reloads.
                 vm.event_loop_ref().tick_possibly_forever();
             }
         } else {
@@ -1597,7 +1615,6 @@ impl Run {
                     }
                     result
                 };
-                // Zig: `to_print.print(vm.global, .Log, .Log)`.
                 // SAFETY: `vals[..1]` is the single stack `to_print`; null
                 // `ctype` routes to the VM's stdout/stderr default.
                 unsafe {
@@ -1662,7 +1679,10 @@ fn log_clear_msgs(vm: &mut VirtualMachine) {
 
 #[cold]
 #[inline(never)]
-#[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely")
+)]
 fn dump_build_error(vm: &mut VirtualMachine) {
     Output::flush();
     if let Some(log) = vm.log {
@@ -1682,7 +1702,10 @@ fn dump_build_error(vm: &mut VirtualMachine) {
 /// `.text.hot` fault-around window the `require('fs')` startup path pulls in.
 #[cold]
 #[inline(never)]
-#[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely")
+)]
 fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.exit_code = 1;
     vm.on_exit();
@@ -1696,8 +1719,11 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
 /// Cold `Err(err)` arm of `vm.load_entry_point` in `Run::start`.
 #[cold]
 #[inline(never)]
-#[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
-fn entry_point_load_failed(vm: &mut VirtualMachine, err: &bun_core::Error) -> ! {
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely")
+)]
+fn entry_point_load_failed(vm: &mut VirtualMachine, err: bun_core::Error) -> ! {
     if log_has_msgs(vm) {
         dump_build_error(vm);
         log_clear_msgs(vm);
@@ -1715,7 +1741,10 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: &bun_core::Error) -> ! 
 /// exit: bump the exit code and print the sourcemap note + version string.
 #[cold]
 #[inline(never)]
-#[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".text.unlikely")
+)]
 fn print_unhandled_version_note(vm: &mut VirtualMachine) {
     vm.exit_handler.exit_code = 1;
     bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
@@ -1739,7 +1768,7 @@ impl RunCommand {
         });
 
         // `entry_path` must outlive the VM (it's stored in `vm.main`); pass an
-        // owned copy by value (Zig: `ctx.allocator.dupe(u8, path)`).
+        // owned copy by value.
         let owned: Box<[u8]> = path.to_vec().into_boxed_slice();
 
         if let Err(err) = Self::boot(ctx, owned, loader) {
@@ -1755,12 +1784,15 @@ impl RunCommand {
     /// `.text.hot` fault-around window the `require('fs')` startup path pulls in.
     #[cold]
     #[inline(never)]
-    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn boot_failed_exit(ctx: &mut ContextData, display_name: &[u8], err: &bun_core::Error) -> ! {
         // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
         // CLI startup) and is process-lifetime.
         //
-        // PORT NOTE: `Log::print` is generic over `IntoLogWrite`, which is
+        // `Log::print` is generic over `IntoLogWrite`, which is
         // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
         // returns the process-global writer; cast to the raw pointer the
         // trait expects.
@@ -1780,15 +1812,14 @@ impl RunCommand {
     // This path is almost always a path to a user directory. So it cannot be
     // inlined like our uses of /tmp. On Windows use `GetTempPathW` /
     // `RealFS.platformTempDir` instead — this const is POSIX-only and
-    // referencing it on Windows is a compile error (mirrors Zig's
-    // `@compileError` arm).
+    // referencing it on Windows is a compile error.
     //
     // Canonical definition lives in `bun_install::RunCommand` (lower tier so
     // the package manager can use it without depending on `bun_runtime`).
     #[cfg(not(windows))]
     pub const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
 
-    /// Port of `bunNodeFileUtf8` (run_command.zig). Returns the path to the
+    /// Returns the path to the
     /// fake `node` shim that points back at the running `bun` binary.
     pub fn bun_node_file_utf8() -> Result<&'static ZStr, bun_core::Error> {
         #[cfg(not(windows))]
@@ -1832,7 +1863,7 @@ impl RunCommand {
             target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());
             target_path_buffer[total] = 0;
 
-            // Zig: `allocator.dupeZ` — process-lifetime, never freed. Park the
+            // Park the
             // bytes in the per-process `runner_arena()` instead of leaking
             // (PORTING.md §Forbidden bars per-call leaks).
             let stored: &'static [u8] =
@@ -1843,7 +1874,7 @@ impl RunCommand {
         }
     }
 
-    /// Port of `createFakeTemporaryNodeExecutable` (run_command.zig). Creates
+    /// Creates
     /// `<tmp>/bun-node*/node` and `<tmp>/bun-node*/bun` symlinks (or hard
     /// links on Windows) pointing at the running `bun` binary, then appends
     /// that directory to `path` so child processes resolve `node` to bun.
@@ -1859,7 +1890,7 @@ impl RunCommand {
         bun_install::RunCommand::create_fake_temporary_node_executable(path, optional_bun_path)
     }
 
-    /// Port of `configurePathForRun` (run_command.zig). Prepends workspace
+    /// Prepends workspace
     /// `.bin` dirs + the bun-node shim dir to `PATH` and writes the original
     /// PATH back through `original_path`.
     pub fn configure_path_for_run(
@@ -1876,7 +1907,7 @@ impl RunCommand {
             if root_dir_info.package_json.is_none() {
                 // no trailing slash
                 package_json_dir =
-                    strings::without_trailing_slash(package_json.source.path.name.dir);
+                    strings::without_trailing_slash(package_json.source.path.name().dir);
             }
         }
 
@@ -1896,7 +1927,6 @@ impl RunCommand {
         Ok(())
     }
 
-    /// Port of `configurePathForRunWithPackageJsonDir` (run_command.zig).
     /// Builds a new PATH with `node_modules/.bin` for each ancestor of `cwd`
     /// (plus `package_json_dir` and the bun-node shim dir) prepended, returns
     /// it as an owned buffer, and writes the original PATH out via
@@ -1910,21 +1940,20 @@ impl RunCommand {
         force_using_bun: bool,
     ) -> Result<Vec<u8>, bun_core::Error> {
         let env_loader = this_transpiler.env_mut();
-        // Snapshot PATH up front. In Zig the env map stores borrowed slices into
-        // process environ, so the returned `[]const u8` outlives later `put`s; the
-        // Rust map owns `Box<[u8]>` values, so a borrow would dangle once the
+        // Snapshot PATH up front. The env
+        // map owns `Box<[u8]>` values, so a borrow would dangle once the
         // caller (`configure_path_for_run`) overwrites PATH. Own a copy instead.
         let path: Vec<u8> = env_loader
             .get(b"PATH")
             .map(<[u8]>::to_vec)
             .unwrap_or_default();
         if let Some(op) = original_path {
-            *op = path.clone();
+            op.clone_from(&path);
         }
 
         let bun_node_exe = Self::bun_node_file_utf8()?;
         let bun_node_dir_win = bun_paths::dirname(bun_node_exe.as_bytes())
-            .ok_or(bun_core::err!("FailedToGetTempPath"))?;
+            .ok_or_else(|| bun_core::err!("FailedToGetTempPath"))?;
         let found_node = env_loader
             .load_node_js_config(
                 bun_paths::fs::FileSystem::instance(),
@@ -1954,7 +1983,7 @@ impl RunCommand {
                     + 2; // +2 for path separators, +1 for path delimiter
                 remain = &remain[..i];
             }
-            // Zig `else` clause runs once after the loop ends naturally
+            // final segment once the loop ends naturally
             new_path_len +=
                 strings::without_trailing_slash(remain).len() + b"node_modules.bin".len() + 1 + 2; // +2 for path separators, +1 for path delimiter
         }
@@ -2014,7 +2043,7 @@ impl RunCommand {
                 new_path.push(DELIMITER);
                 remain = &remain[..i];
             }
-            // Zig `else` clause runs once after loop ends naturally
+            // final segment once the loop ends naturally
             new_path.extend_from_slice(strings::without_trailing_slash(remain));
             new_path.extend_from_slice(path_literal!(
                 b"/node_modules/.bin",
@@ -2041,7 +2070,7 @@ impl RunCommand {
         paths::basename(str)
     }
 
-    /// Port of `runBinary` (run_command.zig). On Windows this first probes for
+    /// On Windows this first probes for
     /// a sibling `.bunx` shim and direct-launches it via `BunXFastPath` to
     /// skip the wrapper exe; otherwise (or if the fast path declines) it falls
     /// through to `run_binary_without_bunx_path`.
@@ -2083,7 +2112,7 @@ impl RunCommand {
         Self::run_binary_without_bunx_path(
             ctx,
             executable,
-            executable_z.as_ptr().cast::<c_char>(),
+            executable_z,
             cwd,
             env,
             passthrough,
@@ -2091,7 +2120,7 @@ impl RunCommand {
         )
     }
 
-    fn run_binary_generic_error(executable: &[u8], silent: bool, err: sys::Error) -> ! {
+    fn run_binary_generic_error(executable: &[u8], silent: bool, err: &sys::Error) -> ! {
         if !silent {
             pretty_errorln!(
                 "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to:\n{}",
@@ -2102,10 +2131,11 @@ impl RunCommand {
         Global::exit(1);
     }
 
+    /// `executable_z` is the NUL-terminated form of `executable`.
     pub fn run_binary_without_bunx_path(
         ctx: &mut ContextData,
         executable: &[u8],
-        executable_z: *const c_char,
+        executable_z: &ZStr,
         cwd: &[u8],
         env: &mut DotEnv::Loader<'static>,
         passthrough: &[Box<[u8]>],
@@ -2127,7 +2157,7 @@ impl RunCommand {
 
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
-            argv0: Some(executable_z),
+            argv0: Some(executable_z.as_ptr().cast::<c_char>()),
             envp: Some(envp.as_ptr().cast::<*const c_char>()),
             cwd: cwd.to_vec().into_boxed_slice(),
             stderr: sync::SyncStdio::Inherit,
@@ -2156,17 +2186,12 @@ impl RunCommand {
                 bun_core::handle_error_return_trace(&err);
 
                 // an error occurred before the process was spawned
+                #[allow(unused_labels)]
                 'print_error: {
                     if !silent {
                         #[cfg(unix)]
                         {
-                            // SAFETY: `executable_z` is the NUL-terminated form
-                            // of `executable` (caller invariant).
-                            let exec_z = unsafe {
-                                let cstr = bun_core::ffi::cstr(executable_z);
-                                ZStr::from_raw(cstr.as_ptr().cast(), cstr.to_bytes().len())
-                            };
-                            match sys::stat(exec_z) {
+                            match sys::stat(executable_z) {
                                 Ok(stat) => {
                                     if sys::S::ISDIR(stat.st_mode as _) {
                                         pretty_errorln!(
@@ -2204,18 +2229,18 @@ impl RunCommand {
         match spawn_result {
             Err(err) => {
                 // an error occurred while spawning the process
-                Self::run_binary_generic_error(executable, silent, err);
+                Self::run_binary_generic_error(executable, silent, &err);
             }
             Ok(result) => {
                 let signal_code = result.status.signal_code();
                 match result.status {
                     // An error occurred after the process was spawned.
                     SpawnStatus::Err(err) => {
-                        Self::run_binary_generic_error(executable, silent, err);
+                        Self::run_binary_generic_error(executable, silent, &err);
                     }
 
                     SpawnStatus::Signaled(signal) => {
-                        // Zig: print is gated on `signal.valid()` (1..=31 ⇔
+                        // The print is gated on a valid signal code (1..=31 ⇔
                         // `signal_code.is_some()`); the re-raise is NOT — it
                         // forwards the raw byte unconditionally so the parent
                         // observes the real termination signal (incl. RT 32-64).
@@ -2241,7 +2266,7 @@ impl RunCommand {
 
                     SpawnStatus::Exited(exit_code) => {
                         // A process can be both signaled and exited.
-                        // Zig: gated on `exit_code.signal.valid()` (1..=31).
+                        // Gated on a valid signal code (1..=31).
                         if let Some(sc) = signal_code {
                             if !silent {
                                 pretty_errorln!(
@@ -2323,10 +2348,9 @@ impl RunCommand {
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
     /// script, then either boot the VM or spawn the script.
     ///
-    /// Mirrors Zig `RunCommand.exec(ctx, .{ .bin_dirs_only, .log_errors,
-    /// .allow_fast_run_for_extensions })` — all three knobs are forwarded so
+    /// All three `ExecCfg` knobs are forwarded so
     /// `--if-present` (suppresses missing-script errors) and the Auto-command
-    /// fast-path-by-extension behave exactly per spec.
+    /// fast-path-by-extension behave as expected.
     #[inline]
     pub fn exec(ctx: &mut ContextData, cfg: ExecCfg) -> Result<bool, bun_core::Error> {
         Self::exec_with_cfg(ctx, cfg)
@@ -2342,7 +2366,7 @@ impl RunCommand {
             positionals = &positionals[1..];
         }
 
-        // PORT NOTE: `target_name` borrows `ctx.positionals`, but the boot path
+        // `target_name` borrows `ctx.positionals`, but the boot path
         // mutates `ctx` (takes `preloads`/`passthrough`). Dupe up-front to
         // dodge the borrowck split; the string is short and `exec` is cold.
         let target_name: Box<[u8]> = if !positionals.is_empty() {
@@ -2356,10 +2380,7 @@ impl RunCommand {
 
         let mut try_fast_run = false;
         let mut skip_script_check = false;
-        if !target_name.is_empty() && target_name[0] == b'.' {
-            try_fast_run = true;
-            skip_script_check = true;
-        } else if paths::is_absolute(target_name) {
+        if (!target_name.is_empty() && target_name[0] == b'.') || paths::is_absolute(target_name) {
             try_fast_run = true;
             skip_script_check = true;
         } else if cfg.allow_fast_run_for_extensions {
@@ -2386,12 +2407,10 @@ impl RunCommand {
             return Ok(true);
         }
 
-        // ── setup (unconditional — zig:1694-1699) ───────────────────────────
-        // PORT NOTE: out-param init — Zig: `var this_transpiler: Transpiler
-        // = undefined;`. `Transpiler` is NOT all-zero-valid POD (holds
+        // ── setup (unconditional) ────────────────────────────────────────────
+        // out-param init — `Transpiler` is NOT all-zero-valid POD (holds
         // `&Arena`/`Box`/enum fields), so use `MaybeUninit` and let
-        // `configure_env_for_run` `.write()` the whole struct (PORTING.md
-        // §std.mem.zeroes).
+        // `configure_env_for_run` `.write()` the whole struct.
         //
         // Use the `_without_linker` variant: nothing reached from here
         // transpiles through `this_transpiler` — the script-string path shells
@@ -2399,10 +2418,11 @@ impl RunCommand {
         // transpiler — so the bundler-linker / `tsconfig.json` / JSX-runtime
         // setup would be dead weight (and the largest block of bundler code
         // otherwise faulted in for a plain `bun run <script>`).
-        let mut this_transpiler = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
+        let this_transpiler: &'static mut ::core::mem::MaybeUninit<Transpiler<'static>> =
+            runner_arena().alloc(::core::mem::MaybeUninit::<Transpiler<'static>>::uninit());
         let root_dir_info = Self::configure_env_for_run_without_linker(
             ctx,
-            &mut this_transpiler,
+            this_transpiler,
             None,
             log_errors,
             false,
@@ -2410,6 +2430,10 @@ impl RunCommand {
         // SAFETY: `configure_env_for_run_without_linker` returned `Ok`, so the
         // slot is fully initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<Transpiler>(this_transpiler).cast(),
+            ::core::mem::size_of::<Transpiler>(),
+        );
         let force_using_bun = ctx.debug.run_in_bun;
         let mut original_path: Vec<u8> = Vec::new();
         Self::configure_path_for_run(
@@ -2465,9 +2489,9 @@ impl RunCommand {
                             .expect("unreachable");
 
                         // allocate enough to hold "post${scriptname}"
-                        // PORT NOTE: byte 0 is a placeholder so the "pre" slice
+                        // byte 0 is a placeholder so the "pre" slice
                         // (`[1..]`) and the in-place "post" overwrite share one
-                        // buffer (run_command.zig:1749-1794).
+                        // buffer.
                         let mut temp_script_buffer: Vec<u8> =
                             Vec::with_capacity(b"\x00pre".len() + target_name.len());
                         temp_script_buffer.extend_from_slice(b"\x00pre");
@@ -2484,7 +2508,7 @@ impl RunCommand {
                             bstr::BStr::new(package_json_dir)
                         );
 
-                        // PORT NOTE: borrowck reshape — `ctx.passthrough` is a
+                        // borrowck reshape — `ctx.passthrough` is a
                         // field of `ctx` but `run_package_script_foreground`
                         // takes `&mut ContextData`; clone the slice up-front.
                         let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
@@ -2492,7 +2516,7 @@ impl RunCommand {
                         let use_system_shell = ctx.debug.use_system_shell;
 
                         if let Some(&prescript) = scripts.get(&temp_script_buffer[1..]) {
-                            Self::run_package_script_foreground(
+                            Self::run_package_script_foreground_with_shell_path(
                                 ctx,
                                 prescript,
                                 &temp_script_buffer[1..],
@@ -2501,10 +2525,11 @@ impl RunCommand {
                                 &[],
                                 silent,
                                 use_system_shell,
+                                Some(original_path.as_slice()),
                             )?;
                         }
 
-                        Self::run_package_script_foreground(
+                        Self::run_package_script_foreground_with_shell_path(
                             ctx,
                             script_content,
                             target_name,
@@ -2513,12 +2538,13 @@ impl RunCommand {
                             &passthrough,
                             silent,
                             use_system_shell,
+                            Some(original_path.as_slice()),
                         )?;
 
                         temp_script_buffer[..b"post".len()].copy_from_slice(b"post");
 
                         if let Some(&postscript) = scripts.get(&temp_script_buffer[..]) {
-                            Self::run_package_script_foreground(
+                            Self::run_package_script_foreground_with_shell_path(
                                 ctx,
                                 postscript,
                                 &temp_script_buffer,
@@ -2527,6 +2553,7 @@ impl RunCommand {
                                 &[],
                                 silent,
                                 use_system_shell,
+                                Some(original_path.as_slice()),
                             )?;
                         }
 
@@ -2536,17 +2563,19 @@ impl RunCommand {
             }
         }
 
-        // ── module resolution fallback (run_command.zig:1820-1857) ──────────
+        // ── module resolution fallback ───────────────────────────────────────
         // load module and run that module
         // TODO: run module resolution here - try the next condition if the module can't be found
+        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
+        let fs_top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
         bun_core::scoped_log!(
             RUN_LOG,
             "Try resolve `{}` in `{}`",
             bstr::BStr::new(target_name),
-            bstr::BStr::new(unsafe { (*this_transpiler.fs).top_level_dir }),
+            bstr::BStr::new(fs_top_level_dir),
         );
         // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
-        // for this one resolve. Zig: `defer resolver.opts.preserve_symlinks = saved`.
+        // for this one resolve.
         let resolution: ::core::result::Result<bun_resolver::Result, bun_core::Error> = {
             let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
             this_transpiler.resolver.opts.preserve_symlinks =
@@ -2563,7 +2592,7 @@ impl RunCommand {
             ) {
                 ok @ Ok(_) => ok,
                 Err(_) => {
-                    // Retry with explicit `./` prefix (run_command.zig:1832-1836).
+                    // Retry with explicit `./` prefix.
                     let prefixed: Vec<u8> = [b"./".as_slice(), target_name].concat();
                     this_transpiler.resolver.resolve(
                         top_level_dir,
@@ -2582,7 +2611,7 @@ impl RunCommand {
         match resolution {
             Ok(mut resolved) => {
                 let path = resolved.path().expect("resolved primary path");
-                let ext = path.name.ext;
+                let ext = path.name().ext;
                 let loader: Loader = this_transpiler
                     .options
                     .loaders
@@ -2592,7 +2621,7 @@ impl RunCommand {
                     .unwrap_or(Loader::Tsx);
                 if loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md {
                     bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
-                    // PORT NOTE: borrowck — `_boot_and_handle_error` takes
+                    // borrowck — `_boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
                     let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
                     return Ok(Self::_boot_and_handle_error(ctx, &text, Some(loader)));
@@ -2621,7 +2650,7 @@ impl RunCommand {
             }
         }
 
-        // ── Windows .bunx fast-path (run_command.zig:1862-1888) ─────────────
+        // ── Windows .bunx fast-path ──────────────────────────────────────────
         #[cfg(windows)]
         if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
             // SAFETY: process-lifetime static, single-threaded CLI dispatch.
@@ -2658,7 +2687,7 @@ impl RunCommand {
         }
 
         // ── node_modules/.bin / system $PATH fallback ───────────────────────
-        // Zig: run_command.zig:1890-1912 — search the prepended `.bin` dirs
+        // Search the prepended `.bin` dirs
         // (PATH minus ORIGINAL_PATH) unless `--bun` was passed, in which case
         // search the whole stitched PATH.
         {
@@ -2687,7 +2716,7 @@ impl RunCommand {
                     Self::run_binary_without_bunx_path(
                         ctx,
                         stored,
-                        destination.as_ptr().cast::<c_char>(),
+                        destination,
                         top_level_dir,
                         env_loader,
                         &passthrough,
@@ -2702,12 +2731,13 @@ impl RunCommand {
             return Ok(true);
         }
 
-        // `bun feedback` (run_command.zig:1921-1925).
+        // `bun feedback`.
         // SAFETY: `cli::CMD` is written once during single-threaded CLI
         // startup before any worker thread is spawned; read-only here.
+        let current_cmd = unsafe { cli::CMD.read() };
         if ctx.filters.is_empty()
             && !ctx.workspaces
-            && unsafe { cli::CMD.read() } == Some(CommandTag::AutoCommand)
+            && current_cmd == Some(CommandTag::AutoCommand)
             && target_name == b"feedback"
         {
             Self::bun_feedback(ctx)?;
@@ -2760,27 +2790,26 @@ impl RunCommand {
     /// path does not exist / is a directory, so the caller can fall through to
     /// script lookup.
     ///
-    /// PORT NOTE: the Zig version reads `ctx.args.entry_points[0]`; this tier
-    /// has not wired `Arguments::parse` to populate `entry_points` yet, so we
+    /// `Arguments::parse` does not populate `entry_points` yet, so we
     /// take the target slice explicitly.
     fn maybe_open_with_bun_js(ctx: &mut ContextData, target: &[u8]) -> bool {
         if target.is_empty() {
             return false;
         }
 
-        // PORT NOTE (run_command.zig:1586-1640): Zig OPENS the file (rather than
-        // just stat()ing the path), fstat()s the fd, then derives the canonical
-        // absolute path via `bun.getFdPath(fd, &buf)` before booting. The
+        // We OPEN the file (rather than
+        // just stat()ing the path), fstat() the fd, then derive the canonical
+        // absolute path via `get_fd_path` before booting. The
         // get_fd_path step matters: it resolves symlinks so module-relative
         // resolution sees the real location.
         let mut script_name_buf = PathBuffer::uninit();
 
-        // Build a NUL-terminated path to open (mirrors the Zig branching for
+        // Build a NUL-terminated path to open (branching for
         // absolute vs. simple-relative vs. `..`/`~`-prefixed).
         let open_len: usize = if paths::is_absolute(target) {
-            // Zig: `PosixToWinNormalizer.resolveCWD` (prepends the cwd drive
-            // letter on Windows for `/abs` paths) then, on Windows only,
-            // `resolve_path.normalizeString(.., .windows)` to canonicalize
+            // `PosixToWinNormalizer::resolve_cwd` prepends the cwd drive
+            // letter on Windows for `/abs` paths; then, on Windows only,
+            // `normalize_string` canonicalizes
             // separators. Both are no-ops on POSIX (`resolve_cwd` returns the
             // input slice untouched).
             let mut win_resolver = paths::resolve_path::PosixToWinNormalizer::default();
@@ -2825,7 +2854,7 @@ impl RunCommand {
         // `script_name_buf[..open_len]` is init.
         let open_z = bun_core::ZStr::from_buf(&script_name_buf[..], open_len);
 
-        // Open read-only. `catch return false` in Zig.
+        // Open read-only.
         let Ok(fd) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0) else {
             return false;
         };
@@ -2856,7 +2885,7 @@ impl RunCommand {
         });
 
         // Re-derive the canonical absolute path from the open fd (resolves
-        // symlinks). On non-Windows Zig writes back into `script_name_buf`.
+        // symlinks).
         let absolute_script_path: Box<[u8]> = {
             let resolved = match bun_sys::get_fd_path(fd, &mut script_name_buf) {
                 Ok(p) => p,
@@ -2878,9 +2907,9 @@ impl RunCommand {
         bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
 
         // read from stdin
-        // PERF(port): Zig `stackFallback(2048, …)` — Phase B can swap to
+        // PERF: could swap to
         // `SmallVec<[u8; 2048]>` if profiled hot; cold CLI path here.
-        // PORT NOTE: `read_to_end_into` is the cursor-relative streaming reader
+        // `read_to_end_into` is the cursor-relative streaming reader
         // (stdin is a pipe/tty, not seekable; `read_to_end` would `pread(0)`).
         let mut list: Vec<u8> = Vec::new();
         if bun_sys::File::stdin().read_to_end_into(&mut list).is_err() {
@@ -2888,7 +2917,6 @@ impl RunCommand {
         }
         ctx.runtime_options.eval.script = list.into_boxed_slice();
 
-        // Zig: `bun.pathLiteral("/[stdin]")`.
         #[cfg(windows)]
         const STDIN_TRIGGER: &[u8] = b"\\[stdin]";
         #[cfg(not(windows))]
@@ -2903,17 +2931,16 @@ impl RunCommand {
         entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(STDIN_TRIGGER);
         let entry_path = &entry_point_buf[..cwd_len + STDIN_TRIGGER.len()];
 
-        // Zig: prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
+        // Prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
         // Node's `node -` semantics.
         let mut passthrough_list: Vec<Box<[u8]>> = Vec::with_capacity(ctx.passthrough.len() + 1);
         passthrough_list.push(b"-".to_vec().into_boxed_slice());
         passthrough_list.append(&mut ctx.passthrough);
         ctx.passthrough = passthrough_list;
 
-        // Zig: `Run.boot(ctx, dupe(entry_path), null) catch |err| { … }`.
-        // PORT NOTE: NOT routed through `_boot_and_handle_error` — the spec
-        // stdin path (run_command.zig:1740-1749) skips the
-        // `configureAllocator(.long_running=true)` / `.md` checks and prints
+        // NOT routed through `_boot_and_handle_error` — the
+        // stdin path skips the
+        // `configure_allocator(long_running=true)` / `.md` checks and prints
         // `basename(target_name)` (= "-"), not `basename(entry_path)`
         // (= "[stdin]"), in the error message.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
@@ -2923,14 +2950,13 @@ impl RunCommand {
         Ok(true)
     }
 
-    /// Port of `cli.zig`'s `@"bun --eval --print"` — synthetic `cwd/[eval]`
+    /// Synthetic `cwd/[eval]`
     /// entry point + boot. `Arguments::parse` has already stashed the script
     /// in `ctx.runtime_options.eval.script`. Public so `Command::start` can
     /// route the `-e`/`-p` AutoCommand path here without re-implementing the
     /// path-buffer dance.
     pub fn exec_eval(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
-        // Zig: `ctx.passthrough = concat(ctx.positionals, ctx.passthrough)`.
-        // PORT NOTE: prepend positionals into the existing passthrough vec
+        // prepend positionals into the existing passthrough vec
         // (cold path, single allocation).
         if !ctx.positionals.is_empty() {
             let mut merged: Vec<Box<[u8]>> =
@@ -2978,17 +3004,17 @@ impl RunCommand {
             Self::exec_as_if_node_missing_script();
         }
 
-        // PORT NOTE: borrowck — `_boot_and_handle_error` takes `&mut ctx`, so
+        // borrowck — `_boot_and_handle_error` takes `&mut ctx`, so
         // dupe the positional out before the call.
         let filename: Box<[u8]> = ctx.positionals[0].clone();
 
         let normalized: Box<[u8]> = if paths::is_absolute(&filename) {
             filename
         } else {
-            // PORT NOTE (run_command.zig:1976-1984): the spec writes
-            // `path_buf[cwd.len] = std.fs.path.sep_posix` (always `/`, NOT the
-            // platform separator) and then runs the result through
-            // `resolve_path.joinAbsStringBuf(.., .loose)` to collapse `.`/`..`.
+            // Note: write
+            // `cwd_buf[cwd_len] = b'/'` (always `/`, NOT the
+            // platform separator) and then run the result through
+            // `join_abs_string_buf::<Loose>` to collapse `.`/`..`.
             let mut cwd_buf = PathBuffer::uninit();
             let cwd = bun_core::getcwd(&mut cwd_buf)?;
             let cwd_len = cwd.as_bytes().len();
@@ -3002,8 +3028,8 @@ impl RunCommand {
             joined.to_vec().into_boxed_slice()
         };
 
-        // PORT NOTE (run_command.zig:1987-1992): this arm calls `Run.boot`
-        // directly — NOT `_bootAndHandleError` — so it (a) does not call
+        // This arm calls `Run::boot`
+        // directly — NOT `_boot_and_handle_error` — so it (a) does not call
         // `Global::configure_allocator` and (b) uses the
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
@@ -3015,7 +3041,10 @@ impl RunCommand {
 
     #[cold]
     #[inline(never)]
-    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn exec_as_if_node_missing_script() -> ! {
         Output::err_generic(
             "Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.",
@@ -3026,7 +3055,10 @@ impl RunCommand {
 
     #[cold]
     #[inline(never)]
-    #[cfg_attr(target_os = "linux", unsafe(link_section = ".text.unlikely"))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
     fn exec_as_if_node_boot_failed(
         ctx: &mut ContextData,
         basename: &[u8],
@@ -3047,14 +3079,13 @@ impl RunCommand {
     }
 }
 
-// Zig: `bun.pathLiteral("/[eval]")` — `pathLiteral` swaps `/` → platform SEP
-// at comptime. Only the leading separator matters here.
+// Only the leading separator matters here.
 #[cfg(windows)]
 const EVAL_TRIGGER: &[u8] = b"\\[eval]";
 #[cfg(not(windows))]
 const EVAL_TRIGGER: &[u8] = b"/[eval]";
 
-/// Port of `escapeForJSString` (bun.js.zig:615) — escape `\ " \n \r \t` for
+/// Escape `\ " \n \r \t` for
 /// embedding in a double-quoted JS string literal. Used by the cron-execution
 /// wrapper script to inline the entry path and cron period.
 fn escape_for_js_string(input: &[u8]) -> Vec<u8> {
@@ -3114,7 +3145,7 @@ impl RemoteImageDownload {
         async_http: *mut bun_http::AsyncHTTP<'static>,
         _result: bun_http::HTTPClientResult<'_>,
     ) {
-        // Mirror sendSyncCallback from AsyncHTTP.zig: the worker's
+        // The worker's
         // ThreadlocalAsyncHTTP is about to be freed, so copy its
         // mutated state back into our owned AsyncHTTP before writing
         // to the channel.
@@ -3125,8 +3156,8 @@ impl RemoteImageDownload {
             let this = &mut *this;
             let async_http = &mut *async_http;
             if let Some(real) = async_http.real {
-                // Zig `real.* = async_http.*;` is a raw bitwise overwrite with
-                // NO destructor on the old value. `ptr::write` preserves that —
+                // Raw bitwise overwrite with
+                // NO destructor on the old value: `ptr::write` —
                 // `*real.as_ptr() = …` would run Drop on the previous
                 // `this.async_http` (whose state the fresh copy still aliases).
                 real.as_ptr().write(::core::ptr::read(async_http));
@@ -3253,7 +3284,6 @@ impl RunCommand {
             let Ok(response_buffer) = bun_core::MutableString::init(8 * 1024) else {
                 continue;
             };
-            // PORT NOTE: Zig wrote `.async_http = undefined` then overwrote it.
             // `AsyncHTTP` holds non-nullable `fn()` pointers (result_callback,
             // task.callback), so `mem::zeroed()` would be instant UB. Allocate
             // an uninit `Box`, write the cheap fields first to obtain stable
@@ -3275,6 +3305,8 @@ impl RunCommand {
                 let url = &*::core::ptr::addr_of!((*slot).url);
                 ::core::slice::from_raw_parts(url.as_ptr(), url.len())
             };
+            // SAFETY: `slot` is the freshly-allocated `MaybeUninit` heap slot
+            // and `response_buffer` was `ptr::write`n above; address is valid.
             let response_buffer_ptr: *mut bun_core::MutableString =
                 unsafe { ::core::ptr::addr_of_mut!((*slot).response_buffer) };
             let d_ptr: *mut RemoteImageDownload = slot;
@@ -3386,8 +3418,7 @@ impl RunCommand {
                 Ok(f) => f,
                 Err(_) => continue,
             };
-            let ok = sys::File { handle: fd }.write_all(bytes).is_ok();
-            fd.close();
+            let ok = sys::File::from_fd(fd).write_all(bytes).is_ok();
             if !ok {
                 // openA + TRUNC leaves an orphan even on zero-byte
                 // write failure. Unlink via stack buffer so cleanup
@@ -3396,8 +3427,7 @@ impl RunCommand {
                 continue;
             }
             // Dupe d.url for the map key — `collector.urls` owns the backing
-            // PORT NOTE: reshaped — Zig frees `key`/`path` and unlinks on
-            // `put` failure. Check capacity first while `path` is still
+            // bytes. Check capacity first while `path` is still
             // borrowable for `unlink_staged_path`.
             if out_map.try_reserve(1).is_err() {
                 Self::unlink_staged_path(&path);
@@ -3428,7 +3458,7 @@ impl RunCommand {
             // directly. Honor COLUMNS so piped output and tests can
             // pin a width.
             if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {
-                if let Some(n) = bun_core::fmt::parse_int::<u16>(env, 10).ok() {
+                if let Ok(n) = bun_core::fmt::parse_int::<u16>(env, 10) {
                     if n > 0 {
                         break 'brk n;
                     }
@@ -3637,8 +3667,7 @@ impl RunCommand {
                     .ok()
                     .flatten()
                 {
-                    // SAFETY: resolver cache owns the DirInfo for the process lifetime.
-                    if let Some(entries) = unsafe { &*bin_dir }.get_entries_const() {
+                    if let Some(entries) = bin_dir.get_entries_const() {
                         let mut path_buf = PathBuffer::uninit();
                         let mut iter = entries.data.iter();
                         let mut has_copied = false;
@@ -3647,8 +3676,9 @@ impl RunCommand {
                             // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by
                             // the resolver dir-cache for the process lifetime.
                             let value = unsafe { &**entry.1 };
-                            // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-                            if value.kind(unsafe { &raw mut (*this_transpiler.fs).fs }, true)
+                            // SAFETY: entries_mutex held; `Transpiler::fs` is the
+                            // non-null process-static singleton.
+                            if unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
                                 == bun_resolver::fs::EntryKind::File
                             {
                                 if !has_copied {
@@ -3709,8 +3739,9 @@ impl RunCommand {
                             && !strings::contains(name, b".d.ts")
                             && !strings::contains(name, b".d.mts")
                             && !strings::contains(name, b".d.cts")
-                            // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-                            && value.kind(unsafe { &raw mut (*this_transpiler.fs).fs }, true)
+                            // SAFETY: entries_mutex held; `Transpiler::fs` is the
+                            // non-null process-static singleton.
+                            && unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
                                 == bun_resolver::fs::EntryKind::File
                         {
                             // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
@@ -3774,7 +3805,7 @@ impl RunCommand {
                             }
                         }
 
-                        // PERF(port): capacity reserved by `ensure_unused_capacity`
+                        // Capacity reserved by `ensure_unused_capacity`
                         // above; `assume_capacity` skips the grow check and
                         // avoids a redundant alloc when the key is a duplicate.
                         let entry_item = results.get_or_put_assume_capacity(Box::from(key));
@@ -3843,11 +3874,10 @@ impl RunCommand {
         this_transpiler.resolver.care_about_bin_folder = false;
         this_transpiler.resolver.care_about_scripts = false;
 
-        // PORT NOTE: `ShellCompletions` stores `&'static [&'static [u8]]`; the
+        // `ShellCompletions` stores `&'static [&'static [u8]]`; the
         // keys interned into `filename_store` / boxed from static tables outlive
         // the process. The owning `results` ArrayHashMap is held in a process-
-        // lifetime arena slot so the borrowed keys remain valid (Zig never
-        // freed it either).
+        // lifetime arena slot so the borrowed keys remain valid.
         let mut all_keys: Vec<&'static [u8]> = results
             .keys()
             .iter()
@@ -3863,7 +3893,11 @@ impl RunCommand {
         strings::sort_asc(&mut all_keys);
         // Park the owning maps in the runner arena (process-lifetime) so the
         // `'static` slices above remain valid without leaking/forgetting.
-        let _ = runner_arena().alloc(results);
+        let parked = runner_arena().alloc(results);
+        bun_core::asan::register_root_region(
+            std::ptr::from_ref::<ResultList>(parked).cast(),
+            ::core::mem::size_of::<ResultList>(),
+        );
         shell_out.commands = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&all_keys));
         shell_out.descriptions = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(
             // SAFETY: descriptions borrow into the package.json source buffer
@@ -3887,7 +3921,6 @@ impl RunCommand {
 
 bun_core::declare_scope!(BUNX_FAST_PATH_LOG, visible);
 
-/// Uninhabited namespace holder; all members are associated items.
 pub enum BunXFastPath {}
 
 #[cfg(windows)]
@@ -3895,16 +3928,15 @@ mod bunx_fast_path_buffers {
     use super::*;
     // PORTING.md §Global mutable state: Windows-only single-thread CLI scratch
     // buffers (bunx fast-path runs once on the main thread) → RacyCell.
-    pub static DIRECT_LAUNCH_BUFFER: bun_core::RacyCell<WPathBuffer> =
+    pub(super) static DIRECT_LAUNCH_BUFFER: bun_core::RacyCell<WPathBuffer> =
         bun_core::RacyCell::new(WPathBuffer::ZEROED);
-    // Zig spec (run_command.zig:2014): `var environment_buffer: bun.WPathBuffer`
-    // — same `[PATH_MAX_WIDE]u16` shape as the launch buffer.
-    pub static ENVIRONMENT_BUFFER: bun_core::RacyCell<WPathBuffer> =
+    // Same `[PATH_MAX_WIDE]u16` shape as the launch buffer.
+    pub(super) static ENVIRONMENT_BUFFER: bun_core::RacyCell<WPathBuffer> =
         bun_core::RacyCell::new(WPathBuffer::ZEROED);
 }
 
 impl BunXFastPath {
-    /// Port of `appendWindowsArgument` (run_command.zig:2049-2091): convert a
+    /// Convert a
     /// UTF-8 argument to UTF-16, applying Windows command-line quoting/escaping
     /// per the canonical "Everyone quotes command line arguments the wrong way"
     /// rules. Writes into `buffer` and returns the number of u16s written.
@@ -3920,7 +3952,7 @@ impl BunXFastPath {
             return 2;
         }
 
-        // Spec (run_command.zig:2042-2044): trigger quoting only on
+        // Trigger quoting only on
         // space/tab/quote — compare the FULL u16, not the truncated low byte.
         let needs_quote = warg
             .iter()
@@ -3931,7 +3963,7 @@ impl BunXFastPath {
             return warg.len();
         }
 
-        // Fast path: no embedded `"`/`\` → simple wrap (zig:2052-2062).
+        // Fast path: no embedded `"`/`\` → simple wrap.
         let has_quote_or_backslash = warg.iter().any(|&c| c == b'"' as u16 || c == b'\\' as u16);
         if !has_quote_or_backslash {
             buffer[0] = b'"' as u16;
@@ -4030,11 +4062,11 @@ impl BunXFastPath {
             i += 1;
             i += Self::append_windows_argument(&mut command_line[i..], arg);
         }
-        // Zig: `ctx.passthrough = passthrough;` — `direct_launch_callback` →
-        // `Run.boot` reads `vm.argv = ctx.passthrough`, so the assignment must
+        // `direct_launch_callback` →
+        // `Run::boot` reads `vm.argv = ctx.passthrough`, so the assignment must
         // happen before the shim may call back. Current callers pass a clone of
         // `ctx.passthrough` so this is a write-back of identical data, but the
-        // spec contract is that *this* `passthrough` wins.
+        // contract is that *this* `passthrough` wins.
         ctx.passthrough = passthrough.to_vec();
 
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
@@ -4042,8 +4074,7 @@ impl BunXFastPath {
         let environment = match env.map.write_windows_env_block(&mut env_buf.0) {
             Ok(env) => Some(env),
             Err(_) => {
-                // Spec (run_command.zig:2148) leaks `handle` here via
-                // `catch return`; the shim's `NtClose(metadata_handle)` only
+                // The shim's `NtClose(metadata_handle)` only
                 // runs if `try_startup_from_bun_js` is reached. Close it
                 // explicitly so the slow-path fallback doesn't inherit a
                 // dangling open HANDLE for the process lifetime.

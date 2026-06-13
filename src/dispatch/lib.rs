@@ -4,8 +4,7 @@
 //! higher-tier crates, without a vtable. Dispatch is `match kind { … }` over
 //! per-variant `extern "Rust"` direct calls; under `-Clinker-plugin-lto` the
 //! whole thing inlines to the same code an in-crate enum would. Think
-//! `enum_dispatch` where the impls don't have to be in the declaring crate —
-//! the cross-crate Rust spelling of Zig's `union(enum)` switch.
+//! `enum_dispatch` where the impls don't have to be in the declaring crate.
 //!
 //! `link_interface!` in the low-tier crate emits the handle type **and** a
 //! `link_impl_<Iface>!` macro (re-exported at that crate's root) which the
@@ -205,6 +204,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
         });
         quote! {
             #[inline]
+            #[allow(clippy::not_unsafe_ptr_arg_deref)]
             pub fn #mn(&self #(, #an: #at)*) #ret {
                 match self.kind { #(#arms),* }
             }

@@ -2,7 +2,7 @@
 //! `bun_spawn::process` so the fd/action plumbing has no event-loop
 //! dependency. `Process`/`Poller`/`WaiterThread`/`sync` stay in `bun_spawn`.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::CStr;
 use core::ffi::c_char;
 #[cfg(target_os = "macos")]
@@ -14,10 +14,9 @@ use core::sync::atomic::Ordering;
 use bun_core::Output;
 use bun_sys::{self, Fd, FdExt as _};
 
-#[allow(unused_imports)]
+#[cfg(not(windows))]
 use crate::posix_spawn::posix_spawn;
 #[cfg(unix)]
-#[allow(unused_imports)]
 use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
 
 #[cfg(unix)]
@@ -37,17 +36,16 @@ pub type FdT = libc::c_int;
 #[cfg(not(unix))]
 pub type FdT = i32;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub type PidFdType = FdT;
-#[cfg(not(target_os = "linux"))]
-pub type PidFdType = (); // u0 in Zig
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+pub type PidFdType = ();
 
 // ──────────────────────────────────────────────────────────────────────────
 // Rusage — platform-uniform resource-usage struct
 //
-// One Bun-level type per target, mirroring Zig's `bun.spawn.Rusage`
-// (process.zig:72-97). On every Unix this is `libc::rusage` — Rust's libc
-// crate, unlike Zig's `std.posix`, *does* define `rusage` on FreeBSD with
+// One Bun-level type per target. On every Unix this is `libc::rusage` —
+// the libc crate defines `rusage` on FreeBSD with
 // the standard `ru_*` field names, so no hand-rolled FreeBSD struct is
 // needed. On Windows it is the value-typed `WinRusage` below (NOT
 // `uv_rusage_t` — that is vendor FFI ABI in `bun_libuv_sys` and stays
@@ -66,10 +64,10 @@ pub struct WinRusage {
     pub utime: WinTimeval,
     pub stime: WinTimeval,
     pub maxrss: u64,
-    // ixrss, idrss, isrss, minflt, majflt, nswap: u0 in Zig — zero-sized, omitted
+    // ixrss, idrss, isrss, minflt, majflt, nswap: always zero — omitted
     pub inblock: u64,
     pub oublock: u64,
-    // msgsnd, msgrcv, nsignals, nvcsw, nivcsw: u0 in Zig — zero-sized, omitted
+    // msgsnd, msgrcv, nsignals, nvcsw, nivcsw: always zero — omitted
 }
 
 pub type IoCounters = bun_windows_sys::IO_COUNTERS;
@@ -110,13 +108,12 @@ pub fn uv_getrusage(process: &mut bun_libuv_sys::uv_process_t) -> WinRusage {
     } != 0
     {
         // FILETIME is in 100-nanosecond ticks. 1 s = 10_000_000 ticks; 1 µs =
-        // 10 ticks. The Zig spec (process.zig:53) computes the sub-second part
-        // as `temp % 1_000_000`, which is unit-mismatched: it takes a 100-ns
-        // tick count modulo a microsecond denominator, so a 178 125 µs run
-        // (1_781_250 ticks) reports as 781_250 µs. That over-report is what
-        // tips the "does not use 100% cpu > install" test (`cpuTime.total <
-        // 750_000`) on Windows aarch64. Diverge from spec and convert
-        // correctly: `(ticks % 10_000_000) / 10`.
+        // 10 ticks. A `temp % 1_000_000` computation here would be
+        // unit-mismatched (a 100-ns tick count modulo a microsecond
+        // denominator): a 178 125 µs run (1_781_250 ticks) would report as
+        // 781_250 µs, which is what tips the "does not use 100% cpu >
+        // install" test (`cpuTime.total < 750_000`) on Windows aarch64.
+        // Convert correctly: `(ticks % 10_000_000) / 10`.
         let mut temp: u64 =
             ((kerneltime.dwHighDateTime as u64) << 32) | kerneltime.dwLowDateTime as u64;
         if temp > 0 {
@@ -158,8 +155,8 @@ pub fn rusage_zeroed() -> Rusage {
 
 /// Platform-uniform field accessors over [`Rusage`]. The underlying alias has
 /// divergent field names (`ru_*` on every Unix `libc::rusage`; bare names on
-/// `WinRusage` with several `u0`/absent counters). This trait gives JS-facing
-/// getters one cfg-free body, matching the Zig spec's uniform names.
+/// `WinRusage` with several always-zero/absent counters). This trait gives
+/// JS-facing getters one cfg-free body with uniform names.
 pub trait RusageFields {
     fn utime_sec(&self) -> i64;
     fn utime_usec(&self) -> i64;
@@ -179,9 +176,11 @@ pub trait RusageFields {
 
 #[cfg(unix)]
 impl RusageFields for libc::rusage {
+    // `tv_sec`/`tv_usec` are `i64` on linux but `i32` on darwin (`suseconds_t`);
+    // the `as i64` is required for the latter and a no-op on the former.
     #[inline]
     fn utime_sec(&self) -> i64 {
-        self.ru_utime.tv_sec as i64
+        self.ru_utime.tv_sec
     }
     #[inline]
     fn utime_usec(&self) -> i64 {
@@ -189,7 +188,7 @@ impl RusageFields for libc::rusage {
     }
     #[inline]
     fn stime_sec(&self) -> i64 {
-        self.ru_stime.tv_sec as i64
+        self.ru_stime.tv_sec
     }
     #[inline]
     fn stime_usec(&self) -> i64 {
@@ -258,7 +257,7 @@ impl RusageFields for WinRusage {
     fn maxrss_(&self) -> f64 {
         self.maxrss as f64
     }
-    // Zig declares these as `u0` on Windows — always zero.
+    // These counters do not exist on Windows — always zero.
     #[inline]
     fn ixrss_(&self) -> f64 {
         0.0
@@ -345,9 +344,9 @@ pub struct PosixSpawnOptions {
 impl Default for PosixSpawnOptions {
     fn default() -> Self {
         Self {
-            stdin: PosixStdio::Ignore,
-            stdout: PosixStdio::Ignore,
-            stderr: PosixStdio::Ignore,
+            stdin: PosixStdio::Inherit,
+            stdout: PosixStdio::Inherit,
+            stderr: PosixStdio::Inherit,
             ipc: None,
             extra_fds: Box::default(),
             cwd: Box::default(),
@@ -368,7 +367,7 @@ impl Default for PosixSpawnOptions {
 }
 
 impl PosixSpawnOptions {
-    /// No-op — matches Zig `PosixSpawnOptions.deinit` (process.zig:1104).
+    /// No-op.
     /// Exists for cfg-parity with `WindowsSpawnOptions::deinit`, which closes
     /// heap-allocated `uv::Pipe` handles on the spawn error path.
     #[inline]
@@ -436,6 +435,7 @@ impl PosixStdio {
     }
 }
 
+#[derive(Default)]
 pub struct PosixSpawnResult {
     pub pid: PidT,
     pub pidfd: Option<PidFdType>,
@@ -447,22 +447,6 @@ pub struct PosixSpawnResult {
     pub memfds: [bool; 3],
     // ESRCH can happen when requesting the pidfd
     pub has_exited: bool,
-}
-
-impl Default for PosixSpawnResult {
-    fn default() -> Self {
-        Self {
-            pid: 0,
-            pidfd: None,
-            stdin: None,
-            stdout: None,
-            stderr: None,
-            ipc: None,
-            extra_pipes: Vec::new(),
-            memfds: [false, false, false],
-            has_exited: false,
-        }
-    }
 }
 
 /// Entry in `extra_pipes` for a stdio slot at index >= 3.
@@ -499,17 +483,19 @@ impl PosixSpawnResult {
         self.extra_pipes.shrink_to_fit();
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn pidfd_flags_for_linux() -> u32 {
-        // pidfd_nonblock only supported in 5.10+. The Zig path consults
-        // `analytics.kernel_version()` (semver compare); until that helper is
-        // ported, optimistically request NONBLOCK and rely on the EINVAL retry
-        // below to fall back on older kernels.
-        // TODO(port): wire bun_analytics::kernel_version() once available.
-        bun_sys::O::NONBLOCK as u32
+        // PIDFD_NONBLOCK is only supported on kernel 5.10+ (the EINVAL retry
+        // in `pifd_from_pid` still covers misdetection by retrying with 0).
+        let kernel = bun_core::linux_kernel_version();
+        if (kernel.major, kernel.minor) >= (5, 10) {
+            bun_sys::O::NONBLOCK as u32
+        } else {
+            0
+        }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
         if crate::waiter_thread_flag::get() {
             return Err(bun_sys::Error::from_code(
@@ -574,7 +560,7 @@ impl PosixSpawnResult {
         }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
         Err(bun_sys::Error::from_code(
             bun_sys::E::ENOSYS,
@@ -587,61 +573,25 @@ impl PosixSpawnResult {
 // spawn_process_posix — the fd/action plumbing + posix_spawn call
 // ──────────────────────────────────────────────────────────────────────────
 
-// Apple `<spawn.h>` extensions not exported by the `libc` crate (Zig: `bun.c.*`).
+// Apple `<spawn.h>` extensions not exported by the `libc` crate.
 #[cfg(target_os = "macos")]
-pub const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
+pub(crate) const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
 #[cfg(target_os = "macos")]
-pub const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
+pub(crate) const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
 
-/// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
-/// Replaces the Zig `defer if (fd != .invalid) fd.close()` pattern; [`Fd`]
-/// itself is `Copy` (a thin handle) and so cannot impl `Drop`.
-#[cfg(unix)]
-struct AutoCloseFd(Fd);
-
-#[cfg(unix)]
-impl AutoCloseFd {
-    #[inline]
-    const fn new(fd: Fd) -> Self {
-        Self(fd)
-    }
-    #[inline]
-    const fn invalid() -> Self {
-        Self(Fd::INVALID)
-    }
-    /// Borrow the inner handle (`Fd` is `Copy`).
-    #[inline]
-    fn fd(&self) -> Fd {
-        self.0
-    }
-}
-
-#[cfg(unix)]
-impl Drop for AutoCloseFd {
-    fn drop(&mut self) {
-        if self.0 != Fd::INVALID {
-            self.0.close();
-        }
-    }
-}
-
-/// RAII fd cleanup matching the Zig `defer` (process.zig:1393-1403) and
-/// `errdefer` (process.zig:1407-1411) in `spawnProcessPosix`. The `defer`
-/// runs on *every* exit (set CLOEXEC on `to_set_cloexec`, then close
-/// `to_close_at_end`); the `errdefer` additionally closes `to_close_on_error`
-/// on error returns. `on_error` is disarmed on the success path.
+/// RAII fd cleanup for `spawn_process_posix`. On *every* exit it sets
+/// CLOEXEC on `to_set_cloexec`, then closes `to_close_at_end`; on error
+/// returns it additionally closes `to_close_on_error`. `on_error` is
+/// disarmed on the success path.
 ///
 /// This exists so that bare `?` on `actions.*` propagates without leaking
 /// the parent-side socketpair ends pushed earlier in the loop.
 ///
-/// PORT NOTE (intentional divergence): Zig's `errdefer` only fires on
-/// error-union returns (`try` failures), *not* on `return .{.err = ..}` value
-/// returns — so in the spec, socketpair/set_nonblocking/spawn_z value-error
-/// paths leak `to_close_on_error`. This guard initializes `on_error = true`
-/// and is only disarmed after `spawn_z` succeeds, deliberately widening the
-/// cleanup to cover those value-error returns as well. The fds in
-/// `to_close_on_error` are parent-side ends never handed back to the caller on
-/// any error path, so closing them is the correct behavior.
+/// The guard initializes `on_error = true` and is only disarmed after
+/// `spawn_z` succeeds, so socketpair/set_nonblocking/spawn_z value-error
+/// returns (`return Ok(Err(..))`) are covered as well as `?` failures. The
+/// fds in `to_close_on_error` are parent-side ends never handed back to the
+/// caller on any error path, so closing them is the correct behavior.
 #[cfg(unix)]
 struct PosixSpawnFdGuard {
     to_set_cloexec: Vec<Fd>,
@@ -667,8 +617,13 @@ impl Drop for PosixSpawnFdGuard {
     }
 }
 
+/// # Safety
+/// `argv` must point to a null-terminated array of NUL-terminated C strings
+/// with at least one non-null element (`argv[0]`); `envp` must point to a
+/// null-terminated array of NUL-terminated C strings. Both must remain valid
+/// for the duration of the call.
 #[cfg(unix)]
-pub fn spawn_process_posix(
+pub unsafe fn spawn_process_posix(
     options: &PosixSpawnOptions,
     argv: Argv,
     envp: Envp,
@@ -684,51 +639,55 @@ pub fn spawn_process_posix(
     // but not for Android. Bionic's `<spawn.h>` uses the same values as glibc
     // (`0x04`/`0x08`) — they're POSIX-mandated bit flags, not OS-specific.
     #[cfg(not(target_os = "android"))]
-    let (setsigdef, setsigmask) = (
-        libc::POSIX_SPAWN_SETSIGDEF as i32,
-        libc::POSIX_SPAWN_SETSIGMASK as i32,
-    );
+    let (setsigdef, setsigmask) = (libc::POSIX_SPAWN_SETSIGDEF, libc::POSIX_SPAWN_SETSIGMASK);
     #[cfg(target_os = "android")]
     let (setsigdef, setsigmask) = (0x04_i32, 0x08_i32);
-    let mut flags: i32 = setsigdef | setsigmask;
+    let flags: i32 = {
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        let mut f: i32 = setsigdef | setsigmask;
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        let f: i32 = setsigdef | setsigmask;
 
-    #[cfg(target_os = "macos")]
-    {
-        flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
-
-        if options.use_execve_on_macos {
-            flags |= POSIX_SPAWN_SETEXEC;
-
-            if matches!(options.stdin, PosixStdio::Buffer)
-                || matches!(options.stdout, PosixStdio::Buffer)
-                || matches!(options.stderr, PosixStdio::Buffer)
-            {
-                Output::panic(format_args!(
-                    "Internal error: stdin, stdout, and stderr cannot be buffered when use_execve_on_macos is true",
-                ));
-            }
-        }
-    }
-
-    if options.detached {
-        // TODO(port): @hasDecl check — assume present on platforms that define it.
-        #[cfg(target_os = "linux")]
-        {
-            flags |= libc::POSIX_SPAWN_SETSID as i32;
-        }
         #[cfg(target_os = "macos")]
         {
-            // Darwin <spawn.h>: 0x0400 (libc crate omits the constant).
-            flags |= 0x0400;
+            f |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+
+            if options.use_execve_on_macos {
+                f |= POSIX_SPAWN_SETEXEC;
+
+                if matches!(options.stdin, PosixStdio::Buffer)
+                    || matches!(options.stdout, PosixStdio::Buffer)
+                    || matches!(options.stderr, PosixStdio::Buffer)
+                {
+                    Output::panic(format_args!(
+                        "Internal error: stdin, stdout, and stderr cannot be buffered when use_execve_on_macos is true",
+                    ));
+                }
+            }
         }
-        attr.detached = true;
-    }
+
+        if options.detached {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            {
+                // glibc/musl/bionic <spawn.h> all define POSIX_SPAWN_SETSID as 0x80;
+                // the libc crate only exposes it for `target_os = "linux"`.
+                f |= 0x80;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                // Darwin <spawn.h>: 0x0400 (libc crate omits the constant).
+                f |= 0x0400;
+            }
+            attr.detached = true;
+        }
+        f
+    };
 
     // Pass PTY slave fd to attr for controlling terminal setup
     attr.pty_slave_fd = options.pty_slave_fd;
     attr.new_process_group = options.new_process_group;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Explicit per-spawn value wins; otherwise no-orphans mode defaults
         // every child to SIGKILL-on-parent-death so non-Bun descendants are
@@ -748,9 +707,7 @@ pub fn spawn_process_posix(
     }
     let mut spawned = PosixSpawnResult::default();
     let mut extra_fds: Vec<ExtraPipe> = Vec::new();
-    // errdefer extra_fds.deinit() — Vec drops on ?
-    // PERF(port): was stack-fallback allocator (2048)
-    // Zig `defer` + `errdefer` cleanup → owned by an RAII guard so every `?`
+    // Cleanup is owned by an RAII guard so every `?`
     // (and every explicit `return Ok(Err(..))`) runs it. See PosixSpawnFdGuard.
     let mut cleanup = PosixSpawnFdGuard {
         to_set_cloexec: Vec::new(),
@@ -768,12 +725,15 @@ pub fn spawn_process_posix(
     }
 
     let stdio_options: [&PosixStdio; 3] = [&options.stdin, &options.stdout, &options.stderr];
-    // PORT NOTE: reshaped for borrowck — Zig holds [3]*?bun.FD into spawned;
-    // we index spawned.{stdin,stdout,stderr} via a helper closure instead.
+    // Reshaped for borrowck: we
+    // index spawned.{stdin,stdout,stderr} via a helper closure.
     let mut dup_stdout_to_stderr: bool = false;
 
     // The label is only referenced from the Linux memfd fast-path below.
-    #[cfg_attr(not(target_os = "linux"), allow(unused_labels))]
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "android")),
+        allow(unused_labels)
+    )]
     'stdio: for i in 0..3usize {
         let fileno = Fd::from_native(FdT::try_from(i).unwrap());
         let flag: u32 = (if i == 0 {
@@ -807,7 +767,7 @@ pub fn spawn_process_posix(
                 actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;
             }
             PosixStdio::Buffer => {
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 'use_memfd: {
                     if !options.stream && i > 0 && bun_sys::can_use_memfd() {
                         // use memfd if we can
@@ -996,7 +956,7 @@ pub fn spawn_process_posix(
             spawned.pid = pid;
             spawned.extra_pipes = extra_fds;
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // If it's spawnSync and we want to block the entire thread
                 // don't even bother with pidfd. It's not necessary.

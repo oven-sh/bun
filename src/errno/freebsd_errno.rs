@@ -122,23 +122,33 @@ pub mod uv_e {
     // Native `SystemErrno::$e as i32`; libuv-synthetic fallback for codes
     // FreeBSD lacks (ECHARSET / ENONET / ENOTSUP / EREMOTEIO / ENODATA / EUNATCH).
     macro_rules! __v {
-        (CHARSET,  $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
-        (NONET,    $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
-        (NOTSUP,   $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
-        (REMOTEIO, $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
-        (NODATA,   $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
-        (UNATCH,   $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv };
-        ($i:tt,    $e:tt, $uv:tt) => { super::SystemErrno::$e as i32 };
+        (CHARSET,  $e:tt, $uv:tt) => {
+            -::bun_libuv_sys::$uv
+        };
+        (NONET,    $e:tt, $uv:tt) => {
+            -::bun_libuv_sys::$uv
+        };
+        (NOTSUP,   $e:tt, $uv:tt) => {
+            -::bun_libuv_sys::$uv
+        };
+        (REMOTEIO, $e:tt, $uv:tt) => {
+            -::bun_libuv_sys::$uv
+        };
+        (NODATA,   $e:tt, $uv:tt) => {
+            -::bun_libuv_sys::$uv
+        };
+        (UNATCH,   $e:tt, $uv:tt) => {
+            -::bun_libuv_sys::$uv
+        };
+        ($i:tt,    $e:tt, $uv:tt) => {
+            super::SystemErrno::$e as i32
+        };
     }
     crate::__uv_e_rows!(__v);
 }
 pub use uv_e as UV_E;
 
-use super::GetErrno;
-
 // FreeBSD has no raw-syscall return convention (unlike Linux's `-errno` in
 // `usize`); every kernel entry goes through libc, so all widths route to the
 // thread-local `__error()` slot.
 impl_get_errno_libc!(i32, u32, isize, usize, i64);
-
-// ported from: src/errno/freebsd_errno.zig

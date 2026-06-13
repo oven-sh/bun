@@ -5,12 +5,6 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 
-// LAYERING: every `Expr` flowing through this file (YAML parse, package.json
-// cache, `CatalogMap::from_pnpm_lockfile`) is the T2 value-shaped tree from
-// `bun_ast::js_ast`, NOT the T4 `bun_ast::Expr`. Importing the T4
-// type here forced a deep-convert at every boundary and broke type unification
-// with `WorkspacePackageJSONCache.root`. Use the lower crate directly; the
-// only T4 hop is the final `print_json` call, which lifts via `.into()`.
 use bun_ast::{self, self as js_ast, E, Expr, ExprData, G};
 use bun_core::strings;
 use bun_semver as semver;
@@ -22,14 +16,13 @@ use crate::dependency::{self, Dependency, DependencyExt as _};
 use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
-use crate::npm::{self, Negatable};
+use crate::npm::{self};
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
 
-// PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
-// lockfile.stringBuf()` for the whole function, but in Rust that locks out
-// every other `lockfile.*` access. Construct a fresh `Buf` per append so the
-// mutable borrow ends immediately.
+// A single long-lived `Buf` for the whole function would lock out every other
+// `lockfile.*` access. Construct a fresh `Buf` per append so the mutable
+// borrow ends immediately.
 macro_rules! sbuf {
     ($lockfile:expr) => {
         semver::string::Buf {
@@ -39,12 +32,11 @@ macro_rules! sbuf {
     };
 }
 
-// PORT NOTE: Zig freely passes `lockfile.buffers.string_bytes.items` alongside
-// `&mut lockfile`. In Rust we keep the borrows field-disjoint instead — every
-// concurrent mutation in this file touches `buffers.dependencies`,
-// `buffers.resolutions`, `packages`, etc., never `string_bytes` itself, so a
-// plain `lockfile.buffers.string_bytes.as_slice()` at the use site is sound
-// and checked. The one exception (`append_package_dedupe` taking `&mut self`)
+// Borrows are kept field-disjoint — every concurrent mutation in this file
+// touches `buffers.dependencies`, `buffers.resolutions`, `packages`, etc.,
+// never `string_bytes` itself, so a plain
+// `lockfile.buffers.string_bytes.as_slice()` at the use site is sound and
+// checked. The one exception (`append_package_dedupe` taking `&mut self`)
 // reads the slice from `self` internally.
 macro_rules! string_bytes {
     ($lockfile:expr) => {
@@ -150,8 +142,8 @@ bun_core::oom_from_alloc!(MigratePnpmLockfileError);
 
 impl From<bun_core::Error> for MigratePnpmLockfileError {
     fn from(e: bun_core::Error) -> Self {
-        // Preserve the variants Zig's error-set union carried through; only
-        // collapse genuinely-unknown tags to InvalidPnpmLockfile.
+        // Preserve the known error variants; only collapse genuinely-unknown
+        // tags to InvalidPnpmLockfile.
         if e == bun_core::err!(OutOfMemory) {
             Self::OutOfMemory
         } else if e == bun_core::err!(DependencyLoop) {
@@ -226,8 +218,8 @@ fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
     }
 }
 
-/// Shallow struct copy (Zig copies `G.Property` by value freely; the Rust
-/// `G::Property` lacks `Clone` because of its `Vec`/`NonNull` fields).
+/// Shallow struct copy (`G::Property` lacks `Clone` because of its
+/// `Vec`/`NonNull` fields).
 fn shallow_clone_prop(p: &G::Property) -> G::Property {
     G::Property {
         key: p.key,
@@ -236,7 +228,7 @@ fn shallow_clone_prop(p: &G::Property) -> G::Property {
     }
 }
 
-pub fn migrate_pnpm_lockfile<'a>(
+pub(crate) fn migrate_pnpm_lockfile<'a>(
     lockfile: &'a mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
@@ -251,9 +243,8 @@ pub fn migrate_pnpm_lockfile<'a>(
     // `Store` (via `Expr::init`). Later `workspace_package_json_cache.get_with_path`
     // calls (with default `init_reset_store: true`) invoke `initialize_store()`,
     // which `Store::reset()`s — invalidating every `StoreRef` in the parsed
-    // YAML tree. Mirror Zig's `deepClone(allocator)`: clone the tree out of
-    // the Store into `yaml_arena` (which lives for the whole function) so
-    // `root` survives those resets.
+    // YAML tree. Clone the tree out of the Store into `yaml_arena` (which
+    // lives for the whole function) so `root` survives those resets.
     let yaml_source = bun_ast::Source::init_path_string(b"pnpm-lock.yaml", data);
     let yaml_arena = bun_alloc::Arena::new();
     let _root: Expr = match bun_parsers::yaml::YAML::parse(&yaml_source, log, &yaml_arena) {
@@ -447,8 +438,8 @@ pub fn migrate_pnpm_lockfile<'a>(
             }
 
             let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-            let _ = pkg_json_path.append(importer_path); // OOM/capacity: Zig aborts; port keeps fire-and-forget
-            let _ = pkg_json_path.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = pkg_json_path.append(importer_path); // OOM/capacity error is non-actionable here
+            let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
 
             let importer_pkg_json = match manager
                 .workspace_package_json_cache
@@ -502,7 +493,7 @@ pub fn migrate_pnpm_lockfile<'a>(
 
         {
             let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-            let _ = pkg_json_path.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
 
             let pkg_json = match manager
                 .workspace_package_json_cache
@@ -562,15 +553,17 @@ pub fn migrate_pnpm_lockfile<'a>(
                     continue;
                 }
 
-                let mut pkg = lockfile::Package::default();
-
-                pkg.resolution =
-                    Resolution::init(TaggedValue::Workspace(sbuf!(lockfile).append(path)?));
+                let mut pkg = lockfile::Package {
+                    resolution: Resolution::init(TaggedValue::Workspace(
+                        sbuf!(lockfile).append(path)?,
+                    )),
+                    ..Default::default()
+                };
 
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                let _ = path_buf.append(path); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                let _ = path_buf.append(path); // OOM/capacity error is non-actionable here
                 let abs_path: Box<[u8]> = Box::from(path_buf.slice());
-                let _ = path_buf.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                let _ = path_buf.append(b"package.json"); // OOM/capacity error is non-actionable here
 
                 let workspace_pkg_json = match manager
                     .workspace_package_json_cache
@@ -581,7 +574,7 @@ pub fn migrate_pnpm_lockfile<'a>(
                     Err(_) => return Err(invalid_pnpm_lockfile()),
                 };
 
-                // PORT NOTE: copy `Expr` out by value so the `&mut manager`
+                // Copy `Expr` out by value so the `&mut manager`
                 // borrow held by `workspace_pkg_json` ends here — `manager`
                 // is reborrowed below for `parse_append_importer_dependencies`.
                 let workspace_root: Expr = workspace_pkg_json.root;
@@ -644,7 +637,7 @@ pub fn migrate_pnpm_lockfile<'a>(
         for _pkg_id in 0..workspace_pkgs_end {
             let pkg_id: PackageID = u32::try_from(_pkg_id).expect("int cast");
 
-            // PORT NOTE: own the bytes — the `'next_dep` loop body mutates
+            // Own the bytes — the `'next_dep` loop body mutates
             // `lockfile.buffers.string_bytes` (via `sbuf!`) and takes
             // `&mut *lockfile` (`append_package_dedupe`), so a borrow that
             // spans the loop would conflict.
@@ -664,7 +657,7 @@ pub fn migrate_pnpm_lockfile<'a>(
 
             let deps = lockfile.packages.items_dependencies()[pkg_id as usize];
             'next_dep: for _dep_id in deps.begin()..deps.end() {
-                let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                let dep_id: DependencyID = _dep_id;
 
                 let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
 
@@ -689,13 +682,13 @@ pub fn migrate_pnpm_lockfile<'a>(
                             if dep.version.tag == dependency::VersionTag::Workspace {
                                 let mut link_path_buf =
                                     bun_paths::AutoAbsPath::init_top_level_dir();
-                                let _ = link_path_buf.append(workspace_path); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                                let _ = link_path_buf.append(workspace_path); // OOM/capacity error is non-actionable here
                                 let _ = link_path_buf.join(&[link_path]); // path-buffer overflow unreachable for bounded inputs
 
                                 for existing_workspace_path in lockfile.workspace_paths.values() {
                                     let mut workspace_path_buf =
                                         bun_paths::AutoAbsPath::init_top_level_dir();
-                                    // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                                    // OOM/capacity error is non-actionable here
                                     let _ = workspace_path_buf.append(
                                         existing_workspace_path.slice(string_bytes!(lockfile)),
                                     );
@@ -975,7 +968,7 @@ pub fn migrate_pnpm_lockfile<'a>(
         // resolve root dependencies first
         let root_deps = lockfile.packages.items_dependencies()[0];
         for _dep_id in root_deps.begin()..root_deps.end() {
-            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+            let dep_id: DependencyID = _dep_id;
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
             let string_buf = string_bytes!(lockfile);
 
@@ -1052,7 +1045,7 @@ pub fn migrate_pnpm_lockfile<'a>(
 
         let deps = lockfile.packages.items_dependencies()[pkg_id as usize];
         for _dep_id in deps.begin()..deps.end() {
-            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+            let dep_id: DependencyID = _dep_id;
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
             let string_buf = string_bytes!(lockfile);
             let dep_name = dep.name.slice(string_buf);
@@ -1109,7 +1102,7 @@ pub fn migrate_pnpm_lockfile<'a>(
 
         let deps = lockfile.packages.items_dependencies()[pkg_id as usize];
         for _dep_id in deps.begin()..deps.end() {
-            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+            let dep_id: DependencyID = _dep_id;
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
             let string_buf = string_bytes!(lockfile);
             let mut version_maybe_alias = dep.version.literal.slice(string_buf);
@@ -1140,7 +1133,7 @@ pub fn migrate_pnpm_lockfile<'a>(
             write!(
                 &mut res_buf,
                 "{}@{}",
-                bstr::BStr::new(has_alias.unwrap_or(dep.name.slice(string_buf))),
+                bstr::BStr::new(has_alias.unwrap_or_else(|| dep.name.slice(string_buf))),
                 bstr::BStr::new(version_without_suffix)
             )
             .map_err(|_| AllocError)?;
@@ -1173,7 +1166,7 @@ fn invalid_pnpm_lockfile() -> MigratePnpmLockfileError {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ParseAppendDependenciesError {
+pub(crate) enum ParseAppendDependenciesError {
     #[error("out of memory")]
     OutOfMemory,
     #[error("InvalidPnpmLockfile")]
@@ -1500,10 +1493,10 @@ fn parse_append_importer_dependencies(
                 if strings::has_prefix(specifier_str, b"catalog:") {
                     let catalog_group_name_str = &specifier_str[b"catalog:".len()..];
                     let catalog_group_name = sbuf!(lockfile).append(catalog_group_name_str)?;
-                    // PORT NOTE: reshaped for borrowck — `CatalogMap::get` needs
-                    // both `&mut self.catalogs` and `&self`; temporarily move
-                    // catalogs out so the disjoint fields can be borrowed.
-                    let mut catalogs = core::mem::take(&mut lockfile.catalogs);
+                    // `CatalogMap::get` needs both `&mut self.catalogs` and
+                    // `&self`; temporarily move catalogs out so the disjoint
+                    // fields can be borrowed.
+                    let catalogs = core::mem::take(&mut lockfile.catalogs);
                     let dep_result = catalogs.get(lockfile, catalog_group_name, name.value);
                     lockfile.catalogs = catalogs;
                     let Some(mut dep) = dep_result else {
@@ -1532,10 +1525,6 @@ fn parse_append_importer_dependencies(
                 let behavior: dependency::Behavior = group_behavior;
 
                 // TODO: find peerDependencies from package.json
-                if group_behavior.is_prod() {
-                    // PERF(port): was comptime branch
-                }
-
                 let dep = Dependency {
                     name: name.value,
                     name_hash: name.hash,
@@ -1569,8 +1558,8 @@ fn parse_append_importer_dependencies(
                 }
 
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                let _ = path_buf.append(path); // OOM/capacity: Zig aborts; port keeps fire-and-forget
-                let _ = path_buf.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                let _ = path_buf.append(path); // OOM/capacity error is non-actionable here
+                let _ = path_buf.append(b"package.json"); // OOM/capacity error is non-actionable here
 
                 let workspace_pkg_json = match manager
                     .workspace_package_json_cache
@@ -1626,7 +1615,7 @@ fn update_package_json_after_migration(
     patches: &StringArrayHashMap<Box<[u8]>>,
 ) -> Result<(), AllocError> {
     let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-    let _ = pkg_json_path.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+    let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
 
     let bump = bun_alloc::Arena::new();
 
@@ -1796,15 +1785,12 @@ fn update_package_json_after_migration(
 
     match sys::File::read_from(Fd::cwd(), b"pnpm-workspace.yaml") {
         Ok(contents) => 'read_pnpm_workspace_yaml: {
-            // Zig: `readFrom(..., allocator)` heap-allocates with the long-
-            // lived default allocator and never frees, so YAML scalar
-            // `EString.data` slices that borrow from these source bytes stay
-            // valid for the rest of the program. The Rust `Vec<u8>` would drop
-            // at the end of this arm while the `Expr`s it backs (catalog/
-            // catalogs/overrides/patchedDependencies below) escape into `json`
-            // and the `workspace_package_json_cache`. Intern the bytes into
-            // the same thread-local `DATA_STORE` that owns the surrounding
-            // `Expr` nodes — arena ownership, not a leak (bulk-freed on
+            // The `Vec<u8>` would drop at the end of this arm while the
+            // `Expr`s it backs (catalog/catalogs/overrides/patchedDependencies
+            // below) escape into `json` and the
+            // `workspace_package_json_cache`. Intern the bytes into the same
+            // thread-local `DATA_STORE` that owns the surrounding `Expr`
+            // nodes — arena ownership, not a leak (bulk-freed on
             // `Expr::data_store_reset`).
             let contents: &'static [u8] = js_ast::data_store_dupe_str(&contents);
             let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
@@ -2036,8 +2022,7 @@ fn update_package_json_after_migration(
                     bstr::BStr::new(&**res_str)
                 )
                 .map_err(|_| AllocError)?;
-                // Zig: `allocator.dupe(u8, join_buf.items)` with the long-lived
-                // default allocator. The rewritten key ends up inside
+                // The rewritten key ends up inside
                 // `root_pkg_json.root` (Store-backed, cached in
                 // `workspace_package_json_cache`), so it must outlive this
                 // function — intern into the thread-local `DATA_STORE` that
@@ -2076,7 +2061,7 @@ fn update_package_json_after_migration(
 
         if bun_js_printer::print_json(
             &mut package_json_writer,
-            json.into(),
+            json,
             &root_pkg_json.source,
             bun_js_printer::PrintJsonOptions {
                 indent: root_pkg_json.indentation,
@@ -2110,5 +2095,3 @@ fn update_package_json_after_migration(
 
     Ok(())
 }
-
-// ported from: src/install/pnpm.zig

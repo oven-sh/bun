@@ -1,25 +1,21 @@
-use bun_core::{Output, env_var};
-use bun_core::{ZStr, strings};
-use bun_paths::{self as Path, PathBuffer};
-use bun_url::URL;
-// TODO(port): move to <area>_sys / verify crate path for schema API
 use crate::bun_schema::api as Api;
+use bun_core::ZStr;
+use bun_core::{Output, env_var};
+use bun_paths::PathBuffer;
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::{Features, Npm};
 
-// PORT NOTE: `string` fields are `[]const u8` borrowed from CLI args / bunfig config,
+// `string` fields are `[]const u8` borrowed from CLI args / bunfig config,
 // which live for the process lifetime. There is no `deinit` on Options. Mapped to
-// `&'static [u8]` per PORTING.md (no lifetime params on structs in Phase A).
-// TODO(port): lifetime — if any source is not truly 'static, revisit in Phase B.
+// `&'static [u8]` per PORTING.md (no lifetime params on structs).
 
 pub struct Options {
     pub log_level: LogLevel,
     pub global: bool,
 
-    // TODO(port): std.fs.Dir → bun_sys::Fd (directory handle); default was bun.FD.invalid.stdDir()
     pub global_bin_dir: bun_sys::Fd,
     pub explicit_global_directory: &'static [u8],
     /// destination directory to link bins into
@@ -103,10 +99,9 @@ impl Default for Options {
             global: false,
             global_bin_dir: bun_sys::Fd::INVALID,
             explicit_global_directory: b"",
-            // TODO(port): bun.pathLiteral("node_modules/.bin") — platform-specific separator at comptime
             bin_path: bun_paths::path_literal!("node_modules/.bin"),
             did_override_default_scope: false,
-            // PORT NOTE: Zig had `= undefined`; always assigned in `load()` before read.
+            // Always assigned in `load()` before read.
             scope: Npm::registry::Scope::default(),
             registries: Npm::registry::Map::default(),
             cache_directory: b"",
@@ -134,7 +129,8 @@ impl Default for Options {
             json_output: false,
             max_retry_count: 5,
             min_simultaneous_requests: 4,
-            // TODO(port): no default in Zig — caller must supply at construction
+            // Placeholder only — every constructor supplies the real value
+            // (`cli.concurrent_scripts` or `cpu_count * 2`).
             max_concurrent_lifecycle_scripts: 0,
             publish_config: PublishConfig::default(),
             ca: Box::default(),
@@ -161,7 +157,6 @@ impl Default for Options {
     }
 }
 
-// PORT NOTE: was an anonymous `union(enum)` field type in Zig.
 pub enum PatchFeatures {
     Nothing,
     Patch,
@@ -184,7 +179,7 @@ pub enum Access {
 }
 
 impl Access {
-    // PORT NOTE: was `bun.ComptimeEnumMap(Access)`; ≤8 entries → plain match on &[u8].
+    // was `bun.ComptimeEnumMap(Access)`; ≤8 entries → plain match on &[u8].
     pub fn from_str(str: &[u8]) -> Option<Access> {
         match str {
             b"public" => Some(Access::Public),
@@ -193,7 +188,7 @@ impl Access {
         }
     }
 
-    /// Port of Zig `@tagName(access)` — lower-case tag name as written into the
+    /// Lower-case tag name as written into the
     /// publish JSON body and summary output.
     #[inline]
     pub const fn as_str(self) -> &'static str {
@@ -211,7 +206,7 @@ pub enum AuthType {
 }
 
 impl AuthType {
-    // PORT NOTE: was `bun.ComptimeEnumMap(AuthType)`; ≤8 entries → plain match on &[u8].
+    // was `bun.ComptimeEnumMap(AuthType)`; ≤8 entries → plain match on &[u8].
     pub fn from_str(str: &[u8]) -> Option<AuthType> {
         match str {
             b"legacy" => Some(AuthType::Legacy),
@@ -220,7 +215,7 @@ impl AuthType {
         }
     }
 
-    /// Port of Zig `@tagName(auth_type)` — lower-case tag name as used by
+    /// Lower-case tag name as used by
     /// `npm-auth-type` header in `npm.whoami`.
     #[inline]
     pub const fn as_str(self) -> &'static str {
@@ -285,9 +280,7 @@ pub struct Update {
     pub peer: bool,
 }
 
-// PORT NOTE: `std.fs.cwd().makeOpenPath` → `bun_sys::Dir::cwd().make_open_path()`
-// (mkdir -p + open dir). Return type was `!std.fs.Dir`; callers store the raw
-// `Fd` (`options.global_bin_dir: Fd`), so unwrap to `.fd`.
+// mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
 pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_core::Error> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
@@ -295,13 +288,13 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
         return Dir::cwd()
             .make_open_path(home_dir, OpenDirOptions::default())
-            .map(|d| d.fd);
+            .map(|d| d.into_raw());
     }
 
     if !explicit_global_dir.is_empty() {
         return Dir::cwd()
             .make_open_path(explicit_global_dir, OpenDirOptions::default())
-            .map(|d| d.fd);
+            .map(|d| d.into_raw());
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
@@ -310,7 +303,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.fd);
+            .map(|d| d.into_raw());
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
@@ -322,13 +315,13 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.fd);
+            .map(|d| d.into_raw());
     }
 
     Err(bun_core::err!("No global directory found"))
 }
 
-pub fn open_global_bin_dir(
+pub(crate) fn open_global_bin_dir(
     opts_: Option<&Api::BunInstall>,
 ) -> Result<bun_sys::Fd, bun_core::Error> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
@@ -337,7 +330,7 @@ pub fn open_global_bin_dir(
     if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
         return Dir::cwd()
             .make_open_path(home_dir, OpenDirOptions::default())
-            .map(|d| d.fd);
+            .map(|d| d.into_raw());
     }
 
     if let Some(opts) = opts_ {
@@ -345,7 +338,7 @@ pub fn open_global_bin_dir(
             if !home_dir.is_empty() {
                 return Dir::cwd()
                     .make_open_path(home_dir, OpenDirOptions::default())
-                    .map(|d| d.fd);
+                    .map(|d| d.into_raw());
             }
         }
     }
@@ -356,7 +349,7 @@ pub fn open_global_bin_dir(
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.fd);
+            .map(|d| d.into_raw());
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
@@ -368,7 +361,7 @@ pub fn open_global_bin_dir(
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.fd);
+            .map(|d| d.into_raw());
     }
 
     Err(bun_core::err!(
@@ -376,11 +369,9 @@ pub fn open_global_bin_dir(
     ))
 }
 
-// PORT NOTE: Zig borrowed `[]const u8` from `Api.BunInstall` (process-lifetime
-// arena). Rust `BunInstall` owns `Box<[u8]>`; Options stores `&'static [u8]`
-// per Phase-A "no struct lifetime params". Park a clone for the lifetime of
-// the install command (matches Zig's never-reset config arena) via the named
-// hand-off helper.
+// `BunInstall` owns `Box<[u8]>`; Options stores `&'static [u8]`
+// (no struct lifetime params). Park a clone for the
+// lifetime of the install command via the named hand-off helper.
 #[inline]
 fn leak_static(s: &[u8]) -> &'static [u8] {
     bun_core::heap::release(s.to_vec().into_boxed_slice())
@@ -392,15 +383,13 @@ impl Options {
         log: &mut bun_ast::Log,
         env: &mut DotEnvLoader,
         maybe_cli: Option<CommandLineArguments>,
-        // Spec PackageManagerOptions.zig:224 `bun_install_: ?*Api.BunInstall` —
-        // every access below is a read of `config.*`; no field is ever written.
+        // Every access below is a read of `config.*`; no field is ever written.
         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
-        // resolver storage (`Option<&api::BunInstall>` / `*const ()`).
+        // resolver storage (`Option<NonNull<api::BunInstall>>`).
         bun_install_: Option<&Api::BunInstall>,
         subcommand: Subcommand,
     ) -> Result<(), bun_alloc::AllocError> {
         let mut base = Api::NpmRegistry::default();
-        // PORT NOTE: reshaped for borrowck — Zig captures `*Api.BunInstall` twice via `if (bun_install_) |config|`.
         let bun_install_ref = bun_install_;
         if let Some(config) = bun_install_ref {
             if let Some(registry) = &config.default_registry {
@@ -414,10 +403,10 @@ impl Options {
         if base.url.is_empty() {
             base.url = Npm::registry::DEFAULT_URL.as_bytes().into();
         }
-        // PORT NOTE: Zig passes `base` by-value (struct copy); clone so the
+        // Clone so the
         // `base.url` fallback below in the scoped-registry loop stays valid.
         self.scope = Npm::registry::Scope::from_api(b"", base.clone(), env)?;
-        // PORT NOTE: Zig `defer { this.did_override_default_scope = ... }` moved to end of fn;
+        // `did_override_default_scope` is set at the end of this fn;
         // on the OOM error path the field is irrelevant (process aborts).
 
         if let Some(config) = bun_install_ref {
@@ -430,7 +419,7 @@ impl Options {
                     debug_assert_eq!(scoped.scopes.keys().len(), scoped.scopes.values().len());
                     let mut registry = registry_.clone();
                     if registry.url.is_empty() {
-                        registry.url = base.url.clone();
+                        registry.url.clone_from(&base.url);
                     }
                     self.registries.put(
                         Npm::registry::Scope::hash(name),
@@ -442,10 +431,10 @@ impl Options {
             if let Some(ca) = &config.ca {
                 match ca {
                     Api::Ca::List(ca_list) => {
-                        self.ca = ca_list.clone();
+                        self.ca.clone_from(ca_list);
                     }
                     Api::Ca::Str(ca_str) => {
-                        // Zig `&.{ca_str}` — single-element slice; own it (no `Box::leak`).
+                        // Single-element slice; own it (no `Box::leak`).
                         self.ca = vec![ca_str.clone()].into_boxed_slice();
                     }
                 }
@@ -534,10 +523,6 @@ impl Options {
                 self.max_concurrent_lifecycle_scripts = jobs as usize;
             }
 
-            if let Some(cache_dir) = config.cache_directory.as_deref() {
-                self.cache_directory = leak_static(cache_dir);
-            }
-
             if let Some(ignore_scripts) = config.ignore_scripts {
                 if ignore_scripts {
                     self.do_.set(Do::RUN_SCRIPTS, false);
@@ -593,7 +578,7 @@ impl Options {
             ];
             let mut did_set = false;
 
-            // PORT NOTE: was `inline for`; homogeneous elements → plain for.
+            // was `inline for`; homogeneous elements → plain for.
             for registry_key in REGISTRY_KEYS {
                 if !did_set {
                     if let Some(registry_) = env.get(registry_key) {
@@ -602,11 +587,22 @@ impl Options {
                                 || registry_.starts_with(b"http://"))
                         {
                             let prev_scope = self.scope.clone();
-                            // PORT NOTE: was `std.mem.zeroes(Api.NpmRegistry)`; zeroed slices are
-                            // invalid in Rust — use Default (empty strings) which is semantically equivalent.
-                            let mut api_registry = Api::NpmRegistry::default();
-                            api_registry.url = registry_.into();
-                            api_registry.token = prev_scope.token;
+                            let prev_url = prev_scope.url.url();
+                            let new_url = bun_url::URL::parse(registry_);
+                            let token = if bun_core::without_trailing_slash(new_url.host)
+                                == bun_core::without_trailing_slash(prev_url.host)
+                                && (new_url.is_https() || !prev_url.is_https())
+                            {
+                                prev_scope.token
+                            } else {
+                                Box::default()
+                            };
+                            // Default (empty strings) is the zero value for Api::NpmRegistry.
+                            let api_registry = Api::NpmRegistry {
+                                url: registry_.into(),
+                                token,
+                                ..Default::default()
+                            };
                             self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                             did_set = true;
                         }
@@ -623,7 +619,7 @@ impl Options {
             ];
             let mut did_set = false;
 
-            // PORT NOTE: was `inline for`; homogeneous elements → plain for.
+            // was `inline for`; homogeneous elements → plain for.
             for registry_key in TOKEN_KEYS {
                 if !did_set {
                     if let Some(registry_) = env.get(registry_key) {
@@ -643,7 +639,6 @@ impl Options {
         }
 
         if let Some(retry_count) = env.get(b"BUN_CONFIG_HTTP_RETRY_COUNT") {
-            // PORT NOTE: Zig `parseInt(u16, str, 10) catch null` — `Result` → `.ok()`.
             if let Ok(int) = bun_core::parse_int::<u16>(retry_count, 10) {
                 self.max_retry_count = int;
             }
@@ -773,7 +768,7 @@ impl Options {
                 } else {
                     LogLevel::Verbose
                 };
-                // SAFETY: main-thread CLI option load — single writer (Zig: `verbose_install = true`).
+                // SAFETY: main-thread CLI option load — single writer.
                 super::PackageManager::set_verbose_install(true);
             } else if cli.silent {
                 self.log_level = LogLevel::Silent;
@@ -799,7 +794,7 @@ impl Options {
             }
 
             if let Some(backend) = cli.backend {
-                // Zig: `PackageInstall.supported_method = backend` — atomic store,
+                // Atomic store,
                 // main-thread CLI option load (single writer).
                 crate::package_install::SUPPORTED_METHOD
                     .store(backend as u8, core::sync::atomic::Ordering::Relaxed);
@@ -899,7 +894,7 @@ impl Options {
             self.enable.set(Enable::FORCE_SAVE_LOCKFILE, false);
         }
 
-        // PORT NOTE: moved from `defer { ... }` after scope assignment (see note above).
+        // moved from `defer { ... }` after scope assignment (see note above).
         self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
 
         Ok(())
@@ -973,12 +968,12 @@ impl Default for Enable {
     }
 }
 
-// Field-style accessors for Zig parity (`options.do.save_lockfile = false` /
+// Field-style accessors (`options.do.save_lockfile = false` /
 // `if options.do.install_packages { ... }`). The bitflags struct is `Copy`,
 // so getters return by value and setters take `&mut self`.
 impl Do {
     #[inline]
-    pub fn save_lockfile(&self) -> bool {
+    pub fn save_lockfile(self) -> bool {
         self.contains(Do::SAVE_LOCKFILE)
     }
     #[inline]
@@ -986,7 +981,7 @@ impl Do {
         self.set(Do::SAVE_LOCKFILE, v);
     }
     #[inline]
-    pub fn load_lockfile(&self) -> bool {
+    pub fn load_lockfile(self) -> bool {
         self.contains(Do::LOAD_LOCKFILE)
     }
     #[inline]
@@ -994,7 +989,7 @@ impl Do {
         self.set(Do::LOAD_LOCKFILE, v);
     }
     #[inline]
-    pub fn install_packages(&self) -> bool {
+    pub fn install_packages(self) -> bool {
         self.contains(Do::INSTALL_PACKAGES)
     }
     #[inline]
@@ -1002,7 +997,7 @@ impl Do {
         self.set(Do::INSTALL_PACKAGES, v);
     }
     #[inline]
-    pub fn write_package_json(&self) -> bool {
+    pub fn write_package_json(self) -> bool {
         self.contains(Do::WRITE_PACKAGE_JSON)
     }
     #[inline]
@@ -1010,7 +1005,7 @@ impl Do {
         self.set(Do::WRITE_PACKAGE_JSON, v);
     }
     #[inline]
-    pub fn run_scripts(&self) -> bool {
+    pub fn run_scripts(self) -> bool {
         self.contains(Do::RUN_SCRIPTS)
     }
     #[inline]
@@ -1018,7 +1013,7 @@ impl Do {
         self.set(Do::RUN_SCRIPTS, v);
     }
     #[inline]
-    pub fn save_yarn_lock(&self) -> bool {
+    pub fn save_yarn_lock(self) -> bool {
         self.contains(Do::SAVE_YARN_LOCK)
     }
     #[inline]
@@ -1026,7 +1021,7 @@ impl Do {
         self.set(Do::SAVE_YARN_LOCK, v);
     }
     #[inline]
-    pub fn print_meta_hash_string(&self) -> bool {
+    pub fn print_meta_hash_string(self) -> bool {
         self.contains(Do::PRINT_META_HASH_STRING)
     }
     #[inline]
@@ -1034,7 +1029,7 @@ impl Do {
         self.set(Do::PRINT_META_HASH_STRING, v);
     }
     #[inline]
-    pub fn verify_integrity(&self) -> bool {
+    pub fn verify_integrity(self) -> bool {
         self.contains(Do::VERIFY_INTEGRITY)
     }
     #[inline]
@@ -1042,7 +1037,7 @@ impl Do {
         self.set(Do::VERIFY_INTEGRITY, v);
     }
     #[inline]
-    pub fn summary(&self) -> bool {
+    pub fn summary(self) -> bool {
         self.contains(Do::SUMMARY)
     }
     #[inline]
@@ -1050,7 +1045,7 @@ impl Do {
         self.set(Do::SUMMARY, v);
     }
     #[inline]
-    pub fn trust_dependencies_from_args(&self) -> bool {
+    pub fn trust_dependencies_from_args(self) -> bool {
         self.contains(Do::TRUST_DEPENDENCIES_FROM_ARGS)
     }
     #[inline]
@@ -1058,7 +1053,7 @@ impl Do {
         self.set(Do::TRUST_DEPENDENCIES_FROM_ARGS, v);
     }
     #[inline]
-    pub fn update_to_latest(&self) -> bool {
+    pub fn update_to_latest(self) -> bool {
         self.contains(Do::UPDATE_TO_LATEST)
     }
     #[inline]
@@ -1066,7 +1061,7 @@ impl Do {
         self.set(Do::UPDATE_TO_LATEST, v);
     }
     #[inline]
-    pub fn analyze(&self) -> bool {
+    pub fn analyze(self) -> bool {
         self.contains(Do::ANALYZE)
     }
     #[inline]
@@ -1074,7 +1069,7 @@ impl Do {
         self.set(Do::ANALYZE, v);
     }
     #[inline]
-    pub fn recursive(&self) -> bool {
+    pub fn recursive(self) -> bool {
         self.contains(Do::RECURSIVE)
     }
     #[inline]
@@ -1082,7 +1077,7 @@ impl Do {
         self.set(Do::RECURSIVE, v);
     }
     #[inline]
-    pub fn prefetch_resolved_tarballs(&self) -> bool {
+    pub fn prefetch_resolved_tarballs(self) -> bool {
         self.contains(Do::PREFETCH_RESOLVED_TARBALLS)
     }
     #[inline]
@@ -1091,12 +1086,12 @@ impl Do {
     }
 }
 
-// Field-style accessors for Zig parity (`options.enable.cache = false` /
+// Field-style accessors (`options.enable.cache = false` /
 // `if options.enable.manifest_cache { ... }`). The bitflags struct is `Copy`,
 // so getters return by value and setters take `&mut self`.
 impl Enable {
     #[inline]
-    pub fn cache(&self) -> bool {
+    pub fn cache(self) -> bool {
         self.contains(Enable::CACHE)
     }
     #[inline]
@@ -1104,7 +1099,7 @@ impl Enable {
         self.set(Enable::CACHE, v);
     }
     #[inline]
-    pub fn manifest_cache(&self) -> bool {
+    pub fn manifest_cache(self) -> bool {
         self.contains(Enable::MANIFEST_CACHE)
     }
     #[inline]
@@ -1112,7 +1107,7 @@ impl Enable {
         self.set(Enable::MANIFEST_CACHE, v);
     }
     #[inline]
-    pub fn manifest_cache_control(&self) -> bool {
+    pub fn manifest_cache_control(self) -> bool {
         self.contains(Enable::MANIFEST_CACHE_CONTROL)
     }
     #[inline]
@@ -1120,33 +1115,31 @@ impl Enable {
         self.set(Enable::MANIFEST_CACHE_CONTROL, v);
     }
     #[inline]
-    pub fn fail_early(&self) -> bool {
+    pub fn fail_early(self) -> bool {
         self.contains(Enable::FAIL_EARLY)
     }
     #[inline]
-    pub fn frozen_lockfile(&self) -> bool {
+    pub fn frozen_lockfile(self) -> bool {
         self.contains(Enable::FROZEN_LOCKFILE)
     }
     #[inline]
-    pub fn force_save_lockfile(&self) -> bool {
+    pub fn force_save_lockfile(self) -> bool {
         self.contains(Enable::FORCE_SAVE_LOCKFILE)
     }
     #[inline]
-    pub fn force_install(&self) -> bool {
+    pub fn force_install(self) -> bool {
         self.contains(Enable::FORCE_INSTALL)
     }
     #[inline]
-    pub fn exact_versions(&self) -> bool {
+    pub fn exact_versions(self) -> bool {
         self.contains(Enable::EXACT_VERSIONS)
     }
     #[inline]
-    pub fn only_missing(&self) -> bool {
+    pub fn only_missing(self) -> bool {
         self.contains(Enable::ONLY_MISSING)
     }
     #[inline]
-    pub fn global_virtual_store(&self) -> bool {
+    pub fn global_virtual_store(self) -> bool {
         self.contains(Enable::GLOBAL_VIRTUAL_STORE)
     }
 }
-
-// ported from: src/install/PackageManager/PackageManagerOptions.zig

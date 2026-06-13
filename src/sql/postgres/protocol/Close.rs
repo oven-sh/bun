@@ -1,6 +1,6 @@
 use super::new_writer::NewWriter;
 use super::portal_or_prepared_statement::PortalOrPreparedStatement;
-use super::write_wrap::WriteWrap;
+use crate::postgres::AnyPostgresError;
 
 /// Close (F)
 /// Byte1('C')
@@ -19,15 +19,13 @@ impl<'a> Close<'a> {
     fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<(), AnyPostgresError> {
         let p = &self.p;
         let count: u32 = core::mem::size_of::<u32>() as u32
             + 1
             + u32::try_from(p.slice().len()).expect("int cast")
             + 1;
-        // PORT NOTE: Zig source builds `[_]u8{'C'} ++ @byteSwap(count) ++ [_]u8{p.tag()}`;
-        // intent is 'C' · big-endian u32 count · tag byte. Reshaped to a fixed 6-byte buffer.
+        // 'C' · big-endian u32 count · tag byte, in a fixed 6-byte buffer.
         let mut header = [0u8; 6];
         header[0] = b'C';
         header[1..5].copy_from_slice(&count.to_be_bytes());
@@ -38,13 +36,10 @@ impl<'a> Close<'a> {
         Ok(())
     }
 
-    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyPostgresError> {
         self.write_internal(writer)
     }
 }
-
-// ported from: src/sql/postgres/protocol/Close.zig

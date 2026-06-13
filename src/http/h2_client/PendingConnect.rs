@@ -8,32 +8,26 @@ use bun_core::strings;
 
 use crate::HTTPClient;
 use crate::NewHTTPContext;
-// TODO(b0): SSLConfig arrives from move-in
-// (MOVE_DOWN bun_runtime::api::server::server_config::SSLConfig → bun_http)
 use crate::ssl_config::SSLConfig;
 
+#[derive(Default)]
 pub struct PendingConnect {
     pub hostname: Box<[u8]>,
     pub port: u16,
-    // TODO(port): lifetime — compared by pointer identity only, never derefed/freed here
+    // Compared by pointer identity only, never derefed/freed here; lifetime-erased.
     pub ssl_config: Option<NonNull<SSLConfig>>,
+    /// Whether the client that initiated this in-flight TLS connect requested
+    /// `rejectUnauthorized`. The eventual `ClientSession` records this as
+    /// `established_with_reject_unauthorized`; mirroring it here lets the
+    /// coalescing path apply the same strictness guard *before* the session
+    /// exists, so a strict caller never waits on a connect started by a lax one.
+    pub reject_unauthorized: bool,
+    pub host_header_hash: u64,
     // BACKREF: waiters are borrowed HTTP clients owned elsewhere; lifetime-erased.
     pub waiters: Vec<NonNull<HTTPClient<'static>>>,
 }
 
-impl Default for PendingConnect {
-    fn default() -> Self {
-        Self {
-            hostname: Box::default(),
-            port: 0,
-            ssl_config: None,
-            waiters: Vec::new(),
-        }
-    }
-}
-
 impl PendingConnect {
-    /// Zig: `pub const new = bun.TrivialNew(@This());`
     pub fn new(init: Self) -> Box<Self> {
         Box::new(init)
     }
@@ -56,9 +50,11 @@ impl PendingConnect {
         hostname: &[u8],
         port: u16,
         ssl_config: Option<NonNull<SSLConfig>>,
+        host_header_hash: u64,
     ) -> bool {
         self.port == port
             && self.ssl_config == ssl_config
+            && self.host_header_hash == host_header_hash
             && strings::eql_long(&self.hostname, hostname, true)
     }
 
@@ -66,19 +62,16 @@ impl PendingConnect {
     /// `Box<Self>` back to the caller. Associated fn (not `&mut self`) because
     /// the list owns `Box<Self>` — `swap_remove` would otherwise drop the very
     /// allocation `&mut self` borrows from (UAF). Caller holds the returned
-    /// Box until scope exit (Zig: `defer pc.deinit()`).
+    /// Box until scope exit.
     pub fn unregister_from(this: *const Self, ctx: &mut NewHTTPContext<true>) -> Option<Box<Self>> {
         let list = &mut ctx.pending_h2_connects;
-        // PORT NOTE: reshaped for borrowck (was `for + swapRemove + return`)
+        // reshaped for borrowck (was `for + swapRemove + return`)
         list.iter()
             .position(|p| core::ptr::eq(&raw const **p, this))
             .map(|i| list.swap_remove(i))
     }
 
-    // Zig `deinit` freed `hostname`, deinited `waiters`, and `bun.destroy(this)`.
-    // In Rust all three are handled by dropping `Box<PendingConnect>` — `Box<[u8]>`
+    // Cleanup is handled by dropping `Box<PendingConnect>` — `Box<[u8]>`
     // and `Vec<_>` fields free themselves, and the Box frees the allocation.
     // No explicit `Drop` impl needed.
 }
-
-// ported from: src/http/h2_client/PendingConnect.zig

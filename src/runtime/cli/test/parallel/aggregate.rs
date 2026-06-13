@@ -21,7 +21,6 @@ use crate::test_command;
 use crate::test_runner::jest::Summary;
 
 fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
-    // PERF(port): was comptime `" " ++ name ++ "=\""` concat — profile in Phase B
     let needle = [b" ", name, b"=\""].concat();
     let Some(idx) = strings::index_of(head, &needle) else {
         return 0;
@@ -31,11 +30,10 @@ fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
         return 0;
     };
     let end = start + q as usize;
-    // TODO(port): narrow error set
     strings::parse_int::<u32>(&head[start..end], 10).unwrap_or(0)
 }
 
-pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &Summary) {
+pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &Summary) {
     let mut body: Vec<u8> = Vec::new();
     // Crashed workers never reach workerFlushAggregates, so any files they ran
     // (including earlier passing ones) have no fragment. Compute the outer
@@ -117,18 +115,14 @@ pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &
             "Failed to write JUnit report to {}\n{}",
             (BStr::new(outfile), e),
         ),
-        bun_sys::Result::Ok(fd) => {
-            let fd = fd; // moved into scope; closed on drop
-            match File::write_all(&fd, &contents) {
-                bun_sys::Result::Err(e) => Output::err(
-                    err!("JUnitReportFailed"),
-                    "Failed to write JUnit report to {}\n{}",
-                    (BStr::new(outfile), e),
-                ),
-                bun_sys::Result::Ok(()) => {}
-            }
-            let _ = fd.close();
-        }
+        bun_sys::Result::Ok(fd) => match File::write_all(&fd, &contents) {
+            bun_sys::Result::Err(e) => Output::err(
+                err!("JUnitReportFailed"),
+                "Failed to write JUnit report to {}\n{}",
+                (BStr::new(outfile), e),
+            ),
+            bun_sys::Result::Ok(()) => {}
+        },
     }
 }
 
@@ -156,12 +150,10 @@ impl FileCoverage {
 /// emit per-function FN/FNDA records yet, so disjoint per-worker function hits
 /// can't be unioned; this under-reports % Funcs when workers cover different
 /// functions of the same file. The non-parallel path has the same FN/FNDA gap.
-pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
+pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     paths: &[&[u8]],
     opts: &mut CodeCoverageOptions,
 ) {
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
-
     let mut by_file: StringArrayHashMap<FileCoverage> = StringArrayHashMap::default();
 
     for &path in paths {
@@ -170,7 +162,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             bun_sys::Result::Err(_) => continue,
         };
         let mut cur: Option<usize> = None; // index into by_file; raw &mut would alias across getOrPut
-        // PORT NOTE: reshaped for borrowck — store index instead of *mut FileCoverage
+        // reshaped for borrowck — store index instead of *mut FileCoverage
         for raw in data.split(|b| *b == b'\n') {
             let line = strings::trim_right(raw, b"\r");
             if line.starts_with(b"SF:") {
@@ -178,7 +170,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 let gop = bun_core::handle_oom(by_file.get_or_put(name));
                 if !gop.found_existing {
                     let owned: Box<[u8]> = Box::from(name);
-                    *gop.key_ptr = owned.clone();
+                    gop.key_ptr.clone_from(&owned);
                     *gop.value_ptr = FileCoverage {
                         path: owned,
                         ..Default::default()
@@ -222,8 +214,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         return;
     }
 
-    // Stable output order. Zig's `ArrayHashMap.sort` reorders entries in place;
-    // PORT NOTE: reshaped — ArrayHashMap has no in-place sort yet, so build a
+    // Stable output order. ArrayHashMap has no in-place sort yet, so build a
     // permutation and iterate via `order` everywhere below.
     let mut order: Vec<usize> = (0..by_file.count()).collect();
     {
@@ -258,7 +249,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 (e,),
             ),
             bun_sys::Result::Ok(f) => {
-                // TODO(port): Zig used a 64KiB-buffered writer adapter; building in Vec then one write_all
+                // Build the whole report in a Vec, then issue one write_all.
                 let mut w: Vec<u8> = Vec::with_capacity(64 * 1024);
                 for &i in &order {
                     let fc = &by_file.values()[i];
@@ -272,12 +263,8 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                         fc.fnh
                     );
                     for &ln in &sorted {
-                        let _ = write!(
-                            &mut w,
-                            "DA:{},{}\n",
-                            ln,
-                            fc.da.get(&ln).expect("unreachable")
-                        );
+                        let _ =
+                            writeln!(&mut w, "DA:{},{}", ln, fc.da.get(&ln).expect("unreachable"));
                     }
                     let _ = write!(
                         &mut w,
@@ -287,7 +274,6 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                     );
                 }
                 let _ = File::write_all(&f, &w);
-                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
             }
         }
     }
@@ -337,8 +323,14 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         let console = Output::error_writer();
         fn sep<const COLORS: bool>(c: &mut bun_core::io::Writer, n: usize) {
             let _ = c.write_all(Output::pretty_fmt::<COLORS>("<r><d>").as_ref());
-            // TODO(port): splatByteAll equivalent on writer
-            let _ = c.write_all(&vec![b'-'; n + 2]);
+            // Repeat the byte without a heap allocation.
+            const DASHES: [u8; 64] = [b'-'; 64];
+            let mut left = n + 2;
+            while left > 0 {
+                let take = left.min(DASHES.len());
+                let _ = c.write_all(&DASHES[..take]);
+                left -= take;
+            }
             let _ = c.write_all(
                 Output::pretty_fmt::<COLORS>("|---------|---------|-------------------<r>\n")
                     .as_ref(),
@@ -402,7 +394,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             avg.stmts /= avg_n;
         }
         let _ = console.write_all(&body);
-        // PORT NOTE: bun_core::io::Writer doesn't impl bun_io::Write — buffer
+        // bun_core::io::Writer doesn't impl bun_io::Write — buffer
         // through a Vec then write_all once.
         let mut all_files: Vec<u8> = Vec::new();
         let _ = CoverageReportText::write_format_with_values::<ENABLE_COLORS>(
@@ -434,5 +426,3 @@ fn write_range<const COLORS: bool>(w: &mut impl std::io::Write, first: &mut bool
         let _ = write!(w, "{}{}-{}", Output::pretty_fmt::<COLORS>("<red>"), a, b);
     }
 }
-
-// ported from: src/cli/test/parallel/aggregate.zig

@@ -36,5 +36,3 @@ pub fn generate<'a>(
 
     Some(&out[..outlen as usize])
 }
-
-// ported from: src/sha_hmac/hmac.zig

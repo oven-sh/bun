@@ -1,14 +1,9 @@
-//! Port of src/shell/shell.zig — lexer, parser, AST.
+//! Shell lexer, parser, AST.
 //! Extracted from `shell_body.rs` so the parser compiles in the lower-tier
 //! `bun_shell_parser` crate (no `bun_jsc` dependency). `Interpreter::parse`
 //! in `bun_runtime` consumes these via `bun_shell_parser::*`.
 
-#![allow(
-    non_camel_case_types,
-    non_snake_case,
-    dead_code,
-    clippy::too_many_arguments
-)]
+#![allow(non_camel_case_types, non_snake_case, clippy::too_many_arguments)]
 
 use core::fmt;
 use core::mem::size_of;
@@ -16,12 +11,9 @@ use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::VecExt;
-use bun_core::{self as bun_str, String as BunString, immutable as strings};
+use bun_core::{String as BunString, immutable as strings};
 
-// PORT NOTE: `strings::Cursor` (immutable.zig CodepointIterator.Cursor). The
-// Phase-A draft referenced it as `CodepointCursor`; alias here so the body
-// reads identically to the Zig source.
+// `strings::Cursor` aliased as `CodepointCursor` for readability.
 type CodepointCursor = strings::Cursor;
 
 /// Opaque stand-in for `bun_jsc::JSValue` — the parser only *stores* the
@@ -67,15 +59,14 @@ impl From<ParseError> for bun_core::Error {
 pub mod ast {
     use super::*;
 
-    // Re-export so `ast::SmolList<T, N>` resolves for downstream state nodes
-    // (mirrors Zig's nesting where `SmolList` lives under the AST namespace).
+    // Re-export so `ast::SmolList<T, N>` resolves for downstream state nodes.
     pub use super::SmolList;
 
-    // PORT NOTE: Zig AST nodes hold `[]T` slices (ptr+len, copyable). The Rust
-    // port uses `&'arena [T]` so the whole tree is `Clone`/`Copy`-able like
-    // Zig — required by `Atom::merge` and `SmolList::init_with_slice`.
+    // AST nodes hold `&'arena [T]` slices so the whole tree is
+    // `Clone`/`Copy`-able — required by `Atom::merge` and
+    // `SmolList::init_with_slice`.
 
-    #[derive(Clone)]
+    #[derive(Copy, Clone)]
     pub struct Script<'arena> {
         pub stmts: &'arena [Stmt<'arena>],
     }
@@ -122,10 +113,10 @@ pub mod ast {
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-    // PORT NOTE: must match Zig `@tagName(AST.Expr.Tag)` exactly — used in
+    // The snake_case tag names are used in
     // user-visible parser errors (see add_error_expected_pipeline_item).
     #[strum(serialize_all = "snake_case")]
-    pub enum ExprTag {
+    pub(crate) enum ExprTag {
         Assign,
         Binary,
         Pipeline,
@@ -175,7 +166,7 @@ pub mod ast {
         pub args: CondExprArgList<'arena>,
     }
 
-    pub type CondExprArgList<'arena> = SmolList<Atom<'arena>, 2>;
+    pub(crate) type CondExprArgList<'arena> = SmolList<Atom<'arena>, 2>;
 
     impl<'arena> CondExpr<'arena> {
         pub fn memory_cost(&self) -> usize {
@@ -191,7 +182,7 @@ pub mod ast {
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-    #[strum(serialize_all = "kebab-case")] // TODO(port): tag names must match Zig exactly ("-a", "==", etc.)
+    #[strum(serialize_all = "kebab-case")]
     pub enum CondExprOp {
         /// -a file: True if file exists.
         #[strum(serialize = "-a")]
@@ -327,7 +318,6 @@ pub mod ast {
         }
 
         /// Single-arg ops: name starts with '-' and len == 2.
-        // TODO(port): Zig built this via @typeInfo reflection over enum fields. Hand-rolled here.
         pub const SINGLE_ARG_OPS: &'static [(&'static str, CondExprOp)] = &[
             ("-a", CondExprOp::DashA),
             ("-b", CondExprOp::DashB),
@@ -501,12 +491,6 @@ pub mod ast {
         Assigns(&'arena [Assign<'arena>]),
     }
 
-    #[derive(Clone, Copy)]
-    pub enum CmdOrAssignsTag {
-        Cmd,
-        Assigns,
-    }
-
     impl<'arena> CmdOrAssigns<'arena> {
         pub fn to_pipeline_item(self, bump: &'arena Bump) -> PipelineItem<'arena> {
             match self {
@@ -541,12 +525,6 @@ pub mod ast {
         pub fn new(idx: u32) -> JSBuf {
             JSBuf { idx }
         }
-    }
-
-    /// A Subprocess from JS
-    #[derive(Clone, Copy)]
-    pub struct JSProc {
-        pub idx: JSValue,
     }
 
     pub struct Assign<'arena> {
@@ -643,8 +621,8 @@ pub mod ast {
             self.contains(Self::DUPLICATE_OUT)
         }
 
-        // PORT NOTE: shell.zig RedirectFlags.isEmpty() — bitflags already
-        // generates `is_empty()`; expose under the Zig spelling for parity.
+        // bitflags already generates `is_empty()`; expose under this
+        // spelling too for callers that use it.
         #[inline]
         pub fn isEmpty(self) -> bool {
             self.bits() == 0
@@ -670,20 +648,11 @@ pub mod ast {
             }
         }
 
-        // TODO(port): Zig fns @"2>&1"/@"1>&2" reference nonexistent `.duplicate` field — likely dead code.
-        pub fn two_gt_amp_one() -> RedirectFlags {
-            Self::STDERR | Self::DUPLICATE_OUT
-        }
-        pub fn one_gt_amp_two() -> RedirectFlags {
-            Self::STDOUT | Self::DUPLICATE_OUT
-        }
-
         pub fn to_flags(self) -> i32 {
-            // Spec: shell.zig `RedirectFlags.toFlags()` uses `bun.O.{RDONLY,...}`.
             // `bun_shell_parser` is sys-tier-free so it cannot depend on
             // `bun_sys::O`; mirror those constants here. On POSIX `bun.O.*` is
             // `libc::O_*`. On Windows `bun.O.*` is the *Linux-shaped octal*
-            // values (sys.zig:188-213) — NOT MSVCRT `_O_*` — because
+            // values — NOT MSVCRT `_O_*` — because
             // `bun_sys::open` → `sys_uv::open` → `uv::O::from_bun_o` bit-tests
             // against those exact values. Using `libc::O_CREAT` (0x100) /
             // `libc::O_APPEND` (0x8) on Windows silently dropped CREAT/APPEND
@@ -766,13 +735,6 @@ pub mod ast {
         Compound(CompoundAtom<'arena>),
     }
 
-    #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub enum AtomTag {
-        Simple,
-        Compound,
-    }
-
     impl<'arena> Atom<'arena> {
         pub fn memory_cost(&self) -> usize {
             match self {
@@ -783,13 +745,12 @@ pub mod ast {
 
         pub fn merge(
             self,
-            right: Atom<'arena>,
+            right: &Atom<'arena>,
             bump: &'arena Bump,
         ) -> Result<Atom<'arena>, bun_alloc::AllocError> {
             use SimpleAtom as SA;
-            match (&self, &right) {
+            match (&self, right) {
                 (Atom::Simple(l), Atom::Simple(r)) => {
-                    // PORT NOTE: Zig `try allocator.alloc(SimpleAtom, 2)` —
                     // bumpalo has no fill_default for non-Default types, so
                     // seed with `QuotedEmpty` then overwrite.
                     let atoms = bump.alloc_slice_fill_with(2, |_| SimpleAtom::QuotedEmpty);
@@ -808,7 +769,7 @@ pub mod ast {
                 _ => {}
             }
 
-            if let (Atom::Compound(l), Atom::Compound(r)) = (&self, &right) {
+            if let (Atom::Compound(l), Atom::Compound(r)) = (&self, right) {
                 let total = l.atoms.len() + r.atoms.len();
                 let atoms = bump.alloc_slice_fill_with(total, |_| SimpleAtom::QuotedEmpty);
                 atoms[..l.atoms.len()].clone_from_slice(l.atoms);
@@ -821,7 +782,7 @@ pub mod ast {
             }
 
             if let Atom::Simple(l) = &self {
-                let Atom::Compound(r) = &right else {
+                let Atom::Compound(r) = right else {
                     unreachable!()
                 };
                 let atoms =
@@ -839,7 +800,7 @@ pub mod ast {
             let Atom::Compound(l) = &self else {
                 unreachable!()
             };
-            let Atom::Simple(r) = &right else {
+            let Atom::Simple(r) = right else {
                 unreachable!()
             };
             let atoms = bump.alloc_slice_fill_with(1 + l.atoms.len(), |_| SimpleAtom::QuotedEmpty);
@@ -916,8 +877,6 @@ pub mod ast {
         pub script: Script<'arena>,
         pub quoted: bool,
     }
-    // TODO(port): Script contains &'arena mut — Clone is wrong; revisit in Phase B.
-
     impl<'arena> CmdSubst<'arena> {
         pub fn memory_cost(&self) -> usize {
             let mut cost = size_of::<Self>();
@@ -941,7 +900,7 @@ pub mod ast {
         }
     }
 
-    #[derive(Clone)]
+    #[derive(Copy, Clone)]
     pub struct CompoundAtom<'arena> {
         pub atoms: &'arena [SimpleAtom<'arena>],
         pub brace_expansion_hint: bool,
@@ -972,6 +931,9 @@ pub use ast as AST;
 pub struct Parser<'bump> {
     pub strpool: &'bump [u8],
     pub tokens: &'bump [Token],
+    /// Strpool ranges that came from interpolated JS values (`\x08__bunstr_N`
+    /// refs). See `Lexer::js_string_ranges`.
+    pub js_string_ranges: &'bump [TextRange],
     pub alloc: &'bump Bump,
     pub jsobjs: &'bump mut [JSValue],
     pub current: u32,
@@ -1000,7 +962,6 @@ pub struct ParserError<'bump> {
 }
 
 type ParseResult<T> = Result<T, bun_core::Error>;
-// TODO(port): narrow error set — Zig uses inferred error sets that include ParseError + OOM.
 
 impl<'bump> Parser<'bump> {
     pub fn new(
@@ -1011,6 +972,7 @@ impl<'bump> Parser<'bump> {
         Ok(Parser {
             strpool: lex_result.strpool,
             tokens: lex_result.tokens,
+            js_string_ranges: lex_result.js_string_ranges,
             alloc: bump,
             jsobjs,
             current: 0,
@@ -1023,14 +985,14 @@ impl<'bump> Parser<'bump> {
     /// If you make a subparser and call some fallible functions on it, you need to catch the errors
     /// and call `.continue_from_subparser()`, otherwise errors will not propagate upwards to the parent.
     pub fn make_subparser(&mut self, kind: SubshellKind) -> Parser<'bump> {
-        // PORT NOTE: reshaped for borrowck — Zig copies `self.errors` (the ArrayList struct) into
-        // the subparser by value, then writes it back in continue_from_subparser. We move it out
-        // via mem::take and restore it later.
+        // reshaped for borrowck — `self.errors` is moved out
+        // via mem::take and restored in continue_from_subparser.
         Parser {
             strpool: self.strpool,
             tokens: self.tokens,
+            js_string_ranges: self.js_string_ranges,
             alloc: self.alloc,
-            // PORT NOTE: reshaped for borrowck — Zig copies the slice value; we move the
+            // reshaped for borrowck — move the
             // exclusive borrow into the subparser and restore it in continue_from_subparser.
             jsobjs: core::mem::take(&mut self.jsobjs),
             current: self.current,
@@ -1115,7 +1077,6 @@ impl<'bump> Parser<'bump> {
                     "Background commands \"&\" are not supported yet."
                 ))?;
                 return Err(ParseError::Unsupported.into());
-                // (large block of commented-out async-handling code in Zig — omitted)
             }
             exprs.push(expr);
         }
@@ -1211,7 +1172,10 @@ impl<'bump> Parser<'bump> {
 
     fn is_if_clause_text_token(&mut self, if_clause_token: IfClauseTok) -> bool {
         match self.peek() {
-            Token::Text(range) => self.is_if_clause_text_token_impl(range, if_clause_token),
+            Token::Text(range) => {
+                self.delimits(self.peek_n(1))
+                    && self.is_if_clause_text_token_impl(range, if_clause_token)
+            }
             _ => false,
         }
     }
@@ -1410,7 +1374,7 @@ impl<'bump> Parser<'bump> {
 
                 return Ok(ast::CondExpr {
                     op,
-                    args: ast::CondExprArgList::init_with_slice(&[arg1, arg2]),
+                    args: ast::CondExprArgList::init_with_slice(&[arg1, arg2], self.alloc),
                 });
             }
         }
@@ -1440,7 +1404,7 @@ impl<'bump> Parser<'bump> {
         } {
             self.skip_newlines();
             let stmt = self.parse_stmt()?;
-            ret.append(stmt);
+            ret.append(stmt, self.alloc);
             self.skip_newlines();
         }
 
@@ -1493,7 +1457,7 @@ impl<'bump> Parser<'bump> {
                     ))?;
                     return Err(ParseError::Expected.into());
                 }
-                else_parts.append(else_);
+                else_parts.append(else_, self.alloc);
                 Ok(ast::If {
                     cond,
                     then,
@@ -1516,8 +1480,8 @@ impl<'bump> Parser<'bump> {
                         IfClauseTok::Else,
                         IfClauseTok::Fi,
                     ])?;
-                    else_parts.append(elif_cond);
-                    else_parts.append(then_part);
+                    else_parts.append(elif_cond, self.alloc);
+                    else_parts.append(then_part, self.alloc);
 
                     match IfClauseTok::from_tok(self, self.peek()) {
                         None => break,
@@ -1525,7 +1489,7 @@ impl<'bump> Parser<'bump> {
                         Some(IfClauseTok::Else) => {
                             let _ = self.expect_if_clause_text_token(IfClauseTok::Else);
                             let else_part = self.parse_if_body(&[IfClauseTok::Fi])?;
-                            else_parts.append(else_part);
+                            else_parts.append(else_part, self.alloc);
                             break;
                         }
                         Some(_) => break,
@@ -1576,17 +1540,15 @@ impl<'bump> Parser<'bump> {
             }
         }
 
-        let at_end = if self.inside_subshell.is_none() {
-            self.check_any_comptime(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof])
-        } else {
+        let at_end = if let Some(subshell) = self.inside_subshell {
             self.check_any(&[
                 TokenTag::Semicolon,
                 TokenTag::Newline,
                 TokenTag::Eof,
-                self.inside_subshell
-                    .expect("infallible: checked is_some")
-                    .closing_tok(),
+                subshell.closing_tok(),
             ])
+        } else {
+            self.check_any_comptime(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof])
         };
         if at_end {
             if assigns.is_empty() {
@@ -1679,6 +1641,12 @@ impl<'bump> Parser<'bump> {
                         if eq_idx == 0 {
                             break 'var_decl None;
                         }
+                        // An `=` that came from an interpolated JS value is data, not
+                        // shell syntax — it must not turn the word into an env
+                        // assignment (e.g. interpolating "LD_PRELOAD=/evil.so").
+                        if self.is_interpolated_position(txtrng.start + eq_idx) {
+                            break 'var_decl None;
+                        }
                         let label = &txt[..eq_idx as usize];
                         if !is_valid_var_name(label) {
                             break 'var_decl None;
@@ -1719,7 +1687,7 @@ impl<'bump> Parser<'bump> {
                             }
                         };
                         let left = ast::Atom::Simple(ast::SimpleAtom::Text(txt_value));
-                        let merged = left.merge(right, self.alloc)?;
+                        let merged = left.merge(&right, self.alloc)?;
                         break 'var_decl Some(ast::Assign {
                             label,
                             value: merged,
@@ -1741,7 +1709,6 @@ impl<'bump> Parser<'bump> {
     }
 
     fn parse_atom(&mut self) -> ParseResult<Option<ast::Atom<'bump>>> {
-        // PERF(port): was stack-fallback (1 SimpleAtom) — profile in Phase B
         let mut atoms = bun_alloc::ArenaVec::with_capacity_in(1, self.alloc);
         let mut has_brace_open = false;
         let mut has_brace_close = false;
@@ -1755,17 +1722,12 @@ impl<'bump> Parser<'bump> {
                 }
                 Token::Eof | Token::Semicolon | Token::Newline => false,
                 t => {
-                    if self.inside_subshell.is_some()
+                    !(self.inside_subshell.is_some()
                         && self
                             .inside_subshell
                             .expect("infallible: checked is_some")
                             .closing_tok()
-                            == t.tag()
-                    {
-                        false
-                    } else {
-                        true
-                    }
+                            == t.tag())
                 }
             } {
                 let next = self.peek_n(1);
@@ -1926,10 +1888,7 @@ impl<'bump> Parser<'bump> {
 
         Ok(match atoms.len() {
             0 => None,
-            1 => {
-                debug_assert!(atoms.capacity() == 1);
-                Some(ast::Atom::new_simple(atoms.into_iter().next().unwrap()))
-            }
+            1 => Some(ast::Atom::new_simple(atoms.into_iter().next().unwrap())),
             _ => Some(ast::Atom::Compound(ast::CompoundAtom {
                 atoms: atoms.into_bump_slice(),
                 brace_expansion_hint: has_brace_open && has_brace_close && has_comma,
@@ -1944,6 +1903,14 @@ impl<'bump> Parser<'bump> {
 
     fn text(&self, range: TextRange) -> &'bump [u8] {
         &self.strpool[range.start as usize..range.end as usize]
+    }
+
+    /// Whether the strpool position holds a byte that came from an
+    /// interpolated JS value (a `\x08__bunstr_N` ref spliced in by the lexer).
+    fn is_interpolated_position(&self, pos: u32) -> bool {
+        self.js_string_ranges
+            .iter()
+            .any(|r| pos >= r.start && pos < r.end)
     }
 
     fn advance(&mut self) -> Token {
@@ -2037,7 +2004,6 @@ impl<'bump> Parser<'bump> {
     }
 
     fn match_any_comptime(&mut self, toktags: &[TokenTag]) -> bool {
-        // PERF(port): was comptime monomorphization — profile in Phase B
         let peeked = self.peek().tag();
         for &tag in toktags {
             if peeked == tag {
@@ -2064,6 +2030,13 @@ impl<'bump> Parser<'bump> {
         let Token::Text(range) = peektok else {
             return false;
         };
+        // A keyword like `fi` only terminates the if body when it is followed
+        // by a delimiter. `fi$x`, `else$x`, etc. are ordinary command text and
+        // must keep the body loop running so they go through the normal
+        // command/atom path instead of the panicking `expect_if_clause_text_token`.
+        if !self.delimits(self.peek_n(1)) {
+            return false;
+        }
         let txt = self.text(range);
         for &tag in toktags {
             if txt == <&'static str>::from(tag).as_bytes() {
@@ -2074,7 +2047,6 @@ impl<'bump> Parser<'bump> {
     }
 
     fn peek_any_comptime_ifclausetok(&self, toktags: &[IfClauseTok]) -> bool {
-        // PERF(port): was comptime monomorphization — profile in Phase B
         self.peek_any_ifclausetok(toktags)
     }
 
@@ -2121,7 +2093,8 @@ impl<'bump> Parser<'bump> {
 
     pub fn combine_errors(&self) -> &'bump [u8] {
         let errors = &self.errors[..];
-        let str = {
+
+        ({
             let size = {
                 let mut i = 0usize;
                 for e in errors {
@@ -2136,13 +2109,12 @@ impl<'bump> Parser<'bump> {
                 i += e.msg.len();
             }
             buf
-        };
-        str
+        }) as _
     }
 
     fn add_error(&mut self, args: fmt::Arguments<'_>) -> ParseResult<()> {
-        // PORT NOTE: bumpalo::collections::Vec<u8> doesn't impl io::Write.
-        // Format into a stack String, then bump-copy. PERF(port): collapse to
+        // bumpalo::collections::Vec<u8> doesn't impl io::Write.
+        // Format into a stack String, then bump-copy. TODO: collapse to
         // a bumpalo `String` writer once available.
         let s = bun_alloc::ArenaString::from_str_in(&std::fmt::format(args), self.alloc);
         let msg = s.into_bump_str().as_bytes();
@@ -2183,9 +2155,16 @@ pub enum IfClauseTok {
 }
 
 impl IfClauseTok {
+    /// Classify the *current peeked* token as an if-clause keyword.
+    ///
+    /// `tok` must be `p.peek()`: like `match_if_clausetok` and
+    /// `is_if_clause_text_token`, this only treats the text as a keyword when
+    /// the *next* token delimits it, so `fi$x` / `else$x` / `elif$x` are not
+    /// misclassified and routed into the panicking
+    /// `expect_if_clause_text_token`.
     pub fn from_tok(p: &Parser<'_>, tok: Token) -> Option<IfClauseTok> {
         match tok {
-            Token::Text(range) => Self::from_text(p.text(range)),
+            Token::Text(range) if p.delimits(p.peek_n(1)) => Self::from_text(p.text(range)),
             _ => None,
         }
     }
@@ -2323,8 +2302,8 @@ impl TextRange {
 
 impl Token {
     pub fn as_human_readable(self, strpool: &[u8]) -> &[u8] {
-        // TODO(port): Zig builds varargv_strings as a 10x[2]u8 stack array; in Rust we'd need
-        // a thread_local or to return Cow. For Phase A use static lookup.
+        // Building these on the stack would need
+        // a thread_local or a Cow return type. Use a static lookup instead.
         const VARARGV_STRINGS: [&[u8]; 10] = [
             b"$0", b"$1", b"$2", b"$3", b"$4", b"$5", b"$6", b"$7", b"$8", b"$9",
         ];
@@ -2367,16 +2346,19 @@ impl Token {
 pub type LexerAscii<'bump> = Lexer<'bump, { StringEncoding::Ascii }>;
 pub type LexerUnicode<'bump> = Lexer<'bump, { StringEncoding::Wtf8 }>;
 
+#[derive(Clone, Copy)]
 pub struct LexResult<'bump> {
     pub errors: &'bump [LexError],
     pub tokens: &'bump [Token],
     pub strpool: &'bump [u8],
+    pub js_string_ranges: &'bump [TextRange],
 }
 
 impl<'bump> LexResult<'bump> {
     pub fn combine_errors(&self, bump: &'bump Bump) -> &'bump [u8] {
-        let errors = &self.errors[..];
-        let str = {
+        let errors = self.errors;
+
+        ({
             let size = {
                 let mut i = 0usize;
                 for e in errors {
@@ -2392,8 +2374,7 @@ impl<'bump> LexResult<'bump> {
                 i += s.len();
             }
             buf
-        };
-        str
+        }) as _
     }
 }
 
@@ -2445,7 +2426,7 @@ pub enum SubShellKind {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RedirectDirection {
+pub(crate) enum RedirectDirection {
     Out,
     In,
 }
@@ -2476,6 +2457,12 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     pub subshell_depth: u32,
     pub errors: bun_alloc::ArenaVec<'bump, LexError>,
 
+    /// Strpool ranges that hold bytes spliced in from interpolated JS values
+    /// (`\x08__bunstr_N` refs). Interpolated bytes are data, not shell
+    /// syntax, so the parser must not reinterpret them (e.g. an `=` inside
+    /// one must not create an env assignment).
+    pub js_string_ranges: bun_alloc::ArenaVec<'bump, TextRange>,
+
     /// Contains a list of strings we need to escape
     /// Not owned by this struct
     pub string_refs: &'bump mut [BunString],
@@ -2498,6 +2485,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             tokens: bun_alloc::ArenaVec::new_in(bump),
             strpool: bun_alloc::ArenaVec::new_in(bump),
             errors: bun_alloc::ArenaVec::new_in(bump),
+            js_string_ranges: bun_alloc::ArenaVec::new_in(bump),
             word_start: 0,
             j: 0,
             delimit_quote: false,
@@ -2513,6 +2501,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             tokens: self.tokens.into_bump_slice(),
             strpool: self.strpool.into_bump_slice(),
             errors: self.errors.into_bump_slice(),
+            js_string_ranges: self.js_string_ranges.into_bump_slice(),
         }
     }
 
@@ -2530,8 +2519,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     fn make_sublexer(&mut self, kind: SubShellKind) -> Self {
         log!("[lex] make sublexer");
-        // PORT NOTE: reshaped for borrowck — Zig copies ArrayLists by value (shared backing buffer
-        // until reallocation). In Rust we move them out via mem::take and restore in
+        // reshaped for borrowck — move the lists out via mem::take and restore in
         // continue_from_sublexer.
         let bump = self.strpool.bump();
         let mut sublexer = Self {
@@ -2539,12 +2527,16 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             strpool: core::mem::replace(&mut self.strpool, bun_alloc::ArenaVec::new_in(bump)),
             tokens: core::mem::replace(&mut self.tokens, bun_alloc::ArenaVec::new_in(bump)),
             errors: core::mem::replace(&mut self.errors, bun_alloc::ArenaVec::new_in(bump)),
+            js_string_ranges: core::mem::replace(
+                &mut self.js_string_ranges,
+                bun_alloc::ArenaVec::new_in(bump),
+            ),
             in_subshell: Some(kind),
             subshell_depth: self.subshell_depth + 1,
             word_start: self.word_start,
             j: self.j,
             delimit_quote: false,
-            // PORT NOTE: reshaped for borrowck — move the exclusive borrow into the sublexer
+            // reshaped for borrowck — move the exclusive borrow into the sublexer
             // and restore it in continue_from_sublexer (avoids aliased &mut).
             string_refs: core::mem::take(&mut self.string_refs),
             jsobjs_len: self.jsobjs_len,
@@ -2559,6 +2551,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.strpool = core::mem::replace(&mut sublexer.strpool, bun_alloc::ArenaVec::new_in(bump));
         self.tokens = core::mem::replace(&mut sublexer.tokens, bun_alloc::ArenaVec::new_in(bump));
         self.errors = core::mem::replace(&mut sublexer.errors, bun_alloc::ArenaVec::new_in(bump));
+        self.js_string_ranges = core::mem::replace(
+            &mut sublexer.js_string_ranges,
+            bun_alloc::ArenaVec::new_in(bump),
+        );
 
         self.chars = sublexer.chars;
         self.word_start = sublexer.word_start;
@@ -2568,7 +2564,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     }
 
     fn make_snapshot(&self) -> BacktrackSnapshot<'bump, ENCODING> {
-        // PORT NOTE: explicit `'bump` so the snapshot borrows the arena, not
+        // explicit `'bump` so the snapshot borrows the arena, not
         // `&self` — otherwise holding a snapshot would freeze the lexer.
         BacktrackSnapshot {
             chars: self.chars,
@@ -2578,7 +2574,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
     }
 
-    fn backtrack(&mut self, snap: BacktrackSnapshot<'bump, ENCODING>) {
+    fn backtrack(&mut self, snap: &BacktrackSnapshot<'bump, ENCODING>) {
         self.chars = snap.chars;
         self.j = snap.j;
         self.word_start = snap.word_start;
@@ -2595,8 +2591,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     pub fn lex(&mut self) -> Result<(), LexerError> {
         loop {
             // Fast path: bulk-consume runs of non-special bytes in Normal state.
-            // Zig's `switch (char)` compiles to a jump table even in debug; the
-            // Rust guard-arm chain below does not, so a 1 MiB literal word (see
+            // The guard-arm chain below does not compile to a jump table in
+            // debug, so a 1 MiB literal word (see
             // shell-leak-args.test.ts) walks ~20 guard comparisons per byte and
             // overruns the test timeout. This block mirrors what the slow path
             // would do for any byte NOT in SPECIAL_CHARS_TABLE: append to
@@ -2725,7 +2721,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                     fell_through = true;
                                     break 'escaped;
                                 }
-                                self.backtrack(state);
+                                self.backtrack(&state);
                             }
                             break 'escaped;
                         }
@@ -2776,7 +2772,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                     fell_through = true;
                                     break 'escaped;
                                 }
-                                self.backtrack(state);
+                                self.backtrack(&state);
                             }
                             break 'escaped;
                         }
@@ -2988,7 +2984,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             return Ok(());
                         }
                         c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
-                            // PERF(port): was `comptime for ('0'..'9') |c| assertSpecialChar(c);`
                             if self.chars.state != CharState::Normal {
                                 break 'escaped;
                             }
@@ -2999,7 +2994,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 fell_through = true;
                                 break 'escaped;
                             }
-                            self.backtrack(snapshot);
+                            self.backtrack(&snapshot);
                             break 'escaped;
                         }
                         // Operators
@@ -3141,9 +3136,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 if fell_through {
                     continue;
                 }
-                // PORT NOTE: Zig has `continue;` after the switch in `else escaped:`, but only when
-                // the case did NOT `break :escaped`. We model that with `fell_through`. Cases that
-                // break 'escaped fall through to appendCharToStrPool below.
+                // `fell_through` marks cases that should re-enter the loop;
+                // cases that break 'escaped fall through to appendCharToStrPool below.
             }
             // Treat newline preceded by backslash as whitespace
             else if char == u32::from(b'\n') {
@@ -3173,12 +3167,12 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     fn append_char_to_str_pool(&mut self, char: u32) -> Result<(), LexerError> {
         if ENCODING == StringEncoding::Ascii {
-            // PERF(port): @intCast — ENCODING==Ascii guarantees char < 256
+            // ENCODING==Ascii guarantees char < 256
             self.strpool.push(u8::try_from(char).expect("int cast"));
             self.j += 1;
         } else {
             if char <= 0x7F {
-                // PERF(port): @intCast — guarded by char <= 0x7F
+                // guarded by char <= 0x7F
                 self.strpool.push(u8::try_from(char).expect("int cast"));
                 self.j += 1;
                 return Ok(());
@@ -3343,7 +3337,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             // Just allow the std file descriptors for now
             _ => return None,
         }
-        let mut dir = RedirectDirection::Out;
         if let Some(input) = self.peek() {
             if input.escaped {
                 return None;
@@ -3351,8 +3344,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             match input.char {
                 c if c == u32::from(b'>') => {
                     let _ = self.eat();
-                    dir = RedirectDirection::Out;
-                    let is_double = self.eat_simple_redirect_operator(dir);
+                    let is_double = self.eat_simple_redirect_operator(RedirectDirection::Out);
                     if is_double {
                         flags |= ast::RedirectFlags::APPEND;
                     }
@@ -3389,8 +3381,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     Some(flags)
                 }
                 c if c == u32::from(b'<') => {
-                    dir = RedirectDirection::In;
-                    let is_double = self.eat_simple_redirect_operator(dir);
+                    let is_double = self.eat_simple_redirect_operator(RedirectDirection::In);
                     if is_double {
                         flags |= ast::RedirectFlags::APPEND;
                     }
@@ -3401,155 +3392,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         } else {
             None
         }
-    }
-
-    fn eat_redirect_old(&mut self, first: InputChar) -> Option<ast::RedirectFlags> {
-        let mut flags = ast::RedirectFlags::default();
-        if self.matches_ascii_literal(b"2>&1") {
-        } else if self.matches_ascii_literal(b"1>&2") {
-        } else {
-            match first.char {
-                c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
-                    // Codepoint int casts are safe here because the digits are in the ASCII range
-                    let mut count: usize = 1;
-                    let mut buf = [u8::try_from(first.char).expect("int cast"); 32];
-
-                    while let Some(peeked) = self.peek() {
-                        let char = peeked.char;
-                        match char {
-                            c2 if (u32::from(b'0')..=u32::from(b'9')).contains(&c2) => {
-                                let _ = self.eat();
-                                if count >= 32 {
-                                    return None;
-                                }
-                                buf[count] = u8::try_from(char).expect("int cast");
-                                count += 1;
-                                continue;
-                            }
-                            _ => break,
-                        }
-                    }
-
-                    let num = match bun_core::parse_int::<usize>(&buf[..count], 10) {
-                        Ok(n) => n,
-                        // This means the number was really large, meaning it
-                        // probably was supposed to be a string
-                        Err(_) => return None,
-                    };
-
-                    match num {
-                        0 => flags |= ast::RedirectFlags::STDIN,
-                        1 => flags |= ast::RedirectFlags::STDOUT,
-                        2 => flags |= ast::RedirectFlags::STDERR,
-                        _ => {
-                            // FIXME support redirection to any arbitrary fd
-                            log!("redirection to fd {} is invalid\n", num);
-                            return None;
-                        }
-                    }
-                }
-                c if c == u32::from(b'&') => {
-                    if first.escaped {
-                        return None;
-                    }
-                    flags |= ast::RedirectFlags::STDOUT;
-                    flags |= ast::RedirectFlags::STDERR;
-                    let _ = self.eat();
-                }
-                _ => return None,
-            }
-        }
-
-        let mut dir = RedirectDirection::Out;
-        if let Some(input) = self.peek() {
-            if input.escaped {
-                return None;
-            }
-            match input.char {
-                c if c == u32::from(b'>') => dir = RedirectDirection::Out,
-                c if c == u32::from(b'<') => dir = RedirectDirection::In,
-                _ => return None,
-            }
-            let _ = self.eat();
-        } else {
-            return None;
-        }
-
-        let is_double = self.eat_simple_redirect_operator(dir);
-        if is_double {
-            flags |= ast::RedirectFlags::APPEND;
-        }
-
-        Some(flags)
-    }
-
-    /// Assumes the first character of the literal has been eaten
-    /// Backtracks and returns false if unsuccessful
-    // PORT NOTE: shell.zig `eatLiteral` is dead (no callers); preserved for
-    // shape parity. Reshaped to avoid `{ N - 1 }` const-generic arithmetic by
-    // peeking element-wise — same observable behaviour.
-    fn eat_literal<CP: PartialEq + Copy + Default + TryFrom<u32>>(
-        &mut self,
-        literal: &[CP],
-    ) -> bool {
-        let literal_skip_first = &literal[1..];
-        let snapshot = self.make_snapshot();
-        for &want in literal_skip_first {
-            match self.peek() {
-                Some(got) => {
-                    let Ok(v) = CP::try_from(got.char) else {
-                        self.backtrack(snapshot);
-                        return false;
-                    };
-                    if v != want {
-                        self.backtrack(snapshot);
-                        return false;
-                    }
-                    let _ = self.eat();
-                }
-                None => {
-                    self.backtrack(snapshot);
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
-    fn eat_number_word(&mut self) -> Option<usize> {
-        let snap = self.make_snapshot();
-        let mut count: usize = 0;
-        let mut buf = [0u8; 32];
-
-        while let Some(result) = self.eat() {
-            let char = result.char;
-            match char {
-                c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
-                    if count >= 32 {
-                        return None;
-                    }
-                    buf[count] = u8::try_from(char).expect("int cast");
-                    count += 1;
-                    continue;
-                }
-                _ => break,
-            }
-        }
-
-        if count == 0 {
-            self.backtrack(snap);
-            return None;
-        }
-
-        let num = match bun_core::parse_int::<usize>(&buf[..count], 10) {
-            Ok(n) => n,
-            Err(_) => {
-                self.backtrack(snap);
-                return None;
-            }
-        };
-
-        Some(num)
     }
 
     fn eat_subshell(&mut self, kind: SubShellKind) -> Result<(), LexerError> {
@@ -3584,11 +3426,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         let start = self.strpool.len();
         if bunstr.is_utf16() {
             let utf16 = bunstr.utf16();
-            // PORT NOTE: Zig calls simdutf for the exact length then
-            // `convertUTF16ToUTF8Append` directly into the bump-backed
-            // ArrayList. The Rust transcoding helpers in bun_core take
+            // The transcoding helpers in bun_core take
             // `&mut Vec<u8>` (global allocator), so go through a scratch Vec
-            // and copy. PERF(port): re-unify once a bumpalo-aware transcoder
+            // and copy. PERF: re-unify once a bumpalo-aware transcoder
             // lands in bun_core.
             let mut scratch: Vec<u8> = Vec::with_capacity(utf16.len() * 3);
             bun_core::convert_utf16_to_utf8_append(&mut scratch, utf16);
@@ -3604,7 +3444,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 if non_ascii_idx > 0 {
                     self.strpool.extend_from_slice(&bytes[..non_ascii_idx]);
                 }
-                // PORT NOTE: `allocateLatin1IntoUTF8WithList` round-trips
+                // `allocateLatin1IntoUTF8WithList` round-trips
                 // through a std Vec; encode directly here instead (same
                 // mapping: 0x00–0x7F passthrough, 0x80–0xFF → 2-byte UTF-8).
                 self.strpool.reserve((bytes.len() - non_ascii_idx) * 2);
@@ -3636,12 +3476,27 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             }));
             return Ok(());
         }
-        self.append_string_to_str_pool(bunstr)
+        let start = self.j;
+        self.append_string_to_str_pool(bunstr)?;
+        self.js_string_ranges.push(TextRange { start, end: self.j });
+        // Interpolated values are data, not shell syntax. If the value would
+        // begin its Text token with `~`, flush it as a quoted-text token so the
+        // parser does not re-interpret it as tilde expansion. Values that
+        // cannot be misread stay coalesced with the surrounding word so that
+        // literal source text after the interpolation (e.g. `${name}~bak`)
+        // keeps its meaning.
+        if self.chars.state == CharState::Normal && self.strpool.get(start as usize) == Some(&b'~')
+        {
+            self.tokens
+                .push(Token::DoubleQuotedText(TextRange { start, end: self.j }));
+            self.word_start = self.j;
+        }
+        Ok(())
     }
 
     fn looks_like_js_obj_ref(&mut self) -> bool {
         let bytes = self.chars.src_bytes_at_cursor();
-        if LEX_JS_OBJREF_PREFIX.len() - 1 >= bytes.len() {
+        if LEX_JS_OBJREF_PREFIX.len() > bytes.len() {
             return false;
         }
         bytes[..LEX_JS_OBJREF_PREFIX.len() - 1] == LEX_JS_OBJREF_PREFIX[1..]
@@ -3649,7 +3504,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     fn looks_like_js_string_ref(&mut self) -> bool {
         let bytes = self.chars.src_bytes_at_cursor();
-        if LEX_JS_STRING_PREFIX.len() - 1 >= bytes.len() {
+        if LEX_JS_STRING_PREFIX.len() > bytes.len() {
             return false;
         }
         bytes[..LEX_JS_STRING_PREFIX.len() - 1] == LEX_JS_STRING_PREFIX[1..]
@@ -3678,7 +3533,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         // Set the cursor to decode the codepoint at new_idx.
         // Use width=0 so that nextCursor (which computes pos = width + i)
         // starts reading from exactly new_idx.
-        // TODO(port): direct field access on SrcUnicode cursor — encapsulate in helper.
         self.chars.src.set_unicode_cursor(new_idx);
         if let Some(pc) = prev_ascii_char {
             self.chars.prev = Some(InputChar {
@@ -3718,7 +3572,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 match bytes[i] {
                     b'0'..=b'9' => {
                         if digit_buf_count as usize >= digit_buf.len() {
-                            // TODO(port): Zig comptime concat for error string. Build at runtime.
                             let mut error_buf = Vec::new();
                             write!(
                                 &mut error_buf,
@@ -3887,6 +3740,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.chars.eat()
     }
 
+    fn peek(&mut self) -> Option<InputChar> {
+        self.chars.peek()
+    }
+
     fn eat_comment(&mut self) {
         while let Some(peeked) = self.eat() {
             if peeked.escaped {
@@ -3897,43 +3754,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             }
         }
     }
-
-    fn eat_slice<CP: Copy + Default, const N: usize>(&mut self) -> Option<[CP; N]>
-    where
-        CP: TryFrom<u32>,
-    {
-        // TODO(port): Zig branched on whether CP's max >= source codepoint range; here we use
-        // TryFrom and bail if conversion fails.
-        let mut slice = [CP::default(); N];
-        let mut i: usize = 0;
-        while let Some(result) = self.peek() {
-            let Ok(v) = CP::try_from(result.char) else {
-                return None;
-            };
-            slice[i] = v;
-            i += 1;
-            let _ = self.eat();
-            if i == N {
-                return Some(slice);
-            }
-        }
-        None
-    }
-
-    fn peek(&mut self) -> Option<InputChar> {
-        self.chars.peek()
-    }
-
-    fn read_char(&mut self) -> Option<InputChar> {
-        self.chars.read_char()
-    }
 }
 
 // ───────────────────────────── ShellCharIter / Src ─────────────────────────────
 
-/// Unified InputChar — Zig had two layouts (packed u8 for ascii, struct for unicode).
-/// In Rust we use one struct; CodepointType is u32 in both (ascii values fit in u7).
-// TODO(port): if the packed-u8 layout matters for perf, specialize via const generic in Phase B.
+/// Unified InputChar — one struct for both encodings;
+/// CodepointType is u32 in both (ascii values fit in u7).
+// TODO(perf): if the packed-u8 layout matters for perf, specialize via const generic.
 #[derive(Clone, Copy)]
 pub struct InputChar {
     pub char: u32,
@@ -3948,16 +3775,12 @@ pub struct SrcAscii<'a> {
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct SrcAsciiIndexValue(u8); // packed: char:7 + escaped:1
+pub(crate) struct SrcAsciiIndexValue(u8); // packed: char:7 + escaped:1
 
 impl SrcAsciiIndexValue {
     #[inline]
     fn char(self) -> u8 {
         self.0 & 0x7F
-    }
-    #[inline]
-    fn escaped(self) -> bool {
-        (self.0 & 0x80) != 0
     }
 }
 
@@ -3972,7 +3795,8 @@ impl<'a> SrcAscii<'a> {
             return None;
         }
         Some(SrcAsciiIndexValue(self.bytes[self.i] & 0x7F))
-        // TODO(port): Zig @intCast to u7 — high bit truncated; assumes ASCII input.
+        // `& 0x7F` truncates to 7 bits; callers
+        // must guarantee ASCII input.
     }
 
     #[inline]
@@ -3989,13 +3813,12 @@ impl<'a> SrcAscii<'a> {
     }
 }
 
-pub type CodepointIterator<'a> = strings::UnsignedCodepointIterator<'a>;
+pub(crate) type CodepointIterator<'a> = strings::UnsignedCodepointIterator<'a>;
 
-// PORT NOTE: Zig holds a `CodepointIterator` by value (whose only state used
-// by `next(cursor)` is `bytes`). The Rust `NewCodePointIterator` lacks
+// `NewCodePointIterator` lacks
 // `Clone`/`Copy`, so store the underlying `&[u8]` instead and rebuild the
 // iterator on demand — keeps `SrcUnicode` (and thus `BacktrackSnapshot`)
-// `Copy` like the Zig original.
+// `Copy`.
 #[derive(Clone, Copy)]
 pub struct SrcUnicode<'a> {
     pub bytes: &'a [u8],
@@ -4004,7 +3827,7 @@ pub struct SrcUnicode<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub struct SrcUnicodeIndexValue {
+pub(crate) struct SrcUnicodeIndexValue {
     pub char: u32,
     pub width: u8,
 }
@@ -4076,8 +3899,6 @@ pub enum CharState {
     Double,
 }
 
-// TODO(port): Zig `Src = switch (encoding) { .ascii => SrcAscii, .wtf8/.utf16 => SrcUnicode }`
-// — Rust const-generic-on-enum can't pick a struct type. Use a tagged union and branch on ENCODING.
 #[derive(Clone, Copy)]
 pub enum Src<'a> {
     Ascii(SrcAscii<'a>),
@@ -4263,7 +4084,7 @@ pub fn is_valid_var_name(var_name: &[u8]) -> bool {
         return false;
     }
 
-    // PORT NOTE: `Cursor.c` is `i32` (`CodePoint`). Widen to `u32` for the
+    // `Cursor.c` is `i32` (`CodePoint`). Widen to `u32` for the
     // ASCII-range matches below; negative sentinel never matches anyway.
     match cursor.c as u32 {
         c if c == u32::from(b'=') || (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
@@ -4310,7 +4131,7 @@ fn is_valid_var_name_ascii(var_name: &[u8]) -> bool {
     true
 }
 
-// PORT NOTE: shell.zig declares a `stderr_mutex: bun.Mutex` here. It is only
+// A `stderr_mutex` is only
 // used by the `Test` namespace's debug-dump path (gated to `bun_runtime`), so
 // the lower-tier parser crate omits it.
 
@@ -4376,14 +4197,13 @@ pub const SPECIAL_CHARS: [u8; 34] = [
     SPECIAL_JS_CHAR,
 ];
 
-// PORT NOTE: Zig uses `bit_set.IntegerBitSet(256)`. The Rust
 // `bun_collections::IntegerBitSet<N>` is single-`usize`-backed (≤64 bits), so a
 // 256-entry membership table is materialised as `[bool; 256]` instead — same
 // O(1) byte-indexed lookup, const-evaluable.
 pub struct ByteTable(pub [bool; 256]);
 impl ByteTable {
     #[inline]
-    pub const fn is_set(&self, idx: usize) -> bool {
+    pub(crate) const fn is_set(&self, idx: usize) -> bool {
         self.0[idx]
     }
 }
@@ -4402,7 +4222,7 @@ pub fn assert_special_char(c: u8) {
 }
 
 /// Characters that need to be backslashed inside double quotes
-pub const BACKSLASHABLE_CHARS: [u8; 4] = [b'$', b'`', b'"', b'\\'];
+pub const BACKSLASHABLE_CHARS: [u8; 4] = *b"$`\"\\";
 
 pub fn escape_bun_str<const ADD_QUOTES: bool>(
     bunstr: BunString,
@@ -4434,6 +4254,10 @@ pub fn escape_8bit<const ADD_QUOTES: bool>(
                 outbuf.extend_from_slice(&[b'\\', c]);
                 continue 'outer;
             }
+        }
+        if c == SPECIAL_JS_CHAR {
+            outbuf.extend_from_slice(&[SPECIAL_JS_CHAR, b'"', b'"']);
+            continue;
         }
         outbuf.push(c);
     }
@@ -4467,8 +4291,8 @@ pub fn escape_utf16<const ADD_QUOTES: bool>(
                 i += 1;
                 break 'brk c as u32;
             }
-            // PORT NOTE: Zig calls `bun.strings.utf16Codepoint` (never sets `.fail`),
-            // so the `is_invalid` early-return is dead in spec; use the non-FFFD variant.
+            // `utf16_codepoint` never sets `.fail`,
+            // so an `is_invalid` early-return would be dead; use the non-FFFD variant.
             let ret = strings::utf16_codepoint(&str[i..]);
             i += ret.len as usize;
             ret.code_point
@@ -4479,6 +4303,11 @@ pub fn escape_utf16<const ADD_QUOTES: bool>(
                 outbuf.extend_from_slice(&[b'\\', char as u8]);
                 continue 'outer;
             }
+        }
+
+        if char == u32::from(SPECIAL_JS_CHAR) {
+            outbuf.extend_from_slice(&[SPECIAL_JS_CHAR, b'"', b'"']);
+            continue;
         }
 
         let len = bun_core::encode_wtf8_rune(&mut cp_buf, char);
@@ -4522,10 +4351,71 @@ pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
 
 // ───────────────────────────── SmolList ─────────────────────────────
 
-/// A list that can store its items inlined, and promote itself to a heap allocated Vec<T>
+/// `Allocator` routing `SmolList::Heap` through the parser arena. Must not outlive the arena.
+#[derive(Clone, Copy)]
+pub struct SmolListAlloc(core::ptr::NonNull<Bump>);
+
+// SAFETY: just a pointer to a `Send + Sync` `MimallocArena`.
+unsafe impl Send for SmolListAlloc {}
+// SAFETY: just a pointer to a `Send + Sync` `MimallocArena`.
+unsafe impl Sync for SmolListAlloc {}
+
+impl SmolListAlloc {
+    #[inline]
+    fn new(bump: &Bump) -> Self {
+        Self(core::ptr::NonNull::from(bump))
+    }
+    #[inline]
+    fn arena(&self) -> &Bump {
+        // SAFETY: the arena outlives `self`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+// SAFETY: forwards every method to `&Bump`'s `Allocator` impl; clones hold the
+// same arena pointer, so blocks stay valid across clones until the arena drops.
+unsafe impl core::alloc::Allocator for SmolListAlloc {
+    #[inline]
+    fn allocate(
+        &self,
+        layout: core::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        core::alloc::Allocator::allocate(&self.arena(), layout)
+    }
+    #[inline]
+    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
+        // SAFETY: caller upholds `deallocate`'s contract; `ptr`/`layout` came from this arena.
+        unsafe { core::alloc::Allocator::deallocate(&self.arena(), ptr, layout) }
+    }
+    #[inline]
+    unsafe fn grow(
+        &self,
+        ptr: core::ptr::NonNull<u8>,
+        old: core::alloc::Layout,
+        new: core::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        // SAFETY: caller upholds `grow`'s contract; `ptr`/`old` came from this arena.
+        unsafe { core::alloc::Allocator::grow(&self.arena(), ptr, old, new) }
+    }
+    #[inline]
+    unsafe fn shrink(
+        &self,
+        ptr: core::ptr::NonNull<u8>,
+        old: core::alloc::Layout,
+        new: core::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        // SAFETY: caller upholds `shrink`'s contract; `ptr`/`old` came from this arena.
+        unsafe { core::alloc::Allocator::shrink(&self.arena(), ptr, old, new) }
+    }
+}
+
+pub(crate) type SmolListHeap<T> = Vec<T, SmolListAlloc>;
+
+/// A list that can store its items inlined, and promote itself to an
+/// arena-backed heap list.
 pub enum SmolList<T, const INLINED_MAX: usize> {
     Inlined(SmolListInlined<T, INLINED_MAX>),
-    Heap(Vec<T>),
+    Heap(SmolListHeap<T>),
 }
 
 pub struct SmolListInlined<T, const INLINED_MAX: usize> {
@@ -4545,36 +4435,31 @@ impl<T, const INLINED_MAX: usize> Default for SmolListInlined<T, INLINED_MAX> {
 }
 
 impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
-    pub fn slice(&self) -> &[T] {
+    pub(crate) fn slice(&self) -> &[T] {
         // SAFETY: first `len` elements are initialized
         unsafe { core::slice::from_raw_parts(self.items.as_ptr().cast::<T>(), self.len as usize) }
     }
 
-    pub fn slice_mut(&mut self) -> &mut [T] {
+    pub(crate) fn slice_mut(&mut self) -> &mut [T] {
         // SAFETY: first `self.len` elements are initialized; pointer is valid for `len` reads/writes.
         unsafe {
             core::slice::from_raw_parts_mut(self.items.as_mut_ptr().cast::<T>(), self.len as usize)
         }
     }
 
-    pub fn allocated_slice(&self) -> &[core::mem::MaybeUninit<T>] {
-        &self.items
-    }
-
-    pub fn promote(&mut self, n: usize, new: T) -> Vec<T> {
-        let mut list = Vec::<T>::init_capacity(n);
-        // SAFETY: moving INLINED_MAX initialized elements out
+    pub(crate) fn promote(&mut self, n: usize, new: T, bump: &Bump) -> SmolListHeap<T> {
+        let mut list = Vec::with_capacity_in(n + 1, SmolListAlloc::new(bump));
         for i in 0..INLINED_MAX {
             // SAFETY: all INLINED_MAX slots are initialized when promote is called (len == INLINED_MAX)
             let v = unsafe { self.items[i].assume_init_read() };
-            list.append_assume_capacity(v);
+            list.push(v);
         }
         self.len = 0;
         list.push(new);
         list
     }
 
-    pub fn ordered_remove(&mut self, idx: usize) -> T {
+    pub(crate) fn ordered_remove(&mut self, idx: usize) -> T {
         if self.len as usize - 1 == idx {
             return self.pop();
         }
@@ -4582,11 +4467,9 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         // equivalent of the previous `assume_init_read` + `ptr::copy` shift.
         self.slice_mut()[idx..].rotate_left(1);
         self.pop()
-        // TODO(port): Zig fn returns T but body falls off end without returning the removed item
-        // (likely a Zig bug). Here we return it.
     }
 
-    pub fn swap_remove(&mut self, idx: usize) -> T {
+    pub(crate) fn swap_remove(&mut self, idx: usize) -> T {
         if self.len as usize - 1 == idx {
             return self.pop();
         }
@@ -4595,10 +4478,9 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         let last = self.len as usize - 1;
         self.slice_mut().swap(idx, last);
         self.pop()
-        // TODO(port): same Zig oddity — pop() decremented len already; restore by writing back.
     }
 
-    pub fn pop(&mut self) -> T {
+    pub(crate) fn pop(&mut self) -> T {
         // SAFETY: caller guarantees self.len > 0; slot at len-1 is initialized.
         let ret = unsafe { self.items[self.len as usize - 1].assume_init_read() };
         self.len -= 1;
@@ -4606,8 +4488,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
     }
 }
 
-// PORT NOTE: Zig's `SmolList.memoryCost` branched on `@hasDecl(T, "memoryCost")`
-// at comptime. Expressed as a trait + per-type forwarding impls below.
+// Per-type memory-cost dispatch is expressed as a trait + forwarding impls below.
 pub trait MemoryCost {
     fn memory_cost(&self) -> usize;
 }
@@ -4651,22 +4532,21 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
         let mut cost = size_of::<Self>();
         match self {
             SmolList::Inlined(inlined) => {
-                // TODO(port): Zig branches on `@hasDecl(T, "memoryCost")` — express via trait/specialization.
                 for item in inlined.slice() {
                     cost += item.memory_cost();
                 }
             }
             SmolList::Heap(heap) => {
-                for item in heap.slice() {
+                for item in heap.iter() {
                     cost += item.memory_cost();
                 }
-                cost += heap.memory_cost();
+                cost += heap.capacity() * size_of::<T>();
             }
         }
         cost
     }
 
-    pub fn init_with_slice(vals: &[T]) -> Self
+    pub fn init_with_slice(vals: &[T], bump: &Bump) -> Self
     where
         T: Clone,
     {
@@ -4681,14 +4561,13 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
             }
             return this;
         }
-        let mut heap = Vec::<T>::init_capacity(vals.len());
-        for v in vals {
-            heap.append_assume_capacity(v.clone());
-        }
+        let mut heap = Vec::with_capacity_in(vals.len(), SmolListAlloc::new(bump));
+        heap.extend_from_slice(vals);
         SmolList::Heap(heap)
     }
 
-    // TODO(port): jsonStringify — wire up serde or custom JSON writer in Phase B.
+    // JSON serialization lives in `json_fmt.rs` (`write_stmt_smol` writes the
+    // slice as a JSON array).
 
     #[inline]
     pub fn len(&self) -> usize {
@@ -4701,7 +4580,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     pub fn ordered_remove(&mut self, idx: usize) {
         match self {
             SmolList::Heap(h) => {
-                let _ = h.ordered_remove(idx);
+                let _ = h.remove(idx);
             }
             SmolList::Inlined(i) => {
                 let _ = i.ordered_remove(idx);
@@ -4734,15 +4613,16 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                     return;
                 }
                 let new_len = inlined.len as usize - starting_idx;
-                // Rotate the suffix to the front; the old prefix lands at
-                // `[new_len..]` and is abandoned by the len adjust (same
-                // leak-on-Drop caveat as the original `ptr::copy` version —
-                // see `clear_retaining_capacity` TODO; all current `T` are
-                // arena-backed and `!Drop`).
+                // Rotate the suffix to the front; the rotated-out prefix
+                // lands at `[new_len..]` and must be dropped before the len
+                // adjust so `T: Drop` elements are not leaked (matching
+                // `clear_retaining_capacity` and the `Drop` impl).
                 inlined.slice_mut().rotate_left(starting_idx);
+                // SAFETY: `slice_mut` covers exactly the initialized prefix;
+                // `[new_len..]` are the elements being discarded, and the len
+                // adjust below makes them unobservable afterwards.
+                unsafe { core::ptr::drop_in_place(&raw mut inlined.slice_mut()[new_len..]) };
                 inlined.len = u32::try_from(new_len).expect("int cast");
-                // TODO(port): Zig version copies into [0..starting_idx] which is a bug if
-                // new_len > starting_idx; mirroring intended semantics (shift-down) here.
             }
             SmolList::Heap(heap) => {
                 // `Vec::drain` shifts the tail down and drops the prefix.
@@ -4768,7 +4648,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 if h.is_empty() {
                     return &mut [];
                 }
-                h.slice_mut()
+                h.as_mut_slice()
             }
         }
     }
@@ -4786,7 +4666,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 if h.is_empty() {
                     return &[];
                 }
-                h.slice()
+                h.as_slice()
             }
         }
     }
@@ -4804,11 +4684,11 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
         &self.slice()[idx]
     }
 
-    pub fn append(&mut self, new: T) {
+    pub fn append(&mut self, new: T, bump: &Bump) {
         match self {
             SmolList::Inlined(inlined) => {
                 if inlined.len as usize == INLINED_MAX {
-                    let promoted = inlined.promote(INLINED_MAX, new);
+                    let promoted = inlined.promote(INLINED_MAX, new, bump);
                     *self = SmolList::Heap(promoted);
                     return;
                 }
@@ -4824,10 +4704,13 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     pub fn clear_retaining_capacity(&mut self) {
         match self {
             SmolList::Inlined(i) => {
-                // TODO(port): drop initialized elements if T: Drop
+                // SAFETY: `slice_mut` covers exactly the initialized prefix
+                // (first `len` elements); dropping it then resetting `len`
+                // leaves no element observable twice.
+                unsafe { core::ptr::drop_in_place(i.slice_mut()) };
                 i.len = 0;
             }
-            SmolList::Heap(h) => h.clear_retaining_capacity(),
+            SmolList::Heap(h) => h.clear(),
         }
     }
 
@@ -4859,11 +4742,16 @@ impl<T, const N: usize> core::ops::Index<usize> for SmolList<T, N> {
 
 impl<T, const N: usize> Drop for SmolList<T, N> {
     fn drop(&mut self) {
-        if let SmolList::Heap(_) = self {
-            // Vec drops itself
+        // Heap: the Vec drops itself.
+        // Inlined: drop the initialized prefix so `T: Drop` elements are not
+        // leaked.
+        if let SmolList::Inlined(i) = self {
+            // SAFETY: `slice_mut` covers exactly the initialized prefix
+            // (first `len` elements); we are in `drop`, so nothing observes
+            // the elements afterwards.
+            unsafe { core::ptr::drop_in_place(i.slice_mut()) };
+            i.len = 0;
         }
-        // Inlined: TODO(port): drop initialized elements if T: Drop. Zig deinit only freed heap.
-        // Reset to zeroes is implicit.
     }
 }
 

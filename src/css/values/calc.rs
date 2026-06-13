@@ -8,39 +8,9 @@ use crate::values::protocol;
 use crate::values::time::Time;
 // Bring the numeric-protocol traits into scope so their methods resolve via the
 // `CalcValue` supertrait bounds inside `impl<V: CalcValue> Calc<V>`.
-use crate::values::protocol::{
-    IsCompatible, MulF32, Parse, ToCss, TryFromAngle, TryMap, TryOp, TryOpTo, TrySign,
-};
+use crate::values::protocol::{IsCompatible, ToCss, TryOpTo};
 
 use core::cmp::Ordering;
-
-// TODO(port): `needsDeinit` / `needsDeepclone` were comptime type predicates used to gate
-// per-variant cleanup/clone in Zig. In Rust, `Drop` on `Box<V>` and `V: Clone` subsume
-// these. Kept as stubs for parity; Phase B may delete.
-pub const fn needs_deinit<V>() -> bool {
-    // TODO(port): comptime type switch — not expressible in Rust; subsumed by Drop.
-    true
-}
-
-pub const fn needs_deepclone<V>() -> bool {
-    // TODO(port): comptime type switch — not expressible in Rust; subsumed by Clone.
-    true
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Tag {
-    /// A literal value.
-    Value = 1,
-    /// A literal number.
-    Number = 2,
-    /// A sum of two calc expressions.
-    Sum = 4,
-    /// A product of a number and another calc expression.
-    Product = 8,
-    /// A math function, such as `calc()`, `min()`, or `max()`.
-    Function = 16,
-}
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
 #[strum(serialize_all = "lowercase")]
@@ -69,11 +39,10 @@ pub enum CalcUnit {
 }
 
 impl CalcUnit {
-    /// Zig: `bun.ComptimeEnumMap(CalcUnit).getAnyCase(f)`
-    // TODO(port): phf custom hasher — case-insensitive lookup over &[u8].
+    /// Case-insensitive lookup of a `CalcUnit` by its function name.
     pub fn get_any_case(f: &[u8]) -> Option<Self> {
-        // PERF(port): Zig used a comptime perfect hash; this is a linear match on a
-        // stack-lowercased byte slice. Phase B: phf_map! over &[u8].
+        // PERF: linear match on a stack-lowercased byte slice. Profile
+        // before swapping in a `comptime_string_map!`.
         // §Strings: source bytes are &[u8], never &str/String — no from_utf8/to_ascii_lowercase().
         let (buf, len) = bun_core::strings::ascii_lowercase_buf::<5>(f)?;
         match &buf[..len] {
@@ -100,6 +69,23 @@ impl CalcUnit {
             b"tan" => Some(Self::Tan),
             _ => None,
         }
+    }
+
+    pub fn arg_parse_is_type_independent(self) -> bool {
+        matches!(
+            self,
+            Self::Sin
+                | Self::Cos
+                | Self::Tan
+                | Self::Asin
+                | Self::Acos
+                | Self::Atan
+                | Self::Atan2
+                | Self::Pow
+                | Self::Log
+                | Self::Sqrt
+                | Self::Exp
+        )
     }
 }
 
@@ -128,7 +114,6 @@ pub enum Calc<V> {
 }
 
 // ───────────────────────────── CalcValue trait ─────────────────────────────
-// Replaces the Zig `switch (V)` / `@hasDecl(V, ...)` comptime-type dispatch.
 // Every type that can appear inside `Calc<V>` implements this.
 //
 // The numeric protocol (`mul_f32`/`try_sign`/`try_map`/`try_op`/`try_op_to`/
@@ -152,9 +137,9 @@ pub trait CalcValue:
     + protocol::IsCompatible
 {
     fn add_internal(self, rhs: Self) -> Self;
-    /// Wrap a value as a `Calc<Self>` (Zig: `intoCalc`).
+    /// Wrap a value as a `Calc<Self>`.
     fn into_calc(self) -> Calc<Self>;
-    /// Convert a `Calc<Self>` into `Self` if representable (Zig: `intoValue`).
+    /// Convert a `Calc<Self>` into `Self` if representable.
     fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self>;
     fn eql(&self, other: &Self) -> bool;
 }
@@ -207,8 +192,7 @@ impl<V> Calc<V> {
     {
         match self {
             Calc::Value(v) => {
-                // Zig: if (needs_deepclone) v.deepClone(arena) else v.*
-                // Rust: V: Clone covers both — V's Clone impl is the deep clone.
+                // V's Clone impl is the deep clone.
                 Calc::Value(Box::new((**v).clone()))
             }
             Calc::Number(n) => Calc::Number(*n),
@@ -231,7 +215,7 @@ impl<V> Calc<V> {
         Box::new(self.deep_clone())
     }
 
-    // Zig `deinit` only freed owned Box fields → handled by Drop on Box<V>/Box<Calc<V>>/
+    // Cleanup is handled by Drop on Box<V>/Box<Calc<V>>/
     // Box<MathFunction<V>>. No explicit Drop impl needed.
 
     pub fn eql(&self, other: &Self) -> bool
@@ -272,32 +256,25 @@ impl<V> Calc<V> {
 
 impl<V: CalcValue> Calc<V> {
     fn mul_value_f32(lhs: V, rhs: f32) -> V {
-        // Zig: `f32 => lhs * rhs, else => lhs.mulF32(...)` — folded into trait.
         lhs.mul_f32(rhs)
     }
 
-    // TODO: addValueOwned
     pub fn add_value(lhs: V, rhs: V) -> V {
-        // Zig: `f32 => lhs + rhs, else => lhs.addInternal(...)` — folded into trait.
         lhs.add_internal(rhs)
     }
 
-    // TODO: intoValueOwned
     pub fn into_value(self, input: &mut css::Parser) -> CssResult<V> {
-        // Zig comptime type switch on V → trait method `V::from_calc`.
         V::from_calc(self, input)
     }
 
     pub fn into_calc(val: V) -> Self {
-        // Zig: `f32 => .{ .value = box(val) }, else => val.intoCalc()` — folded into trait.
         val.into_calc()
     }
 
-    // TODO: change to addOwned()
     pub fn add(self, rhs: Self, input: &mut css::Parser) -> CssResult<Self> {
         if let (Calc::Value(_), Calc::Value(_)) = (&self, &rhs) {
             // PERF: we can reuse the allocation here
-            // PORT NOTE: reshaped for borrowck — clone out of boxes then drop originals.
+            // Reshaped for borrowck — clone out of boxes then drop originals.
             let (a, b) = match (self, rhs) {
                 (Calc::Value(a), Calc::Value(b)) => (*a, *b),
                 _ => unreachable!(),
@@ -336,8 +313,6 @@ impl<V: CalcValue> Calc<V> {
         Ok(Self::into_calc(Self::add_value(this_value, rhs_value)))
     }
 
-    // TODO: users of this and `parseWith` don't need the pointer and often throwaway heap allocated values immediately
-    // use temp arena or something?
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
         fn parse_with_fn<V>(_: (), _: &[u8]) -> Option<Calc<V>> {
             None
@@ -351,9 +326,9 @@ impl<V: CalcValue> Calc<V> {
         parse_ident: F,
     ) -> CssResult<Self> {
         let location = input.current_source_location();
-        // PORT NOTE: clone the token before reborrowing `input` so the function
+        // Clone the token before reborrowing `input` so the function
         // name slice is owned by the cloned `Token` (whose payload already
-        // carries the Phase-A arena lifetime) instead of being laundered to
+        // carries the parser's arena lifetime) instead of being laundered to
         // `'static` here.
         let tok = input.next()?.clone();
         let unit = match tok {
@@ -366,8 +341,7 @@ impl<V: CalcValue> Calc<V> {
             other => return Err(location.new_unexpected_token_error(other)),
         };
 
-        // PORT NOTE: Zig used explicit `Closure` structs because Zig lacks closures.
-        // Rust closures capture `ctx` + `parse_ident` directly.
+        // The closures capture `ctx` + `parse_ident` directly.
         match unit {
             CalcUnit::Calc => {
                 let calc = input.parse_nested_block(|i| Self::parse_sum(i, ctx, parse_ident))?;
@@ -433,9 +407,15 @@ impl<V: CalcValue> Calc<V> {
 
                 Ok(match (min, max) {
                     (None, None) => center,
-                    (Some(min), None) => Calc::Function(Box::new(MathFunction::Max(arr2(min, center)))),
-                    (None, Some(max)) => Calc::Function(Box::new(MathFunction::Min(arr2(max, center)))),
-                    (Some(min), Some(max)) => Calc::Function(Box::new(MathFunction::Clamp { min, center, max })),
+                    (Some(min), None) => {
+                        Calc::Function(Box::new(MathFunction::Max(arr2(min, center))))
+                    }
+                    (None, Some(max)) => {
+                        Calc::Function(Box::new(MathFunction::Min(arr2(max, center))))
+                    }
+                    (Some(min), Some(max)) => {
+                        Calc::Function(Box::new(MathFunction::Clamp { min, center, max }))
+                    }
                 })
             }
             CalcUnit::Round => input.parse_nested_block(|i| {
@@ -464,7 +444,7 @@ impl<V: CalcValue> Calc<V> {
                     i,
                     (),
                     |_, a, b| {
-                        // Zig `@mod(a, b)`: floored modulo, result takes sign of divisor.
+                        // Floored modulo: result takes the sign of the divisor.
                         // Equivalent to `a - b * floor(a / b)`. Rust `%` is truncated (sign of
                         // dividend) and `rem_euclid` is non-negative, so neither matches for
                         // negative `b` — use the explicit floor formula.
@@ -483,9 +463,13 @@ impl<V: CalcValue> Calc<V> {
                     i,
                     (),
                     |_, a, b| {
-                        // return ((a % b) + b) % b;
-                        // TODO(port): Zig used nested `@mod`; using Rust `%` per the commented
-                        // formula. Verify edge cases (negative b, NaN).
+                        // Floored modulo (result takes the sign of the divisor):
+                        // `((a % b) + b) % b` over Rust's truncated `%` gets the
+                        // sign right for NaN/inf and ordinary finite inputs.
+                        // Note: this double-wrap formula applies a different rounding
+                        // sequence than the explicit `a - b * floor(a / b)`, so results
+                        // can differ by ~|b| near exact multiples of the divisor
+                        // (e.g. f32 `mod(-3e-8, 1)` -> 0.99999994 vs 0.0).
                         ((a % b) + b) % b
                     },
                     |_, a, b| MathFunction::Mod {
@@ -568,7 +552,6 @@ impl<V: CalcValue> Calc<V> {
         ctx: C,
         parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<Self> {
-        // PERF(port): was comptime monomorphization on `op` — profile in Phase B.
         input.parse_nested_block(|i| {
             let v = Self::parse_numeric(i, ctx, parse_ident)?;
             Ok(Calc::Number(match op {
@@ -686,8 +669,8 @@ impl<V: CalcValue> Calc<V> {
         parse_ident: F,
     ) -> CssResult<Self> {
         // Parse nested calc() and other math functions.
-        if let Ok(calc) = input.try_parse(Self::parse) {
-            match calc {
+        match input.try_parse(Self::parse) {
+            Ok(calc) => match calc {
                 Calc::Function(f) => {
                     return match *f {
                         MathFunction::Calc(c) => Ok(c),
@@ -695,6 +678,26 @@ impl<V: CalcValue> Calc<V> {
                     };
                 }
                 other => return Ok(other),
+            },
+            Err(e) => {
+                // A math function token can only be parsed by `Self::parse`.
+                // If that failed, none of the alternatives below can succeed
+                // either, so return the error rather than falling through:
+                // `V::parse` would re-enter the same nested block through
+                // `Calc::parse` again, which makes deeply nested invalid
+                // arguments exponentially slow to reject.
+                let start = input.state();
+                let failed_unit = match input.next() {
+                    Ok(css::Token::Function(name)) => CalcUnit::get_any_case(name),
+                    _ => None,
+                };
+                input.reset(&start);
+                if let Some(unit) = failed_unit {
+                    if unit.arg_parse_is_type_independent() {
+                        input.note_math_fn_parse_failure();
+                    }
+                    return Err(e);
+                }
             }
         }
 
@@ -711,7 +714,7 @@ impl<V: CalcValue> Calc<V> {
         }
 
         let location = input.current_source_location();
-        // PORT NOTE: reshaped for borrowck — clone the next token inside the
+        // Reshaped for borrowck — clone the next token inside the
         // try-parse so the ident slice is owned by the cloned `Token` rather
         // than laundered to `'static` from the `&mut Parser` borrow.
         if let Ok(ident) = input.try_parse(|p| {
@@ -738,7 +741,6 @@ impl<V: CalcValue> Calc<V> {
         ctx: C,
         parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<Self> {
-        // PERF(port): was comptime monomorphization on `trig_fn_kind` — profile in Phase B.
         let trig_fn = move |x: f32| -> f32 {
             match trig_fn_kind {
                 TrigFnKind::Sin => x.sin(),
@@ -751,8 +753,8 @@ impl<V: CalcValue> Calc<V> {
         };
 
         input.parse_nested_block(|i| {
-            // PORT NOTE: Zig wrapped `parse_ident` to project `Calc<V>::Number` into
-            // `Calc<Angle>::Number`. Rust closure does the same.
+            // Wrap `parse_ident` to project `Calc<V>::Number` into
+            // `Calc<Angle>::Number`.
             let parse_ident_fn = |_self: (), ident: &[u8]| -> Option<Calc<Angle>> {
                 let v = parse_ident(ctx, ident)?;
                 if let Calc::Number(n) = v {
@@ -761,8 +763,9 @@ impl<V: CalcValue> Calc<V> {
                     None
                 }
             };
-            // TODO(port): Zig passed `&closure` (a *@This()) as ctx; here we use `()` and
-            // capture `ctx` via the outer closure. Verify `Calc<Angle>::parse_sum` signature.
+            // ctx is `()` and the
+            // outer closure captures `ctx`/`parse_ident` (both `Copy`, satisfying
+            // `parse_sum`'s `C: Copy` / `F: Fn(C, &[u8]) -> Option<Self> + Copy`).
             let v = Calc::<Angle>::parse_sum(i, (), parse_ident_fn)?;
 
             let rad: f32 = 'rad: {
@@ -798,23 +801,66 @@ impl<V: CalcValue> Calc<V> {
         ctx: C,
         parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<Angle> {
-        // atan2 supports arguments of any <number>, <dimension>, or <percentage>, even ones that wouldn't
-        // normally be supported by V. The only requirement is that the arguments be of the same type.
-        // Try parsing with each type, and return the first one that parses successfully.
-        //
+        let angle_ident = move |c: C, ident: &[u8]| -> Option<Calc<Angle>> {
+            match parse_ident(c, ident)? {
+                Calc::Number(n) => Some(Calc::Number(n)),
+                _ => None,
+            }
+        };
+
+        let before_args = input.state();
+        let failures_before = input.math_fn_parse_failures();
+        let hit_unrecoverable =
+            |input: &css::Parser| input.math_fn_parse_failures() != failures_before;
+
+        let reconcile =
+            |input: &mut css::Parser, a: &Calc<Angle>, b: &Calc<Angle>| -> CssResult<Angle> {
+                if let (Calc::Value(av), Calc::Value(bv)) = (a, b) {
+                    if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
+                        return Ok(v);
+                    }
+                } else if let (Calc::Number(an), Calc::Number(bn)) = (a, b) {
+                    return Ok(Angle::Rad(an.atan2(*bn)));
+                }
+                Err(input.new_custom_error(css::ParserError::invalid_value))
+            };
+
+        match Calc::<Angle>::parse_sum(input, ctx, angle_ident) {
+            Ok(a) => {
+                input.expect_comma()?;
+                match Calc::<Angle>::parse_sum(input, ctx, angle_ident) {
+                    Ok(b) => {
+                        if let Ok(v) = reconcile(input, &a, &b) {
+                            return Ok(v);
+                        }
+                        return Err(input.new_custom_error(css::ParserError::invalid_value));
+                    }
+                    Err(e) => {
+                        if hit_unrecoverable(input) {
+                            return Err(e);
+                        }
+                        input.reset(&before_args);
+                    }
+                }
+            }
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+                input.reset(&before_args);
+            }
+        }
+
         // blocked_on: values/length.rs un-gate — until Length is real,
         // `atan2(10px, 5px)` (and any other length-dimension pair) falls
-        // through to the CSSNumber path below and errors with `invalid_value`,
-        // diverging from Zig (`Angle::Rad(atan2(10,5))`). Tracked as a known
+        // through to the CSSNumber path below and errors with `invalid_value`
+        // instead of producing `Angle::Rad(atan2(10,5))`. Tracked as a known
         // incompleteness; no behaviour stub is added because a partial
         // dimension matcher would mis-reduce mixed-unit lengths.
         if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
             return Ok(v);
         }
         if let Ok(v) = try_parse_atan2_args::<C, Percentage>(input, ctx) {
-            return Ok(v);
-        }
-        if let Ok(v) = try_parse_atan2_args::<C, Angle>(input, ctx) {
             return Ok(v);
         }
         if let Ok(v) = try_parse_atan2_args::<C, Time>(input, ctx) {
@@ -829,7 +875,6 @@ impl<V: CalcValue> Calc<V> {
                 None
             }
         };
-        // TODO(port): Zig threaded `&closure` here; Rust captures via fn-pointer wrapper.
         Calc::<CSSNumber>::parse_atan2_args(input, ctx, parse_ident_fn)
     }
 
@@ -870,7 +915,6 @@ impl<V: CalcValue> Calc<V> {
                 None
             }
         };
-        // TODO(port): Zig threaded `&closure` here; same reshape as parse_trig/parse_atan2.
         let v: Calc<CSSNumber> = Calc::<CSSNumber>::parse_sum(input, ctx, parse_ident_fn)?;
         let val = match v {
             Calc::Number(n) => n,
@@ -880,8 +924,7 @@ impl<V: CalcValue> Calc<V> {
         Ok(val)
     }
 
-    // PERF(port): `args` was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
-    pub fn parse_hypot(args: &mut Vec<Self>) -> CssResult<Option<Self>> {
+    pub fn parse_hypot(args: &mut [Self]) -> CssResult<Option<Self>> {
         if args.len() == 1 {
             let v = core::mem::replace(&mut args[0], Calc::Number(0.0));
             return Ok(Some(v));
@@ -961,7 +1004,7 @@ impl<V: CalcValue> Calc<V> {
     pub fn to_css_impl(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Calc::Value(v) => v.to_css(dest),
-            Calc::Number(n) => CSSNumberFns::to_css(n, dest),
+            Calc::Number(n) => CSSNumberFns::to_css(*n, dest),
             Calc::Sum { left: a, right: b } => {
                 a.to_css(dest)?;
                 // White space is always required.
@@ -982,9 +1025,9 @@ impl<V: CalcValue> Calc<V> {
                     let div = 1.0 / num;
                     calc.to_css(dest)?;
                     dest.delim(b'/', true)?;
-                    CSSNumberFns::to_css(&div, dest)?;
+                    CSSNumberFns::to_css(div, dest)?;
                 } else {
-                    CSSNumberFns::to_css(&num, dest)?;
+                    CSSNumberFns::to_css(num, dest)?;
                     dest.delim(b'*', true)?;
                     calc.to_css(dest)?;
                 }
@@ -1050,7 +1093,6 @@ impl<V: CalcValue> Calc<V> {
     /// I don't like how this function requires allocating a second ArrayList
     /// I am pretty sure we could do this reduction in place, or do it as the
     /// arguments are being parsed.
-    // PERF(port): `args`/`reduced` were arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
     fn reduce_args(args: &mut Vec<Self>, order: Ordering) {
         // Reduces the arguments of a min() or max() expression, combining compatible values.
         // e.g. min(1px, 1em, 2px, 3in) => min(1px, 1em)
@@ -1075,7 +1117,7 @@ impl<V: CalcValue> Calc<V> {
                 }
             }
 
-            // PORT NOTE: reshaped for borrowck — Zig stored `?*This`; Rust stores index.
+            // For borrowck, `found` stores an index rather than a pointer.
             if let Some(maybe_idx) = found {
                 if let Some(idx) = maybe_idx {
                     reduced[idx] = core::mem::replace(arg, Calc::Number(420.0));
@@ -1083,18 +1125,17 @@ impl<V: CalcValue> Calc<V> {
                 }
             } else {
                 reduced.push(core::mem::replace(arg, Calc::Number(420.0)));
-                // PERF(port): was assume_capacity-free append
                 continue;
             }
-            // arg dropped here (Zig: arg.deinit + dummy)
+            // arg dropped here
             *arg = Calc::Number(420.0);
         }
 
-        // Zig: css.deepDeinit(This, arena, args) — Rust: Drop on replace handles it.
+        // Drop on replace frees the old args.
         *args = reduced;
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             Calc::Sum { left, right } => {
                 left.is_compatible(browsers) && right.is_compatible(browsers)
@@ -1140,10 +1181,8 @@ pub enum MathFunction<V> {
     /// The `calc()` function.
     Calc(Calc<V>),
     /// The `min()` function.
-    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
     Min(Vec<Calc<V>>),
     /// The `max()` function.
-    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
     Max(Vec<Calc<V>>),
     /// The `clamp()` function.
     Clamp {
@@ -1166,7 +1205,6 @@ pub enum MathFunction<V> {
     /// The `sign()` function.
     Sign(Calc<V>),
     /// The `hypot()` function.
-    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
     Hypot(Vec<Calc<V>>),
 }
 
@@ -1338,7 +1376,7 @@ impl<V> MathFunction<V> {
         }
     }
 
-    // Zig `deinit` only freed owned Vec/Calc fields → handled by Drop. No explicit impl.
+    // Owned Vec/Calc fields are freed by Drop. No explicit impl.
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr>
     where
@@ -1416,7 +1454,7 @@ impl<V> MathFunction<V> {
         }
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool
     where
         V: CalcValue,
     {
@@ -1486,7 +1524,6 @@ pub enum RoundingStrategy {
 }
 
 fn arr2<T>(a: T, b: T) -> Vec<T> {
-    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
     vec![a, b]
 }
 
@@ -1512,7 +1549,7 @@ fn sqrtf32(v: f32) -> f32 {
     v.sqrt()
 }
 
-/// Zig `std.math.sign` — returns -1.0, 0.0, or 1.0 (NOT Rust's `f32::signum`, which
+/// Returns -1.0, 0.0, or 1.0 (NOT Rust's `f32::signum`, which
 /// returns ±1.0 for ±0.0).
 fn std_math_sign(v: f32) -> f32 {
     if v > 0.0 {
@@ -1541,7 +1578,7 @@ pub enum Constant {
 }
 
 impl Constant {
-    pub fn into_f32(&self) -> f32 {
+    pub fn into_f32(self) -> f32 {
         match self {
             Constant::E => core::f32::consts::E,
             Constant::Pi => core::f32::consts::PI,
@@ -1561,7 +1598,7 @@ fn absf(a: f32) -> f32 {
 // numeric-protocol surface (`mul_f32`/`try_sign`/`try_map`/`try_op{,_to}`/
 // `partial_cmp`/`try_from_angle`/`parse`/`to_css`/`is_compatible`) is
 // satisfied via `crate::values::protocol::*` supertraits; only the
-// calc-specific Zig `switch (V)` arms (`intoValue` / `addValue` / `intoCalc`
+// calc-specific methods (`intoValue` / `addValue` / `intoCalc`
 // / `eql`) live here.
 //
 // Any type whose protocol impls don't already exist elsewhere gets them
@@ -1607,16 +1644,14 @@ impl CalcValue for Angle {
     }
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        Angle::eql(self, other)
+        Angle::eql(*self, *other)
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // `protocol::*` forwarder stamper for `CalcValue` leaf types.
 //
-// Rust analogue of Zig's single comptime dispatcher in `src/css/generics.zig`
-// (`tryFromAngle`/`trySign`/`tryMap`/`tryOp`/`tryOpTo`/`partialCmp`, lines
-// ~489-570), which duck-types via `@hasDecl(T, "sign")` etc. Here each leaf
+// Each leaf
 // opts in per-trait; only the listed arms are stamped — `Parse`/`ToCss`/
 // `IsCompatible` already supplied by `impl_parse_tocss_via_inherent!` /
 // `bridge_is_compatible!` stay out of the invocation.
@@ -1642,6 +1677,10 @@ macro_rules! calc_protocol_forwarders {
         impl protocol::PartialCmp for $T { #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> { <$T>::partial_cmp(self, rhs) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
+    (@ $T:ty; partial_cmp: forward_copy, $($r:tt)*) => {
+        impl protocol::PartialCmp for $T { #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> { <$T>::partial_cmp(*self, *rhs) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
     (@ $T:ty; try_from_angle: forward, $($r:tt)*) => {
         impl protocol::TryFromAngle for $T { #[inline] fn try_from_angle(a: Angle) -> Option<Self> { <$T>::try_from_angle(a) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
@@ -1662,13 +1701,17 @@ macro_rules! calc_protocol_forwarders {
         impl protocol::TryMap for $T { #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { <$T>::try_map(self, f) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
+    (@ $T:ty; try_map: forward_copy, $($r:tt)*) => {
+        impl protocol::TryMap for $T { #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { <$T>::try_map(*self, f) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
     (@ $T:ty; try_map: $m:ident, $($r:tt)*) => {
         impl protocol::TryMap for $T { #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { Some(self.$m(f)) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; try_op: forward, $($r:tt)*) => {
         impl protocol::TryOp for $T {
-            #[inline] fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> { <$T>::try_op(self, rhs, ctx, f) }
+            #[inline] fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> { <$T>::try_op(*self, *rhs, ctx, f) }
         }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
@@ -1695,11 +1738,11 @@ macro_rules! calc_protocol_forwarders {
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; is_compatible: forward, $($r:tt)*) => {
-        impl protocol::IsCompatible for $T { #[inline] fn is_compatible(&self, b: css::targets::Browsers) -> bool { <$T>::is_compatible(self, b) } }
+        impl protocol::IsCompatible for $T { #[inline] fn is_compatible(&self, b: &css::targets::Browsers) -> bool { <$T>::is_compatible(self, b) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; is_compatible: always_true, $($r:tt)*) => {
-        impl protocol::IsCompatible for $T { #[inline] fn is_compatible(&self, _: css::targets::Browsers) -> bool { true } }
+        impl protocol::IsCompatible for $T { #[inline] fn is_compatible(&self, _: &css::targets::Browsers) -> bool { true } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; parse_to_css: forward, $($r:tt)*) => {
@@ -1707,18 +1750,23 @@ macro_rules! calc_protocol_forwarders {
         impl protocol::ToCss for $T { #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { <$T>::to_css(self, dest) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
+    (@ $T:ty; parse_to_css: forward_copy, $($r:tt)*) => {
+        impl protocol::Parse for $T { #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { <$T>::parse(input) } }
+        impl protocol::ToCss for $T { #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { <$T>::to_css(*self, dest) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
 }
 
 calc_protocol_forwarders!(Percentage {
     mul_f32: forward,
     try_from_angle: none,
-    try_sign: forward,
-    try_map: forward,
+    try_sign: sign,
+    try_map: forward_copy,
     try_op: forward,
-    try_op_to: |this, rhs, ctx, f| { Some(this.op_to(rhs, ctx, f)) },
-    partial_cmp: forward,
+    try_op_to: |this, rhs, ctx, f| { Some(this.op_to(*rhs, ctx, f)) },
+    partial_cmp: forward_copy,
     is_compatible: always_true,
-    parse_to_css: forward,
+    parse_to_css: forward_copy,
 });
 impl CalcValue for Percentage {
     #[inline]
@@ -1732,13 +1780,12 @@ impl CalcValue for Percentage {
     fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
-            // Zig: else → Percentage { v: NaN }
             _ => Ok(Percentage { v: f32::NAN }),
         }
     }
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        Percentage::eql(self, other)
+        Percentage::eql(*self, *other)
     }
 }
 
@@ -1764,7 +1811,7 @@ calc_protocol_forwarders!(Time {
             (Time::Milliseconds(a), Time::Seconds(b)) => f(ctx, a, b * 1000.0),
         })
     },
-    partial_cmp: forward,
+    partial_cmp: forward_copy,
     is_compatible: always_true,
 });
 impl CalcValue for Time {
@@ -1784,7 +1831,7 @@ impl CalcValue for Time {
     }
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        Time::eql(self, other)
+        Time::eql(*self, *other)
     }
 }
 
@@ -1821,7 +1868,6 @@ impl CalcValue for Length {
         Length::into_calc(self)
     }
     fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
-        // Zig: Length { .calc = Box::new(self) }
         Ok(Length::Calc(Box::new(c)))
     }
     #[inline]
@@ -1876,11 +1922,9 @@ macro_rules! dim_pct_protocol {
             fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
                 Ok(DimensionPercentage::Calc(Box::new(c)))
             }
-            #[inline] fn eql(&self, other: &Self) -> bool { DimensionPercentage::eql(self, other) }
+            #[inline] fn eql(&self, other: &Self) -> bool { self == other }
         }
     };
 }
 dim_pct_protocol!(LengthValue);
 dim_pct_protocol!(Angle, parse_to_css: forward,);
-
-// ported from: src/css/values/calc.zig

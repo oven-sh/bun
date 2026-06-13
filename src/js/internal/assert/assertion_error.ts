@@ -166,7 +166,11 @@ function getSimpleDiff(originalActual, actual: string, originalExpected, expecte
   const isStringComparison = typeof originalActual === "string" && typeof originalExpected === "string";
   // colored myers diff
   if (isStringComparison && colors.hasColors) {
-    return getColoredMyersDiff(actual, expected);
+    try {
+      return getColoredMyersDiff(actual, expected);
+    } catch {
+      return getStackedDiff(actual, expected);
+    }
   }
 
   return getStackedDiff(actual, expected);
@@ -213,13 +217,24 @@ function createErrDiff(actual, expected, operator, customMessage) {
     header = "";
   } else {
     const checkCommaDisparity = actual != null && typeof actual === "object";
-    const diff = myersDiff(inspectedActual, inspectedExpected, checkCommaDisparity, true);
+    let myersDiffMessage;
+    try {
+      const diff = myersDiff(inspectedActual, inspectedExpected, checkCommaDisparity, true);
+      myersDiffMessage = printMyersDiff(diff);
+    } catch {
+      myersDiffMessage = undefined;
+    }
 
-    const myersDiffMessage = printMyersDiff(diff);
-    message = myersDiffMessage.message;
-
-    if (myersDiffMessage.skipped) {
+    if (myersDiffMessage === undefined) {
+      message = `${ArrayPrototypeJoin.$call(ArrayPrototypeSlice.$call(inspectedSplitActual, 0, 50), "\n")}\n...`;
+      header = "";
       skipped = true;
+    } else {
+      message = myersDiffMessage.message;
+
+      if (myersDiffMessage.skipped) {
+        skipped = true;
+      }
     }
   }
 

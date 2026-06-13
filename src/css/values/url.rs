@@ -2,7 +2,6 @@ use crate::css_parser as css;
 use css::{CssResult, PrintErr, Printer};
 
 use bun_ast::ImportRecord;
-use bun_collections::VecExt;
 use bun_core::strings;
 
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
@@ -27,11 +26,8 @@ impl Url {
     }
 
     /// Returns whether the URL is absolute, and not relative.
-    pub fn is_absolute(&self, import_records: &Vec<ImportRecord>) -> bool {
-        let url: &[u8] = import_records
-            .at(self.import_record_idx as usize)
-            .path
-            .pretty;
+    pub fn is_absolute(&self, import_records: &[ImportRecord]) -> bool {
+        let url: &[u8] = import_records[self.import_record_idx as usize].path.pretty;
 
         // Quick checks. If the url starts with '.', it is relative.
         if strings::starts_with_char(url, b'.') {
@@ -71,7 +67,7 @@ impl Url {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::dependencies::UrlDependency;
         let dep: Option<UrlDependency> = if dest.dependencies.is_some() {
-            // PORT NOTE: hoist `get_import_records` (mut borrow) out of the arg
+            // `get_import_records` (mut borrow) is hoisted out of the arg
             // list so `filename()` (shared borrow) can run; result is `&'a _`.
             let import_records = dest.get_import_records()?;
             Some(UrlDependency::new(
@@ -94,7 +90,6 @@ impl Url {
             dest.write_char(b')')?;
 
             if let Some(dependencies) = &mut dest.dependencies {
-                // PORT NOTE: bun.handleOom dropped — Vec::push aborts on OOM via global arena
                 dependencies.push(crate::Dependency::Url(d));
             }
 
@@ -112,12 +107,11 @@ impl Url {
         let url: &[u8] = unsafe { bun_collections::detach_lifetime(url) };
 
         if dest.minify && !is_internal {
-            // PERF(port): was std.Io.Writer.Allocating with dest.arena — using Vec<u8>; profile in Phase B
             let mut buf: Vec<u8> = Vec::new();
             // PERF(alloc) we could use stack fallback here?
-            // PORT NOTE: inlined `Token::to_css_generic(UnquotedUrl(url))` —
-            // `Token` payloads are `&'static [u8]` placeholders in Phase A and
-            // we only have `&'a [u8]` here.
+            // `Token::to_css_generic(UnquotedUrl(url))` is inlined here —
+            // `Token` payloads are `&'static [u8]` placeholders and we only
+            // have `&'a [u8]`.
             use css::WriteAll;
             if buf
                 .write_all(b"url(")
@@ -152,8 +146,6 @@ impl Url {
     }
 
     pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: Zig `css.implementDeepClone` is field-wise reflection; both
-        // fields (`u32`, `dependencies::Location`) are `Copy`, so identity copy.
         Url {
             import_record_idx: self.import_record_idx,
             loc: self.loc,
@@ -169,11 +161,8 @@ impl Url {
     // TODO: dedupe import records??
     // This might not fucking work
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // PORT NOTE: Zig `css.implementHash` is field-wise reflection. Only
-        // `import_record_idx` participates in identity (matches `eql` above);
-        // `loc` is presentation metadata.
+        // Only `import_record_idx` participates in identity (matches `eql`
+        // above); `loc` is presentation metadata.
         hasher.update(&self.import_record_idx.to_ne_bytes());
     }
 }
-
-// ported from: src/css/values/url.zig

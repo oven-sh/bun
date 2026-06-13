@@ -10,10 +10,10 @@ bun_dispatch::link_interface! {
     }
 }
 
-pub struct CircleT {
+pub(crate) struct CircleT {
     r: f64,
 }
-pub struct SquareT {
+pub(crate) struct SquareT {
     s: f64,
 }
 

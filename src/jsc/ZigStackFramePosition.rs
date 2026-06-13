@@ -20,12 +20,9 @@ impl ZigStackFramePosition {
     };
 
     pub fn is_invalid(&self) -> bool {
-        // Zig: std.mem.eql(u8, std.mem.asBytes(this), std.mem.asBytes(&invalid))
-        // #[repr(C)] + derived PartialEq on POD fields is equivalent.
         *self == Self::INVALID
     }
 
-    // TODO(port): narrow error set
     pub fn decode<R>(reader: &mut R) -> Result<Self, bun_core::Error>
     where
         R: ?Sized + bun_analytics::Reader,
@@ -33,9 +30,9 @@ impl ZigStackFramePosition {
         Ok(Self {
             line: Ordinal::from_zero_based(reader.read_value::<i32>()?),
             column: Ordinal::from_zero_based(reader.read_value::<i32>()?),
-            // TODO(port): Zig's `decode` omits `line_start_byte` in the struct literal
-            // (extern-struct field left at zero/default). Confirm intended value in Phase B.
-            line_start_byte: 0,
+            // `encode` never writes this field, so a decoded frame has no
+            // line-start-byte information: -1 means "not present".
+            line_start_byte: -1,
         })
     }
 
@@ -44,5 +41,3 @@ impl ZigStackFramePosition {
         writer.write_int(self.column.zero_based());
     }
 }
-
-// ported from: src/jsc/ZigStackFramePosition.zig

@@ -59,7 +59,7 @@ use bun_core::StringBuilder;
 use bun_core::{OwnedString, strings};
 use bun_url::PercentEncoding;
 use bun_url::whatwg::URL as JscUrl;
-use enum_map::{Enum, EnumMap, enum_map};
+use enum_map::{Enum, EnumMap};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Errors
@@ -120,11 +120,10 @@ pub enum Representation {
 // HostedGitInfo
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: reshaped for borrowck. The Zig stores `committish`/`project`/`user`
-// as `[]const u8` slices that alias into `_memory_buffer` (a single owned
-// allocation). Rust can't express that self-reference safely without lifetimes
-// on the struct (forbidden in Phase A). We store byte ranges into
-// `_memory_buffer` instead and expose slice accessors.
+// `committish`/`project`/`user` conceptually alias into `_memory_buffer` (a
+// single owned allocation), but Rust can't express that self-reference safely
+// without lifetimes on the struct. Store byte ranges into `_memory_buffer`
+// instead and expose slice accessors.
 pub struct HostedGitInfo {
     committish: Option<Range<usize>>,
     project: Range<usize>,
@@ -160,7 +159,7 @@ impl HostedGitInfo {
     /// Therefore, we use this function to first take a URL string, encode it into a *jsc.URL and
     /// then decode it back to a normal string. Kind of a lot of work, but it works.
     ///
-    /// PORT NOTE: returns a `Range<usize>` into the StringBuilder's allocated buffer
+    /// Returns a `Range<usize>` into the StringBuilder's allocated buffer
     /// instead of a borrowed slice (see struct-level note).
     fn decode_and_append(
         sb: &mut StringBuilder,
@@ -168,8 +167,6 @@ impl HostedGitInfo {
     ) -> Result<Range<usize>, HostedGitInfoError> {
         let start = sb.len;
         let writable = sb.writable();
-        // PORT NOTE: Zig `PercentEncoding.decode(Writer, writer, input)` ported via the
-        // fixed-buffer `decode_into(out, input) -> Result<u32, _>` overload in bun_url.
         let decoded_len = PercentEncoding::decode_into(writable, input)
             .map_err(|_| HostedGitInfoError::InvalidURL)? as usize;
         sb.len += decoded_len;
@@ -236,14 +233,7 @@ impl HostedGitInfo {
         }
     }
 
-    // PORT NOTE: `pub fn deinit` → `impl Drop`. Body only freed `_memory_buffer`;
-    // `Box<[u8]>` drops automatically, so no explicit Drop impl is needed.
-
-    // PORT NOTE: `pub const toJS = @import("../install_jsc/...")` deleted —
     // `to_js` is an extension-trait method living in `bun_install_jsc`.
-
-    // PORT NOTE: `pub const StringPair` was a Zig-nested struct; hoisted to module
-    // scope below (Rust forbids struct defs inside `impl`).
 
     /// Given a URL-like (including shortcuts) string, parses it into a HostedGitInfo structure.
     /// The HostedGitInfo is valid only for as long as `git_url` is valid.
@@ -251,8 +241,8 @@ impl HostedGitInfo {
         // git_url_mut may carry two ownership semantics:
         //  - It aliases `git_url`, in which case it must not be freed.
         //  - It actually points to a new allocation, in which case it must be freed.
-        // PORT NOTE: modeled as Cow-like local; Drop handles the owned case.
-        let mut git_url_owned: Option<Box<[u8]>> = None;
+        // Modeled as a Cow-like local; Drop handles the owned case.
+        let git_url_owned: Option<Box<[u8]>>;
         let mut git_url_mut: &[u8] = git_url;
 
         if is_github_shorthand(git_url) {
@@ -265,7 +255,10 @@ impl HostedGitInfo {
             let concatenated = strings::concat(&[b"github:", git_url]);
             git_url_owned = Some(concatenated);
             git_url_mut = git_url_owned.as_deref().unwrap();
+        } else {
+            git_url_owned = None;
         }
+        let _ = &git_url_owned;
 
         let Ok(parsed) = parse_url(git_url_mut) else {
             return Ok(None);
@@ -344,12 +337,9 @@ impl HostedGitInfo {
     }
 }
 
-// PORT NOTE: Zig nested `pub const StringPair = struct {...}` inside HostedGitInfo;
-// Rust can't nest struct defs inside `impl`, so it lives at module scope but is
-// re-exported through the type's namespace conceptually.
 pub struct StringPair {
-    // PORT NOTE: Zig `[]const u8` aliasing-semantics. No constructor in this module
-    // (consumed by install_jsc), so own the buffers — callers allocate per use.
+    // No constructor in this module (consumed by install_jsc), so own the
+    // buffers — callers allocate per use.
     pub save_spec: Box<[u8]>,
     pub fetch_spec: Option<Box<[u8]>>,
 }
@@ -377,8 +367,7 @@ impl Drop for OwnedJscUrl {
     }
 }
 
-// PORT NOTE: anonymous return struct in Zig → named struct here.
-// `url` is OWNED per LIFETIMES.tsv (jsc.URL.fromString creates; caller deinits).
+// `url` is owned: `jsc.URL.fromString` creates it and the holder deinits.
 pub struct ParsedUrl<'a> {
     pub url: OwnedJscUrl,
     pub proto: UrlProtocol<'a>,
@@ -448,13 +437,13 @@ pub enum WellDefinedProtocol {
 
 /// Buffer type for holding a protocol string with colon (e.g., "git+rsync:").
 /// Sized to hold the longest protocol name plus one character for the colon.
-// PORT NOTE: hoisted from `impl WellDefinedProtocol` — inherent associated types
-// are unstable (E0658).
-pub type StringWithColonBuffer = [u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
+// Lives at module scope (not inside `impl WellDefinedProtocol`) because
+// inherent associated types are unstable (E0658).
+pub(crate) type StringWithColonBuffer = [u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
 
-impl WellDefinedProtocol {
+bun_core::comptime_string_map! {
     /// Mapping from protocol string (without colon) to WellDefinedProtocol.
-    pub const STRINGS: phf::Map<&'static [u8], WellDefinedProtocol> = phf::phf_map! {
+    pub(crate) static PROTOCOL_STRINGS: WellDefinedProtocol = {
         b"bitbucket" => WellDefinedProtocol::Bitbucket,
         b"gist" => WellDefinedProtocol::Gist,
         b"git+file" => WellDefinedProtocol::GitPlusFile,
@@ -471,8 +460,9 @@ impl WellDefinedProtocol {
         b"sourcehut" => WellDefinedProtocol::Sourcehut,
         b"ssh" => WellDefinedProtocol::Ssh,
     };
+}
 
-    // PORT NOTE: Zig `strings.getKey(self)` did reverse lookup; provide explicit map.
+impl WellDefinedProtocol {
     fn protocol_str(self) -> &'static [u8] {
         match self {
             Self::Bitbucket => b"bitbucket",
@@ -495,25 +485,25 @@ impl WellDefinedProtocol {
 
     /// Look up a protocol from a string that includes the trailing colon (e.g., "https:").
     /// This method strips the colon before looking up in the strings map.
-    pub fn from_string_with_colon(protocol_with_colon: &[u8]) -> Option<Self> {
+    pub(crate) fn from_string_with_colon(protocol_with_colon: &[u8]) -> Option<Self> {
         if protocol_with_colon.is_empty() {
             None
         } else {
-            Self::STRINGS
+            PROTOCOL_STRINGS
                 .get(strings::trim_suffix(protocol_with_colon, b":"))
                 .copied()
         }
     }
 
     /// Maximum length of any protocol string in the strings map (computed at compile time).
-    // PORT NOTE: Zig computed this with a comptime loop over `strings.kvs`. The
-    // longest keys ("git+https", "git+rsync", "sourcehut", "bitbucket") are 9 bytes.
-    pub const MAX_PROTOCOL_LENGTH: usize = 9;
+    // The longest keys in `PROTOCOL_STRINGS` ("git+https", "git+rsync", "sourcehut",
+    // "bitbucket") are 9 bytes.
+    pub(crate) const MAX_PROTOCOL_LENGTH: usize = 9;
 
     /// Get the protocol string with colon (e.g., "https:") for a given protocol enum.
     /// Takes a buffer pointer to hold the result.
     /// Returns a slice into that buffer containing the protocol string with colon.
-    pub fn to_string_with_colon(self, buf: &mut StringWithColonBuffer) -> &[u8] {
+    pub(crate) fn to_string_with_colon(self, buf: &mut StringWithColonBuffer) -> &[u8] {
         // Look up the protocol string (without colon) from the map
         let protocol_str = self.protocol_str();
 
@@ -589,7 +579,7 @@ impl WellDefinedProtocol {
 /// Test whether the given node-package-arg string is a GitHub shorthand.
 ///
 /// This mirrors the implementation of hosted-git-info, though it is significantly faster.
-pub fn is_github_shorthand(npa_str: &[u8]) -> bool {
+pub(crate) fn is_github_shorthand(npa_str: &[u8]) -> bool {
     // The implementation in hosted-git-info is a multi-pass algorithm. We've opted to implement a
     // single-pass algorithm for better performance.
     //
@@ -628,8 +618,8 @@ pub fn is_github_shorthand(npa_str: &[u8]) -> bool {
             }
             _ => {
                 // Implement spaceOnlyAfterHash
-                // PORT NOTE: match Zig std.ascii.isWhitespace exactly (includes VT 0x0B and FF 0x0C;
-                // Rust u8::is_ascii_whitespace excludes VT).
+                // The whitespace set deliberately includes VT 0x0B and FF 0x0C;
+                // Rust's `u8::is_ascii_whitespace` excludes VT, so spell it out.
                 if matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C) && pound_idx.is_none() {
                     return false;
                 }
@@ -652,8 +642,8 @@ pub fn is_github_shorthand(npa_str: &[u8]) -> bool {
 // UrlProtocol / UrlProtocolPair
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: Zig `union(enum) { custom: []const u8 }` borrowed the input `npa_str`.
-// Carries a BORROW_PARAM lifetime; lives only for the duration of `parse_url`.
+// The `Custom` variant borrows the input `npa_str`; this type lives only for
+// the duration of `parse_url`.
 #[derive(Debug, Clone, Copy)]
 pub enum UrlProtocol<'a> {
     WellFormed(WellDefinedProtocol),
@@ -668,7 +658,7 @@ pub enum UrlProtocol<'a> {
 
 impl<'a> UrlProtocol<'a> {
     /// Deduces the default representation for this protocol.
-    pub fn default_representation(self) -> Representation {
+    pub(crate) fn default_representation(self) -> Representation {
         match self {
             UrlProtocol::WellFormed(p) => p.default_representation(),
             _ => Representation::Sshurl, // Unknown/custom protocols default to sshurl
@@ -676,34 +666,29 @@ impl<'a> UrlProtocol<'a> {
     }
 }
 
-// PORT NOTE: `url: union(enum) { managed: {buf, allocator}, unmanaged: []const u8 }`
-// → enum with `Managed(Box<[u8]>)` / `Unmanaged(&'a [u8])`. Allocator dropped.
-pub enum UrlProtocolPairUrl<'a> {
+pub(crate) enum UrlProtocolPairUrl<'a> {
     Managed(Box<[u8]>),
     Unmanaged(&'a [u8]),
 }
 
-pub struct UrlProtocolPair<'a> {
+pub(crate) struct UrlProtocolPair<'a> {
     pub url: UrlProtocolPairUrl<'a>,
     pub protocol: UrlProtocol<'a>,
 }
 
 impl<'a> UrlProtocolPair<'a> {
-    pub fn url_slice(&self) -> &[u8] {
+    pub(crate) fn url_slice(&self) -> &[u8] {
         match &self.url {
             UrlProtocolPairUrl::Managed(s) => s,
             UrlProtocolPairUrl::Unmanaged(s) => s,
         }
     }
 
-    // PORT NOTE: `deinit` → Drop; `Managed(Box<[u8]>)` frees automatically.
-
     /// Given a protocol pair, create a jsc.URL if possible. May allocate, but owns its memory.
     fn to_url(&self) -> Option<OwnedJscUrl> {
         // Ehhh.. Old IE's max path length was 2K so let's just use that. I searched for a
         // statistical distribution of URL lengths and found nothing.
         const _LONG_URL_THRESH: usize = 2048;
-        // PERF(port): was stack-fallback (std.heap.stackFallback) — profile in Phase B
 
         let mut protocol_buf: StringWithColonBuffer =
             [0u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
@@ -728,7 +713,7 @@ impl<'a> UrlProtocolPair<'a> {
 
     fn concat_parts_to_url(parts: &[&[u8]]) -> Option<OwnedJscUrl> {
         // TODO(markovejnovic): There is a sad unnecessary allocation here that I don't know how to
-        // get rid of -- in theory, URL.zig could allocate once.
+        // get rid of -- in theory, the URL layer could allocate once.
         let new_str = strings::concat(parts);
         // Drop handles `defer allocator.free(new_str)`.
         JscUrl::from_utf8(&new_str).map(OwnedJscUrl)
@@ -871,7 +856,7 @@ fn normalize_protocol(npa_str: &[u8]) -> UrlProtocolPair<'_> {
 /// Attempt to correct an scp-style URL into a proper URL, parsable with jsc.URL.
 ///
 /// This function assumes that the input is an scp-style URL.
-pub fn correct_url<'a>(
+pub(crate) fn correct_url<'a>(
     url_proto_pair: &UrlProtocolPair<'a>,
 ) -> Result<UrlProtocolPair<'a>, AllocError> {
     let at_idx: isize = if let Some(idx) =
@@ -901,8 +886,8 @@ pub fn correct_url<'a>(
     }
 
     if col_idx == -1 && matches!(url_proto_pair.protocol, UrlProtocol::Unknown) {
-        // PORT NOTE: Zig copies `url_proto_pair.url` (a tagged union) by value. Here
-        // we know `normalize_protocol` only ever returns `Unmanaged`, so re-borrow.
+        // `normalize_protocol` only ever returns `Unmanaged` here, so re-borrow
+        // rather than move; the `Managed` arm clones for completeness.
         return Ok(UrlProtocolPair {
             url: match &url_proto_pair.url {
                 UrlProtocolPairUrl::Unmanaged(s) => UrlProtocolPairUrl::Unmanaged(s),
@@ -954,43 +939,6 @@ impl HostProvider {
         HostProvider::Sourcehut,
     ];
 
-    fn format_ssh(
-        self,
-        user: Option<&[u8]>,
-        project: &[u8],
-        committish: Option<&[u8]>,
-    ) -> Result<Vec<u8>, AllocError> {
-        (configs()[self].format_ssh)(self, user, project, committish)
-    }
-
-    fn format_ssh_url(
-        self,
-        user: Option<&[u8]>,
-        project: &[u8],
-        committish: Option<&[u8]>,
-    ) -> Result<Vec<u8>, AllocError> {
-        (configs()[self].format_sshurl)(self, user, project, committish)
-    }
-
-    fn format_https(
-        self,
-        auth: Option<&[u8]>,
-        user: Option<&[u8]>,
-        project: &[u8],
-        committish: Option<&[u8]>,
-    ) -> Result<Vec<u8>, AllocError> {
-        (configs()[self].format_https)(self, auth, user, project, committish)
-    }
-
-    fn format_shortcut(
-        self,
-        user: Option<&[u8]>,
-        project: &[u8],
-        committish: Option<&[u8]>,
-    ) -> Result<Vec<u8>, AllocError> {
-        (configs()[self].format_shortcut)(self, user, project, committish)
-    }
-
     fn extract(self, url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
         (configs()[self].format_extract)(url)
     }
@@ -1008,34 +956,16 @@ impl HostProvider {
         configs()[self].domain
     }
 
-    fn protocols(self) -> &'static [WellDefinedProtocol] {
-        configs()[self].protocols
-    }
-
     fn shortcut_without_colon(self) -> &'static [u8] {
         let shct = self.shortcut();
         &shct[0..shct.len() - 1]
-    }
-
-    fn tree_path(self) -> Option<&'static [u8]> {
-        configs()[self].tree_path
-    }
-
-    fn blob_path(self) -> Option<&'static [u8]> {
-        configs()[self].blob_path
-    }
-
-    fn edit_path(self) -> Option<&'static [u8]> {
-        configs()[self].edit_path
     }
 
     /// Find the appropriate host provider by its shortcut (e.g. "github:").
     ///
     /// The second parameter allows you to declare whether the given string includes the protocol:
     /// colon or not.
-    // PERF(port): was comptime monomorphization — profile in Phase B
     fn from_shortcut(shortcut_str: &[u8], with_colon: bool) -> Option<HostProvider> {
-        // PORT NOTE: Zig used `inline for (std.meta.fields(Self))` (comptime reflection).
         for provider in Self::ALL {
             let shortcut_matches = if with_colon {
                 provider.shortcut() == shortcut_str
@@ -1053,14 +983,9 @@ impl HostProvider {
 
     /// Find the appropriate host provider by its domain (e.g. "github.com").
     fn from_domain(domain_str: &[u8]) -> Option<HostProvider> {
-        // PORT NOTE: Zig used `inline for (std.meta.fields(Self))` (comptime reflection).
-        for provider in Self::ALL {
-            if provider.domain() == domain_str {
-                return Some(provider);
-            }
-        }
-
-        None
+        Self::ALL
+            .into_iter()
+            .find(|&provider| provider.domain() == domain_str)
     }
 
     /// Parse a URL and return the appropriate host provider, if any.
@@ -1078,7 +1003,6 @@ impl HostProvider {
     /// Given a URL, use the domain in the URL to find the appropriate host provider.
     fn from_url_domain(url: &JscUrl) -> Option<HostProvider> {
         const _MAX_HOSTNAME_LEN: usize = 253;
-        // PERF(port): was stack-fallback (FixedBufferAllocator) — profile in Phase B
 
         let hostname_str = OwnedString::new(url.hostname());
 
@@ -1109,8 +1033,8 @@ pub struct Config {
     pub format_extract: formatters::extract::Type,
 }
 
-// PORT NOTE: `ExtractResult` corresponds to `Config.formatters.extract.Result`.
-// Reshaped to use `Range<usize>` into `_owned_buffer` (see HostedGitInfo note).
+// Uses `Range<usize>` into `_owned_buffer` rather than self-referential
+// slices (see the HostedGitInfo struct-level note).
 pub struct ExtractResult {
     pub user: Option<Range<usize>>,
     pub project: Range<usize>,
@@ -1119,8 +1043,6 @@ pub struct ExtractResult {
 }
 
 impl ExtractResult {
-    // PORT NOTE: `deinit` → Drop; `Option<Box<[u8]>>` frees automatically.
-
     /// Return the buffer which owns this Result and the allocator responsible for
     /// freeing it.
     ///
@@ -1163,7 +1085,7 @@ pub mod formatters {
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError>;
 
-        pub fn default(
+        pub(crate) fn default(
             self_: HostProvider,
             user: Option<&[u8]>,
             project: &[u8],
@@ -1187,7 +1109,7 @@ pub mod formatters {
             Ok(v)
         }
 
-        pub fn gist(
+        pub(crate) fn gist(
             self_: HostProvider,
             _user: Option<&[u8]>,
             project: &[u8],
@@ -1221,7 +1143,7 @@ pub mod formatters {
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError>;
 
-        pub fn default(
+        pub(crate) fn default(
             self_: HostProvider,
             user: Option<&[u8]>,
             project: &[u8],
@@ -1245,7 +1167,7 @@ pub mod formatters {
             Ok(v)
         }
 
-        pub fn gist(
+        pub(crate) fn gist(
             self_: HostProvider,
             _user: Option<&[u8]>,
             project: &[u8],
@@ -1280,7 +1202,7 @@ pub mod formatters {
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError>;
 
-        pub fn default(
+        pub(crate) fn default(
             self_: HostProvider,
             auth: Option<&[u8]>,
             user: Option<&[u8]>,
@@ -1310,7 +1232,7 @@ pub mod formatters {
             Ok(v)
         }
 
-        pub fn gist(
+        pub(crate) fn gist(
             self_: HostProvider,
             _auth: Option<&[u8]>,
             _user: Option<&[u8]>,
@@ -1333,7 +1255,7 @@ pub mod formatters {
             Ok(v)
         }
 
-        pub fn sourcehut(
+        pub(crate) fn sourcehut(
             self_: HostProvider,
             _auth: Option<&[u8]>,
             user: Option<&[u8]>,
@@ -1371,7 +1293,7 @@ pub mod formatters {
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError>;
 
-        pub fn default(
+        pub(crate) fn default(
             self_: HostProvider,
             user: Option<&[u8]>,
             project: &[u8],
@@ -1396,7 +1318,7 @@ pub mod formatters {
             Ok(v)
         }
 
-        pub fn gist(
+        pub(crate) fn gist(
             self_: HostProvider,
             _user: Option<&[u8]>,
             project: &[u8],
@@ -1425,7 +1347,7 @@ pub mod formatters {
 
         pub type Type = fn(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError>;
 
-        pub fn github(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn github(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1453,9 +1375,8 @@ pub mod formatters {
                 }
             }
 
-            // PORT NOTE: in Zig the `committish` borrow from `fragment_utf8` is freed
-            // before being copied into the StringBuilder. We hold the owned fragment
-            // here to keep the borrow valid until copied.
+            // Hold the owned fragment here so the `committish` borrow stays
+            // valid until it's copied into the StringBuilder.
             let fragment_utf8;
             let committish: Option<&[u8]> = if type_part.is_none() {
                 let fragment_str = OwnedString::new(url.fragment_identifier());
@@ -1494,7 +1415,7 @@ pub mod formatters {
             }))
         }
 
-        pub fn bitbucket(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn bitbucket(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1552,7 +1473,7 @@ pub mod formatters {
             }))
         }
 
-        pub fn gitlab(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn gitlab(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1606,7 +1527,7 @@ pub mod formatters {
             }))
         }
 
-        pub fn gist(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn gist(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1691,7 +1612,7 @@ pub mod formatters {
             }))
         }
 
-        pub fn sourcehut(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        pub(crate) fn sourcehut(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
@@ -1736,8 +1657,8 @@ pub mod formatters {
                 return Ok(None);
             };
 
-            // PORT NOTE: Zig inlines PercentEncoding.decode here instead of calling
-            // decodeAndAppend (returns null instead of erroring on decode failure).
+            // Inline percent-decode rather than `decode_and_append`: this path
+            // returns None instead of erroring on decode failure.
             let user_slice = 'blk: {
                 let start = sb.len;
                 let writable = sb.writable();
@@ -1794,9 +1715,9 @@ pub mod formatters {
             ) -> Result<Vec<u8>, AllocError>,
         >;
 
-        pub const DEFAULT: Type = None;
+        pub(crate) const DEFAULT: Type = None;
 
-        pub fn github(
+        pub(crate) fn github(
             self_: HostProvider,
             auth: Option<&[u8]>,
             user: Option<&[u8]>,
@@ -1826,7 +1747,7 @@ pub mod formatters {
             Ok(v)
         }
 
-        pub fn gist(
+        pub(crate) fn gist(
             self_: HostProvider,
             _auth: Option<&[u8]>,
             _user: Option<&[u8]>,
@@ -1852,18 +1773,17 @@ pub mod formatters {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// configs (std.enums.EnumArray)
+// configs
 // ──────────────────────────────────────────────────────────────────────────
 
-// PERF(port): was `std.enums.EnumArray(Self, Config).init(.{...})` (comptime
-// dense array indexed by enum). `enum_map::EnumMap` can't be const-initialized
-// with fn pointers, so this uses a `OnceLock` static — profile in Phase B and
-// flatten into a `match`-based accessor if it shows up.
+// `enum_map::EnumMap` can't be const-initialized
+// with fn pointers, so this uses a `OnceLock` static — flatten into a
+// `match`-based accessor if it shows up on a hot path.
 fn configs() -> &'static EnumMap<HostProvider, Config> {
     use std::sync::OnceLock;
     static CONFIGS: OnceLock<EnumMap<HostProvider, Config>> = OnceLock::new();
     CONFIGS.get_or_init(|| {
-        enum_map! {
+        EnumMap::from_fn(|k| match k {
             HostProvider::Bitbucket => Config {
                 protocols: &[
                     WellDefinedProtocol::GitPlusHttp,
@@ -1944,10 +1864,7 @@ fn configs() -> &'static EnumMap<HostProvider, Config> {
                 format_extract: formatters::extract::gitlab,
             },
             HostProvider::Sourcehut => Config {
-                protocols: &[
-                    WellDefinedProtocol::GitPlusSsh,
-                    WellDefinedProtocol::Https,
-                ],
+                protocols: &[WellDefinedProtocol::GitPlusSsh, WellDefinedProtocol::Https],
                 domain: b"git.sr.ht",
                 shortcut: b"sourcehut:",
                 tree_path: Some(b"tree"),
@@ -1960,7 +1877,7 @@ fn configs() -> &'static EnumMap<HostProvider, Config> {
                 format_git: formatters::git::DEFAULT,
                 format_extract: formatters::extract::sourcehut,
             },
-        }
+        })
     })
 }
 
@@ -1968,10 +1885,7 @@ fn configs() -> &'static EnumMap<HostProvider, Config> {
 // TestingAPIs
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE (layering): `pub const X = @import("../install_jsc/...")` aliases deleted —
-// `js_parse_url` / `js_from_url` live in `bun_install_jsc` (higher tier). Re-exporting
-// them here would re-introduce the install ↔ jsc cycle. Module kept as a marker so
-// Zig grep for `TestingAPIs` still lands here.
+// Layering: `js_parse_url` / `js_from_url` live in `bun_install_jsc` (higher
+// tier). Re-exporting them here would re-introduce the install ↔ jsc cycle.
+// Module kept as a marker for the original `TestingAPIs` namespace.
 pub mod testing_apis {}
-
-// ported from: src/install/hosted_git_info.zig

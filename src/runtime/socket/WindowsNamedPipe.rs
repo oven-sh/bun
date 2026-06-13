@@ -18,11 +18,13 @@
 //! with µWebSockets, bridging the gap between libuv's pipe handling and uSockets'
 //! unified socket interface.
 
-use core::ffi::{CStr, c_uint, c_void};
+use core::ffi::{c_uint, c_void};
+#[cfg(windows)]
 use core::ptr::NonNull;
 
 use bun_boringssl_sys as boringssl;
-use bun_collections::{ByteVecExt, VecExt};
+#[cfg(windows)]
+use bun_collections::ByteVecExt;
 use bun_core::timespec;
 use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
@@ -40,11 +42,12 @@ use bun_uws::us_bun_verify_error_t;
 
 use crate::socket::SSLConfig;
 use crate::socket::ssl_wrapper::{self, SSLWrapper};
-use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+#[cfg(windows)]
+use crate::timer::EventLoopTimerTag;
+use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState};
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
-// Zig `pub const CertError = UpgradedDuplex.CertError;`
 pub type CertError = crate::socket::upgraded_duplex::CertError;
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
@@ -53,7 +56,7 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 
 pub struct WindowsNamedPipe {
     pub wrapper: Option<WrapperType>,
-    /// Non-owning alias of the heap `uv::Pipe` (Zig: `?*uv.Pipe`). The owning
+    /// Non-owning alias of the heap `uv::Pipe`. The owning
     /// `Box<uv::Pipe>` is leaked in [`from`] and adopted by
     /// `self.writer.source` (`Source::Pipe`) inside [`start`]; this field only
     /// ever observes/null-checks the handle, never frees it.
@@ -61,16 +64,14 @@ pub struct WindowsNamedPipe {
     pub pipe: Option<NonNull<uv::Pipe>>, // any duplex
     #[cfg(not(windows))]
     pub pipe: (),
-    // TODO(port): lifetime — JSC_BORROW; VM outlives this struct. Using &'static for Phase A;
-    // create a timeout version that doesn't need the jsc VM
+    /// The per-thread VM singleton outlives this struct (it is torn down only
+    /// at thread exit, after every named pipe is closed), so `&'static` is the
+    /// honest model here rather than a threaded lifetime.
     pub vm: &'static VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
 
-    // TODO(port): `bun.io.StreamingWriter(WindowsNamedPipe, .{ onClose, onWritable, onError, onWrite })`
-    // is a comptime type-generator binding callbacks at type level. Phase B: encode callbacks as a
-    // trait impl (`impl StreamingWriterHandler for WindowsNamedPipe`) or const-generic vtable.
     pub writer: StreamingWriter<WindowsNamedPipe>,
 
     pub incoming: Vec<u8>, // Maybe we should use IPCBuffer here as well
@@ -182,8 +183,7 @@ impl WindowsNamedPipe {
     /// adopts it (before adoption it is the leaked `Box` from [`from`]).
     /// Single JS thread; the writer never holds a competing `&mut uv::Pipe`
     /// across a call into this struct, so the borrow is exclusive for its
-    /// duration. FFI-adjacent: this is the libuv-handle raw-pointer deref the
-    /// Zig `this.pipe.?` does implicitly.
+    /// duration. FFI-adjacent: this is a libuv-handle raw-pointer deref.
     #[cfg(windows)]
     #[inline]
     fn pipe_mut(&mut self) -> Option<&mut uv::Pipe> {
@@ -203,10 +203,6 @@ impl WindowsNamedPipe {
     /// if `uv_pipe_init` had already run — leave the handle in the libuv
     /// `handle_queue` with no `uv_close` ever scheduled (loop never drains).
     /// `close_and_destroy` covers both states via its `loop_.is_null()` branch.
-    ///
-    /// PORT NOTE: the Zig spec has the same gap (WindowsNamedPipe.zig
-    /// L334-401); this is a deliberate divergence to plug a pre-existing leak,
-    /// not a transcription mismatch.
     ///
     /// MUST NOT be called once `start_with_pipe` has adopted the allocation
     /// (would double-free against `writer.source`'s `Box`).
@@ -234,30 +230,19 @@ impl WindowsNamedPipe {
         (self.handlers.on_writable)(self.handlers.ctx);
     }
 
-    fn on_pipe_close(&mut self) {
-        bun_output::scoped_log!(WindowsNamedPipe, "onPipeClose");
-        self.flags.set_disconnected(true);
-        #[cfg(windows)]
-        {
-            // Non-owning `NonNull` — clearing it does NOT free. The writer's
-            // `Source::Pipe(Box)` is the sole owner and frees via
-            // `close_and_destroy` (Zig: `this.pipe = null` is a raw-ptr null-out).
-            self.pipe = None;
-        }
-        self.on_close();
-    }
-
+    #[cfg(windows)]
     fn on_read_alloc(&mut self, suggested_size: usize) -> &mut [u8] {
         // SAFETY: libuv writes into this region before on_read commits.
         let spare = unsafe { self.incoming.uv_alloc_spare_u8(suggested_size) };
         &mut spare[..suggested_size]
     }
 
-    // PORT NOTE: takes `nread` (not the libuv `buffer` slice) because that
+    // takes `nread` (not the libuv `buffer` slice) because that
     // slice points *into* `self.incoming` — see `StreamReader::on_read` below
-    // for the Stacked-Borrows split. The Zig `is_slice_in_buffer` debug assert
-    // is dropped: libuv guarantees the read buffer is the one returned from
+    // for the Stacked-Borrows split. No "is slice in buffer" debug assert:
+    // libuv guarantees the read buffer is the one returned from
     // `on_read_alloc`, and we no longer hold the original pointer here.
+    #[cfg(windows)]
     fn on_read(&mut self, nread: usize) {
         bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", nread);
         // SAFETY: `nread` bytes written by libuv into on_read_alloc's slice.
@@ -275,8 +260,6 @@ impl WindowsNamedPipe {
         //   (b) call `receive_data` through a raw `*mut WrapperType` so no
         //       outer `&mut self.wrapper` Unique tag is held across the
         //       re-entrant retag (raw-ptr-per-field pattern, see jsc_hooks.rs).
-        // The Zig original aliases freely (`wrapper.receiveData(data)` while
-        // `data` points into `this.incoming`); Rust needs the explicit detach.
         let mut data = core::mem::take(&mut self.incoming);
 
         if let Some(w) = self.wrapper_ptr() {
@@ -318,7 +301,7 @@ impl WindowsNamedPipe {
         } else {
             (self.handlers.on_data)(self.handlers.ctx, data.as_slice());
         }
-        // Zig: `this.incoming.len = 0` — restore the (cleared) allocation so
+        // Restore the (cleared) allocation so
         // the next `on_read_alloc` reuses it instead of growing from empty.
         data.clear();
         self.incoming = data;
@@ -342,7 +325,7 @@ impl WindowsNamedPipe {
                 // unref after sending all data
                 #[cfg(windows)]
                 if let Some(source) = self.writer.source.as_mut() {
-                    // Zig: `source.pipe.unref()` — Rust `Source` is an enum;
+                    // `Source` is an enum;
                     // `unref()` matches the active variant (always `Pipe` here
                     // via `start_with_pipe`).
                     source.unref();
@@ -355,6 +338,7 @@ impl WindowsNamedPipe {
         }
     }
 
+    #[cfg(windows)]
     fn on_read_error(&mut self, err: bun_sys::E) {
         bun_output::scoped_log!(WindowsNamedPipe, "onReadError");
         // `E::EOF` only exists in the Windows errno table (libuv UV_EOF mapping);
@@ -392,18 +376,24 @@ impl WindowsNamedPipe {
     // SAFETY (all): `this` is the `ctx` we set to `self as *mut _` when building
     // the wrapper; SSLWrapper never holds a competing `&mut WindowsNamedPipe`.
     fn ssl_on_open(this: *mut Self) {
+        // SAFETY: `this` is the `ctx` we set to `self as *mut _` when building
+        // the wrapper; SSLWrapper holds no competing `&mut WindowsNamedPipe`.
         unsafe { (*this).on_open() }
     }
     fn ssl_on_handshake(this: *mut Self, ok: bool, e: us_bun_verify_error_t) {
+        // SAFETY: see `ssl_on_open`.
         unsafe { (*this).on_handshake(ok, e) }
     }
     fn ssl_on_data(this: *mut Self, d: &[u8]) {
+        // SAFETY: see `ssl_on_open`.
         unsafe { (*this).on_data(d) }
     }
     fn ssl_on_close(this: *mut Self) {
+        // SAFETY: see `ssl_on_open`.
         unsafe { (*this).on_close() }
     }
     fn ssl_write(this: *mut Self, d: &[u8]) {
+        // SAFETY: see `ssl_on_open`.
         unsafe { (*this).internal_write(d) }
     }
 
@@ -428,15 +418,13 @@ impl WindowsNamedPipe {
         bun_output::scoped_log!(WindowsNamedPipe, "onClose");
         #[cfg(windows)]
         {
-            // PORT NOTE: `self.pipe` is a non-owning `NonNull` alias of the
+            // `self.pipe` is a non-owning `NonNull` alias of the
             // `Box<uv::Pipe>` owned by `writer.source`. By the time the writer
             // invokes this `on_close` hook it has already `take()`n that Box and
             // scheduled `uv_close` → `Box::from_raw` on it (PipeWriter::close),
             // so the alias is about to dangle. Clear it here so later
             // `pipe_mut()` callers (e.g. `pause_stream` exported to JS) observe
-            // `None` instead of a freed pointer. The Zig spec's `onPipeClose`
-            // (which would null `this.pipe`) is dead code there too — the
-            // writer's `.onClose` slot is wired to `onClose`, not `onPipeClose`.
+            // `None` instead of a freed pointer.
             self.pipe = None;
         }
         if !self.flags.is_closed() {
@@ -444,8 +432,6 @@ impl WindowsNamedPipe {
             // Drop the non-owning alias now: the writer's `close()` has
             // already handed the Box off to libuv's async close callback (or
             // will), so any later `pause_stream()` would deref freed memory.
-            // (Zig leaves `this.pipe` dangling here — its `onPipeClose` is
-            // dead code; we diverge to avoid the latent UAF.)
             #[cfg(windows)]
             {
                 self.pipe = None;
@@ -461,8 +447,7 @@ impl WindowsNamedPipe {
                 // ref because we have pending data
                 #[cfg(windows)]
                 if let Some(source) = self.writer.source.as_mut() {
-                    // Zig: `source.pipe.ref()` — see `on_write` for the
-                    // enum-vs-union note.
+                    // See `on_write` for the active-variant note.
                     source.ref_();
                 }
                 if self.flags.disconnected() {
@@ -584,34 +569,6 @@ impl WindowsNamedPipe {
         }
     }
 
-    fn on_internal_receive_data(&mut self, data: &[u8]) {
-        // PORT NOTE: reshaped for borrowck — reset_timeout borrows self mutably, so guard on
-        // is_some() first, call reset_timeout(), then re-borrow wrapper.
-        if self.wrapper.is_some() {
-            self.reset_timeout();
-            // Same re-entrancy hazard as `on_read`: `receive_data` may fire
-            // `ssl_on_close` synchronously. Hold `WRAPPER_BUSY` so
-            // `release_resources()` defers `self.wrapper = None`, and call
-            // through a raw pointer so no outer `&mut self.wrapper` Unique tag
-            // is live across the re-entrant `&mut *this` retag.
-            // `reset_timeout` cannot clear `wrapper`, so still `Some`.
-            let w: *mut WrapperType = self.wrapper_ptr().unwrap();
-            // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
-            // the flag / run the deferred-drop epilogue.
-            let was_busy = self.flags.contains(Flags::WRAPPER_BUSY);
-            self.flags.insert(Flags::WRAPPER_BUSY);
-            // SAFETY: see `on_read` — `WRAPPER_BUSY` keeps the `Some` payload
-            // bytes at `*w` valid and un-overwritten for the call's duration.
-            unsafe { (*w).receive_data(data) };
-            if !was_busy {
-                self.flags.remove(Flags::WRAPPER_BUSY);
-                if self.flags.is_closed() {
-                    self.wrapper = None;
-                }
-            }
-        }
-    }
-
     pub fn on_timeout(&mut self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onTimeout");
 
@@ -634,13 +591,13 @@ impl WindowsNamedPipe {
         handlers: Handlers,
         vm: &'static VirtualMachine,
     ) -> WindowsNamedPipe {
-        // Zig: `if (Environment.isPosix) @compileError(...)` — the whole fn is
-        // now `#[cfg(windows)]`-gated so POSIX builds never see `uv::Pipe`.
+        // The whole fn is `#[cfg(windows)]`-gated so POSIX builds never see
+        // `uv::Pipe`.
         WindowsNamedPipe {
             vm,
             event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
-            // Leak the `Box` and keep only a non-owning `NonNull` alias (Zig:
-            // `?*uv.Pipe`). Ownership of the allocation is later transferred to
+            // Leak the `Box` and keep only a non-owning `NonNull` alias.
+            // Ownership of the allocation is later transferred to
             // `self.writer.source` via `start_with_pipe` in `start()`, which
             // re-materialises the `Box` and is responsible for freeing it.
             pipe: Some(NonNull::from(Box::leak(pipe))),
@@ -651,9 +608,6 @@ impl WindowsNamedPipe {
             incoming: Vec::new(),
             ssl_error: CertError::default(),
             connect_req: bun_core::ffi::zeroed::<uv::uv_connect_t>(),
-            // Zig: `.{ .next = .epoch, .tag = .WindowsNamedPipe }` with field
-            // defaults `state = .PENDING`, `heap = .{}`, `in_heap = .none` —
-            // exactly what `init_paused` produces.
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::WindowsNamedPipe),
             current_timeout: 0,
             flags: Flags::DISCONNECTED, // disconnected: bool = true is the only non-false default
@@ -684,8 +638,8 @@ impl WindowsNamedPipe {
 
     #[cfg(windows)]
     fn on_connect(&mut self, status: uv::ReturnCode) {
-        // PORT NOTE: reshaped — Zig `defer this.deref()` cannot be a scopeguard here (would need
-        // to capture &mut self alongside body uses). Call deref() explicitly at each return.
+        // A deref-on-exit scopeguard would need to capture &mut self alongside
+        // body uses; call deref() explicitly at each return.
 
         #[cfg(windows)]
         if let Some(pipe) = self.pipe_mut() {
@@ -693,14 +647,13 @@ impl WindowsNamedPipe {
         }
 
         if let Some(err) = status.to_error(bun_sys::Tag::connect) {
-            // PORT NOTE: divergence from Zig spec — on async connect failure the
+            // On async connect failure the
             // leaked `Box<uv::Pipe>` was never adopted by `writer.source`
             // (`start_with_pipe` only runs on the success branch below), so
             // `on_error → close → writer.end()` is a no-op for it. Reclaim it
             // here via `discard_unadopted_pipe` (which schedules `uv_close` and
             // `Box::from_raw`s in the callback), mirroring the synchronous
-            // early-error paths in `connect`/`open`/`get_accepted_by`. The Zig
-            // original leaks the init'd `uv_pipe_t` in this path.
+            // early-error paths in `connect`/`open`/`get_accepted_by`.
             self.discard_unadopted_pipe();
             self.on_error(err);
             self.deref();
@@ -774,11 +727,10 @@ impl WindowsNamedPipe {
                 }
             };
             // ref because we are accepting will unref when wrapper deinit.
-            // ffi-safe-fn: opaque-ZST `&SSL_CTX` redecl; `tls_nn` proven
-            // non-null above (`NonNull::new(tls).expect(..)`).
-            let _ = super::tls_socket_functions::ffi::SSL_CTX_up_ref(
-                boringssl::SSL_CTX::opaque_ref(tls_nn.as_ptr()),
-            );
+            // SAFETY: `tls_nn` proven non-null above
+            // (`NonNull::new(tls).expect(..)`); `SSL_CTX_up_ref` only bumps the
+            // atomic refcount on a live `SSL_CTX*`.
+            let _ = unsafe { boringssl::SSL_CTX_up_ref(tls_nn.as_ptr()) };
         }
         #[cfg(windows)]
         {
@@ -904,7 +856,7 @@ impl WindowsNamedPipe {
         }
 
         // BORROW_PARAM: `connect()` takes `&mut self.connect_req`, a `*mut c_void`
-        // context, and `&mut self.pipe` simultaneously (Zig: all `*T` alias freely).
+        // context, and `&mut self.pipe` simultaneously.
         // Derive `ctx` first via `addr_of_mut!` (no intermediate `&mut Self` retag),
         // then project `req`/`pipe` *from `ctx`* so all three share one provenance
         // root — taking `&mut self.connect_req` followed by `self as *mut Self`
@@ -967,6 +919,7 @@ impl WindowsNamedPipe {
     /// longer spreads `{ca,cert,key}`, so the `SSLConfig` fallback alone would build
     /// a CTX with an empty trust store and fail `DEPTH_ZERO_SELF_SIGNED_CERT`.
     /// Returns null when neither input requested TLS.
+    #[cfg(windows)]
     fn init_tls_wrapper(
         &mut self,
         ssl_options: Option<SSLConfig>,
@@ -1016,14 +969,13 @@ impl WindowsNamedPipe {
 
     pub fn start_tls(
         &mut self,
-        ssl_options: SSLConfig,
+        ssl_options: &SSLConfig,
         is_client: bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         self.flags.set_is_ssl(true);
         if self.start(is_client) {
             self.wrapper = Some(ssl_wrapper::init(
-                &ssl_options,
+                ssl_options,
                 is_client,
                 ssl_wrapper::Handlers {
                     ctx: std::ptr::from_mut(self),
@@ -1065,7 +1017,6 @@ impl WindowsNamedPipe {
             };
             self.pipe_mut().unwrap().unref();
             // raw self-ptr first to dodge the &mut self.writer / &mut *self overlap
-            // (Zig: `this.writer.setParent(this)` — `this` is already `*WindowsNamedPipe`).
             let this: *mut Self = core::ptr::from_mut(self);
             self.writer.set_parent(this);
             // SAFETY: `start_with_pipe`'s contract is "Box-allocated pointer;
@@ -1075,8 +1026,7 @@ impl WindowsNamedPipe {
             // `debug_assert!(source.is_none())`). After this call
             // `self.writer.source` holds the SOLE `Box` for the allocation;
             // `self.pipe` remains a non-owning alias for `pause_stream`. NOTE:
-            // nothing clears that alias when the writer frees the Box (the
-            // `on_pipe_close` method above is dead code, matching Zig) — so
+            // nothing clears that alias when the writer frees the Box — so
             // `on_close` nulls it defensively and `Drop` only reclaims when
             // `PIPE_ADOPTED` was never set.
             self.flags.insert(Flags::PIPE_ADOPTED);
@@ -1118,6 +1068,7 @@ impl WindowsNamedPipe {
     /// SAFETY: `vm.uv_loop()` hands back the process-wide libuv loop; two calls
     /// alias the same `&mut AsyncLoop`. Caller must not hold another live
     /// `&mut` to it.
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn loop_(&self) -> &mut AsyncLoop {
         // SAFETY: see fn-level safety comment — process-wide libuv loop, caller
         // promises no aliasing `&mut`.
@@ -1187,7 +1138,9 @@ impl WindowsNamedPipe {
                 unsafe { (*this).wrapper.as_mut().unwrap_unchecked() };
             // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
             // the flag / run the deferred-drop epilogue.
+            // SAFETY: `this` aliases the live `&mut self`; single JS thread.
             let was_busy = unsafe { (*this).flags.contains(Flags::WRAPPER_BUSY) };
+            // SAFETY: as above.
             unsafe { (*this).flags.insert(Flags::WRAPPER_BUSY) };
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
@@ -1198,7 +1151,10 @@ impl WindowsNamedPipe {
                 // SAFETY: `this` is still the live payload (re-entry only
                 // toggles flags / defers wrapper drop while WRAPPER_BUSY).
                 unsafe { (*this).flags.remove(Flags::WRAPPER_BUSY) };
+                // SAFETY: `this` is still live; read-only flag check.
                 if unsafe { (*this).flags.is_closed() } {
+                    // SAFETY: `this` still live; WRAPPER_BUSY cleared so dropping
+                    // the wrapper no longer races its own `&mut self`.
                     unsafe { (*this).wrapper = None };
                 }
             }
@@ -1222,7 +1178,9 @@ impl WindowsNamedPipe {
                 unsafe { (*this).wrapper.as_mut().unwrap_unchecked() };
             // Re-entrancy: see `on_read` — only the OUTERMOST scope may clear
             // the flag / run the deferred-drop epilogue.
+            // SAFETY: `this` aliases the live `&mut self`; single JS thread.
             let was_busy = unsafe { (*this).flags.contains(Flags::WRAPPER_BUSY) };
+            // SAFETY: as above.
             unsafe { (*this).flags.insert(Flags::WRAPPER_BUSY) };
             // SAFETY: see `on_read` — WRAPPER_BUSY keeps the `Some` payload
             // bytes at `*w` valid for the call's duration.
@@ -1233,7 +1191,10 @@ impl WindowsNamedPipe {
                 // SAFETY: `this` is still live (re-entry only toggles flags /
                 // defers wrapper drop while WRAPPER_BUSY).
                 unsafe { (*this).flags.remove(Flags::WRAPPER_BUSY) };
+                // SAFETY: `this` is still live; read-only flag check.
                 if unsafe { (*this).flags.is_closed() } {
+                    // SAFETY: `this` still live; WRAPPER_BUSY cleared so dropping
+                    // the wrapper no longer races its own `&mut self`.
                     unsafe { (*this).wrapper = None };
                 }
             }
@@ -1292,12 +1253,12 @@ impl WindowsNamedPipe {
                 .ssl_error
                 .code
                 .as_deref()
-                .map_or(b"\0".as_ptr().cast(), |c| c.as_ptr()),
+                .map_or(c"".as_ptr(), |c| c.as_ptr()),
             reason: self
                 .ssl_error
                 .reason
                 .as_deref()
-                .map_or(b"\0".as_ptr().cast(), |c| c.as_ptr()),
+                .map_or(c"".as_ptr(), |c| c.as_ptr()),
         }
     }
 
@@ -1317,7 +1278,7 @@ impl WindowsNamedPipe {
         }
 
         // reschedule the timer
-        // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
+        // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
         // bridge from `bun_core::Timespec` until the lower tier switches.
         let next = timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
         self.event_loop_timer.next = ElTimespec {
@@ -1334,7 +1295,7 @@ impl WindowsNamedPipe {
     }
 
     /// Free internal resources, it can be called multiple times.
-    // PORT NOTE: Zig `pub fn deinit` → private idempotent helper invoked from on_close and Drop.
+    // Private idempotent helper invoked from on_close and Drop.
     // Owned fields (writer, wrapper, ssl_error) free themselves via their own Drop impls; only
     // the side effects (timer cancel, read_stop, take()) remain explicit here.
     fn release_resources(&mut self) {
@@ -1347,15 +1308,13 @@ impl WindowsNamedPipe {
             // succeeds and is a no-op if not reading.
             unsafe { (*stream).read_stop() };
         }
-        // Zig: `this.writer.deinit()` → `closeWithoutReporting(); outgoing.deinit();
-        // current_payload.deinit();`. The earlier port skipped
-        // `closeWithoutReporting()` on the assumption that "the source is already
+        // "The source is already
         // closed by the time on_close reaches here (that close is what fired the
-        // callback)" — true ONLY for the writer-initiated close path
+        // callback)" is true ONLY for the writer-initiated close path
         // (`WindowsStreamingWriterParent::on_close`). It is FALSE when we arrive
         // via `ssl_on_close` (TLS close_notify): the underlying `uv_pipe_t` is
         // still open and in libuv's handle_queue, so without an explicit close
-        // here the HANDLE outlives Zig's by ≥ one event-loop tick (until the
+        // here the HANDLE survives ≥ one extra event-loop tick (until the
         // embedding context's refcount hits 0 and `WindowsStreamingWriter::Drop`
         // finally runs). Inline `close_without_reporting()` (private on the
         // writer) so the source pipe is `uv_close`d NOW; the `get_fd() != INVALID`
@@ -1375,7 +1334,7 @@ impl WindowsNamedPipe {
         }
         // `receive_data → handle_traffic → trigger_close_callback` can land
         // here while a raw `*mut WrapperType` into `self.wrapper`'s payload is
-        // still mid-execution (see `on_read`/`on_internal_receive_data`).
+        // still mid-execution (see `on_read`).
         // Dropping the wrapper now would free SSL/SSL_CTX and overwrite the
         // `Option` discriminant under that live pointer — UAF / aliased-&mut
         // UB. Defer; the call site drops it after `receive_data` returns.
@@ -1444,8 +1403,8 @@ bun_io::impl_streaming_writer_parent! {
     deref      = |this| (&mut *this).deref(),
 }
 
-/// Port of the three `comptime` fn-pointer args to Zig `stream.readStart(this,
-/// onReadAlloc, onReadError, onRead)` — Rust bakes them into a trait so the
+/// The three `stream.readStart` callbacks (alloc/error/read) baked into a
+/// trait so the
 /// `extern "C"` libuv trampoline is monomorphised over `WindowsNamedPipe`.
 #[cfg(windows)]
 impl uv::StreamReader for WindowsNamedPipe {
@@ -1455,10 +1414,8 @@ impl uv::StreamReader for WindowsNamedPipe {
     }
     #[inline]
     fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
-        // Zig: `ReturnCodeI64.init(nreads).errEnum() orelse .CANCELED` — but
-        // `errEnum()` returns `null` ONLY for non-negative values, and the
-        // trampoline only reaches this arm when `nreads < 0`, so the `orelse`
-        // is dead in spec. For any negative code `translateUVErrorToE` already
+        // The trampoline only reaches this arm when `nreads < 0`, and for any
+        // negative code `translate_uv_error_to_e` already
         // yields a concrete `E` (falling back to `UNKNOWN` for unmapped
         // codes). Pass it straight through; do NOT remap UNKNOWN→CANCELED.
         let e = bun_sys::windows::translate_uv_error_to_e(err);
@@ -1478,5 +1435,3 @@ impl uv::StreamReader for WindowsNamedPipe {
         WindowsNamedPipe::on_read(unsafe { &mut *this }, nread);
     }
 }
-
-// ported from: src/runtime/socket/WindowsNamedPipe.zig

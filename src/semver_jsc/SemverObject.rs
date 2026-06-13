@@ -17,9 +17,8 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // PERF(port): was ArenaAllocator + stackFallback(512) — profile in Phase B
-    // (allocator params dropped; to_slice() owns its buffer and Drops)
+pub(crate) fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    // `to_slice()` owns its buffer and frees it on Drop.
 
     let arguments = frame.arguments_old::<2>();
     let arguments = arguments.slice();
@@ -70,9 +69,7 @@ pub fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 }
 
 #[bun_jsc::host_fn]
-pub fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // PERF(port): was ArenaAllocator + stackFallback(512) — profile in Phase B
-
+pub(crate) fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<2>();
     let arguments = arguments.slice();
     if arguments.len() < 2 {
@@ -99,7 +96,7 @@ pub fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 
     let left_version = left_result.version.min();
 
-    // `Query::parse` can only fail with OOM (Zig: `try` propagates allocator error).
+    // `Query::parse` can only fail with OOM.
     let right_group = match query::parse(
         right.slice(),
         SlicedString::init(right.slice(), right.slice()),
@@ -118,5 +115,3 @@ pub fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         left.slice(),
     )))
 }
-
-// ported from: src/semver_jsc/SemverObject.zig

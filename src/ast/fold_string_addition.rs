@@ -1,18 +1,18 @@
 use crate::expr::{Data, PrimitiveType, data};
-use crate::{self as js_ast, E, Expr, StoreRef, e};
+use crate::{E, Expr, StoreRef, e};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 
 // ── local rope helpers ─────────────────────────────────────────────────────
 // `EString::push` / `EString::clone_rope_nodes` are still gated in E.rs
 // (round-C draft); inline the minimal surface here so this file can un-gate
-// without touching E.rs. These mirror the Zig bodies 1:1.
+// without touching E.rs.
 
 #[inline]
 fn store_append_string(s: E::EString) -> StoreRef<E::EString> {
     data::Store::append(s)
 }
 
-/// Zig `E.String.push` — link `other` onto `lhs`'s rope tail.
+/// Link `other` onto `lhs`'s rope tail.
 fn estring_push(lhs: &mut E::EString, mut other: StoreRef<E::EString>) {
     debug_assert!(lhs.is_utf8());
     debug_assert!(other.is_utf8());
@@ -41,8 +41,8 @@ fn estring_push(lhs: &mut E::EString, mut other: StoreRef<E::EString>) {
     }
 }
 
-/// Zig `E.String.cloneRopeNodes` — deep-copy the `next` chain into fresh
-/// Store nodes so mutating the result can't alias an inlined-enum's string.
+/// Deep-copy the `next` chain into fresh Store nodes so mutating the result
+/// can't alias an inlined-enum's string.
 fn clone_rope_nodes(s: &E::EString) -> E::EString {
     let mut root = s.shallow_clone();
     if let Some(first) = root.next {
@@ -111,8 +111,8 @@ fn join_strings(
     new
 }
 
-/// `std.mem.concat(arena, E.TemplatePart, &.{a, b})` — concat into the bump
-/// arena. `TemplatePart` is POD-shaped (no Drop) but not `Copy` because
+/// Concat two `TemplatePart` slices into the bump arena.
+/// `TemplatePart` is POD-shaped (no Drop) but not `Copy` because
 /// `EString` opted out; mirror `Template::fold`'s field-wise copy via
 /// `shallow_clone` instead of raw `copy_nonoverlapping`.
 fn concat_parts(
@@ -122,7 +122,7 @@ fn concat_parts(
 ) -> crate::StoreSlice<e::TemplatePart> {
     let mut v = bun_alloc::ArenaVec::<e::TemplatePart>::with_capacity_in(a.len() + b.len(), bump);
     for p in a.iter().chain(b.iter()) {
-        // Zig `var part = part.*` — field-wise copy (all fields structurally `Copy`).
+        // Field-wise copy (all fields structurally `Copy`).
         v.push(e::TemplatePart {
             value: p.value,
             tail_loc: p.tail_loc,
@@ -214,7 +214,7 @@ pub fn fold_string_addition(
                 // "'x' + `y${z}`" => "`xy${z}`"
                 if let Data::ETemplate(t) = rhs.data {
                     if t.tag.is_none() {
-                        // (intentionally empty — matches Zig)
+                        // (intentionally empty)
                     }
                 }
             }
@@ -253,7 +253,6 @@ pub fn fold_string_addition(
                                         right.get(),
                                         matches!(r.data, Data::EInlinedEnum(_)),
                                     ));
-                                    // Zig wrote `left.parts[i].tail = ...` in place.
                                     left.parts_mut()[i].tail = new_tail;
                                     return Some(lhs);
                                 }
@@ -285,7 +284,6 @@ pub fn fold_string_addition(
                                     let new_parts = if right.parts().is_empty() {
                                         left.parts
                                     } else {
-                                        // std.mem.concat → bump-allocated concat
                                         concat_parts(bump, left.parts(), right.parts())
                                     };
                                     left.parts = new_parts;
@@ -323,9 +321,3 @@ pub fn fold_string_addition(
 
     None
 }
-
-// silence unused-import warning when only some helpers fire
-#[allow(unused_imports)]
-use js_ast as _;
-
-// ported from: src/js_parser/ast/foldStringAddition.zig

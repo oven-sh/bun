@@ -9,20 +9,17 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem;
 
-use bun_core::{OwnedString, String as BunString, ZStr, strings};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
-// TODO(port): move to <area>_sys — c-ares FFI lives in bun_cares_sys
 use bun_cares_sys::c_ares as ares;
+use bun_core::{OwnedString, String as BunString, ZStr};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
 
-// `pub const js = jsc.Codegen.JSSocketAddress;` + toJS/fromJS/fromJSDirect
-// → handled by the JsClass derive; codegen wires toJS/fromJS/fromJSDirect.
+// The JsClass derive / codegen wires toJS/fromJS/fromJSDirect.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the one
 // field written from a host_fn-reachable path (`_presentation`, lazily filled
 // by `address()`) is `Cell`-wrapped (`BunString` is `Copy`). `_addr` is
 // read-only after construction and stays bare.
 #[bun_jsc::JsClass]
 pub struct SocketAddress {
-    // NOTE: not std.net.Address b/c .un is huge and we don't use it.
     // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
     // but sockaddr_storage is 128 bytes.
     /// @internal
@@ -47,12 +44,12 @@ impl Default for SocketAddress {
 }
 
 impl SocketAddress {
-    // `pub const new = bun.TrivialNew(SocketAddress);`
     pub fn new(init: SocketAddress) -> Box<SocketAddress> {
         Box::new(init)
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct Options {
     pub family: AF,
     /// When `None`, default is determined by address family.
@@ -104,7 +101,7 @@ impl Options {
 
         // required. Validated by `validatePort`.
         let _port: u16 = if let Some(p) = obj.get(global, "port")? {
-            // PORT NOTE: Zig `JSValue.isFinite()`; Rust shim until landed in bun_jsc.
+            // Note: shim until `JSValue::is_finite` lands in bun_jsc.
             if !(p.is_number() && p.as_number().is_finite()) {
                 return Err(Self::throw_bad_port(global, p));
             }
@@ -150,7 +147,7 @@ impl Options {
     }
 
     fn throw_bad_port(global: &JSGlobalObject, port_: JSValue) -> JsError {
-        // `defer ty.deref()` → OwnedString (returned by determine_specific_type) releases the +1.
+        // OwnedString (returned by determine_specific_type) releases the +1.
         let Ok(ty) = JSGlobalObject::determine_specific_type(global, port_) else {
             return global
                 .err(
@@ -178,11 +175,11 @@ impl SocketAddress {
     /// ### `SocketAddress.parse(input: string): SocketAddress | undefined`
     /// Parse an address string (with an optional `:port`) into a `SocketAddress`.
     /// Returns `undefined` if the input is invalid.
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the macro's free-fn arm emits a
+    // Note: no `#[bun_jsc::host_fn]` here — the macro's free-fn arm emits a
     // bare `parse(__g, __f)` call which doesn't resolve inside an `impl` block.
     // The C-ABI shim is wired by the `.classes.ts` codegen / `JsClass` derive.
     pub fn parse(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        // `defer input.deref()` → OwnedString releases the +1 from BunString::from_js
+        // OwnedString releases the +1 from BunString::from_js
         let input: OwnedString = {
             let input_arg = callframe.argument(0);
             if !input_arg.is_string() {
@@ -194,8 +191,7 @@ impl SocketAddress {
         };
 
         const PREFIX: &str = "http://";
-        // PERF(port): was comptime bool dispatch (`switch (input.is8Bit()) { inline else => |is_8_bit| ... }`) — profile in Phase B
-        // `defer url_str.deref()` → OwnedString releases the +1 from create_uninitialized_*
+        // OwnedString releases the +1 from create_uninitialized_*
         let url_str: OwnedString = if input.is_8bit() {
             let from_chars = input.latin1();
             let (str, to_chars) =
@@ -216,7 +212,6 @@ impl SocketAddress {
         let Some(url_ptr) = URL::from_string(url_str.get()) else {
             return Ok(JSValue::UNDEFINED);
         };
-        // `defer url.deinit()`
         // SAFETY: URL::from_string returns an owned C++ heap pointer; freed exactly once via destroy().
         let _url_guard = scopeguard::guard(url_ptr, |p| unsafe { URL::destroy(p.as_ptr()) });
         // `_url_guard` keeps the C++ allocation live for this scope, so the
@@ -239,10 +234,9 @@ impl SocketAddress {
         // - "[::1]" -> "::1"
         // - "0x.0x.0" -> "0.0.0.0"
         let paddr = host.latin1(); // presentation address
-        // PORT NOTE: Zig used `std.net.Ip{4,6}Address.parse`; Rust port uses
-        // `ares_inet_pton` (already linked) to fill the sockaddr in place.
-        // `std.net.Ip6Address.parse` accepts a `%scope` suffix and populates
-        // `scope_id`; `ares_inet_pton` does not, so we strip and parse it here.
+        // Uses `ares_inet_pton` (already linked) to fill the sockaddr in place.
+        // A `%scope` suffix populates `scope_id`, but
+        // `ares_inet_pton` does not accept it, so we strip and parse it here.
         // (WHATWG URL host parsing rejects zone identifiers, so in practice
         // `URL::host_()` should not yield one — handled defensively.)
         let addr = if paddr[0] == b'[' && paddr[paddr.len() - 1] == b']' {
@@ -251,7 +245,7 @@ impl SocketAddress {
             if let Some(pct) = inner.iter().position(|&b| b == b'%') {
                 let zone = &inner[pct + 1..];
                 inner = &inner[..pct];
-                // Numeric zone → scope_id directly (matches std.net.Ip6Address.parse).
+                // Numeric zone → scope_id directly.
                 // Non-numeric zone would require if_nametoindex; treat as invalid here.
                 scope_id = match bun_core::fmt::parse_int::<u32>(zone, 10).ok() {
                     Some(id) => id,
@@ -295,7 +289,7 @@ impl SocketAddress {
     /// ### `SocketAddress.isSocketAddress(value: unknown): value is SocketAddress`
     /// Returns `true` if `value` is a `SocketAddress`. Subclasses and similarly-shaped
     /// objects are not considered `SocketAddress`s.
-    // PORT NOTE: no `#[bun_jsc::host_fn]` — free-fn arm emits bare ident; see `parse`.
+    // Note: no `#[bun_jsc::host_fn]` — free-fn arm emits bare ident; see `parse`.
     pub fn is_socket_address(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let value = callframe.argument(0);
         Ok(JSValue::from(
@@ -317,7 +311,7 @@ impl SocketAddress {
     ///
     /// ## References
     /// - [Node docs](https://nodejs.org/api/net.html#new-netsocketaddressoptions)
-    // PORT NOTE: no `#[bun_jsc::host_fn]` — free-fn arm emits bare ident; see `parse`.
+    // Note: no `#[bun_jsc::host_fn]` — free-fn arm emits bare ident; see `parse`.
     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<SocketAddress>> {
         let options_obj = frame.argument(0);
         if options_obj.is_undefined() {
@@ -325,7 +319,6 @@ impl SocketAddress {
                 _addr: sockaddr::LOOPBACK_V4,
                 _presentation: Cell::new(BunString::empty()),
                 // ._presentation = WellKnownAddress::loopback_v4(),
-                // ._presentation = BunString::from_js(global.common_strings().loopback_v4()) catch unreachable,
             }));
         }
         options_obj.ensure_still_alive();
@@ -387,12 +380,8 @@ impl SocketAddress {
 
         // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
         // copy the string.
-        // PERF(port): was stack-fallback — profile in Phase B
-        // (Zig used std.heap.stackFallback(64, bun.default_allocator))
+        // PERF: could use a small stack buffer with heap fallback.
 
-        // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
-        // Switch back to `htons(options.port)` when this issue gets resolved:
-        // https://github.com/ziglang/zig/issues/22804
         let addr: sockaddr = match options.family {
             AF::INET => {
                 let mut sin: inet::sockaddr_in = inet::sockaddr_in {
@@ -404,7 +393,7 @@ impl SocketAddress {
                 if let Some(address_str) = options.address {
                     presentation = address_str;
                     let slice = presentation.to_owned_slice_z();
-                    // `defer alloc.free(slice)` → Box<ZStr> drops at scope exit
+                    // Box<ZStr> drops at scope exit
                     pton(
                         global,
                         inet::AF_INET,
@@ -506,10 +495,9 @@ impl SocketAddress {
 
 impl Drop for SocketAddress {
     fn drop(&mut self) {
-        // Zig `deinit`: `this._presentation.deref()` then `destroy(this)`.
         // `bun_core::String` is `Copy` (no Drop), so the +1 on the cached
         // presentation must be released explicitly here. `deref()` on a `.Dead`
-        // string is a no-op, matching the Zig spec.
+        // string is a no-op.
         self._presentation.get().deref();
     }
 }
@@ -541,7 +529,6 @@ impl SocketAddress {
         let mut addr_str = self.address();
         let port = self.port();
         let is_v6 = self.family() == AF::INET6;
-        // `defer this._presentation = .dead;`
         let _guard = scopeguard::guard(&self._presentation, |p| p.set(BunString::dead()));
         Ok(JSSocketAddressDTO__create(
             global,
@@ -576,7 +563,6 @@ impl SocketAddress {
     }
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn JSSocketAddressDTO__create(
         global_object: &JSGlobalObject,
@@ -609,8 +595,8 @@ impl SocketAddress {
     /// and `::`, respectively).
     ///
     /// ### TODO
-    /// - replace `addressToString` in `dns.zig` w this
-    /// - use this impl in server.zig
+    /// - replace `addressToString` in the dns module with this
+    /// - use this impl in the server module
     pub fn address(&self) -> BunString {
         let cached = self._presentation.get();
         if cached.tag() != bun_core::Tag::Dead {
@@ -648,8 +634,8 @@ impl SocketAddress {
         JSValue::js_number(f64::from(this.family().int()))
     }
 
-    /// NOTE: zig std uses posix values only, while this returns whatever the
-    /// system uses. Do not compare to `std.posix.AF`.
+    /// NOTE: this returns whatever address-family value the system uses,
+    /// which may differ across platforms.
     pub fn family(&self) -> AF {
         // NOTE: sockaddr_in and sockaddr_in6 have the same layout for family.
         // `sa_family_t` width varies (u8 on Darwin/the BSDs, u16 on Linux/
@@ -671,8 +657,6 @@ impl SocketAddress {
     /// Get the port number in host byte order.
     pub fn port(&self) -> u16 {
         // NOTE: sockaddr_in and sockaddr_in6 have the same layout for port.
-        // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
-        // Switch back to `ntohs` when this issue gets resolved: https://github.com/ziglang/zig/issues/22804
         u16::from_be(self._addr.port_raw())
     }
 
@@ -702,8 +686,8 @@ impl SocketAddress {
 
     #[bun_jsc::host_fn(method)]
     pub fn to_json(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        // PORT NOTE: Zig used an anon struct with `jsc.JSObject.create`; Rust
-        // requires a `PojoFields` impl, so use a local struct.
+        // `jsc.JSObject.create` requires a `PojoFields` impl, so use a local
+        // struct.
         struct ToJson {
             address: JSValue,
             family: JSValue,
@@ -734,30 +718,29 @@ impl SocketAddress {
     }
 }
 
-// PERF(port): was comptime monomorphization (`comptime af: c_int`) — profile in Phase B
 fn pton(global: &JSGlobalObject, af: c_int, addr: &ZStr, dst: *mut c_void) -> JsResult<()> {
+    use bun_jsc::js_global_object::SysErrOptions;
     // SAFETY: addr is NUL-terminated, dst points to a valid in_addr/in6_addr
     match unsafe { ares::ares_inet_pton(af, addr.as_ptr(), dst) } {
-        0 => Err(global
-            .err(
-                bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
-                format_args!("Invalid socket address"),
-            )
-            .throw()),
+        0 => Err(global.throw_sys_error(
+            &SysErrOptions {
+                code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
+                errno: None,
+                name: None,
+            },
+            format_args!("Invalid socket address"),
+        )),
 
-        // TODO: figure out proper way to convert a c errno into a js exception
-        // TODO(port): Zig set `.errno = std.c._errno().*` on the thrown SystemError;
-        // `JSGlobalObject::throw_sys_error` / `SysErrOptions` are not yet on the
-        // active stub, so the errno property is dropped for now.
-        -1 => {
-            let _ = bun_sys::last_errno();
-            Err(global
-                .err(
-                    bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
-                    format_args!("Invalid socket address"),
-                )
-                .throw())
-        }
+        // Open question: the proper way to
+        // convert a C errno into a JS exception.
+        -1 => Err(global.throw_sys_error(
+            &SysErrOptions {
+                code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
+                errno: Some(bun_sys::last_errno()),
+                name: None,
+            },
+            format_args!("Invalid socket address"),
+        )),
         1 => Ok(()),
         _ => unreachable!(),
     }
@@ -777,38 +760,9 @@ fn pton_noerr(af: c_int, addr: &[u8], dst: *mut c_void) -> bool {
     unsafe { ares::ares_inet_pton(af, buf.as_ptr().cast(), dst) == 1 }
 }
 
-impl SocketAddress {
-    #[inline]
-    fn as_v4(&self) -> &inet::sockaddr_in {
-        self._addr.as_sin().expect("family() == INET")
-    }
-
-    #[inline]
-    fn as_v6(&self) -> &inet::sockaddr_in6 {
-        self._addr.as_sin6().expect("family() == INET6")
-    }
-}
-
 // =============================================================================
 
-// WTF::StringImpl and WTF::StaticStringImpl have the same shape
-// (StringImplShape) so this is fine. We should probably add StaticStringImpl
-// bindings though.
-// TODO(port): move to <area>_sys
-unsafe extern "C" {
-    // C++-side `WTF::StaticStringImpl` constants — initialized at load time,
-    // immutable, immortal refcount. Reading the pointer value has no
-    // precondition, so declare them `safe static`.
-    safe static IPv4: bun_core::WTFStringImpl;
-    safe static IPv6: bun_core::WTFStringImpl;
-}
-// TODO(port): const bun.String construction from extern static — needs runtime init or const-fn wrapper
-// const ipv4: BunString = BunString { tag: .WTFStringImpl, value: .{ .WTFStringImpl = IPv4 } };
-// const ipv6: BunString = BunString { tag: .WTFStringImpl, value: .{ .WTFStringImpl = IPv6 } };
-
-// FIXME: c-headers-for-zig casts AF_* and PF_* to `c_int` when it should be `comptime_int`
 #[repr(u16)]
-// TODO(port): repr should be inet::sa_family_t but Rust requires concrete int; sa_family_t is u16 on posix+win
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum AF {
     INET = inet::AF_INET as u16,
@@ -817,13 +771,13 @@ pub enum AF {
 
 impl AF {
     #[inline]
-    pub fn int(self) -> inet::sa_family_t {
+    pub(crate) fn int(self) -> inet::sa_family_t {
         self as inet::sa_family_t
     }
 
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<AF> {
+    pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<AF> {
         if value.is_string() {
-            // `defer fam_str.deref()` → OwnedString releases the +1 from BunString::from_js
+            // OwnedString releases the +1 from BunString::from_js
             let fam_str = OwnedString::new(BunString::from_js(value, global)?);
             if fam_str.length() != 4 {
                 return Err(global.throw_invalid_argument_property_value(
@@ -880,7 +834,7 @@ impl AF {
         }
     }
 
-    pub fn upper(self) -> &'static ZStr {
+    pub(crate) fn upper(self) -> &'static ZStr {
         match self {
             AF::INET => bun_core::zstr!("IPv4"),
             AF::INET6 => bun_core::zstr!("IPv6"),
@@ -910,7 +864,7 @@ impl sockaddr {
 
     /// Raw `sa_family_t` from the shared prefix — valid for either variant.
     #[inline]
-    pub fn family_raw(&self) -> inet::sa_family_t {
+    pub(crate) fn family_raw(&self) -> inet::sa_family_t {
         // SAFETY: `family` is the first field of both `sockaddr_in` and
         // `sockaddr_in6` at the same offset/type; reading through `sin` is
         // well-defined regardless of which variant was written.
@@ -919,7 +873,7 @@ impl sockaddr {
 
     /// Raw network-byte-order port from the shared prefix — valid for either variant.
     #[inline]
-    pub fn port_raw(&self) -> inet::in_port_t {
+    pub(crate) fn port_raw(&self) -> inet::in_port_t {
         // SAFETY: `port` follows `family` in both `sockaddr_in` and
         // `sockaddr_in6` at the same offset/type.
         unsafe { self.sin.port }
@@ -927,7 +881,7 @@ impl sockaddr {
 
     /// Tag-checked borrow of the IPv4 payload.
     #[inline]
-    pub fn as_sin(&self) -> Option<&inet::sockaddr_in> {
+    pub(crate) fn as_sin(&self) -> Option<&inet::sockaddr_in> {
         if self.family_raw() as u16 == inet::AF_INET as u16 {
             // SAFETY: family == AF_INET ⇒ `sin` is the active variant.
             Some(unsafe { &self.sin })
@@ -938,7 +892,7 @@ impl sockaddr {
 
     /// Tag-checked borrow of the IPv6 payload.
     #[inline]
-    pub fn as_sin6(&self) -> Option<&inet::sockaddr_in6> {
+    pub(crate) fn as_sin6(&self) -> Option<&inet::sockaddr_in6> {
         if self.family_raw() as u16 == inet::AF_INET6 as u16 {
             // SAFETY: family == AF_INET6 ⇒ `sin6` is the active variant.
             Some(unsafe { &self.sin6 })
@@ -947,7 +901,7 @@ impl sockaddr {
         }
     }
 
-    pub const fn v4(port_: inet::in_port_t, addr: u32) -> sockaddr {
+    pub(crate) const fn v4(port_: inet::in_port_t, addr: u32) -> sockaddr {
         sockaddr {
             sin: inet::sockaddr_in {
                 family: inet::AF_INET as inet::sa_family_t,
@@ -958,7 +912,7 @@ impl sockaddr {
         }
     }
 
-    pub const fn v6(
+    pub(crate) const fn v6(
         port_: inet::in_port_t,
         addr: [u8; 16],
         // set to 0 if you don't care
@@ -978,7 +932,7 @@ impl sockaddr {
         }
     }
 
-    pub fn as_v4(&self) -> Option<u32> {
+    pub(crate) fn as_v4(&self) -> Option<u32> {
         if let Some(sin) = self.as_sin() {
             return Some(sin.addr);
         }
@@ -1000,7 +954,7 @@ impl sockaddr {
         None
     }
 
-    pub fn family(&self) -> AF {
+    pub(crate) fn family(&self) -> AF {
         match self.family_raw() {
             v if v == inet::AF_INET as inet::sa_family_t => AF::INET,
             v if v == inet::AF_INET6 as inet::sa_family_t => AF::INET6,
@@ -1008,7 +962,7 @@ impl sockaddr {
         }
     }
 
-    pub fn fmt<'a>(&self, buf: &'a mut [u8; inet::INET6_ADDRSTRLEN as usize]) -> &'a ZStr {
+    pub(crate) fn fmt<'a>(&self, buf: &'a mut [u8; inet::INET6_ADDRSTRLEN as usize]) -> &'a ZStr {
         let addr_src: *const c_void = match self.as_sin() {
             Some(sin) => core::ptr::from_ref(&sin.addr).cast::<c_void>(),
             None => {
@@ -1030,8 +984,7 @@ impl sockaddr {
     }
 
     // I'd bet money endianness is going to screw us here.
-    // Zig name: `@"127.0.0.1"`
-    pub const LOOPBACK_V4: sockaddr = sockaddr {
+    pub(crate) const LOOPBACK_V4: sockaddr = sockaddr {
         sin: inet::sockaddr_in {
             family: inet::AF_INET as inet::sa_family_t,
             port: 0,
@@ -1041,8 +994,7 @@ impl sockaddr {
     };
     // TODO: check that `::` is all zeroes on all platforms. Should correspond
     // to `IN6ADDR_ANY_INIT`.
-    // Zig name: `@"::"`
-    pub const ANY_V6: sockaddr = sockaddr {
+    pub(crate) const ANY_V6: sockaddr = sockaddr {
         sin6: inet::sockaddr_in6 {
             family: inet::AF_INET6 as inet::sa_family_t,
             port: 0,
@@ -1058,70 +1010,44 @@ impl sockaddr {
     // → use inet::sockaddr_in / inet::sockaddr_in6 directly (Rust has no associated type aliases on inherent impls)
 }
 
-#[allow(non_snake_case)]
-mod WellKnownAddress {
-    use super::*;
-    // TODO(port): move to <area>_sys
-    unsafe extern "C" {
-        // C++-side `WTF::StaticStringImpl` constants — initialized at load time,
-        // immutable, immortal refcount. Reading the pointer value has no
-        // precondition, so declare them `safe static`.
-        safe static INET_LOOPBACK: bun_core::WTFStringImpl;
-        safe static INET6_ANY: bun_core::WTFStringImpl;
-    }
-    #[inline]
-    pub fn loopback_v4() -> BunString {
-        BunString::adopt_wtf_impl(INET_LOOPBACK)
-    }
-    #[inline]
-    pub fn any_v6() -> BunString {
-        BunString::adopt_wtf_impl(INET6_ANY)
-    }
-}
-
 // =============================================================================
 
 // The same types are defined in a bunch of different places. We should probably unify them.
-// TODO(port): comptime static asserts — Rust const_assert! once inet types are concrete
-// const _: () = assert!(mem::size_of::<inet::socklen_t>() == mem::size_of::<bun_sys::posix::socklen_t>());
-// const _: () = assert!(mem::align_of::<inet::socklen_t>() == mem::align_of::<bun_sys::posix::socklen_t>());
-// const _: () = assert!(AF::INET.int() == ares::AF::INET);
-// const _: () = assert!(AF::INET6.int() == ares::AF::INET6);
+// Compile-time checks: socklen_t shape parity + AF constant parity with c-ares.
+#[cfg(not(windows))]
+const _: () = {
+    assert!(mem::size_of::<inet::socklen_t>() == mem::size_of::<libc::socklen_t>());
+    assert!(mem::align_of::<inet::socklen_t>() == mem::align_of::<libc::socklen_t>());
+};
+const _: () = {
+    assert!(AF::INET as c_int == ares::AF::INET);
+    assert!(AF::INET6 as c_int == ares::AF::INET6);
+};
 
 #[cfg(windows)]
 pub mod inet {
     #![allow(non_camel_case_types)]
     use bun_sys::windows::ws2_32 as ws2;
-    // PORT NOTE: `bun_windows_sys::ws2_32` does not currently surface
-    // `IN4ADDR_LOOPBACK` / `INET6_ADDRSTRLEN` / `ADDRESS_FAMILY` / `USHORT`;
-    // mirror the `ws2ipdef.h` / `ws2def.h` values locally so the Windows
-    // build resolves without widening the leaf crate.
-    /// `ws2ipdef.h`: `#define IN4ADDR_LOOPBACK 0x0100007f` — the raw
-    /// **network-order** `s_addr` value for 127.0.0.1. Spelled via
-    /// `from_ne_bytes` so the wire bytes `[127,0,0,1]` are explicit (yields
-    /// `0x0100_007f` on little-endian Windows, matching the header literal).
-    pub const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
+    // Note: `bun_windows_sys::ws2_32` does not currently surface
+    // `INET6_ADDRSTRLEN` / `ADDRESS_FAMILY` / `USHORT`; mirror the
+    // `ws2ipdef.h` / `ws2def.h` values locally so the Windows build
+    // resolves without widening the leaf crate.
     /// `ws2ipdef.h`: `INET6_ADDRSTRLEN == 65` on Windows (vs 46 on POSIX).
     pub use bun_sys::posix::INET6_ADDRSTRLEN;
-    pub const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
+    pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
     pub use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub use ws2::AF_INET;
     pub use ws2::AF_INET6;
-    pub type socklen_t = super::ares::ares_socklen_t;
+    pub(crate) type socklen_t = super::ares::ares_socklen_t;
 }
 
 #[cfg(not(windows))]
 pub mod inet {
     #![allow(non_camel_case_types)]
-    // PORT NOTE: `bun_sys::c` (translated-c-headers) does not yet expose these
-    // socket constants/types; mirror them locally from libc / POSIX values.
-    pub const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
     pub use bun_sys::posix::INET6_ADDRSTRLEN;
     // Make sure this is in line with IN6ADDR_ANY_INIT in `netinet/in.h` on all platforms.
-    pub const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
+    pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
     pub use bun_sys::net::{in_port_t, sa_family_t, sockaddr_in, sockaddr_in6};
     pub use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
     pub type socklen_t = super::ares::ares_socklen_t;
 }
-
-// ported from: src/runtime/socket/SocketAddress.zig

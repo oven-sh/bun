@@ -70,6 +70,41 @@ describe("Bun.build", () => {
     throw new Error("should have thrown");
   });
 
+  // A `define:` value that isn't valid JSON or a JS identifier is auto-quoted
+  // (treated as a string literal). The JSON lexer must not error eagerly on the
+  // first character — a raw minified CSS string starts with `*{...}`, which
+  // src/codegen/bake-codegen.ts passes verbatim as `OVERLAY_CSS`.
+  describe.each([
+    "*{box-sizing:border-box}.root{all:initial}",
+    "?foo",
+    "(parenthesized)",
+    ")close",
+    "abc{not json}",
+    // Leading-operator chars must `step()` before falling back to auto-quote so
+    // `parse_string_literal`'s leading `step()` lands past index 1 (matching the
+    // reference lexer). Otherwise a LF at index 1 truncates the value to `"("`.
+    "(\nrest",
+    "*\nrest",
+  ])("define value %j is auto-quoted when not valid JSON", value => {
+    test("emits a quoted string literal", async () => {
+      const dir = tempDirWithFiles("bun-build-define-auto-quote", {
+        "entry.ts": `declare const X: string; console.log(X);`,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(dir, "entry.ts")],
+        define: { X: value },
+      });
+      expect(result.success).toBe(true);
+      const out = await result.outputs[0].text();
+      // The printer emits the define as a `"..."` string literal, or as a
+      // `` `...` `` template literal when the value contains a literal newline.
+      // Either way the full value — not a truncated prefix — must round-trip.
+      if (!out.includes("`" + value + "`")) {
+        expect(out).toContain(JSON.stringify(value));
+      }
+    });
+  });
+
   // https://github.com/oven-sh/bun/issues/12818
   test("sourcemap + build error crash case", async () => {
     const dir = tempDirWithFiles("build", {
@@ -1294,3 +1329,65 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   expect(growth).toBeLessThan(48 * 1024 * 1024);
   expect(exitCode).toBe(0);
 }, 120_000);
+
+// Regression: repeated in-process `Bun.build()` calls panicked with
+// `index out of bounds: the len is 4095 but the index is 4095` (SIGTRAP) after
+// a couple thousand builds. `Path.dupeAlloc` interns every module path into the
+// process-lifetime `FilenameStore`. The Rust port had dropped two things the
+// Zig original does: (1) the `isSliceInBuffer` short-circuit that returns an
+// already-interned path unchanged, and (2) routing the disjoint `text`/`pretty`
+// case (a freshly-relativized display path, recomputed every build) into the
+// per-build arena instead of the store. Without them, each build re-appended
+// every path, and once the store's overflow blocks filled
+// (`OVERFLOW_GROUP_MAX` = 4095 blocks), the next append indexed one past the
+// fixed-capacity pointer array and panicked.
+//
+// Many modules per build reaches the cap in far fewer builds: with 500 modules
+// the broken binary panics roughly a third of the way through this loop, while
+// the fixed binary keeps the store bounded and exits cleanly after all 400.
+// (MODULES stays well under the ~550 where the unrelated recursive tree-shaker
+// overflows its thread stack.) Not gated to debug/ASAN — the panic reproduces
+// on release builds too.
+//
+// An explicit timeout is required (not optional): this runs hundreds of real
+// bundles, far past bun:test's 5s default. The sibling leak tests above do the
+// same. 180s matches the CI runner's own per-test ceiling.
+test("Bun.build can be called thousands of times in one process without crashing", async () => {
+  const MODULES = 500;
+  const BUILDS = 400;
+  const files: Record<string, string> = {};
+  for (let i = 0; i < MODULES; i++) {
+    files[`m${i}.js`] =
+      `import { f${(i + 1) % MODULES} } from "./m${(i + 1) % MODULES}.js";\n` +
+      `export const v${i} = ${i};\n` +
+      `export function f${i}() { return v${i}; }\n`;
+  }
+  files["entry.js"] = Array.from(
+    { length: MODULES },
+    (_, i) => `import { f${i} } from "./m${i}.js"; console.log(f${i}());`,
+  ).join("\n");
+  files["run.ts"] = `
+    const entry = process.argv[2];
+    const BUILDS = ${BUILDS};
+    for (let i = 1; i <= BUILDS; i++) {
+      const res = await Bun.build({ entrypoints: [entry], minify: true, sourcemap: "external" });
+      if (!res.success) throw new AggregateError(res.logs, "build failed");
+      for (const o of res.outputs) await o.arrayBuffer();
+    }
+    console.log("OK " + BUILDS);
+  `;
+  const dir = tempDirWithFiles("bun-build-filename-store-overflow", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "run.ts"), join(dir, "entry.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A crash surfaces as a non-zero (signal) exit and a panic on stderr; assert
+  // the run completed cleanly instead.
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK 400");
+  expect(exitCode).toBe(0);
+}, 180_000);

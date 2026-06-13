@@ -6,6 +6,9 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 strum.workspace = true
 # `raw-entry` powers `StringHashMap::{get_hashed, put_static_key_hashed}` — the
@@ -24,6 +27,7 @@ bun_alloc.workspace = true
 bun_core.workspace = true
 bun_wyhash.workspace = true
 bun_ptr.workspace = true
+rustc-hash = "2"
 
 thiserror.workspace = true
 

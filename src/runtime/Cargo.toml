@@ -6,6 +6,9 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 bun_opaque.workspace = true
 rust-argon2.workspace = true
@@ -18,7 +21,6 @@ blake2 = { version = "0.10", default-features = false }
 bytemuck = "1"
 thiserror.workspace = true
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true
@@ -45,6 +47,7 @@ bun_dns.workspace = true
 bun_dotenv.workspace = true
 bun_event_loop.workspace = true
 bun_glob.workspace = true
+bun_highway.workspace = true
 bun_http.workspace = true
 bun_http_jsc.workspace = true
 bun_http_types.workspace = true

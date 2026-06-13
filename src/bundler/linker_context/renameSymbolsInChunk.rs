@@ -10,16 +10,11 @@ use bun_ast::{Part, SlotCounts};
 use crate::bun_renamer as renamer;
 use crate::bun_renamer::{ChunkRenamer, MinifyRenamer, NumberRenamer, StableSymbolCount};
 use crate::chunk::Content;
-use crate::ungate_support::js_meta;
+use crate::js_meta;
 use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 
 /// TODO: investigate if we need to parallelize this function
 /// esbuild does parallelize it.
-// TODO(port): narrow error set
-// TODO(port): bundler is an AST crate (PORTING.md §Allocators) — verify whether caller passes
-// an arena vs default_allocator for the dropped `arena: std.mem.Allocator` param; if arena,
-// thread `bump: &'bump Bump` and switch working Vecs to bun_alloc::ArenaVec<'bump, T>.
-//
 // CONCURRENCY: called from `LinkerContext::generate_js_renamer` (`each_ptr`
 // callback) — runs on worker threads, one task per chunk. Writes go to
 // `chunk.renamer` (per-chunk disjoint) plus per-`source_index` rows of
@@ -27,9 +22,9 @@ use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 // symbol scope assignment). `files_in_order` is the chunk's own file list;
 // without code-splitting, files are partitioned across chunks so per-row
 // writes are disjoint. With code-splitting a `source_index` may appear in
-// multiple chunks — the Zig original has the same overlap; the writes are
+// multiple chunks; the writes are
 // idempotent (`declared_symbols` flag set, scope-member sort) so the race is
-// benign there but is still a Stacked Borrows hazard here. Mitigation: never
+// benign but is still a Stacked Borrows hazard. Mitigation: never
 // materialize `&mut LinkerContext` (would assert whole-context exclusivity
 // across N tasks); take `*mut LinkerContext` raw, deref to `&LinkerContext`
 // for reads, and access SoA columns via `split_raw()` root-provenance
@@ -105,8 +100,7 @@ pub unsafe fn rename_symbols_in_chunk(
         )
     };
 
-    // PORT NOTE: `symbol::Map` is not `Clone`/`Copy`; Zig passed the struct
-    // (slice header) by value. Build a non-owning shallow view via
+    // `symbol::Map` is not `Clone`/`Copy`. Build a non-owning shallow view via
     // `from_bump_slice` so the renamer's `Map` does not free graph storage on
     // drop.
     // SAFETY: `c.graph.symbols` outlives the returned `ChunkRenamer` (both are
@@ -120,6 +114,11 @@ pub unsafe fn rename_symbols_in_chunk(
         // slice header to build a non-owning shallow `Vec` view.
         let inner = unsafe { (*symbols).symbols_for_source.slice_mut() };
         symbol::Map {
+            // SAFETY: `inner` aliases the live `c.graph.symbols` storage,
+            // which outlives the returned `ChunkRenamer`; the renamer only
+            // reads through this view and never grows or drops it (see the
+            // closure-level note above), upholding the "no drop, no grow"
+            // contract of `from_borrowed_slice_dangerous`.
             symbols_for_source: core::mem::ManuallyDrop::into_inner(unsafe {
                 <Vec<_> as bun_collections::VecExt<_>>::from_borrowed_slice_dangerous(inner)
             }),
@@ -147,7 +146,6 @@ pub unsafe fn rename_symbols_in_chunk(
             count += item.len() as u32;
         }
 
-        // PERF(port): Zig pre-set len and filled via slice writes; using push() here
         let mut list: Vec<StableRef> = Vec::with_capacity(count as usize);
         let stable_source_indices = c.graph.stable_source_indices.slice();
         for item in imports_from_other_chunks {
@@ -175,14 +173,14 @@ pub unsafe fn rename_symbols_in_chunk(
         let first_top_level_slots: SlotCounts = {
             let mut slots = SlotCounts::default();
             for &i in files_in_order {
-                slots.union_max(nested_slot_counts_col[i as usize].clone());
+                slots.union_max(nested_slot_counts_col[i as usize]);
             }
             slots
         };
 
         let mut minify_renamer = MinifyRenamer::init(
             make_symbols_view(symbols),
-            first_top_level_slots,
+            &first_top_level_slots,
             reserved_names,
         )?;
 
@@ -226,8 +224,9 @@ pub unsafe fn rename_symbols_in_chunk(
                 )?;
             }
 
-            for part in parts.slice() {
-                if !part.is_live {
+            let parts_live = &c.graph.parts_live[source_index as usize];
+            for (part_index, part) in parts.as_slice().iter().enumerate() {
+                if !parts_live.is_set(part_index) {
                     continue;
                 }
 
@@ -254,7 +253,7 @@ pub unsafe fn rename_symbols_in_chunk(
 
         top_level_symbols.clear();
         for stable_ref in &sorted_imports_from_other_chunks {
-            // PORT NOTE: `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
+            // `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
             let ref_ = { stable_ref.r#ref };
             minify_renamer.accumulate_symbol_use_count(
                 &mut top_level_symbols,
@@ -273,19 +272,18 @@ pub unsafe fn rename_symbols_in_chunk(
         return Ok(ChunkRenamer::Minify(minify_renamer));
     }
 
-    let mut r = NumberRenamer::init(make_symbols_view(symbols), reserved_names)?;
+    let mut r = NumberRenamer::init(make_symbols_view(symbols), &reserved_names)?;
     for stable_ref in &sorted_imports_from_other_chunks {
-        // PORT NOTE: `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
-        r.add_top_level_symbol({ stable_ref.r#ref });
+        // `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
+        r.add_top_level_symbol(stable_ref.r#ref);
     }
 
-    // PORT NOTE: Zig used `r.temp_arena` for this list; arena param dropped
     let mut sorted: Vec<u32> = Vec::new();
 
     for &source_index in files_in_order {
         let wrap = all_flags[source_index as usize].wrap;
-        // PORT NOTE: need `&mut [Part]` for `add_top_level_declared_symbols`.
-        let parts: &mut [Part] = all_parts[source_index as usize].slice_mut();
+        // Need `&mut [Part]` for `add_top_level_declared_symbols`.
+        let parts: &mut [Part] = all_parts[source_index as usize].as_mut_slice();
 
         match wrap {
             // Modules wrapped in a CommonJS closure look like this:
@@ -310,7 +308,7 @@ pub unsafe fn rename_symbols_in_chunk(
                 // add those symbols to the top-level scope to avoid causing name
                 // collisions. This code special-cases only those symbols.
                 if c.options.output_format.keep_es6_import_export_syntax() {
-                    let import_records = all_import_records[source_index as usize].slice();
+                    let import_records = all_import_records[source_index as usize].as_slice();
                     for part in parts.iter() {
                         for stmt in part.stmts.slice() {
                             match stmt.data {
@@ -360,7 +358,7 @@ pub unsafe fn rename_symbols_in_chunk(
                         }
                     }
                 }
-                // PORT NOTE: reshaped for borrowck — `&mut r.root` while `r` is the
+                // Reshaped for borrowck — `&mut r.root` while `r` is the
                 // `&mut self` receiver. Take a raw pointer; `assign_names_*` does
                 // not touch `self.root` through `self`.
                 let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
@@ -394,8 +392,9 @@ pub unsafe fn rename_symbols_in_chunk(
             WrapKind::None => {}
         }
 
-        for part in parts.iter_mut() {
-            if !part.is_live {
+        let parts_live = &c.graph.parts_live[source_index as usize];
+        for (part_index, part) in parts.iter_mut().enumerate() {
+            if !parts_live.is_set(part_index) {
                 continue;
             }
 
@@ -411,7 +410,6 @@ pub unsafe fn rename_symbols_in_chunk(
                     &mut sorted,
                 );
             }
-            // Zig: `@TypeOf(r.number_scope_pool.hive.used).initEmpty()`.
             r.number_scope_pool.hive.used = bun_collections::hive_array::HiveBitSet::init_empty();
         }
     }
@@ -422,5 +420,3 @@ pub unsafe fn rename_symbols_in_chunk(
 pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
-
-// ported from: src/bundler/linker_context/renameSymbolsInChunk.zig

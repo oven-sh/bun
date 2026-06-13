@@ -9,17 +9,16 @@ use crate::String as SemverString;
 use crate::query::token::Wildcard;
 
 pub type Version = VersionType<u64>;
-pub type OldV2Version = VersionType<u32>;
 
 // ──────────────────────────────────────────────────────────────────────────
-// VersionInt — trait capturing the operations the Zig generic needed on
-// `comptime IntType: type`. Only u32 and u64 are instantiated.
+// VersionInt — trait capturing the operations the generic version type needs
+// from its integer parameter. Only u32 and u64 are instantiated.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait VersionInt: Copy + Default + Eq + Ord + fmt::Display + 'static {
     const ZERO: Self;
     const MAX: Self;
-    /// Zig: `_tag_padding: [if (IntType == u32) 4 else 0]u8` — explicit zeroed
+    /// Explicit zeroed
     /// padding so lockfile byte-serialization is deterministic.
     type TagPadding: Copy + Default + 'static;
     fn parse_ascii(s: &[u8]) -> Option<Self>;
@@ -31,7 +30,6 @@ impl VersionInt for u64 {
     type TagPadding = [u8; 0];
     #[inline]
     fn parse_ascii(s: &[u8]) -> Option<Self> {
-        // Semantics match Zig `std.fmt.parseUnsigned(u64, s, 10) catch null`:
         // None for empty, any non-[0-9] byte, or overflow. Callers rely on
         // the non-digit None case for pre-release identifier ordering
         // (semver identifiers are `[0-9A-Za-z-]+`, so `_` never appears).
@@ -59,15 +57,14 @@ pub struct VersionType<T: VersionInt> {
     pub major: T,
     pub minor: T,
     pub patch: T,
-    // Zig: `_tag_padding: [if (IntType == u32) 4 else 0]u8 = .{0} ** ...` —
-    // explicit zeroed bytes so the alignment gap before `tag` is deterministic
-    // for lockfile serialization (see padding_checker.zig).
+    // Explicit zeroed bytes so the alignment gap before `tag` is deterministic
+    // for lockfile serialization.
     #[doc(hidden)]
     pub _tag_padding: T::TagPadding,
     pub tag: Tag,
 }
 
-// Layout must match Zig `extern struct` exactly (lockfile binary format).
+// Layout is load-bearing (lockfile binary format).
 const _: () = {
     assert!(core::mem::size_of::<Tag>() == 32);
     assert!(core::mem::align_of::<Tag>() == 8);
@@ -242,11 +239,10 @@ impl<T: VersionInt> VersionType<T> {
     ///    from package.json)
     ///
     /// The goal of this function is to avoid a complete parse of semver that's unused
-    #[allow(unused_assignments)]
     pub fn which_version_is_pinned(input: &[u8]) -> PinnedVersion {
         let version = strings::trim(input, &strings::WHITESPACE_CHARS);
 
-        let mut i: usize = 0;
+        let mut i: usize;
 
         let pinned: PinnedVersion = 'pinned: {
             for j in 0..version.len() {
@@ -256,8 +252,8 @@ impl<T: VersionInt> VersionType<T> {
                     | b'\t'
                     | b'\n'
                     | b'\r'
-                    | 0x0B // std.ascii.control_code.vt
-                    | 0x0C // std.ascii.control_code.ff
+                    | 0x0B // vertical tab
+                    | 0x0C // form feed
 
                     // version separators
                     | b'v'
@@ -471,13 +467,12 @@ impl<T: VersionInt> VersionType<T> {
         self.tag.order_without_build(rhs.tag, lhs_buf, rhs_buf)
     }
 
-    #[allow(unused_assignments)]
     pub fn parse(sliced_string: SlicedString) -> ParseResult<T> {
         let input = sliced_string.slice;
         let mut result = ParseResult::<T>::default();
 
         let mut part_i: u8 = 0;
-        let mut part_start_i: usize = 0;
+        let mut part_start_i: usize;
         let mut last_char_i: usize = 0;
 
         if input.is_empty() {
@@ -495,8 +490,8 @@ impl<T: VersionInt> VersionType<T> {
                 | b'\t'
                 | b'\n'
                 | b'\r'
-                | 0x0B // std.ascii.control_code.vt
-                | 0x0C // std.ascii.control_code.ff
+                | 0x0B // vertical tab
+                | 0x0C // form feed
 
                 // version separators
                 | b'v'
@@ -526,16 +521,14 @@ impl<T: VersionInt> VersionType<T> {
                 }
                 b'|' | b'^' | b'#' | b'&' | b'%' | b'!' => {
                     is_done = true;
-                    if i > 0 {
-                        i -= 1;
-                    }
+                    i = i.saturating_sub(1);
                     break;
                 }
                 b'0'..=b'9' => {
                     part_start_i = i;
                     i += 1;
 
-                    while i < input.len() && matches!(input[i], b'0'..=b'9') {
+                    while i < input.len() && input[i].is_ascii_digit() {
                         i += 1;
                     }
 
@@ -593,7 +586,6 @@ impl<T: VersionInt> VersionType<T> {
                     break;
                 }
                 b'x' | b'*' | b'X' => {
-                    part_start_i = i;
                     i += 1;
 
                     while i < input.len() && matches!(input[i], b'x' | b'*' | b'X') {
@@ -627,10 +619,7 @@ impl<T: VersionInt> VersionType<T> {
                 c => {
                     // Some weirdo npm packages in the wild have a version like "1.0.0rc.1"
                     // npm just expects that to work...even though it has no "-" qualifier.
-                    if result.wildcard == Wildcard::None
-                        && part_i >= 2
-                        && matches!(c, b'a'..=b'z' | b'A'..=b'Z')
-                    {
+                    if result.wildcard == Wildcard::None && part_i >= 2 && c.is_ascii_alphabetic() {
                         part_start_i = i;
                         let tag_result =
                             Tag::parse_with_pre_count(sliced_string.sub(&input[part_start_i..]), 1);
@@ -705,8 +694,6 @@ impl<T: VersionInt> VersionType<T> {
             return match T::parse_ascii(&bytes[0..byte_i as usize]) {
                 Some(v) => Some(v),
                 None => {
-                    // TODO(port): Output.prettyErrorln with @errorName — Rust parse
-                    // error doesn't carry a Zig-style tag name.
                     bun_core::pretty_errorln!(
                         "ERROR parsing version: \"{}\", bytes: {}",
                         bstr::BStr::new(input),
@@ -786,8 +773,6 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
         )
         .unwrap_or(ChangedVersion::None);
 
-        // TODO(port): Output.prettyFmt is a comptime ANSI-tag expander. `pretty_fmt!`
-        // currently passes the literal through; the proc-macro substitution lands later.
         match diff {
             ChangedVersion::Major => write!(
                 writer,
@@ -994,17 +979,10 @@ pub struct Tag {
     pub build: ExternalString,
 }
 
-// TODO(port): unused module-level static in Zig (`var multi_tag_warn = false;`).
-// Kept as a note; remove if confirmed dead in Phase B.
-#[allow(dead_code)]
-static MULTI_TAG_WARN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 // TODO: support multiple tags
 
 impl Tag {
     pub fn order_pre(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
-        // TODO(port): Zig parameterized this on IntType (u32 vs u64). Only the
-        // u64 instantiation is used at runtime (OldV2Version is migration-only),
-        // so we hardcode u64 here.
         let lhs_str = self.pre.slice(lhs_buf);
         let rhs_str = rhs.pre.slice(rhs_buf);
 
@@ -1097,9 +1075,8 @@ impl Tag {
         } else {
             let pre_slice = self.pre.slice(slice);
             buf[..pre_slice.len()].copy_from_slice(pre_slice);
-            // PORT NOTE: reshaped for borrowck — Zig does
-            // `String.init(buf.*, buf.*[0..pre_slice.len])` then advances buf.
-            // We capture the init args before advancing.
+            // reshaped for borrowck —
+            // capture the init args before advancing `buf`.
             pre = SemverString::init(buf, &buf[0..pre_slice.len()]);
             *buf = &mut core::mem::take(buf)[pre_slice.len()..];
         }
@@ -1283,5 +1260,3 @@ impl<T: VersionInt> Default for ParseResult<T> {
         }
     }
 }
-
-// ported from: src/semver/Version.zig

@@ -7,20 +7,20 @@ use bun_uws_sys::{Opcode, SendStatus};
 use crate::timer::EventLoopTimerState;
 
 use super::source_map_store::{self, RemoveOrUpgradeMode};
-use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId, RouteBundle};
+use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId};
 use crate::bake::dev_server_body::HmrTopicBits;
 
-// Local shim for Zig's `res: anytype` — shared with `DevServer::on_web_socket_upgrade`.
-// TODO(port): replace with `bun_uws::ResponseLike` once that trait lands upstream.
-pub use super::ResponseLike;
+// Shared with `DevServer::on_web_socket_upgrade`.
+// The trait lives in `dev_server/mod.rs`; only the dev server needs it.
+pub(crate) use super::ResponseLike;
 
 // Struct definition lives in `dev_server/mod.rs` so the public
 // `crate::bake::dev_server::HmrSocket` path and these impl blocks name a
 // single type (no cross-type pointer casts).
-pub use super::HmrSocket;
+pub(crate) use super::HmrSocket;
 
 impl HmrSocket {
-    // `res: anytype` — only `.getRemoteSocketInfo()` is called on it.
+    // `res` is generic — only `.get_remote_socket_info()` is called on it.
     // Bound matches the caller in `DevServer::on_web_socket_upgrade`.
     pub fn new<R>(dev: &mut DevServer, res: &mut R) -> Box<HmrSocket>
     where
@@ -74,8 +74,7 @@ impl HmrSocket {
 
         if send_status != SendStatus::Dropped {
             // Notify inspector about client connection
-            // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-            if let Some(agent) = unsafe { dev.inspector() } {
+            if let Some(agent) = dev.inspector() {
                 self.inspector_connection_id = agent.next_connection_id();
                 agent
                     .notify_client_connected(dev.inspector_server_id, self.inspector_connection_id);
@@ -88,30 +87,27 @@ impl HmrSocket {
             return ws.close();
         }
 
-        // Zig's IncomingMessageId is non-exhaustive (`_ => ws.close()`), so msg[0] may be any
-        // byte. Transmuting an out-of-range u8 into a #[repr(u8)] enum is UB regardless of a
-        // wildcard match arm — match on the raw byte instead.
+        // `msg[0]` may be any byte. Transmuting an out-of-range u8 into a
+        // #[repr(u8)] enum is UB regardless of a wildcard match arm — match on
+        // the raw byte instead.
         match msg[0] {
             x if x == IncomingMessageId::Init as u8 => {
                 if msg.len() != 9 {
                     return ws.close();
                 }
                 let mut generation_bytes = [0u8; 4];
-                // std.fmt.hexToBytes → bun_core::decode_hex_to_bytes
                 if strings::decode_hex_to_bytes(&mut generation_bytes, &msg[1..]).is_err() {
                     return ws.close();
                 }
                 let generation = u32::from_ne_bytes(generation_bytes);
                 let source_map_id = source_map_store::Key::init((generation as u64) << 32);
+                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 let dev = unsafe { self.dev() };
                 if dev
                     .source_maps
                     .remove_or_upgrade_weak_ref(source_map_id, RemoveOrUpgradeMode::Upgrade)
                 {
-                    self.referenced_source_maps
-                        .insert(source_map_id, ())
-                        // PERF(port): was `catch bun.outOfMemory()` — Rust HashMap aborts on OOM
-                        ;
+                    self.referenced_source_maps.insert(source_map_id, ());
                 }
             }
             x if x == IncomingMessageId::Subscribe as u8 => {
@@ -120,14 +116,11 @@ impl HmrSocket {
                 if topics.len() > HmrTopic::MAX_COUNT {
                     return;
                 }
-                // Zig: inline for over @typeInfo(HmrTopic).@"enum".fields, matching
-                // `char == field.value` and setting the corresponding bit.
                 for &ch in topics {
                     if let Some(topic) = HmrTopic::from_u8(ch) {
                         new_bits.insert(topic.as_bit());
                     }
                 }
-                // Zig: inline for over std.enums.values(HmrTopic)
                 for &field in HmrTopic::ALL {
                     let bit = field.as_bit();
                     if new_bits.contains(bit) && !self.subscriptions.contains(bit) {
@@ -135,6 +128,7 @@ impl HmrSocket {
 
                         // on-subscribe hooks
                         if feature_flags::BAKE_DEBUGGING_FEATURES {
+                            // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                             let dev = unsafe { self.dev() };
                             match field {
                                 HmrTopic::IncrementalVisualizer => {
@@ -149,7 +143,7 @@ impl HmrSocket {
                                             dev.memory_visualizer_timer.state
                                                 != EventLoopTimerState::ACTIVE
                                         );
-                                        // PORT NOTE (b2-cycle): `vm.timer` is `()` on the
+                                        // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the
                                         // low-tier `VirtualMachine`; the real `timer::All`
                                         // lives in `RuntimeState` (see jsc_hooks.rs).
                                         let state = crate::jsc_hooks::runtime_state();
@@ -172,9 +166,9 @@ impl HmrSocket {
                             }
                         }
                     } else if new_bits.contains(bit) && !self.subscriptions.contains(bit) {
-                        // PORT NOTE: this `else if` condition is identical to the `if` above in
-                        // the source Zig (line 96) and is therefore unreachable. Ported verbatim;
-                        // likely an upstream bug (intended: `!new && old` → unsubscribe).
+                        // Note: this `else if` condition is identical to the `if`
+                        // above and is therefore unreachable; likely a bug
+                        // (intended: `!new && old` → unsubscribe).
                         let _ = ws.unsubscribe(&[field as u8]);
                     }
                 }
@@ -183,10 +177,10 @@ impl HmrSocket {
             }
             x if x == IncomingMessageId::SetUrl as u8 => {
                 let pattern = &msg[1..];
+                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 let dev = unsafe { self.dev() };
                 let maybe_rbi = dev.route_to_bundle_index_slow(pattern);
-                // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-                if let Some(agent) = unsafe { dev.inspector() } {
+                if let Some(agent) = dev.inspector() {
                     if self.inspector_connection_id > -1 {
                         let mut pattern_str = bun_core::String::init(pattern);
                         // `defer pattern_str.deref()` → Drop on bun_core::String
@@ -212,9 +206,9 @@ impl HmrSocket {
                 response[1..].copy_from_slice(&rbi.get().to_ne_bytes());
 
                 let _ = ws.send(&response, Opcode::Binary, false, true);
-                self.notify_inspector_client_navigation(pattern, Some(rbi));
             }
             x if x == IncomingMessageId::TestingBatchEvents as u8 => {
+                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 let dev = unsafe { self.dev() };
                 match &dev.testing_batch_events {
                     super::TestingBatchEvents::Disabled => {
@@ -236,8 +230,7 @@ impl HmrSocket {
                         ws.close();
                     }
                     super::TestingBatchEvents::Enabled(_event_const) => {
-                        // PORT NOTE: reshaped for borrowck — Zig copied the payload then
-                        // overwrote the union; here we replace-and-extract.
+                        // Replace-and-extract to satisfy borrowck.
                         let super::TestingBatchEvents::Enabled(mut event) = core::mem::replace(
                             &mut dev.testing_batch_events,
                             super::TestingBatchEvents::Disabled,
@@ -255,7 +248,6 @@ impl HmrSocket {
                             return;
                         }
 
-                        // TODO(port): std.time.Timer — `start_async_bundle` takes Instant.
                         let timer = std::time::Instant::now();
                         dev.start_async_bundle(event.entry_points, true, timer)
                             // bun.handleOom(err) — Rust aborts on OOM by default
@@ -281,28 +273,28 @@ impl HmrSocket {
                 };
 
                 let data = &msg[2..];
+                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 let dev = unsafe { self.dev() };
 
-                // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-                if let Some(agent) = unsafe { dev.inspector() } {
+                if let Some(agent) = dev.inspector() {
                     let mut log_str = bun_core::String::init(data);
                     // `defer log_str.deref()` → Drop on bun_core::String
                     agent.notify_console_log(dev.inspector_server_id, kind as u8, &mut log_str);
                 }
 
                 if dev.broadcast_console_log_from_browser_to_server {
+                    let arena = bun_alloc::Arena::new();
+                    let data =
+                        super::error_report_request_body::sanitize_for_terminal(data, &arena);
                     match kind {
                         ConsoleLogKind::Log => {
-                            Output::pretty(format_args!(
-                                "<r><d>[browser]<r> {}<r>\n",
-                                bstr::BStr::new(data)
-                            ));
+                            bun_core::pretty!("<r><d>[browser]<r> {}<r>\n", bstr::BStr::new(data));
                         }
                         ConsoleLogKind::Err => {
-                            Output::pretty_error(format_args!(
+                            bun_core::pretty_error!(
                                 "<r><d>[browser]<r> {}<r>\n",
                                 bstr::BStr::new(data)
-                            ));
+                            );
                         }
                     }
                     Output::flush();
@@ -315,12 +307,13 @@ impl HmrSocket {
                 };
                 let source_map_id = source_map_store::Key::init(u64::from_le_bytes(bytes));
                 let Some(kv) = self.referenced_source_maps.remove_entry(&source_map_id) else {
-                    Output::debug_warn(format_args!(
+                    bun_core::debug_warn!(
                         "unref_source_map: no entry found: {:x}\n",
                         source_map_id.get()
-                    ));
+                    );
                     return; // no entry may happen.
                 };
+                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 unsafe { self.dev() }.source_maps.unref(kv.0);
             }
             _ => ws.close(),
@@ -329,6 +322,7 @@ impl HmrSocket {
 
     fn on_unsubscribe(&mut self, field: HmrTopicBits) {
         if feature_flags::BAKE_DEBUGGING_FEATURES {
+            // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
             let dev = unsafe { self.dev() };
             if field.contains(HmrTopic::IncrementalVisualizer.as_bit()) {
                 dev.emit_incremental_visualizer_events -= 1;
@@ -338,7 +332,7 @@ impl HmrSocket {
                 if dev.emit_incremental_visualizer_events == 0
                     && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
-                    // PORT NOTE (b2-cycle): `vm.timer` is `()` on the low-tier
+                    // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier
                     // `VirtualMachine`; the real `timer::All` lives in `RuntimeState`.
                     let state = crate::jsc_hooks::runtime_state();
                     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
@@ -351,19 +345,24 @@ impl HmrSocket {
         }
     }
 
-    pub fn on_close(s: *mut HmrSocket, _ws: AnyWebSocket, _exit_code: i32, _message: &[u8]) {
-        // SAFETY: uws guarantees the socket context pointer is valid for the
-        // duration of the close callback; we consume ownership here.
+    /// # Safety
+    /// `s` must be a valid, uniquely-owned `HmrSocket` heap pointer (allocated
+    /// via `HmrSocket::new`'s caller). uws guarantees the socket context
+    /// pointer is valid for the duration of the close callback; this function
+    /// consumes ownership and frees it.
+    pub(crate) fn on_close(s: *mut HmrSocket, _ws: AnyWebSocket, _exit_code: i32, _message: &[u8]) {
+        // SAFETY: caller contract above.
         let this = unsafe { &mut *s };
 
         let subs = this.subscriptions;
         this.on_unsubscribe(subs);
 
+        // SAFETY: JS-thread only; the `on_unsubscribe` borrow above has been
+        // released, so this is the sole `&mut DevServer` for the remainder.
         let dev = unsafe { this.dev() };
         if this.inspector_connection_id > -1 {
             // Notify inspector about client disconnection
-            // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-            if let Some(agent) = unsafe { dev.inspector() } {
+            if let Some(agent) = dev.inspector() {
                 agent.notify_client_disconnected(
                     dev.inspector_server_id,
                     this.inspector_connection_id,
@@ -385,27 +384,4 @@ impl HmrSocket {
         // owner reclaiming it. Matches `s.dev.arena().destroy(s)`.
         drop(unsafe { bun_core::heap::take(s) });
     }
-
-    fn notify_inspector_client_navigation(
-        &self,
-        pattern: &[u8],
-        rbi: super::route_bundle::IndexOptional,
-    ) {
-        if self.inspector_connection_id > -1 {
-            let dev = unsafe { self.dev() };
-            // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-            if let Some(agent) = unsafe { dev.inspector() } {
-                let mut pattern_str = bun_core::String::init(pattern);
-                // `defer pattern_str.deref()` → Drop on bun_core::String
-                agent.notify_client_navigated(
-                    dev.inspector_server_id,
-                    self.inspector_connection_id,
-                    &mut pattern_str,
-                    rbi.map(|i| i.get() as i32).unwrap_or(-1),
-                );
-            }
-        }
-    }
 }
-
-// ported from: src/bake/DevServer/HmrSocket.zig

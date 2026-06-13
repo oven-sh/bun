@@ -1,13 +1,13 @@
 //! High-level socket wrapper over `us_socket_t` / `ConnectingSocket` /
 //! `UpgradedDuplex` / `WindowsNamedPipe`.
 //!
-//! THIS IS THE ONE CANONICAL PORT of `src/uws_sys/socket.zig`. `bun_uws`
+//! THIS IS THE ONE CANONICAL IMPLEMENTATION. `bun_uws`
 //! re-exports everything here; do NOT add a parallel `InternalSocket` /
-//! `NewSocketHandler` in `bun_uws` again — the Phase-A "thin placeholder"
+//! `NewSocketHandler` in `bun_uws` again — the earlier "thin placeholder"
 //! that grew full bodies there has been deleted.
 //!
-//! Shape: `InternalSocket` is a `Copy` tagged raw pointer (Zig passed
-//! `ThisSocket` by value through the entire HTTP-client state machine), all
+//! Shape: `InternalSocket` is a `Copy` tagged raw pointer (passed by value
+//! through the entire HTTP-client state machine), all
 //! `NewSocketHandler` methods take `&self`, and the `#[cfg(windows)]` Pipe
 //! split is owned exactly once by the `on_socket!` macro below.
 
@@ -21,8 +21,8 @@ use bun_core::{Fd, ZStr};
 use crate::WindowsNamedPipe;
 use crate::{
     CloseCode, ConnectResult, ConnectingSocket, LIBUS_SOCKET_ALLOW_HALF_OPEN,
-    LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, UpgradedDuplex, us_bun_verify_error_t,
-    us_socket_t,
+    LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, UpgradedDuplex,
+    us_bun_verify_error_t, us_socket_t,
 };
 
 bun_core::declare_scope!(uws, visible);
@@ -30,7 +30,7 @@ bun_core::declare_scope!(uws, visible);
 // ──────────────────────────────────────────────────────────────────────────
 // CloseCode PascalCase aliases
 // ──────────────────────────────────────────────────────────────────────────
-// `bun_uws_sys::CloseCode` (us_socket_t.rs) keeps the Zig snake-case variant
+// `bun_uws_sys::CloseCode` (us_socket_t.rs) keeps the snake-case variant
 // names (`normal`/`failure`/`fast_shutdown`). The deleted `bun_uws::CloseKind`
 // duplicate used PascalCase. Expose both spellings via associated consts so
 // every existing call site (`CloseCode::Normal`, `CloseKind::Failure`, …)
@@ -46,7 +46,7 @@ impl CloseCode {
 // InternalSocket
 // ──────────────────────────────────────────────────────────────────────────
 
-/// State of a single connection. `Copy` — Zig passed `ThisSocket` by value
+/// State of a single connection. `Copy` — passed by value
 /// through the entire HTTP-client / Bun.Socket state machines, so the handle
 /// is a trivially-copyable tagged pointer. The `UpgradedDuplex` / `Pipe`
 /// payloads are raw `*mut` (NOT `&mut`): they are stored in long-lived
@@ -64,11 +64,10 @@ pub enum InternalSocket {
     Pipe,
 }
 
-// Zig `InternalSocket.eq` — variant + pointer-identity equality.
-// PORT NOTE: Zig's `.pipe` arm returns `false` even for `(pipe, pipe)` on
-// non-Windows (the variant carries no payload there, so identity is
-// meaningless). Mirrored exactly so debug-asserts that compare sockets behave
-// identically to the Zig build.
+// Variant + pointer-identity equality. The `Pipe` arm intentionally returns
+// `false` even for `(Pipe, Pipe)` on non-Windows (the variant carries no
+// payload there, so identity is meaningless) — debug-asserts that compare
+// sockets rely on this matching the original `InternalSocket.eq` semantics.
 impl PartialEq for InternalSocket {
     fn eq(&self, other: &Self) -> bool {
         match (*self, *other) {
@@ -88,7 +87,7 @@ impl PartialEq for InternalSocket {
 }
 
 impl InternalSocket {
-    /// Zig `InternalSocket.get()` — `Some` only for `.connected`.
+    /// `Some` only for `.connected`.
     #[inline]
     pub fn get(&self) -> Option<*mut us_socket_t> {
         match *self {
@@ -188,7 +187,7 @@ macro_rules! on_socket {
 // NewSocketHandler<IS_SSL>
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig `NewSocketHandler(comptime is_ssl: bool)`. The const generic only
+/// The const generic only
 /// selects `*SSL` vs fd for `get_native_handle`; it is NOT forwarded to C —
 /// TLS is per-socket there.
 #[derive(Copy, Clone)]
@@ -209,7 +208,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         socket: InternalSocket::Detached,
     };
 
-    /// Zig `pub const detached` — lower-case constructor form.
+    /// Constructor form of [`Self::DETACHED`].
     #[inline]
     pub const fn detached() -> Self {
         Self::DETACHED
@@ -222,12 +221,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     #[inline]
     pub const fn assume_ssl(self) -> NewSocketHandler<true> {
         debug_assert!(IS_SSL);
-        NewSocketHandler { socket: self.socket }
+        NewSocketHandler {
+            socket: self.socket,
+        }
     }
     #[inline]
     pub const fn assume_tcp(self) -> NewSocketHandler<false> {
         debug_assert!(!IS_SSL);
-        NewSocketHandler { socket: self.socket }
+        NewSocketHandler {
+            socket: self.socket,
+        }
     }
     /// Generic counterpart of [`Self::assume_ssl`]/[`Self::assume_tcp`] for
     /// callers inside an `if IS_SSL { ... }` arm widening a concrete handle
@@ -235,7 +238,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     #[inline]
     pub const fn cast_ssl<const NEW_SSL: bool>(self) -> NewSocketHandler<NEW_SSL> {
         debug_assert!(IS_SSL == NEW_SSL);
-        NewSocketHandler { socket: self.socket }
+        NewSocketHandler {
+            socket: self.socket,
+        }
     }
 
     #[inline]
@@ -358,9 +363,11 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     #[cfg(not(windows))]
     pub fn write_fd(&self, data: &[u8], file_descriptor: c_int) -> i32 {
         match self.socket {
-            InternalSocket::Connected(s) => sock(s).write_fd(data, Fd::from_native(file_descriptor)),
-            // Mirror Zig `socket.writeFd`: duplex/pipe fall back to a plain
-            // write (the fd is silently dropped).
+            InternalSocket::Connected(s) => {
+                sock(s).write_fd(data, Fd::from_native(file_descriptor))
+            }
+            // Duplex/pipe fall back to a plain write (the fd is silently
+            // dropped).
             InternalSocket::UpgradedDuplex(_) | InternalSocket::Pipe => self.write(data),
             InternalSocket::Connecting(_) | InternalSocket::Detached => 0,
         }
@@ -387,7 +394,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── timeouts ────────────────────────────────────────────────────────────
 
-    /// Direct seconds timeout (no long-timeout split). Mirrors Zig `timeout`.
+    /// Direct seconds timeout (no long-timeout split).
     pub fn timeout(&self, seconds: c_uint) {
         on_socket!(self.socket;
             connected s => s.set_timeout(seconds),
@@ -519,9 +526,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             // Raw `*mut T` only — do NOT route through `ext::<T>()` (which
             // materializes `&mut T` and would assert validity invariants).
             InternalSocket::Connected(s) => Some(sock(s).ext_ptr().cast::<T>()),
-            InternalSocket::Connecting(s) => Some(
-                crate::connecting_socket::us_connecting_socket_ext(conn(s)).cast::<T>(),
-            ),
+            InternalSocket::Connecting(s) => {
+                Some(crate::connecting_socket::us_connecting_socket_ext(conn(s)).cast::<T>())
+            }
             _ => None,
         }
     }
@@ -529,7 +536,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Group this socket is linked into. `None` for non-uSockets transports.
     pub fn group(&self) -> Option<*mut SocketGroup> {
         match self.socket {
-            InternalSocket::Connected(s) => Some(sock(s).group() as *mut SocketGroup),
+            InternalSocket::Connected(s) => {
+                Some(std::ptr::from_mut::<SocketGroup>(sock(s).group()))
+            }
             InternalSocket::Connecting(s) => Some(conn(s).group()),
             _ => None,
         }
@@ -585,7 +594,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     pub fn mark_needs_more_for_sendfile(&self) {
-        // Zig: `if (comptime is_ssl) @compileError(...)` — keep as a const assert.
         const { assert!(!IS_SSL, "SSL sockets do not support sendfile yet") };
         if let InternalSocket::Connected(s) = self.socket {
             sock(s).send_file_needs_more();
@@ -596,11 +604,15 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     #[inline]
     pub fn from(socket: *mut us_socket_t) -> Self {
-        Self { socket: InternalSocket::Connected(socket) }
+        Self {
+            socket: InternalSocket::Connected(socket),
+        }
     }
     #[inline]
     pub fn from_connecting(connecting: *mut ConnectingSocket) -> Self {
-        Self { socket: InternalSocket::Connecting(connecting) }
+        Self {
+            socket: InternalSocket::Connecting(connecting),
+        }
     }
     #[inline]
     pub fn from_any(socket: InternalSocket) -> Self {
@@ -608,12 +620,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
     #[inline]
     pub fn from_duplex(d: *mut UpgradedDuplex) -> Self {
-        Self { socket: InternalSocket::UpgradedDuplex(d) }
+        Self {
+            socket: InternalSocket::UpgradedDuplex(d),
+        }
     }
     #[cfg(windows)]
     #[inline]
     pub fn from_named_pipe(p: *mut WindowsNamedPipe) -> Self {
-        Self { socket: InternalSocket::Pipe(p) }
+        Self {
+            socket: InternalSocket::Pipe(p),
+        }
     }
 
     /// Wrap an already-open fd. Ext stores `*mut This`; the socket is linked
@@ -625,11 +641,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         this: *mut This,
         is_ipc: bool,
     ) -> Option<Self> {
-        // Zig `?*This` is null-niche optimized (8 bytes); the dispatch
-        // trampolines read the ext slot as `Option<NonNull<_>>`, so size and
-        // write must match that layout — NOT `Option<*mut This>` (16 bytes).
+        // The dispatch trampolines read the ext slot as `Option<NonNull<_>>`
+        // (8 bytes, null-niche optimized), so size and write must match that
+        // layout — NOT `Option<*mut This>` (16 bytes).
         let ext_size = size_of::<Option<NonNull<This>>>() as c_int;
-        let raw = g.from_fd(k, None, ext_size, handle.native() as LIBUS_SOCKET_DESCRIPTOR, is_ipc);
+        let raw = g.from_fd(
+            k,
+            None,
+            ext_size,
+            handle.native() as LIBUS_SOCKET_DESCRIPTOR,
+            is_ipc,
+        );
         if raw.is_null() {
             return None;
         }
@@ -637,7 +659,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // live socket. `ext::<T>()` is sound here because we immediately
         // overwrite the slot, never reading the prior (zeroed) bit pattern.
         *sock(raw).ext::<Option<NonNull<This>>>() = NonNull::new(this);
-        Some(Self { socket: InternalSocket::Connected(raw) })
+        Some(Self {
+            socket: InternalSocket::Connected(raw),
+        })
     }
 
     /// Connect via a `SocketGroup` and stash `owner` in the socket ext.
@@ -651,7 +675,11 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         owner: *mut Owner,
         allow_half_open: bool,
     ) -> Result<Self, ConnectError> {
-        let opts: c_int = if allow_half_open { LIBUS_SOCKET_ALLOW_HALF_OPEN } else { 0 };
+        let opts: c_int = if allow_half_open {
+            LIBUS_SOCKET_ALLOW_HALF_OPEN
+        } else {
+            0
+        };
         // getaddrinfo doesn't understand bracketed IPv6 literals; URL parsing
         // leaves them in (`[::1]`), so strip here like the old connectAnon did.
         let host =
@@ -677,21 +705,24 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             ZStr::from_slice_with_nul(&heap).as_cstr()
         };
 
-        // Zig `?*Owner` is null-niche optimized (8 bytes); the dispatch
-        // trampolines read the ext slot as `Option<NonNull<_>>`, so size and
-        // write must match that layout — NOT `Option<*mut Owner>` (16 bytes,
-        // discriminant-first), which would hand the trampoline `1` instead of
-        // the owner pointer.
+        // The dispatch trampolines read the ext slot as `Option<NonNull<_>>`
+        // (8 bytes, null-niche optimized), so size and write must match that
+        // layout — NOT `Option<*mut Owner>` (16 bytes, discriminant-first),
+        // which would hand the trampoline `1` instead of the owner pointer.
         let ext_size = size_of::<Option<NonNull<Owner>>>() as c_int;
         match g.connect(kind, ssl_ctx, host_z, port, opts, ext_size) {
             ConnectResult::Failed => Err(ConnectError::FailedToOpenSocket),
             ConnectResult::Socket(s) => {
                 *sock(s).ext::<Option<NonNull<Owner>>>() = NonNull::new(owner);
-                Ok(Self { socket: InternalSocket::Connected(s) })
+                Ok(Self {
+                    socket: InternalSocket::Connected(s),
+                })
             }
             ConnectResult::Connecting(cs) => {
                 *conn(cs).ext::<Option<NonNull<Owner>>>() = NonNull::new(owner);
-                Ok(Self { socket: InternalSocket::Connecting(cs) })
+                Ok(Self {
+                    socket: InternalSocket::Connecting(cs),
+                })
             }
         }
     }
@@ -704,22 +735,27 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         owner: *mut Owner,
         allow_half_open: bool,
     ) -> Result<Self, ConnectError> {
-        let opts: c_int = if allow_half_open { LIBUS_SOCKET_ALLOW_HALF_OPEN } else { 0 };
-        // Zig `?*Owner` — see connect_group above for layout rationale.
+        let opts: c_int = if allow_half_open {
+            LIBUS_SOCKET_ALLOW_HALF_OPEN
+        } else {
+            0
+        };
+        // See connect_group above for the ext-slot layout rationale.
         let ext_size = size_of::<Option<NonNull<Owner>>>() as c_int;
         let s = g.connect_unix(kind, ssl_ctx, path, opts, ext_size);
         if s.is_null() {
             return Err(ConnectError::FailedToOpenSocket);
         }
         *sock(s).ext::<Option<NonNull<Owner>>>() = NonNull::new(owner);
-        Ok(Self { socket: InternalSocket::Connected(s) })
+        Ok(Self {
+            socket: InternalSocket::Connected(s),
+        })
     }
 
     /// Move an open socket into a new group/kind, stashing `owner` in the ext.
     /// Replaces `Socket.adoptPtr`.
     ///
-    /// `set_socket_field` replaces Zig's `comptime field: []const u8` +
-    /// `@field(owner, field)` reflection — the closure writes the resulting
+    /// `set_socket_field` — the closure writes the resulting
     /// `Self` into the owner's socket field via the raw `*mut Owner` (passing
     /// `&mut Owner` here would alias any live `&mut` the caller already holds).
     pub fn adopt_group<Owner>(
@@ -747,7 +783,12 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // callers (e.g. websocket_client) hold a live `&mut Owner` across this
         // call, so creating a second one would be aliased UB. The closure
         // performs the field write through the raw pointer itself.
-        set_socket_field(owner, Self { socket: InternalSocket::Connected(new_s) });
+        set_socket_field(
+            owner,
+            Self {
+                socket: InternalSocket::Connected(new_s),
+            },
+        );
         true
     }
 }
@@ -794,7 +835,6 @@ pub enum AnySocket {
 }
 
 /// Stamp out `AnySocket::$m` as a two-arm forward to `NewSocketHandler<SSL>::$m`.
-/// Mirrors Zig `switch (this) { inline else => |s| s.$m(...) }` (socket.zig:532-628).
 macro_rules! any_socket_forward {
     ($( fn $name:ident(&self $(, $arg:ident : $ty:ty)* ) $(-> $ret:ty)? ; )*) => {$(
         #[inline]
@@ -832,7 +872,6 @@ impl AnySocket {
     }
     #[inline]
     pub fn group(&self) -> *mut SocketGroup {
-        // Zig had `@setRuntimeSafety(true)` — Rust always panics on `.unwrap()`.
         match self {
             AnySocket::SocketTcp(s) => s.group(),
             AnySocket::SocketTls(s) => s.group(),
@@ -843,6 +882,7 @@ impl AnySocket {
     any_socket_forward! {
         fn is_closed(&self) -> bool;
         fn is_shutdown(&self) -> bool;
+        fn is_established(&self) -> bool;
         fn close(&self, code: CloseCode);
         fn write(&self, data: &[u8]) -> i32;
         fn set_timeout(&self, seconds: c_uint);
@@ -852,5 +892,3 @@ impl AnySocket {
         fn get_native_handle(&self) -> Option<*mut c_void>;
     }
 }
-
-// ported from: src/uws_sys/socket.zig

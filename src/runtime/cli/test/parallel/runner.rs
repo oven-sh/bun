@@ -7,11 +7,11 @@ use core::ffi::c_char;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_core::PathString;
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
+use bun_ptr::Interned;
 use bun_resolver::fs::{FileSystem, RealFS};
 use bun_sys::{Fd, FdDirExt, FdExt};
 
@@ -30,9 +30,8 @@ use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 
-// TODO(port): `format_bytes!` placeholder — needs a macro that writes fmt args
-// into a Vec<u8> (no UTF-8 validation). Define in bun_core or use
-// `{ let mut v = Vec::new(); write!(&mut v, ...).unwrap(); v }` inline.
+// Local helper: formats args into a Vec<u8>. The `unwrap` cannot fail —
+// `Write for Vec<u8>` is infallible.
 macro_rules! format_bytes {
     ($($arg:tt)*) => {{
         let mut __v: Vec<u8> = Vec::new();
@@ -44,14 +43,12 @@ macro_rules! format_bytes {
 /// All workers are busy for at least this long before another is spawned.
 /// Overridable via BUN_TEST_PARALLEL_SCALE_MS for tests, where debug-build
 /// module load alone can exceed the production 5ms threshold.
-pub const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
+pub(crate) const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
 /// Owns the coordinator-side per-run worker temp directory path bytes;
-/// recursively removes it on drop. Mirrors the Zig
-/// `defer if (worker_tmpdir) |d| bun.FD.cwd().deleteTree(d) catch {}`.
-/// Zig stored a `[:0]const u8` whose `.len` excludes the sentinel; here we
-/// store the bare path with no trailing NUL so `path()`/Drop hand the exact
-/// same bytes to `delete_tree` that `make_path` created.
+/// recursively removes it on drop. Stores the bare path with no trailing NUL
+/// so `path()`/Drop hand the exact same bytes to `delete_tree` that
+/// `make_path` created.
 struct WorkerTmpdir(Option<Box<[u8]>>);
 
 impl WorkerTmpdir {
@@ -75,7 +72,7 @@ impl Drop for WorkerTmpdir {
 pub fn run_as_coordinator(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,
-    files: &[PathString],
+    files: &[Interned],
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
 ) -> Result<bool, bun_core::Error> {
@@ -85,7 +82,6 @@ pub fn run_as_coordinator(
     let vm_ptr = vm;
     // SAFETY: env loader is initialized before the test runner runs.
     let env = unsafe { &mut *(*vm_ptr).transpiler.env };
-    // TODO(port): narrow error set
     let n: u32 = u32::try_from(files.len()).unwrap();
     let k: u32 = ctx.test_options.parallel.min(n);
     if k <= 1 {
@@ -98,12 +94,9 @@ pub fn run_as_coordinator(
         return Ok(false);
     }
 
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
-
-    // Owned path bytes (Zig: `[:0]const u8` from allocPrintSentinel — the
-    // sentinel was for C interop only, `.len` excluded it). ZStr is a borrow
-    // header; we must own the backing storage here. Drop recursively removes
-    // the directory once the run finishes.
+    // Owned path bytes. ZStr is a borrow header; we must own the backing
+    // storage here. Drop recursively removes the directory once the run
+    // finishes.
     let mut worker_tmpdir = WorkerTmpdir(None);
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
@@ -122,7 +115,6 @@ pub fn run_as_coordinator(
                 unsafe { libc::getpid() as i64 }
             }
         };
-        // TODO(port): allocPrintSentinel — was arena-backed; sentinel dropped (no C-string consumer on this path)
         let dir: Box<[u8]> = format_bytes!(
             "{}/bun-test-worker-{}",
             bstr::BStr::new(RealFS::get_default_temp_dir()),
@@ -167,16 +159,15 @@ pub fn run_as_coordinator(
     // Each worker owns a contiguous chunk; co-located files share imports, so
     // this keeps each worker's isolation SourceProvider cache hot. --randomize
     // explicitly opts out of locality (the caller already shuffled).
-    let mut sorted: Vec<PathString> = files.to_vec();
+    let mut sorted: Vec<Interned> = files.to_vec();
     if !ctx.test_options.randomize {
-        sorted.sort_by(|a, b| bun_core::order(a.slice(), b.slice()));
+        sorted.sort_by(|a, b| bun_core::order(a.as_bytes(), b.as_bytes()));
     }
 
     let mut workers: Vec<Worker> = Vec::with_capacity(k as usize);
-    // TODO(port): Zig allocates uninitialized then assigns in-place; Rust pushes
-    // constructed values. Populate fully BEFORE constructing Coordinator so it
-    // can hold `&mut [Worker]` without aliasing the push loop. The `coord`
-    // backref is null here and patched once Coordinator's address is fixed.
+    // Populate fully BEFORE constructing Coordinator so it can hold
+    // `&mut [Worker]` without aliasing the push loop. The `coord` backref is
+    // null here and patched once Coordinator's address is fixed.
     for i in 0..k {
         let idx: u32 = i;
         workers.push(Worker {
@@ -210,20 +201,23 @@ pub fn run_as_coordinator(
         // SAFETY: see vm_ptr note above.
         vm: unsafe { &*vm_ptr },
         // SAFETY: see vm_ptr note above; `event_loop()` returns its live JS loop.
-        event_loop_handle: bun_jsc::EventLoopHandle::init(
-            unsafe { (*vm_ptr).event_loop() }.cast::<()>(),
-        ),
+        event_loop_handle: unsafe {
+            bun_jsc::EventLoopHandle::init((*vm_ptr).event_loop().cast::<()>())
+        },
         reporter,
         files: sorted,
         // SAFETY: FileSystem singleton is initialized before any test runner code runs.
         cwd: FileSystem::get().top_level_dir,
         argv,
         envps,
-        workers: &mut workers, // TODO(port): lifetime — Coordinator borrows workers slice
+        // Coordinator borrows the workers slice while each Worker holds a raw
+        // backref to the Coordinator; the raw pointers (never a second `&mut`)
+        // are what keep this sound. See the backref patch loop below.
+        workers: &mut workers,
         worker_tmpdir: worker_tmpdir.path(),
         parallel_limit: k,
         scale_up_after_ms: if let Some(d) = ctx.test_options.parallel_delay_ms {
-            i64::try_from(d).unwrap()
+            i64::from(d)
         } else if let Some(s) = env.get(b"BUN_TEST_PARALLEL_SCALE_MS") {
             bun_core::fmt::parse_int::<i64>(s, 10)
                 .unwrap_or(DEFAULT_SCALE_UP_AFTER_MS)
@@ -252,7 +246,14 @@ pub fn run_as_coordinator(
     // Patch the Worker→Coordinator backref now that `coord`'s address is fixed.
     // Access workers through `coord.workers` to avoid a second &mut on the Vec.
     {
-        let coord_ptr = (&raw const coord).cast::<Coordinator<'static>>();
+        // `&raw mut` so the stored `*const` backref keeps write provenance —
+        // Worker mutates the Coordinator through `coord.cast_mut()`. This only
+        // removes the read-only-provenance layer of UB: `coord.drive()` below
+        // is called through a fresh `&mut coord` and the backref writes happen
+        // during drive(), so the aliasing remains UB-adjacent under
+        // Stacked/Tree Borrows. Full fix = `*mut` backref or interior
+        // mutability (see `Worker.coord` field doc).
+        let coord_ptr = (&raw mut coord).cast::<Coordinator<'static>>().cast_const();
         for w in coord.workers.iter_mut() {
             w.coord = coord_ptr;
         }
@@ -299,9 +300,8 @@ pub fn run_as_coordinator(
 fn build_worker_argv(
     ctx: &Command::ContextData,
 ) -> Result<Box<[bun_spawn::CStrPtr]>, bun_core::Error> {
-    // Zig `[:null]?[*:0]const u8` — null-sentinel slice of C-string pointers.
-    // String storage was arena-owned in Zig; route through the process-lifetime
-    // CLI arena (bulk-freed on exit).
+    // Null-sentinel slice of C-string pointers. String storage routes through
+    // the process-lifetime CLI arena (bulk-freed on exit).
     let mut argv: Vec<bun_spawn::CStrPtr> = Vec::new();
     let opts = &ctx.test_options;
 
@@ -353,7 +353,7 @@ fn build_worker_argv(
         argv.push(print_z(format_args!("--seed={}", seed))?);
     }
     // --bail is intentionally NOT forwarded: workers Global.exit(1) on bail
-    // (test_command.zig handleTestCompleted), which the coordinator would
+    // (see test_command.rs handle_test_completed), which the coordinator would
     // misread as a crash. Cross-worker bail is handled at file granularity by
     // the coordinator instead.
     if opts.repeat_count > 0 {
@@ -400,7 +400,7 @@ fn build_worker_argv(
         argv.push(lit(b"--tsconfig-override\0"));
         argv.push(dupe_z(tsconfig));
     }
-    // PORT NOTE: was `inline for` over heterogeneous-ish tuple; all elements are
+    // Was `inline for` over a heterogeneous-ish tuple; all elements are
     // (&'static [u8], &[Box<[u8]>]) so a const array + plain for suffices.
     let multi_value_flags: [(&'static [u8], &[Box<[u8]>]); 6] = [
         (b"--conditions\0", &ctx.args.conditions),
@@ -469,9 +469,7 @@ fn build_worker_argv(
     }
 
     argv.push(core::ptr::null());
-    // Zig: `argv.items[0 .. argv.items.len - 1 :null]` — sentinel slice excluding
-    // the trailing null from len but keeping it as sentinel. Rust callers index
-    // by .len() so we keep the None in the boxed slice.
+    // Callers index by .len(), so keep the trailing null in the boxed slice.
     Ok(argv.into_boxed_slice())
 }
 
@@ -525,9 +523,6 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
 pub struct WorkerCommands {
     pub vm: *mut VirtualMachine,
-    // TODO(port): Channel(WorkerCommands, "channel") — second comptime arg is
-    // the field name for intrusive container_of recovery; encode via offset_of
-    // or trait impl in Phase B.
     pub channel: Channel<WorkerCommands>,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
@@ -562,7 +557,7 @@ impl ChannelOwner for WorkerCommands {
     }
 }
 
-// PORT NOTE: hoisted from local struct inside run_as_worker — Rust does not
+// Hoisted from a local struct inside run_as_worker — Rust does not
 // support method-bearing local structs that need to be named in a generic call.
 struct WorkerLoop<'a> {
     reporter: &'a mut CommandLineReporter,
@@ -571,11 +566,11 @@ struct WorkerLoop<'a> {
 }
 
 impl<'a> WorkerLoop<'a> {
-    pub fn begin(&mut self) {
+    pub(crate) fn begin(&mut self) {
         // SAFETY: vm pointer is valid for the worker's lifetime.
         let vm = unsafe { &mut *self.vm };
         if !self.cmds.channel.adopt(vm, Fd::from_uv(3)) {
-            Output::pretty_errorln("<red>error<r>: test worker failed to adopt IPC fd");
+            bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
         }
         // SAFETY: single-threaded worker; WORKER_CMDS is only read on this thread
@@ -622,6 +617,7 @@ impl<'a> WorkerLoop<'a> {
             ) {
                 test_command::handle_top_level_test_error_before_javascript_start(err);
             }
+            crate::jsc_hooks::close_isolation_handles(vm);
             vm.swap_global_for_test_isolation();
             self.reporter
                 .jest
@@ -631,8 +627,6 @@ impl<'a> WorkerLoop<'a> {
 
             let after = *self.reporter.summary();
             wf.begin(frame::Kind::FileDone);
-            // PORT NOTE: was `inline for (.{...}) |v| worker_frame.u32_(v)` —
-            // all elements are u32, so a plain array + for loop is equivalent.
             for v in [
                 idx,
                 after.pass - before.pass,
@@ -653,6 +647,15 @@ impl<'a> WorkerLoop<'a> {
 
 /// Worker side: read framed commands from the IPC channel via the event loop,
 /// run each file with isolation, stream per-test events back. Never returns.
+///
+/// # Safety
+/// `vm` must be a valid, exclusively-accessed pointer to a live `VirtualMachine`
+/// for the entire duration of the call (i.e. for the rest of the process, since
+/// this never returns).
+// `vm` must stay a raw pointer: it is stored in `WorkerLoop`/`WorkerCommands`
+// while a `&mut` derived from it (`vm_ref`) is also live, so a reference param
+// would alias. The `# Safety` contract above documents the caller's obligation.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn run_as_worker(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,
@@ -663,8 +666,9 @@ pub fn run_as_worker(
     vm_ref.test_isolation_enabled = true;
     vm_ref.auto_killer.enabled = true;
 
-    // TODO(port): MimallocArena assigned to vm.arena/vm.allocator — verify
-    // whether Rust VM still needs explicit arena wiring or if this is a no-op.
+    // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
+    // reader was dropped from the GC path (see web_worker.rs, which wires its
+    // own arena the same way and notes the dropped read).
     let mut arena = bun_alloc::MimallocArena::new();
     // SAFETY: event_loop pointer is valid while vm lives.
     unsafe { (*vm_ref.event_loop()).ensure_waker() };
@@ -702,7 +706,17 @@ pub fn run_as_worker(
         // SAFETY: event_loop pointer is valid while vm lives.
         unsafe { (*vm_ref.event_loop()).auto_tick() };
     }
-    Global::exit(0);
+    // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
+    // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
+    vm_ref.exit_handler.exit_code = 0;
+    vm_ref.is_shutting_down = true;
+    vm_ref.run_with_api_lock(|| {
+        // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
+        unsafe { (*vm).global_exit() }
+    });
+    {
+        Global::exit(0);
+    }
 }
 
 fn worker_flush_aggregates(
@@ -741,7 +755,6 @@ fn worker_flush_aggregates(
             }
         };
         if let Some(junit) = &mut reporter.reporters.junit {
-            // TODO(port): allocPrintSentinel → ZBox; was bun.default_allocator (leaked)
             let path =
                 ZBox::from_bytes(format_bytes!("{}/w{}.xml", bstr::BStr::new(dir), id).as_slice());
             if !junit.current_file.is_empty() {
@@ -793,8 +806,8 @@ static WORKER_FRAME: bun_core::RacyCell<Frame> = bun_core::RacyCell::new(Frame::
 /// `CommandLineReporter.handleTestCompleted`) can reach the channel.
 // PORTING.md §Global mutable state: single-worker-thread ptr slot → RacyCell.
 static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::RacyCell::new(None);
-// TODO(port): lifetime — stores a 'a-bound pointer as 'static; sound because
-// the pointee outlives all callers (process exits before it's dropped).
+// Lifetime note: stores an 'a-bound pointer as 'static; sound because the
+// pointee outlives all callers (process exits before it's dropped).
 
 /// Called from `CommandLineReporter.handleTestCompleted` in the worker with the
 /// fully-formatted status line (✓/✗ + scopes + name + duration, including ANSI
@@ -814,5 +827,3 @@ pub fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
     wf.str(formatted_line);
     cmds.send(wf.finish());
 }
-
-// ported from: src/cli/test/parallel/runner.zig

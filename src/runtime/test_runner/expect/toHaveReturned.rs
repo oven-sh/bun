@@ -1,11 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use super::mock;
 use super::Expect;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
-enum Mode {
+pub enum Mode {
     ToHaveReturned,
     ToHaveReturnedTimes,
 }
@@ -20,9 +19,7 @@ impl Mode {
     }
 }
 
-// PERF(port): Zig used a `comptime mode` parameter (anonymous enum) so the two callers were
-// monomorphized; stable Rust forbids enum const-generic params (`adt_const_params`). Passed as a
-// runtime value here — the body branches on it only on cold/error paths.
+// `mode` is a runtime parameter — the body branches on it only on cold/error paths.
 #[inline]
 fn to_have_returned_times_fn(
     this: &Expect,
@@ -43,7 +40,6 @@ fn to_have_returned_times_fn(
 
     let expected_success_count: i32 = if mode == Mode::ToHaveReturned {
         if arguments.len() > 0 && !arguments[0].is_undefined() {
-            // PERF(port): Zig used comptime `@tagName(mode) ++ "..."`; runtime fmt on error path.
             return Err(global.throw_invalid_arguments(format_args!(
                 "{}() must not have an argument",
                 mode.tag_name()
@@ -86,8 +82,6 @@ fn to_have_returned_times_fn(
         return Ok(JSValue::UNDEFINED);
     }
 
-    // Zig: `switch (not) { inline else => |is_not| ... }` — runtime bool → comptime dispatch.
-    // PERF(port): Zig computed `getSignature` at comptime; runtime here (error path, cold).
     let signature = Expect::get_signature(mode.tag_name(), "<green>expected<r>", not);
     // `throw` runs pretty_fmt over the *rendered* string, so `<`/`>` in these
     // operands must be backslash-escaped to survive the tag pass.
@@ -133,5 +127,3 @@ impl Expect {
         to_have_returned_times_fn(self, global, callframe, Mode::ToHaveReturnedTimes)
     }
 }
-
-// ported from: src/test_runner/expect/toHaveReturned.zig

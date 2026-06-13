@@ -1,4 +1,4 @@
-//! In some parts of lockfile serialization, Bun will use the equivalent of `std.mem.sliceAsBytes` to convert a
+//! In some parts of lockfile serialization, Bun will convert a
 //! struct into raw bytes to write. This makes lockfile serialization/deserialization much simpler/faster, at the
 //! cost of not having any pointers within these structs.
 //!
@@ -31,50 +31,38 @@
 //! There is one other way to introduce undefined memory into a struct, which this does not check for, and that is
 //! a union with unequal size fields.
 
-// TODO(port): The Zig implementation is pure `comptime` reflection over `@typeInfo(T)` —
-// it walks struct/union/array/optional/pointer field trees, recurses into children, and
-// `@compileError`s on any gap between `@offsetOf(T, field) + @sizeOf(field)` and the next
-// field's offset (and between the last field's end and `@sizeOf(T)`).
-//
-// Rust has no `@typeInfo` equivalent. Phase B should provide this as a proc-macro derive
-// (`#[derive(AssertNoUninitializedPadding)]`) that emits the `const _: () = assert!(...)`
-// checks below per-field, plus a marker trait so `assert_no_uninitialized_padding::<T>()`
-// is bounded on it. The free function here is kept as the call-site-compatible entry point.
+// Per-field `const _: () = assert!(offset_of!...)` proofs live next to each serialized
+// struct (e.g. `NpmPackage` / `PackageVersion` in npm.rs), and the `layout_asserts`
+// module below pins every serialized type's size/align against the on-disk spec.
+// The free function here is kept as the call-site-compatible entry point.
 
 /// Marker trait asserting that `Self` is `#[repr(C)]` (or `#[repr(transparent)]`/packed),
 /// contains no pointer fields, and has no implicit padding bytes anywhere in its layout
-/// (recursively). Implemented by `#[derive(AssertNoUninitializedPadding)]`.
+/// (recursively).
 ///
 /// # Safety
-/// Implementing this by hand asserts the layout invariants above without the derive's
-/// compile-time checks. Only do so for primitives and manually-audited `#[repr(C)]` types.
+/// Implementing this by hand asserts the layout invariants above without compile-time
+/// checks. Only do so for primitives and manually-audited `#[repr(C)]` types whose
+/// explicit `_padding_*` fields are proven gap-free by `const` offset asserts.
 pub unsafe trait AssertNoUninitializedPadding {}
 
 /// Assertion that `T` has no uninitialized padding. See module docs.
 ///
-/// In Zig this walked `@typeInfo(T)` at comptime and emitted `@compileError` on gaps,
-/// with an `else => return` arm that silently accepted any non-aggregate type and a
-/// `.pointer => |ptr| assertNoUninitializedPadding(ptr.child)` arm so callers could
-/// pass `@TypeOf(slice)` directly.
-///
-/// In Rust the actual layout checking lives in `#[derive(AssertNoUninitializedPadding)]`
-/// on each serialized struct; this function is a zero-cost call-site marker that
-/// documents intent. It takes a type-witness value so call sites can mirror the Zig
-/// `assertNoUninitializedPadding(@TypeOf(value))` pattern (pass any value of `T` —
+/// The actual layout checking lives in the per-struct `const` offset asserts
+/// and `layout_asserts` pins; this function is a zero-cost call-site marker that
+/// documents intent. It takes a type-witness value (pass any value of `T` —
 /// or name `T` explicitly via turbofish and reference the fn item without calling).
 ///
-/// The trait bound is intentionally *not* applied here: Zig's `else => return` accepts
-/// all leaf types, and bounding the generic would force every `write_array<T>` caller
-/// to propagate `T: AssertNoUninitializedPadding` before the derive exists.
+/// The trait bound is intentionally *not* applied here: bounding the generic
+/// would force every `write_array<T>` caller to propagate
+/// `T: AssertNoUninitializedPadding`.
 #[inline(always)]
 #[allow(dropping_copy_types, clippy::needless_pass_by_value)]
 pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
-    // Body intentionally empty — the derive on `T` is the check. Matches Zig's
-    // runtime behaviour (the Zig version is `comptime`-only and codegens nothing).
+    // Body intentionally empty — the per-type `const` layout asserts are the check.
 }
 
-// TODO(port): proc-macro — the derive should expand roughly to the following per type
-// (shown as a declarative helper for Phase-B reference; not invoked anywhere yet):
+// Reference: what a manual padding audit of a serialized type must establish:
 //
 // For each adjacent field pair (prev, field) in declaration order:
 //   const _: () = assert!(
@@ -101,31 +89,39 @@ pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
 //       ),
 //   );
 //
-// Recursion rules (mirroring the Zig `switch (@typeInfo(...))`):
+// Recursion rules:
 //   - struct / union field  → require `FieldTy: AssertNoUninitializedPadding`
 //   - [T; N] field          → require `T: AssertNoUninitializedPadding`
 //   - Option<T> field       → require `T: AssertNoUninitializedPadding`
 //   - pointer field         → compile_error!("Expected no pointer types in ...")
 //   - anything else         → ok
 //
-// Unions: recurse into field types but skip the offset-gap scan (matches Zig's
-// `if (info_ == .@"union") return;` before the offset loop).
+// Unions: recurse into field types but skip the offset-gap scan.
 
-// Blanket impls for leaf types the Zig version's `else => return` arm accepted.
-// SAFETY: scalar primitives have no padding by definition.
+// Blanket impls for leaf types.
+// SAFETY: u8 is a single value byte; no padding by definition.
 unsafe impl AssertNoUninitializedPadding for u8 {}
+// SAFETY: u16 is a fixed-width integer; all 2 bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for u16 {}
+// SAFETY: u32 is a fixed-width integer; all 4 bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for u32 {}
+// SAFETY: u64 is a fixed-width integer; all 8 bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for u64 {}
+// SAFETY: usize is a fixed-width integer; all bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for usize {}
+// SAFETY: i8 is a single value byte; no padding by definition.
 unsafe impl AssertNoUninitializedPadding for i8 {}
+// SAFETY: i16 is a fixed-width integer; all 2 bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for i16 {}
+// SAFETY: i32 is a fixed-width integer; all 4 bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for i32 {}
+// SAFETY: i64 is a fixed-width integer; all 8 bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for i64 {}
+// SAFETY: isize is a fixed-width integer; all bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for isize {}
+// SAFETY: bool occupies exactly one byte (value 0 or 1); no padding.
 unsafe impl AssertNoUninitializedPadding for bool {}
 
-// Arrays: Zig's `.array => |a| assertNoUninitializedPadding(a.child)`.
 // SAFETY: `[T; N]` has no inter-element padding when `T` itself has none
 // (array stride == size_of::<T>() always; any tail padding would be inside T and
 // already rejected by T's own impl).
@@ -135,21 +131,20 @@ unsafe impl<T: AssertNoUninitializedPadding, const N: usize> AssertNoUninitializ
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Cross-runtime layout pins
+// Cross-version layout pins
 //
-// Every type below is `std.mem.sliceAsBytes`-serialised into either `bun.lockb`
-// (the binary lockfile) or the `.npm` manifest cache. Their sizes/alignments
-// are therefore an ABI contract with Zig-built Bun: a Zig-written lockfile
-// must round-trip through this build and vice versa. The expected values are
-// computed by hand from the `extern struct` declarations in the corresponding
-// `.zig` files (no `@typeInfo` available in Rust). If any assert fires the
-// on-disk format has drifted — either fix the Rust `#[repr(C)]` layout or
-// bump the relevant format version (`bun.lockb` `format_version` /
+// Every type below is byte-serialised into either `bun.lockb` (the binary
+// lockfile) or the `.npm` manifest cache. Their sizes/alignments are
+// therefore an ABI contract with previously released Bun versions: an
+// older-written lockfile must round-trip through this build and vice versa.
+// The expected values are computed by hand. If any assert fires the on-disk
+// format has drifted — either fix the Rust `#[repr(C)]` layout or bump the
+// relevant format version (`bun.lockb` `format_version` /
 // `PackageManifest::Serializer::VERSION`).
 //
 // The asserts are gated to 64-bit little-endian targets because that is the
-// only ABI the binary formats are defined for (Zig hard-codes `.little` and
-// `@alignOf([*]u8) == 8` in the lockfile header).
+// only ABI the binary formats are defined for (the lockfile header hard-codes
+// little-endian and 8-byte pointer alignment).
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(all(target_pointer_width = "64", target_endian = "little"))]
 pub mod layout_asserts {
@@ -204,5 +199,3 @@ pub mod layout_asserts {
     pin!(crate::npm::PackageVersion, size = 240, align = 8);
     pin!(crate::npm::NpmPackage, size = 120, align = 8);
 }
-
-// ported from: src/install/padding_checker.zig

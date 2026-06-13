@@ -165,6 +165,31 @@ describe("fs.watchFile", () => {
     expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);
   });
 
+  test("watchFile returns a shared StatWatcher and unwatchFile stops it", async () => {
+    const file = path.join(testDir, "watch.txt");
+    const listener1 = () => {};
+    const listener2 = () => {};
+    const watcher = fs.watchFile(file, { interval: 50 }, listener1);
+    try {
+      // watching the same file again (even via a file: URL) reuses the same StatWatcher
+      expect(fs.watchFile(pathToFileURL(file), { interval: 50 }, listener2)).toBe(watcher);
+      expect(watcher.listenerCount("change")).toBe(2);
+
+      // removing a single listener keeps the watcher alive
+      fs.unwatchFile(file, listener1);
+      expect(watcher.listenerCount("change")).toBe(1);
+
+      // removing the last listener stops the watcher and emits "stop"
+      const { promise, resolve } = Promise.withResolvers<void>();
+      watcher.once("stop", resolve);
+      fs.unwatchFile(file);
+      await promise;
+      expect(watcher.listenerCount("change")).toBe(0);
+    } finally {
+      fs.unwatchFile(file);
+    }
+  });
+
   test("StatWatcherScheduler stress test (1000 watchers with random times)", async () => {
     const EventEmitter = require("events");
     let defaultMaxListeners = EventEmitter.defaultMaxListeners;

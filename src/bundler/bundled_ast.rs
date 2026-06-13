@@ -6,50 +6,42 @@
 //!
 //! So we make a slimmer version of Ast for bundling that doesn't allocate as much memory
 
-use bun_collections::VecExt;
-
 // `bun_css` is a T2 peer crate that does not depend on `bun_js_parser`, so the
 // dep is acyclic. Typing the `css` field concretely removes the `*mut c_void`
 // erasure that forced every bundler/linker call site to `.cast()` back.
 pub use bun_css::BundlerStyleSheet;
 
-/// Arena-owned handle to a parsed CSS stylesheet (Zig: `*bun.css.BundlerStyleSheet`).
+/// Arena-owned handle to a parsed CSS stylesheet.
 ///
 /// The pointee lives in a per-file `Bump` whose ownership is held by
-/// `Graph.heap` (PORT_NOTES_PLAN B-1: bumps are `Pin<Box<Bump>>` owned by the
+/// `Graph.heap` (bumps are `Pin<Box<Bump>>` owned by the
 /// graph and outlive every `BundledAst` row by struct drop order). No `'arena`
 /// lifetime is threaded — N files imply N distinct per-worker bumps with no
 /// single common lifetime — so the invariant is enforced by drop order, not
 /// the type system. `StoreRef`'s `Deref`/`DerefMut` encapsulate the single
 /// documented `unsafe` deref justified by that invariant; callers use `&*r`
 /// (or `Option::as_deref`) instead of open-coded `unsafe { &*ptr }`.
-pub type CssAstRef = bun_ast::StoreRef<BundlerStyleSheet>;
+pub(crate) type CssAstRef = bun_ast::StoreRef<BundlerStyleSheet>;
 
 /// Element type of the `css` SoA column (`items_css()`). Exposed so bundler
 /// call sites can name the column without re-spelling the pointer shape.
-pub type CssCol = Option<CssAstRef>;
+pub(crate) type CssCol = Option<CssAstRef>;
 
 use bun_ast::import_record;
 use bun_core::strings;
 
-use bun_ast::ast_result::{self, Ast};
+use bun_ast::ast_result::Ast;
 use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
 use bun_ast::{part, symbol};
-// TODO(port): verify exact module paths for Ast/Part/Symbol associated `List` types in Phase B.
 
-pub type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
-pub type ConstValuesMap = bun_ast::ast_result::ConstValuesMap;
-pub type NamedExports = bun_ast::ast_result::NamedExports;
-pub type NamedImports = bun_ast::ast_result::NamedImports;
+pub(crate) type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
+pub(crate) type NamedExports = bun_ast::ast_result::NamedExports;
+pub(crate) type NamedImports = bun_ast::ast_result::NamedImports;
 pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
-// PORT NOTE: Zig stores `MultiArrayList(BundledAst)` on `Graph.ast` /
-// `LinkerGraph.ast` and the bundler indexes columns via `.items(.field)`
-// (see `linker_context/scanImportsAndExports.zig`, `LinkerContext.zig`).
-// `` generates the `BundledAstField` enum +
-// `BundledAstColumns`/`BundledAstColumns` (`items_named_imports()`,
-// `items_named_exports()`, …) that those callers expect at
-// `crate::bundled_ast::*`.
+// `multi_array_columns!` generates the `BundledAstField` enum +
+// `BundledAstColumns` (`items_named_imports()`,
+// `items_named_exports()`, …) at `crate::bundled_ast::*`.
 //
 // 26 fields ≤ `multi_array_list::MAX_FIELDS` (32).
 
@@ -61,19 +53,19 @@ pub struct BundledAst<'arena> {
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
-    pub import_records: import_record::List,
+    pub import_records: import_record::List<'arena>,
 
-    // PORT NOTE: Ast.hashbang is `StoreStr`; mirror it here so init/to_ast can
+    // Ast.hashbang is `StoreStr`; mirror it here so init/to_ast can
     // round-trip.
     pub hashbang: StoreStr,
-    pub parts: part::List,
-    // Zig: `?*bun.css.BundlerStyleSheet`. See `CssAstRef` doc for the arena
-    // drop-order invariant that backs the safe `Deref`.
+    pub parts: part::List<'arena>,
+    // See `CssAstRef` doc for the arena drop-order invariant that backs the
+    // safe `Deref`.
     pub css: CssCol,
     pub url_for_css: &'arena [u8],
-    pub symbols: symbol::List,
+    pub symbols: symbol::List<'arena>,
     pub module_scope: Scope,
-    // TODO(port): Zig used `= undefined`; only valid when flags.HAS_CHAR_FREQ is set.
+    // Only meaningful when flags.HAS_CHAR_FREQ is set; zero-initialized otherwise.
     pub char_freq: CharFreq,
     pub exports_ref: Ref,
     pub module_ref: Ref,
@@ -87,9 +79,7 @@ pub struct BundledAst<'arena> {
     // is conveniently fully parallelized.
     pub named_imports: NamedImports,
     pub named_exports: NamedExports,
-    // PORT NOTE: Ast owns Box<[u32]>; matching it here avoids the &'arena↔Box
-    // re-alloc on init/to_ast (Zig's `[]u32` is a fat-ptr move either way).
-    pub export_star_import_records: Box<[u32]>,
+    pub export_star_import_records: bun_alloc::AstVec<u32>,
 
     pub top_level_symbols_to_parts: TopLevelSymbolToParts,
 
@@ -113,12 +103,12 @@ bun_collections::multi_array_columns! {
         approximate_newline_count: u32,
         nested_scope_slot_counts: SlotCounts,
         exports_kind: ExportsKind,
-        import_records: import_record::List,
+        import_records: import_record::List<'arena>,
         hashbang: StoreStr,
-        parts: part::List,
+        parts: part::List<'arena>,
         css: CssCol,
         url_for_css: &'arena [u8],
-        symbols: symbol::List,
+        symbols: symbol::List<'arena>,
         module_scope: Scope,
         char_freq: CharFreq,
         exports_ref: Ref,
@@ -129,7 +119,7 @@ bun_collections::multi_array_columns! {
         tla_check: TlaCheck,
         named_imports: NamedImports,
         named_exports: NamedExports,
-        export_star_import_records: Box<[u32]>,
+        export_star_import_records: bun_alloc::AstVec<u32>,
         top_level_symbols_to_parts: TopLevelSymbolToParts,
         commonjs_named_exports: CommonJSNamedExports,
         redirect_import_record_index: u32,
@@ -147,7 +137,7 @@ bitflags::bitflags! {
         // closure.
         const USES_EXPORTS_REF = 1 << 0;
         const USES_MODULE_REF = 1 << 1;
-        // const USES_REQUIRE_REF = 1 << 2; (commented out in Zig; bit positions still match field order)
+        // const USES_REQUIRE_REF = 1 << 2;
         const USES_EXPORT_KEYWORD = 1 << 2;
         const HAS_CHAR_FREQ = 1 << 3;
         const FORCE_CJS_TO_ESM = 1 << 4;
@@ -160,17 +150,44 @@ bitflags::bitflags! {
 }
 
 impl<'arena> BundledAst<'arena> {
-    // TODO(port): Zig `pub const empty = BundledAst.init(Ast.empty);` — cannot be a `const` in Rust
-    // because `init` is not const-evaluable. Phase B: consider a `static` via `OnceLock` or make
-    // `init`/`Ast::empty` const fn if feasible.
-    pub fn empty() -> Self {
-        Self::init(Ast::empty())
+    // The three `ArenaVec` fields prevent `const fn` here, but spell out the
+    // defaults directly instead of round-tripping through `Ast::empty_in` +
+    // `init` — this runs once per discovered module on the main thread.
+    pub fn empty_in(arena: &'arena bun_alloc::Arena) -> Self {
+        Self {
+            approximate_newline_count: 0,
+            nested_scope_slot_counts: SlotCounts::default(),
+            exports_kind: ExportsKind::None,
+            import_records: import_record::List::new_in(arena),
+            hashbang: StoreStr::EMPTY,
+            parts: part::List::new_in(arena),
+            css: None,
+            url_for_css: b"",
+            symbols: symbol::List::new_in(arena),
+            module_scope: Scope::default(),
+            char_freq: CharFreq::default(),
+            exports_ref: Ref::NONE,
+            module_ref: Ref::NONE,
+            wrapper_ref: Ref::NONE,
+            require_ref: Ref::NONE,
+            top_level_await_keyword: bun_ast::Range::NONE,
+            tla_check: TlaCheck::default(),
+            named_imports: NamedImports::default(),
+            named_exports: NamedExports::default(),
+            export_star_import_records: bun_alloc::AstAlloc::vec(),
+            top_level_symbols_to_parts: TopLevelSymbolToParts::default(),
+            commonjs_named_exports: CommonJSNamedExports::default(),
+            redirect_import_record_index: u32::MAX,
+            target: bun_ast::Target::Browser,
+            ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
+            flags: Flags::empty(),
+        }
     }
 
-    // PORT NOTE: Zig's `*const BundledAst` bitwise-copies every field; the Rust
-    // collection types aren't Copy, so consume `self` to move them (toAST is a
-    // one-shot conversion back to the fat Ast).
-    pub fn to_ast(self) -> Ast {
+    // The collection types aren't Copy, so consume `self` to move them (to_ast
+    // is a one-shot conversion back to the fat Ast).
+    pub fn to_ast(self) -> Ast<'arena> {
+        let arena: &'arena bun_alloc::Arena = *self.parts.allocator();
         Ast {
             approximate_newline_count: self.approximate_newline_count as usize,
             nested_scope_slot_counts: self.nested_scope_slot_counts,
@@ -242,13 +259,11 @@ impl<'arena> BundledAst<'arena> {
                 None
             },
             has_import_meta: self.flags.contains(Flags::HAS_IMPORT_META),
-            // TODO(port): Ast has many more fields with defaults; Phase B should use
-            // `..Ast::default()` or equivalent functional-update once Ast's Rust shape is fixed.
-            ..Ast::default()
+            ..Ast::empty_in(arena)
         }
     }
 
-    pub fn init(ast: Ast) -> Self {
+    pub fn init(ast: Ast<'arena>) -> Self {
         let mut flags = Flags::empty();
         flags.set(Flags::USES_EXPORTS_REF, ast.uses_exports_ref);
         flags.set(Flags::USES_MODULE_REF, ast.uses_module_ref);
@@ -282,7 +297,7 @@ impl<'arena> BundledAst<'arena> {
             // This list may be mutated later, so we should store the capacity
             symbols: ast.symbols,
             module_scope: ast.module_scope,
-            // Only read when flags.HAS_CHAR_FREQ is set; Zig used `orelse undefined`.
+            // Only read when flags.HAS_CHAR_FREQ is set.
             char_freq: ast.char_freq.unwrap_or_default(),
             exports_ref: ast.exports_ref,
             module_ref: ast.module_ref,
@@ -347,10 +362,9 @@ impl<'arena> BundledAst<'arena> {
                 let encode_len = bun_base64::encode_len(contents);
                 let data_url_prefix_len = b"data:".len() + mime_type.len() + b";base64,".len();
                 let total_buffer_len = data_url_prefix_len + encode_len;
-                // PERF(port): was arena alloc via `arena.alloc(u8, n)`; using bumpalo here.
                 let encoded: &mut [u8] = bump.alloc_slice_fill_copy(total_buffer_len, 0u8);
-                // PORT NOTE: Zig's std.fmt.bufPrint with `{s}` writes raw bytes; BStr's Display
-                // would emit 3-byte U+FFFD for non-UTF-8 input and overflow the fixed prefix slice.
+                // Write raw bytes directly; BStr's Display would emit 3-byte
+                // U+FFFD for non-UTF-8 input and overflow the fixed prefix slice.
                 encoded[..5].copy_from_slice(b"data:");
                 encoded[5..5 + mime_type.len()].copy_from_slice(mime_type);
                 encoded[5 + mime_type.len()..data_url_prefix_len].copy_from_slice(b";base64,");
@@ -360,5 +374,3 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 }
-
-// ported from: src/js_parser/ast/BundledAst.zig

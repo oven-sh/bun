@@ -6,21 +6,18 @@
 
 use core::cell::Cell;
 
-// TODO(port): move externs to <area>_sys crate
-
 #[cfg(windows)]
 type Context = bun_sys::windows::CONTEXT;
 #[cfg(all(target_os = "linux", target_env = "musl"))]
 type Context = musl::jmp_buf;
 #[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
-type Context = libc::ucontext_t; // TODO(port): std.c.ucontext_t — confirm libc crate vs bun_sys::c
+type Context = libc::ucontext_t;
 
 thread_local! {
     static TOP_CTX: Cell<Option<*const Context>> = const { Cell::new(None) };
 }
 
 /// RAII guard that restores `TOP_CTX` to a saved previous value on drop.
-/// Replaces the Zig `defer top_ctx = prev_ctx;` in `call`/`call_for_test`.
 struct TopCtxRestore {
     prev: Option<*const Context>,
 }
@@ -44,11 +41,6 @@ pub fn panicked() {
     }
 }
 
-// PORT NOTE: Zig's `ExtErrType`/`ReturnType` were comptime @typeInfo helpers
-// that extended the callee's error set with `error.Panic`. In Rust,
-// `bun_core::Error` is a NonZeroU16 tag space that already covers every error
-// name (including `Panic` via `bun_core::err!("Panic")`), so the type-level
-// extension collapses and the helpers are dropped.
 
 pub fn call_for_test(
     test_func: fn() -> Result<(), bun_core::Error>,
@@ -56,7 +48,7 @@ pub fn call_for_test(
     let prev_ctx: Option<*const Context> = TOP_CTX.with(|c| c.get());
     // SAFETY: all-zero is a valid Context (CONTEXT / jmp_buf / ucontext_t are
     // #[repr(C)] POD with no NonNull/NonZero/enum fields).
-    let mut ctx: Context = unsafe { core::mem::zeroed::<Context>() };
+    let mut ctx: Context = unsafe { core::mem::MaybeUninit::<Context>::zeroed().assume_init() };
     // SAFETY: ctx is a valid, writable, properly-aligned Context on this stack.
     unsafe { get_context(&raw mut ctx) };
     if TOP_CTX.with(|c| c.get()) != prev_ctx {
@@ -71,17 +63,17 @@ pub fn call_for_test(
 /// Calls `func`, guarding from runtime errors.
 /// Returns `error.Panic` when recovers from runtime error.
 /// Otherwise returns the return value of func.
-// PORT NOTE: Zig signature was `call(func: anytype, args: anytype)` with
-// `@call(.auto, func, args)`. Rust cannot forward an arbitrary heterogeneous
-// argument tuple without variadics; callers should wrap the invocation in a
-// closure. Return type uses bun_core::Error (see ExtErrType note above).
+// Rust cannot forward an arbitrary heterogeneous argument tuple without
+// variadics; callers should wrap the invocation in a closure. The return type
+// uses bun_core::Error, which already covers every error name (including
+// `Panic` via `bun_core::err!("Panic")`).
 pub fn call<T>(
     func: impl FnOnce() -> Result<T, bun_core::Error>,
 ) -> Result<T, bun_core::Error> {
     let prev_ctx: Option<*const Context> = TOP_CTX.with(|c| c.get());
     // SAFETY: all-zero is a valid Context (CONTEXT / jmp_buf / ucontext_t are
     // #[repr(C)] POD with no NonNull/NonZero/enum fields).
-    let mut ctx: Context = unsafe { core::mem::zeroed::<Context>() };
+    let mut ctx: Context = unsafe { core::mem::MaybeUninit::<Context>::zeroed().assume_init() };
     // SAFETY: ctx is a valid, writable, properly-aligned Context on this stack.
     unsafe { get_context(&raw mut ctx) };
     if TOP_CTX.with(|c| c.get()) != prev_ctx {
@@ -96,7 +88,7 @@ pub fn call<T>(
 // windows
 #[cfg(windows)]
 unsafe extern "system" {
-    // TODO(port): move to bun_sys::windows (ntdll)
+    // ntdll.dll; bun_sys::windows::ntdll_context only declares the capture half.
     pub fn RtlRestoreContext(
         ContextRecord: *const CONTEXT,
         ExceptionRecord: *const EXCEPTION_RECORD, // nullable
@@ -113,18 +105,22 @@ unsafe extern "C" {
 #[cfg(all(target_os = "linux", target_env = "musl"))]
 mod musl {
     use core::ffi::c_int;
-    // TODO(port): Zig used @cImport(@cInclude("setjmp.h")).jmp_buf — confirm
-    // exact musl jmp_buf size/align per target arch in Phase B. This is a
-    // STACK VALUE (`var ctx = std.mem.zeroes(Context); setjmp(&ctx)`), not an
-    // opaque handle, so it must reserve real storage — a ZST would let setjmp
-    // scribble past the allocation. 32×u64 over-reserves vs every musl arch.
+    // This is a STACK VALUE (a zeroed `Context` lives on the caller's stack and
+    // setjmp writes into it), not an opaque handle, so it must reserve real
+    // storage — a ZST would let
+    // setjmp scribble past the allocation. musl's full `jmp_buf` is
+    // `{ __jmp_buf __jb; unsigned long __fl; unsigned long __ss[16]; }`, where
+    // `__jmp_buf` is 8 longs on x86_64 and 22 longs on aarch64 — i.e. 25 and 39
+    // longs total respectively. 64×u64 (512 bytes) over-reserves the full
+    // struct on every musl arch; alignment of `long` is at most 8, so
+    // align(16) over-aligns.
     #[repr(C, align(16))]
-    pub struct jmp_buf {
-        _buf: [u64; 32],
+    pub(super) struct jmp_buf {
+        _buf: [u64; 64],
     }
     unsafe extern "C" {
-        pub fn setjmp(env: *mut jmp_buf) -> c_int;
-        pub fn longjmp(env: *const jmp_buf, val: c_int) -> !;
+        pub(super) fn setjmp(env: *mut jmp_buf) -> c_int;
+        pub(super) fn longjmp(env: *const jmp_buf, val: c_int) -> !;
     }
 }
 
@@ -132,7 +128,6 @@ mod musl {
 unsafe fn get_context(ctx: *mut Context) {
     #[cfg(windows)]
     {
-        // TODO(port): std.os.windows.ntdll.RtlCaptureContext → bun_sys::windows::ntdll
         // SAFETY: ctx is a valid, writable, properly-aligned CONTEXT (caller contract).
         unsafe { bun_sys::windows::ntdll_context::RtlCaptureContext(ctx) };
     }
@@ -143,9 +138,8 @@ unsafe fn get_context(ctx: *mut Context) {
     }
     #[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
     {
-        // Zig called std.debug.getContext(ctx) which wraps getcontext(3).
-        // The `libc` crate omits the binding on Darwin and the BSDs; declare
-        // locally (uniform across all unix targets).
+        // The `libc` crate omits the getcontext(3) binding on Darwin and the
+        // BSDs; declare it locally (uniform across all unix targets).
         unsafe extern "C" { fn getcontext(ucp: *mut libc::ucontext_t) -> core::ffi::c_int; }
         // SAFETY: ctx is a valid, writable, properly-aligned ucontext_t (caller contract).
         let _ = unsafe { getcontext(ctx) };
@@ -176,19 +170,18 @@ unsafe fn set_context(ctx: *const Context) -> ! {
 
 /// Panic handler that if there is a recover call in current thread continues
 /// from recover call. Otherwise calls the default panic.
-/// Install at root source file as `pub const panic = @import("recover").panic;`
-// TODO(port): Zig exposed this as `std.debug.FullPanic(handler)` — a type
-// installed at the root file as `pub const panic`. Rust has no equivalent
-// declarative panic-handler slot; Phase B should wire this via
-// `std::panic::set_hook` (or a `#[panic_handler]` in no_std) at startup.
+///
+/// Rust has no declarative panic-handler slot, so any caller adopting this
+/// module must invoke this from a hook installed via `std::panic::set_hook`
+/// at startup.
 pub fn panic(msg: &[u8], first_trace_addr: Option<usize>) -> ! {
     panicked();
-    // TODO(port): std.debug.defaultPanic — route to bun_core's default panic.
+    // `first_trace_addr` is unused: `bun_core::Output::panic` lowers to
+    // `core::panic!`, and Rust's panic machinery captures its own backtrace at
+    // the panic site rather than starting from a caller-supplied address.
     let _ = first_trace_addr;
     bun_core::Output::panic(format_args!("{}", bstr::BStr::new(msg)));
 }
 
 #[cfg(windows)]
 use bun_sys::windows::{CONTEXT, EXCEPTION_RECORD};
-
-// ported from: src/test_runner/harness/recover.zig

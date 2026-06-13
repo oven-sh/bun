@@ -55,7 +55,9 @@ pub const Row = struct {
                 const val: f64 = bun.parseDouble(value.slice()) catch std.math.nan(f64);
                 cell.* = SQLDataCell{ .tag = .float8, .value = .{ .float8 = val } };
             },
-            .MYSQL_TYPE_TINY, .MYSQL_TYPE_SHORT => {
+            // YEAR arrives as a bare ASCII integer in the text protocol; parse it
+            // like SHORT so `.simple()` returns the same JS number as the binary path.
+            .MYSQL_TYPE_TINY, .MYSQL_TYPE_SHORT, .MYSQL_TYPE_YEAR => {
                 if (column.flags.UNSIGNED) {
                     const val: u16 = std.fmt.parseInt(u16, value.slice(), 10) catch 0;
                     cell.* = SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = val } };
@@ -129,6 +131,14 @@ pub const Row = struct {
                     };
                 };
                 cell.* = SQLDataCell{ .tag = .date, .value = .{ .date = date } };
+            },
+            // NEWDECIMAL is always sent as an ASCII decimal string regardless of the
+            // column's BINARY flag / charset. Computed decimals (SUM/AVG/arithmetic/CAST)
+            // carry the BINARY flag and charset 63, so the catch-all arm's binary-charset
+            // heuristic would wrongly return them as a Buffer.
+            .MYSQL_TYPE_NEWDECIMAL => {
+                const slice = value.slice();
+                cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
             },
             .MYSQL_TYPE_BIT => {
                 // BIT(1) is a special case, it's a boolean

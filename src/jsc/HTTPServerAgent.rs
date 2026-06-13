@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use crate::VirtualMachineRef as VirtualMachine;
@@ -7,7 +6,6 @@ use bun_core::String as BunString;
 
 pub struct HTTPServerAgent {
     /// Underlying C++ agent. Set to null when not enabled.
-    // TODO(port): lifetime — FFI-owned C++ opaque; raw ptr is correct here
     pub agent: Option<NonNull<InspectorHTTPServerAgent>>,
 
     /// This becomes the "server ID" field.
@@ -42,14 +40,13 @@ impl HTTPServerAgent {
 
     // #region Events
     //
-    // PORT NOTE (phase-d): `notify_server_started` / `notify_server_stopped` /
+    // `notify_server_started` / `notify_server_stopped` /
     // `notify_server_routes_updated` reach into `bun_jsc::api::AnyServer` and
     // `ServerConfig::RouteDeclaration`, which live in `bun_runtime` (forward
     // dep). The C++ side only needs `Bun__HTTPServerAgent__setEnabled` for
     // linkage; the per-event notifiers are called from Rust → C++ (FFI decls
     // below) and are wired from `bun_runtime` once that tier un-gates. The
-    // event-body Zig ports are preserved in HTTPServerAgent.zig and will land
-    // when `AnyServer` is reachable.
+    // event bodies will land when `AnyServer` is reachable.
 
     // #endregion
 }
@@ -105,10 +102,10 @@ impl Route {
 impl Drop for Route {
     fn drop(&mut self) {
         if !self.param_names.is_null() {
+            let slice = core::ptr::slice_from_raw_parts_mut(self.param_names, self.param_names_len);
             // SAFETY: param_names was allocated via the global (mimalloc) allocator as a
             // contiguous [BunString; param_names_len]. Reconstructing the Box drops each
             // element (deref) and frees the backing storage.
-            let slice = core::ptr::slice_from_raw_parts_mut(self.param_names, self.param_names_len);
             drop(unsafe { bun_core::heap::take(slice) });
             self.param_names = core::ptr::null_mut();
             self.param_names_len = 0;
@@ -120,15 +117,13 @@ impl Drop for Route {
 
 // #endregion
 
-// #region C++ agent reference type for Zig
+// #region C++ agent reference type
 
 bun_opaque::opaque_ffi! {
     /// Opaque handle to the C++ `InspectorHTTPServerAgent`.
     pub struct InspectorHTTPServerAgent;
 }
 
-// TODO(port): move to jsc_sys
-//
 // `safe fn`: `InspectorHTTPServerAgent` is an `opaque_ffi!` ZST handle
 // (`!Freeze` via `UnsafeCell`); `BunString` is `#[repr(C)]` and read-only
 // across the call. `&mut`/`&` are ABI-identical to non-null `*mut`/`*const`.
@@ -188,7 +183,10 @@ unsafe extern "C" {
 }
 
 impl InspectorHTTPServerAgent {
-    pub fn notify_server_started(
+    /// # Safety
+    /// `server_instance` is forwarded to C++ as an opaque token; caller must
+    /// ensure it remains valid for the duration of the FFI call.
+    pub unsafe fn notify_server_started(
         agent: *mut InspectorHTTPServerAgent,
         server_id: ServerId,
         hot_reload_id: HotReloadId,
@@ -254,7 +252,7 @@ impl InspectorHTTPServerAgent {
 
 // #endregion
 
-// #region Zig -> C++
+// #region C++ entry points
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
@@ -273,5 +271,3 @@ pub type RequestId = i32;
 pub type RouteId = i32;
 pub type HotReloadId = i32;
 pub type HTTPMethod = bun_http::Method;
-
-// ported from: src/jsc/HTTPServerAgent.zig

@@ -27,12 +27,10 @@ pub struct Store {
     pub nodes: node::List,
 }
 
-pub const MODULES_DIR_NAME: &[u8] = b".bun";
-
 // ──────────────────────────────────────────────────────────────────────────
-// NewId<T> — Zig: `fn NewId(comptime T: type) type { return enum(u32) { root=0, invalid=max, _ } }`
+// NewId<T>
 // Rust generic newtypes are nominally distinct, so `NewId<Entry> != NewId<Node>` holds by
-// construction (the Zig `comptime { bun.assert(NewId(Entry) != NewId(Node)) }` block is a no-op).
+// construction.
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 pub struct NewId<T>(u32, PhantomData<fn() -> T>);
@@ -55,8 +53,7 @@ impl<T> core::hash::Hash for NewId<T> {
     }
 }
 impl<T> Default for NewId<T> {
-    // Zig leaves this undefined; pick the sentinel so accidental use trips
-    // the debug_assert in `get()`.
+    // Pick the sentinel so accidental use trips the debug_assert in `get()`.
     fn default() -> Self {
         Self::INVALID
     }
@@ -104,9 +101,16 @@ impl<T> NewId<T> {
     }
 }
 
+impl Drop for Store {
+    fn drop(&mut self) {
+        self.entries.drop_elements();
+        self.nodes.drop_elements();
+    }
+}
+
 impl Store {
     /// Called from multiple threads. `parent_dedupe` should not be shared between threads.
-    pub fn is_cycle(
+    pub(crate) fn is_cycle(
         &self,
         id: entry::Id,
         maybe_parent_id: entry::Id,
@@ -116,7 +120,6 @@ impl Store {
         let mut i: usize = 0;
         let mut len: usize;
 
-        // Zig `.items(.parents)` → derive(MultiArrayElement)-generated `.items_parents()`.
         let entry_parents = self.entries.items_parents();
 
         for &parent_id in entry_parents[id.get() as usize].as_slice() {
@@ -126,12 +129,12 @@ impl Store {
             if parent_id == maybe_parent_id {
                 return true;
             }
-            let _ = parent_dedupe.put(parent_id, ()); // OOM-only Result (Zig: catch unreachable)
+            let _ = parent_dedupe.put(parent_id, ()); // OOM-only Result
         }
 
         len = parent_dedupe.len();
         while i < len {
-            // PORT NOTE: reshaped for borrowck — capture key before mutating `parent_dedupe`.
+            // Capture key before mutating `parent_dedupe`.
             let key = parent_dedupe.keys()[i];
             for &parent_id in entry_parents[key.get() as usize].as_slice() {
                 if parent_id == entry::Id::INVALID {
@@ -140,7 +143,7 @@ impl Store {
                 if parent_id == maybe_parent_id {
                     return true;
                 }
-                let _ = parent_dedupe.put(parent_id, ()); // OOM-only Result (Zig: catch unreachable)
+                let _ = parent_dedupe.put(parent_id, ()); // OOM-only Result
                 len = parent_dedupe.len();
             }
             i += 1;
@@ -151,14 +154,13 @@ impl Store {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// OrderedArraySet<T> — Zig: `fn OrderedArraySet(comptime T, comptime Ctx) type`.
-// PORT NOTE: the `Ctx` type param is dropped from the struct; ctx is passed per-call as
-// `&impl OrderedArraySetCtx<T>`. In Zig the Ctx param only contributed comptime method
-// lookup; in Rust the two instantiations (`Dependencies`, `Peers`) are already distinct
-// via `T`. Ctx structs carry borrowed slices, so binding their lifetime into the
-// container type would infect stored fields.
+// OrderedArraySet<T>
+// The ctx is passed per-call as `&impl OrderedArraySetCtx<T>` rather than as a
+// type param on the struct; the two instantiations (`Dependencies`, `Peers`)
+// are already distinct via `T`. Ctx structs carry borrowed slices, so binding
+// their lifetime into the container type would infect stored fields.
 // ──────────────────────────────────────────────────────────────────────────
-pub trait OrderedArraySetCtx<T: Copy> {
+pub(crate) trait OrderedArraySetCtx<T: Copy> {
     fn eql(&self, l: T, r: T) -> bool;
     fn order(&self, l: T, r: T) -> Ordering;
 }
@@ -182,35 +184,28 @@ impl<T> Default for OrderedArraySet<T> {
 }
 
 impl<T> OrderedArraySet<T> {
-    pub const EMPTY: Self = Self { list: Vec::new() };
+    pub(crate) const EMPTY: Self = Self { list: Vec::new() };
 
-    pub fn init_capacity(n: usize) -> Result<Self, AllocError> {
+    pub(crate) fn init_capacity(n: usize) -> Result<Self, AllocError> {
         // allocator param dropped — global mimalloc
         Ok(Self {
             list: Vec::with_capacity(n),
         })
     }
 
-    /// Infallible alias for `init_capacity` (Zig `initCapacity` + `bun.handleOom`).
-    pub fn with_capacity(n: usize) -> Self {
-        Self {
-            list: Vec::with_capacity(n),
-        }
-    }
-
     // `deinit` → handled by `Drop` on `Vec<T>`; nothing to write.
 
-    pub fn slice(&self) -> &[T] {
+    pub(crate) fn slice(&self) -> &[T] {
         &self.list
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.list.len()
     }
 }
 
 impl<T: Copy> OrderedArraySet<T> {
-    pub fn eql(&self, r: &Self, ctx: &impl OrderedArraySetCtx<T>) -> bool {
+    pub(crate) fn eql(&self, r: &Self, ctx: &impl OrderedArraySetCtx<T>) -> bool {
         if self.list.len() != r.list.len() {
             return false;
         }
@@ -225,7 +220,11 @@ impl<T: Copy> OrderedArraySet<T> {
         true
     }
 
-    pub fn insert(&mut self, new: T, ctx: &impl OrderedArraySetCtx<T>) -> Result<(), AllocError> {
+    pub(crate) fn insert(
+        &mut self,
+        new: T,
+        ctx: &impl OrderedArraySetCtx<T>,
+    ) -> Result<(), AllocError> {
         // allocator param dropped — global mimalloc
         for i in 0..self.list.len() {
             let existing = self.list[i];
@@ -248,30 +247,6 @@ impl<T: Copy> OrderedArraySet<T> {
         self.list.push(new);
         Ok(())
     }
-
-    pub fn insert_assume_capacity(&mut self, new: T, ctx: &impl OrderedArraySetCtx<T>) {
-        for i in 0..self.list.len() {
-            let existing = self.list[i];
-            if ctx.eql(new, existing) {
-                return;
-            }
-
-            let order = ctx.order(new, existing);
-
-            if order == Ordering::Equal {
-                return;
-            }
-
-            if order == Ordering::Less {
-                // PERF(port): was insertAssumeCapacity — profile in Phase B
-                self.list.insert(i, new);
-                return;
-            }
-        }
-
-        // PERF(port): was appendAssumeCapacity — profile in Phase B
-        self.list.push(new);
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -292,7 +267,7 @@ pub mod entry {
 
     pub type Id = NewId<Entry>;
     pub type List = MultiArrayList<Entry>;
-    pub type Dependencies = OrderedArraySet<DependenciesItem>;
+    pub(crate) type Dependencies = OrderedArraySet<DependenciesItem>;
 
     pub struct Entry {
         // Used to get dependency name for destination path and peers
@@ -300,12 +275,10 @@ pub mod entry {
         pub node_id: super::node::Id,
         // parent_id: Id,
         pub dependencies: Dependencies,
-        // Zig default: `.empty`
         pub parents: Vec<Id>,
-        // Zig default: `.init(.link_package)`
-        // PORT NOTE: `std.atomic.Value(Installer.Task.Step)` → `AtomicU32` storing
-        // the `#[repr(u8)]` discriminant. Loads/stores go through `Step as u32` /
-        // `Step::from_u32` (see Installer.rs); no atomic-enum wrapper exists.
+        // `AtomicU32` storing the `#[repr(u8)]` `Step` discriminant. Loads and
+        // stores go through `Step as u32` / `Step::from_u32` (see Installer.rs);
+        // no atomic-enum wrapper exists.
         pub step: core::sync::atomic::AtomicU32,
 
         // if true this entry gets symlinked to `node_modules/.bun/node_modules`
@@ -320,13 +293,11 @@ pub mod entry {
         /// hash differs and a new global-store entry is created. Computed after the
         /// store is built (see `computeEntryHashes`). 0 means "do not use global store"
         /// (root, workspace, folder, symlink, patched).
-        // Zig default: `0`
         pub entry_hash: u64,
 
-        // Zig default: `null`
-        // PORT NOTE: `Cell` because `Installer::Task::run` writes this slot
+        // `Cell` because `Installer::Task::run` writes this slot
         // from a task thread through `&Store` (each Task is the sole writer for
-        // its own `entry_id`; see Installer.zig:541/1161). Without interior
+        // its own `entry_id`; see Installer.rs). Without interior
         // mutability the only access path is `&Store → &[Option<_>]` and the
         // per-entry write would mutate through shared-reference provenance.
         // Raw `*mut` instead of `Box` so reads don't move out of the cell.
@@ -354,15 +325,12 @@ pub mod entry {
             Self {
                 node_id: super::node::Id::INVALID,
                 dependencies: Dependencies::EMPTY,
-                // Zig default: `.empty`
                 parents: Vec::new(),
-                // Zig default: `.init(.link_package)` — `Step::LinkPackage as u32 == 0`.
+                // `Step::LinkPackage as u32 == 0`.
                 step: core::sync::atomic::AtomicU32::new(0),
                 hoisted: false,
                 peer_hash: PeerHash::NONE,
-                // Zig default: `0`
                 entry_hash: 0,
-                // Zig default: `null`
                 scripts: core::cell::Cell::new(None),
             }
         }
@@ -373,13 +341,13 @@ pub mod entry {
     pub struct PeerHash(u64);
 
     impl PeerHash {
-        pub const NONE: Self = Self(0);
+        pub(crate) const NONE: Self = Self(0);
 
-        pub fn from(int: u64) -> Self {
+        pub(crate) fn from(int: u64) -> Self {
             Self(int)
         }
 
-        pub fn cast(self) -> u64 {
+        pub(crate) fn cast(self) -> u64 {
             self.0
         }
     }
@@ -448,7 +416,6 @@ pub mod entry {
             }
 
             if peer_hash != PeerHash::NONE {
-                // Zig `bun.fmt.hexIntLower(u64)` zero-pads to 16 nibbles.
                 write!(f, "+{:016x}", peer_hash.cast())?;
             }
 
@@ -456,7 +423,7 @@ pub mod entry {
         }
     }
 
-    pub fn fmt_store_path<'a>(
+    pub(crate) fn fmt_store_path<'a>(
         entry_id: Id,
         store: &'a Store,
         lockfile: &'a Lockfile,
@@ -468,7 +435,7 @@ pub mod entry {
         }
     }
 
-    pub struct GlobalStorePathFormatter<'a> {
+    pub(crate) struct GlobalStorePathFormatter<'a> {
         inner: StorePathFormatter<'a>,
         entry_hash: u64,
     }
@@ -476,7 +443,6 @@ pub mod entry {
     impl<'a> fmt::Display for GlobalStorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             self.inner.fmt(f)?;
-            // Zig `bun.fmt.hexIntLower(u64)` zero-pads to 16 nibbles.
             write!(f, "-{:016x}", self.entry_hash)
         }
     }
@@ -484,7 +450,7 @@ pub mod entry {
     /// Like `fmt_store_path` but suffixes the entry's content hash so the
     /// resulting name is safe to use as a key in the shared global virtual
     /// store (different dependency closures get different directory names).
-    pub fn fmt_global_store_path<'a>(
+    pub(crate) fn fmt_global_store_path<'a>(
         entry_id: Id,
         store: &'a Store,
         lockfile: &'a Lockfile,
@@ -495,9 +461,7 @@ pub mod entry {
         }
     }
 
-    pub fn debug_gather_all_parents(entry_id: Id, store: &Store) -> Vec<Id> {
-        // PORT NOTE: reshaped — Zig leaked the local map and returned its keys slice;
-        // Rust returns an owned Vec instead.
+    pub(crate) fn debug_gather_all_parents(entry_id: Id, store: &Store) -> Vec<Id> {
         let mut i: usize = 0;
         let mut len: usize;
 
@@ -510,18 +474,18 @@ pub mod entry {
             if parent_id == Id::INVALID {
                 continue;
             }
-            let _ = parents.put(parent_id, ()); // OOM-only Result (Zig: catch unreachable)
+            let _ = parents.put(parent_id, ()); // OOM-only Result
         }
 
         len = parents.len();
         while i < len {
-            // PORT NOTE: reshaped for borrowck — capture key before mutating `parents`.
+            // Capture key before mutating `parents`.
             let key = parents.keys()[i];
             for &parent_id in entry_parents[key.get() as usize].as_slice() {
                 if parent_id == Id::INVALID {
                     continue;
                 }
-                let _ = parents.put(parent_id, ()); // OOM-only Result (Zig: catch unreachable)
+                let _ = parents.put(parent_id, ()); // OOM-only Result
                 len = parents.len();
             }
             i += 1;
@@ -539,7 +503,7 @@ pub mod entry {
         pub dep_id: DependencyID,
     }
 
-    pub struct DependenciesOrderedArraySetCtx<'a> {
+    pub(crate) struct DependenciesOrderedArraySetCtx<'a> {
         pub string_buf: &'a [u8],
         pub dependencies: &'a [Dependency],
     }
@@ -583,55 +547,7 @@ pub mod entry {
             let l_dep_name = l_dep.name;
             let r_dep_name = r_dep.name;
 
-            l_dep_name.order(&r_dep_name, string_buf, string_buf)
-        }
-    }
-
-    // PORT NOTE: the Zig body references stale Entry fields (`pkg_id`,
-    // `dep_name`, `parent_id`) not present on the current `Entry` struct —
-    // dead debug code that Zig's lazy compilation never instantiates. Rust
-    // typechecks dead code, so this is rewritten against the real shape:
-    // resolve `pkg_id` via `nodes[entry.node_id].pkg_id`.
-    pub fn debug_print_list(list: &List, nodes: &super::node::List, lockfile: &mut Lockfile) {
-        use super::node::NodeColumns as _;
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-        let pkgs = lockfile.packages.slice();
-        let pkg_names = pkgs.items_name();
-        let pkg_resolutions = pkgs.items_resolution();
-
-        let entries = list.slice();
-        let entry_node_ids = entries.items_node_id();
-        let entry_dependencies = entries.items_dependencies();
-        let node_pkg_ids = nodes.items_pkg_id();
-
-        for entry_id in 0..list.len() {
-            let node_id = entry_node_ids[entry_id];
-            let pkg_id = node_pkg_ids[node_id.get() as usize];
-            let entry_pkg_name = pkg_names[pkg_id as usize].slice(string_buf);
-            bun_output::scoped_log!(
-                Store,
-                "entry ({}): '{}@{}'\n  node_id: {}\n  pkg_id: {}\n  ",
-                entry_id,
-                BStr::new(entry_pkg_name),
-                pkg_resolutions[pkg_id as usize].fmt(string_buf, bun_core::fmt::PathSep::Posix),
-                node_id.get(),
-                pkg_id,
-            );
-
-            let deps = &entry_dependencies[entry_id];
-            bun_output::scoped_log!(Store, "  dependencies ({}):\n", deps.len());
-            for dep_item in deps.slice() {
-                let dep_node_id = entry_node_ids[dep_item.entry_id.get() as usize];
-                let dep_pkg_id = node_pkg_ids[dep_node_id.get() as usize];
-                bun_output::scoped_log!(
-                    Store,
-                    "    {}@{}\n",
-                    BStr::new(pkg_names[dep_pkg_id as usize].slice(string_buf)),
-                    pkg_resolutions[dep_pkg_id as usize]
-                        .fmt(string_buf, bun_core::fmt::PathSep::Posix),
-                );
-            }
+            l_dep_name.order(r_dep_name, string_buf, string_buf)
         }
     }
 }
@@ -651,9 +567,9 @@ pub mod node {
 
     pub type Id = NewId<Node>;
     pub type List = MultiArrayList<Node>;
-    pub type Peers = OrderedArraySet<TransitivePeer>;
-    /// Zig: `Node.dependencies: ArrayList(Ids)` — re-exported under a
-    /// disambiguating name for callers building the dependency vec.
+    pub(crate) type Peers = OrderedArraySet<TransitivePeer>;
+    /// Re-exported under a disambiguating name for callers building the
+    /// dependency vec.
     pub use super::Ids as DependencyIds;
 
     pub struct Node {
@@ -661,13 +577,10 @@ pub mod node {
         pub pkg_id: PackageID,
         pub parent_id: Id,
 
-        // Zig default: `.empty`
         pub dependencies: Vec<Ids>,
-        // Zig default: `.empty`
         pub peers: Peers,
 
         // each node in this list becomes a symlink in the package's node_modules
-        // Zig default: `.empty`
         pub nodes: Vec<Id>,
     }
 
@@ -702,8 +615,6 @@ pub mod node {
         pub auto_installed: bool,
     }
 
-    // Zig: `TransitivePeer.OrderedArraySetCtx` — Rust can't nest a type inside a struct,
-    // so expose a snake_case module mirroring the Zig namespace for callers.
     pub mod transitive_peer {
         pub use super::TransitivePeerOrderedArraySetCtx as OrderedArraySetCtx;
     }
@@ -731,7 +642,7 @@ pub mod node {
             let l_pkg_name = pkg_names[l_pkg_id as usize];
             let r_pkg_name = pkg_names[r_pkg_id as usize];
 
-            l_pkg_name.order(&r_pkg_name, string_buf, string_buf)
+            l_pkg_name.order(r_pkg_name, string_buf, string_buf)
         }
     }
 
@@ -767,75 +678,7 @@ pub mod node {
             );
         }
     }
-
-    pub fn debug_print_list(list: &List, lockfile: &Lockfile) {
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-        let dependencies = lockfile.buffers.dependencies.as_slice();
-
-        let pkgs = lockfile.packages.slice();
-        let pkg_names = pkgs.items_name();
-        let pkg_resolutions = pkgs.items_resolution();
-
-        for node_id in 0..list.len() {
-            let node = list.get(node_id);
-            let node_pkg_name = pkg_names[node.pkg_id as usize].slice(string_buf);
-            bun_output::scoped_log!(
-                Store,
-                "node ({}): '{}'\n  dep_id: {}\n  pkg_id: {}\n  parent_id: {:?}\n",
-                node_id,
-                BStr::new(node_pkg_name),
-                node.dep_id,
-                node.pkg_id,
-                node.parent_id,
-            );
-
-            bun_output::scoped_log!(Store, "  dependencies ({}):\n", node.dependencies.len());
-            for ids in &node.dependencies {
-                let dep = &dependencies[ids.dep_id as usize];
-                let dep_name = dep.name.slice(string_buf);
-
-                let pkg_name = pkg_names[ids.pkg_id as usize].slice(string_buf);
-                let pkg_res = &pkg_resolutions[ids.pkg_id as usize];
-
-                bun_output::scoped_log!(
-                    Store,
-                    "    {}@{} ({}@{})\n",
-                    BStr::new(pkg_name),
-                    pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Posix),
-                    BStr::new(dep_name),
-                    BStr::new(dep.version.literal.slice(string_buf)),
-                );
-            }
-
-            bun_output::scoped_log!(Store, "  nodes ({}): ", node.nodes.len());
-            for (i, &id) in node.nodes.iter().enumerate() {
-                bun_output::scoped_log!(Store, "{}", id.get());
-                if i != node.nodes.len() - 1 {
-                    bun_output::scoped_log!(Store, ",");
-                }
-            }
-
-            bun_output::scoped_log!(Store, "\n  peers ({}):\n", node.peers.list.len());
-            for ids in &node.peers.list {
-                let dep = &dependencies[ids.dep_id as usize];
-                let dep_name = dep.name.slice(string_buf);
-                let pkg_name = pkg_names[ids.pkg_id as usize].slice(string_buf);
-                let pkg_res = &pkg_resolutions[ids.pkg_id as usize];
-
-                bun_output::scoped_log!(
-                    Store,
-                    "    {}@{} ({}@{})\n",
-                    BStr::new(pkg_name),
-                    pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Posix),
-                    BStr::new(dep_name),
-                    BStr::new(dep.version.literal.slice(string_buf)),
-                );
-            }
-        }
-    }
 }
 
 pub use node::Node;
 pub use node::NodeColumns;
-
-// ported from: src/install/isolated_install/Store.zig

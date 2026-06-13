@@ -1,17 +1,14 @@
 use crate::bun_renamer as renamer;
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
-use bun_ast::ImportRecord;
-use bun_ast::{Part, Symbol};
 use bun_collections::{ArrayHashMap, VecExt};
-use bun_js_parser as js_ast;
 
 use crate::LinkerContext;
 use crate::js_meta;
 use crate::linker_context_mod::{ChunkMeta, ChunkMetaMap, debug};
 use crate::{
-    Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index, IndexInt,
-    JSMeta, Ref, RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
+    Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index, IndexInt, Ref,
+    RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
 };
 
 pub fn compute_cross_chunk_dependencies(
@@ -34,8 +31,7 @@ pub fn compute_cross_chunk_dependencies(
     // defer { meta.*.deinit(); free(chunk_metas) } — handled by Drop
 
     {
-        // PORT NOTE: Zig heap-allocated this via c.arena().create() and destroyed it at
-        // scope end; in Rust we construct on the stack and let it drop.
+        // Constructed on the stack and dropped at scope end.
         //
         // `ctx` / `symbols` / `chunks` are stored as raw pointers so the struct does not
         // hold a borrow on `c` or `chunks` across the sequential `walk` loop below.
@@ -50,7 +46,7 @@ pub fn compute_cross_chunk_dependencies(
         // Lifetime-erase the `LinkerContext<'_>` so the struct's `'a` (which
         // ties only the local SoA-column borrows) is not forced to equal the
         // LinkerContext's invariant `'_`. `NonNull::from(&mut *c)` preserves
-        // `c`'s Unique provenance (see PORT NOTE above).
+        // `c`'s Unique provenance (see note above).
         let ctx_ref = bun_ptr::BackRef::from(
             core::ptr::NonNull::from(&mut *c).cast::<LinkerContext<'static>>(),
         );
@@ -87,25 +83,24 @@ pub fn compute_cross_chunk_dependencies(
     compute_cross_chunk_dependencies_with_chunk_metas(c, chunks, &mut chunk_metas)
 }
 
-pub struct CrossChunkDependencies<'a> {
+pub(crate) struct CrossChunkDependencies<'a, 'bump> {
     chunk_meta: &'a mut [ChunkMeta],
-    // PORT NOTE: `BackRef` — the same `[Chunk]` slice is also iterated mutably by
+    // `BackRef` — the same `[Chunk]` slice is also iterated mutably by
     // the caller's sequential `walk` loop; `walk` only reads `chunks[other].unique_key`
     // (disjoint from the per-iteration `&mut Chunk`). The slice outlives the struct
     // (caller stack frame).
     chunks: bun_ptr::BackRef<[Chunk]>,
-    parts: &'a [Vec<Part>],
-    import_records: &'a mut [Vec<ImportRecord>],
+    parts: &'a [bun_ast::PartList<'bump>],
+    import_records: &'a mut [bun_ast::import_record::List<'bump>],
     flags: &'a [js_meta::Flags],
     entry_point_chunk_indices: &'a [IndexInt],
     imports_to_bind: &'a [RefImportData],
     wrapper_refs: &'a [Ref],
     exports_refs: &'a [Ref],
-    // Zig: []const []const string → SoA column type is Box<[Box<[u8]>]>
-    sorted_and_filtered_export_aliases: &'a [Box<[Box<[u8]>]>],
+    sorted_and_filtered_export_aliases: &'a [js_meta::SortedAndFilteredExportAliases],
     resolved_exports: &'a [ResolvedExports],
-    // PORT NOTE: `BackRef` — Zig stores `*LinkerContext` / `*Symbol.Map` and freely
-    // aliases `c.graph` columns alongside; borrowck cannot express that split, so
+    // `BackRef` — `walk` aliases `c.graph` columns alongside the
+    // `LinkerContext` / `Symbol.Map`; borrowck cannot express that split, so
     // opt out here via `BackRef` (safe `Deref` at each use site in `walk`). Lifetime
     // erased (`'static`) so the outer `CrossChunkDependencies<'_>` borrow is not tied
     // to the LinkerContext's own invariant lifetime parameter.
@@ -119,7 +114,7 @@ pub struct CrossChunkDependencies<'a> {
     symbols: bun_ptr::BackRef<bun_ast::symbol::Map>,
 }
 
-impl<'a> CrossChunkDependencies<'a> {
+impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
     // Called once per chunk from the sequential loop above. Writes:
     // `self.chunk_meta[chunk_index]` (per-chunk disjoint),
     // `self.import_records[source_index][rec].{path,source_index}` (per-chunk
@@ -129,10 +124,10 @@ impl<'a> CrossChunkDependencies<'a> {
     // membership — debug-asserted in `assign_chunk_index`).
     // Reads `ctx`/`chunks`/SoA columns shared. Never forms `&mut
     // LinkerContext` (`ctx` is a `BackRef`, deref'd to `&`).
-    pub fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
+    pub(crate) fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
         let deps = self;
         // `ctx` / `chunks` are `BackRef`s into `LinkerContext` / the caller's chunk
-        // slice, valid for the link pass (see PORT NOTE on the struct fields).
+        // slice, valid for the link pass (see note on the struct fields).
         // `chunks` aliases the slice the caller iterates mutably but is only read here.
         let ctx: &LinkerContext<'_> = deps.ctx.get();
         // `BackRef` into `LinkerContext.graph.symbols`, valid for the link
@@ -141,8 +136,7 @@ impl<'a> CrossChunkDependencies<'a> {
         let symbols: &bun_ast::symbol::Map = deps.symbols.get();
         let _chunks: &[Chunk] = deps.chunks.get();
         let chunk_meta = &mut deps.chunk_meta[chunk_index];
-        // PORT NOTE: reshaped for borrowck — Zig held `&chunk_meta` and `&chunk_meta.imports`
-        // simultaneously; here we go through `chunk_meta.imports` / `chunk_meta.dynamic_imports`.
+        // Go through `chunk_meta.imports` / `chunk_meta.dynamic_imports`.
         let entry_point_chunk_indices = deps.entry_point_chunk_indices;
 
         // Go over each file in this chunk
@@ -156,14 +150,15 @@ impl<'a> CrossChunkDependencies<'a> {
             }
 
             // Go over each part in this file that's marked for inclusion in this chunk
-            let parts = deps.parts[source_index as usize].slice();
-            let import_records = deps.import_records[source_index as usize].slice_mut();
+            let parts = deps.parts[source_index as usize].as_slice();
+            let parts_live = &ctx.graph.parts_live[source_index as usize];
+            let import_records = deps.import_records[source_index as usize].as_mut_slice();
             let imports_to_bind = &deps.imports_to_bind[source_index as usize];
             let wrap = deps.flags[source_index as usize].wrap;
             let wrapper_ref = deps.wrapper_refs[source_index as usize];
 
-            for part in parts.iter() {
-                if !part.is_live {
+            for (part_index, part) in parts.iter().enumerate() {
+                if !parts_live.is_set(part_index) {
                     continue;
                 }
 
@@ -175,16 +170,18 @@ impl<'a> CrossChunkDependencies<'a> {
                     {
                         let other_chunk_index =
                             entry_point_chunk_indices[import_record.source_index.get() as usize];
+                        // Slice copy (fat pointer):
+                        // `path.text` borrows the chunk's
+                        // `unique_key` backing buffer (`LinkerContext.unique_key_buf`),
+                        // which outlives the link pass.
                         import_record.path.text = _chunks[other_chunk_index as usize].unique_key;
-                        // TODO(port): Zig assigns the slice by pointer (no copy); decide
-                        // ownership of `path.text` vs `unique_key` in Phase B.
                         import_record.source_index = Index::INVALID;
 
                         // Track this cross-chunk dynamic import so we make sure to
                         // include its hash when we're calculating the hashes of all
                         // dependencies of this chunk.
                         if other_chunk_index as usize != chunk_index {
-                            let _ = chunk_meta.dynamic_imports.put(other_chunk_index, ()); // OOM-only Result (Zig: catch unreachable)
+                            let _ = chunk_meta.dynamic_imports.put(other_chunk_index, ()); // OOM-only Result
                         }
                     }
                 }
@@ -252,7 +249,7 @@ impl<'a> CrossChunkDependencies<'a> {
                     // be moved to a separate chunk than the use of a symbol even if
                     // the definition and use of that symbol are originally from the
                     // same source file.
-                    let _ = chunk_meta.imports.put(ref_to_use, ()); // OOM-only Result (Zig: catch unreachable)
+                    let _ = chunk_meta.imports.put(ref_to_use, ()); // OOM-only Result
                 }
             }
         }
@@ -295,14 +292,14 @@ impl<'a> CrossChunkDependencies<'a> {
                             debug!("Cross-chunk export: {}", bstr::BStr::new(name),);
                         }
 
-                        let _ = chunk_meta.imports.put(target_ref, ()); // OOM-only Result (Zig: catch unreachable)
+                        let _ = chunk_meta.imports.put(target_ref, ()); // OOM-only Result
                     }
                 }
 
                 // Ensure "exports" is included if the current output format needs it
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
                 if flags.force_include_exports_for_entry_point {
-                    // Zig parity: result intentionally discarded
+                    // result intentionally discarded
                     let _ = chunk_meta.imports.put(
                         deps.exports_refs[chunk.entry_point.source_index() as usize],
                         (),
@@ -312,7 +309,7 @@ impl<'a> CrossChunkDependencies<'a> {
                 // Include the wrapper if present
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1053-L1056
                 if flags.wrap != WrapKind::None {
-                    // Zig parity: result intentionally discarded
+                    // result intentionally discarded
                     let _ = chunk_meta.imports.put(
                         deps.wrapper_refs[chunk.entry_point.source_index() as usize],
                         (),
@@ -328,12 +325,9 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     chunks: &mut [Chunk],
     chunk_metas: &mut [ChunkMeta],
 ) -> Result<(), bun_alloc::AllocError> {
-    // TODO(port): narrow error set
-
     // Mark imported symbols as exported in the chunk from which they are declared
-    // PORT NOTE: reshaped for borrowck — Zig zips (chunks, chunk_metas, 0..) and also indexes
-    // chunk_metas[other_chunk_index] / chunks[other_chunk_index] inside the loop body. We
-    // iterate by index and re-borrow per access.
+    // The loop body also indexes chunk_metas[other_chunk_index] /
+    // chunks[other_chunk_index], so iterate by index and re-borrow per access.
     debug_assert_eq!(chunks.len(), chunk_metas.len());
     for chunk_index in 0..chunks.len() {
         if !matches!(chunks[chunk_index].content, chunk::Content::Javascript(_)) {
@@ -341,10 +335,9 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         }
 
         // Find all uses in this chunk of symbols from other chunks
-        // PORT NOTE: reshaped for borrowck — collect keys first to avoid holding a borrow on
+        // reshaped for borrowck — collect keys first to avoid holding a borrow on
         // chunk_metas[chunk_index] while mutating chunk_metas[other_chunk_index].
         let import_refs: Vec<Ref> = chunk_metas[chunk_index].imports.keys().to_vec();
-        // PERF(port): was direct iteration over .keys() without copy — profile in Phase B
         for import_ref in import_refs {
             let symbol = c.graph.symbols.get_const(import_ref).unwrap();
 
@@ -454,8 +447,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         debug!("Generating cross-chunk exports");
 
         let mut stable_ref_list: Vec<StableRef> = Vec::new();
-        // PERF(port): was arena-backed std.ArrayList — profile in Phase B
-        // defer stable_ref_list.deinit() — handled by Drop
 
         debug_assert_eq!(chunks.len(), chunk_metas.len());
         for (chunk, chunk_meta) in chunks.iter_mut().zip(chunk_metas.iter_mut()) {
@@ -469,9 +460,11 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 OutputFormat::Esm => {
                     c.sorted_cross_chunk_export_items(&chunk_meta.exports, &mut stable_ref_list);
                     let mut clause_items =
-                        Vec::<bun_ast::ClauseItem>::init_capacity(stable_ref_list.len());
+                        bun_alloc::ArenaVec::<bun_ast::ClauseItem>::with_capacity_in(
+                            stable_ref_list.len(),
+                            c.arena(),
+                        );
                     repr.exports_to_other_chunks.reserve(stable_ref_list.len());
-                    // PERF(port): was ensureUnusedCapacity — profile in Phase B
                     r.clear_retaining_capacity();
 
                     for stable_ref in stable_ref_list.iter() {
@@ -509,20 +502,17 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             original_name: bun_ast::StoreStr::new(b"" as &[u8]),
                         });
 
-                        // `alias` points into the link-pass arena (see PORT NOTE above),
+                        // `alias` points into the link-pass arena (see note above),
                         // which outlives `exports_to_other_chunks`; `.slice()` re-borrows
                         // under the StoreStr arena contract.
-                        let _ = repr.exports_to_other_chunks.put(ref_, alias.slice()); // OOM-only Result (Zig: catch unreachable)
-                        // PERF(port): was putAssumeCapacity — profile in Phase B
+                        let _ = repr.exports_to_other_chunks.put(ref_, alias.slice()); // OOM-only Result
                     }
 
                     if clause_items.len() > 0 {
                         let mut stmts = Vec::<bun_ast::Stmt>::init_capacity(1);
-                        // PORT NOTE: `S.ExportClause.items` is `*mut [ClauseItem]`; leak the
-                        // Vec buffer (arena-lifetime) into a raw fat ptr.
-                        let items_ptr = bun_ast::StoreSlice::new_mut(clause_items.slice_mut());
-                        core::mem::forget(clause_items);
-                        // Zig: `c.allocator().create(S.ExportClause)` + struct literal —
+                        let items_ptr =
+                            bun_ast::StoreSlice::new_mut(clause_items.into_bump_slice_mut());
+                        // Allocated directly from the arena —
                         // bypasses Stmt.Data.Store (not pushed on this thread here).
                         let export_clause = c.arena().alloc(bun_ast::S::ExportClause {
                             items: items_ptr,
@@ -532,7 +522,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             bun_ast::StoreRef::from_bump(export_clause),
                             bun_ast::Loc::EMPTY,
                         ));
-                        // PERF(port): was appendAssumeCapacity — profile in Phase B
                         repr.cross_chunk_suffix_stmts = stmts;
                     }
                 }
@@ -548,8 +537,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         debug!("Generating cross-chunk imports");
         let mut list: Vec<CrossChunkImport> = Vec::new();
         // defer list.deinit() — handled by Drop
-        // PORT NOTE: reshaped for borrowck — Zig's `for (chunks) |*chunk|` aliases the same
-        // slice it passes to `sortedCrossChunkImports`. We move the per-chunk fields we
+        // We move the per-chunk fields we
         // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
         // the `chunk` borrow, hand the whole `chunks` slice to `sorted_cross_chunk_imports`
         // (which only reads `chunks[other].exports_to_other_chunks` — disjoint), then write
@@ -566,8 +554,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             );
             let mut cross_chunk_imports =
                 core::mem::take(&mut chunks[chunk_index].cross_chunk_imports);
-            // PORT NOTE: reshaped for borrowck — Zig copies the Vec by value, mutates,
-            // then writes back; we `take` to express the same move-out/move-in.
+            // `take` expresses the move-out/move-in: mutate the Vec, then
+            // write it back at loop end.
             let mut cross_chunk_prefix_stmts = Vec::<bun_ast::Stmt>::default();
 
             CrossChunkImport::sorted_cross_chunk_imports(
@@ -598,7 +586,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                                 alias_loc: bun_ast::Loc::EMPTY,
                                 original_name: bun_ast::StoreStr::new(b"" as &[u8]),
                             });
-                            // PERF(port): was appendAssumeCapacity — profile in Phase B
                         }
 
                         cross_chunk_imports.push(chunk::ChunkImport {
@@ -606,7 +593,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             chunk_index: cross_chunk_import.chunk_index,
                         });
                         let items_ptr = bun_ast::StoreSlice::new_mut(clauses.into_bump_slice_mut());
-                        // Zig: `c.allocator().create(S.Import)` + struct literal —
+                        // Allocated directly from the arena —
                         // bypasses Stmt.Data.Store (not pushed on this thread here).
                         let import = c.arena().alloc(bun_ast::S::Import {
                             items: items_ptr,
@@ -635,8 +622,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
 pub use crate::{DeferredBatchTask, ParseTask, ThreadPool};
 
-// `bun.options.Format` is the bundler output-format enum (Esm/Cjs/Iife/...);
-// alias to keep callsites parallel with the Zig `c.options.output_format`.
+// `Format` is the bundler output-format enum (Esm/Cjs/Iife/...);
+// aliased so callsites read as `c.options.output_format`.
 use crate::options::Format as OutputFormat;
-
-// ported from: src/bundler/linker_context/computeCrossChunkDependencies.zig

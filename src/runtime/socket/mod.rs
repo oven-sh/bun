@@ -1,8 +1,6 @@
-//! Port of `src/runtime/socket/socket.zig`.
-//!
 //! TCP/TLS socket JS bindings (`Bun.connect` / `Bun.listen` socket wrappers).
 //!
-//! The full method-body port lives in `socket_body.rs`; this module wires the
+//! The full method bodies live in `socket_body.rs`; this module wires the
 //! submodules together and re-exports the canonical type surface so
 //! `crate::api` and the dispatch / handler layers see one set of types.
 
@@ -37,7 +35,6 @@ pub mod windows_named_pipe_context;
 pub mod ssl_wrapper {
     pub use bun_uws::ssl_wrapper::*;
 
-    /// Zig `init(ssl_options: jsc.API.ServerConfig.SSLConfig, ...)`.
     /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
     /// tier can keep passing `&SSLConfig` directly.
     pub fn init<T: Copy>(
@@ -45,13 +42,14 @@ pub mod ssl_wrapper {
         is_client: bool,
         handlers: Handlers<T>,
     ) -> Result<SSLWrapper<T>, bun_core::Error> {
-        SSLWrapper::<T>::init_from_options(ssl_options.as_usockets(), is_client, handlers)
+        SSLWrapper::<T>::init_from_options(&ssl_options.as_usockets(), is_client, handlers)
             .map_err(bun_core::Error::from)
     }
 }
 
-#[path = "tls_socket_functions.rs"]
-mod tls_socket_functions;
+// `tls_socket_functions.rs` is `#[path]`-included from `socket_body.rs` (where
+// the functions are actually used); a second top-level include here was only
+// there for type-check parity.
 
 #[path = "udp_socket.rs"]
 pub mod udp_socket_draft;
@@ -70,8 +68,8 @@ pub mod ssl_config;
 pub use ssl_config::{SSLConfig, SSLConfigFromJs};
 
 // ─── canonical type surface ──────────────────────────────────────────────────
-// These were previously stub-defined inline here for the B-2 struct/state
-// un-gate; now that the real submodules compile, re-export instead so
+// These were previously stub-defined inline here; now that the real
+// submodules compile, re-export instead so
 // `socket_body`/`tls_socket_functions`/`uws_handlers` all agree on one type.
 
 pub use handlers::{Handlers, SocketConfig};
@@ -83,11 +81,9 @@ pub use socket_body::{
 
 #[cfg(windows)]
 pub use windows_named_pipe_context::WindowsNamedPipeContext;
-#[cfg(not(windows))]
-pub type WindowsNamedPipeContext = ();
 
 /// LAYERING: `udp_socket.rs` is the canonical body. It is mounted as
-/// `udp_socket_draft` above (Phase-B name retained for existing callers); the
+/// `udp_socket_draft` above (legacy name retained for existing callers); the
 /// public `udp_socket` module below is a thin re-export façade so both
 /// `generated_classes.rs` (`crate::socket::udp_socket::UDPSocket`) and
 /// `generated_js2native.rs` (`crate::socket::udp_socket::udp_socket::js_connect`)
@@ -119,7 +115,7 @@ pub mod socket {
 // ─── RawSocketEvents glue ────────────────────────────────────────────────────
 // `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
 // vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`,
-// not `PtrHandler`). PORT NOTE (noalias re-entrancy): the inherent `on_*`
+// not `PtrHandler`). Noalias re-entrancy: the inherent `on_*`
 // methods take `this: *mut Self` precisely so no `&mut NewSocket` is held
 // across `callback.call` (JS can re-derive `&mut Self` via the wrapper's
 // `m_ptr` and mutate `flags`/`handlers`/`ref_count`); a `&mut self` argument
@@ -187,5 +183,3 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         let _ = unsafe { NewSocket::on_handshake(this, s, ok, err) };
     }
 }
-
-// ported from: src/runtime/socket/socket.zig

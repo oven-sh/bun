@@ -22,7 +22,6 @@ pub type Debug<Value> = GuardedBy<Value, ThreadLock>;
 
 /// A wrapper around a mutex, and a value protected by the mutex.
 /// `M` should have `lock` and `unlock` methods.
-// TODO(port): `RawMutex` trait (lock/unlock) is assumed to live in bun_threading; verify in Phase B.
 pub struct GuardedBy<Value, M: RawMutex> {
     /// The raw value. Don't use this if there might be concurrent accesses.
     // `UnsafeCell` is load-bearing: `lock(&self)` hands out `&mut Value` while other `&self`
@@ -40,7 +39,10 @@ unsafe impl<Value: Send, M: RawMutex + Sync> Sync for GuardedBy<Value, M> {}
 impl<Value, M: RawMutex + Default> GuardedBy<Value, M> {
     /// Creates a guarded value with a default-initialized mutex.
     pub fn init(value: Value) -> Self {
-        Self::init_with_mutex(value, M::default())
+        Self {
+            unsynchronized_value: UnsafeCell::new(value),
+            mutex: M::default(),
+        }
     }
 }
 
@@ -88,14 +90,6 @@ impl<Value> GuardedBy<Value, Mutex> {
 }
 
 impl<Value, M: RawMutex> GuardedBy<Value, M> {
-    /// Creates a guarded value with the given mutex.
-    pub fn init_with_mutex(value: Value, mutex: M) -> Self {
-        Self {
-            unsynchronized_value: UnsafeCell::new(value),
-            mutex,
-        }
-    }
-
     /// Locks the mutex and returns an RAII guard that dereferences to the protected value and
     /// releases the lock on drop.
     pub fn lock(&self) -> GuardedLock<'_, Value, M> {
@@ -110,25 +104,10 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
     pub fn get_mut(&mut self) -> &mut Value {
         self.unsynchronized_value.get_mut()
     }
-
-    /// Returns the inner unprotected value.
-    ///
-    /// You must ensure that no other threads could be concurrently using `self`. This method
-    /// invalidates `self`, so you must ensure `self` is not used on any thread after calling
-    /// this method.
-    pub fn into_unprotected(self) -> Value {
-        // Zig: `bun.memory.deinit(&self.#mutex)` then return value, then `self.* = undefined`.
-        // In Rust, moving out of `self` drops `self.mutex` automatically.
-        self.unsynchronized_value.into_inner()
-    }
 }
 
-// Zig `deinit` only calls `bun.memory.deinit` on both fields and writes `undefined`.
-// Rust drops `Value` and `M` fields automatically — no explicit `Drop` impl needed.
-
 /// RAII guard returned by [`GuardedBy::lock`]. Dereferences to the protected value and releases
-/// the underlying mutex when dropped — the Rust-native replacement for Zig's split
-/// `lock()`/`defer unlock()` pair.
+/// the underlying mutex when dropped.
 pub struct GuardedLock<'a, Value, M: RawMutex> {
     guarded: &'a GuardedBy<Value, M>,
 }
@@ -173,8 +152,6 @@ impl<'a, Value, M: RawMutex> Drop for GuardedLock<'a, Value, M> {
 }
 
 /// Trait for the `M` parameter of `GuardedBy`: a raw mutex with `lock`/`unlock`.
-// TODO(port): move to bun_threading if not already there; both `bun_threading::Mutex`
-// and `bun_safety::ThreadLock` must impl this.
 pub trait RawMutex {
     fn lock(&self);
     fn unlock(&self);
@@ -191,4 +168,13 @@ impl RawMutex for Mutex {
     }
 }
 
-// ported from: src/threading/guarded.zig
+impl RawMutex for ThreadLock {
+    #[inline]
+    fn lock(&self) {
+        ThreadLock::lock(self)
+    }
+    #[inline]
+    fn unlock(&self) {
+        ThreadLock::unlock(self)
+    }
+}

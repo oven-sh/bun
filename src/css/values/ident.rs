@@ -1,7 +1,6 @@
 use crate::SmallList;
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, Parser, PrintErr, Printer, Token};
-use bun_collections::VecExt;
 
 use bun_ast::Ref;
 use bun_core::strings;
@@ -21,7 +20,9 @@ macro_rules! arena_slice_newtype {
         $(#[$meta])*
         #[derive(Debug, Clone, Copy)]
         pub struct $name {
-            // TODO(port): arena lifetime — CSS parser slices are arena-owned; Phase B threads `'bump`
+            // CSS parser slices are arena-owned; the borrow is erased to a raw
+            // pointer until the crate threads a `'bump` lifetime (see
+            // PORTING.md §Allocators). Never dereferenced after arena reset.
             pub v: *const [u8],
         }
 
@@ -34,27 +35,25 @@ macro_rules! arena_slice_newtype {
             /// value produced from them, so handing out `&[u8]` is sound.
             ///
             /// NOTE: the borrow is tied to `&self`. Call sites that must return
-            /// the slice with the Phase-A `'static` placeholder lifetime (e.g.
+            /// the slice with the `'static` placeholder lifetime (e.g.
             /// `IdentOrRef::{debug_ident,as_str,as_original_string}`,
             /// `Printer::lookup_ident_or_ref`, `SelectorParser::namespace_for_prefix`)
-            /// still go through the raw `v` field directly until Phase B threads `'bump`.
+            /// still go through the raw `v` field directly until `'bump` is threaded.
             #[inline]
             pub fn v(&self) -> &[u8] {
                 // SAFETY: arena-owned, never null, immutable for the parse session
-                // (see field-level TODO(port) on `'bump` threading).
+                // (see the field-level comment on `'bump` threading).
                 unsafe { crate::arena_str(self.v) }
             }
 
             pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-                // PORT NOTE: Zig `css.implementDeepClone` — field-wise. The
-                // `*const [u8]` slice is arena-owned (never mutated, freed on
-                // arena reset), so identity copy is correct (matches generics.zig
-                // "const strings" fast-path).
+                // The `*const [u8]` slice is arena-owned (never mutated, freed
+                // on arena reset), so identity copy is correct.
                 *self
             }
 
             pub fn hash(&self, hasher: &mut Wyhash) {
-                // PORT NOTE: Zig `css.implementHash` (comptime field-walk) → arena slice bytes.
+                // Hash the arena slice bytes.
                 hasher.update(self.v());
             }
 
@@ -73,7 +72,7 @@ macro_rules! arena_slice_newtype {
 // `from` field below uses it directly. `parse_with_options` honors
 // `ParserOptions.css_modules.dashed_idents`. `to_css` resolves the
 // import-record path up front and hands it to `CssModule::reference_dashed`
-// (borrowck — see PORT NOTE on that method).
+// (borrowck — see the comment on that method).
 
 /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) reference.
 ///
@@ -92,27 +91,25 @@ pub struct DashedIdentReference {
 }
 
 impl DashedIdentReference {
-    pub fn eql(&self, rhs: &Self) -> bool {
-        // PORT NOTE: Zig `css.implementEql` — field-wise. `from` is a CSS-modules
-        // resolution hint, not part of value identity, so compare on `ident` only
-        // (matches Zig `Specifier`-less comparison in the dashed-ident dedup path).
+    pub(crate) fn eql(&self, rhs: &Self) -> bool {
+        // Field-wise over `ident` and `from`.
         use crate::generics::CssEql;
         self.ident.eql(&rhs.ident) && self.from.eql(&rhs.from)
     }
 
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         self.ident.hash(hasher);
         if let Some(from) = &self.from {
             from.hash(hasher);
         }
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // Both fields are `Copy` (arena-slice pointer + tagged enum of Copy payloads).
         *self
     }
 
-    pub fn parse_with_options(
+    pub(crate) fn parse_with_options(
         input: &mut Parser,
         options: &css::ParserOptions,
     ) -> CssResult<DashedIdentReference> {
@@ -136,7 +133,7 @@ impl DashedIdentReference {
         Ok(DashedIdentReference { ident, from })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let dashed_idents = match &dest.css_module {
             Some(m) => m.config.dashed_idents,
             None => false,
@@ -149,11 +146,10 @@ impl DashedIdentReference {
             let ident_v = unsafe { crate::arena_str(self.ident.v) };
             let source_index = dest.loc.source_index;
             let bump = dest.arena;
-            // PORT NOTE: Zig `referenceDashed` took `*Printer` and called
-            // `dest.importRecord()` internally. Rust borrowck forbids handing
+            // Borrowck forbids handing
             // `dest` to a method on `dest.css_module`, so resolve the path
-            // here and pass the slice down. The `?` preserves the Zig
-            // `try dest.importRecord(...)` error path.
+            // here and pass the slice down. The `?` propagates the
+            // `import_record` error path.
             use crate::properties::css_modules::Specifier;
             let specifier_path: Option<&[u8]> = match &self.from {
                 Some(Specifier::ImportRecordIndex(idx)) => {
@@ -164,7 +160,7 @@ impl DashedIdentReference {
             let name = dest.css_module.as_mut().unwrap().reference_dashed(
                 bump,
                 ident_v,
-                &self.from,
+                self.from,
                 specifier_path,
                 source_index,
             );
@@ -187,13 +183,26 @@ arena_slice_newtype! {
     DashedIdent
 }
 
-// TODO(port): Zig `pub fn HashMap(comptime V: type) type` returned an
-// ArrayHashMapUnmanaged with a custom string-hash context. Inherent assoc
-// type aliases are unstable in Rust; expose as a free type alias instead.
-// bun_collections::ArrayHashMap is wyhash-keyed; Phase B must verify the
-// hasher matches std.array_hash_map.hashString or supply a custom Hash impl.
-// blocked_on: bun_collections::ArrayHashMap surface
-pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V>;
+/// Hash/eql context for [`DashedIdentHashMap`]: keys hash their string bytes
+/// (wyhash seed 0, truncated to u32) and compare by byte equality.
+#[derive(Default, Clone, Copy)]
+pub struct DashedIdentContext;
+
+impl bun_collections::array_hash_map::ArrayHashContext<DashedIdent> for DashedIdentContext {
+    #[inline]
+    fn hash(&self, key: &DashedIdent) -> u32 {
+        bun_collections::array_hash_map::hash_string(key.v())
+    }
+
+    #[inline]
+    fn eql(&self, a: &DashedIdent, b: &DashedIdent, _b_index: usize) -> bool {
+        a.v() == b.v()
+    }
+}
+
+/// Inherent assoc type aliases
+/// are unstable in Rust, so this is a free type alias instead.
+pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V, DashedIdentContext>;
 
 impl DashedIdent {
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
@@ -245,38 +254,26 @@ impl Ident {
 /// In debug mode, if it is a `Ref` we will also set the `__ptrbits` to point to the original
 /// []const u8 so we can debug the string. This should be fine since we use arena
 #[repr(transparent)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct IdentOrRef(u128);
 
-impl Default for IdentOrRef {
-    fn default() -> Self {
-        IdentOrRef(0)
-    }
-}
-
-// Zig packed struct(u128) field layout, LSB-first:
+// Packed u128 field layout, LSB-first:
 //   __ptrbits: u63  -> bits  0..63
 //   __ref_bit: bool -> bit   63
 //   __len:     u64  -> bits 64..128
 const PTRBITS_MASK: u128 = (1u128 << 63) - 1;
 const REF_BIT: u128 = 1u128 << 63;
 
-#[allow(dead_code)]
-enum Tag {
-    Ident,
-    Ref,
-}
-
 #[cfg(debug_assertions)]
-pub type DebugIdent<'a> = (&'a [u8], &'a bun_alloc::Arena);
+pub(crate) type DebugIdent<'a> = (&'a [u8], &'a bun_alloc::Arena);
 #[cfg(not(debug_assertions))]
-pub type DebugIdent<'a> = core::marker::PhantomData<&'a ()>;
+pub(crate) type DebugIdent<'a> = core::marker::PhantomData<&'a ()>;
 
 /// Construct a `DebugIdent` — call sites use this instead of an inline
 /// `#[cfg(debug_assertions)]` arg attribute (which removes the parameter
 /// entirely in release and breaks arity).
 #[inline(always)]
-pub fn debug_ident<'a>(_raw: &'a [u8], _arena: &'a bun_alloc::Arena) -> DebugIdent<'a> {
+pub(crate) fn debug_ident<'a>(_raw: &'a [u8], _arena: &'a bun_alloc::Arena) -> DebugIdent<'a> {
     #[cfg(debug_assertions)]
     {
         (_raw, _arena)
@@ -315,10 +312,12 @@ impl IdentOrRef {
 
     #[cfg(debug_assertions)]
     pub fn debug_ident(self) -> &'static [u8] {
-        // TODO(port): lifetime — returns arena-borrowed slice; `'static` is a placeholder.
+        // Returns an arena-borrowed slice; `'static` is a placeholder for the
+        // not-yet-threaded `'bump` lifetime.
         if self.ref_bit() {
-            // SAFETY: in debug builds, ptrbits stores a heap pointer to a *const [u8] written by from_ref
             let ptr = self.ptrbits() as usize as *const *const [u8];
+            // SAFETY: in debug builds, `ptrbits` stores a valid arena-allocated `*const *const [u8]`
+            // written by `from_ref`; the pointee is an arena-owned slice (see `DashedIdent::v`).
             unsafe { crate::arena_str(*ptr) }
         } else {
             // SAFETY: as_ident reconstructs the arena slice this was packed from
@@ -326,33 +325,32 @@ impl IdentOrRef {
         }
     }
 
-    // NOTE: no `#[cfg(not(debug_assertions))]` variant. Zig's `@compileError` is lazy (fires only
-    // if the body is analyzed); Rust's `compile_error!` fires at expansion and would break every
-    // release build. Omitting the fn in release yields a name-resolution error at the call site,
-    // which is the closest Rust equivalent.
+    // NOTE: no `#[cfg(not(debug_assertions))]` variant. `compile_error!` fires at expansion and
+    // would break every release build. Omitting the fn in release yields a name-resolution error
+    // at the call site, which is the intent: this is debug-only.
 
     pub fn from_ident(ident: Ident) -> Self {
         let s = ident.v();
         let (ptr, len) = (s.as_ptr() as usize as u64, s.len() as u64);
-        // @intCast(@intFromPtr(...)) — narrowing usize→u63 is checked in debug
+        // narrowing usize→u63 is checked in debug
         debug_assert!(ptr & (1u64 << 63) == 0);
         Self::pack(ptr, false, len)
     }
 
     pub fn from_ref(r: Ref, debug_ident: DebugIdent<'_>) -> Self {
         let len: u64 = r.to_raw_bits();
-        #[allow(unused_mut)]
-        let mut this = Self::pack(0, true, len);
+        #[cfg(not(debug_assertions))]
+        let this = Self::pack(0, true, len);
 
         #[cfg(debug_assertions)]
-        {
+        let this = {
             let (slice, bump) = debug_ident;
             // bun.handleOom(arena.create(...)) → arena alloc; OOM aborts
             let heap_ptr: &mut *const [u8] = bump.alloc(std::ptr::from_ref::<[u8]>(slice));
             let addr = std::ptr::from_mut::<*const [u8]>(heap_ptr) as usize as u64;
             debug_assert!(addr & (1u64 << 63) == 0);
-            this = Self::pack(addr, true, len);
-        }
+            Self::pack(addr, true, len)
+        };
         #[cfg(not(debug_assertions))]
         {
             let _ = debug_ident;
@@ -398,7 +396,8 @@ impl IdentOrRef {
         map: &bun_ast::symbol::Map,
         local_names: Option<&css::LocalsResultsMap>,
     ) -> Option<&'static [u8]> {
-        // TODO(port): lifetime — returns arena/symbol-table borrow; `'static` is a placeholder.
+        // Returns an arena/symbol-table borrow; `'static` is a placeholder for
+        // the not-yet-threaded `'bump` lifetime.
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
             return Some(unsafe { crate::arena_str(self.as_ident().unwrap().v) });
@@ -411,25 +410,25 @@ impl IdentOrRef {
         local_names
             .unwrap()
             .get(&final_ref)
-            .map(|p| unsafe { crate::arena_str(&**p) })
+            .map(|p| unsafe { crate::arena_str(&raw const **p) })
     }
 
-    pub fn as_original_string(self, symbols: &bun_ast::symbol::List) -> &[u8] {
+    pub fn as_original_string(self, symbols: &[bun_ast::Symbol]) -> &[u8] {
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
             return unsafe { crate::arena_str(self.as_ident().unwrap().v) };
         }
         let r = self.as_ref().unwrap();
-        symbols.at(r.inner_index() as usize).original_name.slice()
+        symbols[r.inner_index() as usize].original_name.slice()
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
         if let Some(ident) = self.as_ident() {
             hasher.update(ident.v());
         } else {
-            // SAFETY: self is #[repr(transparent)] u128; reading first 2 bytes matches Zig's
-            // `slice_u8[0..2]` (which is almost certainly a Zig bug — hashes 2 bytes, not 16).
-            // TODO(port): verify upstream intent; preserving behavior verbatim.
+            // SAFETY: self is #[repr(transparent)] u128 (16 bytes), so reading the first 2
+            // bytes is in-bounds. Hashing only 2 of the 16 bytes (sic) is preserved for
+            // behavioral compatibility; PR #30784 hashes the full identity.
             let bytes = unsafe {
                 core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2)
             };
@@ -474,10 +473,17 @@ pub use CustomIdent as CustomIdentFns;
 /// reserved separately by css-values-4. `none` is *not* in this set —
 /// `<keyframes-name>` / `<single-animation-name>` callers check it themselves.
 #[inline]
-pub fn is_reserved_custom_ident(s: &[u8]) -> bool {
+pub(crate) fn is_reserved_custom_ident(s: &[u8]) -> bool {
     strings::eql_any_case_insensitive_ascii(
         s,
-        &[b"initial", b"inherit", b"unset", b"default", b"revert", b"revert-layer"],
+        &[
+            b"initial",
+            b"inherit",
+            b"unset",
+            b"default",
+            b"revert",
+            b"revert-layer",
+        ],
     )
 }
 
@@ -525,5 +531,3 @@ impl CustomIdent {
 
 /// A list of CSS [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents) values.
 pub type CustomIdentList = SmallList<CustomIdent, 1>;
-
-// ported from: src/css/values/ident.zig

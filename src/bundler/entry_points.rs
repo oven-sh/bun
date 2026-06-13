@@ -10,9 +10,9 @@ use bun_wyhash::{self, Wyhash11};
 use crate::Transpiler;
 use bun_js_parser as js_ast;
 
-// PORT NOTE: `Path`/`PathName` come from the lower-tier `bun_paths::fs` shim
-// (lifetime-erased `'static` slices, Phase-A) so `bun_ast::Source` field types
-// line up; `FileSystem` is the real `bun_resolver::fs` singleton now that
+// `Path`/`PathName` come from the lower-tier `bun_paths::fs` shim
+// (lifetime-erased `'static` slices) so `bun_ast::Source` field types line up;
+// `FileSystem` is the real `bun_resolver::fs` singleton now that
 // `bun_resolver` is in this crate's dep set.
 pub mod Fs {
     pub use bun_paths::fs::{Path, PathName};
@@ -39,17 +39,12 @@ impl Default for FallbackEntryPoint {
 }
 
 impl FallbackEntryPoint {
-    // TODO(b2-blocked): crate::options::Framework / ClientCssInJs — `options`
-    // module is still gated; body also touched `bun_resolver::fs` (see
-    // PORTING.md §Forbidden) before un-gating.
     pub fn generate<TranspilerType>(
         entry: &mut FallbackEntryPoint,
         input_path: &[u8],
         transpiler: &mut TranspilerType,
     ) -> Result<(), bun_core::Error>
-    // TODO(port): narrow error set
     where
-        // TODO(port): TranspilerType trait bound — body reads `.options.framework` and `.arena`.
         TranspilerType: TranspilerLike,
     {
         // This is *extremely* naive.
@@ -70,26 +65,23 @@ impl FallbackEntryPoint {
             .client_css_in_js
             != ClientCssInJs::AutoOnImportCss;
 
-        // PORT NOTE: self-referential — when the rendered code fits in
+        // self-referential — when the rendered code fits in
         // `entry.code_buffer` the Source borrows it (disjoint-field write to
         // `entry.source` while `entry.code_buffer` is shared-borrowed). On
-        // overflow the Source owns the bytes via `Cow::Owned` (Zig allocated
-        // from `transpiler.arena`; here the Source owns it directly so Drop
+        // overflow the Source owns the bytes via `Cow::Owned` (so Drop
         // frees it).
-        // PORT NOTE: assemble bytes directly (not `write!`+`BStr`) so a
-        // non-UTF-8 byte in `input_path` is emitted verbatim like Zig `{s}`,
+        // assemble bytes directly (not `write!`+`BStr`) so a
+        // non-UTF-8 byte in `input_path` is emitted verbatim,
         // not lossily replaced with U+FFFD by `BStr as Display`.
         macro_rules! render_into_entry {
             ($prefix:expr, $suffix:expr) => {{
                 let prefix: &[u8] = $prefix;
                 let suffix: &[u8] = $suffix;
-                // PERF(port): was std.fmt.count + bufPrint/allocPrint stack-fallback — profile in Phase B
                 let count = prefix.len() + input_path.len() + suffix.len();
                 if count < entry.code_buffer.len() {
                     let buf = &mut entry.code_buffer;
                     buf[..prefix.len()].copy_from_slice(prefix);
-                    buf[prefix.len()..prefix.len() + input_path.len()]
-                        .copy_from_slice(input_path);
+                    buf[prefix.len()..prefix.len() + input_path.len()].copy_from_slice(input_path);
                     buf[prefix.len() + input_path.len()..count].copy_from_slice(suffix);
                     entry.source =
                         bun_ast::Source::init_path_string(input_path, &entry.code_buffer[..count]);
@@ -138,7 +130,7 @@ impl ClientEntryPoint {
         strings::starts_with(b"entry.", extname)
     }
 
-    // PORT NOTE: takes the lifetime-generic `bun_paths::fs::PathName<'_>` (not the
+    // takes the lifetime-generic `bun_paths::fs::PathName<'_>` (not the
     // `'static`-field `bun_paths::fs::PathName<'static>`) so callers with a borrowed path
     // (e.g. `bun_runtime::filesystem_router::get_script_src_string`) needn't forge
     // `'static`. The body only copies `dir`/`base`/`ext` into `outbuffer`.
@@ -151,7 +143,7 @@ impl ClientEntryPoint {
         let mut generated_path =
             Fs::FileSystem::get().abs_buf(&joined_base_and_dir_parts, outbuffer);
 
-        // PORT NOTE: reshaped for borrowck — capture len, drop borrow, re-borrow outbuffer.
+        // reshaped for borrowck — capture len, drop borrow, re-borrow outbuffer.
         let mut len = generated_path.len();
         outbuffer[len..len + b".entry".len()].copy_from_slice(b".entry");
         len += b".entry".len();
@@ -185,9 +177,7 @@ impl ClientEntryPoint {
         original_path: &Fs::PathName,
         client: &[u8],
     ) -> Result<(), bun_core::Error>
-    // TODO(port): narrow error set
     where
-        // TODO(port): TranspilerType trait bound — body reads `.options.framework`.
         TranspilerType: TranspilerLike,
     {
         let entry = self;
@@ -210,11 +200,11 @@ impl ClientEntryPoint {
             .client_css_in_js
             != ClientCssInJs::AutoOnImportCss;
 
-        // TODO(port): self-referential — `code` borrows `entry.code_buffer` and is stored into
-        // `entry.source`. See note in FallbackEntryPoint::generate.
-        let code: &[u8];
-
-        if disable_css_imports {
+        // INVARIANT: self-referential — `code` borrows `entry.code_buffer` and is
+        // stored into `entry.source` (lifetime erased), so `entry` must not move
+        // or drop while `entry.source` is in use. See note in
+        // FallbackEntryPoint::generate.
+        let code: &[u8] = if disable_css_imports {
             let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[..]);
             write!(
                 &mut cursor,
@@ -228,7 +218,7 @@ impl ClientEntryPoint {
             )
             .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
             let n = cursor.position() as usize;
-            code = &entry.code_buffer[..n];
+            &entry.code_buffer[..n]
         } else {
             let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[..]);
             write!(
@@ -243,8 +233,8 @@ impl ClientEntryPoint {
             )
             .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
             let n = cursor.position() as usize;
-            code = &entry.code_buffer[..n];
-        }
+            &entry.code_buffer[..n]
+        };
 
         // `bun_paths::fs::PathName<'static>` → `bun_paths::fs::PathName<'static>`: field-identical
         // mirrors (see `#[repr(C)]` note on both); spell out the copy instead of a cast.
@@ -281,7 +271,6 @@ impl ServerEntryPoint {
         is_hot_reload_enabled: bool,
         path_to_use: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // Use the global arena so this buffer's lifetime is decoupled
         // from whichever arena the caller's VM happens to be using; the
         // slice is read later from `getHardcodedModule` which outlives any
@@ -354,7 +343,7 @@ impl ServerEntryPoint {
         };
 
         // Free the previous buffer on regenerate (hot reload) instead of
-        // leaking it. `contents` is either "" or a prior allocPrint result.
+        // leaking it. `contents` is either "" or a previously generated buffer.
         // (Handled implicitly: assigning to `Box<[u8]>` drops the old one.)
         entry.contents = code.into_boxed_slice();
         entry.generated = true;
@@ -397,7 +386,7 @@ impl MacroEntryPoint {
         let hash = hasher.final_();
         let fmt = bun_fmt::hex_int_lower::<16>(hash);
 
-        // PORT NOTE: reshaped for borrowck — capture cursor position, drop &mut
+        // reshaped for borrowck — capture cursor position, drop &mut
         // borrow, then re-borrow `buf` immutably.
         let n = {
             let mut cursor = std::io::Cursor::new(&mut buf[..]);
@@ -417,12 +406,10 @@ impl MacroEntryPoint {
     }
 
     pub fn generate_id_from_specifier(specifier: &[u8]) -> i32 {
-        // Same-size bitcast u32 → i32 (matches Zig `@bitCast`).
+        // Same-size bitcast u32 → i32.
         (bun_wyhash::hash(specifier) as u32) as i32
     }
 
-    // TODO(b2-blocked): bun_ast::Macro + bun_resolver::fs::PathName —
-    // see `generate_id`.
     pub fn generate(
         entry: &mut MacroEntryPoint,
         _: &mut Transpiler,
@@ -431,13 +418,12 @@ impl MacroEntryPoint {
         macro_id: i32,
         macro_label_: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let dir_to_use: &[u8] = if import_path.dir.is_empty() {
             b""
         } else {
             import_path.dir_with_trailing_slash()
         };
-        // PORT NOTE: reshaped for borrowck — capture the label length, write the
+        // reshaped for borrowck — capture the label length, write the
         // body via a scoped &mut borrow, then re-borrow `code_buffer` immutably
         // for the (label, code) slices passed to `init_path_string`.
         let label_len = macro_label_.len();
@@ -523,9 +509,10 @@ impl MacroEntryPoint {
             cursor.position() as usize
         };
 
-        // TODO(port): self-referential — `macro_label`/`code` borrow `entry.code_buffer`
-        // and are stored into `entry.source` (lifetime erased via `IntoStr`). Phase B:
-        // raw-ptr slice or restructure so Source owns its bytes.
+        // INVARIANT: self-referential — `macro_label`/`code` borrow
+        // `entry.code_buffer` and are stored into `entry.source` (lifetime erased
+        // via `IntoStr`), so `entry` must not move or drop while `entry.source`
+        // is in use.
         let macro_label: &[u8] = &entry.code_buffer[..label_len];
         let code: &[u8] = &entry.code_buffer[label_len..label_len + code_len];
         entry.source = bun_ast::Source::init_path_string(macro_label, code);
@@ -535,14 +522,10 @@ impl MacroEntryPoint {
     }
 }
 
-// TODO(port): `TranspilerLike` is a placeholder for the duck-typed
-// `comptime TranspilerType: type` param used by FallbackEntryPoint/ClientEntryPoint.
-// Phase B: replace with the concrete `Transpiler` type or a real trait once
-// `bun_bundler::options` is ported.
+// Trait abstraction over the transpiler types used by
+// FallbackEntryPoint/ClientEntryPoint.
 pub trait TranspilerLike {
     fn options(&self) -> &crate::options::Options<'_>;
 }
 
 use crate::options::ClientCssInJs;
-
-// ported from: src/bundler/entry_points.zig

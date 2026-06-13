@@ -1,10 +1,7 @@
-#![allow(dead_code, unused_imports, unused_macros)]
 use crate as css;
-use crate::VendorPrefix;
 use crate::css_properties::custom::UnparsedProperty;
 use crate::css_properties::{Property, PropertyIdTag};
 use crate::generics::{DeepClone as _, IsCompatible as _};
-use crate::prefixes::Feature;
 use bun_alloc::ArenaVecExt as _;
 
 /// *NOTE* The struct field names must match their corresponding variants in `Property`!
@@ -12,7 +9,7 @@ use bun_alloc::ArenaVecExt as _;
 pub struct FallbackHandler {
     pub color: Option<usize>,
     pub text_shadow: Option<usize>,
-    // TODO: add these back plz
+    // The remaining fallback fields are not implemented yet.
     // filter: Option<usize>,
     // backdrop_filter: Option<usize>,
     // fill: Option<usize>,
@@ -22,32 +19,21 @@ pub struct FallbackHandler {
 }
 
 impl FallbackHandler {
-    // TODO(port): Zig computed this via @typeInfo(FallbackHandler).Struct.fields.len.
-    #[allow(dead_code)]
-    const FIELD_COUNT: usize = 2;
-
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        // The Zig source does `inline for (std.meta.fields(FallbackHandler))` and uses
-        // `@field` / `@unionInit` keyed on the field name. Rust has no field reflection,
-        // so we expand each (field, Property variant, has_vendor_prefix) pair via macro.
-        // TODO(port): proc-macro — if the field list grows, generate these arms from a
-        // single source of truth shared with `Property`/`PropertyIdTag`.
+        // Each (field, Property variant, has_vendor_prefix) pair is expanded via macro.
 
         let arena = dest.bump();
 
-        // PORT NOTE: Zig's `inline for` over `std.meta.fields(FallbackHandler)` dispatched
-        // each (field, Property variant) pair via a single generic body using `@field` /
-        // `@unionInit` + `css.generic.{deepClone,isCompatible,hasGetFallbacks}`. Rust has
-        // no field reflection and the generic-trait surface (`DeepClone`/`IsCompatible`/
-        // `get_fallbacks` on `SmallList<TextShadow,1>`) is still partially gated, so we
-        // expand each pair via a macro that takes per-type closures for those three ops.
-        // This keeps the *control flow* identical while letting each payload type use its
-        // own inherent methods until the trait lattice un-gates.
+        // The generic-trait surface (`DeepClone`/`IsCompatible`/`get_fallbacks`
+        // on `SmallList<TextShadow,1>`) is still partially gated, so each
+        // (field, Property variant) pair is expanded via a macro that takes
+        // per-type closures for those three ops. This lets each payload type
+        // use its own inherent methods until the trait lattice un-gates.
         macro_rules! handle_unprefixed {
             (
                 $self_field:ident,
@@ -60,20 +46,20 @@ impl FallbackHandler {
                     let mut val = ($dc)(payload, arena);
 
                     if $self_field.is_none() {
-                        // PORT NOTE: `has_fallbacks` only used in the vendor-prefixed branch in Zig.
-                        ($fb)(&mut val, arena, context.targets, dest);
+                        // `has_fallbacks` is only consulted in the vendor-prefixed branch.
+                        ($fb)(&mut val, arena, &context.targets, dest);
                     }
 
                     if $self_field.is_none()
                         || (context.targets.browsers.is_some()
-                            && !($ic)(&val, context.targets.browsers.unwrap()))
+                            && !($ic)(&val, &context.targets.browsers.unwrap()))
                     {
                         *$self_field = Some(dest.len());
                         dest.push(Property::$Variant(val));
                     } else if let Some(index) = *$self_field {
                         dest[index] = Property::$Variant(val);
                     } else {
-                        // val dropped — Rust Drop handles cleanup (Zig: val.deinit(context.arena))
+                        // val dropped — Drop handles cleanup
                         drop(val);
                     }
 
@@ -82,7 +68,7 @@ impl FallbackHandler {
             };
         }
 
-        // PORT NOTE: reshaped for borrowck — pre-borrow each self.<field> as &mut so the
+        // Reshaped for borrowck — pre-borrow each self.<field> as &mut so the
         // macro body can both read and assign it without re-borrowing `self`.
         let this = &mut *self;
         let color = &mut this.color;
@@ -136,21 +122,6 @@ impl FallbackHandler {
                         }
                     };
                 }
-                macro_rules! match_unparsed_prefixed {
-                    ($self_field:ident, $Variant:ident, $FeatureVariant:ident) => {
-                        if val.property_id.tag() == PropertyIdTag::$Variant {
-                            // PORT NOTE: Zig accessed `@field(val.property_id, field.name)[1]`
-                            // to get the VendorPrefix from the PropertyId payload. Mapped to
-                            // the generated `PropertyId::prefix()` accessor.
-                            let newval = if val.property_id.prefix().contains(VendorPrefix::NONE) {
-                                val.get_prefixed(arena, context.targets, Feature::$FeatureVariant)
-                            } else {
-                                val.deep_clone(arena)
-                            };
-                            break 'unparsed_and_index (newval, $self_field);
-                        }
-                    };
-                }
 
                 match_unparsed_unprefixed!(color, Color);
                 match_unparsed_unprefixed!(text_shadow, TextShadow);
@@ -160,11 +131,7 @@ impl FallbackHandler {
                 return false;
             };
 
-            // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
-            // un-gates (blocked on `SupportsCondition::eql` in context.rs).
-
             context.add_unparsed_fallbacks(arena, &mut unparsed);
-            let _ = &mut unparsed;
             if let Some(i) = *index {
                 dest[i] = Property::Unparsed(unparsed);
             } else {
@@ -178,15 +145,12 @@ impl FallbackHandler {
         false
     }
 
-    pub fn finalize(
+    pub(crate) fn finalize(
         &mut self,
         _dest: &mut css::DeclarationList,
         _context: &mut css::PropertyHandlerContext,
     ) {
-        // Zig: inline for (std.meta.fields(FallbackHandler)) |f| @field(this, f.name) = null;
         self.color = None;
         self.text_shadow = None;
     }
 }
-
-// ported from: src/css/properties/prefix_handler.zig

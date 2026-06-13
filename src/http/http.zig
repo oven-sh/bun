@@ -2861,41 +2861,44 @@ pub fn handleResponseMetadata(
             },
             hashHeaderConst("Content-Encoding") => {
                 if (!this.flags.disable_decompression) {
-                    if (strings.eqlComptime(header.value, "gzip")) {
+                    // RFC 9110 §8.4.1: content codings are case-insensitive.
+                    // `x-gzip` is a registered deprecated alias of `gzip`.
+                    if (std.ascii.eqlIgnoreCase(header.value, "gzip") or std.ascii.eqlIgnoreCase(header.value, "x-gzip")) {
                         this.state.encoding = Encoding.gzip;
                         this.state.content_encoding_i = @as(u8, @truncate(header_i));
-                    } else if (strings.eqlComptime(header.value, "deflate")) {
+                    } else if (std.ascii.eqlIgnoreCase(header.value, "deflate")) {
                         this.state.encoding = Encoding.deflate;
                         this.state.content_encoding_i = @as(u8, @truncate(header_i));
-                    } else if (strings.eqlComptime(header.value, "br")) {
+                    } else if (std.ascii.eqlIgnoreCase(header.value, "br")) {
                         this.state.encoding = Encoding.brotli;
                         this.state.content_encoding_i = @as(u8, @truncate(header_i));
-                    } else if (strings.eqlComptime(header.value, "zstd")) {
+                    } else if (std.ascii.eqlIgnoreCase(header.value, "zstd")) {
                         this.state.encoding = Encoding.zstd;
                         this.state.content_encoding_i = @as(u8, @truncate(header_i));
                     }
                 }
             },
             hashHeaderConst("Transfer-Encoding") => {
-                if (strings.eqlComptime(header.value, "gzip")) {
+                // RFC 9112 §7: transfer-coding names are case-insensitive.
+                if (std.ascii.eqlIgnoreCase(header.value, "gzip") or std.ascii.eqlIgnoreCase(header.value, "x-gzip")) {
                     if (!this.flags.disable_decompression) {
                         this.state.transfer_encoding = Encoding.gzip;
                     }
-                } else if (strings.eqlComptime(header.value, "deflate")) {
+                } else if (std.ascii.eqlIgnoreCase(header.value, "deflate")) {
                     if (!this.flags.disable_decompression) {
                         this.state.transfer_encoding = Encoding.deflate;
                     }
-                } else if (strings.eqlComptime(header.value, "br")) {
+                } else if (std.ascii.eqlIgnoreCase(header.value, "br")) {
                     if (!this.flags.disable_decompression) {
                         this.state.transfer_encoding = .brotli;
                     }
-                } else if (strings.eqlComptime(header.value, "zstd")) {
+                } else if (std.ascii.eqlIgnoreCase(header.value, "zstd")) {
                     if (!this.flags.disable_decompression) {
                         this.state.transfer_encoding = .zstd;
                     }
-                } else if (strings.eqlComptime(header.value, "identity")) {
+                } else if (std.ascii.eqlIgnoreCase(header.value, "identity")) {
                     this.state.transfer_encoding = Encoding.identity;
-                } else if (strings.eqlComptime(header.value, "chunked")) {
+                } else if (std.ascii.eqlIgnoreCase(header.value, "chunked")) {
                     this.state.transfer_encoding = Encoding.chunked;
                 } else {
                     return error.UnsupportedTransferEncoding;

@@ -13,11 +13,13 @@ path = "lib.rs"
 # when those files are compiled by the separate `bun_shim_impl` crate.
 shim_standalone = []
 
+[lints]
+workspace = true
+
 [dependencies]
 bytemuck = "1"
 strum.workspace = true
 thiserror.workspace = true
-phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true

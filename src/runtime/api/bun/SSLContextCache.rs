@@ -23,7 +23,7 @@ use core::ffi::{c_int, c_long, c_void};
 use core::ptr;
 
 use bun_boringssl_sys as boringssl;
-use bun_collections::ArrayHashMap;
+use bun_collections::array_hash_map::{ArrayHashContext, ArrayHashMap};
 use bun_threading::Mutex;
 use bun_uws as uws;
 use bun_uws::create_bun_socket_error_t;
@@ -31,47 +31,11 @@ use bun_uws::create_bun_socket_error_t;
 // `jsc.API.ServerConfig.SSLConfig` — re-exported from src/runtime/socket/SSLConfig.rs
 use crate::api::server::server_config::SSLConfig;
 
-/// Local shim: `bun_uws::SocketContext::BunSocketContextOptions` is a `#[repr(C)]`
-/// duplicate of `bun_uws_sys::BunSocketContextOptions` (same fields, same order)
-/// but only the `_sys` copy has `.digest()`. Bridge by bitwise copy until the
-/// upstream crates are unified.
-trait BunSocketContextOptionsDigest {
-    fn digest(&self) -> Digest;
-}
-impl BunSocketContextOptionsDigest for uws::SocketContext::BunSocketContextOptions {
-    fn digest(&self) -> Digest {
-        const _: () = assert!(
-            core::mem::size_of::<uws::SocketContext::BunSocketContextOptions>()
-                == core::mem::size_of::<bun_uws_sys::BunSocketContextOptions>()
-        );
-        // SAFETY: both are `#[repr(C)]` with identical field list/order (see
-        // src/uws/lib.rs SocketContext::BunSocketContextOptions and
-        // src/uws_sys/SocketContext.rs); Copy + POD, so a typed pointer cast
-        // followed by a load is sound.
-        let sys: bun_uws_sys::BunSocketContextOptions = unsafe {
-            core::ptr::from_ref(self)
-                .cast::<bun_uws_sys::BunSocketContextOptions>()
-                .read()
-        };
-        sys.digest()
-    }
-}
-
+#[derive(Default)]
 pub struct SSLContextCache {
-    // TODO(port): ArrayHashMap needs custom context = DigestContext, store_hash = false
-    map: ArrayHashMap<Digest, *mut Entry>,
+    map: ArrayHashMap<Digest, *mut Entry, DigestContext>,
     mutex: Mutex,
     ops_since_compact: u32,
-}
-
-impl Default for SSLContextCache {
-    fn default() -> Self {
-        Self {
-            map: ArrayHashMap::default(),
-            mutex: Mutex::default(),
-            ops_since_compact: 0,
-        }
-    }
 }
 
 pub type Digest = [u8; 32];
@@ -80,17 +44,19 @@ pub type Digest = [u8; 32];
 /// bucket hash — no need to re-Wyhash 32 bytes (what AutoContext would do).
 /// `eql` still compares the full digest. `store_hash = false` since recompute
 /// is a single load.
+#[derive(Default)]
 pub struct DigestContext;
 
-impl DigestContext {
-    pub fn hash(&self, k: &Digest) -> u32 {
+impl ArrayHashContext<Digest> for DigestContext {
+    #[inline]
+    fn hash(&self, k: &Digest) -> u32 {
         u32::from_le_bytes([k[0], k[1], k[2], k[3]])
     }
-    pub fn eql(&self, a: &Digest, b: &Digest, _: usize) -> bool {
+    #[inline]
+    fn eql(&self, a: &Digest, b: &Digest, _b_index: usize) -> bool {
         bun_core::strings::eql_long(a, b, false)
     }
 }
-// TODO(port): wire DigestContext as the ArrayHashMap hasher/eq (Zig: 4th generic param)
 
 pub struct Entry {
     /// Nulled by `bun_ssl_ctx_cache_on_free` when BoringSSL drops the last
@@ -111,14 +77,14 @@ impl SSLContextCache {
         err: &mut create_bun_socket_error_t,
     ) -> Option<*mut boringssl::SSL_CTX> {
         let opts = config.as_usockets();
-        self.get_or_create_digest(opts, opts.digest(), err)
+        self.get_or_create_digest(&opts, opts.digest(), err)
     }
 
     /// Variant for callers that already projected to `BunSocketContextOptions`
     /// (e.g. via `as_usockets_for_client_verification()`).
     pub fn get_or_create_opts(
         &mut self,
-        opts: uws::SocketContext::BunSocketContextOptions,
+        opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut create_bun_socket_error_t,
     ) -> Option<*mut boringssl::SSL_CTX> {
         self.get_or_create_digest(opts, opts.digest(), err)
@@ -129,7 +95,7 @@ impl SSLContextCache {
     /// instead of three times on a miss.
     pub fn get_or_create_digest(
         &mut self,
-        opts: uws::SocketContext::BunSocketContextOptions,
+        opts: &uws::SocketContext::BunSocketContextOptions,
         d: Digest,
         err: &mut create_bun_socket_error_t,
     ) -> Option<*mut boringssl::SSL_CTX> {
@@ -246,6 +212,11 @@ impl SSLContextCache {
 /// e.g. `HTTPThread`'s, or build-fail paths). Runs synchronously inside
 /// whichever `SSL_CTX_free` took the refcount to zero, on that caller's
 /// thread; for the per-VM cache that's always the JS thread.
+// `ptr` is the ex_data slot value: null (CTX never went through the cache) or
+// a live `*Entry`; the deref is null-guarded. The C `CRYPTO_EX_free` ABI fixes
+// the parameter as `void*`, so the function cannot be marked `unsafe` or take a
+// reference — not_unsafe_ptr_arg_deref is a false positive here.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn bun_ssl_ctx_cache_on_free(
     parent: *mut c_void,
@@ -300,12 +271,9 @@ impl Drop for SSLContextCache {
 
 pub mod c {
     use core::ffi::c_int;
-    // TODO(port): move to bun_uws_sys
     unsafe extern "C" {
         /// Registered alongside the other usockets ex_data slots in
         /// `us_ex_idx_init` (pthread_once-guarded).
         pub safe fn us_ssl_ctx_cache_ex_idx() -> c_int;
     }
 }
-
-// ported from: src/runtime/api/bun/SSLContextCache.zig

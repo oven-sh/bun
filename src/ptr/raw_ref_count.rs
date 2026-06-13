@@ -3,16 +3,15 @@
 //!
 //! May be useful for implementing the interface required by `ExternalShared`.
 //!
-//! PORT NOTE: Zig's `RawRefCount(Int, thread_safety)` is a comptime type
-//! function selecting field types from an enum. Stable Rust cannot vary a
-//! field's type from a const generic, and there is no generic `Atomic<Int>`.
-//! Split into two concrete structs (the only `Int` ever used is `u32`):
+//! Two concrete structs rather than one generic (stable Rust cannot vary a
+//! field's type from a const generic, and there is no generic `Atomic<Int>`):
 //!   `RawRefCount`       — single-threaded, plain `u32`, debug `ThreadLock`
 //!   `RawAtomicRefCount` — thread-safe, `AtomicU32`
-//! and a `const ATOMIC: bool` alias for callers that want the Zig spelling.
+//! plus a `const ATOMIC: bool` alias for callers that select by flag.
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
+#[cfg(debug_assertions)]
 use bun_core::ThreadLock;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -88,7 +87,7 @@ impl RawAtomicRefCount {
     }
 
     pub fn decrement(&self) -> DecrementResult {
-        // Zig: `fetchSub(1, .release)` then `if new == 0 { fence(.acquire) }`.
+        // Release decrement, acquire fence on the last reference (below).
         let old = self.raw_value.fetch_sub(1, Ordering::Release);
         if cfg!(debug_assertions) || cfg!(windows) {
             // Always-on on Windows while #53265 fs-promises-writeFile is being
@@ -120,5 +119,3 @@ impl RawAtomicRefCount {
 // cannot dispatch on the const param on stable Rust, so any such alias would
 // silently resolve to one variant regardless of the bool — a footgun. Callers
 // must pick `RawRefCount` (single-thread) vs `RawAtomicRefCount` explicitly.
-
-// ported from: src/ptr/raw_ref_count.zig

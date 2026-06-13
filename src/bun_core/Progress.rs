@@ -1,10 +1,7 @@
-//! This is a snapshot of the Zig std.Progress API before it's rewrite in 0.13
-//! We use this API for the progress in Bun install and some other places.
+//! Terminal progress indicator used for Bun install and some other places.
 //!
 //! TODO: It would be worth considering using our own progress indicator for
 //! Bun install, as this bar only shows the most recent action.
-//!
-//! https://github.com/ziglang/zig/blob/0.12.0/lib/std/Progress.zig
 //!
 //! This API is non-allocating, non-fallible, and thread-safe.
 //! The tradeoff is that users of this API must provide the storage
@@ -65,20 +62,19 @@ unsafe extern "system" {
 // stderr/File from `OutputSinkVTable`). The duplicate `ProgressTerminalVTable`
 // from B-0 round 1 is removed; tty/ansi/winsize route through the new
 // `OutputSinkVTable` slots so `bun_core` stays T0 (no `bun_sys` dep).
-use crate::Fd;
 pub use crate::output::File;
 use crate::output::output_sink;
 
 impl File {
-    /// `std.io.tty.supportsAnsiEscapeCodes()` — on unix this is `isatty()`;
+    /// Whether ANSI escape codes are supported — on unix this is `isatty()`;
     /// on Windows it requires `ENABLE_VIRTUAL_TERMINAL_PROCESSING` (set by
     /// `Output.Source.init`). We route through the sink so the platform check
     /// lives in `bun_sys`.
     #[inline]
-    pub fn supports_ansi_escape_codes(&self) -> bool {
+    pub fn supports_ansi_escape_codes(self) -> bool {
         #[cfg(windows)]
         {
-            // Zig std.fs.File.supportsAnsiEscapeCodes(): query the live console
+            // Query the live console
             // mode for ENABLE_VIRTUAL_TERMINAL_PROCESSING — a *capability*
             // check. Do NOT proxy through ENABLE_ANSI_COLORS_STDERR: that is a
             // color-*preference* flag (NO_COLOR/FORCE_COLOR/tty) and never
@@ -96,7 +92,7 @@ impl File {
         }
     }
     #[inline]
-    pub fn is_tty(&self) -> bool {
+    pub fn is_tty(self) -> bool {
         output_sink().is_terminal(self.fd())
     }
     /// Windows console HANDLE for the legacy `SetConsoleCursorPosition` path.
@@ -106,7 +102,7 @@ impl File {
         self.fd().native()
     }
     #[inline]
-    pub fn winsize(&self) -> Option<crate::Winsize> {
+    pub fn winsize(self) -> Option<crate::Winsize> {
         output_sink().tty_winsize(self.fd())
     }
 }
@@ -167,23 +163,18 @@ pub struct Progress {
 impl Default for Progress {
     fn default() -> Self {
         Self {
-            // Zig: `= undefined` — overwritten in `start()`
             terminal: None,
             is_windows_terminal: false,
             supports_ansi_escape_codes: false,
             dont_print_on_dumb: false,
-            // Zig: `= undefined` — overwritten in `start()`
             root: Node::default(),
             timer: None,
-            // Zig: `= undefined`
             prev_refresh_timestamp: 0,
-            // Zig: `= undefined`
             output_buffer: [0; 100],
             refresh_rate_ns: 50 * NS_PER_MS,
             initial_delay_ns: 500 * NS_PER_MS,
             done: true,
             update_mutex: Mutex::new(()),
-            // Zig: `= undefined`
             columns_written: 0,
         }
     }
@@ -202,8 +193,10 @@ pub enum Unit {
 pub struct Node {
     pub context: *mut Progress,
     pub parent: *mut Node,
-    // TODO(port): lifetime — caller-borrowed slice, Zig is non-allocating; using
-    // 'static here as a Phase-A placeholder (callers in install/ pass string literals).
+    // The non-allocating design means `Node` cannot own the bytes. `'static`
+    // is the chosen simplification because all current callers (install/,
+    // cli/) pass string literals; the alternative would be threading a
+    // lifetime through `Node`/`Progress`.
     pub name: &'static [u8],
     pub unit: Unit,
     /// Must be handled atomically to be thread-safe.
@@ -264,9 +257,7 @@ impl Node {
 
     /// Create a new child progress node. Thread-safe.
     /// Call `Node.end` when done.
-    /// TODO solve https://github.com/ziglang/zig/issues/2765 and then change this
-    /// API to set `self.parent.recently_updated_child` with the return value.
-    /// Until that is fixed you probably want to call `activate` on the return value.
+    /// You probably want to call `activate` on the return value.
     /// Passing 0 for `estimated_total_items` means unknown.
     pub fn start(&mut self, name: &'static [u8], estimated_total_items: usize) -> Node {
         Node {
@@ -313,7 +304,7 @@ impl Node {
             }
             parent.complete_one();
         } else {
-            // PORT NOTE: reshaped for borrowck — guard borrows context.update_mutex;
+            // Reshaped for borrowck — guard borrows context.update_mutex;
             // we capture a raw ptr first so the &mut access goes through *mut.
             let ctx_ptr = std::ptr::from_mut::<Progress>(context);
             let _g = context.update_mutex.lock();
@@ -369,9 +360,6 @@ impl Node {
 
     /// Thread-safe.
     pub fn set_unit(&mut self, unit: Unit) {
-        // TODO(port): Zig signature was `unit: []const u8` assigned to an enum field —
-        // dead code in Zig (lazy compilation never type-checked it). Ported with the
-        // enum type to keep it well-typed; revisit if any caller appears.
         let ctx_ptr = self.context_ptr();
         // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
         let progress = unsafe { &mut *ctx_ptr };
@@ -413,12 +401,8 @@ impl Node {
 impl Progress {
     /// Create a new progress node.
     /// Call `Node.end` when done.
-    /// TODO solve https://github.com/ziglang/zig/issues/2765 and then change this
-    /// API to return Progress rather than accept it as a parameter.
     /// `estimated_total_items` value of 0 means unknown.
     pub fn start(&mut self, name: &'static [u8], estimated_total_items: usize) -> &mut Node {
-        // TODO(port): std.fs.File.stderr() / supportsAnsiEscapeCodes() / isTty() —
-        // map to bun_sys::File equivalents in Phase B.
         let stderr = File::stderr();
         self.terminal = None;
         if stderr.supports_ansi_escape_codes() {
@@ -447,7 +431,6 @@ impl Progress {
         };
         self.columns_written = 0;
         self.prev_refresh_timestamp = 0;
-        // Zig: std.time.Timer.start() catch null — Instant::now() is infallible.
         self.timer = Some(Instant::now());
         self.done = false;
         &mut self.root
@@ -455,9 +438,9 @@ impl Progress {
 
     /// Updates the terminal if enough time has passed since last update. Thread-safe.
     pub fn maybe_refresh(&mut self) {
-        // PORT NOTE: reshaped for borrowck — Instant is Copy, captured by value.
+        // Reshaped for borrowck — Instant is Copy, captured by value.
         if let Some(timer) = self.timer {
-            // PORT NOTE: reshaped for borrowck — capture *mut self before the
+            // Reshaped for borrowck — capture *mut self before the
             // guard borrows update_mutex.
             let ctx_ptr = std::ptr::from_mut::<Self>(self);
             let Some(_g) = self.update_mutex.try_lock() else {
@@ -469,7 +452,6 @@ impl Progress {
     }
 
     fn maybe_refresh_with_held_lock(&mut self, timer: Instant) {
-        // Zig: timer.read() returns ns since start.
         let now = u64::try_from(timer.elapsed().as_nanos()).expect("int cast");
         if now < self.initial_delay_ns {
             return;
@@ -520,7 +502,6 @@ impl Progress {
                 'winapi: {
                     debug_assert!(self.is_windows_terminal);
 
-                    // TODO(port): verify bun_sys::windows::CONSOLE_SCREEN_BUFFER_INFO layout & kernel32 bindings.
                     let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO = crate::ffi::zeroed();
                     if GetConsoleScreenBufferInfo(file.console_handle(), &mut info) != windows::TRUE
                     {
@@ -605,16 +586,14 @@ impl Progress {
             let mut need_ellipse = false;
             let mut maybe_node: *mut Node = &raw mut self.root;
             while !maybe_node.is_null() {
+                let (name, unit, eti, completed_items);
                 // SAFETY: walking the recently_updated_child chain under
                 // update_mutex; nodes are caller-owned and outlive this call
                 // per API contract. Read every field through the raw pointer
                 // and advance `maybe_node` *before* any `self.buf_write` call:
                 // on the first iteration `maybe_node` is `&raw mut self.root`,
                 // and `buf_write`'s `&mut self` reborrow would invalidate any
-                // tag derived from it under Stacked Borrows. (Zig has no
-                // aliasing model, so Progress.zig:313-345 holds `node: *Node`
-                // across `self.bufWrite` freely; Rust must not.)
-                let (name, unit, eti, completed_items);
+                // tag derived from it under Stacked Borrows.
                 unsafe {
                     name = (*maybe_node).name;
                     unit = (*maybe_node).unit;
@@ -648,8 +627,8 @@ impl Progress {
                                 &mut end,
                                 format_args!("[{}/{} files] ", current_item, eti),
                             ),
-                            // TODO(port): Zig `{Bi:.2}` is std.fmt binary-bytes formatter (e.g. "1.50KiB").
-                            // Need a bun_core::fmt::BytesBi helper in Phase B.
+                            // Raw byte counts are printed until an IEC-units
+                            // (KiB/MiB) formatting helper lands.
                             Unit::Bytes => self
                                 .buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti)),
                         }
@@ -665,7 +644,7 @@ impl Progress {
                             Unit::Files => {
                                 self.buf_write(&mut end, format_args!("[{} files] ", current_item))
                             }
-                            // TODO(port): Zig `{Bi:.2}` binary-bytes formatter.
+                            // Raw byte counts; see the note above.
                             Unit::Bytes => {
                                 self.buf_write(&mut end, format_args!("[{}] ", current_item))
                             }
@@ -691,11 +670,9 @@ impl Progress {
 
     pub fn log(&mut self, args: fmt::Arguments<'_>) {
         let Some(file) = self.terminal else {
-            // TODO(port): std.debug.print → bun_core::Output debug print equivalent.
-            eprint!("{}", args);
+            let _ = File::stderr().write_fmt(args);
             return;
         };
-        // TODO(port): Zig `file.writerStreaming(&.{})` — map to bun_sys::File writer in Phase B.
         self.refresh();
         if file.write_fmt(args).is_err() {
             self.terminal = None;
@@ -708,13 +685,13 @@ impl Progress {
     /// called. During the lock, the progress information is cleared from the
     /// terminal.
     ///
-    /// PORT NOTE: Zig splits the lock/unlock across fn boundaries.
-    /// `crate::Mutex` (std::sync wrapper) has no raw `unlock()`, and storing a
-    /// guard on `self` is self-referential. There are currently **no callers**
-    /// of `lock_stderr`/`unlock_stderr` in either the Zig or Rust trees, so
-    /// this clears the terminal under a scoped lock and `unlock_stderr` is a
-    /// no-op. If a caller materializes, refactor to return the guard (or move
-    /// `update_mutex` to a raw `bun_threading::Mutex` once layering allows).
+    /// `crate::Mutex` (std::sync wrapper) has no
+    /// raw `unlock()`, and storing a guard on `self` is self-referential. There
+    /// are currently **no callers** of `lock_stderr`/`unlock_stderr`,
+    /// so this clears the terminal under a scoped lock
+    /// and `unlock_stderr` is a no-op. If a caller materializes, refactor to
+    /// return the guard (or move `update_mutex` to a raw `bun_threading::Mutex`
+    /// once layering allows) and route stderr through a shared global mutex.
     pub fn lock_stderr(&mut self) {
         let ctx_ptr = std::ptr::from_mut::<Self>(self);
         let _g = self.update_mutex.lock();
@@ -729,13 +706,11 @@ impl Progress {
                 this.terminal = None;
             }
         }
-        // `_g` drops here; lock is NOT held past return — see PORT NOTE above.
-        // TODO(port): std.debug.getStderrMutex().lock() — need a global stderr mutex in bun_core.
+        // `_g` drops here; lock is NOT held past return — see the doc comment above.
     }
 
     pub fn unlock_stderr(&mut self) {
-        // TODO(port): std.debug.getStderrMutex().unlock() — see lock_stderr.
-        // No-op; see PORT NOTE on `lock_stderr`.
+        // No-op; see the doc comment on `lock_stderr`.
         let _ = self;
     }
 
@@ -809,7 +784,7 @@ mod tests {
             );
             node.activate();
             thread::sleep(Duration::from_nanos(10 * speed_factor));
-            // PORT NOTE: reshaped for borrowck — cannot borrow `progress` while `root_node`
+            // Reshaped for borrowck — cannot borrow `progress` while `root_node`
             // (a &mut into progress.root) is live; refresh via the node's context backref.
             // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
             unsafe { (*node.context_ptr()).refresh() };
@@ -819,5 +794,3 @@ mod tests {
         root_node.end();
     }
 }
-
-// ported from: src/bun_core/Progress.zig

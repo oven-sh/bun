@@ -2,7 +2,6 @@ use core::ffi::c_int;
 
 use bun_event_loop::{ConcurrentTask::ConcurrentTask, TaskTag, Taskable, task_tag};
 
-use crate::ExceptionValidationScope;
 use crate::event_loop::{EventLoop, JsTerminated};
 use crate::virtual_machine::VirtualMachine;
 
@@ -29,8 +28,8 @@ impl JSCDeferredWorkTask {
         let global_this = VirtualMachine::get().global();
         crate::validation_scope!(scope, global_this);
         Bun__runDeferredWork(self);
-        // Zig: `try scope.assertNoExceptionExceptTermination()` — the only error variant
-        // that fn returns is termination, so map the wider `JsError` back down.
+        // The only error variant that fn returns is termination, so map the
+        // wider `JsError` back down.
         scope
             .assert_no_exception_except_termination()
             .map_err(|_| JsTerminated::JSTerminated)
@@ -38,7 +37,10 @@ impl JSCDeferredWorkTask {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__eventLoop__incrementRefConcurrently(jsc_vm: &VirtualMachine, delta: c_int) {
+pub(crate) extern "C" fn Bun__eventLoop__incrementRefConcurrently(
+    jsc_vm: &VirtualMachine,
+    delta: c_int,
+) {
     crate::mark_binding!();
     // C++ passes a non-null live `VirtualMachine*`; ABI-compatible with `&T`.
     // `event_loop_shared()` is the safe accessor over the VM-owned EventLoop.
@@ -51,27 +53,27 @@ pub extern "C" fn Bun__eventLoop__incrementRefConcurrently(jsc_vm: &VirtualMachi
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
+pub(crate) extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     jsc_vm: &VirtualMachine,
     task: *mut JSCDeferredWorkTask,
 ) {
     crate::mark_binding!();
     // C++ passes a non-null live `VirtualMachine*`; ABI-compatible with `&T`.
     let loop_: &EventLoop = jsc_vm.event_loop_shared();
-    // Zig: `ConcurrentTask.new(.{ .task = Task.init(task), .next = .auto_delete })`
-    // — `create_from` is exactly that (heap-allocates with the auto-delete bit set).
+    // `create_from` heap-allocates with the auto-delete bit set.
     loop_.enqueue_task_concurrent(ConcurrentTask::create_from(task));
 }
 
+/// # Safety
+/// `paused` must point to a live `bool`; C++ writes `true` through it from a
+/// callback inside `tick()`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
+pub(crate) unsafe extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
     crate::mark_binding!();
-    // SAFETY: `paused` points to a live bool for the duration of the call.
-    VirtualMachine::get()
-        .event_loop_mut()
-        .tick_while_paused(unsafe { &mut *paused });
+    // SAFETY: see fn contract.
+    unsafe {
+        VirtualMachine::get()
+            .event_loop_mut()
+            .tick_while_paused(paused.cast_const());
+    }
 }
-
-// Zig `comptime { _ = Bun__... }` force-reference block dropped — Rust links what's `pub`.
-
-// ported from: src/jsc/JSCScheduler.zig

@@ -4,17 +4,13 @@
 //! Most I/O happens on the main thread.
 
 // ════════════════════════════════════════════════════════════════════════════
-// B-2 UN-GATED. Loop / Poll / Waker / Closer / FilePoll-vtable / heap / pipes /
-// MaxBuf / openForWriting / PipeReader / PipeWriter compile on POSIX. `source`
-// and the Windows*Reader/Writer impls are `#[cfg(windows)]`-gated (libuv-only;
-// not B-2-verifiable on this host). See TODO(b2-blocked) notes for remaining
-// T0/T1 shims (`bun_sys::syslog`, `bun_sys::Error::oom`, `bun_core::debug_warn`).
+// Loop / Poll / Waker / Closer / FilePoll-vtable / heap / pipes / MaxBuf /
+// openForWriting / PipeReader / PipeWriter compile on POSIX. `source` and the
+// Windows*Reader/Writer impls are `#[cfg(windows)]`-gated (libuv-only).
 // ════════════════════════════════════════════════════════════════════════════
 
-#![allow(dead_code, unused_variables, unused_imports, unused_mut, clippy::all)]
 #![allow(unsafe_op_in_unsafe_fn)]
 // ── submodules ──────────────────────────────────────────────────────────────
-#![warn(unreachable_pub)]
 
 // ── merged from bun_io ──────────────────────────────────────────────────────
 //
@@ -45,12 +41,10 @@ pub mod posix_event_loop;
 pub use keep_alive::KeepAlive;
 
 // ParentDeathWatchdog is POSIX-only (uses `libc::pid_t`, `getppid`, signals);
-// Windows handles orphan death via Job Objects in `spawn`. The Zig original
-// compiles on all targets and short-circuits each fn with
-// `if (comptime !Environment.isPosix) return;`, so downstream code calls
-// `install()` / `enable()` / `is_enabled()` unconditionally. Mirror that with a
-// no-op Windows stub so the cross-platform call sites (main.rs, bunfig,
-// run_command, filter_run, dispatch) keep compiling.
+// Windows handles orphan death via Job Objects in `spawn`. Downstream code
+// calls `install()` / `enable()` / `is_enabled()` unconditionally, so a
+// no-op Windows stub keeps the cross-platform call sites (main.rs, bunfig,
+// run_command, filter_run, dispatch) compiling.
 #[cfg(not(windows))]
 #[path = "ParentDeathWatchdog.rs"]
 pub mod parent_death_watchdog;
@@ -119,14 +113,13 @@ pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 // `platform_event_loop_ptr` is typed `*mut bun_uws_sys::Loop` (the uws
 // wrapper — `PosixLoop`/`WindowsLoop`), NOT the cfg-aliased `crate::Loop`
 // re-export. On POSIX those coincide, but on Windows `crate::Loop` is the raw
-// `uv_loop_t` (Zig `windows_event_loop.zig:1`) whereas the impl bodies
-// (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) and the Zig spec
-// (`EventLoopHandle.loop() -> *uws.Loop`) hand back the wrapper.
+// `uv_loop_t` whereas the impl bodies
+// (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) hand back the wrapper.
 bun_dispatch::link_interface! {
     pub EventLoopCtx[Js, Mini] {
         fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
         fn file_polls_ptr() -> *mut Store;
-        // PORT NOTE: `alloc_file_poll() -> *mut FilePoll` was removed — it
+        // `alloc_file_poll() -> *mut FilePoll` was removed — it
         // returned an *uninitialized* hive slot, and any caller forming
         // `&mut FilePoll` over it hit validity-invariant UB on the niche-
         // bearing enum fields. `FilePoll::init` now goes through
@@ -135,7 +128,10 @@ bun_dispatch::link_interface! {
         fn ref_concurrently();
         fn unref_concurrently();
         fn after_event_loop_callback() -> Option<OpaqueCallback>;
-        fn set_after_event_loop_callback(cb: Option<OpaqueCallback>, ctx: *mut core::ffi::c_void);
+        fn set_after_event_loop_callback(
+            cb: Option<OpaqueCallback>,
+            ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
+        );
         fn pipe_read_buffer() -> *mut [u8];
     }
 }
@@ -146,7 +142,7 @@ impl EventLoopCtx {
     /// SAFETY: caller must not hold another live `&mut` to the same loop
     /// across this borrow (resolver-style accessor; the loop is per-thread).
     #[inline]
-    pub unsafe fn platform_event_loop(&self) -> &mut bun_uws_sys::Loop {
+    pub unsafe fn platform_event_loop(&self) -> &'static mut bun_uws_sys::Loop {
         // Route through the single nonnull-asref accessor below; the `unsafe`
         // on this fn's signature is the caller-side aliasing contract — the
         // body itself needs no extra `unsafe`.
@@ -154,7 +150,7 @@ impl EventLoopCtx {
     }
     /// SAFETY: same aliasing hazard as [`platform_event_loop`].
     #[inline]
-    pub unsafe fn file_polls(&self) -> &mut Store {
+    pub unsafe fn file_polls(&self) -> &'static mut Store {
         self.file_polls_mut()
     }
 
@@ -176,7 +172,7 @@ impl EventLoopCtx {
     // `posix_event_loop`/`windows_event_loop` route their N identical
     // `ctx.platform_event_loop()` derefs through this single accessor.
     #[inline]
-    pub(crate) fn loop_mut(&self) -> &mut bun_uws_sys::Loop {
+    pub(crate) fn loop_mut(&self) -> &'static mut bun_uws_sys::Loop {
         // SAFETY: per-thread set-once pointer (the uws loop singleton); the
         // event loop is single-threaded so no concurrent `&mut` exists, and
         // every crate-internal caller is a leaf op that drops the borrow
@@ -191,7 +187,7 @@ impl EventLoopCtx {
     /// (`deinit_possibly_defer`) or holds none (`init_with_owner`,
     /// `alloc_file_poll`), so no two `&mut Store` ever coexist.
     #[inline]
-    pub(crate) fn file_polls_mut(&self) -> &mut Store {
+    pub(crate) fn file_polls_mut(&self) -> &'static mut Store {
         // SAFETY: per-thread set-once pointer (`BackRef`-shaped); the event
         // loop is single-threaded so no concurrent `&mut Store` exists, and
         // every crate-internal caller upholds the leaf-op / decayed-slot
@@ -284,7 +280,8 @@ pub mod file_poll {
     pub use super::Store;
     pub use super::posix_event_loop::{Flags, Flags as Flag, FlagsSet};
     /// Kqueue/epoll watch kind passed to `FilePoll::register`.
-    pub type Pollable = Flags;
+    #[allow(dead_code)]
+    pub(crate) type Pollable = Flags;
 }
 
 // ── bun_io original submodules ──────────────────────────────────────────────
@@ -293,7 +290,6 @@ pub mod file_poll {
 pub mod heap;
 // `source.rs` is Windows-only (libuv pipe/tty/file wrappers). On POSIX the
 // `Source` type is never constructed; callers are themselves `#[cfg(windows)]`.
-// TODO(b2-blocked): bun_sys::windows::libuv — verify compiles on Windows in CI.
 #[path = "MaxBuf.rs"]
 pub mod max_buf;
 #[path = "openForWriting.rs"]
@@ -311,7 +307,7 @@ pub mod source;
 pub mod write;
 
 // ── re-exports for higher tiers ─────────────────────────────────────────────
-// Byte-level `Write` trait + helpers (Zig `std.Io.Writer` surface). Downstream
+// Byte-level `Write` trait + helpers. Downstream
 // crates name these as `bun_io::Write` / `bun_io::BufWriter` /
 // `bun_io::FmtAdapter` / `bun_io::Result`.
 pub use bun_core::fmt::SliceCursor;
@@ -319,7 +315,6 @@ pub use write::{
     AsFmt, BufWriter, DiscardingWriter, FixedBufferStream, FmtAdapter, IntBe, IntLe, Result, Write,
 };
 
-#[allow(non_snake_case)]
 pub use max_buf as MaxBuf;
 pub use pipes::{FileType, ReadState};
 
@@ -356,10 +351,8 @@ bun_dispatch::link_interface! {
 
 /// One-stop generator for a `BufferedReader` parent: emits **both** the
 /// `impl BufferedReaderParent for $T` block and the matching
-/// `link_impl_BufferedReaderParentLink!` registration. Direct port of the Zig
-/// comptime thunk-generator `BufferedReaderVTable.Fn.init(comptime Type)`
-/// (PipeReader.zig:7-45) — every parent type just declares same-named inherent
-/// methods and writes one macro invocation.
+/// `link_impl_BufferedReaderParentLink!` registration. Every parent type just
+/// declares same-named inherent methods and writes one macro invocation.
 ///
 /// ## Shape
 ///
@@ -498,13 +491,13 @@ pub use pipe_writer::{BufferedWriter, StreamBuffer, StreamingWriter, WriteResult
 #[cfg(windows)]
 pub use source::Source;
 
-// B-2: stub for never-constructed-on-POSIX `Source` so cross-platform sigs
+// Stub for never-constructed-on-POSIX `Source` so cross-platform sigs
 // (`Option<Source>`) typecheck.
 #[cfg(not(windows))]
 pub enum Source {}
 
 pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags};
-/// Downstream alias (Zig: `bun.io.BufferedReader` is sometimes referenced as
+/// Downstream alias (`BufferedReader` is sometimes referenced as
 /// `PipeReader`).
 pub type PipeReader = BufferedReader;
 
@@ -512,19 +505,19 @@ pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 
 // ════════════════════════════════════════════════════════════════════════════
 
-use core::ffi::{c_int, c_void};
-use core::mem::offset_of;
-use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicPtr, Ordering};
+#[cfg(not(windows))]
+use core::ffi::c_int;
+use core::sync::atomic::Ordering;
 
 pub use crate::closer::Closer;
 pub use crate::waker::Waker;
-use bun_sys::{self as sys, E, Fd, FdExt};
+use bun_sys::{self as sys, E, Fd};
 
-// Zig scope name is `.loop` (io.zig:11). `loop` is a Rust keyword, so the static is
+// `loop` is a Rust keyword, so the static is
 // named `io_loop` but the runtime tagname is `"loop"` so `BUN_DEBUG_loop=1` works.
 #[allow(non_upper_case_globals)]
-pub static io_loop: bun_core::output::ScopedLogger =
+#[allow(dead_code)]
+pub(crate) static io_loop: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("loop", bun_core::output::Visibility::Visible);
 // All `log!` call sites are inside epoll/kqueue paths (Linux/macOS/FreeBSD); on
 // Windows the IoRequestLoop is `panic!`-stubbed, so gate the macro to match.
@@ -534,7 +527,7 @@ bun_core::define_scoped_log!(log, io_loop); // hand-declared static above (tagna
 #[cfg(windows)]
 mod windows_ffi {
     // Bun C++ shim over `QueryPerformanceCounter` (src/bun.js/bindings/
-    // c-bindings.cpp). Zig io.zig:314 declares it inline in `Loop`.
+    // c-bindings.cpp).
     unsafe extern "C" {
         // safe: out-params are `&mut i64` (non-null, valid for write); C++ side
         // only writes the slots and returns a status code — no preconditions.
@@ -555,9 +548,10 @@ mod windows_ffi {
 mod safe_c {
     use core::ffi::c_int;
     unsafe extern "C" {
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         pub(super) safe fn kqueue() -> c_int;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         pub(super) safe fn epoll_create1(flags: c_int) -> c_int;
-        pub(super) safe fn eventfd(initval: libc::c_uint, flags: c_int) -> c_int;
         // Out-param `tp` is `&mut timespec` (non-null, valid for write); libc
         // only writes the slot and reports failure via the return value —
         // bad `clk_id` → `EINVAL`, never UB.
@@ -568,8 +562,8 @@ mod safe_c {
 
 // ─── platform type aliases ────────────────────────────────────────────────────
 
-/// `bun_sys::linux` doesn't exist yet; use `libc` constants directly.
-/// TODO(b2-blocked): bun_sys::linux — replace with that module once available.
+/// `bun_sys` has no `linux` constants module; alias the `libc` constants
+/// locally so the call sites below stay terse.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux {
     pub(crate) use libc::epoll_event;
@@ -584,7 +578,7 @@ mod linux {
     pub(crate) const EPOLL_CTL_DEL: i32 = libc::EPOLL_CTL_DEL;
 }
 
-/// Zig std's `.freebsd` `EV` struct lacks `.EOF`; the value (0x8000) is the
+/// The value (0x8000) is the
 /// same on Darwin and FreeBSD (sys/event.h: `#define EV_EOF 0x8000`).
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 const EV_EOF: u16 = 0x8000;
@@ -630,7 +624,7 @@ type EventType = linux::epoll_event;
 type EventType = KEvent;
 
 // ─── IoRequestLoop ──────────────────────────────────────────────────────────
-// This is io.zig's `Loop` — the bare-kqueue/epoll request loop that backs
+// The bare-kqueue/epoll request loop that backs
 // `Bun.file(path).text()` / `Bun.write()` & friends (and nothing else; see the
 // crate doc above). NOT the main event loop. Renamed from `Loop` so this
 // crate's `Loop` (= `posix_event_loop::Loop` = the uws `us_loop_t` everyone
@@ -664,7 +658,7 @@ pub struct IoRequestLoop {
 // §Concurrency: `OnceLock` for init gate; the singleton itself stays raw because
 // the IO thread mutates fields concurrently with `schedule()` callers (which only
 // touch the lock-free `pending` queue + `waker`), so wrapping the whole struct in a
-// `Mutex` would be wrong. Matches Zig `var loop: Loop = undefined;` + `std.once(load)`.
+// `Mutex` would be wrong.
 //
 // `ThreadCell` (not `RacyCell`) to encode "IO-thread-only after init" in the
 // type. `claim()` is invoked from `on_spawn_io_thread`. Cross-thread
@@ -673,9 +667,11 @@ pub struct IoRequestLoop {
 // happens-before for init.
 static LOOP: bun_core::ThreadCell<core::mem::MaybeUninit<IoRequestLoop>> =
     bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
+#[cfg(not(windows))]
 static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
 impl IoRequestLoop {
+    #[cfg(not(windows))]
     fn load() {
         // SAFETY: called exactly once via `ONCE.get_or_init`; no other access
         // until this returns. `get_unchecked` because this runs on the
@@ -697,13 +693,11 @@ impl IoRequestLoop {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let raw = safe_c::epoll_create1(libc::EPOLL_CLOEXEC | 0);
+            let raw = safe_c::epoll_create1(libc::EPOLL_CLOEXEC);
             if raw < 0 {
                 panic!("Failed to create epoll file descriptor");
             }
             loop_.epoll_fd = Fd::from_native(raw);
-            // TODO(port): Zig used `std.posix.epoll_create1` which already error-checks; here we
-            // only panic on negative, matching semantics.
 
             {
                 // SAFETY: all-zero is a valid epoll_event (POD).
@@ -770,7 +764,7 @@ impl IoRequestLoop {
             .stack_size(1024 * 1024 * 2)
             .spawn(Self::on_spawn_io_thread)
             .unwrap_or_else(|_| panic!("Failed to spawn IO watcher thread"));
-        // Zig: thread.detach() — Rust JoinHandle detaches on drop.
+        // The JoinHandle detaches on drop.
     }
 
     fn ensure_init() {
@@ -812,6 +806,7 @@ impl IoRequestLoop {
         Self::ensure_init();
         debug_assert!(!request.scheduled);
         request.scheduled = true;
+        let request = core::ptr::NonNull::from(request);
         // SAFETY: `ONCE` above established happens-before for `load()`'s
         // init of `pending`/`waker`. We use `get_unchecked` (no owner assert)
         // and stay in raw-ptr land via `addr_of_mut!` so we never materialize
@@ -877,7 +872,7 @@ impl IoRequestLoop {
                                 readable.fd,
                             ) {
                                 Err(err) => {
-                                    (readable.on_error)(readable.ctx, err);
+                                    (readable.on_error)(readable.ctx, &err);
                                 }
                                 Ok(()) => {
                                     self.active.set(self.active.get() + 1);
@@ -893,7 +888,7 @@ impl IoRequestLoop {
                                 writable.fd,
                             ) {
                                 Err(err) => {
-                                    (writable.on_error)(writable.ctx, err);
+                                    (writable.on_error)(writable.ctx, &err);
                                 }
                                 Ok(()) => {
                                     self.active.set(self.active.get() + 1);
@@ -958,14 +953,19 @@ impl IoRequestLoop {
                         continue;
                     }
                 }
-                Poll::on_update_epoll(pollable.poll(), pollable.tag(), *event);
+                // `pollable.poll()` is the `io_poll` field pointer this loop
+                // registered via `register_for_epoll`; the owner is live and
+                // non-null (the kernel hands back the udata we registered).
+                let Some(poll) = core::ptr::NonNull::new(pollable.poll()) else {
+                    continue;
+                };
+                Poll::on_update_epoll(poll, pollable.tag(), *event);
             }
         }
     }
 
-    // Zig: `Waker.getFd` / the loop's poll fd are `@compileError` on Windows
-    // (src/io/windows_event_loop.zig:368-373). Gate these so any Windows
-    // call site fails at compile time, matching the spec, rather than
+    // `Waker.getFd` / the loop's poll fd have no Windows equivalent. Gate
+    // these so any Windows call site fails at compile time rather than
     // compiling cleanly and only panicking at runtime.
     #[cfg(not(windows))]
     pub fn pollfd(&self) -> Fd {
@@ -993,14 +993,13 @@ impl IoRequestLoop {
         self.update_now();
 
         loop {
-            // PERF(port): was StackFallbackAllocator(256*sizeof(EventType)) — profile in Phase B.
             let mut events_list: Vec<EventType> = Vec::with_capacity(256);
 
             // Process pending requests
             {
                 let mut pending = self.pending.pop_batch().iterator();
                 events_list.reserve(pending.batch.count);
-                // Zig: `addOneAssumeCapacity`. `reserve` above ⇒ no realloc; apply_kqueue
+                // `reserve` above ⇒ no realloc; apply_kqueue
                 // fully overwrites the slot so the zero is a safe placeholder.
                 #[inline(always)]
                 fn add_one(list: &mut Vec<EventType>) -> &mut EventType {
@@ -1060,13 +1059,11 @@ impl IoRequestLoop {
             let rc = kevent_call(
                 self.pollfd().native(),
                 events_list.as_ptr(),
-                // PERF(port): @intCast
                 c_int::try_from(change_count).expect("int cast"),
                 // The same array may be used for the changelist and eventlist.
                 events_list.as_mut_ptr(),
                 // we set 0 here so that if we get an error on
                 // registration, it becomes errno
-                // PERF(port): @intCast
                 c_int::try_from(capacity).expect("int cast"),
                 core::ptr::null(),
             );
@@ -1094,15 +1091,15 @@ impl IoRequestLoop {
         }
     }
 
+    #[cfg(not(windows))]
     fn update_now(&self) {
         let mut ts = self.cached_now.get();
         Self::update_timespec(&mut ts);
         self.cached_now.set(ts);
     }
 
-    // PORT NOTE: Zig nests the `extern "c" fn clock_gettime_monotonic` decl
-    // inside the `Loop` namespace (io.zig:314); Rust forbids `extern` blocks
-    // inside `impl`, so it's hoisted to `windows_ffi` at module scope.
+    // The `extern "C" fn clock_gettime_monotonic` decl lives in `windows_ffi`
+    // at module scope (Rust forbids `extern` blocks inside `impl`).
 
     pub fn update_timespec(timespec: &mut libc::timespec) {
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1150,8 +1147,7 @@ impl Request {
         }
     }
 
-    /// Atomic-ordered store of `callback` — mirrors Zig
-    /// `@atomicStore(?*const fn, &this.io_request.callback, cb, .seq_cst)`.
+    /// Atomic-ordered store of `callback`.
     ///
     /// The io thread reads `callback` after popping `self` from the MPSC
     /// queue (which already provides acquire on `next`); this SeqCst fence
@@ -1177,8 +1173,7 @@ impl Request {
 
 /// A type that embeds an intrusive `io_request: `[`Request`] field. Declares the
 /// byte offset once and provides the canonical container-of recovery used by
-/// every `fn(&mut Request) -> Action` io-loop trampoline (the Rust equivalent of
-/// Zig's per-site `@fieldParentPtr("io_request", req)`).
+/// every `fn(&mut Request) -> Action` io-loop trampoline.
 ///
 /// Implement via [`intrusive_io_request!`].
 ///
@@ -1259,8 +1254,6 @@ macro_rules! intrusive_uv_fs {
 
 impl Default for Request {
     fn default() -> Self {
-        // TODO(port): Zig had `next: ?*Request = null, scheduled: bool = false` defaults
-        // but `callback` has no default; callers must overwrite `callback`.
         Self {
             next: bun_threading::Link::new(),
             callback: |_| unreachable!(),
@@ -1269,15 +1262,11 @@ impl Default for Request {
     }
 }
 
-// `bun.UnboundedQueue(Request, .next)` — intrusive MPSC queue keyed on the
-// `next` field.
+// Intrusive MPSC queue keyed on the `next` field.
 //
-// Zig's `Request.next: ?*Request` is a plain optional pointer that the queue
-// reads/writes both atomically and non-atomically via `@atomicLoad`/`@field`.
-// The Rust port stores it as `AtomicPtr<Request>`; the non-atomic accessor
+// `next` is stored as `AtomicPtr<Request>`; the non-atomic accessor
 // paths (`get_next`/`set_next`, used only by the batch iterator and the
-// debug-mode `pushBatch` reachability assert) lower to `Relaxed` ops, which is
-// no weaker than the original.
+// debug-mode `pushBatch` reachability assert) lower to `Relaxed` ops.
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue(Request, .next)`.
 unsafe impl bun_threading::Linked for Request {
     #[inline]
@@ -1287,10 +1276,7 @@ unsafe impl bun_threading::Linked for Request {
     }
 }
 
-/// Zig: `pub const Queue = bun.UnboundedQueue(Request, .next);`
-pub type RequestQueue = bun_threading::UnboundedQueue<Request>;
-pub type RequestBatch = bun_threading::unbounded_queue::Batch<Request>;
-pub type RequestBatchIter = bun_threading::unbounded_queue::BatchIterator<Request>;
+pub(crate) type RequestQueue = bun_threading::UnboundedQueue<Request>;
 
 // ─── Action ───────────────────────────────────────────────────────────────────
 
@@ -1305,7 +1291,7 @@ pub struct FileAction<'a> {
     pub poll: &'a mut Poll,
     pub ctx: *mut (),
     pub tag: PollableTag,
-    pub on_error: fn(*mut (), sys::Error),
+    pub on_error: fn(*mut (), &sys::Error),
 }
 
 pub struct CloseAction<'a> {
@@ -1318,7 +1304,8 @@ pub struct CloseAction<'a> {
 
 // ─── Pollable ─────────────────────────────────────────────────────────────────
 
-// TODO(port): repr must match `bun.TaggedPointer.Tag` (15-bit tag in TaggedPtr).
+// Invariant: the repr must fit `bun.TaggedPointer.Tag` (the 15-bit tag packed
+// into `Pollable`'s u64 below) — keep `#[repr(u16)]` and values < 2^15.
 #[repr(u16)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PollableTag {
@@ -1331,15 +1318,18 @@ pub enum PollableTag {
 /// into `(tag: u8, ptr: *mut ())`. Here the value must round-trip through a
 /// single `u64` (`epoll_event.data.u64` / `kevent.udata`), so we keep the
 /// packed addr:49 + tag:15 layout locally.
-/// PERF(port): was TaggedPointer pack — load-bearing (kernel-surface u64).
+#[cfg(not(windows))]
 #[derive(Clone, Copy)]
 struct Pollable {
     value: u64,
 }
 
+#[cfg(not(windows))]
 const POLLABLE_ADDR_BITS: u64 = 49;
+#[cfg(not(windows))]
 const POLLABLE_ADDR_MASK: u64 = (1u64 << POLLABLE_ADDR_BITS) - 1;
 
+#[cfg(not(windows))]
 impl Pollable {
     pub(crate) fn init(t: PollableTag, p: *mut Poll) -> Pollable {
         let addr = p as usize as u64;
@@ -1364,8 +1354,8 @@ impl Pollable {
             1 => PollableTag::ReadFile,
             2 => PollableTag::WriteFile,
             // Only `init` writes the tag bits, so any other value is memory
-            // corruption / a logic bug — match Zig's safety-checked
-            // `@enumFromInt` and trap rather than fabricate a discriminant.
+            // corruption / a logic bug — trap rather than fabricate a
+            // discriminant.
             n => unreachable!("invalid PollableTag {n}"),
         }
     }
@@ -1379,11 +1369,8 @@ impl Pollable {
 
 #[cfg(all(target_os = "macos", debug_assertions))]
 type GenerationNumberInt = u64;
-#[cfg(not(all(target_os = "macos", debug_assertions)))]
-type GenerationNumberInt = (); // Zig: u0
 
-// PORTING.md §Global mutable state: counter → Atomic. Only the IO thread
-// touches this, so `Relaxed` matches the Zig non-atomic `+= 1`.
+// Only the IO thread touches this, so `Relaxed` is sufficient.
 #[cfg(all(target_os = "macos", debug_assertions))]
 static GENERATION_NUMBER_MONOTONIC: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);
@@ -1411,10 +1398,10 @@ unsafe extern "Rust" {
     /// (`ReadFile` / `WriteFile`) live in `bun_runtime::webcore::blob` (T6);
     /// io (T2) only knows the embedded `*mut Poll` and the tag. The body is
     /// `#[no_mangle]` in `bun_runtime::dispatch` and recovers the parent
-    /// struct via `container_of(io_poll)` per spec `io.zig:626`.
-    /// PERF(port): was inline switch (cold path — Bun.write / Bun.file().text() only).
+    /// struct via `container_of(io_poll)`.
+    /// Cold path — only Bun.write / Bun.file().text() reach this.
     fn __bun_io_pollable_on_ready(tag: PollableTag, poll: *mut Poll);
-    fn __bun_io_pollable_on_io_error(tag: PollableTag, poll: *mut Poll, err: sys::Error);
+    fn __bun_io_pollable_on_io_error(tag: PollableTag, poll: *mut Poll, err: &sys::Error);
 }
 
 #[derive(enumset::EnumSetType)]
@@ -1459,12 +1446,10 @@ pub enum Flags {
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
-// TODO(port): `pub const Struct = std.enums.EnumFieldStruct(Flags, bool, false);` — a struct with
-// one `bool` field per variant. Unused in this file; provide if external callers need it.
 
-// PORT NOTE: Zig used a `comptime action: enum` const-generic. `adt_const_params`
+// A runtime parameter rather than a const generic: `adt_const_params`
 // is nightly-only and the body never uses ACTION in a type position — it just
-// `match`es on it — so demote to a runtime parameter (PORTING.md §Idiom-map).
+// `match`es on it.
 // Three call sites, each with a literal variant — trivially inlined; kqueue
 // registration is not hot enough for the lost monomorphization to matter.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -1550,7 +1535,7 @@ impl Poll {
         );
 
         let one_shot_flag = libc::EV_ONESHOT;
-        let udata: usize = Pollable::init(tag, poll as *mut Poll).ptr() as usize;
+        let udata: usize = Pollable::init(tag, std::ptr::from_mut::<Poll>(poll)).ptr() as usize;
         let (filter, flags_): (i16, u16) = match action {
             ApplyAction::Readable => (libc::EVFILT_READ, libc::EV_ADD | one_shot_flag),
             ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag),
@@ -1567,8 +1552,7 @@ impl Poll {
         // SAFETY: all-zero is a valid KEvent (POD).
         *kqueue_event = bun_core::ffi::zeroed();
         // `ident` is `u64` on Darwin's `kevent64_s`, `usize` on FreeBSD `kevent`.
-        // Zig `@intCast` would trap on a negative fd in safe builds — keep that
-        // safety net so a stray -1 doesn't silently register ident=u64::MAX.
+        // Assert so a stray -1 doesn't silently register ident=u64::MAX.
         debug_assert!(fd.native() >= 0, "register: negative fd {:?}", fd);
         kqueue_event.ident = fd.native() as _;
         kqueue_event.filter = filter;
@@ -1589,7 +1573,6 @@ impl Poll {
             kqueue_event.ext = [gen_, 0];
         }
 
-        // Zig `defer` block — runs after the body above.
         match action {
             ApplyAction::Readable => {
                 poll.flags.insert(Flags::PollReadable);
@@ -1612,8 +1595,7 @@ impl Poll {
         // which only exists on Darwin (GenerationNumberInt is u0 elsewhere).
         #[cfg(all(target_os = "macos", debug_assertions))]
         if action != ApplyAction::Cancel {
-            // Only the IO thread mutates this counter; Relaxed matches Zig's
-            // non-atomic `+= 1`.
+            // Only the IO thread mutates this counter; Relaxed is sufficient.
             poll.generation_number =
                 GENERATION_NUMBER_MONOTONIC.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
         }
@@ -1662,8 +1644,8 @@ impl Poll {
                     // `event.data` is a kernel-supplied errno; do NOT transmute into the
                     // closed `sys::Errno` enum (size mismatch on darwin/freebsd where it
                     // is `#[repr(u16)]`, and UB for unmapped discriminants). Store the
-                    // raw integer via `from_code_int` (Zig: `@enumFromInt(event.data)`).
-                    sys::Error::from_code_int(event.data as core::ffi::c_int, sys::Tag::kevent),
+                    // raw integer via `from_code_int`.
+                    &sys::Error::from_code_int(event.data as core::ffi::c_int, sys::Tag::kevent),
                 )
             };
         } else {
@@ -1674,11 +1656,16 @@ impl Poll {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn on_update_epoll(poll: *mut Poll, tag: PollableTag, event: linux::epoll_event) {
+    pub fn on_update_epoll(
+        poll: core::ptr::NonNull<Poll>,
+        tag: PollableTag,
+        event: linux::epoll_event,
+    ) {
         // ignore empty tags. This case should be unreachable in practice
         if tag == PollableTag::Empty {
             return;
         }
+        let poll = poll.as_ptr();
         // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
         // `extern "Rust"` defined in `bun_runtime::dispatch`. The
         // container_of(io_poll) recovery happens there.
@@ -1687,12 +1674,11 @@ impl Poll {
             log!("error() = {:?}", errno);
             // SAFETY: poll is the `io_poll` field of a live owner; link-time
             // extern body matches on `tag`.
-            // TODO(b2-blocked): bun_sys::Tag::epoll_ctl
             unsafe {
                 __bun_io_pollable_on_io_error(
                     tag,
                     poll,
-                    sys::Error::from_code(errno, sys::Tag::TODO),
+                    &sys::Error::from_code(errno, sys::Tag::epoll_ctl),
                 )
             };
         } else {
@@ -1703,8 +1689,8 @@ impl Poll {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    // PORT NOTE: `flag` was a comptime param in Zig; `enumset::EnumSetType` cannot be a
-    // const generic, so it's a runtime arg. The `match` below preserves the exhaustiveness check.
+    // `enumset::EnumSetType` cannot be a const generic, so `flag` is a runtime
+    // arg. The `match` below preserves the exhaustiveness check.
     pub fn register_for_epoll(
         &mut self,
         flag: Flags,
@@ -1727,7 +1713,6 @@ impl Poll {
             linux::EPOLL_ONESHOT
         };
 
-        // "flag" is comptime to make sure we always check
         let flags: u32 = match flag {
             Flags::Process | Flags::PollReadable => {
                 linux::EPOLL_IN | linux::EPOLL_HUP | linux::EPOLL_ERR | one_shot_flag
@@ -1763,8 +1748,7 @@ impl Poll {
 
         let errno = sys::get_errno(ctl);
         if errno != E::SUCCESS {
-            // TODO(b2-blocked): bun_sys::Tag::epoll_ctl
-            return Err(sys::Error::from_code(errno, sys::Tag::TODO));
+            return Err(sys::Error::from_code(errno, sys::Tag::epoll_ctl));
         }
         // Only mark if it successfully registered.
         // If it failed to register, we don't want to unregister it later if
@@ -1775,7 +1759,6 @@ impl Poll {
         self.flags.insert(match flag {
             Flags::PollReadable => Flags::PollReadable,
             Flags::PollProcess => {
-                // PORT NOTE: Zig's `Environment.isLinux` is true on Android too.
                 if cfg!(any(target_os = "linux", target_os = "android")) {
                     Flags::PollReadable
                 } else {
@@ -1793,7 +1776,9 @@ impl Poll {
 
 pub const RETRY: E = E::EAGAIN;
 
-use crate::posix_event_loop::{Flags as PollFlags, FlagsSet as PollFlagsSet, OneShotFlag};
+#[cfg(not(windows))]
+use crate::posix_event_loop::OneShotFlag;
+use crate::posix_event_loop::{Flags as PollFlags, FlagsSet as PollFlagsSet};
 
 pub type EventLoopHandle = EventLoopCtx;
 
@@ -1887,11 +1872,10 @@ impl FilePollRef {
         #[cfg(windows)]
         {
             let _ = force;
-            if self.inner().unregister(loop_) {
-                Ok(())
-            } else {
-                Err(sys::Error::from_code(sys::E::INVAL, sys::Tag::TODO))
-            }
+            // The windows `FilePoll::unregister` always returns true — the
+            // bool is vestigial, so there is no error path to surface here.
+            let _ = self.inner().unregister(loop_);
+            Ok(())
         }
     }
     #[inline]
@@ -1959,8 +1943,7 @@ impl FilePollRef {
         }
         #[cfg(windows)]
         {
-            // Zig spec: `canEnableKeepingProcessAlive` is POSIX-only (posix_event_loop.zig:656-658);
-            // windows_event_loop.zig has no such method. The previous synthesized expression
+            // `canEnableKeepingProcessAlive` is POSIX-only. The previous synthesized expression
             // `!closed && can_ref()` reduced to `!has_incremented_poll_count` — the OPPOSITE
             // polarity of the POSIX semantics (`keeps_event_loop_alive && has_incremented_poll_count`).
             // All callers (PipeWriter PosixWriter, process.rs PollerPosix) are POSIX-only.
@@ -1987,18 +1970,18 @@ impl FilePollRef {
 
 /// Moved from `bun_runtime::webcore::PathOrFileDescriptor`.
 /// Owned here so `open_for_writing` has no upward dep; runtime re-exports it.
-pub enum PathOrFileDescriptor {
-    Path(bun_core::PathString),
+pub enum PathOrFileDescriptor<'a> {
+    Path(&'a [u8]),
     Fd(Fd),
 }
 
 // ─── Waker (moved from bun_io) ──────────────────────────────────────────────
 //
-// Ported from src/aio/posix_event_loop.zig:1272-1384 (LinuxWaker / KEventWaker)
-// and src/aio/windows_event_loop.zig:361-383 (Windows Waker). io (T2) owns the
+// io (T2) owns the
 // Waker so `Loop::load` has no upward dep on bun_io (T3). bun_io re-exports.
 
 pub mod waker {
+    #[cfg(not(windows))]
     use bun_sys::Fd;
 
     #[cfg(target_os = "macos")]
@@ -2026,22 +2009,19 @@ pub mod waker {
         }
 
         pub fn init() -> Result<Self, bun_core::Error> {
-            // TODO(port): std.posix.eventfd(0, 0) → bun_sys::eventfd. Phase B
-            // should confirm bun_sys exposes the wrapper; falls back to libc.
-            let raw = crate::safe_c::eventfd(0, 0);
-            if raw < 0 {
-                return Err(bun_core::Error::from_errno(bun_sys::last_errno()));
+            match bun_sys::eventfd(0, 0) {
+                Ok(fd) => Ok(Self::init_with_file_descriptor(fd)),
+                Err(err) => Err(bun_core::Error::from_errno(i32::from(err.errno))),
             }
-            Ok(Self::init_with_file_descriptor(Fd::from_native(raw)))
         }
 
         #[inline]
-        pub fn get_fd(&self) -> Fd {
+        pub(crate) fn get_fd(&self) -> Fd {
             self.fd
         }
 
         #[inline]
-        pub fn init_with_file_descriptor(fd: Fd) -> Self {
+        pub(crate) fn init_with_file_descriptor(fd: Fd) -> Self {
             Self { fd }
         }
 
@@ -2082,7 +2062,6 @@ pub mod waker {
     unsafe extern "C" {
         // Defined in src/io/io_darwin.cpp. `mach_port` is a by-value `u32`;
         // bad/dead ports are reported by mach return codes, not UB.
-        safe fn io_darwin_close_machport(port: bun_core::mach_port);
         fn io_darwin_create_machport(kq: i32, buf: *mut c_void, len: usize) -> bun_core::mach_port;
         safe fn io_darwin_schedule_wakeup(port: bun_core::mach_port) -> bool;
     }
@@ -2146,8 +2125,7 @@ pub mod waker {
 
         pub fn init_with_file_descriptor(kq: i32) -> Result<Self, bun_core::Error> {
             debug_assert!(kq > -1);
-            // PERF(port): Zig used bun.default_allocator.alloc(u8, 1024); Box<[u8]>
-            // owns the buffer for the machport's lifetime.
+            // Box<[u8]> owns the buffer for the machport's lifetime.
             let mut machport_buf = vec![0u8; 1024].into_boxed_slice();
             // SAFETY: FFI call; buf outlives the machport (owned by the returned Waker).
             let machport = unsafe {
@@ -2238,8 +2216,7 @@ pub mod waker {
         /// `loop_` is the process-global singleton from `WindowsLoop::get()`
         /// (set in [`init`]), so the returned pointer has process lifetime —
         /// safe to hand to `uv::Timer::init` and friends without an `unsafe`
-        /// block at the call site. Mirrors Zig's `waker.loop.uv_loop` field
-        /// chain (BundleThread.zig:79).
+        /// block at the call site.
         #[inline]
         pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
             // `BackRef` deref is safe (process-lifetime singleton); `uv_loop`
@@ -2251,8 +2228,7 @@ pub mod waker {
 
 // ─── Closer (moved from bun_io) ─────────────────────────────────────────────
 //
-// Ported from src/aio/posix_event_loop.zig:1386-1406 and
-// src/aio/windows_event_loop.zig:385-411. Schedules an async fd close on the
+// Schedules an async fd close on the
 // thread pool (POSIX) or via uv_fs_close (Windows). io (T2) owns it so
 // `pipes::PollOrFd::close` has no upward dep on bun_io (T3).
 
@@ -2300,11 +2276,11 @@ pub mod closer {
     // ── Windows ──────────────────────────────────────────────────────────────
 
     #[cfg(windows)]
+    use crate::IntrusiveUvFs as _;
+    #[cfg(windows)]
     use bun_sys::windows::libuv as uv;
     #[cfg(windows)]
     use core::ffi::c_void;
-    #[cfg(windows)]
-    use crate::IntrusiveUvFs as _;
 
     #[cfg(windows)]
     #[repr(C)]
@@ -2331,7 +2307,7 @@ pub mod closer {
                 )
                 .err_enum()
                 {
-                    bun_core::Output::debug_warn(format_args!("libuv close() failed = {}", err));
+                    bun_core::debug_warn!("libuv close() failed = {}", err);
                     drop(bun_core::heap::take(closer));
                 }
             }
@@ -2352,7 +2328,7 @@ pub mod closer {
 
                 #[cfg(debug_assertions)]
                 if let Some(err) = (*closer).io_request.result.err_enum() {
-                    bun_core::Output::debug_warn(format_args!("libuv close() failed = {}", err));
+                    bun_core::debug_warn!("libuv close() failed = {}", err);
                 }
 
                 (*req).deinit();
@@ -2361,5 +2337,3 @@ pub mod closer {
         }
     }
 }
-
-// ported from: src/io/io.zig

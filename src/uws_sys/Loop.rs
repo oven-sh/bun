@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_longlong, c_uint, c_void};
+use core::ffi::{c_int, c_uint, c_void};
 
 use crate::InternalLoopData;
 use crate::Timespec;
@@ -10,10 +10,14 @@ bun_core::declare_scope!(Loop, visible);
 
 // ───────────────────────────── PosixLoop ─────────────────────────────
 
-// TODO(port): Zig has field-level `align(16)` on `internal_loop_data` and
-// `ready_polls`. Rust cannot align individual fields directly; `#[repr(C, align(16))]`
-// covers the struct head, but `ready_polls` may need explicit padding to match
-// the C layout in usockets. Verify with a static size/offset assertion in Phase B.
+// Mirrors C `struct us_loop_t` (packages/bun-usockets/src/internal/eventing/
+// epoll_kqueue.h). The C struct has `alignas(LIBUS_EXT_ALIGNMENT /* 16 */)` on
+// both `data` and `ready_polls`; Rust cannot align individual fields, so the
+// struct head gets `#[repr(C, align(16))]` and `ready_polls` is preceded by a
+// zero-sized align(16) field that forces the same offset rounding the C
+// `alignas` performs (`libc::epoll_event` is `packed`/align(1) on x86-64
+// Linux, so the element type alone would not pad). Layout is verified by the
+// static assertions below the struct.
 #[repr(C, align(16))]
 pub struct PosixLoop {
     pub internal_loop_data: InternalLoopData,
@@ -37,9 +41,46 @@ pub struct PosixLoop {
     /// If non-zero, the event loop will return immediately so we can skip the GC safepoint.
     pub pending_wakeups: u32,
 
+    /// Forces `ready_polls` to the next 16-byte boundary, matching the C
+    /// `alignas(LIBUS_EXT_ALIGNMENT)` on `us_loop_t::ready_polls`.
+    _ready_polls_align: ReadyPollsAlign,
+
     /// The list of ready polls
     pub ready_polls: [EventType; 1024],
 }
+
+/// Zero-sized, 16-byte-aligned marker field type (see `_ready_polls_align`).
+/// The zero-length array member keeps `improper_ctypes` satisfied (a
+/// field-less struct is rejected in `extern` signatures) without changing
+/// size (still 0) or alignment.
+#[repr(C, align(16))]
+struct ReadyPollsAlign {
+    _unused: [u8; 0],
+}
+
+// Static layout verification against the C `us_loop_t` rules: scalar fields
+// packed after `data`, `ready_polls` at the next 16-byte boundary, struct size
+// padded to its 16-byte alignment.
+#[cfg(not(windows))]
+const _: () = {
+    use core::mem::{align_of, offset_of, size_of};
+    assert!(align_of::<PosixLoop>() == 16);
+    assert!(offset_of!(PosixLoop, num_polls) == size_of::<InternalLoopData>());
+    assert!(offset_of!(PosixLoop, num_ready_polls) == offset_of!(PosixLoop, num_polls) + 4);
+    assert!(offset_of!(PosixLoop, current_ready_poll) == offset_of!(PosixLoop, num_polls) + 8);
+    assert!(offset_of!(PosixLoop, fd) == offset_of!(PosixLoop, num_polls) + 12);
+    assert!(offset_of!(PosixLoop, active) == offset_of!(PosixLoop, num_polls) + 16);
+    assert!(offset_of!(PosixLoop, pending_wakeups) == offset_of!(PosixLoop, num_polls) + 20);
+    assert!(
+        offset_of!(PosixLoop, ready_polls)
+            == (offset_of!(PosixLoop, pending_wakeups) + 4).next_multiple_of(16)
+    );
+    assert!(
+        size_of::<PosixLoop>()
+            == (offset_of!(PosixLoop, ready_polls) + 1024 * size_of::<EventType>())
+                .next_multiple_of(16)
+    );
+};
 
 // Android shares the Linux kernel's epoll ABI (uSockets' `epoll_kqueue.h` only
 // branches on `LIBUS_USE_EPOLL` vs `LIBUS_USE_KQUEUE`, not on libc).
@@ -54,11 +95,9 @@ pub type EventType = libc::kevent;
 // TODO:
 #[cfg(windows)]
 pub type EventType = *mut c_void;
-// TODO(port): Zig had `.wasm => @compileError("Unsupported OS")` — no Rust equivalent needed;
-// the missing cfg arm will fail to compile on wasm.
 
-/// Trait replacing Zig's `comptime Handler: anytype` with `@hasDecl` checks for
-/// optional `pre`/`post`. Implementors override `PRE`/`POST` if they have them.
+/// Loop handler trait with optional `pre`/`post` hooks. Implementors override
+/// `PRE`/`POST` if they have them.
 pub trait LoopHandler {
     const WAKEUP: unsafe extern "C" fn(*mut Loop);
     const PRE: Option<unsafe extern "C" fn(*mut Loop)> = None;
@@ -172,7 +211,6 @@ impl PosixLoop {
     }
 
     pub fn get() -> *mut Loop {
-        // TODO(port): wrap in a safe handle type in bun_uws (higher-level crate)
         c::uws_get_loop()
     }
 
@@ -194,7 +232,6 @@ impl PosixLoop {
         };
         assert!(!p.is_null(), "us_create_loop returned null");
         p
-        // TODO(port): wrap in a safe handle type in bun_uws (higher-level crate)
     }
 
     pub fn wakeup(&mut self) {
@@ -221,10 +258,7 @@ impl PosixLoop {
     pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>) {
         // SAFETY: self is a valid loop pointer
         unsafe {
-            c::us_loop_run_bun_tick(
-                self,
-                timespec.map_or(core::ptr::null(), |t| std::ptr::from_ref(t)),
-            )
+            c::us_loop_run_bun_tick(self, timespec.map_or(core::ptr::null(), std::ptr::from_ref))
         };
     }
 
@@ -246,10 +280,8 @@ impl PosixLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
-    // TODO(port): Zig `nextTick` took a `comptime deferCallback: fn(UserType) void` and
-    // synthesized a per-callsite `extern "C"` trampoline that casts `*anyopaque` → `UserType`.
-    // Rust cannot monomorphize an `extern "C"` fn over a fn-pointer const generic on stable.
-    // Callers must provide the C-ABI trampoline directly (or via a `next_tick!` macro in Phase B).
+    // Rust cannot monomorphize an `extern "C"` fn over a fn-pointer const generic on stable,
+    // so callers provide the C-ABI trampoline directly.
     pub fn next_tick(
         &mut self,
         user_data: *mut c_void,
@@ -259,14 +291,14 @@ impl PosixLoop {
         unsafe { c::uws_loop_defer(self, user_data, defer_callback) };
     }
 
-    // TODO(port): same trampoline-synthesis limitation as `next_tick` — callers pass the
+    // Same trampoline-synthesis limitation as `next_tick` — callers pass the
     // C-ABI callback directly. The returned `Handler` stores it for later removal.
     //
     // Takes `this: *mut Self` (not `&mut self`) so the stored `Handler.loop_` inherits the
     // long-lived raw-pointer provenance from `us_create_loop`/`uws_get_loop`. Routing through
     // a `&mut self` reborrow would bound the stored pointer's provenance to this call, and any
     // subsequent `&mut`/`&` to the C-owned singleton would invalidate it under Stacked Borrows,
-    // making the later FFI write in `Handler::remove_*` UB. Mirrors Zig's `this: *PosixLoop`.
+    // making the later FFI write in `Handler::remove_*` UB.
     /// # Safety
     /// `this` must be the live C-allocated loop pointer returned by
     /// `us_create_loop`/`uws_get_loop` (not derived from a `&mut` reborrow).
@@ -323,10 +355,9 @@ impl PosixLoop {
     }
 }
 
-/// Replaces Zig `fn NewHandler(comptime UserType, comptime callback_fn) type`.
 /// Stores the loop ref and the C-ABI callback so it can be unregistered later.
 ///
-/// Stores `*mut Loop` (not `&Loop`) to mirror Zig's freely-aliasing `loop: *Loop`
+/// Stores `*mut Loop` (not `&Loop`)
 /// — the loop is C-owned/heap-allocated and the FFI remove calls mutate it, so a
 /// shared `&Loop` would make the `*const → *mut` cast UB when written through.
 pub struct Handler {
@@ -344,8 +375,8 @@ impl Handler {
     }
 
     pub fn remove_pre(&self) {
-        // PORT NOTE: Zig also called `uws_loop_removePostHandler` here (likely a bug
-        // upstream); preserving behavior verbatim.
+        // Intentionally calls `uws_loop_removePostHandler` here (likely an
+        // upstream bug); preserving longstanding behavior verbatim.
         // SAFETY: `loop_` is the original C-allocated raw pointer (from
         // `us_create_loop`/`uws_get_loop`) stored by `add_*_handler`, with provenance
         // that outlives this Handler and permits mutation; callback was previously registered.
@@ -379,7 +410,6 @@ impl WindowsLoop {
 
     pub fn get() -> *mut WindowsLoop {
         // SAFETY: uv::Loop::get() returns the libuv default loop; uws wraps it
-        // TODO(port): wrap in a safe handle type in bun_uws (higher-level crate)
         unsafe { c::uws_get_loop_with_native(uv::Loop::get() as *mut c_void) }
     }
 
@@ -461,7 +491,6 @@ impl WindowsLoop {
         };
         assert!(!p.is_null(), "us_create_loop returned null");
         p
-        // TODO(port): wrap in a safe handle type in bun_uws (higher-level crate)
     }
 
     pub fn run(&mut self) {
@@ -506,7 +535,7 @@ impl WindowsLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
-    // TODO(port): see PosixLoop::next_tick — same trampoline-synthesis limitation.
+    // See PosixLoop::next_tick — same trampoline-synthesis limitation.
     pub fn next_tick(
         &mut self,
         user_data: *mut c_void,
@@ -529,11 +558,11 @@ impl WindowsLoop {
         unsafe { c::us_loop_free(this) };
     }
 
-    // TODO(port): see PosixLoop::add_post_handler — same trampoline-synthesis limitation.
+    // See PosixLoop::add_post_handler — same trampoline-synthesis limitation.
     // Takes `this: *mut Self` (not `&mut self`) so the stored `Handler.loop_` inherits the
     // long-lived raw-pointer provenance from `us_create_loop`/`uws_get_loop_with_native`
     // rather than a transient `&mut` reborrow (which Stacked Borrows would invalidate on the
-    // next access to the C-owned singleton). Mirrors Zig's `this: *WindowsLoop`.
+    // next access to the C-owned singleton).
     /// # Safety
     /// `this` must be the live C-allocated loop pointer returned by
     /// `us_create_loop`/`uws_get_loop_with_native` (not derived from a `&mut` reborrow).
@@ -578,9 +607,9 @@ pub type Loop = PosixLoop;
 
 // ───────────────────────────── extern "C" ─────────────────────────────
 
-pub type LoopCb = unsafe extern "C" fn(*mut Loop);
-pub type LoopCtxCb = unsafe extern "C" fn(ctx: *mut c_void, loop_: *mut Loop);
-pub type DeferCb = unsafe extern "C" fn(ctx: *mut c_void);
+pub(crate) type LoopCb = unsafe extern "C" fn(*mut Loop);
+pub(crate) type LoopCtxCb = unsafe extern "C" fn(ctx: *mut c_void, loop_: *mut Loop);
+pub(crate) type DeferCb = unsafe extern "C" fn(ctx: *mut c_void);
 
 #[allow(non_snake_case)]
 mod c {
@@ -593,34 +622,33 @@ mod c {
     // `us_loop_close_all_groups`, …) dispatch Rust callbacks that touch the same
     // loop via `Loop::get()`. Keep all loop-taking decls as raw `*mut Loop`.
     unsafe extern "C" {
-        pub fn us_create_loop(
+        pub(super) fn us_create_loop(
             hint: *mut c_void,
             wakeup_cb: Option<LoopCb>,
             pre_cb: Option<LoopCb>,
             post_cb: Option<LoopCb>,
             ext_size: c_uint,
         ) -> *mut Loop;
-        pub fn us_loop_free(loop_: *mut Loop);
-        pub fn us_loop_ext(loop_: *mut Loop) -> *mut c_void;
-        pub fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
+        pub(super) fn us_loop_free(loop_: *mut Loop);
+        pub(super) fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
         pub fn us_loop_run(loop_: *mut Loop);
-        pub fn us_loop_pump(loop_: *mut Loop);
-        pub fn us_wakeup_loop(loop_: *mut Loop);
-        pub fn us_loop_integrate(loop_: *mut Loop);
-        pub fn us_loop_iteration_number(loop_: *mut Loop) -> c_longlong;
-        pub fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
-        pub fn uws_loop_removePostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
-        pub fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
-        pub fn uws_loop_removePreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
-        pub fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const Timespec);
-        pub fn us_internal_free_closed_sockets(loop_: *mut Loop);
-        pub fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
-        pub safe fn uws_get_loop() -> *mut Loop;
         #[cfg(windows)]
-        pub fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
-        pub fn uws_loop_defer(loop_: *mut Loop, ctx: *mut c_void, cb: DeferCb);
-        pub fn uws_res_clear_corked_socket(loop_: *mut Loop);
-        pub fn uws_loop_date_header_timer_update(loop_: *mut Loop);
+        pub(super) fn us_loop_pump(loop_: *mut Loop);
+        pub fn us_wakeup_loop(loop_: *mut Loop);
+        pub(super) fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
+        pub(super) fn uws_loop_removePostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
+        pub(super) fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
+        #[cfg(not(windows))]
+        pub(super) fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const Timespec);
+        pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
+        pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
+        #[cfg(not(windows))]
+        pub(super) safe fn uws_get_loop() -> *mut Loop;
+        #[cfg(windows)]
+        pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
+        pub(super) fn uws_loop_defer(loop_: *mut Loop, ctx: *mut c_void, cb: DeferCb);
+        pub(super) fn uws_res_clear_corked_socket(loop_: *mut Loop);
+        pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
     }
 }
 // Re-exported raw externs for cross-thread callers (e.g. bun_http's
@@ -632,4 +660,13 @@ mod c {
 // receiver would create two live `&mut Loop` to the same singleton (UB).
 pub use c::{us_loop_run, us_wakeup_loop};
 
-// ported from: src/uws_sys/Loop.zig
+unsafe extern "C" {
+    // safe: no args; clears the C side's thread-local loop pointer — no preconditions.
+    safe fn bun_clear_loop_at_thread_exit();
+}
+
+/// Clears the C side's thread-local loop pointer. Call when a thread that ran
+/// a uws loop (e.g. a Worker thread) exits.
+pub fn on_thread_exit() {
+    bun_clear_loop_at_thread_exit()
+}

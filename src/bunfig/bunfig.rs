@@ -1,4 +1,4 @@
-//! Port of `src/runtime/cli/bunfig.zig`.
+//! Bunfig (configuration file) loading.
 //!
 //! `Bunfig::parse` and the inner `Parser` route through the real
 //! `bun_parsers::{toml,json}` parsers (which produce the value-shaped
@@ -28,7 +28,6 @@ use bun_options_types::schema::api;
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
 
-// Re-exports (Zig: `pub const OfflineMode = @import("../options_types/OfflineMode.zig").OfflineMode;`)
 pub use bun_options_types::offline_mode::OfflineMode;
 
 // TODO: replace api.TransformOptions with Bunfig
@@ -40,9 +39,8 @@ fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
     Box::<[u8]>::from(s.string(bump).expect("OOM"))
 }
 
-/// Port of `resolver/package_json.zig` `PackageJSON.parseMacrosJSON`.
-///
-/// Re-ported here against the value-shaped `bun_ast::Expr` (the
+/// Macro-remap parsing (the `PackageJSON.parseMacrosJSON` shape),
+/// implemented here against the value-shaped `bun_ast::Expr` (the
 /// tree produced by the TOML/JSON parsers) and returning the
 /// `bun_options_types::context::MacroMap` shape so the result slots directly
 /// into `ctx.debug.macros` without crossing the `bun_ast::Expr` /
@@ -110,7 +108,7 @@ fn parse_macros_json(
                 continue;
             };
             let remap_value_str = match &remap_value.data {
-                ExprData::EString(s) if s.len() > 0 => estring_to_owned(&*s, bump),
+                ExprData::EString(s) if s.len() > 0 => estring_to_owned(s, bump),
                 _ => {
                     log.add_warning_fmt(
                         Some(json_source),
@@ -136,7 +134,7 @@ fn parse_macros_json(
 
 #[inline]
 fn num_to_u32(n: f64) -> u32 {
-    // Note: Rust `as` saturates on overflow/NaN where Zig @intFromFloat is UB.
+    // Note: Rust `as` saturates on overflow/NaN.
     n as u32
 }
 
@@ -144,13 +142,13 @@ fn num_to_u32(n: f64) -> u32 {
 // Parser
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub struct Parser<'a> {
+pub(crate) struct Parser<'a> {
     json: Expr,
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
-    // PORT NOTE: Zig held both `bunfig: *api.TransformOptions` (= `&ctx.args`)
-    // and `ctx: *Command.Context` simultaneously. Rust forbids the overlapping
-    // borrow, so `bunfig` writes route through `self.ctx.args` directly.
+    // Holding both a `TransformOptions` pointer (= `&ctx.args`) and `ctx`
+    // would be an overlapping borrow, so `bunfig` writes route through
+    // `self.ctx.args` directly.
     ctx: &'a mut ContextData,
     /// Arena backing `EString::string()` UTF-16→UTF-8 transcodes; lifetime
     /// matches the `Expr` tree (same bump used for the TOML/JSON parse).
@@ -188,7 +186,7 @@ impl<'a> Parser<'a> {
         Err(err!("Invalid Bunfig"))
     }
 
-    pub fn expect_string(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
+    pub(crate) fn expect_string(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
         match &expr.data {
             ExprData::EString(_) => Ok(()),
             _ => self.add_error_format(
@@ -216,7 +214,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub fn expect(&mut self, expr: &Expr, token: ExprTag) -> Result<(), bun_core::Error> {
+    pub(crate) fn expect(&mut self, expr: &Expr, token: ExprTag) -> Result<(), bun_core::Error> {
         if expr.data.tag() != token {
             return self.add_error_format(
                 expr.loc,
@@ -232,7 +230,6 @@ impl<'a> Parser<'a> {
 
     fn load_log_level(&mut self, expr: &Expr) -> Result<(), bun_core::Error> {
         self.expect_string(expr)?;
-        // PERF(port): Zig used strings.ExactSizeMatcher(8) — profile in Phase B
         let level = match expr.as_string(self.bump).unwrap_or(b"") {
             b"debug" => api::MessageLevel::Debug,
             b"error" => api::MessageLevel::Err,
@@ -258,7 +255,6 @@ impl<'a> Parser<'a> {
                     self.expect_string(item)?;
                     if let ExprData::EString(s) = &item.data {
                         if s.len() > 0 {
-                            // PERF(port): was appendAssumeCapacity
                             preloads.push(estring_to_owned(s, self.bump));
                         }
                     }
@@ -267,9 +263,7 @@ impl<'a> Parser<'a> {
             }
             ExprData::EString(s) => {
                 if s.len() > 0 {
-                    let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(1);
-                    preloads.push(estring_to_owned(s, self.bump));
-                    self.ctx.preloads = preloads;
+                    self.ctx.preloads = vec![estring_to_owned(s, self.bump)];
                 }
             }
             ExprData::ENull(_) => {}
@@ -344,18 +338,18 @@ impl<'a> Parser<'a> {
             else {
                 continue;
             };
-            keys.push(estring_to_owned(&*k, self.bump));
-            values.push(estring_to_owned(&*v, self.bump));
+            keys.push(estring_to_owned(k, self.bump));
+            values.push(estring_to_owned(v, self.bump));
         }
         Ok(api::StringMap { keys, values })
     }
 
-    // PORT NOTE: `comptime cmd: Command.Tag` demoted to a runtime arg —
+    // `cmd` is a runtime arg rather than a const generic —
     // `bun_options_types::command_tag::Tag` does not derive `ConstParamTy` (it
-    // already derives `enum_map::Enum`, which conflicts). The Zig original
-    // monomorphised over `cmd` purely to dead-code-eliminate untaken arms; the
+    // already derives `enum_map::Enum`, which conflicts). Monomorphising over
+    // `cmd` would only dead-code-eliminate untaken arms; the
     // runtime branches below are equivalent and the few hot fields are tiny.
-    pub fn parse(&mut self, cmd: CommandTag) -> Result<(), bun_core::Error> {
+    pub(crate) fn parse(&mut self, cmd: CommandTag) -> Result<(), bun_core::Error> {
         bun_analytics::features::bunfig.fetch_add(1, Ordering::Relaxed);
 
         let json = self.json;
@@ -627,7 +621,7 @@ impl<'a> Parser<'a> {
                                     )?;
                                     return Ok(());
                                 }
-                                patterns.push(estring_to_owned(&*s, self.bump));
+                                patterns.push(estring_to_owned(s, self.bump));
                             }
                             self.ctx.test_options.concurrent_test_glob = Some(patterns);
                         }
@@ -662,7 +656,7 @@ impl<'a> Parser<'a> {
                                         )?;
                                         return Ok(());
                                     };
-                                    patterns.push(estring_to_owned(&*s, self.bump));
+                                    patterns.push(estring_to_owned(s, self.bump));
                                 }
                                 self.ctx.test_options.coverage.ignore_patterns = patterns;
                             }
@@ -702,7 +696,7 @@ impl<'a> Parser<'a> {
                                         )?;
                                         return Ok(());
                                     };
-                                    patterns.push(estring_to_owned(&*s, self.bump));
+                                    patterns.push(estring_to_owned(s, self.bump));
                                 }
                                 self.ctx.test_options.path_ignore_patterns = patterns;
                             }
@@ -790,7 +784,7 @@ impl<'a> Parser<'a> {
 
                 if let Some(elide_lines) = run_expr.get(b"elide-lines") {
                     if let Some(n) = elide_lines.as_number() {
-                        // Note: Rust `as` saturates on overflow/NaN where Zig @intFromFloat is UB
+                        // Note: Rust `as` saturates on overflow/NaN
                         self.ctx.bundler_options.elide_lines = Some(n as usize);
                     } else {
                         self.add_error(elide_lines.loc, b"Expected number")?;
@@ -933,13 +927,12 @@ impl<'a> Parser<'a> {
                         let ExprData::EString(k) = &key_expr.data else {
                             continue;
                         };
-                        let path = estring_to_owned(&*k, self.bump);
+                        let path = estring_to_owned(k, self.bump);
 
                         if !bun_resolver::is_package_path(&path) {
                             self.add_error(key_expr.loc, b"Expected package name")?;
                         }
 
-                        // PERF(port): was putAssumeCapacity
                         self.ctx.debug.package_bundle_map.insert(
                             path,
                             if b.value {
@@ -996,17 +989,7 @@ impl<'a> Parser<'a> {
             }
         }
         {
-            if self.ctx.args.jsx.is_none() {
-                self.ctx.args.jsx = Some(api::Jsx {
-                    factory: jsx_factory,
-                    fragment: jsx_fragment,
-                    import_source: jsx_import_source,
-                    runtime: jsx_runtime,
-                    development: jsx_dev,
-                    ..Default::default()
-                });
-            } else {
-                let jsx: &mut api::Jsx = self.ctx.args.jsx.as_mut().unwrap();
+            if let Some(jsx) = self.ctx.args.jsx.as_mut() {
                 if !jsx_factory.is_empty() {
                     jsx.factory = jsx_factory;
                 }
@@ -1018,6 +1001,15 @@ impl<'a> Parser<'a> {
                 }
                 jsx.runtime = jsx_runtime;
                 jsx.development = jsx_dev;
+            } else {
+                self.ctx.args.jsx = Some(api::Jsx {
+                    factory: jsx_factory,
+                    fragment: jsx_fragment,
+                    import_source: jsx_import_source,
+                    runtime: jsx_runtime,
+                    development: jsx_dev,
+                    ..Default::default()
+                });
             }
         }
 
@@ -1031,7 +1023,7 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = json.get(b"macros") {
             if let ExprData::EBoolean(b) = expr.data {
-                if b.value == false {
+                if !b.value {
                     self.ctx.debug.macros = MacroOptions::Disable;
                 }
             } else {
@@ -1117,19 +1109,20 @@ impl Bunfig {
         // (Parser later needs `&mut ctx` alongside `&mut log`).
         let log_ptr: *mut bun_ast::Log = ctx.log;
         debug_assert!(!log_ptr.is_null());
+        // SAFETY: `log_ptr` is non-null (asserted above) and points to the Log
+        // owned by single-threaded CLI startup; Parser only touches the log via
+        // this borrow (never via `ctx.log`), so the `&mut` is exclusive.
         let log: &mut bun_ast::Log = unsafe { &mut *log_ptr };
         let log_count = log.errors + log.warnings;
 
-        // Zig passes `bun.default_allocator` here — no side `mi_heap`. The Rust
-        // port previously called `Arena::new()` (= `mi_heap_new` +
+        // This previously called `Arena::new()` (= `mi_heap_new` +
         // `mi_heap_destroy` on drop), which perf attributed ~1.6% of
         // `bun -e ''` startup to. Borrow the process default heap instead so
-        // TOML/JSON parse allocations route through plain `mi_malloc`, matching
-        // Zig. Parsed config lives for the process lifetime either way.
+        // TOML/JSON parse allocations route through plain `mi_malloc`.
+        // Parsed config lives for the process lifetime either way.
         let bump = Bump::borrowing_default();
 
-        let ext = source.path.name.ext;
-        // Zig: `if (strings.eqlComptime(source.path.name.ext[1..], "toml"))`
+        let ext = source.path.name().ext;
         let is_toml = ext.len() > 1 && &ext[1..] == b"toml";
 
         let expr = if is_toml {
@@ -1168,9 +1161,9 @@ impl Bunfig {
             }
         };
 
-        // PORT NOTE: reshaped for borrowck — Zig stored both `&mut ctx` and
-        // `&mut ctx.args` simultaneously inside Parser. In Rust we route bunfig
-        // writes through `self.ctx.args` directly. `log` is derived from the
+        // Parser cannot hold both `&mut ctx` and `&mut ctx.args`
+        // simultaneously, so bunfig
+        // writes route through `self.ctx.args` directly. `log` is derived from the
         // copied raw pointer above so it does not overlap the `&mut ctx` borrow.
         // SAFETY: Parser never reaches `ctx.log` (only `self.log`), so no two
         // live `&mut` to the same `Log` coexist.
@@ -1259,7 +1252,6 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_install(&mut self, install_obj: &Expr) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig held `*BunInstall` and `*Parser` simultaneously.
         // The helper methods (`expect*`, `add_error`, `parse_registry`) take
         // `&mut self`, which under Stacked Borrows would invalidate any
         // long-lived `&mut` derived from `self.ctx.install`. Move the box
@@ -1342,7 +1334,7 @@ impl<'a> Parser<'a> {
                 }
                 let name = if name_[0] == b'@' { &name_[1..] } else { name_ };
                 let registry = self.parse_registry(value)?;
-                registry_map.scopes.insert(name.into(), registry);
+                registry_map.scopes.insert(name, registry);
             }
             install.scoped = Some(registry_map);
         }
@@ -1529,7 +1521,7 @@ impl<'a> Parser<'a> {
                             self.bump,
                         ));
                     }
-                    install.minimum_release_age_excludes = Some(list.into());
+                    install.minimum_release_age_excludes = Some(list);
                 }
                 _ => {
                     self.add_error(
@@ -1540,7 +1532,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // bunfig.zig:824-839 — remap PnpmMatcher errors so callers (and the
+        // Remap PnpmMatcher errors so callers (and the
         // crash handler's `"Invalid Bunfig"` match) see the canonical
         // bunfig error; only OOM passes through unchanged.
         let remap = |e: FromExprError| -> bun_core::Error {
@@ -1680,5 +1672,3 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 }
-
-// ported from: src/runtime/cli/bunfig.zig

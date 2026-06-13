@@ -1,19 +1,14 @@
-#![feature(allocator_api)]
-#![allow(unused, dead_code, non_snake_case, non_upper_case_globals)]
 #![warn(unused_must_use)]
 // ──────────────────────────────────────────────────────────────────────────
-// Phase B-2 un-gate: pieces that do not transitively need the JS-AST
-// (`Expr`/`E::Object`/`Rope`) or the schema (`BunInstall`/`NpmRegistry`)
-// now compile for real. Everything that touches those types stays re-gated
-// with a `// TODO(b2-blocked):` pointing at the missing lower-tier symbol.
+// The remaining `'static` lifetime erasures and raw-pointer borrow splits in
+// this file are documented at each site; removing them is tracked by the
+// bun_ini Parser lifetime-restructure work item (external arena, split `env`
+// lifetime, `Source` lifetime threading in bun_ast).
 // ──────────────────────────────────────────────────────────────────────────
-#![warn(unreachable_pub)]
-use bun_collections::VecExt;
 use core::fmt;
 
-use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
+use bun_alloc::AllocError;
 use bun_ast::{Loc, Log, Source};
-use bun_core::ZStr;
 
 type OOM<T> = Result<T, AllocError>;
 
@@ -35,7 +30,7 @@ impl Default for Options {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Pure-byte helpers (lifted from `Parser` so they compile without the
-// Expr-carrying struct). The Zig has these as methods on `Parser` but they
+// Expr-carrying struct). They
 // touch no parser state — exposing them as free fns lets the logic stay
 // un-gated and unit-testable while the AST-dependent body is blocked.
 // ──────────────────────────────────────────────────────────────────────────
@@ -82,7 +77,7 @@ pub enum IniOption<T> {
 }
 
 impl<T> IniOption<T> {
-    pub fn get(self) -> Option<T> {
+    pub(crate) fn get(self) -> Option<T> {
         match self {
             IniOption::Some(v) => Some(v),
             IniOption::None => None,
@@ -197,14 +192,16 @@ impl fmt::Display for ConfigItem {
 
 use bun_install_types::NodeLinker::NodeLinker;
 
-static NODE_LINKER_MAP: phf::Map<&'static [u8], NodeLinker> = phf::phf_map! {
-    // yarn
-    b"pnpm" => NodeLinker::Isolated,
-    b"node-modules" => NodeLinker::Hoisted,
-    // pnpm
-    b"isolated" => NodeLinker::Isolated,
-    b"hoisted" => NodeLinker::Hoisted,
-};
+bun_core::comptime_string_map! {
+    static NODE_LINKER_MAP: NodeLinker = {
+        // yarn
+        b"pnpm" => NodeLinker::Isolated,
+        b"node-modules" => NodeLinker::Hoisted,
+        // pnpm
+        b"isolated" => NodeLinker::Isolated,
+        b"hoisted" => NodeLinker::Hoisted,
+    };
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // ScopeError
@@ -221,15 +218,7 @@ pub enum ScopeError {
 //
 // `Parser::parse` / `Parser::prepare_str` (unquoted path) / `ConfigIterator`
 // now compile against the live `bun_js_parser::{Expr, ExprData, E::*}` surface.
-// Remaining gates are blocked on schema/API types only:
 // ──────────────────────────────────────────────────────────────────────────
-
-// TODO(b2-blocked): bun_api::BunInstall
-// TODO(b2-blocked): bun_api::NpmRegistry
-// TODO(b2-blocked): bun_api::NpmRegistryMap
-// TODO(b2-blocked): bun_api::npm_registry::Parser
-// TODO(b2-blocked): bun_api::Ca
-// TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
 
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
@@ -243,12 +232,11 @@ mod draft {
 
     use core::fmt;
     use core::ptr;
-    use std::io::Write as _;
 
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
-    use bun_api::{self, BunInstall, Ca, NpmRegistry, NpmRegistryMap, npm_registry};
+    use bun_api::{self, BunInstall, NpmRegistry, npm_registry};
     use bun_ast::E::Rope;
-    use bun_ast::{self as js_ast, E, Expr, ExprData};
+    use bun_ast::{E, Expr, ExprData};
     use bun_ast::{IntoStr, Loc, Log, Source};
     use bun_collections::{ArrayHashMap, VecExt};
     use bun_core::ZStr;
@@ -257,11 +245,18 @@ mod draft {
     use bun_url::URL;
 
     use super::{
-        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, Options, ScopeError,
-        is_quoted, next_dot, should_skip_line,
+        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, Options, is_quoted,
+        next_dot, should_skip_line,
     };
 
     type OOM<T> = Result<T, AllocError>;
+
+    /// Hard cap on dot-separated segments in a section-header rope. The rope is
+    /// consumed by `E::Object::get_or_put_object`, which recurses once per
+    /// `rope.next` link, so an unbounded header overflows the stack. Past the
+    /// cap the remainder of the header (dots included) becomes the final
+    /// segment. Mirrors `MAX_DOTTED_KEY_SEGMENTS` in the TOML parser.
+    const MAX_SECTION_ROPE_SEGMENTS: usize = 512;
 
     // ──────────────────────────────────────────────────────────────────────────
     // Parser
@@ -277,15 +272,14 @@ mod draft {
         pub env: &'a mut DotEnvLoader<'a>,
     }
 
-    // PORT NOTE: Zig `prepareStr` switches its *return type* on a comptime enum
-    // param (`.section -> *Rope`, `.key -> []const u8`, `.value -> Expr`). Rust
+    // The result type depends on the usage (`.section -> *Rope`, `.key ->
+    // bytes`, `.value -> Expr`). Rust
     // const generics cannot select a return type, so we keep a single
-    // `prepare_str::<USAGE>()` body for diffability and wrap the result in
+    // `prepare_str::<USAGE>()` body and wrap the result in
     // `PrepareResult`. Callers unwrap with `.into_*()`.
     //
-    // PORT NOTE: `#[derive(ConstParamTy)]` requires nightly `adt_const_params`.
+    // `#[derive(ConstParamTy)]` requires nightly `adt_const_params`.
     // Dropped to a runtime arg (the body never uses USAGE in a type position).
-    // PERF(port): was comptime monomorphization — profile in Phase B.
     #[derive(PartialEq, Eq, Clone, Copy)]
     enum Usage {
         Section,
@@ -307,7 +301,7 @@ mod draft {
 
     impl<'a> Parser<'a> {
         pub fn init(path: &[u8], src: &'a [u8], env: &'a mut DotEnvLoader<'a>) -> Parser<'a> {
-            // TODO(b2-blocked): bun_ast::Source<'bump> — `Source::init_path_string`
+            // TODO: bun_ast::Source<'bump> — `Source::init_path_string`
             // currently takes `Str = &'static [u8]`; once the lower tier threads a
             // lifetime through `Source`, pass `path`/`src` directly. They outlive
             // the `Parser` and its `Source`/`Expr` tree (arena-freed in lockstep),
@@ -328,11 +322,11 @@ mod draft {
         // deinit -> Drop: `logger` and `arena` are owned and drop automatically.
 
         pub fn parse(&mut self, bump: &'a Arena) -> OOM<()> {
-            // TODO(port): borrowck — in Zig, `arena_allocator` is `self.arena.arena()`;
-            // here it is passed separately to avoid overlapping &mut self borrows.
+            // borrowck — `arena_allocator` is passed separately (rather than
+            // read off `self.arena`) to avoid overlapping &mut self borrows.
             let src = self.src;
             let mut iter = src.split(|&b| b == b'\n');
-            // TODO(port): borrowck — `head` aliases into `self.out.data.e_object` while
+            // TODO: borrowck — `head` aliases into `self.out.data.e_object` while
             // `self` is also borrowed mutably for prepare_str(). Kept as raw `*mut`
             // (the underlying `E::Object` lives in the Expr Store, not on `self`).
             let mut head: *mut E::Object = std::ptr::from_mut::<E::Object>(
@@ -342,10 +336,6 @@ mod draft {
                     .expect("Parser.out is E.Object"),
             );
 
-            // var duplicates = bun.StringArrayHashMapUnmanaged(u32){};
-            // defer duplicates.deinit(allocator);
-
-            // PERF(port): was stack-fallback (sizeOf(Rope)*6) over arena — using bump directly.
             let ropealloc = bump;
 
             let mut skip_until_next_section = false;
@@ -367,10 +357,9 @@ mod draft {
                     'treat_as_key: {
                         skip_until_next_section = false;
                         let Some(close_bracket_idx) = line.iter().position(|&b| b == b']') else {
-                            // Zig: `orelse continue` — skip the whole line
+                            // Skip the whole line: treat_as_key stays false and
+                            // we fall through to `continue` below.
                             break 'treat_as_key;
-                            // PORT NOTE: reshaped — Zig `continue` from inside labeled block;
-                            // we set treat_as_key=false and fall through to `continue` below.
                         };
                         // Make sure the rest is just whitespace
                         if close_bracket_idx + 1 < line.len() {
@@ -393,7 +382,6 @@ mod draft {
                                 offset,
                             )?
                             .into_section();
-                        // PERF(port): was `rope_stack.fixed_buffer_allocator.reset()` here.
                         // SAFETY: `self.out` was constructed as `E.Object` in `init()`.
                         let root = self
                             .out
@@ -571,7 +559,7 @@ mod draft {
             usage: Usage,
             bump: &'a Arena,
             ropealloc: &'a Arena,
-            val_: &[u8],
+            val_: &'a [u8],
             offset_: i32,
         ) -> OOM<PrepareResult<'a>> {
             let mut offset = offset_;
@@ -593,16 +581,16 @@ mod draft {
                     // `bun_ast::Expr` (via the `From` impl in
                     // `bun_ast::expr`) so the rest of this body works
                     // against a single `ExprData`.
-                    // Phase-A `Str = &'static [u8]` lifetime erasure (see
-                    // PORTING.md §Allocators / `Parser::init` above). `val` is a
-                    // sub-slice of `self.src` and outlives the temporary `Source`.
+                    // `Str = &'static [u8]` lifetime erasure (see PORTING.md
+                    // §Allocators / `Parser::init` above). `val` is a sub-slice
+                    // of `self.src` and outlives the temporary `Source`.
                     let val_s: &'static [u8] = val.into_str();
                     let src = Source::init_path_string(self.source.path.text, val_s);
                     let mut log = Log::init();
                     // Try to parse it and if it fails will just treat it as a string
                     let json_val: Expr =
                         match bun_parsers::json::parse_utf8_impl::<true>(&src, &mut log, bump) {
-                            Ok(v) => Expr::from(v),
+                            Ok(v) => v,
                             Err(_) => {
                                 // JSON parse failed (e.g., single-quoted string like '${VAR}')
                                 // Still need to expand env vars in the content
@@ -641,10 +629,9 @@ mod draft {
                     }
 
                     if usage == Usage::Value {
-                        // Spec ini.zig:247: `if (comptime usage == .value) return json_val;`
-                        // — the parsed Expr is returned as-is, preserving
+                        // The parsed Expr is returned as-is, preserving
                         // `E.Array`/`E.Object` tags so downstream `.e_array`/
-                        // `.e_object` checks (e.g. ini.zig:178/192, loadNpmrc
+                        // `.e_object` checks (e.g. loadNpmrc
                         // `ca`/`omit`/`include`) fire. `json_val` was lifted to T4
                         // at the parse site above.
                         return Ok(PrepareResult::Value(Expr {
@@ -672,7 +659,7 @@ mod draft {
                             return Ok(PrepareResult::Key(b"[Object object]"));
                         }
                         _ => {
-                            // PERF(port): was std.fmt.allocPrint into arena. Cold
+                            // Cold
                             // npm-quirk path (JSON array/number used as a section
                             // header or key); format to a temp `String` then copy
                             // into the arena.
@@ -692,19 +679,19 @@ mod draft {
                 // walk the val to find the first non-escaped comment character (; or #)
                 let mut did_any_escape = false;
                 let mut esc = false;
-                // PERF(port): was stack-fallback(STACK_BUF_SIZE) over arena
                 let mut unesc = ArenaVec::<u8>::with_capacity_in(STACK_BUF_SIZE, bump);
 
                 // RopeT is *Rope when usage==Section, else unit. In Rust we just
                 // keep an Option<&mut Rope> and ignore it for non-section usages.
                 let mut rope: Option<&'a mut Rope> = None;
+                let mut rope_parts: usize = 0;
 
                 let mut i: usize = 0;
                 'walk: while i < val.len() {
                     let c = val[i];
                     if esc {
                         match c {
-                            b'\\' => unesc.extend_from_slice(&[b'\\']),
+                            b'\\' => unesc.extend_from_slice(b"\\"),
                             b';' | b'#' | b'$' => unesc.push(c),
                             b'.' => {
                                 if usage == Usage::Section {
@@ -785,8 +772,10 @@ mod draft {
                                 did_any_escape = true;
                             }
                             b'.' => {
-                                if usage == Usage::Section {
+                                if usage == Usage::Section && rope_parts < MAX_SECTION_ROPE_SEGMENTS
+                                {
                                     self.commit_rope_part(bump, ropealloc, &mut unesc, &mut rope)?;
+                                    rope_parts += 1;
                                 } else {
                                     unesc.push(b'.');
                                 }
@@ -880,9 +869,9 @@ mod draft {
                 )));
             }
             if usage == Usage::Key {
-                // TODO(port): lifetime — `val` borrows `val_` (caller line slice);
-                // Zig returns it directly. Dupe into the bump for now.
-                return Ok(PrepareResult::Key(bump.alloc_slice_copy(val)));
+                // `val` is a subslice of `val_: &'a [u8]`; return the borrow
+                // directly.
+                return Ok(PrepareResult::Key(val));
             }
             Ok(PrepareResult::Section(Self::str_to_rope(ropealloc, val)?))
         }
@@ -894,11 +883,11 @@ mod draft {
         /// - ${VAR} - if VAR is undefined, leave as "${VAR}" (no expansion)
         /// - ${VAR?} - if VAR is undefined, expand to empty string
         /// - Backslash escaping is already handled by JSON parsing
-        fn expand_env_vars(&mut self, bump: &'a Arena, val: &[u8]) -> OOM<&'a [u8]> {
+        fn expand_env_vars(&mut self, bump: &'a Arena, val: &'a [u8]) -> OOM<&'a [u8]> {
             // Quick check if there are any env vars to expand
             if bun_core::index_of(val, b"${").is_none() {
-                // TODO(port): lifetime — Zig returns `val` directly (arena-borrowed).
-                return Ok(bump.alloc_slice_copy(val));
+                // Nothing to expand: return the borrow directly.
+                return Ok(val);
             }
 
             let mut result = ArenaVec::<u8>::with_capacity_in(val.len(), bump);
@@ -975,7 +964,13 @@ mod draft {
                         b'\\' => esc = !esc,
                         b'$' => {
                             if !esc {
-                                return self.parse_env_substitution(val, start, j, depth + 1, unesc);
+                                return self.parse_env_substitution(
+                                    val,
+                                    start,
+                                    j,
+                                    depth + 1,
+                                    unesc,
+                                );
                             }
                         }
                         b'{' => {
@@ -1068,33 +1063,26 @@ mod draft {
                 head: Expr::init(E::EString::init(&key[..dot_idx]), Loc::EMPTY),
                 next: ptr::null_mut(),
             });
-            // SAFETY: `head` is the same allocation as `rope`'s initial value;
-            // we walk `rope` forward via `append` while keeping `head` to return.
-            // PORT NOTE: reshaped for borrowck — Zig holds two *Rope simultaneously.
-            let head: *mut Rope = std::ptr::from_mut::<Rope>(rope_head);
-            let mut rope: *mut Rope = head;
 
+            let mut segments: usize = 1;
             while dot_idx + 1 < key.len() {
                 let next_dot_idx = match next_dot(&key[dot_idx + 1..]) {
-                    Some(n) => dot_idx + 1 + n,
-                    None => {
+                    Some(n) if segments < MAX_SECTION_ROPE_SEGMENTS => dot_idx + 1 + n,
+                    _ => {
                         let rest = &key[dot_idx + 1..];
-                        // SAFETY: `rope` points into a live bump allocation; no aliasing borrow.
-                        rope = unsafe { &mut *rope }
+                        let _ = rope_head
                             .append(Expr::init(E::EString::init(rest), Loc::EMPTY), ropealloc)?;
                         break;
                     }
                 };
                 let part = &key[dot_idx + 1..next_dot_idx];
-                // SAFETY: `rope` points into a live bump allocation; no aliasing borrow.
-                rope = unsafe { &mut *rope }
-                    .append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc)?;
+                let _ =
+                    rope_head.append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc)?;
+                segments += 1;
                 dot_idx = next_dot_idx;
             }
 
-            let _ = rope;
-            // SAFETY: head was created by ropealloc.alloc above and is still live in the bump.
-            Ok(unsafe { &mut *head })
+            Ok(rope_head)
         }
     }
 
@@ -1173,9 +1161,8 @@ mod draft {
             if let Some(keyexpr) = prop.key {
                 if let Some(key) = keyexpr.as_utf8_string_literal() {
                     if bun_core::has_prefix(key, b"//") {
-                        // PORT NOTE: Zig builds this list at comptime by reversing
-                        // `std.meta.fieldNames(Item.Opt)` so that `_authToken` is
-                        // matched before `_auth`. We hard-code the reversed order.
+                        // Order matters: `_authToken` must be
+                        // matched before `_auth`.
                         const OPTNAMES: &[(&[u8], ConfigOpt)] = &[
                             (b"keyfile", ConfigOpt::Keyfile),
                             (b"certfile", ConfigOpt::Certfile),
@@ -1198,7 +1185,6 @@ mod draft {
                                 if let Some(value_expr) = prop.value {
                                     if let Some(value) = value_expr.as_utf8_string_literal() {
                                         return Some(IniOption::Some(ConfigItem {
-                                            // PERF(port): Zig borrowed arena slices here; we box.
                                             registry_url: Box::<[u8]>::from(url_part),
                                             value: Box::<[u8]>::from(value),
                                             optname: opt,
@@ -1261,7 +1247,6 @@ mod draft {
                                 return Ok(Some(IniOption::None));
                             };
                             return Ok(Some(IniOption::Some(ScopeItem {
-                                // PERF(port): Zig borrowed arena slice here; we box.
                                 scope: Box::<[u8]>::from(&key[1..key.len() - b":registry".len()]),
                                 registry,
                             })));
@@ -1317,15 +1302,15 @@ mod draft {
             }
             if log.has_errors() {
                 if log.errors == 1 {
-                    Output::warn(&format_args!(
+                    bun_core::warn!(
                         "Encountered an error while reading <b>{}<r>:\n\n",
                         bstr::BStr::new(npmrc_path.as_bytes()),
-                    ));
+                    );
                 } else {
-                    Output::warn(&format_args!(
+                    bun_core::warn!(
                         "Encountered errors while reading <b>{}<r>:\n\n",
                         bstr::BStr::new(npmrc_path.as_bytes()),
-                    ));
+                    );
                 }
                 Output::flush();
             }
@@ -1343,21 +1328,24 @@ mod draft {
         source: &Source,
         configs: &mut Vec<ConfigItem>,
     ) -> OOM<()> {
-        // TODO(port): lifetime — `Parser<'a>` ties `src` and `env: &'a mut DotEnvLoader<'a>`
+        // TODO: lifetime — `Parser<'a>` ties `src` and `env: &'a mut DotEnvLoader<'a>`
         // to a single invariant `'a`; threading that through this fn signature poisons
         // the `load_npmrc_config` loop (env borrowed-for-'a across iterations). The
         // local `parser` is dropped before this fn returns, so erase both to a fresh
         // `'p` (matches `Parser::init`'s own erasures for `path`/`src`).
         // SAFETY: `parser` does not outlive `env`/`source.contents`.
         let contents: &'static [u8] = source.contents.as_ref().into_str();
-        // Round-trip through a raw pointer to erase both the borrow and the inner
-        // lifetime; identical bit-pattern.
-        let env = unsafe { &mut *(env as *mut DotEnvLoader<'_> as *mut DotEnvLoader<'static>) };
+        // SAFETY: `parser` is dropped before this function returns and so does not
+        // outlive `env` or its borrowed data; this cast only erases lifetimes.
+        let env = unsafe {
+            &mut *std::ptr::from_mut::<DotEnvLoader<'_>>(env).cast::<DotEnvLoader<'static>>()
+        };
         let mut parser = Parser::init(npmrc_path.as_bytes(), contents, env);
-        // TODO(port): borrowck — `parser.arena` is borrowed while `parser` is `&mut`.
-        // SAFETY: arena outlives all bump-allocated slices used below; Phase B should
-        // restructure Parser so the bump is passed externally or split borrows.
-        let bump: &Arena = unsafe { &*(&raw const parser.arena) };
+        // TODO: borrowck — `parser.arena` is borrowed while `parser` is `&mut`.
+        // TODO(refactor): restructure Parser so the bump is passed externally or split borrows.
+        let bump_ptr: *const Arena = &raw const parser.arena;
+        // SAFETY: arena outlives all bump-allocated slices used below.
+        let bump: &Arena = unsafe { &*bump_ptr };
         parser.parse(bump)?;
         // Need to be very, very careful here with strings.
         // They are allocated in the Parser's arena, which of course gets
@@ -1492,9 +1480,7 @@ mod draft {
                     install.node_linker = Some(NodeLinker::Hoisted);
                 } else if install_strategy_str == b"linked" {
                     install.node_linker = Some(NodeLinker::Isolated);
-                } else if install_strategy_str == b"nested" {
-                    // TODO
-                } else if install_strategy_str == b"shallow" {
+                } else if install_strategy_str == b"nested" || install_strategy_str == b"shallow" {
                     // TODO
                 }
             }
@@ -1535,10 +1521,7 @@ mod draft {
                 };
         }
 
-        let mut registry_map = install
-            .scoped
-            .take()
-            .unwrap_or_else(NpmRegistryMap::default);
+        let mut registry_map = install.scoped.take().unwrap_or_default();
 
         // SAFETY: `parser.out` is an `E::Object` produced by `Parser::parse`; the
         // arena pointee lives until `parser` drops at end of fn.
@@ -1571,10 +1554,9 @@ mod draft {
                 count
             };
 
-            // PORT NOTE: Zig's `defer install.scoped = registry_map;` is a shallow
-            // write-back at scope end while later code keeps mutating `registry_map`.
-            // Reshaped for borrowck: the single write-back happens at the bottom of
-            // `load_npmrc` after the registry-configuration block.
+            // The single `install.scoped = registry_map` write-back happens at
+            // the bottom of `load_npmrc` after the registry-configuration
+            // block has finished mutating `registry_map`.
             registry_map.scopes.ensure_unused_capacity(scope_count)?;
 
             iter.prop_idx = 0;
@@ -1608,9 +1590,9 @@ mod draft {
                 break 'out;
             }
 
-            // PORT NOTE: `URL<'a>` borrows its input. The Zig `default_registry_url`
-            // points into `install.default_registry.url` while the loop below
-            // mutates that same field; copy the two fields we compare against so
+            // `URL<'a>` borrows its input; a borrow of
+            // `install.default_registry.url` would conflict with the loop below
+            // mutating that same field. Copy the two fields we compare against so
             // the borrow ends before the `install.default_registry` mutation.
             let (default_registry_host, default_registry_pathname): (Box<[u8]>, Box<[u8]>) = 'brk: {
                 if let Some(dr) = &install.default_registry {
@@ -1637,8 +1619,8 @@ mod draft {
 "#;
             // The line that sets the auth token should only apply to the @myorg scope
             // The line that sets the username would apply to both @myorg and @another
-            let mut url_map = {
-                // PERF(port): was StringArrayHashMap<URL> on parser.arena. `URL<'a>`
+            let url_map = {
+                // `URL<'a>`
                 // borrows `v.url` (inside `registry_map.scopes`), which would alias the
                 // `values_mut()` iteration below. Store the owned URL bytes instead and
                 // re-parse per lookup (URL::parse is a cheap slice scan).
@@ -1749,10 +1731,10 @@ mod draft {
                     }
                 }
 
-                // PORT NOTE: Zig iterated `registry_map.scopes` and looked up `url_map[k]`
-                // by key. In Rust `keys()`/`values_mut()` on the same map alias; since
+                // `keys()`/`values_mut()` on the same map alias; since
                 // `url_map` was filled in lockstep with `registry_map.scopes` (same
-                // ArrayHashMap insertion order), zip its values directly instead.
+                // ArrayHashMap insertion order), zip its values directly instead
+                // of looking each one up by key.
                 for (url_bytes, v) in url_map
                     .values()
                     .iter()
@@ -1808,9 +1790,10 @@ mod draft {
             drop(url_map);
         }
 
-        // TODO(port): Zig's `defer install.scoped = registry_map;` (in the scope-processing
-        // block) writes back the *final* registry_map after the registry-configuration block
-        // mutates it. Mirror that here.
+        // The single write-back happens here, after the registry-config loop
+        // has finished mutating the scope *values* in place. (An
+        // OOM `?` above leaves `install.scoped` as `None`, which is moot — install
+        // aborts on OOM.)
         install.scoped = Some(registry_map);
 
         Ok(())
@@ -1821,7 +1804,7 @@ mod draft {
         PnpmMatcher, create_matcher,
     };
 
-    /// Port of `PnpmMatcher.fromExpr` (src/install/PnpmMatcher.zig) operating on
+    /// `PnpmMatcher.fromExpr` operating on
     /// `bun_ast::Expr` instead of the lower-tier `bun_ast::Expr`.
     ///
     /// `bun_install_types` (T2) cannot depend on `bun_js_parser` (T4),
@@ -2001,5 +1984,3 @@ mod draft {
         Ok(())
     }
 } // mod draft
-
-// ported from: src/ini/ini.zig

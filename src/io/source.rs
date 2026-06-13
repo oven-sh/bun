@@ -1,5 +1,5 @@
 use core::ffi::{c_int, c_void};
-use core::mem::{MaybeUninit, offset_of};
+use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_sys::windows::libuv as uv;
@@ -86,7 +86,7 @@ pub enum FileState {
 
 impl Default for File {
     fn default() -> Self {
-        // PORT NOTE: std.mem.zeroes(File) — hand-written because `state` is an enum field
+        // Hand-written equivalent of zero-initialization because `state` is an enum field
         // (PORTING.md forbids blanket zeroed() over enums). FileState::Deinitialized == 0.
         Self {
             fs: bun_core::ffi::zeroed(),
@@ -256,7 +256,7 @@ impl Source {
     pub fn get_handle(&mut self) -> *mut uv::Handle {
         match self {
             // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_handle_t as their first member.
-            // `&mut self` so the returned `*mut` carries write provenance (Zig: `getHandle` returns `*uv.Handle`).
+            // `&mut self` so the returned `*mut` carries write provenance.
             Source::Pipe(pipe) => core::ptr::from_mut::<Pipe>(pipe.as_mut()).cast(),
             Source::Tty(tty) => tty.as_ptr().cast(),
             Source::SyncFile(_) | Source::File(_) => unreachable!(),
@@ -266,7 +266,7 @@ impl Source {
     pub fn to_stream(&mut self) -> *mut uv::uv_stream_t {
         match self {
             // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_stream_t as their first member.
-            // `&mut self` so the returned `*mut` carries write provenance (Zig: `toStream` returns `*uv.uv_stream_t`).
+            // `&mut self` so the returned `*mut` carries write provenance.
             Source::Pipe(pipe) => core::ptr::from_mut::<Pipe>(pipe.as_mut()).cast(),
             Source::Tty(tty) => tty.as_ptr().cast(),
             Source::SyncFile(_) | Source::File(_) => unreachable!(),
@@ -327,7 +327,7 @@ impl Source {
     pub fn open_pipe(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Box<Pipe>> {
         bun_core::scoped_log!(PipeSource, "openPipe (fd = {})", fd);
         let mut pipe: Box<Pipe> = Box::new(bun_core::ffi::zeroed::<Pipe>());
-        // we should never init using IPC here see ipc.zig
+        // we should never init using IPC here
         if let Some(err) = pipe.init(loop_, false).to_error(bun_sys::Tag::pipe) {
             drop(pipe);
             return bun_sys::Result::Err(err);
@@ -406,7 +406,7 @@ impl Source {
         }
     }
 
-    /// Direct accessor for the `File`/`SyncFile` arm (Zig: `source.file`).
+    /// Direct accessor for the `File`/`SyncFile` arm.
     /// Panics on Pipe/Tty — callers gate on `matches!(.., File | SyncFile)`.
     pub fn file(&self) -> &File {
         match self {
@@ -435,7 +435,6 @@ impl Source {
                 errno: bun_sys::E::NOTSUP as _,
                 syscall: bun_sys::Tag::uv_tty_set_mode,
                 fd: self.get_fd(),
-                // TODO(port): bun_sys::Error remaining fields default
                 ..Default::default()
             }),
         }
@@ -453,16 +452,15 @@ pub mod stdin_tty {
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
     #[inline]
-    pub fn value() -> *mut uv::uv_tty_t {
+    pub(crate) fn value() -> *mut uv::uv_tty_t {
         DATA.get().cast::<uv::uv_tty_t>()
     }
 
-    pub fn is_stdin_tty(tty: *const Tty) -> bool {
+    pub(crate) fn is_stdin_tty(tty: *const Tty) -> bool {
         core::ptr::eq(tty, value())
     }
 
     pub(super) fn get_stdin_tty(loop_: *mut uv::Loop) -> bun_sys::Result<bun_ptr::BackRef<Tty>> {
-        // Zig spec (source.zig:247-248): `lock.lock(); defer lock.unlock();`
         // bun_threading::Mutex::lock() returns `()` — must use lock_guard() for RAII
         // unlock-on-drop, otherwise the mutex is held forever and the next call
         // (e.g. Source__setRawModeStdin → open_tty(stdin)) deadlocks/UB-relocks.
@@ -484,12 +482,11 @@ pub mod stdin_tty {
     }
 }
 
-/// Zig spec (source.zig:357) calls `bun.jsc.VirtualMachine.get().uvLoop()` directly,
-/// which is a T6 dependency. PORTING.md §Forbidden bans dep-cycle fn-ptr hooks, so
-/// the uv loop is taken as a parameter instead; the C++ caller
+/// The uv loop is taken as a parameter (reading it from the VM directly would
+/// be a T6 dependency); the C++ caller
 /// (`ProcessBindingTTYWrap.cpp`) supplies `defaultGlobalObject()->uvLoop()`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_int {
+pub(crate) extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_int {
     let mut tty = match Source::open_tty(uv_loop, Fd::stdin()) {
         bun_sys::Result::Ok(tty) => tty,
         bun_sys::Result::Err(e) => return e.errno as c_int,
@@ -515,5 +512,3 @@ pub extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> 
     }
     0
 }
-
-// ported from: src/io/source.zig

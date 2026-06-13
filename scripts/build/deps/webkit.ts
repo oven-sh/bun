@@ -3,11 +3,13 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-// oven-sh/WebKit main: macOS + Windows artifacts cross-compiled on Linux,
-// -lto variants built with ThinLTO (per-module summaries for cross-language
-// importing), and the Windows ICU data table filtered + per-item zstd
-// compressed (lazily decompressed via bun_icu_decompress.cpp).
-export const WEBKIT_VERSION = "6d586e293f008f0e74e5697611a379b1b24815c9";
+// Preview autobuild of oven-sh/WebKit#235 rebased on current main —
+// the ucontext-SP fix for JSC's signalHandlerSuspendResume (so the GC
+// thread-suspend signal works under SA_ONSTACK, e.g. Go cgo's initsig,
+// instead of spinning forever). Rebased on 6d586e293f (current main's
+// pin) so JSC/ICU ABI and the LTO-variant asset set match. Swap back to
+// the merged hash once #235 lands.
+export const WEBKIT_VERSION = "autobuild-preview-pr-235-e478893a";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

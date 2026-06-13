@@ -85,9 +85,20 @@ enum {
   /* Three first bits */
   POLL_TYPE_SOCKET = 0,
   POLL_TYPE_SOCKET_SHUT_DOWN = 1,
+  /* Connecting client socket. Polls for WRITABLE until connect completes,
+   * then is promoted to POLL_TYPE_SOCKET in us_internal_socket_after_open. */
   POLL_TYPE_SEMI_SOCKET = 2,
   POLL_TYPE_CALLBACK = 3,
   POLL_TYPE_UDP = 4,
+  /* Listen socket (server-side accept loop). Polls for READABLE; a ready
+   * event = an incoming connection to accept(). Distinct from
+   * POLL_TYPE_SEMI_SOCKET so the dispatcher never confuses the two: a
+   * SEMI_SOCKET whose polling switches away from WRITABLE (paused
+   * connecting socket, pre-promotion read of a peer FIN, etc.) was
+   * previously misrouted into the accept-loop branch, calling accept(2)
+   * on a connected client FD in a tight kqueue level-trigger loop.
+   * See packages/bun-usockets/src/loop.c::us_internal_dispatch_ready_poll. */
+  POLL_TYPE_LISTEN_SOCKET = 5,
 
   /* Two last bits */
   POLL_TYPE_POLLING_OUT = 8,

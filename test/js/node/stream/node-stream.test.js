@@ -386,6 +386,31 @@ it("Readable.fromWeb", async () => {
   expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
 });
 
+// https://github.com/oven-sh/bun/issues/30939
+// Multiple queued writes on a Transform.fromWeb stream trigger _writev, which
+// internally calls SafePromiseAll. Promise.all must be bound in primordials;
+// otherwise this throws "TypeError: |this| is not an object".
+it("Transform.fromWeb _writev does not throw on buffered writes", async () => {
+  const s = Transform.fromWeb(new TransformStream());
+  const chunks = [];
+  s.on("data", chunk => chunks.push(chunk));
+  const { promise, resolve, reject } = Promise.withResolvers();
+  s.on("end", resolve);
+  s.on("error", reject);
+
+  // Five synchronous writes force the writable side to queue and coalesce
+  // into a single _writev call.
+  s.write(Buffer.from("hello"));
+  s.write(Buffer.from("hello"));
+  s.write(Buffer.from("hello"));
+  s.write(Buffer.from("hello"));
+  s.write(Buffer.from("hello"));
+  s.end();
+
+  await promise;
+  expect(Buffer.concat(chunks).toString()).toBe("hellohellohellohellohello");
+});
+
 it("#9242.5 Stream has constructor", () => {
   const s = new Stream({});
   expect(s.constructor).toBe(Stream);

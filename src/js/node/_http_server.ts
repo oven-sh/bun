@@ -5,6 +5,7 @@ const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   validateHeaderName,
   validateHeaderValue,
+  continueExpression,
 } = require("node:_http_common");
 const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
 const { ConnResetException } = require("internal/shared");
@@ -631,7 +632,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             }
           }
         } else if (http_req.headers.expect !== undefined) {
-          if (http_req.headers.expect === "100-continue") {
+          // RFC 7231 §5.1.1: expectation-name is a case-insensitive token.
+          // Match Node.js upstream which uses continueExpression.test(...).
+          if (continueExpression.test(http_req.headers.expect)) {
             if (server.listenerCount("checkContinue") > 0) {
               server.emit("checkContinue", http_req, http_res);
             } else {

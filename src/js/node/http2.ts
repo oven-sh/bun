@@ -29,6 +29,7 @@
 const { isTypedArray } = require("node:util/types");
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const { STATUS_CODES } = require("internal/http");
+const { continueExpression } = require("node:_http_common");
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -1144,7 +1145,8 @@ function onServerStream(Http2ServerRequest, Http2ServerResponse, stream, headers
 
   // Check for Expectations
   if (headers.expect !== undefined) {
-    if (headers.expect === "100-continue") {
+    // RFC 7231 §5.1.1: expectation-name is a case-insensitive token.
+    if (continueExpression.test(headers.expect)) {
       if (server.listenerCount("checkContinue")) {
         server.emit("checkContinue", request, response);
       } else {

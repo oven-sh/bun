@@ -21,9 +21,24 @@
 /* Various common utilities */
 
 #include <cstdint>
+#include <string_view>
 
 namespace uWS {
 namespace utils {
+
+/* ASCII case-insensitive equality for header token matching (RFC 7230 §3.2.6).
+ * Only the 26 ASCII letters are folded; all other bytes compare as-is. */
+inline bool asciiIEquals(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); i++) {
+        unsigned char ca = (unsigned char) a[i];
+        unsigned char cb = (unsigned char) b[i];
+        if (ca >= 'A' && ca <= 'Z') ca = (unsigned char) (ca + ('a' - 'A'));
+        if (cb >= 'A' && cb <= 'Z') cb = (unsigned char) (cb + ('a' - 'A'));
+        if (ca != cb) return false;
+    }
+    return true;
+}
 
 inline int u32toaHex(uint32_t value, char *dst) {
     char palette[] = "0123456789abcdef";

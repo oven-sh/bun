@@ -68,6 +68,20 @@ test("Bun.TOML.parse normalizes literal CRLF to LF in multiline basic strings", 
   expect(Bun.TOML.parse(input).k).toBe("a\nb\tc");
 });
 
+// https://github.com/oven-sh/bun/issues/32025
+// An unterminated `\u{` escape (the string body ends before the closing `}`)
+// fell out of the decoder's variable-length digit loop at end of input and
+// silently decoded the accumulated value instead of raising a syntax error.
+test("Bun.TOML.parse rejects an unterminated \\u{ escape (#32025)", () => {
+  expect(() => Bun.TOML.parse('key = "\\u{41"')).toThrow("Syntax Error");
+  expect(() => Bun.TOML.parse('key = "\\u{"')).toThrow("Syntax Error");
+  expect(() => Bun.TOML.parse('key = """\\u{41"""')).toThrow("Syntax Error");
+
+  // Terminated \u{...} escapes (a Bun extension) still decode.
+  expect(Bun.TOML.parse('key = "\\u{41}"')).toEqual({ key: "A" });
+  expect(Bun.TOML.parse('key = """\\u{41}"""')).toEqual({ key: "A" });
+});
+
 // https://github.com/oven-sh/bun/issues/31252
 // `Lexer::expect` in the TOML lexer logs a mismatch via `add_range_error` and
 // then falls through to `next()` for error recovery, so the parser returned

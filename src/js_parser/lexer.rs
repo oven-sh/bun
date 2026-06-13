@@ -817,7 +817,8 @@ lexer_impl_header! {
                                 let mut is_out_of_range = false;
                                 'variable_length: loop {
                                     if !iterator.next(&mut iter) {
-                                        break 'variable_length;
+                                        // The string ended before the closing `}`.
+                                        return self.syntax_error();
                                     }
                                     c3 = iter.c;
 

@@ -242,6 +242,68 @@ test("Valid unicode escapes in identifiers should work", async () => {
   }
 });
 
+// https://github.com/oven-sh/bun/issues/32025
+// An unterminated `\u{` escape (the string body ends before the closing `}`)
+// fell out of the decoder's variable-length digit loop at end of input and
+// silently decoded the accumulated value instead of raising a syntax error.
+describe("unterminated \\u{ escape is a syntax error (#32025)", () => {
+  const cases = [
+    { name: "double-quoted string", source: 'var a = "\\u{41";' },
+    { name: "single-quoted string", source: "var a = '\\u{41';" },
+    { name: "zero digits before the closing quote", source: 'var a = "\\u{";' },
+    { name: "untagged template literal", source: "var a = `\\u{48`;" },
+    { name: "untagged template literal tail", source: "var a = `${1}\\u{48`;" },
+  ];
+
+  test.each(cases)("$name", ({ source }) => {
+    using dir = tempDir("unterminated-u-brace", { "test.js": source });
+    const { stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), join(dir, "test.js")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+      cwd: String(dir),
+    });
+
+    expect(stderr.toString()).toContain("Syntax Error");
+    expect(exitCode).toBe(1);
+  });
+
+  // Tagged templates legally contain invalid escape sequences (ES2018): the
+  // cooked value becomes undefined and the raw text is preserved.
+  test("tagged template literal still allows an unterminated \\u{ escape", () => {
+    using dir = tempDir("unterminated-u-brace-tagged", {
+      "test.js": "function tag(s) { return [s[0], s.raw[0]]; } console.log(JSON.stringify(tag`\\u{48`));",
+    });
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), join(dir, "test.js")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+      cwd: String(dir),
+    });
+
+    expect(stdout.toString()).toBe('[null,"\\\\u{48"]\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test("terminated \\u{} escapes still decode", () => {
+    using dir = tempDir("terminated-u-brace", {
+      "test.js": 'console.log("\\u{41}", `\\u{42}`);',
+    });
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), join(dir, "test.js")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+      cwd: String(dir),
+    });
+
+    expect(stdout.toString()).toBe("A B\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/31134
 // Invalid escape-sequence diagnostics in `decode_escape_sequences` reported
 // caret locations at text-relative offsets instead of absolute source

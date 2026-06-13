@@ -103,6 +103,12 @@ impl Yes {
             let chunk = &yes.buffer[..yes.buffer_used];
             let mut err = None;
             for _ in 0..4 {
+                // Zero-copy path bypasses `Builtin::write_no_io`, so the
+                // sandbox output accounting happens here.
+                if let Err(e) = interp.sandbox_count_output(chunk.len()) {
+                    err = Some(e);
+                    break;
+                }
                 // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd.
                 if let Err(e) = unsafe { stdout.write_no_io_to(shell, chunk) } {
                     err = Some(e);

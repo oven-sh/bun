@@ -25,6 +25,10 @@ export default [
         fn: "setQuiet",
         length: 1,
       },
+      setSandbox: {
+        fn: "setSandbox",
+        length: 1,
+      },
     },
   }),
 ];

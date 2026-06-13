@@ -42,6 +42,7 @@ pub mod io_reader;
 pub mod io_writer;
 #[path = "ParsedShellScript.rs"]
 pub mod parsed_shell_script;
+pub mod sandbox;
 #[path = "Yield.rs"]
 pub mod yield_;
 
@@ -122,6 +123,7 @@ pub use interpreter::{ExitCode, Interpreter, Node, NodeId, ShellExecEnv};
 pub use io::IO;
 pub use io_writer as IOWriter;
 pub use ref_counted_str::RefCountedStr;
+pub use sandbox::{SandboxAccess, SandboxFault, SandboxPolicy};
 pub use yield_::Yield;
 
 /// Forward-decl task payloads for `runtime::dispatch::run_task` arms whose

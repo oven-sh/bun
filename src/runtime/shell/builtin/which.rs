@@ -51,7 +51,7 @@ impl Which {
             let mut had_not_found = false;
             for i in 0..argc {
                 let arg = Self::arg(interp, cmd, i);
-                match Self::resolve(&path_env, &cwd, &arg) {
+                match Self::resolve(interp, &path_env, &cwd, &arg) {
                     Some(resolved) => {
                         let buf = Builtin::fmt_error_arena(
                             interp,
@@ -102,7 +102,7 @@ impl Which {
 
         let arg = Self::arg(interp, cmd, arg_idx);
         let (path_env, cwd) = Self::path_and_cwd(interp, cmd);
-        let resolved = Self::resolve(&path_env, &cwd, &arg);
+        let resolved = Self::resolve(interp, &path_env, &cwd, &arg);
 
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
         match resolved {
@@ -212,7 +212,20 @@ impl Which {
         Builtin::of(interp, cmd).arg_bytes(idx).to_vec()
     }
 
-    fn resolve(path_env: &[u8], cwd: &[u8], arg: &[u8]) -> Option<Vec<u8>> {
+    fn resolve(interp: &Interpreter, path_env: &[u8], cwd: &[u8], arg: &[u8]) -> Option<Vec<u8>> {
+        // Sandboxed shells never probe PATH (external binaries cannot run and
+        // stat'ing PATH entries would leak what exists on the host): the only
+        // resolvable commands are the policy-permitted builtins.
+        if let Some(policy) = interp.sandbox() {
+            use crate::shell::builtin::Kind;
+            return Kind::from_argv0(arg)
+                .filter(|kind| policy.builtin_allowed(*kind))
+                .map(|_| {
+                    let mut out = arg.to_vec();
+                    out.extend_from_slice(b": shell builtin");
+                    out
+                });
+        }
         let mut path_buf = bun_paths::path_buffer_pool::get();
         bun_which::which(&mut *path_buf, path_env, cwd, arg).map(|z| z.as_bytes().to_vec())
     }

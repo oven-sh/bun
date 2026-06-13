@@ -432,6 +432,31 @@ impl Expansion {
             pattern = Self::neutralize_glob_metachars(&me.current_out, &me.meta_offsets);
             cwd = me.base.shell().cwd().to_vec();
         }
+        if let Some(policy) = interp.sandbox() {
+            // The walker's literal root is everything before the first glob
+            // metachar (escaped literals were neutralized into `[x]` classes
+            // above, so cutting at `[`/`*`/`?`/`{` matches the walker's own
+            // root). Traversal below the root never follows symlinks
+            // (`follow_symlinks = false` in the init call), so a readable
+            // root keeps enumeration inside the policy.
+            let root = glob_literal_root(&pattern);
+            let denied = match root {
+                Some(root) => {
+                    !policy.check_path(&cwd, root, crate::shell::sandbox::SandboxAccess::Read)
+                }
+                // Pattern has no literal directory prefix: the walk starts
+                // at the shell cwd.
+                None => !policy.check_path(&cwd, b".", crate::shell::sandbox::SandboxAccess::Read),
+            };
+            if denied {
+                let mut msg = Vec::new();
+                msg.extend_from_slice(&pattern);
+                msg.extend_from_slice(b": read access not permitted in sandbox");
+                interp.as_expansion_mut(this).state =
+                    ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_boxed_slice())));
+                return Yield::Next(this);
+            }
+        }
         let walker = match bun_glob::BunGlobWalkerZ::init_with_cwd(
             &pattern, &cwd, false, false, false, false, false, None,
         ) {
@@ -738,4 +763,24 @@ impl Expansion {
         out.has_quoted_empty = me.has_quoted_empty;
         out
     }
+}
+
+/// Longest literal directory prefix of a glob pattern: everything before the
+/// first glob metachar, truncated to the last path separator. `None` when the
+/// pattern has no literal directory part (walk starts at the cwd).
+fn glob_literal_root(pattern: &[u8]) -> Option<&[u8]> {
+    let meta = pattern
+        .iter()
+        .position(|&c| matches!(c, b'*' | b'?' | b'[' | b'{'))
+        .unwrap_or(pattern.len());
+    let is_sep = |c: u8| {
+        if cfg!(windows) {
+            c == b'/' || c == b'\\'
+        } else {
+            c == b'/'
+        }
+    };
+    let sep = pattern[..meta].iter().rposition(|&c| is_sep(c))?;
+    // Keep the separator for a bare root (`/*` → `/`).
+    Some(&pattern[..sep.max(1)])
 }

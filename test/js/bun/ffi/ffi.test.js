@@ -1,13 +1,14 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
 import { isGlibcVersionAtLeast } from "harness";
-import { platform } from "os";
+import { freemem, platform } from "os";
 
 import {
   dlopen as _dlopen,
   CFunction,
   CString,
   JSCallback,
+  linkSymbols,
   ptr,
   read,
   suffix,
@@ -675,6 +676,37 @@ it(".ptr is not leaked", () => {
     expect(fn).not.toHaveProperty("ptr");
     expect(fn.ptr).toBeUndefined();
   }
+});
+
+it("FFI functions are not constructors", () => {
+  const cb = new JSCallback(() => 42, {
+    returns: "int32_t",
+    args: [],
+  });
+  try {
+    const lib = linkSymbols({
+      fn: {
+        returns: "int32_t",
+        args: [],
+        ptr: cb.ptr,
+      },
+    });
+    expect(lib.symbols.fn()).toBe(42);
+    // a native construct handler must never return a primitive
+    expect(() => new lib.symbols.fn()).toThrow(TypeError);
+    expect(() => Reflect.construct(lib.symbols.fn, [])).toThrow(TypeError);
+    // non-constructible functions inspect as functions, not classes (#32103)
+    expect(Bun.inspect(lib.symbols.fn)).toBe("[Function: fn]");
+  } finally {
+    cb.close();
+  }
+
+  // runtime functions like the node:os natives are created through
+  // JSFFIFunction::create rather than createForFFI
+  expect(freemem()).toBeGreaterThan(0);
+  expect(() => new freemem()).toThrow(TypeError);
+  expect(() => Reflect.construct(freemem, [])).toThrow(TypeError);
+  expect(Bun.inspect(freemem)).toBe("[Function: freemem]");
 });
 
 const libPath =

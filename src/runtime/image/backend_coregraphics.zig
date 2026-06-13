@@ -28,6 +28,21 @@ extern fn bun_coregraphics_encode(
     out_len: *usize,
 ) i32;
 
+// Read the first-image EXIF/TIFF orientation tag (1..8). ImageIO parses the
+// JPEG APP1/EXIF IFD, the TIFF IFD0, and HEIC `irot`/`imir` transform
+// properties — all mapped to the same 1..8 enum — so one ImageIO call covers
+// every system-backend format. Returns 1 (identity) on any failure to match
+// Sharp's "advisory, never error the decode" treatment. Used by Image.zig's
+// auto-orient gate for containers whose Zig-side EXIF reader doesn't exist
+// (HEIC's EXIF lives inside an ISOBMFF `iloc`/`iinf` item, nothing like the
+// JPEG APP1 walker in exif.zig). (#30235)
+extern fn bun_coregraphics_orientation(bytes: [*]const u8, len: usize) i32;
+
+pub fn orientation(bytes: []const u8) u8 {
+    const raw = bun_coregraphics_orientation(bytes.ptr, bytes.len);
+    return if (raw >= 1 and raw <= 8) @intCast(raw) else 1;
+}
+
 const CG_OK = 0;
 const CG_UNAVAILABLE = 1;
 const CG_DECODE_FAILED = 2;

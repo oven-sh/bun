@@ -1149,16 +1149,82 @@ pub enum URLProto {
     Abstract,
 }
 
+/// Percent-encode bytes that are unsafe in a URL path component.
+/// Matches WTF's filePathEscapeTable so that unix socket paths with
+/// spaces, brackets, etc. round-trip through the URL parser.
+fn url_needs_escape(c: u8, authority: bool) -> bool {
+    match c {
+        0x00..=0x1F
+        | b' '
+        | b'"'
+        | b'#'
+        | b'%'
+        | b'<'
+        | b'>'
+        | b'?'
+        | b'['
+        | b'\\'
+        | b']'
+        | b'^'
+        | b'`'
+        | b'|'
+        | b'~' => true,
+        // In the authority position (abstract sockets), @/:/ are
+        // structural delimiters that must also be percent-encoded.
+        b'/' | b'@' | b':' => authority,
+        _ => c >= 0x7F,
+    }
+}
+
+fn url_write_escaped(f: &mut impl fmt::Write, path: &[u8], authority: bool) -> fmt::Result {
+    let mut remaining = path;
+    while !remaining.is_empty() {
+        let mut safe_len = 0;
+        while safe_len < remaining.len() && !url_needs_escape(remaining[safe_len], authority) {
+            safe_len += 1;
+        }
+        write_bytes(f, &remaining[..safe_len])?;
+        remaining = &remaining[safe_len..];
+        if remaining.is_empty() {
+            break;
+        }
+        write!(f, "%{:02X}", remaining[0])?;
+        remaining = &remaining[1..];
+    }
+    Ok(())
+}
+
 impl Display for URLFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self.proto {
+            URLProto::Unix | URLProto::Abstract => {
+                let is_abstract = self.proto == URLProto::Abstract;
+                f.write_str(if is_abstract {
+                    "abstract://"
+                } else {
+                    "unix://"
+                })?;
+                if let Some(path) = self.hostname {
+                    // Abstract socket names sit in the URL authority, so
+                    // @, :, / must be escaped. Unix paths sit in the URL
+                    // path where / is a legitimate separator.
+                    url_write_escaped(f, path, is_abstract)?;
+                }
+                if is_abstract {
+                    f.write_str("/")?;
+                }
+                return Ok(());
+            }
+            URLProto::Http | URLProto::Https => {}
+        }
+
         write!(
             f,
             "{}://",
-            match self.proto {
-                URLProto::Http => "http",
-                URLProto::Https => "https",
-                URLProto::Unix => "unix",
-                URLProto::Abstract => "abstract",
+            if self.proto == URLProto::Https {
+                "https"
+            } else {
+                "http"
             }
         )?;
 
@@ -1171,10 +1237,6 @@ impl Display for URLFormatter<'_> {
             }
         } else {
             f.write_str("localhost")?;
-        }
-
-        if self.proto == URLProto::Unix {
-            return Ok(());
         }
 
         let is_port_optional = self.port.is_none()

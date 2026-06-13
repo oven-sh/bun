@@ -276,37 +276,50 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     return release;
 }
 
-// Emit a process lifecycle event through the JS-visible `process.emit` so a user
-// replacement (a monkey-patch, as signal-exit and similar libraries do) observes
-// the event, matching Node, which dispatches `beforeExit`/`exit` via
-// `process.emit`. A full [[Get]] honors own, prototype, and accessor overrides
-// alike. If `process.emit` is not callable (replaced with a non-function), fall
-// back to the internal EventEmitter so lifecycle events still fire instead of
-// throwing at shutdown.
+// Emit a process lifecycle event. When user code has replaced `process.emit`
+// with a callable own property (a monkey-patch, as signal-exit and similar
+// libraries do), invoke that override so it observes the event, matching Node,
+// which dispatches `beforeExit`/`exit` via `process.emit`. Otherwise emit
+// directly on the internal EventEmitter, which reaches the same listeners and
+// preserves the exact "a listener fired" signal the caller uses to gate the
+// nextTick/microtask drain (routing the common no-override case through the JS
+// emit instead would always report "fired" and drain on every shutdown, which
+// perturbs pending-rejection timing). A `process.emit` replaced with a
+// non-callable value also falls through to the internal emitter so lifecycle
+// events still fire instead of throwing at shutdown.
 //
-// Returns whether the caller should drain the nextTick/microtask queue after the
-// emit: true once a user-visible emit ran (it may have scheduled continuation
-// work), otherwise the internal emitter's "a listener fired" signal. Listener
-// exceptions are reported inside EventEmitter::fireEventListeners; a throwing
-// override leaves a pending exception for the caller to report.
+// Returns whether the caller should drain afterward: the native "a listener
+// fired" signal on the internal path, or true once an override ran (it may have
+// scheduled continuation work). Listener exceptions are reported inside
+// EventEmitter::fireEventListeners; a throwing override leaves a pending
+// exception for the caller to report.
 static bool emitProcessExitEvent(JSC::JSGlobalObject* globalObject, Process* process, ASCIILiteral eventName, int exitCode)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue emit = process->get(globalObject, Identifier::fromString(vm, "emit"_s));
-    RETURN_IF_EXCEPTION(scope, false);
+    JSValue emitOverride = process->getDirect(vm, Identifier::fromString(vm, "emit"_s));
+    if (emitOverride) {
+        // getDirect returns the raw slot, so an `emit` defined as an accessor
+        // (Object.defineProperty) yields a GetterSetter; invoke the getter with a
+        // full [[Get]] to reach the actual function, matching Node.
+        if (emitOverride.isGetterSetter() || emitOverride.isCustomGetterSetter()) [[unlikely]] {
+            emitOverride = process->get(globalObject, Identifier::fromString(vm, "emit"_s));
+            RETURN_IF_EXCEPTION(scope, false);
+        }
 
-    auto callData = JSC::getCallData(emit);
-    if (callData.type != CallData::Type::None) {
-        MarkedArgumentBuffer arguments;
-        arguments.append(jsString(vm, String(eventName)));
-        arguments.append(jsNumber(exitCode));
-        ASSERT(!arguments.hasOverflowed());
+        auto callData = JSC::getCallData(emitOverride);
+        if (callData.type != CallData::Type::None) {
+            MarkedArgumentBuffer arguments;
+            arguments.append(jsString(vm, String(eventName)));
+            arguments.append(jsNumber(exitCode));
+            ASSERT(!arguments.hasOverflowed());
 
-        JSC::call(globalObject, emit, callData, process, arguments);
-        RETURN_IF_EXCEPTION(scope, false);
-        return true;
+            JSC::call(globalObject, emitOverride, callData, process, arguments);
+            RETURN_IF_EXCEPTION(scope, false);
+            return true;
+        }
+        // A non-callable override falls through to the internal emitter.
     }
 
     MarkedArgumentBuffer arguments;

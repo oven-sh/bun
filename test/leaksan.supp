@@ -121,3 +121,10 @@ leak:WebCore::jsSQLStatementOpenStatementFunction
 # is called before firing (WaiterListManager::clearTimer on notify/unregister),
 # the DispatchTimer and its Bun-side WTFTimer Box leak. JSC-owned ref-cycle.
 leak:WTF::RunLoop::dispatchAfter
+# AsyncHTTP::send_sync wraps the response metadata in ManuallyDrop (the
+# returned Response<'static> borrows into metadata.owned_buf; Zig's sendSync
+# never deinit'd it either — "one-shot CLI"). clone_metadata allocates the
+# header buffer via heap::release (= Box::leak). Callers that keep the
+# Response on the stack until exit stay reachable; callers that drop it
+# (bun_sigstore::http_json) surface the leak here. Bounded: ≤3 per publish.
+leak:HTTPClient>::clone_metadata

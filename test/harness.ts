@@ -8,7 +8,7 @@
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
-import { ChildProcess, execSync, fork } from "child_process";
+import { ChildProcess, fork } from "child_process";
 import { readdir, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
@@ -890,12 +890,31 @@ export function dockerExe(): string | null {
   return which("docker") || which("podman") || null;
 }
 
+// CI agents where container-backed tests are expected to run. If Docker is
+// missing or its daemon isn't running on one of these, we fail loudly instead
+// of silently skipping (see `requireDockerInCI` below). Linux arm64 is
+// excluded on purpose — Docker tests don't currently work there (see below).
+function dockerIsRequiredInCI(): boolean {
+  if (!isCI) return false;
+  if (isLinux && process.arch === "arm64") return false;
+  return isLinux || isMacOS;
+}
+
+function requireDockerInCI(reason: string): void {
+  if (dockerIsRequiredInCI()) {
+    throw new Error(
+      `A functional \`docker\` is required in CI for container-backed tests, but ${reason}. ` +
+        `Install Docker and make sure its daemon is running on this CI agent, ` +
+        `or these tests will be silently skipped. ` +
+        `(platform=${process.platform} arch=${process.arch})`,
+    );
+  }
+}
+
 export function isDockerEnabled(): boolean {
   const dockerCLI = dockerExe();
   if (!dockerCLI) {
-    if (isCI && isLinux) {
-      throw new Error("A functional `docker` is required in CI for some tests.");
-    }
+    requireDockerInCI("no `docker` (or `podman`) executable was found on PATH");
     return false;
   }
 
@@ -904,15 +923,35 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 
+  // `dockerExe()` accepts podman as well as docker, and the two report
+  // readiness differently: docker needs a running daemon (surfaced as a
+  // `Server Version:` line in `docker info`), whereas podman is daemonless, so
+  // a successful `podman info` is itself the readiness signal.
+  const isPodman = /(^|\/)podman(\.exe)?$/i.test(dockerCLI);
+  const cliName = isPodman ? "podman" : "docker";
+
+  // Keep `infoOutput` outside the try: a throw from `requireDockerInCI` for the
+  // "exited 0 but no Server Version" case must not be swallowed by the catch
+  // (which would re-throw with the wrong "not reachable" reason).
+  // Use spawnSync with an argument array (not execSync with a shell string) to
+  // match the rest of this file and avoid any shell interpretation of the path.
+  let infoOutput: string;
   try {
-    const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
-    return info.toString().indexOf("Server Version:") !== -1;
-  } catch {
-    if (isCI && isLinux) {
-      throw new Error("A functional `docker` is required in CI for some tests.");
+    const result = Bun.spawnSync({ cmd: [dockerCLI, "info"], stdout: "pipe", stderr: "inherit" });
+    if (!result.success) {
+      throw new Error(`\`${cliName} info\` exited non-zero`);
     }
+    infoOutput = result.stdout.toString();
+  } catch {
+    requireDockerInCI(`\`${cliName} info\` failed, so the container runtime is not reachable`);
     return false;
   }
+
+  if (isPodman || infoOutput.indexOf("Server Version:") !== -1) {
+    return true;
+  }
+  requireDockerInCI("`docker info` did not report a running daemon (`Server Version:`)");
+  return false;
 }
 export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
   let deadline = Date.now() + Math.max(1, timeout);

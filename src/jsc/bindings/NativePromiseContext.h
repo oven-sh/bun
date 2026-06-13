@@ -45,6 +45,8 @@ public:
         BodyValueBufferer,
         HTTPSServerH3RequestContext,
         DebugHTTPSServerH3RequestContext,
+        HTTPSServerH2RequestContext,
+        DebugHTTPSServerH2RequestContext,
     };
 
     static NativePromiseContext* create(JSC::VM& vm, JSC::Structure* structure, void* ctx, Tag tag);

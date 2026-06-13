@@ -598,6 +598,26 @@ ZIG_DECL void H3ResponseSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__write);
 #endif
 
+CPP_DECL JSC::EncodedJSValue H2ResponseSink__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, void* arg2, void** arg3);
+CPP_DECL JSC::EncodedJSValue H2ResponseSink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
+CPP_DECL void H2ResponseSink__detachPtr(JSC::EncodedJSValue JSValue0);
+CPP_DECL void* H2ResponseSink__fromJS(JSC::EncodedJSValue JSValue1);
+CPP_DECL void H2ResponseSink__onClose(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1);
+CPP_DECL void H2ResponseSink__onReady(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::EncodedJSValue JSValue2);
+
+#ifdef __cplusplus
+
+ZIG_DECL JSC::EncodedJSValue H2ResponseSink__close(JSC::JSGlobalObject* arg0, void* arg1);
+BUN_DECLARE_HOST_FUNCTION(H2ResponseSink__construct);
+BUN_DECLARE_HOST_FUNCTION(H2ResponseSink__end);
+ZIG_DECL JSC::EncodedJSValue SYSV_ABI SYSV_ABI H2ResponseSink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
+ZIG_DECL void H2ResponseSink__finalize(void* arg0);
+BUN_DECLARE_HOST_FUNCTION(H2ResponseSink__flush);
+BUN_DECLARE_HOST_FUNCTION(H2ResponseSink__start);
+ZIG_DECL void H2ResponseSink__updateRef(void* arg0, bool arg1);
+BUN_DECLARE_HOST_FUNCTION(H2ResponseSink__write);
+#endif
+
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);
@@ -738,6 +758,15 @@ BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onResolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onReject);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onRejectStream);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH2__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH2__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH2__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH2__onRejectStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH2__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH2__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH2__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH2__onRejectStream);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onRejectStream);

@@ -138,7 +138,7 @@ fn writeStatusCode(_: *FileRoute, status: u16, resp: AnyResponse) void {
     switch (resp) {
         .SSL => |r| writeStatus(true, r, status),
         .TCP => |r| writeStatus(false, r, status),
-        .H3 => |r| {
+        inline .H3, .H2 => |r| {
             var b: [16]u8 = undefined;
             r.writeStatus(std.fmt.bufPrint(&b, "{d}", .{status}) catch unreachable);
         },

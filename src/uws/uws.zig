@@ -43,6 +43,7 @@ pub const State = @import("../uws_sys/Response.zig").State;
 pub const Loop = @import("../uws_sys/Loop.zig").Loop;
 pub const udp = @import("../uws_sys/udp.zig");
 pub const BodyReaderMixin = @import("../uws_sys/BodyReaderMixin.zig").BodyReaderMixin;
+pub const H2 = @import("../uws_sys/h2.zig");
 pub const H3 = @import("../uws_sys/h3.zig");
 pub const quic = @import("../uws_sys/quic.zig");
 
@@ -52,6 +53,7 @@ pub const ResponseKind = enum(i32) {
     tcp = 0,
     ssl = 1,
     h3 = 2,
+    h2 = 3,
 
     pub fn from(comptime ssl: bool, comptime http3: bool) ResponseKind {
         return if (http3) .h3 else if (ssl) .ssl else .tcp;

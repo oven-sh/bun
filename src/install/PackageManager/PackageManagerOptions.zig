@@ -56,6 +56,7 @@ ca_file_name: string = &.{},
 save_text_lockfile: ?bool = null,
 
 lockfile_only: bool = false,
+no_save_package_json: bool = false,
 
 // `bun pm version` command options
 git_tag_version: bool = true,
@@ -499,9 +500,11 @@ pub fn load(
             this.scope.token = cli.token;
         }
 
-        if (cli.no_save) {
-            this.do.save_lockfile = false;
+        if (cli.no_save or cli.no_save_package_json) {
             this.do.write_package_json = false;
+            if (cli.no_save) {
+                this.do.save_lockfile = false;
+            }
         }
 
         if (cli.dry_run) {
@@ -561,6 +564,7 @@ pub fn load(
         }
 
         this.lockfile_only = cli.lockfile_only;
+        this.no_save_package_json = cli.no_save_package_json;
 
         if (cli.lockfile_only) {
             this.do.prefetch_resolved_tarballs = false;

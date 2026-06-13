@@ -121,6 +121,10 @@ export default [
         fn: "getNextStream",
         length: 0,
       },
+      sendPushPromise: {
+        fn: "sendPushPromise",
+        length: 3,
+      },
     },
     finalize: true,
     construct: true,

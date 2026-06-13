@@ -209,7 +209,8 @@ pub struct VirtualMachine {
 
     pub is_printing_plugin: bool,
     pub is_shutting_down: bool,
-    /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
+    /// Set once `run_cleanup_hooks()` (called from `on_exit()` and
+    /// `global_exit()`) has finished draining `RareData::cleanup_hooks`.
     /// After this point the cleanup-hook list is never iterated again, so
     /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
     /// the final `collectNow()` in `Zig__GlobalObject__destructOnExit`) would
@@ -372,6 +373,10 @@ unsafe extern "C" {
     safe fn Bun__closeAllSQLiteDatabasesForTermination();
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
+    /// Makes `NapiEnv::cleanup()` run only the explicit env cleanup hooks,
+    /// skipping pending `napi_wrap` finalizers (src/jsc/bindings/napi.cpp).
+    /// Sets a process-global flag; no preconditions.
+    safe fn napi_internal_set_cleanup_hooks_only();
 }
 
 pub const HOT_RELOAD_HOT: u8 = 1;
@@ -1481,7 +1486,16 @@ impl VirtualMachine {
 
         ExitHandler::dispatch_on_exit(self);
         self.is_shutting_down = true;
+        self.run_cleanup_hooks();
+    }
 
+    /// Drain `RareData::cleanup_hooks` and set `has_run_cleanup_hooks`.
+    /// Every `NapiEnv` registers its at-exit cleanup on this list (env
+    /// cleanup hooks + pending `napi_wrap` finalizers), so it must run while
+    /// JSC and the global are still fully alive. Idempotent: the drained
+    /// list stays empty and the flag makes later `NapiFinalizerTask`s drop
+    /// instead of re-registering.
+    fn run_cleanup_hooks(&mut self) {
         // Make sure we run new cleanup hooks introduced by running cleanup
         // hooks.
         // Note: each iteration re-fetches `rare_data` so the FFI hook
@@ -1505,6 +1519,24 @@ impl VirtualMachine {
 
     pub fn global_exit(&mut self) -> ! {
         debug_assert!(self.is_shutting_down());
+        // Exit paths that never go through `on_exit()` (the test runner and
+        // its --parallel workers jump straight here) must still drain the
+        // cleanup hooks. Skipping the drain means napi env cleanup hooks
+        // never run, and it leaves `has_run_cleanup_hooks` false, so
+        // `NapiFinalizerTask::schedule()` parks every finalizer deferred by
+        // `destructOnExit`'s final collection on a list that is never walked
+        // again (an LSAN-visible leak of the task boxes). No-op when
+        // `on_exit()` already ran.
+        //
+        // Unlike `on_exit()`, these paths reach here without draining the
+        // event loop, so addons may still have queued async work; running
+        // their pending `napi_wrap` finalizers now could tear down wraps
+        // that the abandoned work still references (see `NapiEnv::cleanup`).
+        // Restrict the napi env cleanup to the explicit cleanup hooks.
+        if !self.has_run_cleanup_hooks() {
+            napi_internal_set_cleanup_hooks_only();
+        }
+        self.run_cleanup_hooks();
         // FIXME: we should be doing this, but we're not, but unfortunately
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();

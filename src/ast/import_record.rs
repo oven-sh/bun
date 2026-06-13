@@ -101,9 +101,10 @@ bitflags::bitflags! {
         const WRAP_WITH_TO_ESM = 1 << 13;
         const WRAP_WITH_TO_COMMONJS = 1 << 14;
 
-        /// "import defer * as ns from 'path'" — defer evaluation of the
-        /// imported module until a property on the namespace object is
-        /// accessed. Requires `CONTAINS_IMPORT_STAR`.
+        /// "import defer * as ns from 'path'" (kind `Stmt`, requires
+        /// `CONTAINS_IMPORT_STAR`) or "import.defer('path')" (kind `Dynamic`)
+        /// — defer evaluation of the imported module until a property on the
+        /// namespace object is accessed.
         const PHASE_DEFER = 1 << 15;
     }
 }

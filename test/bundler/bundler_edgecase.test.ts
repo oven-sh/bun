@@ -2541,6 +2541,77 @@ describe("bundler", () => {
       `);
     },
   });
+  // Dynamic `import.defer()` (TC39 deferred module evaluation). When the
+  // target module is inlined into the bundle, the defer phase is dropped —
+  // same documented limitation as static `import defer` — and it behaves
+  // like a regular dynamic import.
+  itBundled("edgecase/DynamicImportDeferBundled", {
+    files: {
+      "/entry.js": /* js */ `
+        const ns = await import.defer("./dep.js");
+        console.log("after import");
+        console.log("value:", ns.value);
+      `,
+      "/dep.js": /* js */ `
+        console.log("dep evaluated");
+        export const value = 42;
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: "dep evaluated\nafter import\nvalue: 42",
+    },
+  });
+  // When the target stays external, the defer phase must be preserved in the
+  // emitted code so the runtime can still defer evaluation.
+  itBundled("edgecase/DynamicImportDeferExternal", {
+    files: {
+      "/entry.js": /* js */ `
+        export async function load() {
+          const ns = await import.defer("x-external");
+          return ns.value;
+        }
+        export function loadComputed(name) {
+          return import.defer(name);
+        }
+      `,
+    },
+    external: ["x-external"],
+    target: "bun",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('import.defer("x-external")');
+      expect(out).toContain("import.defer(name)");
+    },
+  });
+  // With code splitting, a deferred dynamic import of a CommonJS module needs
+  // the `__toESM` interop wrapper, whose `.then((m) => __toESM(m.default))`
+  // callback touches the namespace immediately. Emitting `import.defer()`
+  // there would be pointless (it would be defeated on the same line), so the
+  // defer phase is dropped and a regular dynamic import is emitted.
+  itBundled("edgecase/DynamicImportDeferSplittingCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        const ns = await import.defer("./dep.cjs");
+        console.log("value:", ns.default.value);
+      `,
+      "/dep.cjs": /* js */ `
+        module.exports = { value: 7 };
+      `,
+    },
+    splitting: true,
+    outdir: "/out",
+    target: "bun",
+    onAfterBundle(api) {
+      const out = api.readFile("/out/entry.js");
+      expect(out).toContain("__toESM(");
+      expect(out).not.toContain("import.defer(");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "value: 7",
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

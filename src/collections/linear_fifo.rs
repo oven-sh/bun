@@ -24,20 +24,46 @@ pub enum LinearFifoBufferType {
     Dynamic,
 }
 
+/// Element types where any initialized bit pattern is a valid value (integers,
+/// raw pointers). Bounds the [`LinearFifo::writable_slice`] family, which
+/// exposes not-yet-written slots as `&mut [T]`; callers must still write a
+/// slot before anything reads it. Other `T` (enums, `NonNull`-bearing structs)
+/// must go through `write_item` / `write_item_assume_capacity`.
+///
+/// # Safety
+///
+/// Implementors assert every initialized bit pattern is a valid `T`.
+pub unsafe trait AnyBitPattern: Copy {}
+
+macro_rules! impl_any_bit_pattern {
+    ($($T:ty),* $(,)?) => {$(
+        // SAFETY: primitive integers have no validity invariant.
+        unsafe impl AnyBitPattern for $T {}
+    )*};
+}
+impl_any_bit_pattern!(u8, i8, u16, i16, u32, i32, u64, i64, usize, isize);
+// SAFETY: raw pointers have no validity invariant (dereferencing is a separate contract).
+unsafe impl<T> AnyBitPattern for *mut T {}
+// SAFETY: same as `*mut T`.
+unsafe impl<T> AnyBitPattern for *const T {}
+
 /// Backing-storage abstraction; `DYNAMIC` is true for the `.Dynamic` variant.
 // Trait + assoc-consts encode the structurally different layouts per
 // variant. No in-tree caller
 // instantiates `SliceBuffer` directly; `threading::Channel::init_slice` wraps
 // it for `.Slice` API parity.
+//
+// Accessors expose `MaybeUninit<T>`, never `&[T]`: only the `LinearFifo` core
+// knows which subranges are logically written, and it alone assume-inits them.
 pub trait LinearFifoBuffer<T> {
     const POWERS_OF_TWO: bool;
     const DYNAMIC: bool;
 
-    fn as_slice(&self) -> &[T];
-    fn as_mut_slice(&mut self) -> &mut [T];
+    fn as_uninit_slice(&self) -> &[MaybeUninit<T>];
+    fn as_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<T>];
     #[inline]
     fn len(&self) -> usize {
-        self.as_slice().len()
+        self.as_uninit_slice().len()
     }
 
     /// Reallocate to exactly `new_size` elements, preserving the prefix.
@@ -53,36 +79,47 @@ pub trait LinearFifoBuffer<T> {
     }
 }
 
-/// Reinterpret `&[MaybeUninit<T>]` as `&[T]`. `MaybeUninit<T>` has identical
-/// layout to `T`; exposing uninitialized bytes as `T` is sound only when any
-/// bit pattern is a valid `T`. NOT every in-tree element type satisfies this:
-/// besides byte buffers and raw pointers, fifos today store `NonNull`-bearing
-/// enums (`bun_test::RefDataValue`), `JSPromiseStrong`-bearing structs
-/// (`ValkeyCommand::PromisePair`), and the `event_loop::Task` enum — see the
-/// `StaticBuffer` note below for the pending MaybeUninit accessor rework.
-/// Centralises the four per-buffer-kind casts behind one audited block.
+/// Reinterpret a *logically initialized* `&[MaybeUninit<T>]` subrange as
+/// `&[T]`. `MaybeUninit<T>` has identical layout to `T`.
+///
+/// # Safety
+///
+/// Every element of `s` must be initialized, or `T: AnyBitPattern` and the
+/// result used strictly write-before-read (the `writable_slice` contract).
 #[inline(always)]
-fn assume_init_slice<T>(s: &[MaybeUninit<T>]) -> &[T] {
-    // SAFETY: see fn doc.
+unsafe fn assume_init_slice<T>(s: &[MaybeUninit<T>]) -> &[T] {
+    // SAFETY: forwarded to caller — see fn doc.
     unsafe { &*(ptr::from_ref::<[MaybeUninit<T>]>(s) as *const [T]) }
 }
 
 /// Mutable variant of [`assume_init_slice`]. The input borrow is consumed by
 /// the cast, so the returned `&mut [T]` is the sole live reference into the
 /// allocation for its lifetime.
+///
+/// # Safety
+///
+/// Same initialization contract as [`assume_init_slice`].
 #[inline(always)]
-fn assume_init_slice_mut<T>(s: &mut [MaybeUninit<T>]) -> &mut [T] {
-    // SAFETY: see `assume_init_slice`.
+unsafe fn assume_init_slice_mut<T>(s: &mut [MaybeUninit<T>]) -> &mut [T] {
+    // SAFETY: forwarded to caller — see `assume_init_slice`.
     unsafe { &mut *(ptr::from_mut::<[MaybeUninit<T>]>(s) as *mut [T]) }
 }
 
-/// Shift `slice[1..]` down to `slice[0..len-1]` (memmove). Used by
-/// `ordered_remove_item` for the four wrap/non-wrap segment shifts. Not
-/// `slice::copy_within` because that requires `T: Copy`; this fifo permits
-/// move-only `T` (the duplicated tail slot is logically discarded by the
-/// subsequent `count -= 1`).
+/// Copy `src` into the (possibly uninitialized) destination slots,
+/// initializing them. Lengths must match exactly.
 #[inline(always)]
-fn shift_down_one<T>(slice: &mut [T]) {
+fn write_copy<T: Copy>(dst: &mut [MaybeUninit<T>], src: &[T]) {
+    debug_assert_eq!(dst.len(), src.len());
+    // SAFETY: `dst` is a unique borrow so the ranges cannot overlap; lengths are equal.
+    unsafe { ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast::<T>(), src.len()) };
+}
+
+/// Shift `slice[1..]` down to `slice[0..len-1]` (memmove). Used by
+/// `ordered_remove_item`. Operates on raw `MaybeUninit` storage because the
+/// shifted range may include logically-unwritten tail slots; the duplicated
+/// tail slot is discarded by the subsequent `count -= 1`.
+#[inline(always)]
+fn shift_down_one<T>(slice: &mut [MaybeUninit<T>]) {
     if slice.len() <= 1 {
         return;
     }
@@ -93,7 +130,7 @@ fn shift_down_one<T>(slice: &mut [T]) {
 
 #[cfg(debug_assertions)]
 #[inline(always)]
-fn poison<T>(slice: &mut [T], n: usize) {
+fn poison<T>(slice: &mut [MaybeUninit<T>], n: usize) {
     debug_assert!(n <= slice.len());
     // SAFETY: writing 0xAA into the byte representation of `n` slots that are
     // about to be logically discarded; never read as `T` again.
@@ -109,19 +146,6 @@ fn poison<T>(slice: &mut [T], n: usize) {
 // ── .Static ───────────────────────────────────────────────────────────────────
 
 /// `buffer_type == .Static` — inline `[T; N]` storage.
-// INVARIANT: storage is MaybeUninit and exposed as &[T] via pointer cast
-// (`assume_init_slice`). The public API
-// (`writable_slice` hands out `&mut [T]` over not-yet-written slots) bakes in
-// the same exposure for every buffer kind. Sound only for `T` whose
-// any-bit-pattern is valid — and in-tree element types ALREADY violate that:
-// `RefDataValue` (NonNull<DescribeScope> payload), `PromisePair`
-// (JSPromiseStrong), and the `Task` enum are stored in fifos today, so
-// materialising `&[T]` over uninitialized slots for those types is latent UB.
-// The fix is reworking the accessors to operate on `&[MaybeUninit<T>]` and
-// only assume-init the logically-written subranges. That cannot be done by
-// touching this file alone — `writable_slice`-family callers in other crates
-// see the signature change — so it is deferred to a dedicated change with
-// Miri coverage for a NonNull-bearing element type.
 pub struct StaticBuffer<T, const N: usize>([MaybeUninit<T>; N]);
 
 impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {
@@ -129,18 +153,22 @@ impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {
     const DYNAMIC: bool = false;
 
     #[inline]
-    fn as_slice(&self) -> &[T] {
-        assume_init_slice(self.0.as_slice())
+    fn as_uninit_slice(&self) -> &[MaybeUninit<T>] {
+        self.0.as_slice()
     }
     #[inline]
-    fn as_mut_slice(&mut self) -> &mut [T] {
-        assume_init_slice_mut(self.0.as_mut_slice())
+    fn as_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<T>] {
+        self.0.as_mut_slice()
     }
 }
 
 // ── .Slice ────────────────────────────────────────────────────────────────────
 
 /// `buffer_type == .Slice` — caller-provided `[]T`.
+///
+/// Viewed as `MaybeUninit<T>` internally; callers must treat the backing
+/// slice's contents as unspecified once handed to the fifo (debug builds
+/// poison discarded slots).
 pub struct SliceBuffer<'a, T>(&'a mut [T]);
 
 impl<'a, T> LinearFifoBuffer<T> for SliceBuffer<'a, T> {
@@ -148,12 +176,15 @@ impl<'a, T> LinearFifoBuffer<T> for SliceBuffer<'a, T> {
     const DYNAMIC: bool = false;
 
     #[inline]
-    fn as_slice(&self) -> &[T] {
-        self.0
+    fn as_uninit_slice(&self) -> &[MaybeUninit<T>] {
+        // SAFETY: `&[T]` → `&[MaybeUninit<T>]` is layout-identical and always sound.
+        unsafe { &*(ptr::from_ref::<[T]>(self.0) as *const [MaybeUninit<T>]) }
     }
     #[inline]
-    fn as_mut_slice(&mut self) -> &mut [T] {
-        self.0
+    fn as_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<T>] {
+        // SAFETY: layout-identical view; the fifo only writes valid `T` (or
+        // debug poison over discarded slots — see type-level doc).
+        unsafe { &mut *(ptr::from_mut::<[T]>(self.0) as *mut [MaybeUninit<T>]) }
     }
 }
 
@@ -168,12 +199,12 @@ impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
     const DYNAMIC: bool = true;
 
     #[inline]
-    fn as_slice(&self) -> &[T] {
-        assume_init_slice(&self.0)
+    fn as_uninit_slice(&self) -> &[MaybeUninit<T>] {
+        &self.0
     }
     #[inline]
-    fn as_mut_slice(&mut self) -> &mut [T] {
-        assume_init_slice_mut(&mut self.0)
+    fn as_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<T>] {
+        &mut self.0
     }
 
     fn realloc(&mut self, new_size: usize) -> Result<(), AllocError> {
@@ -193,6 +224,14 @@ impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
 
 // ── LinearFifo ────────────────────────────────────────────────────────────────
 
+/// Ring buffer over `MaybeUninit<T>` storage.
+///
+/// INVARIANT: exactly the slots in `[head, head+count)` (modulo wrap) are
+/// initialized. Accessors materialize `&[T]` only over that window, except
+/// the [`Self::writable_slice`] family ([`AnyBitPattern`] only).
+///
+/// The fifo never drops `T`: resource-owning items must be drained with
+/// `read_item` before drop, or they leak by design.
 pub struct LinearFifo<T, B: LinearFifoBuffer<T>> {
     buf: B,
     head: usize,
@@ -276,7 +315,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             // this copy overlaps
             let count = self.count;
             let head = self.head;
-            let buf = self.buf.as_mut_slice();
+            let buf = self.buf.as_uninit_slice_mut();
             // SAFETY: src/dst within same allocation; ptr::copy is memmove.
             unsafe { ptr::copy(buf.as_ptr().add(head), buf.as_mut_ptr(), count) };
             self.head = 0;
@@ -299,11 +338,12 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             while self.head != 0 {
                 let n = self.head.min(tmp_len);
                 let m = buf_len - n;
-                let buf = self.buf.as_mut_slice();
+                let buf = self.buf.as_uninit_slice_mut();
                 // SAFETY: `tmp` is disjoint from `buf`. The tmp↔buf copies move
                 // `n * size_of::<T>()` raw bytes (no `T` typed access through
                 // the 1-aligned scratch). The buf→buf shift overlaps, so use
-                // `ptr::copy` (memmove); it operates on properly-aligned `*T`.
+                // `ptr::copy` (memmove); it operates on properly-aligned
+                // `*MaybeUninit<T>`, which is sound for uninit slots too.
                 unsafe {
                     ptr::copy_nonoverlapping(buf.as_ptr().cast::<u8>(), tmp_ptr, n * t_size);
                     ptr::copy(buf.as_ptr().add(n), buf.as_mut_ptr(), m);
@@ -320,7 +360,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         #[cfg(debug_assertions)]
         {
             let count = self.count;
-            let unused = &mut self.buf.as_mut_slice()[count..];
+            let unused = &mut self.buf.as_uninit_slice_mut()[count..];
             // SAFETY: the tail past `count` is logically uninitialized; writing
             // the 0xAA poison pattern there cannot invalidate live items.
             unsafe {
@@ -365,11 +405,12 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             let count = self.count;
             let old = self.buf.alloc_swap(new_size)?;
             if count > 0 {
-                let new = self.buf.as_mut_slice();
+                let new = self.buf.as_uninit_slice_mut();
                 // After realign(), head==0 so readableSlice(0) == old[0..count].
-                // SAFETY: old and new are disjoint allocations.
+                // SAFETY: old and new are disjoint allocations; raw
+                // `MaybeUninit` copy of the initialized prefix.
                 unsafe {
-                    ptr::copy_nonoverlapping(old.as_ptr().cast::<T>(), new.as_mut_ptr(), count);
+                    ptr::copy_nonoverlapping(old.as_ptr(), new.as_mut_ptr(), count);
                 }
             }
             // `self.allocator.free(self.buf)` — `old` drops here.
@@ -395,15 +436,17 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         self.count
     }
 
-    /// Returns a writable slice from the 'read' end of the fifo
-    fn readable_slice_mut(&mut self, offset: usize) -> &mut [T] {
+    /// First contiguous readable segment starting at `offset`, as raw
+    /// `MaybeUninit` storage; callers may overwrite or poison it but must not
+    /// read it as `T` without `assume_init`.
+    fn readable_uninit_slice_mut(&mut self, offset: usize) -> &mut [MaybeUninit<T>] {
         if offset > self.count {
             return &mut [];
         }
         let buf_len = self.buf_len();
         let head = self.head;
         let count = self.count;
-        let buf = self.buf.as_mut_slice();
+        let buf = self.buf.as_uninit_slice_mut();
         let mut start = head + offset;
         if start >= buf_len {
             start -= buf_len;
@@ -420,15 +463,17 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             return &[];
         }
         let buf_len = self.buf_len();
-        let buf = self.buf.as_slice();
+        let buf = self.buf.as_uninit_slice();
         let mut start = self.head + offset;
-        if start >= buf_len {
+        let range = if start >= buf_len {
             start -= buf_len;
             &buf[start..start + (self.count - offset)]
         } else {
             let end = (self.head + self.count).min(buf_len);
             &buf[start..end]
-        }
+        };
+        // SAFETY: `range` is within the `[head, head+count)` initialized window.
+        unsafe { assume_init_slice(range) }
     }
 
     /// Discard first `count` items in the fifo
@@ -439,13 +484,13 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         {
             // set old range to undefined. Note: may be wrapped around
             // reshaped for borrowck — capture len, then re-borrow.
-            let slice_len = self.readable_slice_mut(0).len();
+            let slice_len = self.readable_uninit_slice_mut(0).len();
             if slice_len >= count {
-                poison(self.readable_slice_mut(0), count);
+                poison(self.readable_uninit_slice_mut(0), count);
             } else {
-                poison(self.readable_slice_mut(0), slice_len);
+                poison(self.readable_uninit_slice_mut(0), slice_len);
                 let rem = count - slice_len;
-                poison(self.readable_slice_mut(slice_len), rem);
+                poison(self.readable_uninit_slice_mut(slice_len), rem);
             }
         }
 
@@ -466,9 +511,17 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         if self.count == 0 {
             return None;
         }
-        // SAFETY: buf[head] is in the readable region (count > 0); we move it
-        // out and immediately discard(1), so the slot is never read again.
-        let c = unsafe { ptr::read(self.buf.as_slice().as_ptr().add(self.head)) };
+        // SAFETY: buf[head] is initialized (count > 0); moved out then
+        // discard(1), so the slot is never read again.
+        let c = unsafe {
+            ptr::read(
+                self.buf
+                    .as_uninit_slice()
+                    .as_ptr()
+                    .add(self.head)
+                    .cast::<T>(),
+            )
+        };
         self.discard(1);
         Some(c)
     }
@@ -502,9 +555,9 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         self.buf_len() - self.count
     }
 
-    /// Returns the first section of writable buffer.
-    /// Note that this may be of length 0.
-    pub fn writable_slice(&mut self, offset: usize) -> &mut [T] {
+    /// First contiguous writable segment starting at `offset`, as raw
+    /// `MaybeUninit` storage (logically uninitialized slots).
+    fn writable_uninit_slice(&mut self, offset: usize) -> &mut [MaybeUninit<T>] {
         let buf_len = self.buf_len();
         if offset > buf_len {
             return &mut [];
@@ -512,7 +565,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         let head = self.head;
         let count = self.count;
         let writable = buf_len - count;
-        let buf = self.buf.as_mut_slice();
+        let buf = self.buf.as_uninit_slice_mut();
         let tail = head + offset + count;
         if tail < buf_len {
             &mut buf[tail..]
@@ -522,15 +575,32 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         }
     }
 
+    /// Returns the first section of writable buffer.
+    /// Note that this may be of length 0.
+    ///
+    /// `T: AnyBitPattern` because the returned `&mut [T]` covers never-written
+    /// slots; for other `T` use [`Self::write_item`].
+    pub fn writable_slice(&mut self, offset: usize) -> &mut [T]
+    where
+        T: AnyBitPattern,
+    {
+        let slice = self.writable_uninit_slice(offset);
+        // SAFETY: `T: AnyBitPattern` — every bit pattern is a valid `T`.
+        unsafe { assume_init_slice_mut(slice) }
+    }
+
     /// Returns a writable buffer of at least `size` items, allocating memory as needed.
     /// Use `fifo.update` once you've written data to it.
-    pub fn writable_with_size(&mut self, size: usize) -> Result<&mut [T], AllocError> {
+    pub fn writable_with_size(&mut self, size: usize) -> Result<&mut [T], AllocError>
+    where
+        T: AnyBitPattern,
+    {
         self.ensure_unused_capacity(size)?;
 
         // try to avoid realigning buffer
         // reshaped for borrowck — check len, drop borrow, maybe
         // realign, then take the final borrow.
-        if self.writable_slice(0).len() < size {
+        if self.writable_uninit_slice(0).len() < size {
             self.realign();
         }
         let slice = self.writable_slice(0);
@@ -557,10 +627,10 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             // reshaped for borrowck — scoped block drops the
             // `writable` borrow before `self.update`.
             let n = {
-                let writable = self.writable_slice(0);
+                let writable = self.writable_uninit_slice(0);
                 debug_assert!(!writable.is_empty());
                 let n = writable.len().min(src_left.len());
-                writable[..n].copy_from_slice(&src_left[..n]);
+                write_copy(&mut writable[..n], &src_left[..n]);
                 n
             };
             self.update(n);
@@ -586,7 +656,16 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         // logically uninitialized — `ptr::write` does not drop the prior
         // bit-pattern, which is required for non-`Copy` `T` whose backing
         // storage is `MaybeUninit<T>`.
-        unsafe { ptr::write(self.buf.as_mut_slice().as_mut_ptr().add(tail), item) };
+        unsafe {
+            ptr::write(
+                self.buf
+                    .as_uninit_slice_mut()
+                    .as_mut_ptr()
+                    .add(tail)
+                    .cast::<T>(),
+                item,
+            )
+        };
         self.update(1);
     }
 
@@ -627,14 +706,14 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         // reshaped for borrowck — copy into first chunk in a scoped
         // block, drop borrow, then re-borrow for the wrapped chunk.
         let slice_len = {
-            let s = self.readable_slice_mut(0);
+            let s = self.readable_uninit_slice_mut(0);
             let n = s.len().min(src.len());
-            s[..n].copy_from_slice(&src[..n]);
+            write_copy(&mut s[..n], &src[..n]);
             s.len()
         };
         if src.len() > slice_len {
-            let slice2 = self.readable_slice_mut(slice_len);
-            slice2[..src.len() - slice_len].copy_from_slice(&src[slice_len..]);
+            let slice2 = self.readable_uninit_slice_mut(slice_len);
+            write_copy(&mut slice2[..src.len() - slice_len], &src[slice_len..]);
         }
         Ok(())
     }
@@ -653,7 +732,8 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         } else {
             index %= self.buf_len();
         }
-        self.buf.as_slice()[index]
+        // SAFETY: `offset < count` ⇒ the slot is initialized.
+        unsafe { self.buf.as_uninit_slice()[index].assume_init_read() }
     }
 
     /// Returns the item at `offset`.
@@ -667,7 +747,8 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         } else {
             index %= self.buf_len();
         }
-        &mut self.buf.as_mut_slice()[index]
+        // SAFETY: `offset < count` ⇒ the slot is initialized.
+        unsafe { self.buf.as_uninit_slice_mut()[index].assume_init_mut() }
     }
 
     /// Remove one item at `offset` and MOVE all items after it up one.
@@ -684,7 +765,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
         if buf_len - head >= count {
             // If it doesnt overflow past the end, there is one copy to be done
-            let buf = self.buf.as_mut_slice();
+            let buf = self.buf.as_uninit_slice_mut();
             shift_down_one(&mut buf[head + offset..]);
         } else {
             let mut index = head + offset;
@@ -698,7 +779,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             // prefix; `wrap_len <= head` (since `count <= buf_len`) so the
             // prefix never overlaps the tail.
             let wrap_len = head + count - buf_len;
-            let buf = self.buf.as_mut_slice();
+            let buf = self.buf.as_uninit_slice_mut();
             if index < head {
                 // If the item to remove is before the head, one slice is moved.
                 shift_down_one(&mut buf[index..wrap_len]);
@@ -706,11 +787,11 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
                 // The items before and after the head have to be shifted
                 // SAFETY: buf[0] is initialized (it's in the wrapped readable
                 // region); we move it to the end after shifting.
-                let wrap = unsafe { ptr::read(buf.as_ptr()) };
+                let wrap = unsafe { ptr::read(buf.as_ptr().cast::<T>()) };
                 shift_down_one(&mut buf[index..]);
                 // SAFETY: writing into the last slot; previous occupant already
                 // shifted down.
-                unsafe { ptr::write(buf.as_mut_ptr().add(buf_len - 1), wrap) };
+                unsafe { ptr::write(buf.as_mut_ptr().add(buf_len - 1).cast::<T>(), wrap) };
                 shift_down_one(&mut buf[..wrap_len]);
             }
         }
@@ -724,8 +805,10 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     // `src_reader(buf)` ≙ `reader.read(buf)`, `dest_writer(buf)` ≙
     // `writer.write(buf)`, both returning a count (`Ok(0)` from the reader
     // means EOF). This keeps `pump` generic over `T`, which `std::io` cannot.
+    // `T: AnyBitPattern`: the reader closure is handed not-yet-written slots as `&mut [T]`.
     pub fn pump<R, W, E>(&mut self, mut src_reader: R, dest_writer: &mut W) -> Result<(), E>
     where
+        T: AnyBitPattern,
         R: FnMut(&mut [T]) -> Result<usize, E>,
         W: FnMut(&[T]) -> Result<usize, E>,
     {
@@ -981,6 +1064,119 @@ mod tests {
             )*};
         }
         per_type!(u8, u16, u64);
+    }
+
+    // NonNull-bearing enum (niche-optimized, NOT any-bit-pattern-valid), like
+    // the in-tree `Task` enum: verifies only logically written subranges are
+    // assumed-init. `cargo miri test -p bun_collections linear_fifo` checks this.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    enum PtrItem {
+        Val(core::ptr::NonNull<i32>),
+        Marker,
+    }
+
+    fn ptr_items(backing: &[i32]) -> Vec<PtrItem> {
+        backing
+            .iter()
+            .map(|v| PtrItem::Val(core::ptr::NonNull::from(v)))
+            .collect()
+    }
+
+    fn deref_item(item: PtrItem) -> i32 {
+        match item {
+            // SAFETY: pointer targets `backing`, which outlives the fifo.
+            PtrItem::Val(p) => unsafe { *p.as_ref() },
+            PtrItem::Marker => -1,
+        }
+    }
+
+    #[test]
+    fn linear_fifo_nonnull_enum_static_wrapped() {
+        let backing: Vec<i32> = (0..110).collect();
+        let items = ptr_items(&backing);
+
+        let mut fifo = LinearFifo::<PtrItem, StaticBuffer<PtrItem, 16>>::init();
+        // write 12, read 8, write 10 → head=8, count=14, wraps.
+        for v in 0..12 {
+            fifo.write_item(items[v]).unwrap();
+        }
+        for v in 0..8 {
+            assert_eq!(deref_item(fifo.read_item().unwrap()), v as i32);
+        }
+        for v in 100..110 {
+            fifo.write_item(items[v]).unwrap();
+        }
+        assert_eq!(fifo.readable_length(), 14);
+
+        // peek across the wrap point
+        let peeked: Vec<i32> = (0..fifo.readable_length())
+            .map(|i| deref_item(fifo.peek_item(i)))
+            .collect();
+        assert_eq!(
+            peeked,
+            vec![
+                8, 9, 10, 11, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109
+            ]
+        );
+
+        // wrapped ordered_remove_item with a niche-optimized element type
+        fifo.ordered_remove_item(6);
+        let after: Vec<i32> = (0..fifo.readable_length())
+            .map(|i| deref_item(fifo.peek_item(i)))
+            .collect();
+        assert_eq!(
+            after,
+            vec![8, 9, 10, 11, 100, 101, 103, 104, 105, 106, 107, 108, 109]
+        );
+
+        // unget puts an item back in front
+        let front = fifo.read_item().unwrap();
+        fifo.unget(&[front]).unwrap();
+        assert_eq!(deref_item(fifo.peek_item(0)), 8);
+
+        // readable_slice over the contiguous tail segment
+        let first_seg = fifo.readable_slice(0);
+        assert!(!first_seg.is_empty());
+        assert_eq!(deref_item(first_seg[0]), 8);
+
+        // drain fully
+        let mut drained = Vec::new();
+        while let Some(item) = fifo.read_item() {
+            drained.push(deref_item(item));
+        }
+        assert_eq!(
+            drained,
+            vec![8, 9, 10, 11, 100, 101, 103, 104, 105, 106, 107, 108, 109]
+        );
+        assert_eq!(fifo.readable_length(), 0);
+    }
+
+    #[test]
+    fn linear_fifo_nonnull_enum_dynamic_growth() {
+        let backing: Vec<i32> = (0..64).collect();
+        let items = ptr_items(&backing);
+
+        let mut fifo = LinearFifo::<PtrItem, DynamicBuffer<PtrItem>>::init();
+        // Interleave writes/reads so growth (ensure_total_capacity →
+        // alloc_swap copy) happens with a non-zero head.
+        for v in 0..8 {
+            fifo.write_item(items[v]).unwrap();
+        }
+        for v in 0..4 {
+            assert_eq!(deref_item(fifo.read_item().unwrap()), v as i32);
+        }
+        for v in 8..64 {
+            fifo.write_item(items[v]).unwrap();
+        }
+        fifo.write_item(PtrItem::Marker).unwrap();
+
+        let mut out = Vec::new();
+        while let Some(item) = fifo.read_item() {
+            out.push(deref_item(item));
+        }
+        let mut expected: Vec<i32> = (4..64).collect();
+        expected.push(-1);
+        assert_eq!(out, expected);
     }
 
     // 16-slot static buffer: `POWERS_OF_TWO` is true, matching the in-tree

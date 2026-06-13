@@ -796,3 +796,65 @@ payloads.forEach(type => {
     expect(calls).toBeGreaterThan(0);
   });
 });
+
+// A JS-defined ReadableStream body is unsupported by transform() and has
+// always surfaced ERR_STREAM_CANNOT_PIPE.
+it("transform() of a Response with a JS-defined ReadableStream body reports ERR_STREAM_CANNOT_PIPE", async () => {
+  const stream = new ReadableStream({
+    pull(controller) {
+      controller.enqueue(new TextEncoder().encode("<div>hello</div>"));
+      controller.close();
+    },
+  });
+  const response = new Response(stream, { headers: { "content-type": "text/html" } });
+
+  let outcome;
+  try {
+    outcome = new HTMLRewriter().on("div", { element() {} }).transform(response);
+  } catch (e) {
+    outcome = e;
+  }
+  expect(outcome).toBeInstanceOf(Error);
+  expect(outcome.code).toBe("ERR_STREAM_CANNOT_PIPE");
+});
+
+it("transform() of a streaming Response survives forced GC between chunks", async () => {
+  // GC-stress for the body-value bufferer + sink backpressure. The chunked
+  // body is served over HTTP because transform() only accepts native
+  // (fetched/file) bodies.
+  const piece = "<p>x</p>";
+  const perChunk = 64;
+  const chunks = 16;
+  const encoder = new TextEncoder();
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream({
+        async pull(controller) {
+          for (let i = 0; i < chunks; i++) {
+            controller.enqueue(encoder.encode(piece.repeat(perChunk)));
+            Bun.gc(true);
+            await Bun.sleep(1);
+          }
+          controller.close();
+        },
+      });
+      return new Response(stream, { headers: { "content-type": "text/html" } });
+    },
+  });
+
+  const res = await fetch(server.url);
+  let count = 0;
+  const transformed = new HTMLRewriter()
+    .on("p", {
+      element() {
+        count++;
+        Bun.gc(true);
+      },
+    })
+    .transform(res);
+  if (transformed instanceof Error) throw transformed;
+  const text = await transformed.text();
+  expect(text).toBe(piece.repeat(perChunk * chunks));
+  expect(count).toBe(perChunk * chunks);
+});

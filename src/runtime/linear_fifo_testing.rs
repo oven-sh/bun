@@ -25,15 +25,21 @@ type ProbeFifo = LinearFifo<i32, StaticBuffer<i32, 16>>;
 /// Builds a wrapped `LinearFifo` for the requested scenario, removes one item,
 /// and returns the live items (FIFO order) as a JS `number[]`.
 ///
-/// Scenarios mirror issue #31563:
+/// Scenarios 0/1 mirror issue #31563:
 ///   0 — tail sub-branch (`index >= head`), `head < count`:
 ///       write 12, read 8, write 10 → head=8 count=14, remove offset 6.
 ///   1 — wrapped-prefix sub-branch (`index < head`), `head > count`:
 ///       write 12, read 12, write 8 → head=12 count=8, remove offset 5.
+///   2 — same wrapped layout as 0, but with a `NonNull`-bearing element type
+///       (not any-bit-pattern-valid); returns the pointed-to values.
 ///
 /// Any other scenario value returns an empty array.
 pub fn ordered_remove_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let scenario = frame.argument(0).to_int32();
+
+    if scenario == 2 {
+        return nonnull_probe(global);
+    }
 
     let mut fifo = ProbeFifo::init();
     match scenario {
@@ -72,6 +78,43 @@ pub fn ordered_remove_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
             i as u32,
             JSValue::js_number_from_int32(fifo.peek_item(i)),
         )?;
+    }
+    Ok(array)
+}
+
+/// Scenario 2: the scenario-0 wrapped state with `NonNull`-bearing enum
+/// items; expected result identical to scenario 0.
+fn nonnull_probe(global: &JSGlobalObject) -> JsResult<JSValue> {
+    use core::ptr::NonNull;
+
+    #[derive(Clone, Copy)]
+    enum Item {
+        Val(NonNull<i32>),
+    }
+
+    // Stable addresses; the fifo stores pointers into this vec.
+    let backing: Vec<i32> = (0..110).collect();
+    let item = |v: usize| Item::Val(NonNull::from(&backing[v]));
+
+    let mut fifo = LinearFifo::<Item, StaticBuffer<Item, 16>>::init();
+    for v in 0..12 {
+        fifo.write_item(item(v)).unwrap();
+    }
+    for _ in 0..8 {
+        fifo.read_item().unwrap();
+    }
+    for v in 100..110 {
+        fifo.write_item(item(v)).unwrap();
+    }
+    fifo.ordered_remove_item(6);
+
+    let len = fifo.readable_length();
+    let array = JSValue::create_empty_array(global, len)?;
+    for i in 0..len {
+        let Item::Val(p) = fifo.peek_item(i);
+        // SAFETY: stored pointers target `backing`, live until this fn returns.
+        let value = unsafe { *p.as_ref() };
+        array.put_index(global, i as u32, JSValue::js_number_from_int32(value))?;
     }
     Ok(array)
 }

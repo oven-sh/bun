@@ -3193,7 +3193,7 @@ pub mod target;
 
 pub use ast_result::{
     Ast, CommonJSNamedExport, CommonJSNamedExports, ConstValuesMap, NamedExports, NamedImports,
-    TopLevelSymbolToParts, TsEnumsMap,
+    TopLevelSymbolToParts, TsEnumsMap, TsRuntimeSyntax,
 };
 pub use import_record::{
     Flags as ImportRecordFlags, ImportRecord, PrintMode as ImportRecordPrintMode,

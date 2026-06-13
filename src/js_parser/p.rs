@@ -242,6 +242,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub latest_return_had_semicolon: bool,
     pub has_import_meta: bool,
     pub has_es_module_syntax: bool,
+    /// See `Ast::ts_runtime_syntax`; records the first occurrence.
+    pub ts_runtime_syntax: Option<bun_ast::TsRuntimeSyntax>,
+    /// See `Ast::uses_ts_module_keyword`.
+    pub uses_ts_module_keyword: bool,
     pub top_level_await_keyword: bun_ast::Range,
     pub fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub fn_or_arrow_data_visit: FnOrArrowDataVisit,
@@ -8283,6 +8287,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 // independently. `compute_character_frequency` is fully un-gated
 // (lexer.all_comments + CharFreq.scan live).
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+    /// Record the first non-ambient TS runtime-syntax construct in the file;
+    /// see `Ast::ts_runtime_syntax`.
+    #[inline]
+    pub fn record_ts_runtime_syntax(&mut self, kind: bun_ast::TsRuntimeSyntax) {
+        if self.ts_runtime_syntax.is_none() {
+            self.ts_runtime_syntax = Some(kind);
+        }
+    }
+
     pub fn to_ast(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -8862,6 +8875,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_top_level_return: false,
             redirect_import_record_index: None,
             target: js_ast::Target::Browser,
+            ts_runtime_syntax: self.ts_runtime_syntax,
+            uses_ts_module_keyword: self.uses_ts_module_keyword,
         }))
     }
 
@@ -9148,6 +9163,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             latest_return_had_semicolon: false,
             has_import_meta: false,
             has_es_module_syntax: false,
+            ts_runtime_syntax: None,
+            uses_ts_module_keyword: false,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),

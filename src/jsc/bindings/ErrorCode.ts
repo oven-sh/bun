@@ -326,5 +326,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_MYSQL_CONNECTION_FAILED", Error, "MySQLError"],
   ["ERR_POSTGRES_CONNECTION_REFUSED", Error, "PostgresError"],
   ["ERR_MYSQL_CONNECTION_REFUSED", Error, "MySQLError"],
+  ["ERR_INVALID_TYPESCRIPT_SYNTAX", SyntaxError],
+  ["ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX", SyntaxError],
 ];
 export default errors;

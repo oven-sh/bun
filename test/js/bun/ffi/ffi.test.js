@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { isGlibcVersionAtLeast } from "harness";
+import { bunEnv, bunExe, isGlibcVersionAtLeast } from "harness";
 import { platform } from "os";
 
 import {
@@ -645,6 +645,50 @@ it("read", () => {
   }
 
   delete globalThis.buffer;
+});
+
+// https://github.com/oven-sh/bun/issues/32054
+it("ptr(typedArray) stays valid after DFG tier-up", async () => {
+  const code = `
+    import { ptr, read } from "bun:ffi";
+    const out = new Float64Array(1);
+    out[0] = 1.5;
+    const outPtr = ptr(out);
+    function main() {
+      let sum = 0;
+      for (let i = 0; i < 10_000; i++) {
+        sum += out[0];
+      }
+      return sum;
+    }
+    main();
+    if (ptr(out) !== outPtr) {
+      console.log("MOVED: the view's storage was relocated after ptr() was taken");
+      process.exit(1);
+    }
+    out[0] = 42.5;
+    if (read.f64(outPtr) !== 42.5) {
+      console.log("STALE: write through the view is not visible at the captured address");
+      process.exit(1);
+    }
+    console.log("STABLE");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: {
+      ...bunEnv,
+      // Force deterministic, early tier-up so the loop above reliably
+      // DFG-compiles (which registers an ArrayBufferView watchpoint on the
+      // folded view; registration relocates a FastTypedArray's vector).
+      BUN_JSC_useConcurrentJIT: "false",
+      BUN_JSC_thresholdForOptimizeAfterWarmUp: "100",
+      BUN_JSC_thresholdForOptimizeSoon: "100",
+    },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("STABLE");
+  expect(exitCode).toBe(0);
 });
 
 if (ok) {

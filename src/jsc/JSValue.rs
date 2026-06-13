@@ -945,6 +945,17 @@ impl JSValue {
         }
         self.as_array_buffer(global)
     }
+    /// If `self` is a `FastTypedArray` (small view whose vector lives in the
+    /// GC heap), force it into wasteful mode so the engine can never relocate
+    /// its data. JSC moves such vectors on its own, e.g. DFG tier-up
+    /// registers an ArrayBufferView watchpoint whose installation calls
+    /// `possiblySharedBuffer()` and repoints the vector. Must be called
+    /// before capturing the data pointer for use beyond the current native
+    /// call. No-op for every other storage mode (their data never moves).
+    /// Returns `false` on allocation failure.
+    pub fn ensure_stable_typed_array_vector(self) -> bool {
+        JSC__JSValue__ensureStableTypedArrayVector(self)
+    }
     /// Generic downcast. Dispatches via [`JsClass::from_js`].
     #[inline]
     pub fn as_<T: JsClass>(self) -> Option<*mut T> {
@@ -2063,6 +2074,7 @@ unsafe extern "C" {
         out: &mut ArrayBuffer,
     ) -> bool;
     safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> bool;
+    safe fn JSC__JSValue__ensureStableTypedArrayVector(this: JSValue) -> bool;
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     safe fn Bun__attachAsyncStackFromPromise(

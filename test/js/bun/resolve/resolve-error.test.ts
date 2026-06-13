@@ -109,6 +109,38 @@ describe("ResolveMessage", () => {
     }
     expect().pass();
   });
+
+  it("does not leak the formatted message on the bare-package error path", () => {
+    // resolveMaybeNeedsTrailingSlash() allocPrints a "Cannot find package
+    // '...' from '...'" message into the VM arena before handing it to
+    // ResolveMessage.create(), which immediately clones it. The original
+    // was never freed, so every failed bare-specifier resolve leaked one
+    // string into the same mimalloc heap that ResolveMessage structs are
+    // freed back into. In a long-running Fuzzilli REPRL process this
+    // surfaced as a flaky use-after-poison in the resolver.
+    for (let i = 0; i < 50; i++) {
+      let errs: any[] = [];
+      for (let j = 0; j < 5; j++) {
+        try {
+          require("804");
+        } catch (e) {
+          errs.push(e);
+        }
+      }
+      for (const e of errs) {
+        void e.message;
+        void e.code;
+        void e.specifier;
+        void e.referrer;
+        void e.level;
+        void e.importKind;
+        void String(e);
+      }
+      errs = [];
+      Bun.gc(true);
+    }
+    expect().pass();
+  });
 });
 
 // These tests reproduce panics where the module resolver wrote past fixed-size

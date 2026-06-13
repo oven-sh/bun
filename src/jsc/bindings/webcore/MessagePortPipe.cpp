@@ -13,6 +13,12 @@
 #include "ScriptExecutionContext.h"
 #include <wtf/Locker.h>
 
+// Whether cooperative close (`self.close()`) has been requested for the
+// worker attached to `workerVM`. Used to break mid-batch dispatch when
+// the spec says queued message-event tasks must be discarded.
+// Defined in src/bun.js/web_worker.zig; returns false for non-worker VMs.
+extern "C" bool WebWorker__hasRequestedClose(void* workerVM);
+
 namespace WebCore {
 
 MessagePortPipe::~MessagePortPipe() = default;
@@ -127,6 +133,15 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     ScriptExecutionContextIdentifier rescheduleCtx = 0;
     while (true) {
+        // Cooperative close: if `self.close()` was set before this drain
+        // started — e.g. a prior CppTask in the same `vm.tick()` ran
+        // first and closed — discard the whole batch per WHATWG
+        // "close a worker" step 1. Returns false on the main thread
+        // (no attached worker); returns true when the VM is itself a
+        // worker that has called self.close(), which is also the
+        // spec-required outcome for that worker's queued ports.
+        if (WebWorker__hasRequestedClose(globalObject->bunVM()))
+            break;
         std::optional<MessageWithMessagePorts> message;
         {
             Locker locker { s.lock };
@@ -161,6 +176,15 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         // queueMicrotask(cb) inside onmessage runs before the next message.
         if (globalObject->drainMicrotasks())
             break; // termination pending
+        // Cooperative close: `self.close()` inside a port.onmessage handler
+        // must discard the rest of the batch per WHATWG "close a worker"
+        // step 1. `drainMicrotasks()` above only trips on the JSC
+        // termination trap, which `self.close()` deliberately doesn't arm,
+        // so check the close flag separately. Returns false for non-worker
+        // VMs (main thread), so this is a no-op for ports outside a
+        // Web Worker.
+        if (WebWorker__hasRequestedClose(globalObject->bunVM()))
+            break;
     }
 
     if (rescheduleCtx)

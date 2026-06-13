@@ -31,9 +31,19 @@
 #include "EventNames.h"
 #include "MessageEvent.h"
 #include "SerializedScriptValue.h"
+#include "ZigGlobalObject.h"
 #include <wtf/TZoneMallocInlines.h>
 
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+
+// Whether cooperative close (self.close()) has been requested for the
+// worker attached to `workerVM`. BroadcastChannel posts one CppTask per
+// subscriber (not one batched drain like drainInbox / drainAndDispatch),
+// so two messages coalesced into the same `vm.tick()` on a worker whose
+// first handler calls `self.close()` would otherwise both dispatch —
+// WHATWG "close a worker" step 1 says the second is a queued task and
+// must be discarded. Returns false for main-thread / non-worker VMs.
+extern "C" bool WebWorker__hasRequestedClose(void* workerVM);
 
 namespace WebCore {
 
@@ -80,6 +90,14 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
     ASSERT(context->isContextThread());
 
     auto* globalObject = context->jsGlobalObject();
+
+    // Cooperative close: discard this task if `self.close()` already
+    // fired on this worker (e.g. a prior BroadcastChannel message in
+    // the same `vm.tick()` whose handler closed). Parent-thread /
+    // non-worker VMs return false and fall through.
+    if (auto* zigGlobal = defaultGlobalObject(globalObject); zigGlobal && WebWorker__hasRequestedClose(zigGlobal->bunVM()))
+        return;
+
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 

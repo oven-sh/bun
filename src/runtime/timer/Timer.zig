@@ -344,6 +344,14 @@ pub const All = struct {
     }
 
     pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
+        // `autoTickActive()` runs tickImmediateTasks then drainTimers
+        // back-to-back in one call. A `self.close()` observed in the
+        // earlier immediate phase (or in any prior callback this tick)
+        // means every due timer here is a "queued task" at the time
+        // the closing flag was set — WHATWG step 1 says discard them
+        // all, not just the tail after the first fire.
+        if (vm.worker) |worker| if (worker.hasRequestedClose()) return;
+
         // Set in next().
         var now: timespec = undefined;
         // Split into a separate variable to avoid increasing the size of the timespec type.
@@ -351,6 +359,12 @@ pub const All = struct {
 
         while (this.next(&has_set_now, &now)) |t| {
             t.fire(&now, vm);
+            // If a timer callback called `self.close()`, discard remaining
+            // due timers per WHATWG "close a worker" step 1. `self.close()`
+            // doesn't arm the JSC termination trap, so the per-callback
+            // `scriptExecutionStatus()` gate (keyed on `requested_terminate`
+            // only) doesn't fire — we check the separate close flag here.
+            if (vm.worker) |worker| if (worker.hasRequestedClose()) break;
         }
     }
 

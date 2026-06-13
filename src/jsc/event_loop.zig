@@ -242,9 +242,42 @@ pub fn tickImmediateTasks(this: *EventLoop, virtual_machine: *VirtualMachine) vo
     this.immediate_tasks = this.next_immediate_tasks;
     this.next_immediate_tasks = .{};
 
+    // If close() was set before this batch — e.g. by a CppTask in the
+    // preceding `vm.tick()` when the caller has no `shouldExitLoop()`
+    // check between `tick()` and `autoTickActive()` (specifically
+    // `VirtualMachine.onBeforeExit`) — every queued immediate is a
+    // "queued task" at the time the closing flag was set per WHATWG
+    // "close a worker" step 1. Release each without firing the
+    // callback. (`spin()` and `waitForPromiseWithTermination` do check
+    // `shouldExitLoop()` between `tick()` and `autoTickActive()`, so
+    // they can't trigger this branch.)
+    const close_already_requested = if (virtual_machine.worker) |worker| worker.hasRequestedClose() else false;
+    if (close_already_requested) {
+        for (to_run_now.items) |task| {
+            task.internals.discardImmediateWithoutFiring(virtual_machine);
+        }
+    }
+
     var exception_thrown = false;
-    for (to_run_now.items) |task| {
-        exception_thrown = task.runImmediateTask(virtual_machine);
+    if (!close_already_requested) {
+        for (to_run_now.items, 0..) |task, i| {
+            exception_thrown = task.runImmediateTask(virtual_machine);
+            // If an immediate called `self.close()`, stop firing siblings
+            // that were already queued — WHATWG "close a worker" step 1
+            // discards them. `self.close()` doesn't arm the JSC trap, so
+            // `scriptExecutionStatus` (checked per-task inside
+            // `runImmediateTask`) doesn't catch this. Release the
+            // skipped siblings explicitly — `clearRetainingCapacity`
+            // below drops their pointers without firing, so their
+            // enqueue-side refs (parent.ref() + keep-alive +
+            // this_value strong) would leak otherwise.
+            if (virtual_machine.worker) |worker| if (worker.hasRequestedClose()) {
+                for (to_run_now.items[i + 1 ..]) |skipped| {
+                    skipped.internals.discardImmediateWithoutFiring(virtual_machine);
+                }
+                break;
+            };
+        }
     }
 
     // make sure microtasks are drained if the last task had an exception
@@ -577,12 +610,18 @@ pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
 
 pub fn waitForPromiseWithTermination(this: *EventLoop, promise: jsc.AnyPromise) void {
     const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
+    // `shouldExitLoop()` observes BOTH `requested_terminate` and
+    // `requested_close`. This loop drives entry-point evaluation, so a
+    // top-level `self.close()` followed by `await ...` must stop ticking
+    // rather than fire tasks the WHATWG "close a worker" algorithm
+    // requires us to discard (and, for an await on a never-resolving
+    // promise, would otherwise hang the worker forever).
     switch (promise.status()) {
         .pending => {
-            while (!worker.hasRequestedTerminate() and promise.status() == .pending) {
+            while (!worker.shouldExitLoop() and promise.status() == .pending) {
                 this.tick();
 
-                if (!worker.hasRequestedTerminate() and promise.status() == .pending) {
+                if (!worker.shouldExitLoop() and promise.status() == .pending) {
                     this.autoTick();
                 }
             }

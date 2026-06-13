@@ -285,7 +285,10 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 // listener fired" signal the caller uses to decide whether to drain the nextTick
 // queue.
 //
-// Returns whether a listener fired (native path) or the override's result.
+// Returns whether the caller should drain the nextTick/microtask queue after the
+// emit: on the native path the real "a listener fired" signal; on the override
+// path true, since the override ran arbitrary JS that may have scheduled
+// continuation work (its own return value is not meaningful for this decision).
 // Listener exceptions on the native path are reported inside
 // EventEmitter::fireEventListeners; a non-callable or throwing override leaves a
 // pending exception for the caller to report.
@@ -313,9 +316,9 @@ static bool emitProcessExitEvent(JSC::JSGlobalObject* globalObject, Process* pro
     arguments.append(jsNumber(exitCode));
     ASSERT(!arguments.hasOverflowed());
 
-    JSValue result = JSC::call(globalObject, emitOverride, callData, process, arguments);
+    JSC::call(globalObject, emitOverride, callData, process, arguments);
     RETURN_IF_EXCEPTION(scope, false);
-    return result.toBoolean(globalObject);
+    return true;
 }
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
@@ -877,14 +880,15 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
         return;
     }
 
-    if (auto* nextTickQueue = globalObject->m_nextTickQueue.get()) {
-        // Drain when a listener/override fired (matching prior behavior, which
-        // also flushes microtasks) or when the emit scheduled nextTick callbacks:
-        // the queue is empty on entry to beforeExit, so a non-empty queue can only
-        // hold work the emit just scheduled, which the event loop liveness check
-        // does not observe.
-        if (fired || !nextTickQueue->isEmpty()) {
+    if (fired) {
+        if (auto* nextTickQueue = globalObject->m_nextTickQueue.get()) {
+            // drain() enters JS (nextTick callbacks, microtasks) and can leave a
+            // pending exception, so report and clear it the same way as the emit.
             nextTickQueue->drain(vm, globalObject);
+            if (auto* exception = scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+            }
         }
     }
 }

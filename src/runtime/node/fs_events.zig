@@ -114,7 +114,8 @@ pub const CoreFoundation = struct {
     RunLoopDefaultMode: *CFStringRef,
 
     pub fn get() CoreFoundation {
-        if (fsevents_cf) |cf| return cf;
+        // No unlocked fast path — see `watch()` below for the reasoning. The
+        // mutex is uncontended after initialization.
         fsevents_mutex.lock();
         defer fsevents_mutex.unlock();
         if (fsevents_cf) |cf| return cf;
@@ -146,7 +147,8 @@ pub const CoreServices = struct {
     kFSEventStreamEventIdSinceNow: FSEventStreamEventId = 18446744073709551615,
 
     pub fn get() CoreServices {
-        if (fsevents_cs) |cs| return cs;
+        // No unlocked fast path — see `watch()` below for the reasoning. The
+        // mutex is uncontended after initialization.
         fsevents_mutex.lock();
         defer fsevents_mutex.unlock();
         if (fsevents_cs) |cs| return cs;
@@ -622,16 +624,27 @@ pub const FSEventsWatcher = struct {
 };
 
 pub fn watch(path: string, recursive: bool, callback: FSEventsWatcher.Callback, updateEnd: FSEventsWatcher.UpdateEndCallback, ctx: ?*anyopaque) !*FSEventsWatcher {
-    if (fsevents_default_loop) |loop| {
-        return FSEventsWatcher.init(loop, path, recursive, callback, updateEnd, ctx);
-    } else {
+    // No unlocked fast path: `fsevents_default_loop` is a plain global and an
+    // unsynchronized read here would be textbook broken DCLP. `Darwin.addWatch`
+    // (path_watcher.zig) calls this WITHOUT holding `manager.mutex`, so two
+    // Workers can enter concurrently; on ARM64 Worker B could observe the
+    // non-null pointer before Worker A's stores inside `FSEventsLoop.init()`
+    // (`this.* = fs_loop`) are visible, and then `registerWatcher()` would lock
+    // a garbage `loop.mutex` / read a garbage `loop.watchers`. Same pattern
+    // `PathWatcherManager.get()` already fixed. `watch()` runs once per
+    // `fs.watch()` call; the mutex is uncontended after initialization.
+    const loop = loop: {
         fsevents_default_loop_mutex.lock();
         defer fsevents_default_loop_mutex.unlock();
         if (fsevents_default_loop == null) {
             fsevents_default_loop = try FSEventsLoop.init();
         }
-        return FSEventsWatcher.init(fsevents_default_loop.?, path, recursive, callback, updateEnd, ctx);
-    }
+        break :loop fsevents_default_loop.?;
+    };
+    // Release `fsevents_default_loop_mutex` before `registerWatcher()` (which
+    // takes `loop.mutex`) so we never nest the two. `loop` is stable once
+    // published — only `closeAndWait()` at process exit ever clears it.
+    return FSEventsWatcher.init(loop, path, recursive, callback, updateEnd, ctx);
 }
 
 pub fn closeAndWait() void {
@@ -639,9 +652,10 @@ pub fn closeAndWait() void {
         return;
     }
 
+    // No unlocked fast path — see `watch()` above.
+    fsevents_default_loop_mutex.lock();
+    defer fsevents_default_loop_mutex.unlock();
     if (fsevents_default_loop) |loop| {
-        fsevents_default_loop_mutex.lock();
-        defer fsevents_default_loop_mutex.unlock();
         loop.deinit();
         fsevents_default_loop = null;
     }

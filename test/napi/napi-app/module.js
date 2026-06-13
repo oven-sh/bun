@@ -911,6 +911,15 @@ nativeTests.test_napi_typeof_boxed_primitives = () => {
   console.log("All boxed primitive tests passed!");
 };
 
+// https://github.com/oven-sh/bun/issues/13771
+// Test that call_js_cb receives js_callback = NULL when the threadsafe
+// function was created with func = NULL.
+nativeTests.test_tsfn_null_js_callback = async () => {
+  nativeTests.test_issue_13771();
+  // The threadsafe function callback fires asynchronously.
+  await new Promise(resolve => setTimeout(resolve, 50));
+};
+
 // https://github.com/oven-sh/bun/issues/25933
 // Test that napi_typeof returns napi_function for callbacks wrapped in
 // AsyncContextFrame (which happens inside AsyncLocalStorage.run()).

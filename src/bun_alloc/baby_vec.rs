@@ -138,19 +138,39 @@ impl<'a, T> BabyVec<'a, T> {
     }
 
     #[inline]
+    #[track_caller]
     pub fn reserve(&mut self, additional: usize) {
-        let need = self.len as usize + additional;
-        if need > self.cap as usize {
-            self.grow_to(need);
+        let _ = self.reserve_to_len(additional, "BabyVec::reserve");
+    }
+
+    #[inline]
+    #[track_caller]
+    pub fn reserve_exact(&mut self, additional: usize) {
+        let need = self.checked_len_after(additional, "BabyVec::reserve_exact");
+        if need > self.cap {
+            self.grow_exact(need as usize);
         }
     }
 
     #[inline]
-    pub fn reserve_exact(&mut self, additional: usize) {
-        let need = self.len as usize + additional;
-        if need > self.cap as usize {
-            self.grow_exact(need);
+    #[track_caller]
+    fn checked_len_after(&self, additional: usize, method: &'static str) -> u32 {
+        (self.len as usize)
+            .checked_add(additional)
+            .and_then(|new_len| u32::try_from(new_len).ok())
+            .unwrap_or_else(|| panic!("{method}: length overflow past u32::MAX"))
+    }
+
+    #[inline]
+    #[track_caller]
+    fn reserve_to_len(&mut self, additional: usize, method: &'static str) -> u32 {
+        let new_len = self.checked_len_after(additional, method);
+
+        if new_len > self.cap {
+            self.grow_to(new_len as usize);
         }
+
+        new_len
     }
 
     #[inline]
@@ -211,13 +231,14 @@ impl<'a, T> BabyVec<'a, T> {
 
     /// `Vec::append` parity — bitwise-move all elements from `other` to the
     /// end of `self`, leaving `other` empty.
+    #[track_caller]
     pub fn append(&mut self, other: &mut Self) {
         let n = other.len as usize;
         if n == 0 {
             return;
         }
-        self.reserve(n);
-        // SAFETY: `reserve` guarantees room for `n` more; `self`/`other` are
+        let new_len = self.reserve_to_len(n, "BabyVec::append");
+        // SAFETY: `reserve_to_len` guarantees room for `n` more; `self`/`other` are
         // distinct (`&mut` × 2). Elements are bitwise-moved; `other.len` is
         // zeroed so it relinquishes ownership before `self` claims it.
         unsafe {
@@ -227,19 +248,20 @@ impl<'a, T> BabyVec<'a, T> {
                 n,
             );
             other.len = 0;
-            self.len += n as u32;
+            self.len = new_len;
         }
     }
 
     /// Bitwise-move all elements from `src` to the *front* of `self`, leaving
     /// `src` empty. Mirrors `bun_collections::prepend_from` for `Vec`.
+    #[track_caller]
     pub fn prepend_from(&mut self, src: &mut Self) {
         let src_len = src.len as usize;
         if src_len == 0 {
             return;
         }
         let dst_len = self.len as usize;
-        self.reserve(src_len);
+        let new_len = self.reserve_to_len(src_len, "BabyVec::prepend_from");
         // SAFETY: capacity holds `dst_len + src_len`; the right-shift memmove
         // and front copy together fully initialize `[0, dst_len+src_len)`.
         // `src.len` is zeroed before `self.len` is grown so no element is ever
@@ -249,7 +271,7 @@ impl<'a, T> BabyVec<'a, T> {
             ptr::copy(base, base.add(src_len), dst_len);
             ptr::copy_nonoverlapping(src.ptr.as_ptr(), base, src_len);
             src.len = 0;
-            self.len += src_len as u32;
+            self.len = new_len;
         }
     }
 
@@ -318,17 +340,18 @@ impl<'a, T> BabyVec<'a, T> {
         core::mem::replace(self, BabyVec::new_in(self.alloc)).into_iter()
     }
 
+    #[track_caller]
     pub fn extend_from_slice(&mut self, other: &[T])
     where
         T: Copy,
     {
         let n = other.len();
-        self.reserve(n);
-        // SAFETY: `reserve` guarantees `cap >= len + n`; the source/destination
+        let new_len = self.reserve_to_len(n, "BabyVec::extend_from_slice");
+        // SAFETY: `reserve_to_len` guarantees `cap >= len + n`; the source/destination
         // ranges are disjoint (`other` borrows immutably, `self` exclusively).
         unsafe {
             ptr::copy_nonoverlapping(other.as_ptr(), self.ptr.as_ptr().add(self.len as usize), n);
-            self.len += n as u32;
+            self.len = new_len;
         }
     }
 
@@ -518,5 +541,84 @@ impl<'a, T> AsRef<[T]> for BabyVec<'a, T> {
     #[inline]
     fn as_ref(&self) -> &[T] {
         self.as_slice()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "BabyVec::reserve: length overflow past u32::MAX")]
+    fn reserve_panics_when_zst_len_would_exceed_u32_max() {
+        let arena = MimallocArena::new();
+        let mut vec = BabyVec::<()>::new_in(&arena);
+
+        // SAFETY: `()` is a ZST, so setting len to the ZST capacity boundary
+        // does not require backing storage or initialized bytes.
+        unsafe { vec.set_len(u32::MAX as usize) };
+
+        vec.reserve(1);
+    }
+
+    #[test]
+    #[should_panic(expected = "BabyVec::reserve_exact: length overflow past u32::MAX")]
+    fn reserve_exact_panics_when_zst_len_would_exceed_u32_max() {
+        let arena = MimallocArena::new();
+        let mut vec = BabyVec::<()>::new_in(&arena);
+
+        // SAFETY: `()` is a ZST, so setting len to the ZST capacity boundary
+        // does not require backing storage or initialized bytes.
+        unsafe { vec.set_len(u32::MAX as usize) };
+
+        vec.reserve_exact(1);
+    }
+
+    #[test]
+    #[should_panic(expected = "BabyVec::append: length overflow past u32::MAX")]
+    fn append_panics_when_zst_len_would_exceed_u32_max() {
+        let arena = MimallocArena::new();
+
+        let mut dst = BabyVec::<()>::new_in(&arena);
+
+        // SAFETY: `()` is a ZST, so setting len to the ZST capacity boundary
+        // does not require backing storage or initialized bytes.
+        unsafe { dst.set_len(u32::MAX as usize) };
+
+        let mut src = BabyVec::<()>::new_in(&arena);
+        src.push(());
+
+        dst.append(&mut src);
+    }
+
+    #[test]
+    #[should_panic(expected = "BabyVec::prepend_from: length overflow past u32::MAX")]
+    fn prepend_from_panics_when_zst_len_would_exceed_u32_max() {
+        let arena = MimallocArena::new();
+
+        let mut dst = BabyVec::<()>::new_in(&arena);
+
+        // SAFETY: `()` is a ZST, so setting len to the ZST capacity boundary
+        // does not require backing storage or initialized bytes.
+        unsafe { dst.set_len(u32::MAX as usize) };
+
+        let mut src = BabyVec::<()>::new_in(&arena);
+        src.push(());
+
+        dst.prepend_from(&mut src);
+    }
+
+    #[test]
+    #[should_panic(expected = "BabyVec::extend_from_slice: length overflow past u32::MAX")]
+    fn extend_from_slice_panics_when_zst_len_would_exceed_u32_max() {
+        let arena = MimallocArena::new();
+
+        let mut vec = BabyVec::<()>::new_in(&arena);
+
+        // SAFETY: `()` is a ZST, so setting len to the ZST capacity boundary
+        // does not require backing storage or initialized bytes.
+        unsafe { vec.set_len(u32::MAX as usize) };
+
+        vec.extend_from_slice(&[()]);
     }
 }

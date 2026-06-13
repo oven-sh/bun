@@ -135,7 +135,17 @@ pub fn onConnectionTimeout(this: *@This()) void {
 pub fn onMaxLifetimeTimeout(this: *@This()) void {
     this.max_lifetime_timer.state = .FIRED;
     if (this.#connection.status == .failed) return;
-    this.failFmt(error.LifetimeTimeout, "Max lifetime timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+
+    // Only retire the connection once it's idle. If queries are queued or
+    // in-flight, reschedule the timer so we close between queries rather
+    // than killing healthy ones with ERR_MYSQL_LIFETIME_TIMEOUT (#30646).
+    if (this.#connection.status == .connected and this.#connection.isIdle()) {
+        this.close();
+        return;
+    }
+
+    this.max_lifetime_timer.next = bun.timespec.msFromNow(.allow_mocked_time, 1000);
+    this.#vm.timer.insert(&this.max_lifetime_timer);
 }
 fn setupMaxLifetimeTimerIfNecessary(this: *@This()) void {
     if (this.max_lifetime_interval_ms == 0) return;

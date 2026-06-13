@@ -109,7 +109,16 @@ fn unregisterAutoFlusher(this: *PostgresSQLConnection) void {
 
 fn getTimeoutInterval(this: *const PostgresSQLConnection) u32 {
     return switch (this.status) {
-        .connected => this.idle_timeout_interval_ms,
+        .connected => {
+            // The idle timer is only relevant when the connection is actually idle.
+            // If there are queued or in-flight requests, we must not arm the idle
+            // timer — otherwise we'd race against healthy queries and kill them
+            // when the timer fires (see #30646, #25405).
+            if (this.requests.readableLength() > 0 or !this.flags.is_ready_for_query) {
+                return 0;
+            }
+            return this.idle_timeout_interval_ms;
+        },
         .failed => 0,
         else => this.connection_timeout_ms,
     };
@@ -213,6 +222,13 @@ pub fn onConnectionTimeout(this: *PostgresSQLConnection) void {
 
     switch (this.status) {
         .connected => {
+            // Only fire the idle-timeout failure when the connection is genuinely
+            // idle. If a request slipped into the queue between the timer being
+            // armed and firing, reschedule rather than killing a healthy query.
+            if (this.requests.readableLength() > 0 or !this.flags.is_ready_for_query) {
+                this.resetConnectionTimeout();
+                return;
+            }
             this.failFmt("ERR_POSTGRES_IDLE_TIMEOUT", "Idle timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
         },
         else => {
@@ -228,7 +244,17 @@ pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) void {
     debug("onMaxLifetimeTimeout", .{});
     this.max_lifetime_timer.state = .FIRED;
     if (this.status == .failed) return;
-    this.failFmt("ERR_POSTGRES_LIFETIME_TIMEOUT", "Max lifetime timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+
+    // Only retire the connection once it's idle. If queries are queued or
+    // in-flight, reschedule the timer so we close between queries rather
+    // than killing healthy ones with ERR_POSTGRES_LIFETIME_TIMEOUT (#30646).
+    if (this.status == .connected and this.requests.readableLength() == 0 and this.flags.is_ready_for_query) {
+        this.disconnect();
+        return;
+    }
+
+    this.max_lifetime_timer.next = bun.timespec.msFromNow(.allow_mocked_time, 1000);
+    this.vm.timer.insert(&this.max_lifetime_timer);
 }
 
 fn start(this: *PostgresSQLConnection) void {

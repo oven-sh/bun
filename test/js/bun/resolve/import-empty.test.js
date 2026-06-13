@@ -73,7 +73,6 @@ it("importing empty jsonc/toml file returns module with empty object as default 
 
 it("importing empty file returns module with path as default export", async () => {
   const other_types = [
-    "wasm",
     // "napi", // marked unreachable in src/jsc/ModuleLoader.zig:1956:22
     "base64",
     "dataurl",
@@ -85,6 +84,25 @@ it("importing empty file returns module with path as default export", async () =
     const empty_file_module = await import("./empty-file", { with: { type } });
     expect(empty_file_module.default).toEqual(empty_file_path);
   }
+});
+
+// The WebAssembly/ES Module Integration proposal instantiates the wasm
+// module at import time — an empty file has no magic header so this now
+// fails at load (Node with --experimental-wasm-modules behaves the same
+// way: "BufferSource argument is empty").
+it("importing empty file with type wasm throws a magic-header error", async () => {
+  delete require.cache[require.resolve(`./empty-file`)];
+  let err;
+  try {
+    await import("./empty-file", { with: { type: "wasm" } });
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toBeDefined();
+  // The Zig side raises "Invalid wasm file ... (missing magic header)"
+  // before JSC ever sees the bytes. Assert on that phrase so unrelated
+  // throws (filesystem errors, etc.) don't satisfy the test.
+  expect(String(err?.message ?? "")).toMatch(/magic header/i);
 });
 
 // MARK: - sqlite

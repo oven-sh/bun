@@ -658,21 +658,129 @@ pub fn transpileSourceCode(
                 };
             }
 
-            return transpileSourceCode(
-                jsc_vm,
-                specifier,
-                referrer,
-                input_specifier,
-                path,
-                .file,
-                .unknown, // cjs/esm don't make sense for wasm
-                log,
-                virtual_source,
-                promise_ptr,
-                source_code_printer,
-                globalObject,
-                flags,
-            );
+            // WebAssembly/ES Module Integration: `import * as x from './x.wasm'`
+            // compiles and instantiates the module and exposes its exports as
+            // named ES module exports.
+            //
+            // Preserve the legacy path-string-as-default behavior for imports
+            // with a query string (e.g. `./x.wasm?1`) — those are used as
+            // asset/cache-bust paths, not as real wasm modules.
+            if (disable_transpilying or strings.containsChar(specifier, '?')) {
+                return transpileSourceCode(
+                    jsc_vm,
+                    specifier,
+                    referrer,
+                    input_specifier,
+                    path,
+                    .file,
+                    .unknown, // cjs/esm don't make sense for wasm
+                    log,
+                    virtual_source,
+                    promise_ptr,
+                    source_code_printer,
+                    globalObject,
+                    flags,
+                );
+            }
+
+            // `readFileWithAllocator(bun.default_allocator, ..., use_shared_buffer=false)`
+            // hands us an owned heap buffer. `cloneLatin1` copies it into a
+            // fresh WTFStringImpl, so the original buffer must be freed
+            // afterwards on both the success and bad-magic-header paths —
+            // otherwise every `import('./x.wasm')` from disk leaks the file.
+            var owned_entry: ?CacheEntry = null;
+            defer if (owned_entry) |*e| {
+                _ = e.closeFD();
+                e.deinit(bun.default_allocator);
+            };
+
+            const wasm_bytes: []const u8 = if (virtual_source) |source|
+                source.contents
+            else brk: {
+                owned_entry = jsc_vm.transpiler.resolver.caches.fs.readFileWithAllocator(
+                    bun.default_allocator,
+                    jsc_vm.transpiler.fs,
+                    path.text,
+                    bun.invalid_fd,
+                    false,
+                    null,
+                ) catch |err| {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        jsc_vm.allocator,
+                        "{s} reading \"{s}\"",
+                        .{ @errorName(err), path.text },
+                    ) catch {};
+                    return error.ParseError;
+                };
+                break :brk owned_entry.?.contents;
+            };
+
+            if (wasm_bytes.len < 4 or !strings.eqlComptime(wasm_bytes[0..4], "\x00asm")) {
+                log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    jsc_vm.allocator,
+                    "Invalid wasm file \"{s}\" (missing magic header)",
+                    .{path.text},
+                ) catch {};
+                return error.ParseError;
+            }
+
+            // Register the wasm file with bun's watcher so `bun --watch` /
+            // hot reload notices edits, mirroring what the generic file loader
+            // does below for non-wasm imports. The watcher's fd is separate
+            // from the cache entry's read-fd; our defer still closes the
+            // cache entry's fd after `cloneLatin1`.
+            if (virtual_source == null) {
+                if (jsc_vm.isWatcherEnabled()) auto_watch: {
+                    if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                        const input_fd: bun.FD = brk: {
+                            // kqueue watchers need a file descriptor to receive event notifications on it.
+                            if (bun.Watcher.requires_file_descriptors) {
+                                switch (bun.sys.open(
+                                    &(std.posix.toPosixPath(path.text) catch break :auto_watch),
+                                    bun.Watcher.watch_open_flags,
+                                    0,
+                                )) {
+                                    .err => break :auto_watch,
+                                    .result => |fd| break :brk fd,
+                                }
+                            } else {
+                                break :brk .invalid;
+                            }
+                        };
+                        const hash = bun.Watcher.getHash(path.text);
+                        switch (jsc_vm.bun_watcher.addFile(
+                            input_fd,
+                            path.text,
+                            hash,
+                            .wasm,
+                            .invalid,
+                            null,
+                            true,
+                        )) {
+                            .err => {
+                                if (comptime Environment.isMac) {
+                                    if (input_fd.isValid()) input_fd.close();
+                                }
+                            },
+                            .result => {},
+                        }
+                    }
+                }
+            }
+
+            // Use Latin-1 encoding so each byte maps to a single char and we
+            // can extract the raw bytes unchanged on the C++ side.
+            return ResolvedSource{
+                .allocator = null,
+                .source_code = bun.String.cloneLatin1(wasm_bytes),
+                .specifier = input_specifier,
+                .source_url = input_specifier.createIfDifferent(path.text),
+                .tag = .wasm,
+            };
         },
 
         .sqlite_embedded, .sqlite => {
@@ -936,6 +1044,13 @@ pub export fn Bun__transpileFile(
                 },
             }
         }
+    }
+
+    // WebAssembly/ES Module Integration is ESM-only. `require("./x.wasm")`
+    // keeps the legacy path-string-as-default behavior (Node rejects it
+    // entirely; we at least return a usable path).
+    if (is_commonjs_require and lr.loader == options.Loader.wasm) {
+        lr.loader = .file;
     }
 
     const module_type: options.ModuleType = brk: {
@@ -1356,6 +1471,7 @@ const analyze_transpiled_module = @import("../bundler/analyze_transpiled_module.
 const ast = @import("../options_types/import_record.zig");
 const node_module_module = @import("./NodeModuleModule.zig");
 const std = @import("std");
+const CacheEntry = @import("../bundler/cache.zig").Fs.Entry;
 const panic = std.debug.panic;
 
 const options = @import("../bundler/options.zig");

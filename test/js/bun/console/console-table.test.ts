@@ -290,6 +290,16 @@ describe.concurrent("console.table escapes control characters in string cells", 
     expect(exitCode).toBe(0);
   });
 
+  test("control character in a UTF-16-backed string is escaped", async () => {
+    // CJK codepoints (> 0xFF) force JSC to store the string as UTF-16, so this
+    // exercises the str.utf16() branch of should_quote_string_cell (the other
+    // cases are all Latin-1 and only hit the byte_slice() branch).
+    const { stdout, exitCode } = await tableOutput(String.raw`console.table([{ v: "日本\n語" }]);`);
+    expect(stdout).toContain("日本");
+    assertRectangular(stdout);
+    expect(exitCode).toBe(0);
+  });
+
   test("boxed String cells keep their [String: ...] type indicator", async () => {
     // `new String(...)` renders as `[String: "..."]`, which already escapes via
     // print_string, so the control-char promotion must not strip the wrapper.

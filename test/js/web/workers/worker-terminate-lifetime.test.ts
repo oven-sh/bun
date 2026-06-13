@@ -10,6 +10,14 @@ const rounds = slow ? 4 : 8;
 const perRound = slow ? 12 : 32;
 const timeout = slow ? 60_000 : 20_000;
 
+// The nested-worker tests spawn a full JSC VM per child; keep the counts
+// small so loaded ASAN CI runners stay well inside the timeout. The race
+// window (a child inside start_vm when the parent is terminated) spans the
+// whole child VM startup, so even this many children crashed the unfixed
+// build on every run.
+const nestedRounds = 3;
+const nestedPerRound = 6;
+
 // Regression: `new Worker(url, { ref: false })` was silently ignored — the
 // Zig-side `user_keep_alive` field was set from it but never read, and the
 // parent keep-alive was taken unconditionally in `create()`. `.unref()` after
@@ -66,6 +74,87 @@ test(
             w.ref();
             w.unref();
           }
+        }
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Regression: terminating a worker that had just spawned children of its own
+// freed its VirtualMachine in shutdown() while the children were still inside
+// start_vm() reading it (transform options, env clone, standalone graph) —
+// ASAN heap-use-after-free in VirtualMachine::init_worker. shutdown() now
+// terminates its children and waits for them to get past that access first.
+test(
+  "terminating a worker while its nested children are starting does not UAF",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const middleCode = \`
+          for (let j = 0; j < ${nestedPerRound}; j++) new Worker("data:text/javascript,");
+          postMessage("spawned");
+        \`;
+        for (let i = 0; i < ${nestedRounds}; i++) {
+          const middle = new Worker("data:text/javascript," + encodeURIComponent(middleCode));
+          await new Promise(resolve => (middle.onmessage = resolve));
+          // The children are still starting up on their own threads; this
+          // used to free the middle worker's VM out from under them.
+          await middle.terminate();
+        }
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Regression: a child whose entry-point resolution fails (revoked blob URL)
+// while its termination is already in flight used to crash on the error
+// path: flush_logs panicked with "unhandled exception" on JsError::Terminated,
+// and the stale TerminationException tripped
+// ASSERT(vm.hasTerminationRequest()) in VMTraps::deferTerminationSlow.
+test(
+  "terminating a worker whose children fail entry resolution does not crash",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const middleCode = \`
+          for (let j = 0; j < ${nestedPerRound}; j++) {
+            const blob = new Blob(["postMessage(1);"], { type: "application/javascript" });
+            const url = URL.createObjectURL(blob);
+            new Worker(url);
+            URL.revokeObjectURL(url);
+          }
+          postMessage("spawned");
+        \`;
+        for (let i = 0; i < ${nestedRounds}; i++) {
+          const middle = new Worker("data:text/javascript," + encodeURIComponent(middleCode));
+          await new Promise(resolve => (middle.onmessage = resolve));
+          await middle.terminate();
         }
       `,
       ],

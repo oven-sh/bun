@@ -66,7 +66,7 @@ pub inline fn UINT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: u64) Enc
     if (val < @as(c_ulonglong, @bitCast(@as(c_longlong, @as(c_long, 2147483648))))) {
         return INT32_TO_JSVALUE(@as(i32, @bitCast(@as(c_uint, @truncate(val)))));
     }
-    if (val < @as(c_ulonglong, @bitCast(@as(c_longlong, @as(c_long, 9007199254740991))))) {
+    if (val <= @as(c_ulonglong, @bitCast(@as(c_longlong, @as(c_long, 9007199254740991))))) {
         return DOUBLE_TO_JSVALUE(@as(f64, @floatFromInt(val)));
     }
     return UINT64_TO_JSVALUE_SLOW(@as(*jsc.JSGlobalObject, @ptrCast(globalObject.?)), val).asEncoded();
@@ -74,7 +74,7 @@ pub inline fn UINT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: u64) Enc
 pub inline fn INT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: i64) EncodedJSValue {
     const globalObject = arg_globalObject;
     const val = arg_val;
-    if ((val >= @as(c_longlong, @bitCast(@as(c_longlong, -@as(c_long, 2147483648))))) and (val <= @as(c_longlong, @bitCast(@as(c_longlong, @as(c_long, 2147483648)))))) {
+    if ((val >= @as(c_longlong, @bitCast(@as(c_longlong, -@as(c_long, 2147483648))))) and (val < @as(c_longlong, @bitCast(@as(c_longlong, @as(c_long, 2147483648)))))) {
         return INT32_TO_JSVALUE(@as(i32, @bitCast(@as(c_int, @truncate(val)))));
     }
     if ((val >= @as(c_longlong, @bitCast(@as(c_longlong, -@as(c_long, 9007199254740991))))) and (val <= @as(c_longlong, @bitCast(@as(c_longlong, @as(c_long, 9007199254740991)))))) {

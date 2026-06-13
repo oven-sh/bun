@@ -536,22 +536,30 @@ pub const Resolver = struct {
     custom_dir_paths: ?[]const bun.String = null,
 
     pub fn getPackageManager(this: *Resolver) *PackageManager {
-        return this.package_manager orelse brk: {
-            bun.HTTPThread.init(&.{});
-            const pm = PackageManager.initWithRuntime(
-                this.log,
-                this.opts.install,
+        if (this.package_manager) |pm| {
+            // The PM is a process singleton shared by every resolver; another
+            // caller (e.g. a Bun.build() completion whose per-task log has
+            // since been freed) may have installed a stale log. Refresh so
+            // error paths always write through this resolver's live log.
+            pm.log = this.log;
+            return pm;
+        }
+        bun.HTTPThread.init(&.{});
+        const pm = PackageManager.initWithRuntime(
+            this.log,
+            this.opts.install,
 
-                // This cannot be the threadlocal allocator. It goes to the HTTP thread.
-                bun.default_allocator,
+            // This cannot be the threadlocal allocator. It goes to the HTTP thread.
+            bun.default_allocator,
 
-                .{},
-                this.env_loader.?,
-            );
+            .{},
+            this.env_loader.?,
+        );
+        if (pm.onWake.context == null) {
             pm.onWake = this.onWakePackageManager;
-            this.package_manager = pm;
-            break :brk pm;
-        };
+        }
+        this.package_manager = pm;
+        return pm;
     }
 
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
@@ -990,6 +998,40 @@ pub const Resolver = struct {
 
             .failure => |e| return e,
         }
+    }
+
+    /// Like `resolve`, but uses the configured `global_cache` setting to
+    /// allow auto-installing packages from the global cache or npm.
+    pub fn resolveWithGlobalCache(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
+        switch (r.resolveAndAutoInstall(source_dir, import_path, kind, r.opts.global_cache)) {
+            .success => |result| return result,
+            .pending, .not_found => return error.ModuleNotFound,
+
+            .failure => |e| return e,
+        }
+    }
+
+    /// Like `resolveWithFramework`, but uses the configured `global_cache` setting
+    /// to allow auto-installing packages from the global cache or npm.
+    pub fn resolveWithFrameworkAndGlobalCache(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
+        if (r.opts.framework) |f| {
+            if (f.built_in_modules.get(import_path)) |mod| {
+                switch (mod) {
+                    .code => {
+                        return .{
+                            .import_kind = kind,
+                            .path_pair = .{ .primary = Fs.Path.initWithNamespace(import_path, "node") },
+                            .module_type = .esm,
+                            .primary_side_effects_data = .no_side_effects__pure_data,
+                            .flags = .{ .is_external = false },
+                        };
+                    },
+                    .import => |path| return r.resolveWithGlobalCache(r.fs.top_level_dir, path, .entry_point_build),
+                }
+                return .{};
+            }
+        }
+        return r.resolveWithGlobalCache(source_dir, import_path, kind);
     }
 
     /// Runs a resolution but also checking if a Bun Bake framework has an

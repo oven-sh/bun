@@ -586,7 +586,7 @@ pub const BundleV2 = struct {
         }
 
         var had_busted_dir_cache: bool = false;
-        var resolve_result: _resolver.Result = while (true) break transpiler.resolver.resolve(
+        var resolve_result: _resolver.Result = while (true) break transpiler.resolver.resolveWithGlobalCache(
             source_dir,
             import_record.specifier,
             import_record.kind,
@@ -3098,7 +3098,7 @@ pub const BundleV2 = struct {
             }
 
             var had_busted_dir_cache = false;
-            var resolve_result: _resolver.Result = inner: while (true) break transpiler.resolver.resolveWithFramework(
+            var resolve_result: _resolver.Result = inner: while (true) break transpiler.resolver.resolveWithFrameworkAndGlobalCache(
                 source_dir,
                 import_record.path.text,
                 import_record.kind,

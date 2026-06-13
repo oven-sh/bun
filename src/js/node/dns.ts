@@ -305,7 +305,7 @@ function lookup(hostname, options, callback) {
   dns
     .lookup(hostname, options)
     .then(res => {
-      throwIfEmpty(res);
+      throwIfEmpty(res, hostname);
 
       if (options.order == "ipv4first") {
         res.sort((a, b) => a.family - b.family);
@@ -669,21 +669,21 @@ const mapLookupAll = res => {
   return { address, family };
 };
 
-function throwIfEmpty(res) {
+function throwIfEmpty(res, hostname) {
   if (res.length === 0) {
-    const err = new Error("No records found");
-    err.name = "DNSException";
-    err.code = "ENODATA";
-    // Hardcoded errno
-    err.errno = 1;
+    const err = new Error(`getaddrinfo ENOTFOUND ${hostname}`);
+    // libuv UV_EAI_NONAME
+    err.errno = -3008;
+    err.code = "ENOTFOUND";
     err.syscall = "getaddrinfo";
+    err.hostname = hostname;
     throw err;
   }
 }
 Object.defineProperty(throwIfEmpty, "name", { value: "::bunternal::" });
 
-const promisifyLookup = order => res => {
-  throwIfEmpty(res);
+const promisifyLookup = (order, hostname) => res => {
+  throwIfEmpty(res, hostname);
   if (order == "ipv4first") {
     res.sort((a, b) => a.family - b.family);
   } else if (order == "ipv6first") {
@@ -693,8 +693,8 @@ const promisifyLookup = order => res => {
   return { address, family };
 };
 
-const promisifyLookupAll = order => res => {
-  throwIfEmpty(res);
+const promisifyLookupAll = (order, hostname) => res => {
+  throwIfEmpty(res, hostname);
   if (order == "ipv4first") {
     res.sort((a, b) => a.family - b.family);
   } else if (order == "ipv6first") {
@@ -753,9 +753,9 @@ const promises = {
     }
 
     if (options.all) {
-      return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookupAll(options.order)));
+      return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookupAll(options.order, hostname)));
     }
-    return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookup(options.order)));
+    return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookup(options.order, hostname)));
   },
 
   lookupService(address, port) {

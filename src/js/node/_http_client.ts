@@ -530,8 +530,8 @@ function ClientRequest(input, options, cb) {
       // Don't need to bother with lookup if it's already an IP address or no lookup function is provided.
       if (RegExpPrototypeExec.$call(INVALID_HOST_CHAR_REGEX, host) !== null) {
         const error = new Error(`getaddrinfo ENOTFOUND ${host}`);
-        error.name = "DNSException";
         error.code = "ENOTFOUND";
+        error.errno = -3008; // libuv UV_EAI_NONAME
         error.syscall = "getaddrinfo";
         error.hostname = host;
         process.nextTick((self, err) => self.emit("error", err), this, error);
@@ -552,17 +552,20 @@ function ClientRequest(input, options, cb) {
 
         let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
 
-        const fail = (message, name, code, syscall) => {
+        // `error.name` inherits "Error" from Error.prototype (like Node's dns
+        // errors), so don't set it as an own property.
+        const fail = (message, code, syscall, errno?, hostname?) => {
           const error = new Error(message);
-          error.name = name;
           error.code = code;
           error.syscall = syscall;
+          if (errno !== undefined) error.errno = errno;
+          if (hostname !== undefined) error.hostname = hostname;
           if (!!$debug) globalReportError(error);
           process.nextTick((self, err) => self.emit("error", err), this, error);
         };
 
         if (candidates.length === 0) {
-          fail("No records found", "DNSException", "ENOTFOUND", "getaddrinfo");
+          fail(`getaddrinfo ENOTFOUND ${host}`, "ENOTFOUND", "getaddrinfo", -3008, host);
           return;
         }
 
@@ -584,7 +587,7 @@ function ClientRequest(input, options, cb) {
         const iterate = () => {
           if (candidates.length === 0) {
             // If we get to this point, it means that none of the addresses could be connected to.
-            fail(`connect ECONNREFUSED ${host}:${port}`, "Error", "ECONNREFUSED", "connect");
+            fail(`connect ECONNREFUSED ${host}:${port}`, "ECONNREFUSED", "connect");
             return;
           }
 

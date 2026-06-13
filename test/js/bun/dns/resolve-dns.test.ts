@@ -100,7 +100,7 @@ describe("dns", () => {
       // @ts-expect-error
       expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
         code: "DNS_ENOTFOUND",
-        name: "DNSException",
+        name: "Error",
       });
     });
 
@@ -108,7 +108,7 @@ describe("dns", () => {
       // @ts-expect-error
       expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
         code: expect.stringMatching(/^DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP$/),
-        name: "DNSException",
+        name: "Error",
       });
     });
   });
@@ -122,7 +122,7 @@ describe("dns", () => {
     const long = Buffer.alloc(100_000, "a").toString();
     // @ts-expect-error
     await expect(dns.lookup(long, { backend })).rejects.toMatchObject({
-      name: "DNSException",
+      name: "Error",
       code: "DNS_ENOTFOUND",
       syscall: "getaddrinfo",
     });

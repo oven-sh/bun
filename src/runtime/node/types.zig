@@ -771,7 +771,10 @@ pub const PathLike = union(enum) {
 
             sliced.reportExtraMemory(global.vm());
 
-            // It is expensive to keep both around.
+            // It is expensive to keep both around. toSlice() transferred the
+            // caller's ref into sliced.underlying; drop it now that we only
+            // keep the owned UTF-8 buffer.
+            sliced.underlying.deref();
             return .{ .encoded_slice = sliced.utf8 };
         }
     }

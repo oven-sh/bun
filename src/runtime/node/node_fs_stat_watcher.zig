@@ -257,10 +257,15 @@ pub const StatWatcher = struct {
 
         global_this: *jsc.JSGlobalObject,
 
+        pub fn deinit(this: *const Arguments) void {
+            this.path.deinit();
+        }
+
         pub fn fromJS(global: *jsc.JSGlobalObject, arguments: *ArgumentsSlice) bun.JSError!Arguments {
             const path = try PathLike.fromJSWithAllocator(global, arguments, bun.default_allocator) orelse {
                 return global.throwInvalidArguments("filename must be a string or TypedArray", .{});
             };
+            errdefer path.deinit();
 
             var listener: jsc.JSValue = .zero;
             var persistent: bool = true;

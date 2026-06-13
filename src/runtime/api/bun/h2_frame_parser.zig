@@ -2453,12 +2453,14 @@ pub const H2FrameParser = struct {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Settings frame on connection stream", this.lastStreamID, true);
             return data.len;
         }
-        defer if (!isACK) this.sendSettingsACK();
+        var should_ack = false;
+        defer if (should_ack) this.sendSettingsACK();
 
         const settingByteSize = SettingsPayloadUnit.byteSize;
         if (frame.length > 0) {
             if (isACK or frame.length % settingByteSize != 0) {
                 log("invalid settings frame size", .{});
+                should_ack = false;
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid settings frame size", this.lastStreamID, true);
                 return data.len;
             }
@@ -2483,9 +2485,9 @@ pub const H2FrameParser = struct {
                             const stream = item.*;
                             // Adjust the stream's local window size by the delta
                             if (delta >= 0) {
-                                stream.windowSize +|= @intCast(@as(u64, @intCast(delta)));
+                                stream.windowSize +|= @as(u64, @intCast(delta));
                             } else {
-                                stream.windowSize -|= @intCast(@as(u64, @intCast(-delta)));
+                                stream.windowSize -|= @as(u64, @intCast(-delta));
                             }
                         }
                         log("adjusted stream windows by delta {} (old: {}, new: {})", .{ delta, old_size, new_size });
@@ -2494,25 +2496,15 @@ pub const H2FrameParser = struct {
 
                 this.dispatch(.onLocalSettings, this.localSettings.toJS(this.handlers.globalObject));
             } else {
+                should_ack = true;
                 defer _ = this.flush();
                 defer this.incrementWindowSizeIfNeeded();
                 log("empty settings has remoteSettings? {}", .{this.remoteSettings != null});
                 if (this.remoteSettings == null) {
 
-                    // ok empty settings so default settings
                     var remoteSettings: FullSettingsPayload = .{};
                     this.remoteSettings = remoteSettings;
                     log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
-
-                    if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
-                        var it = this.streams.valueIterator();
-                        while (it.next()) |item| {
-                            const stream = item.*;
-                            if (remoteSettings.initialWindowSize >= stream.remoteWindowSize) {
-                                stream.remoteWindowSize = remoteSettings.initialWindowSize;
-                            }
-                        }
-                    }
                     this.dispatch(.onRemoteSettings, remoteSettings.toJS(this.handlers.globalObject));
                 }
             }
@@ -2521,29 +2513,45 @@ pub const H2FrameParser = struct {
             return 0;
         }
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+            should_ack = true;
             defer _ = this.flush();
             defer this.incrementWindowSizeIfNeeded();
-            var remoteSettings: FullSettingsPayload = this.remoteSettings orelse .{};
+            const oldRemoteSettings: FullSettingsPayload = this.remoteSettings orelse .{};
+            var remoteSettings: FullSettingsPayload = oldRemoteSettings;
             var i: usize = 0;
             const payload = content.data;
             while (i < payload.len) {
                 defer i += settingByteSize;
                 var unit: SettingsPayloadUnit = undefined;
                 SettingsPayloadUnit.from(&unit, payload[i .. i + settingByteSize], 0, true);
+                if (@as(SettingsType, @enumFromInt(unit.type)) == .SETTINGS_INITIAL_WINDOW_SIZE and unit.value > MAX_WINDOW_SIZE) {
+                    should_ack = false;
+                    this.readBuffer.reset();
+                    this.sendGoAway(0, ErrorCode.FLOW_CONTROL_ERROR, "Invalid initial window size", this.lastStreamID, true);
+                    return content.end;
+                }
                 remoteSettings.updateWith(unit);
                 log("remoteSettings: {} {} isServer: {}", .{ @as(SettingsType, @enumFromInt(unit.type)), unit.value, this.isServer });
             }
             this.readBuffer.reset();
             this.remoteSettings = remoteSettings;
             log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
-            if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
+            if (remoteSettings.initialWindowSize != oldRemoteSettings.initialWindowSize) {
+                // Per RFC 7540 Section 6.9.2, SETTINGS_INITIAL_WINDOW_SIZE changes
+                // apply to existing streams by adjusting their windows by the delta.
+                const old_size: i64 = @intCast(oldRemoteSettings.initialWindowSize);
+                const new_size: i64 = @intCast(remoteSettings.initialWindowSize);
+                const delta = new_size - old_size;
                 var it = this.streams.valueIterator();
                 while (it.next()) |item| {
                     const stream = item.*;
-                    if (remoteSettings.initialWindowSize >= stream.remoteWindowSize) {
-                        stream.remoteWindowSize = remoteSettings.initialWindowSize;
+                    if (delta > 0) {
+                        stream.remoteWindowSize +|= @as(u64, @intCast(delta));
+                    } else {
+                        stream.remoteWindowSize -|= @as(u64, @intCast(-delta));
                     }
                 }
+                log("adjusted remote stream windows by delta {} (old: {}, new: {})", .{ delta, old_size, new_size });
             }
             this.dispatch(.onRemoteSettings, remoteSettings.toJS(this.handlers.globalObject));
             return content.end;

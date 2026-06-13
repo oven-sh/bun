@@ -439,6 +439,29 @@ void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 long us_ssl_ctx_live_count(void);
 
+/* Node's `SecureContext.addCACert`. Parses `pem` as one or more PEM-encoded
+ * X.509 certificates and appends them to `ssl_ctx`'s verify store. On the
+ * first call into a CTX that doesn't already carry user CAs (the `options.ca`
+ * / `options.ca_file_name` / `options.request_cert` build paths set the
+ * `us_ctx_user_ca_idx` marker at construction), swaps in
+ * us_get_default_ca_store() so the added CA joins the OS/baked-in trust
+ * anchors instead of replacing them, and flips the same marker so the
+ * per-socket client override in us_internal_ssl_attach doesn't discard the
+ * added CA. CTX verify_mode is NOT touched — that would make servers send
+ * CertificateRequest on every handshake. Duplicates are silently ignored
+ * (Node behavior). Returns the number of certificates added (0 if `pem` was
+ * empty or contained no PEM blocks — not an error). Silently no-ops on
+ * NULL/0-len input to mirror Node. */
+int us_ssl_ctx_add_ca_pem(struct ssl_ctx_st *ssl_ctx, const char *pem, size_t pem_len);
+
+/* 1 if this CTX already carries user CAs (installed at construction via
+ * `options.ca` / `ca_file_name` / `request_cert`, or appended by a later
+ * `us_ssl_ctx_add_ca_pem`); 0 otherwise. Client-attach paths read this to
+ * decide whether to override the per-SSL verify store with the shared
+ * default roots — they must NOT override when user CAs are on the CTX, or
+ * the added CAs become invisible at handshake time. */
+int us_ctx_has_user_ca(struct ssl_ctx_st *ssl_ctx);
+
 /* Public interfaces for loops */
 
 /* Returns a new event loop with user data extension */

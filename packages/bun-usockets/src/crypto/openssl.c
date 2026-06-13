@@ -19,6 +19,7 @@
 
 #include "internal/internal.h"
 #include "libusockets.h"
+#include <limits.h>
 #include <string.h>
 #include <stdatomic.h>
 #include <time.h>
@@ -119,6 +120,20 @@ static int us_sni_ex_idx = -1;
 static int us_ctx_cache_ex_idx = -1;
 static int us_ssl_reneg_state_idx = -1;
 static int us_ssl_listener_ex_idx = -1;
+/* Set when a CTX carries an explicitly-managed trust store that the
+ * client-attach paths must not override. Producers and what each installs:
+ *   - `us_ssl_ctx_add_ca_pem` (node:tls `SecureContext.addCACert`): default
+ *     roots + the appended user CAs;
+ *   - `options.ca` / `ca_file_name` branches of `us_ssl_ctx_build_raw`: the
+ *     user CAs only (explicit `ca` replaces the default store, Node.js
+ *     semantics);
+ *   - `request_cert` branch of `us_ssl_ctx_build_raw`: default roots only.
+ * The client-attach paths — `us_internal_ssl_attach` here and Rust's
+ * `SSLWrapper` (via `us_ctx_has_user_ca`) — read it to skip their per-SSL
+ * `SSL_set0_verify_cert_store(ssl, shared_default_roots)` override: when set,
+ * the CTX's own store is authoritative and overriding would make it invisible
+ * at handshake time. The pointer IS the value (NULL/!NULL), so no free_func. */
+static int us_ctx_user_ca_idx = -1;
 #ifdef _WIN32
 static INIT_ONCE us_ex_idx_once = INIT_ONCE_STATIC_INIT;
 #else
@@ -158,6 +173,7 @@ static void us_ex_idx_init(void) {
   us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ctx_user_ca_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
 }
 
 #ifdef _WIN32
@@ -375,6 +391,100 @@ end:
   return count > 0;
 }
 
+/* Post-construction variant of add_ca_cert_to_ctx_store for Node's
+ * `SecureContext.addCACert`. Node silently ignores empty/malformed input and
+ * duplicate CAs, and leaves the store untouched if the input has no valid
+ * PEM blocks — so there's no error return; we just count what stuck.
+ *
+ * Unlike the `options.ca` construction-time path, we do NOT flip CTX-level
+ * `verify_mode`. `SecureContext` is mode-neutral (the same object may back
+ * `tls.connect` and `tls.createServer`), and `SSL_VERIFY_PEER` on a server
+ * CTX makes BoringSSL send `CertificateRequest` even when the user never set
+ * `requestCert`. Node's `SecureContext::AddCACert` also leaves verify_mode
+ * alone.
+ *
+ * The trust store is still upgraded on the first call: a SecureContext built
+ * without `ca` has the empty default-paths store from `SSL_CTX_new`, so just
+ * appending would make a client trust ONLY the added CA, not the public web.
+ * We swap in `us_get_default_ca_store()` (OS roots + baked-in Bun roots), add
+ * the user CA on top, and flip `us_ctx_user_ca_idx` so the client branch of
+ * `us_internal_ssl_attach` knows to skip its per-socket trust-store override
+ * (the CTX's own store now carries the user CAs + default roots). */
+int us_ssl_ctx_add_ca_pem(SSL_CTX *ctx, const char *pem, size_t pem_len) {
+  if (ctx == NULL || pem == NULL || pem_len == 0) return 0;
+  /* BoringSSL's BIO_new_mem_buf takes `ossl_ssize_t` (ptrdiff_t). Cap at
+   * INT_MAX, which is far beyond any real PEM blob. */
+  if (pem_len > (size_t)INT_MAX) return 0;
+
+  ERR_clear_error();
+
+  us_ex_idx_ensure();
+  void *marked = SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_idx);
+  X509_STORE *store;
+  if (marked) {
+    /* CTX already carries an explicitly-managed trust store — default roots +
+     * user CAs from a prior `addCACert`, user CAs only from the `options.ca` /
+     * `ca_file_name` branches of `us_ssl_ctx_build_raw`, or default roots only
+     * from its `request_cert` branch. Append to that store instead of swapping
+     * in a fresh one, which would drop whatever it already holds. */
+    store = SSL_CTX_get_cert_store(ctx);
+  } else {
+    /* First user-CA installation on this CTX: swap in the default_ca_store
+     * so the added CA joins (not replaces) OS/baked-in trust anchors. The
+     * mark below is what tells the client attach path to keep this store
+     * instead of overriding it with the shared default roots. */
+    store = us_get_default_ca_store();
+    if (store == NULL) return 0;
+    SSL_CTX_set_cert_store(ctx, store);
+  }
+  if (store == NULL) return 0;
+
+  BIO *in = BIO_new_mem_buf(pem, (int)pem_len);
+  if (in == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
+    return 0;
+  }
+
+  int added = 0;
+  X509 *x;
+  while ((x = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                                SSL_CTX_get_default_passwd_cb_userdata(ctx))) != NULL) {
+    if (X509_STORE_add_cert(store, x) == 1) {
+      added++;
+    }
+    /* Mirror Node's `SecureContext::AddCACert` and Bun's own construction-
+     * time `add_ca_cert_to_ctx_store`: also surface the DN in the
+     * CertificateRequest's `certificate_authorities` list. Only meaningful
+     * for a server with `requestCert: true`; advisory for others. Returns 0
+     * on OOM (rare) — swallow like the rest. `add_client_CA` dups the subject
+     * name, so the `X509_free(x)` below still works. */
+    (void)SSL_CTX_add_client_CA(ctx, x);
+    /* Node behavior: swallow per-cert add failures so stray errors
+     * (X509_R_CERT_ALREADY_IN_HASH_TABLE for duplicates, anything else
+     * per-cert) don't blow up unrelated BoringSSL calls later. */
+    ERR_clear_error();
+    X509_free(x);
+  }
+  /* PEM_read_bio_X509 sets PEM_R_NO_START_LINE on EOF — normal termination. */
+  ERR_clear_error();
+  BIO_free(in);
+
+  /* Mark the CTX so the client attach path preserves our trust store. */
+  if (!marked) {
+    SSL_CTX_set_ex_data(ctx, us_ctx_user_ca_idx, (void *)(uintptr_t)1);
+  }
+  return added;
+}
+
+/* Exposed for the C client-attach path (`us_internal_ssl_attach`) and for
+ * Rust's `SSLWrapper` in `src/uws/lib.rs` (Duplex/UpgradedDuplex TLS) so both
+ * can skip their per-SSL trust-store override when user CAs have been
+ * installed on the CTX (either at construction or via addCACert). */
+int us_ctx_has_user_ca(SSL_CTX *ctx) {
+  us_ex_idx_ensure();
+  return SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_idx) != NULL;
+}
+
 static int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
   BIO *in;
   int ret = 0;
@@ -520,7 +630,12 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     /* An explicit CA replaces the default trust store (Node.js semantics):
      * chains must validate exclusively against the supplied CAs. The SSL_CTX
      * already owns a fresh, empty X509_STORE from SSL_CTX_new(), so
-     * SSL_CTX_load_verify_locations below populates only the user's CAs. */
+     * SSL_CTX_load_verify_locations below populates only the user's CAs.
+     * Flip `us_ctx_user_ca_idx` so a later `us_ssl_ctx_add_ca_pem`
+     * (addCACert) appends to THIS user-CA store rather than swapping in the
+     * default roots, and so the per-socket client override in
+     * `us_internal_ssl_attach` preserves the user CAs. */
+    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_idx, (void *)(uintptr_t)1);
     STACK_OF(X509_NAME) *ca_list = SSL_load_client_CA_file(options.ca_file_name);
     if (ca_list == NULL) {
       *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
@@ -541,7 +656,9 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   } else if (options.ca && options.ca_count > 0) {
     /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
      * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
-     * any client certificate that chains to a public root. */
+     * any client certificate that chains to a public root. The marker makes
+     * a later addCACert append to this store (see ca_file_name branch). */
+    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_idx, (void *)(uintptr_t)1);
     X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context);
     for (unsigned int i = 0; i < options.ca_count; i++) {
       if (!add_ca_cert_to_ctx_store(ssl_context, options.ca[i], cert_store)) {
@@ -557,6 +674,9 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     }
   } else if (options.request_cert) {
     SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());
+    /* See comment above the ca_file_name branch — `requestCert: true` also
+     * installs a populated trust store that a later addCACert must preserve. */
+    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_idx, (void *)(uintptr_t)1);
     SSL_CTX_set_verify(ssl_context,
         options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
                                     : SSL_VERIFY_PEER,
@@ -673,8 +793,14 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
      * never aborts here — JS reads verify_error and decides. */
     if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
       SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
-      X509_STORE *roots = us_get_shared_default_ca_store();
-      if (roots) SSL_set0_verify_cert_store(ssl, roots);
+      /* ...unless `SecureContext.addCACert` already installed the default
+       * roots (and appended the user CAs) on the CTX itself. Overriding would
+       * throw away those added CAs. When the marker is set, the CTX's own
+       * store already has OS/baked-in roots + user CAs. */
+      if (!us_ctx_has_user_ca(ctx)) {
+        X509_STORE *roots = us_get_shared_default_ca_store();
+        if (roots) SSL_set0_verify_cert_store(ssl, roots);
+      }
     }
   } else {
     SSL_set_accept_state(ssl);

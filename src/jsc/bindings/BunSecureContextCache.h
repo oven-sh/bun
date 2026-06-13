@@ -25,6 +25,7 @@ public:
 
     JSC::JSObject* get(uint64_t key) { return m_map.get(key); }
     void set(uint64_t key, JSC::JSObject* value) { m_map.set(key, JSC::Weak<JSC::JSObject>(value)); }
+    void remove(uint64_t key) { m_map.remove(key); }
 
 private:
     JSC::WeakGCMap<uint64_t, JSC::JSObject, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_map;

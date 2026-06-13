@@ -369,10 +369,22 @@ pub const PackageInstall = struct {
         }
     };
 
-    pub var supported_method: Method = if (Environment.isMac)
+    /// Atomic because PackageInstall.install() may run on thread-pool
+    /// workers (ParallelHoistedTask) which write this on fallback. The
+    /// value only ever moves one way (clonefile → hardlink → copyfile)
+    /// so a .monotonic load/store is sufficient.
+    var supported_method_atomic: std.atomic.Value(Method) = .init(if (Environment.isMac)
         Method.clonefile
     else
-        Method.hardlink;
+        Method.hardlink);
+
+    pub fn supportedMethod() Method {
+        return supported_method_atomic.load(.monotonic);
+    }
+
+    pub fn setSupportedMethod(m: Method) void {
+        supported_method_atomic.store(m, .monotonic);
+    }
 
     fn installWithClonefileEachDir(this: *@This(), destination_dir: std.fs.Dir) !Result {
         var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.fail(err, .opening_cache_dir, @errorReturnTrace());
@@ -1348,7 +1360,7 @@ pub const PackageInstall = struct {
         return if (strings.eqlComptime(this.cache_dir_subpath, ".") or strings.hasPrefixComptime(this.cache_dir_subpath, ".."))
             Method.symlink
         else
-            supported_method;
+            supportedMethod();
     }
 
     pub fn packageMissingFromCache(this: *@This(), manager: *PackageManager, package_id: PackageID, resolution_tag: Resolution.Tag) bool {
@@ -1418,7 +1430,7 @@ pub const PackageInstall = struct {
                     } else |err| {
                         switch (err) {
                             error.NotSupported => {
-                                supported_method = .copyfile;
+                                setSupportedMethod(.copyfile);
                                 supported_method_to_use = .copyfile;
                             },
                             error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
@@ -1434,7 +1446,7 @@ pub const PackageInstall = struct {
                     } else |err| {
                         switch (err) {
                             error.NotSupported => {
-                                supported_method = .copyfile;
+                                setSupportedMethod(.copyfile);
                                 supported_method_to_use = .copyfile;
                             },
                             error.FileNotFound => return Result.fail(error.FileNotFound, .opening_cache_dir, @errorReturnTrace()),
@@ -1449,7 +1461,7 @@ pub const PackageInstall = struct {
                 } else |err| outer: {
                     if (comptime !Environment.isWindows) {
                         if (err == error.NotSameFileSystem) {
-                            supported_method = .copyfile;
+                            setSupportedMethod(.copyfile);
                             supported_method_to_use = .copyfile;
                             break :outer;
                         }

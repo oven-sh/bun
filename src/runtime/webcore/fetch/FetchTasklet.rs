@@ -1638,7 +1638,7 @@ impl FetchTasklet {
         };
         let url = BunString::clone_utf8(metadata.url.slice());
         let redirected = self.result.redirected;
-        Response::init(
+        let mut response = Response::init(
             crate::webcore::response::Init {
                 // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
                 headers: Some(unsafe { HeadersRef::adopt(headers) }),
@@ -1649,7 +1649,11 @@ impl FetchTasklet {
             Body::new(self.to_body_value()),
             url,
             redirected,
-        )
+        );
+        // node:http reads these via getFetchResponseConnectionInfo so
+        // `req.socket` can report the real endpoints.
+        response.connection_info = self.result.connection_info.map(Box::new);
+        response
     }
 
     fn ignore_remaining_response_body(&mut self) {
@@ -2215,6 +2219,7 @@ impl FetchTasklet {
         let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();
         let prev_can_stream = task_ref.result.can_stream;
+        let prev_connection_info = task_ref.result.connection_info;
         // SAFETY: lifetime erasure — `HTTPClientResult<'a>` borrows the
         // `*mut MutableString` we passed into `AsyncHTTP::init` (which lives
         // in `self.response_buffer` for the FetchTasklet's lifetime); widen
@@ -2229,6 +2234,11 @@ impl FetchTasklet {
             if let Some(cert_info) = prev_cert_info {
                 task_ref.result.certificate_info = Some(cert_info);
             }
+        }
+
+        // Keep previously reported connection endpoints if this update lacks them.
+        if task_ref.result.connection_info.is_none() {
+            task_ref.result.connection_info = prev_connection_info;
         }
 
         // metadata should be provided only once

@@ -11,6 +11,9 @@ const {
 
 // Internal fetch that allows body on GET/HEAD/OPTIONS for Node.js compatibility
 const nodeHttpClient = $newZigFunction("fetch.zig", "nodeHttpClient", 2);
+// Real local/peer endpoints of the connection a response arrived on, so
+// req.socket can report them like Node does.
+const getFetchResponseConnectionInfo = $newZigFunction("fetch.zig", "getFetchResponseConnectionInfo", 1);
 const { urlToHttpOptions } = require("internal/url");
 const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
@@ -44,6 +47,7 @@ const {
   kEmitState,
   ClientRequestEmitState,
   kSignal,
+  kConnectionInfo,
   kEmptyObject,
   getIsNextIncomingMessageHTTPS,
   setIsNextIncomingMessageHTTPS,
@@ -419,6 +423,8 @@ function ClientRequest(input, options, cb) {
           maybeEmitClose();
           return;
         }
+
+        this[kConnectionInfo] = getFetchResponseConnectionInfo(response);
 
         handleResponse = () => {
           this[kFetchRequest] = null;

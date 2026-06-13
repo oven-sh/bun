@@ -119,8 +119,7 @@ pub const FSWatcher = struct {
             if (this.ctx.refTask()) {
                 var that = FSWatchTask.new(this.*);
                 this.count = 0;
-                that.concurrent_task.task = jsc.Task.init(that);
-                this.ctx.enqueueTaskConcurrent(&that.concurrent_task);
+                this.ctx.enqueueTaskConcurrent(that.concurrent_task.from(that, .manual_deinit));
                 return;
             }
             // closed or detached so just cleanEntries

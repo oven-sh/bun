@@ -21,6 +21,24 @@ fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResu
     arr.push(global, item)
 }
 
+/// Autolink span details carry the raw matched text as `href`; the renderer
+/// is responsible for the `mailto:`/`http://` prefix (matching
+/// `html_renderer.rs`).
+fn create_href_for_js(global: &JSGlobalObject, detail: &md::SpanDetail<'_>) -> JsResult<JSValue> {
+    if !detail.autolink_email && !detail.autolink_www {
+        return create_utf8_for_js(global, detail.href);
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    if detail.autolink_email {
+        buf.extend_from_slice(b"mailto:");
+    }
+    if detail.autolink_www {
+        buf.extend_from_slice(b"http://");
+    }
+    buf.extend_from_slice(detail.href);
+    create_utf8_for_js(global, &buf)
+}
+
 /// Map a host-fn `JsError` back into the parser's error enum so it can
 /// bubble through `md::render_with_renderer` and be re-thrown at the top.
 #[inline]
@@ -883,7 +901,7 @@ impl<'a> ParseRenderer<'a> {
         // Set metadata props
         match span_type {
             md::SpanType::A => {
-                props.put(g, b"href", create_utf8_for_js(g, entry.detail.href)?);
+                props.put(g, b"href", create_href_for_js(g, &entry.detail)?);
                 if !entry.detail.title.is_empty() {
                     props.put(g, b"title", create_utf8_for_js(g, entry.detail.title)?);
                 }
@@ -1558,7 +1576,7 @@ impl<'a> JsCallbackRenderer<'a> {
         let g = self.global_object;
         match span_type {
             md::SpanType::A => {
-                let href = create_utf8_for_js(g, detail.href)?;
+                let href = create_href_for_js(g, detail)?;
                 let title = if !detail.title.is_empty() {
                     create_utf8_for_js(g, detail.title)?
                 } else {

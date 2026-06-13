@@ -105,14 +105,7 @@ mod io_thread_pool {
     static THREAD_POOL: bun_core::RacyCell<MaybeUninit<ThreadPoolLib::ThreadPool>> =
         bun_core::RacyCell::new(MaybeUninit::uninit());
     /// Protects initialization and deinitialization of the IO thread pool.
-    static MUTEX: Mutex = {
-        // `Mutex` derives `Default` but `Default::default()` isn't
-        // `const`. An all-zero `Mutex` is the documented unlocked state on
-        // every impl.
-        // SAFETY: `Mutex` is `repr(Rust)` over an atomic / Futex word; zero is
-        // the valid initial value (matches `#[derive(Default)]`).
-        unsafe { bun_core::ffi::zeroed_unchecked() }
-    };
+    static MUTEX: Mutex = Mutex::new();
     /// 0 means not initialized. 1 means initialized but not used.
     /// N > 1 means N-1 `ThreadPool`s are using the IO thread pool.
     static REF_COUNT: AtomicUsize = AtomicUsize::new(0);

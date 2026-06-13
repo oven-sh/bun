@@ -26,7 +26,7 @@ bun add discord.js
 
 ---
 
-Your bot needs its own account, which you create in Discord's developer portal. Open the [developer portal](https://discord.com/developers/applications), sign in, and create an **Application**. Inside it, open the **Bot** tab to create the bot user. Discord's [setup walkthrough](https://discordjs.guide/legacy/preparations/app-setup#creating-your-bot) has screenshots if you get lost.
+Your bot needs its own account, which you create in Discord's developer portal. Open the [developer portal](https://discord.com/developers/applications), sign in, and create an **Application**. Inside it, open the **Bot** tab to create the bot user. Discord's [setup walkthrough](https://discordjs.guide/preparations/setting-up-a-bot-application) has screenshots if you get lost.
 
 Copy two values from the portal:
 
@@ -35,7 +35,7 @@ Copy two values from the portal:
 
 ---
 
-A bot can't do anything in a server until you invite it. In the portal's **OAuth2** section, generate an invite URL with the `bot` and `applications.commands` scopes, open it, and add the bot to a server you manage. Slash commands need the `applications.commands` scope, so don't skip it. A personal server you make for testing is the easiest place to start.
+A bot can't do anything in a server until you invite it. In the portal's **OAuth2** section, generate an invite URL with the `bot` and `applications.commands` scopes, open it, and add the bot to a server you manage. Slash commands need the `applications.commands` scope, so don't skip it. A personal server you make for testing is the easiest place to start, and Discord's [guide to adding a bot](https://discordjs.guide/preparations/adding-your-bot-to-servers) walks through it with screenshots.
 
 ---
 
@@ -67,15 +67,18 @@ Discord has to know about a command before anyone can use it. Register `/ping` w
 ```ts deploy-commands.ts icon="/icons/typescript.svg"
 import { REST, Routes, SlashCommandBuilder } from "discord.js";
 
+const { DISCORD_TOKEN, DISCORD_CLIENT_ID, DISCORD_GUILD_ID } = process.env;
+if (!DISCORD_TOKEN || !DISCORD_CLIENT_ID || !DISCORD_GUILD_ID) {
+  throw new Error("Set DISCORD_TOKEN, DISCORD_CLIENT_ID, and DISCORD_GUILD_ID in .env.local");
+}
+
 // the commands you want to register
 const commands = [new SlashCommandBuilder().setName("ping").setDescription("Replies with Pong!").toJSON()];
 
-const rest = new REST().setToken(process.env.DISCORD_TOKEN!);
+const rest = new REST().setToken(DISCORD_TOKEN);
 
 // register them in your server, where they appear instantly
-await rest.put(Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID!, process.env.DISCORD_GUILD_ID!), {
-  body: commands,
-});
+await rest.put(Routes.applicationGuildCommands(DISCORD_CLIENT_ID, DISCORD_GUILD_ID), { body: commands });
 
 console.log("Registered /ping");
 ```
@@ -95,6 +98,11 @@ Now the bot itself. Save it as `bot.ts`.
 ```ts bot.ts icon="/icons/typescript.svg"
 import { Client, Events, GatewayIntentBits } from "discord.js";
 
+const { DISCORD_TOKEN } = process.env;
+if (!DISCORD_TOKEN) {
+  throw new Error("Set DISCORD_TOKEN in .env.local");
+}
+
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 // runs once, right after the bot connects
@@ -111,7 +119,7 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+client.login(DISCORD_TOKEN);
 ```
 
 The ready handler logs a line once the bot connects. After that, `interactionCreate` runs whenever someone uses a slash command; it confirms the command was `/ping` and replies with `Pong!`.

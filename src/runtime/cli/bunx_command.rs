@@ -17,6 +17,7 @@ use bun_collections::BoundedArray;
 use bun_core::{self, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_install::dependency::VersionTag;
+use bun_install::package_manager_real::package_manager_options;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
 use bun_paths::{self, DELIMITER, PathBuffer};
@@ -533,6 +534,69 @@ impl BunxCommand {
         }
     }
 
+    /// Probe the `bun add -g` global install tree for `package_name`, like
+    /// `npx` does with npm's global prefix. On a hit, read the package's real
+    /// bin name from its own package.json and resolve that name in bun's
+    /// global bin directory (where global installs link their bin shims).
+    ///
+    /// Both lookups are keyed on the full (possibly scoped) package name
+    /// inside bun-controlled directories, so unlike searching the system
+    /// $PATH with a bin name guessed from a scoped package name, this cannot
+    /// match an unrelated system binary.
+    fn which_global_install_bin<'a>(
+        transpiler: &mut Transpiler,
+        path_buf: &'a mut PathBuffer,
+        explicit_global_dir: &[u8],
+        explicit_global_bin_dir: &[u8],
+        package_name: &[u8],
+        cwd: &[u8],
+    ) -> Option<&'a ZStr> {
+        if package_name.is_empty() {
+            return None;
+        }
+
+        let mut global_dir_buf = bun_paths::path_buffer_pool::get();
+        let global_dir =
+            package_manager_options::global_dir_path(explicit_global_dir, &mut global_dir_buf)
+                .ok()?;
+
+        // <global dir>/node_modules/<package_name>/package.json
+        let mut subpath = bun_paths::path_buffer_pool::get();
+        let len = {
+            let total = subpath.len();
+            let mut cursor: &mut [u8] = &mut subpath[..];
+            write!(
+                cursor,
+                "{global}{sep}node_modules{sep}{pkg}{sep}package.json",
+                global = BStr::new(global_dir),
+                sep = bun_paths::SEP as char,
+                pkg = BStr::new(package_name),
+            )
+            .ok()?;
+            total - cursor.len()
+        };
+        if len >= subpath.len() {
+            return None;
+        }
+        subpath[len] = 0;
+        // SAFETY: subpath[len] == 0 written above
+        let subpath_z = ZStr::from_buf(&subpath[..], len);
+        let bin_name = Self::get_bin_name_from_subpath(transpiler, Fd::cwd(), subpath_z).ok()?;
+
+        let mut bin_dir_buf = bun_paths::path_buffer_pool::get();
+        let global_bin_dir =
+            package_manager_options::global_bin_dir_path(explicit_global_bin_dir, &mut bin_dir_buf)
+                .ok()?;
+
+        let destination = bun_which::which(path_buf, global_bin_dir, cwd, &bin_name)?;
+        bun_output::scoped_log!(
+            bunx,
+            "found global install bin: {}",
+            BStr::new(destination.as_bytes())
+        );
+        Some(destination)
+    }
+
     /// Refuse to execute a binary resolved from inside the bunx cache unless
     /// it is owned by the current user.
     ///
@@ -980,6 +1044,37 @@ impl BunxCommand {
                             initial_bin_name,
                         ) {
                             break 'find Some(d);
+                        }
+
+                        // Like npx, prefer a package installed with `bun add -g`
+                        // over (re)installing a copy into the bunx cache. For
+                        // scoped packages this is the only route to a global
+                        // install: their guessed bin name must not be searched
+                        // in the system $PATH (above), while this lookup is
+                        // keyed on the full package name instead.
+                        if opts.binary_name.is_none() {
+                            let (explicit_global_dir, explicit_global_bin_dir): (&[u8], &[u8]) =
+                                match &ctx.install {
+                                    Some(install_) => (
+                                        install_.global_dir.as_deref().unwrap_or(b""),
+                                        install_.global_bin_dir.as_deref().unwrap_or(b""),
+                                    ),
+                                    None => (b"", b""),
+                                };
+                            if let Some(d) = Self::which_global_install_bin(
+                                this_transpiler,
+                                &mut path_buf,
+                                explicit_global_dir,
+                                explicit_global_bin_dir,
+                                result_package_name,
+                                if !ignore_cwd.is_empty() {
+                                    b"".as_slice()
+                                } else {
+                                    top_level_dir
+                                },
+                            ) {
+                                break 'find Some(d);
+                            }
                         }
                     }
                     bun_which::which(

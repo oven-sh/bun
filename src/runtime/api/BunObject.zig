@@ -1376,7 +1376,7 @@ pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.J
 
     var i: u32 = 0;
     var array = try jsc.JSValue.createEmptyArray(globalThis, sort_indices.items.len);
-    std.mem.sort(u32, sort_indices.items, unsorted_files, bun.StandaloneModuleGraph.File.lessThanByIndex);
+    std.sort.pdq(u32, sort_indices.items, unsorted_files, bun.StandaloneModuleGraph.File.lessThanByIndex);
     for (sort_indices.items) |index| {
         const file = &unsorted_files[index];
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.

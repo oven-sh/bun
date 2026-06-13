@@ -463,7 +463,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn sortDesc(slice_: []ZigString) void {
-        std.sort.block(ZigString, slice_, {}, cmpDesc);
+        std.sort.pdq(ZigString, slice_, {}, cmpDesc);
     }
 
     pub fn cmpDesc(_: void, a: ZigString, b: ZigString) bool {
@@ -471,7 +471,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn sortAsc(slice_: []ZigString) void {
-        std.sort.block(ZigString, slice_, {}, cmpAsc);
+        std.sort.pdq(ZigString, slice_, {}, cmpAsc);
     }
 
     pub fn cmpAsc(_: void, a: ZigString, b: ZigString) bool {

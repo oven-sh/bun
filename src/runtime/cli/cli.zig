@@ -317,6 +317,7 @@ pub const Command = struct {
     pub const MacroOptions = ctx_types.MacroOptions;
     pub const HotReload = ctx_types.HotReload;
     pub const Debugger = ctx_types.Debugger;
+    pub const BunCAStore = ctx_types.BunCAStore;
 
     var global_cli_ctx: Context = undefined;
     var context_data: ContextData = undefined;

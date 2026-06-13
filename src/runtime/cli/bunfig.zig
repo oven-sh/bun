@@ -252,6 +252,22 @@ pub const Bunfig = struct {
                 }
             }
 
+            if (comptime cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
+                if (json.get("CA") orelse json.get("ca")) |expr| {
+                    try this.expectString(expr);
+                    const value = expr.asString(allocator) orelse "";
+                    if (bun.strings.eqlComptime(value, "system")) {
+                        this.ctx.runtime_options.ca_store = .system;
+                    } else if (bun.strings.eqlComptime(value, "openssl")) {
+                        this.ctx.runtime_options.ca_store = .openssl;
+                    } else if (bun.strings.eqlComptime(value, "bundled")) {
+                        this.ctx.runtime_options.ca_store = .bundled;
+                    } else {
+                        try this.addErrorFormat(expr.loc, allocator, "Invalid CA value \"{s}\". Expected one of: \"system\", \"openssl\", \"bundled\"", .{value});
+                    }
+                }
+            }
+
             if (comptime cmd == .TestCommand) {
                 if (json.get("test")) |test_| {
                     if (test_.get("root")) |root| {

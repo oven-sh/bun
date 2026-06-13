@@ -26,6 +26,9 @@ pub const ReplCommand = struct {
         if (!ctx.debug.loaded_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
+        // Always apply — when bunfig was preloaded earlier (e.g. via --config),
+        // ca_store may be set but Bun__Node__CAStore hasn't been touched.
+        bun.cli.Arguments.applyBunfigCAStore(ctx);
 
         // Initialize JSC
         bun.jsc.initialize(true); // true for eval mode

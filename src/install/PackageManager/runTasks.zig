@@ -983,6 +983,9 @@ pub fn runTasks(
                     continue;
                 }
 
+                manager.extracted_count += 1;
+                bun.analytics.Features.extracted_packages += 1;
+
                 if (comptime @TypeOf(callbacks.onExtract) != void) {
                     // We've populated the cache, package already exists in memory. Call the package installer callback
                     // and don't enqueue dependencies

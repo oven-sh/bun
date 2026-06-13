@@ -657,50 +657,19 @@ impl PostgresSQLQuery {
                             unsafe { Self::deref(this_ptr) };
                             return Err(global_object.throw_value(error_response));
                         }
-                        StatementStatus::Prepared => {
-                            if !connection.has_query_running() || connection.can_pipeline() {
-                                this.update_flags(|f| f.binary = !stmt.fields.is_empty());
-                                bun_core::scoped_log!(Postgres, "bindAndExecute");
-
-                                // bindAndExecute will bind + execute, it will change to running after binding is complete
-                                if let Err(err) = PostgresRequest::bind_and_execute(
-                                    global_object,
-                                    stmt,
-                                    binding_value,
-                                    columns_value,
-                                    writer,
-                                ) {
-                                    // fail to run do cleanup — drop the ref we took above.
-                                    this.release_statement();
-                                    // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                                    unsafe { Self::deref(this_ptr) };
-
-                                    if !global_object.has_exception() {
-                                        return Err(global_object.throw_value(
-                                            postgres_error_to_js(
-                                                global_object,
-                                                Some(b"failed to bind and execute query"),
-                                                err,
-                                            ),
-                                        ));
-                                    }
-                                    return Err(JsError::Thrown);
-                                }
-                                {
-                                    let mut f = connection.flags.get();
-                                    f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
-                                    connection.flags.set(f);
-                                }
-                                this.status.set(Status::Binding);
-                                this.update_flags(|f| f.pipelined = true);
-                                connection
-                                    .pipelined_requests
-                                    .set(connection.pipelined_requests.get() + 1);
-
-                                did_write = true;
-                            }
+                        StatementStatus::Prepared
+                        | StatementStatus::Parsing
+                        | StatementStatus::Pending => {
+                            // Leave the request Pending; advance() (reached via
+                            // advance_and_flush() after the enqueue below) writes it only
+                            // once every earlier queued request has been written, so wire
+                            // order always matches queue order. Writing Bind+Execute here
+                            // could bypass a queued-but-unwritten request (e.g. a
+                            // simple-protocol COMMIT waiting for the pipeline to drain);
+                            // responses are matched to requests in FIFO queue order, so
+                            // the bypassed request would steal this query's result and
+                            // permanently desync the connection.
                         }
-                        StatementStatus::Parsing | StatementStatus::Pending => {}
                     }
 
                     break 'enqueue;

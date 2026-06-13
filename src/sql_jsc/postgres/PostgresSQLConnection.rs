@@ -1800,16 +1800,27 @@ impl PostgresSQLConnection {
             && self.pipelined_requests.get() == 0
     }
 
-    /// Process pending requests and flush. Called from the enqueue path when
-    /// unnamed prepared statements with params skip writeQuery+Sync and need
-    /// advance() to send everything atomically on an idle connection.
+    /// Process pending requests and flush. Called from the enqueue path so
+    /// newly queued requests are written as soon as ordering allows: prepared
+    /// statements pipeline behind in-flight pipelined requests, unnamed
+    /// prepared statements with params get Parse+Bind+Execute sent atomically
+    /// on an idle connection, and requests that must wait (simple queries,
+    /// statements that still need preparing) stay queued until advance()
+    /// reaches them in FIFO order.
+    ///
+    /// Gated on WAITING_TO_PREPARE because advance() skips over requests whose
+    /// statement is still Parsing; entering it with a Parse outstanding could
+    /// write a later request ahead of an earlier unwritten one.
     pub fn advance_and_flush(&self) {
         let flags = self.flags.get();
         if !flags.contains(ConnectionFlags::HAS_BACKPRESSURE)
-            && flags.contains(ConnectionFlags::IS_READY_FOR_QUERY)
+            && !flags.contains(ConnectionFlags::WAITING_TO_PREPARE)
         {
             self.advance();
-            self.flush_data();
+            // defer the flush, so many queries enqueued in the same tick
+            // coalesce into one socket write (same batching as
+            // flush_data_and_reset_timeout)
+            self.register_auto_flusher();
         }
     }
 
@@ -2276,12 +2287,13 @@ impl PostgresSQLConnection {
                 }
 
                 QueryStatus::Running | QueryStatus::Binding | QueryStatus::PartialResponse => {
-                    if self
-                        .flags
-                        .get()
-                        .contains(ConnectionFlags::WAITING_TO_PREPARE)
-                        || self.nonpipelinable_requests.get() > 0
-                    {
+                    // can_pipeline() covers WAITING_TO_PREPARE and
+                    // nonpipelinable_requests, and additionally stops us from
+                    // writing past in-flight requests when pipelining is off
+                    // (BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING, unnamed
+                    // prepared statements) or the write buffer is already at
+                    // MAX_PIPELINE_SIZE.
+                    if !self.can_pipeline() {
                         defer_cleanup!(self);
                         return;
                     }

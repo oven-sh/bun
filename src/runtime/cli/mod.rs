@@ -1445,6 +1445,10 @@ pub mod command {
         };
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
+        if ctx.runtime_options.syntax_check {
+            return run_command::RunCommand::exec_check(ctx);
+        }
+
         if ctx.parallel || ctx.sequential {
             // Result<Infallible, _>: if this returns at all, it's Err.
             let Err(err) = super::multi_run::run(ctx);

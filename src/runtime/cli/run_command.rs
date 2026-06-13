@@ -2950,6 +2950,113 @@ impl RunCommand {
         Ok(true)
     }
 
+    /// `bun --check <file>` / `node --check` — parse the entry point and exit
+    /// 0 on success, or print syntax errors and exit 1. Never boots the JS VM.
+    #[cold]
+    #[inline(never)]
+    pub fn exec_check(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+        bun_ast::initialize_store();
+        let arena = runner_arena();
+
+        let mut positionals: &[Box<[u8]>] = &ctx.positionals[..];
+        // `bun run --check <file>` puts "run" in positionals[0]; strip it.
+        // Not applicable under `node`-argv0 emulation, where positionals[0]
+        // is always the script name (a file literally named "run" must not
+        // be stripped).
+        if !crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed)
+            && !positionals.is_empty()
+            && positionals[0].as_ref() == b"run"
+        {
+            positionals = &positionals[1..];
+        }
+
+        let entry = positionals.first().filter(|e| e.as_ref() != b"-");
+        let (path, contents): (Box<[u8]>, Vec<u8>) = if let Some(entry) = entry {
+            let entry: Box<[u8]> = entry.clone();
+            // Cursor-read instead of `read_from` (pread-based) so pipes
+            // reached via a path — process substitution (`/dev/fd/N`), FIFOs —
+            // work like they do in `node --check`.
+            match sys::File::openat(Fd::cwd(), &entry, sys::O::RDONLY, 0).and_then(|f| {
+                let mut bytes = Vec::new();
+                f.read_to_end_into(&mut bytes).map(|_| bytes)
+            }) {
+                Ok(bytes) => (entry, bytes),
+                Err(err) => {
+                    if ctx.runtime_options.if_present && err.get_errno() == sys::E::ENOENT {
+                        Output::flush();
+                        Global::exit(0);
+                    }
+                    // "Cannot find" is only true for ENOENT; EISDIR/EACCES/etc.
+                    // found the path but could not read it.
+                    let verb: &[u8] = if err.get_errno() == sys::E::ENOENT {
+                        b"find module"
+                    } else {
+                        b"read"
+                    };
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> Cannot {} {} ({})",
+                        bstr::BStr::new(verb),
+                        bun_core::fmt::quote(&entry),
+                        bstr::BStr::new(err.name()),
+                    );
+                    Global::exit(1);
+                }
+            }
+        } else {
+            // `read_to_end()` pread()s from offset 0, which fails on a pipe
+            // (ESPIPE). Stream-read stdin into a growable buffer instead.
+            let mut bytes = Vec::new();
+            match sys::File::stdin().read_to_end_into(&mut bytes) {
+                Ok(_) => (Box::from(&b"[stdin]"[..]), bytes),
+                Err(err) => {
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> Failed to read stdin ({})",
+                        bstr::BStr::new(err.name()),
+                    );
+                    Global::exit(1);
+                }
+            }
+        };
+
+        let ext = paths::extension(&path);
+        // `--loader .ext:loader` overrides take precedence over the defaults,
+        // matching the run path.
+        let user_loader = ctx.args.loaders.as_ref().and_then(|m| {
+            m.extensions
+                .iter()
+                .position(|e| strings::eql(e, ext))
+                .map(|i| <Loader as bun_options_types::LoaderExt>::from_api(m.loaders[i]))
+        });
+        let loader = user_loader
+            .or_else(|| bun_bundler::options::DEFAULT_LOADERS.get(ext).copied())
+            .filter(|l| l.is_javascript_like())
+            .unwrap_or(Loader::Tsx);
+
+        let source = bun_ast::Source::init_path_string(&*path, &*contents);
+        let define = bun_js_parser::Define::default();
+        let mut opts =
+            bun_js_parser::ParserOptions::init(bun_options_types::jsx::Pragma::default(), loader);
+        opts.features.top_level_await = true;
+
+        // SAFETY: `ctx.log` is the process-lifetime CLI log set in
+        // `Command::start`; no other borrow is live here.
+        let log: &mut bun_ast::Log = unsafe { ctx.log() };
+        let had_error = match bun_js_parser::Parser::init(opts, log, &source, &define, arena) {
+            Ok(parser) => parser.parse().is_err(),
+            Err(_) => true,
+        };
+
+        // SAFETY: see above; the parser's `&mut Log` borrow has ended.
+        let log: &mut bun_ast::Log = unsafe { ctx.log() };
+        if had_error || log.has_errors() {
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            Output::flush();
+            Global::exit(1);
+        }
+        Output::flush();
+        Global::exit(0);
+    }
+
     /// Synthetic `cwd/[eval]`
     /// entry point + boot. `Arguments::parse` has already stashed the script
     /// in `ctx.runtime_options.eval.script`. Public so `Command::start` can
@@ -2984,6 +3091,10 @@ impl RunCommand {
         // SAFETY: single-threaded CLI startup; `PRETEND_TO_BE_NODE` is set in
         // `Command::which()` before dispatch.
         debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
+
+        if ctx.runtime_options.syntax_check {
+            return Self::exec_check(ctx);
+        }
 
         if !ctx.runtime_options.eval.script.is_empty() {
             // synthetic `[eval]` path under cwd

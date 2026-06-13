@@ -1531,7 +1531,7 @@ pub mod js_bundler {
                 // Faster path: skip the extra threadpool dispatch
                 // SAFETY: bv2 backref is valid; pool/worker_pool are live for bundle.
                 unsafe {
-                    (*(*(*this.bv2).graph.pool.as_ptr()).worker_pool).schedule(
+                    (*(*this.bv2).graph.pool.as_ptr()).worker_pool().schedule(
                         bun_threading::thread_pool::Batch::from(core::ptr::addr_of_mut!(
                             (*this.parse_task.as_ptr()).task
                         )),

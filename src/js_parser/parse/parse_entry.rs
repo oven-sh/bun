@@ -339,6 +339,26 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// Error payload of [`Parser::parse`]: the error plus the failing token's
+/// range, captured while the lexer is still alive (`parse()` consumes the
+/// parser, so the caller can't read it).
+#[derive(Copy, Clone)]
+pub struct ParseFailure {
+    pub err: Error,
+    /// The lexer's token range at the moment the parse failed.
+    pub range: js_ast::Range,
+}
+
+impl From<Error> for ParseFailure {
+    /// For error paths that fail before a lexer exists; no range available.
+    fn from(err: Error) -> Self {
+        ParseFailure {
+            err,
+            range: js_ast::Range::None,
+        }
+    }
+}
+
 // ── live `Parser::parse` / `Parser::scan_imports` symbols ────────────────
 // `parse()` is the real const-generic dispatcher. `_parse` carries the correct `<const TS, JX>`
 // shape but its body is blocked on `P::{init, prepare_for_visit_pass,
@@ -347,7 +367,7 @@ impl<'a> Parser<'a> {
 // surface lands.
 impl<'a> Parser<'a> {
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
-    pub fn parse(mut self) -> Result<crate::Result<'a>, Error> {
+    pub fn parse(mut self) -> Result<crate::Result<'a>, ParseFailure> {
         #[cfg(target_arch = "wasm32")]
         {
             self.options.ts = true;
@@ -709,7 +729,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
+    fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, ParseFailure> {
         // `Source.path` is `Path<'static>`, so
         // `path.text` satisfies `Action::Parse(&'static [u8])` directly.
         let _action_guard = bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(
@@ -738,366 +758,1058 @@ impl<'a> Parser<'a> {
         let mut __p = init_p!(P<'_, TS, false>;
             bump, log, source, define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
+        let p: &mut P<'a, TS, false> = unsafe { __p.assume_init_mut() };
 
-        if p.options.features.hot_module_reloading {
-            debug_assert!(!p.options.tree_shaking);
-        }
-
-        // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
-        // Let's enable this flag file-wide
-        if p.options.features.minify_syntax || p.options.features.inlining {
-            p.should_fold_typescript_constant_expressions = true;
-        }
-
-        // Pre-sized to typical worst-case binary-expression nesting depth.
-        p.binary_expression_stack = BumpVec::with_capacity_in(41, p.arena);
-        p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
-
-        // defer {
-        //     if (p.allocated_names_pool) |pool| {
-        //         pool.data = p.allocated_names;
-        //         pool.release();
-        //         p.allocated_names_pool = null;
-        //     }
-        // }
-
-        // Consume a leading hashbang comment
-        let mut hashbang: &[u8] = b"";
-        if p.lexer.token == js_lexer::T::THashbang {
-            hashbang = p.lexer.identifier;
-            p.lexer.next()?;
-        }
-
-        // Detect a leading "// @bun" pragma
-        if p.options.features.dont_bundle_twice {
-            if let Some(pragma) = Self::has_bun_pragma(&source.contents, !hashbang.is_empty()) {
-                return Ok(crate::Result::AlreadyBundled(pragma));
+        // Inner closure so the error path can still read the failing token's
+        // range off `p.lexer` before `P` is dropped.
+        let run = |p: &mut P<'a, TS, false>| -> Result<crate::Result<'a>, Error> {
+            if p.options.features.hot_module_reloading {
+                debug_assert!(!p.options.tree_shaking);
             }
-        }
 
-        // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
-        // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
-        #[cfg(not(target_arch = "wasm32"))]
-        if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
-            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                // `Path::is_node_module`/`is_jsx_file` live on the resolver
-                // `fs::Path` (not the logger stub) — their bodies are inlined here.
-                let path = &p.source.path;
-                #[cfg(windows)]
-                const NM: &[u8] = b"\\node_modules\\";
-                #[cfg(not(windows))]
-                const NM: &[u8] = b"/node_modules/";
-                let name = path.name();
-                let is_node_module = strings::last_index_of(name.dir, NM).is_some();
-                let is_jsx_file = strings::has_suffix_comptime(name.filename, b".jsx")
-                    || strings::has_suffix_comptime(name.filename, b".tsx");
-                if cache.get(
-                    p.source,
-                    core::ptr::NonNull::from(&p.options).cast::<()>(),
-                    p.options.jsx.parse && (!is_node_module || is_jsx_file),
-                ) {
-                    return Ok(crate::Result::Cached);
+            // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
+            // Let's enable this flag file-wide
+            if p.options.features.minify_syntax || p.options.features.inlining {
+                p.should_fold_typescript_constant_expressions = true;
+            }
+
+            // Pre-sized to typical worst-case binary-expression nesting depth.
+            p.binary_expression_stack = BumpVec::with_capacity_in(41, p.arena);
+            p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
+
+            // defer {
+            //     if (p.allocated_names_pool) |pool| {
+            //         pool.data = p.allocated_names;
+            //         pool.release();
+            //         p.allocated_names_pool = null;
+            //     }
+            // }
+
+            // Consume a leading hashbang comment
+            let mut hashbang: &[u8] = b"";
+            if p.lexer.token == js_lexer::T::THashbang {
+                hashbang = p.lexer.identifier;
+                p.lexer.next()?;
+            }
+
+            // Detect a leading "// @bun" pragma
+            if p.options.features.dont_bundle_twice {
+                if let Some(pragma) = Self::has_bun_pragma(&source.contents, !hashbang.is_empty()) {
+                    return Ok(crate::Result::AlreadyBundled(pragma));
                 }
             }
-        }
 
-        // Parse the file in the first pass, but do not bind symbols
-        let mut opts = ParseStatementOptions {
-            is_module_scope: true,
-            ..Default::default()
-        };
-        let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
-
-        // Parsing seems to take around 2x as much time as visiting.
-        // Which makes sense.
-        // June 4: "Parsing took: 18028000"
-        // June 4: "Rest of this took: 8003000"
-        let stmts: &'a mut [Stmt] = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
-            Ok(s) => s.into_bump_slice_mut(),
-            Err(e) => {
-                parse_tracer.end();
-                if e == err!("StackOverflow") {
-                    // The lexer location won't be totally accurate, but it's kind of helpful.
-                    p.log().add_error(
-                        Some(p.source),
-                        p.lexer.loc(),
-                        b"Maximum call stack size exceeded",
-                    );
-
-                    // Return a SyntaxError so that we reuse existing code for handling errors.
-                    return Err(err!("SyntaxError"));
-                }
-
-                return Err(e);
-            }
-        };
-
-        parse_tracer.end();
-
-        // Halt parsing right here if there were any errors
-        // This fixes various conditions that would cause crashes due to the AST being in an invalid state while visiting
-        // In a number of situations, we continue to parsing despite errors so that we can report more errors to the user
-        //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
-        //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
-        if p.log().errors > orig_error_count {
-            return Err(err!("SyntaxError"));
-        }
-
-        // A second guard dropped at end of `_parse` restores the previous action.
-        let _visit_action_guard =
-            bun_crash_handler::scoped_action(bun_crash_handler::Action::Visit(source.path.text));
-
-        let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
-        p.prepare_for_visit_pass()?;
-
-        let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);
-        let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
-        let mut parts = BumpVec::<js_ast::Part>::new_in(p.arena);
-        // (Element ownership is transferred into `parts` below via bitwise copy + set_len(0).)
-
-        if p.options.bundle {
-            // The bundler requires a part for generated module wrappers. This
-            // part must be at the start as it is referred to by index.
-            before.push(js_ast::Part::default());
-        }
-
-        // --inspect-brk
-        if p.options.features.set_breakpoint_on_first_line {
-            let debugger_stmts = p.arena.alloc_slice_fill_with(1, |_| Stmt {
-                data: js_ast::StmtData::SDebugger(Default::default()),
-                loc: bun_ast::Loc::EMPTY,
-            });
-            before.push(js_ast::Part {
-                stmts: debugger_stmts.into(),
-                ..Default::default()
-            });
-        }
-
-        // When "using" declarations appear at the top level, we change all TDZ
-        // variables in the top-level scope into "var" so that they aren't harmed
-        // when they are moved into the try/catch statement that lowering will
-        // generate.
-        //
-        // This is necessary because exported function declarations must be hoisted
-        // outside of the try/catch statement because they can be evaluated before
-        // this module is evaluated due to ESM cross-file function hoisting. And
-        // these function bodies might reference anything else in this scope, which
-        // must still work when those things are moved inside a try/catch statement.
-        //
-        // Before:
-        //
-        //   using foo = get()
-        //   export function fn() {
-        //     return [foo, new Bar]
-        //   }
-        //   class Bar {}
-        //
-        // After ("fn" is hoisted, "Bar" is converted to "var"):
-        //
-        //   export function fn() {
-        //     return [foo, new Bar]
-        //   }
-        //   try {
-        //     var foo = get();
-        //     var Bar = class {};
-        //   } catch (_) {
-        //     ...
-        //   } finally {
-        //     ...
-        //   }
-        //
-        // This is also necessary because other code might be appended to the code
-        // that we're processing and expect to be able to access top-level variables.
-        p.will_wrap_module_in_try_catch_for_using = p.should_lower_using_declarations(stmts);
-
-        // Bind symbols in a second pass over the AST. I started off doing this in a
-        // single pass, but it turns out it's pretty much impossible to do this
-        // correctly while handling arrow functions because of the grammar
-        // ambiguities.
-        //
-        // Note that top-level lowered "using" declarations disable tree-shaking
-        // because we only do tree-shaking on top-level statements and lowering
-        // a top-level "using" declaration moves all top-level statements into a
-        // nested scope.
-        if !p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using {
-            // When tree shaking is disabled, everything comes in a single part
-            p.append_part(&mut parts, stmts)?;
-        } else {
-            // Preprocess TypeScript enums to improve code generation. Otherwise
-            // uses of an enum before that enum has been declared won't be inlined:
-            //
-            //   console.log(Foo.FOO) // We want "FOO" to be inlined here
-            //   const enum Foo { FOO = 0 }
-            //
-            // The TypeScript compiler itself contains code with this pattern, so
-            // it's important to implement this optimization.
-
-            // `Loc` lacks `Hash` (logger crate), so the
-            // `scopes_in_order_for_enum` lookups linear-scan `keys()` —
-            // fine at small N (one
-            // entry per top-level `enum`). `scope_order_to_visit` is
-            // `&'a [_]` (a `Copy` cursor) so save/restore is a plain value
-            // copy.
-            let arena = p.arena;
-            let mut preprocessed_enums: BumpVec<BumpVec<'a, js_ast::Part>> = BumpVec::new_in(arena);
-            let mut preprocessed_enum_i: usize = 0;
-            if p.scopes_in_order_for_enum.count() > 0 {
-                for stmt in stmts.iter_mut() {
-                    if matches!(stmt.data, js_ast::StmtData::SEnum(_)) {
-                        let old_scopes_in_order = p.scope_order_to_visit;
-                        let idx = p
-                            .scopes_in_order_for_enum
-                            .keys()
-                            .iter()
-                            .position(|k| *k == stmt.loc)
-                            .expect("enum scope-order entry recorded during parse");
-                        // Map stores `&'a [ScopeOrder]`; shared borrow may freely alias the inner
-                        // re-lookup performed by `append_part → visit_stmts`.
-                        p.scope_order_to_visit = p.scopes_in_order_for_enum.values()[idx];
-
-                        let mut enum_parts = BumpVec::<js_ast::Part>::new_in(arena);
-                        let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut enum_parts, sliced)?;
-                        preprocessed_enums.push(enum_parts);
-
-                        p.scope_order_to_visit = old_scopes_in_order;
+            // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
+            // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
+            #[cfg(not(target_arch = "wasm32"))]
+            if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
+                if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
+                    // `Path::is_node_module`/`is_jsx_file` live on the resolver
+                    // `fs::Path` (not the logger stub) — their bodies are inlined here.
+                    let path = &p.source.path;
+                    #[cfg(windows)]
+                    const NM: &[u8] = b"\\node_modules\\";
+                    #[cfg(not(windows))]
+                    const NM: &[u8] = b"/node_modules/";
+                    let name = path.name();
+                    let is_node_module = strings::last_index_of(name.dir, NM).is_some();
+                    let is_jsx_file = strings::has_suffix_comptime(name.filename, b".jsx")
+                        || strings::has_suffix_comptime(name.filename, b".tsx");
+                    if cache.get(
+                        p.source,
+                        core::ptr::NonNull::from(&p.options).cast::<()>(),
+                        p.options.jsx.parse && (!is_node_module || is_jsx_file),
+                    ) {
+                        return Ok(crate::Result::Cached);
                     }
                 }
             }
 
-            // When tree shaking is enabled, each top-level statement is potentially a separate part.
-            for stmt in stmts.iter() {
-                match &stmt.data {
-                    js_ast::StmtData::SLocal(local) => {
-                        if (local.decls.len_u32() as usize) > 1 {
-                            for decl in local.decls.slice() {
-                                // `S::Local`/`Decl` are not `Copy`;
-                                // rebuild the struct instead of `**local`.
-                                let _local = S::Local {
-                                    kind: local.kind,
-                                    is_export: local.is_export,
-                                    was_ts_import_equals: local.was_ts_import_equals,
-                                    was_commonjs_export: local.was_commonjs_export,
-                                    decls: G::DeclList::init_one(G::Decl {
-                                        binding: decl.binding,
-                                        value: decl.value,
-                                    }),
-                                };
-                                let new_stmt = p.s(_local, stmt.loc);
-                                let sliced = arena.alloc_slice_copy(&[new_stmt]);
+            // Parse the file in the first pass, but do not bind symbols
+            let mut opts = ParseStatementOptions {
+                is_module_scope: true,
+                ..Default::default()
+            };
+            let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
+
+            // Parsing seems to take around 2x as much time as visiting.
+            // Which makes sense.
+            // June 4: "Parsing took: 18028000"
+            // June 4: "Rest of this took: 8003000"
+            let stmts: &'a mut [Stmt] =
+                match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
+                    Ok(s) => s.into_bump_slice_mut(),
+                    Err(e) => {
+                        parse_tracer.end();
+                        if e == err!("StackOverflow") {
+                            // The lexer location won't be totally accurate, but it's kind of helpful.
+                            p.log().add_error(
+                                Some(p.source),
+                                p.lexer.loc(),
+                                b"Maximum call stack size exceeded",
+                            );
+
+                            // Return a SyntaxError so that we reuse existing code for handling errors.
+                            return Err(err!("SyntaxError"));
+                        }
+
+                        return Err(e);
+                    }
+                };
+
+            parse_tracer.end();
+
+            // Halt parsing right here if there were any errors
+            // This fixes various conditions that would cause crashes due to the AST being in an invalid state while visiting
+            // In a number of situations, we continue to parsing despite errors so that we can report more errors to the user
+            //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
+            //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
+            if p.log().errors > orig_error_count {
+                return Err(err!("SyntaxError"));
+            }
+
+            // A second guard dropped at end of `_parse` restores the previous action.
+            let _visit_action_guard = bun_crash_handler::scoped_action(
+                bun_crash_handler::Action::Visit(source.path.text),
+            );
+
+            let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
+            p.prepare_for_visit_pass()?;
+
+            let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);
+            let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
+            let mut parts = BumpVec::<js_ast::Part>::new_in(p.arena);
+            // (Element ownership is transferred into `parts` below via bitwise copy + set_len(0).)
+
+            if p.options.bundle {
+                // The bundler requires a part for generated module wrappers. This
+                // part must be at the start as it is referred to by index.
+                before.push(js_ast::Part::default());
+            }
+
+            // --inspect-brk
+            if p.options.features.set_breakpoint_on_first_line {
+                let debugger_stmts = p.arena.alloc_slice_fill_with(1, |_| Stmt {
+                    data: js_ast::StmtData::SDebugger(Default::default()),
+                    loc: bun_ast::Loc::EMPTY,
+                });
+                before.push(js_ast::Part {
+                    stmts: debugger_stmts.into(),
+                    ..Default::default()
+                });
+            }
+
+            // When "using" declarations appear at the top level, we change all TDZ
+            // variables in the top-level scope into "var" so that they aren't harmed
+            // when they are moved into the try/catch statement that lowering will
+            // generate.
+            //
+            // This is necessary because exported function declarations must be hoisted
+            // outside of the try/catch statement because they can be evaluated before
+            // this module is evaluated due to ESM cross-file function hoisting. And
+            // these function bodies might reference anything else in this scope, which
+            // must still work when those things are moved inside a try/catch statement.
+            //
+            // Before:
+            //
+            //   using foo = get()
+            //   export function fn() {
+            //     return [foo, new Bar]
+            //   }
+            //   class Bar {}
+            //
+            // After ("fn" is hoisted, "Bar" is converted to "var"):
+            //
+            //   export function fn() {
+            //     return [foo, new Bar]
+            //   }
+            //   try {
+            //     var foo = get();
+            //     var Bar = class {};
+            //   } catch (_) {
+            //     ...
+            //   } finally {
+            //     ...
+            //   }
+            //
+            // This is also necessary because other code might be appended to the code
+            // that we're processing and expect to be able to access top-level variables.
+            p.will_wrap_module_in_try_catch_for_using = p.should_lower_using_declarations(stmts);
+
+            // Bind symbols in a second pass over the AST. I started off doing this in a
+            // single pass, but it turns out it's pretty much impossible to do this
+            // correctly while handling arrow functions because of the grammar
+            // ambiguities.
+            //
+            // Note that top-level lowered "using" declarations disable tree-shaking
+            // because we only do tree-shaking on top-level statements and lowering
+            // a top-level "using" declaration moves all top-level statements into a
+            // nested scope.
+            if !p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using {
+                // When tree shaking is disabled, everything comes in a single part
+                p.append_part(&mut parts, stmts)?;
+            } else {
+                // Preprocess TypeScript enums to improve code generation. Otherwise
+                // uses of an enum before that enum has been declared won't be inlined:
+                //
+                //   console.log(Foo.FOO) // We want "FOO" to be inlined here
+                //   const enum Foo { FOO = 0 }
+                //
+                // The TypeScript compiler itself contains code with this pattern, so
+                // it's important to implement this optimization.
+
+                // `Loc` lacks `Hash` (logger crate), so the
+                // `scopes_in_order_for_enum` lookups linear-scan `keys()` —
+                // fine at small N (one
+                // entry per top-level `enum`). `scope_order_to_visit` is
+                // `&'a [_]` (a `Copy` cursor) so save/restore is a plain value
+                // copy.
+                let arena = p.arena;
+                let mut preprocessed_enums: BumpVec<BumpVec<'a, js_ast::Part>> =
+                    BumpVec::new_in(arena);
+                let mut preprocessed_enum_i: usize = 0;
+                if p.scopes_in_order_for_enum.count() > 0 {
+                    for stmt in stmts.iter_mut() {
+                        if matches!(stmt.data, js_ast::StmtData::SEnum(_)) {
+                            let old_scopes_in_order = p.scope_order_to_visit;
+                            let idx = p
+                                .scopes_in_order_for_enum
+                                .keys()
+                                .iter()
+                                .position(|k| *k == stmt.loc)
+                                .expect("enum scope-order entry recorded during parse");
+                            // Map stores `&'a [ScopeOrder]`; shared borrow may freely alias the inner
+                            // re-lookup performed by `append_part → visit_stmts`.
+                            p.scope_order_to_visit = p.scopes_in_order_for_enum.values()[idx];
+
+                            let mut enum_parts = BumpVec::<js_ast::Part>::new_in(arena);
+                            let sliced = arena.alloc_slice_copy(&[*stmt]);
+                            p.append_part(&mut enum_parts, sliced)?;
+                            preprocessed_enums.push(enum_parts);
+
+                            p.scope_order_to_visit = old_scopes_in_order;
+                        }
+                    }
+                }
+
+                // When tree shaking is enabled, each top-level statement is potentially a separate part.
+                for stmt in stmts.iter() {
+                    match &stmt.data {
+                        js_ast::StmtData::SLocal(local) => {
+                            if (local.decls.len_u32() as usize) > 1 {
+                                for decl in local.decls.slice() {
+                                    // `S::Local`/`Decl` are not `Copy`;
+                                    // rebuild the struct instead of `**local`.
+                                    let _local = S::Local {
+                                        kind: local.kind,
+                                        is_export: local.is_export,
+                                        was_ts_import_equals: local.was_ts_import_equals,
+                                        was_commonjs_export: local.was_commonjs_export,
+                                        decls: G::DeclList::init_one(G::Decl {
+                                            binding: decl.binding,
+                                            value: decl.value,
+                                        }),
+                                    };
+                                    let new_stmt = p.s(_local, stmt.loc);
+                                    let sliced = arena.alloc_slice_copy(&[new_stmt]);
+                                    p.append_part(&mut parts, sliced)?;
+                                }
+                            } else {
+                                let sliced = arena.alloc_slice_copy(&[*stmt]);
                                 p.append_part(&mut parts, sliced)?;
                             }
-                        } else {
+                        }
+                        js_ast::StmtData::SImport(_)
+                        | js_ast::StmtData::SExportFrom(_)
+                        | js_ast::StmtData::SExportStar(_) => {
+                            let parts_list = if p.options.bundle {
+                                // Move imports (and import-like exports) to the top of the file to
+                                // ensure that if they are converted to a require() call, the effects
+                                // will take place before any other statements are evaluated.
+                                &mut before
+                            } else {
+                                // If we aren't doing any format conversion, just keep these statements
+                                // inline where they were. Exports are sorted so order doesn't matter:
+                                // https://262.ecma-international.org/6.0/#sec-module-namespace-exotic-objects.
+                                // However, this is likely an aesthetic issue that some people will
+                                // complain about. In addition, there are code transformation tools
+                                // such as TypeScript and Babel with bugs where the order of exports
+                                // in the file is incorrectly preserved instead of sorted, so preserving
+                                // the order of exports ourselves here may be preferable.
+                                &mut parts
+                            };
+
+                            let sliced = arena.alloc_slice_copy(&[*stmt]);
+                            p.append_part(parts_list, sliced)?;
+                        }
+
+                        js_ast::StmtData::SClass(class) => {
+                            // Move class export statements to the top of the file if we can
+                            // This automatically resolves some cyclical import issues
+                            // https://github.com/kysely-org/kysely/issues/412
+                            let should_move = !p.options.bundle && class.class.can_be_moved();
+
+                            let sliced = arena.alloc_slice_copy(&[*stmt]);
+                            p.append_part(&mut parts, sliced)?;
+
+                            if should_move {
+                                // `Part` isn't `Copy`; pop+push instead of last+truncate.
+                                before.push(parts.pop().expect("unreachable"));
+                            }
+                        }
+                        js_ast::StmtData::SExportDefault(value) => {
+                            // We move export default statements when we can
+                            // This automatically resolves some cyclical import issues in packages like luxon
+                            // https://github.com/oven-sh/bun/issues/1961
+                            let should_move = !p.options.bundle && value.can_be_moved();
+                            let sliced = arena.alloc_slice_copy(&[*stmt]);
+                            p.append_part(&mut parts, sliced)?;
+
+                            if should_move {
+                                before.push(parts.pop().expect("unreachable"));
+                            }
+                        }
+                        js_ast::StmtData::SEnum(_) => {
+                            // `Part` isn't `Clone`; move out the
+                            // pre-visited parts instead of `appendSlice`.
+                            let enum_parts = core::mem::replace(
+                                &mut preprocessed_enums[preprocessed_enum_i],
+                                BumpVec::new_in(arena),
+                            );
+                            for part in enum_parts {
+                                parts.push(part);
+                            }
+                            preprocessed_enum_i += 1;
+
+                            let idx = p
+                                .scopes_in_order_for_enum
+                                .keys()
+                                .iter()
+                                .position(|k| *k == stmt.loc)
+                                .expect("enum scope-order entry");
+                            let enum_scope_count = p.scopes_in_order_for_enum.values()[idx].len();
+                            // Advance the shared-slice cursor past this enum's scopes.
+                            p.scope_order_to_visit = &p.scope_order_to_visit[enum_scope_count..];
+                        }
+                        _ => {
                             let sliced = arena.alloc_slice_copy(&[*stmt]);
                             p.append_part(&mut parts, sliced)?;
                         }
                     }
-                    js_ast::StmtData::SImport(_)
-                    | js_ast::StmtData::SExportFrom(_)
-                    | js_ast::StmtData::SExportStar(_) => {
-                        let parts_list = if p.options.bundle {
-                            // Move imports (and import-like exports) to the top of the file to
-                            // ensure that if they are converted to a require() call, the effects
-                            // will take place before any other statements are evaluated.
-                            &mut before
-                        } else {
-                            // If we aren't doing any format conversion, just keep these statements
-                            // inline where they were. Exports are sorted so order doesn't matter:
-                            // https://262.ecma-international.org/6.0/#sec-module-namespace-exotic-objects.
-                            // However, this is likely an aesthetic issue that some people will
-                            // complain about. In addition, there are code transformation tools
-                            // such as TypeScript and Babel with bugs where the order of exports
-                            // in the file is incorrectly preserved instead of sorted, so preserving
-                            // the order of exports ourselves here may be preferable.
-                            &mut parts
+                }
+            }
+
+            visit_tracer.end();
+
+            // If there were errors while visiting, also halt here
+            if p.log().errors > orig_error_count {
+                return Err(err!("SyntaxError"));
+            }
+
+            // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.
+            let _postvisit_tracer = bun_core::perf::trace("JSParser::postvisit");
+
+            let mut uses_dirname =
+                p.symbols.as_slice()[p.dirname_ref.inner_index() as usize].use_count_estimate > 0;
+            let mut uses_filename =
+                p.symbols.as_slice()[p.filename_ref.inner_index() as usize].use_count_estimate > 0;
+
+            // Handle dirname and filename at bundle-time
+            // We always inject it at the top of the module
+            //
+            // This inlines
+            //
+            //    var __dirname = "foo/bar"
+            //    var __filename = "foo/bar/baz.js"
+            //
+            if p.options.bundle || !p.options.features.commonjs_at_runtime {
+                if uses_dirname || uses_filename {
+                    let count = (uses_dirname as usize) + (uses_filename as usize);
+                    let mut declared_symbols =
+                        bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
+                    let decls = p
+                        .arena
+                        .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
+                    if uses_dirname {
+                        decls[0] = G::Decl {
+                            binding: p.b(
+                                B::Identifier {
+                                    r#ref: p.dirname_ref,
+                                },
+                                bun_ast::Loc::EMPTY,
+                            ),
+                            value: Some(p.new_expr(
+                                E::String {
+                                    data: p.source.path.name().dir.into(),
+                                    ..Default::default()
+                                },
+                                bun_ast::Loc::EMPTY,
+                            )),
                         };
-
-                        let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(parts_list, sliced)?;
+                        declared_symbols.append_assume_capacity(DeclaredSymbol {
+                            ref_: p.dirname_ref,
+                            is_top_level: true,
+                        });
+                    }
+                    if uses_filename {
+                        decls[uses_dirname as usize] = G::Decl {
+                            binding: p.b(
+                                B::Identifier {
+                                    r#ref: p.filename_ref,
+                                },
+                                bun_ast::Loc::EMPTY,
+                            ),
+                            value: Some(p.new_expr(
+                                E::String {
+                                    data: p.source.path.text.into(),
+                                    ..Default::default()
+                                },
+                                bun_ast::Loc::EMPTY,
+                            )),
+                        };
+                        declared_symbols.append_assume_capacity(DeclaredSymbol {
+                            ref_: p.filename_ref,
+                            is_top_level: true,
+                        });
                     }
 
-                    js_ast::StmtData::SClass(class) => {
-                        // Move class export statements to the top of the file if we can
-                        // This automatically resolves some cyclical import issues
-                        // https://github.com/kysely-org/kysely/issues/412
-                        let should_move = !p.options.bundle && class.class.can_be_moved();
+                    let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
+                        p.s(
+                            S::Local {
+                                kind: js_ast::LocalKind::KVar,
+                                decls: {
+                                    let mut dl = G::DeclList::init_capacity(decls.len());
+                                    for d in decls.iter_mut() {
+                                        dl.append_assume_capacity(core::mem::take(d));
+                                    }
+                                    dl
+                                },
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        )
+                    });
+                    before.push(js_ast::Part {
+                        stmts: part_stmts.into(),
+                        declared_symbols,
+                        tag: bun_ast::PartTag::DirnameFilename,
+                        ..Default::default()
+                    });
+                    uses_dirname = false;
+                    uses_filename = false;
+                }
+            }
 
-                        let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+            // This is a workaround for broken module environment checks in packages like lodash-es
+            // https://github.com/lodash/lodash/issues/5660
+            let mut force_esm = false;
 
-                        if should_move {
-                            // `Part` isn't `Copy`; pop+push instead of last+truncate.
-                            before.push(parts.pop().expect("unreachable"));
-                        }
-                    }
-                    js_ast::StmtData::SExportDefault(value) => {
-                        // We move export default statements when we can
-                        // This automatically resolves some cyclical import issues in packages like luxon
-                        // https://github.com/oven-sh/bun/issues/1961
-                        let should_move = !p.options.bundle && value.can_be_moved();
-                        let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+            if p.should_unwrap_commonjs_to_esm() {
+                if !p.imports_to_convert_from_require.as_slice().is_empty() {
+                    let all_stmts = p.arena.alloc_slice_fill_with::<Stmt, _>(
+                        p.imports_to_convert_from_require.len(),
+                        |_| Stmt {
+                            loc: bun_ast::Loc::EMPTY,
+                            data: js_ast::StmtData::SEmpty(S::Empty {}),
+                        },
+                    );
+                    before.reserve(p.imports_to_convert_from_require.len());
 
-                        if should_move {
-                            before.push(parts.pop().expect("unreachable"));
-                        }
-                    }
-                    js_ast::StmtData::SEnum(_) => {
-                        // `Part` isn't `Clone`; move out the
-                        // pre-visited parts instead of `appendSlice`.
-                        let enum_parts = core::mem::replace(
-                            &mut preprocessed_enums[preprocessed_enum_i],
-                            BumpVec::new_in(arena),
+                    let mut remaining_stmts: &mut [Stmt] = all_stmts;
+
+                    for i in 0..p.imports_to_convert_from_require.len() {
+                        // borrowck — copy out the three Copy fields so the
+                        // immutable borrow of `p.imports_to_convert_from_require`
+                        // ends before `p.module_scope_mut()` takes `&mut self`.
+                        let (ns_ref, ns_loc, import_record_id) = {
+                            let deferred_import = &p.imports_to_convert_from_require[i];
+                            (
+                                deferred_import
+                                    .namespace
+                                    .ref_
+                                    .expect("infallible: ref bound"),
+                                deferred_import.namespace.loc,
+                                deferred_import.import_record_id,
+                            )
+                        };
+                        let (import_part_stmts, rest) = remaining_stmts.split_at_mut(1);
+                        remaining_stmts = rest;
+
+                        VecExt::append(&mut p.module_scope_mut().generated, ns_ref);
+
+                        import_part_stmts[0] = Stmt::alloc(
+                            S::Import {
+                                star_name_loc: Some(ns_loc),
+                                import_record_index: import_record_id,
+                                namespace_ref: ns_ref,
+                                default_name: None,
+                                items: bun_ast::StoreSlice::EMPTY,
+                                is_single_line: false,
+                                phase_defer: false,
+                            },
+                            ns_loc,
                         );
-                        for part in enum_parts {
-                            parts.push(part);
-                        }
-                        preprocessed_enum_i += 1;
-
-                        let idx = p
-                            .scopes_in_order_for_enum
-                            .keys()
-                            .iter()
-                            .position(|k| *k == stmt.loc)
-                            .expect("enum scope-order entry");
-                        let enum_scope_count = p.scopes_in_order_for_enum.values()[idx].len();
-                        // Advance the shared-slice cursor past this enum's scopes.
-                        p.scope_order_to_visit = &p.scope_order_to_visit[enum_scope_count..];
+                        let mut declared_symbols =
+                            bun_ast::DeclaredSymbolList::init_capacity(1).expect("unreachable");
+                        declared_symbols.append_assume_capacity(DeclaredSymbol {
+                            ref_: ns_ref,
+                            is_top_level: true,
+                        });
+                        before.push(js_ast::Part {
+                            stmts: import_part_stmts.into(),
+                            declared_symbols,
+                            tag: bun_ast::PartTag::ImportToConvertFromRequire,
+                            // This part has a single symbol, so it may be removed if unused.
+                            can_be_removed_if_unused: true,
+                            ..Default::default()
+                        });
                     }
-                    _ => {
-                        let sliced = arena.alloc_slice_copy(&[*stmt]);
-                        p.append_part(&mut parts, sliced)?;
+                    debug_assert!(remaining_stmts.is_empty());
+                }
+
+                if p.commonjs_named_exports.count() > 0 {
+                    // borrowck — `deoptimize_commonjs_named_exports` mut-borrows
+                    // `self`, so the `values()`/`keys()` slices are read once into locals.
+                    let export_names_len = p.commonjs_named_exports.keys().len();
+                    let first_export_ref_loc = p.commonjs_named_exports.values()[0].loc_ref.loc;
+                    let export_refs_len = p.commonjs_named_exports.values().len();
+
+                    'break_optimize: {
+                        if !p.commonjs_named_exports_deoptimized {
+                            let mut needs_decl_count: usize = 0;
+                            for export_ref in p.commonjs_named_exports.values().iter() {
+                                needs_decl_count += export_ref.needs_decl as usize;
+                            }
+                            // This is a workaround for packages which have broken ESM checks
+                            // If they never actually assign to exports.foo, only check for it
+                            // and the package specifies type "module"
+                            // and the package uses ESM syntax
+                            // We should just say
+                            // You're ESM and lying about it.
+                            if p.options.module_type == options::ModuleType::Esm
+                                || p.has_es_module_syntax
+                            {
+                                if needs_decl_count == export_names_len {
+                                    force_esm = true;
+                                    break 'break_optimize;
+                                }
+                            }
+
+                            if needs_decl_count > 0 {
+                                p.symbols.as_mut_slice()[p.exports_ref.inner_index() as usize]
+                                    .use_count_estimate += export_refs_len as u32;
+                                p.deoptimize_commonjs_named_exports();
+                            }
+                        }
+                    }
+
+                    if !p.commonjs_named_exports_deoptimized && p.esm_export_keyword.len == 0 {
+                        p.esm_export_keyword.loc = first_export_ref_loc;
+                        p.esm_export_keyword.len = 5;
                     }
                 }
             }
-        }
 
-        visit_tracer.end();
+            if parts.len() < 4 && parts.len() > 0 && p.options.features.unwrap_commonjs_to_esm {
+                // Specially handle modules shaped like this:
+                //
+                //   CommonJS:
+                //
+                //    if (process.env.NODE_ENV === 'production')
+                //         module.exports = require('./foo.prod.js')
+                //     else
+                //         module.exports = require('./foo.dev.js')
+                //
+                // Find the part containing the actual module.exports = require() statement,
+                // skipping over parts that only contain comments, directives, and empty statements.
+                // This handles files like:
+                //
+                //    /*!
+                //     * express
+                //     * MIT Licensed
+                //     */
+                //    'use strict';
+                //    module.exports = require('./lib/express');
+                //
+                // When tree-shaking is enabled, each statement becomes its own part, so we need
+                // to look across all parts to find the single meaningful statement.
+                struct StmtAndPart {
+                    stmt: Stmt,
+                    part_idx: usize,
+                }
+                let stmt_and_part: Option<StmtAndPart> = 'brk: {
+                    let mut found: Option<StmtAndPart> = None;
+                    for (part_idx, part) in parts.iter().enumerate() {
+                        // `Part.stmts` is a `StoreSlice<Stmt>` (arena-owned). It is
+                        // only ever populated from bump-allocated slices in this fn.
+                        for s in part.stmts.iter() {
+                            match s.data {
+                                js_ast::StmtData::SComment(_)
+                                | js_ast::StmtData::SDirective(_)
+                                | js_ast::StmtData::SEmpty(_) => continue,
+                                _ => {
+                                    // If we already found a non-trivial statement, there's more than one
+                                    if found.is_some() {
+                                        break 'brk None;
+                                    }
+                                    found = Some(StmtAndPart { stmt: *s, part_idx });
+                                }
+                            }
+                        }
+                    }
+                    found
+                };
+                if let Some(found) = stmt_and_part {
+                    let stmt = found.stmt;
+                    let part = &mut parts[found.part_idx];
+                    if p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate
+                        == 1
+                    {
+                        if let js_ast::StmtData::SExpr(s_expr) = &stmt.data {
+                            let value: Expr = s_expr.value;
 
-        // If there were errors while visiting, also halt here
-        if p.log().errors > orig_error_count {
-            return Err(err!("SyntaxError"));
-        }
+                            if let js_ast::ExprData::EBinary(bin) = &value.data {
+                                let left = bin.left;
+                                let right = bin.right;
+                                if bin.op == js_ast::op::Code::BinAssign
+                                    && matches!(&left.data, js_ast::ExprData::EDot(d)
+                                    if d.name == b"exports"
+                                        && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
+                                            if id.ref_.eql(p.module_ref)))
+                                {
+                                    let redirect_import_record_index: Option<u32> = 'inner_brk: {
+                                        // general case:
+                                        //
+                                        //      module.exports = require("foo");
+                                        //
+                                        if let js_ast::ExprData::ERequireString(req) = &right.data {
+                                            break 'inner_brk Some(req.import_record_index);
+                                        }
 
-        // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.
-        let _postvisit_tracer = bun_core::perf::trace("JSParser::postvisit");
+                                        // special case: a module for us to unwrap
+                                        //
+                                        //      module.exports = require("react/jsx-runtime")
+                                        //                       ^ was converted into:
+                                        //
+                                        //      import * as Foo from 'bar';
+                                        //      module.exports = Foo;
+                                        //
+                                        // This is what fixes #3537
+                                        if let js_ast::ExprData::EIdentifier(id) = &right.data {
+                                            if p.import_records.len() == 1
+                                                && p.imports_to_convert_from_require.len() == 1
+                                                && p.imports_to_convert_from_require.as_slice()[0]
+                                                    .namespace
+                                                    .ref_
+                                                    .unwrap()
+                                                    .eql(id.ref_)
+                                            {
+                                                // We know it's 0 because there is only one import in the whole file
+                                                // so that one import must be the one we're looking for
+                                                break 'inner_brk Some(0);
+                                            }
+                                        }
 
-        let mut uses_dirname =
-            p.symbols.as_slice()[p.dirname_ref.inner_index() as usize].use_count_estimate > 0;
-        let mut uses_filename =
-            p.symbols.as_slice()[p.filename_ref.inner_index() as usize].use_count_estimate > 0;
+                                        None
+                                    };
+                                    if let Some(id) = redirect_import_record_index {
+                                        part.symbol_uses = Default::default();
+                                        return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
+                                            import_records: p
+                                                .import_records
+                                                .move_to_baby_list(p.arena),
+                                            redirect_import_record_index: Some(id),
+                                            named_imports: core::mem::take(&mut *p.named_imports),
+                                            named_exports: core::mem::take(&mut p.named_exports),
+                                            ..js_ast::Ast::empty_in(p.arena)
+                                        })));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
 
-        // Handle dirname and filename at bundle-time
-        // We always inject it at the top of the module
-        //
-        // This inlines
-        //
-        //    var __dirname = "foo/bar"
-        //    var __filename = "foo/bar/baz.js"
-        //
-        if p.options.bundle || !p.options.features.commonjs_at_runtime {
-            if uses_dirname || uses_filename {
+                if p.commonjs_named_exports_deoptimized
+                    && p.options.features.unwrap_commonjs_to_esm
+                    && p.unwrap_all_requires
+                    && p.imports_to_convert_from_require.len() == 1
+                    && p.import_records.len() == 1
+                    && p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate
+                        == 1
+                {
+                    'outer_part_loop: for part in parts.iter_mut() {
+                        // Specially handle modules shaped like this:
+                        //
+                        //    doSomeStuff();
+                        //    module.exports = require('./foo.js');
+                        //
+                        // An example is react-dom/index.js, which does a DCE check.
+                        // Snapshot the StoreSlice (Copy) so the `&mut` borrow over the
+                        // arena slice doesn't conflict with the `part.stmts = …` rewrite
+                        // below.
+                        let part_stmts_ss = part.stmts;
+                        let part_stmts: &mut [Stmt] = part_stmts_ss.slice_mut();
+                        if part_stmts.len() > 1 {
+                            break;
+                        }
+
+                        for j in 0..part_stmts.len() {
+                            let stmt = &mut part_stmts[j];
+                            if let js_ast::StmtData::SExpr(s_expr) = &stmt.data {
+                                let value: Expr = s_expr.value;
+
+                                if let js_ast::ExprData::EBinary(bin_ptr) = value.data {
+                                    let mut bin = bin_ptr;
+                                    loop {
+                                        let left = bin.left;
+                                        let right = bin.right;
+
+                                        if bin.op == js_ast::op::Code::BinAssign
+                                            && matches!(
+                                                right.data,
+                                                js_ast::ExprData::ERequireString(_)
+                                            )
+                                            && matches!(&left.data, js_ast::ExprData::EDot(d)
+                                            if d.name == b"exports"
+                                                && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
+                                                    if id.ref_.eql(p.module_ref)))
+                                        {
+                                            let req = match &right.data {
+                                                js_ast::ExprData::ERequireString(r) => r,
+                                                _ => unreachable!(),
+                                            };
+                                            p.export_star_import_records
+                                                .push(req.import_record_index);
+                                            let namespace_ref =
+                                                p.imports_to_convert_from_require.as_slice()
+                                                    [req.unwrapped_id as usize]
+                                                    .namespace
+                                                    .ref_
+                                                    .unwrap();
+
+                                            let stmt_loc = stmt.loc;
+                                            part.stmts = {
+                                                let mut new_stmts =
+                                                    BumpVec::<Stmt>::with_capacity_in(
+                                                        part.stmts.len() + 1,
+                                                        p.arena,
+                                                    );
+                                                new_stmts.extend_from_slice(&part_stmts[0..j]);
+
+                                                new_stmts.push(Stmt::alloc(
+                                                    S::ExportStar {
+                                                        import_record_index: req
+                                                            .import_record_index,
+                                                        namespace_ref,
+                                                        alias: None,
+                                                    },
+                                                    stmt_loc,
+                                                ));
+                                                new_stmts.extend_from_slice(&part_stmts[j + 1..]);
+                                                bun_ast::StoreSlice::from_bump(new_stmts)
+                                            };
+
+                                            part.import_record_indices
+                                                .push(req.import_record_index);
+                                            p.symbols.as_mut_slice()
+                                                [p.module_ref.inner_index() as usize]
+                                                .use_count_estimate = 0;
+                                            let ns_idx = namespace_ref.inner_index() as usize;
+                                            p.symbols.as_mut_slice()[ns_idx].use_count_estimate =
+                                                p.symbols.as_slice()[ns_idx]
+                                                    .use_count_estimate
+                                                    .saturating_sub(1);
+                                            let _ = part.symbol_uses.swap_remove(&namespace_ref);
+
+                                            for (i, before_part) in before.iter().enumerate() {
+                                                if before_part.tag
+                                                    == bun_ast::PartTag::ImportToConvertFromRequire
+                                                {
+                                                    let _ = before.swap_remove(i);
+                                                    break;
+                                                }
+                                            }
+
+                                            if p.esm_export_keyword.len == 0 {
+                                                p.esm_export_keyword.loc = stmt_loc;
+                                                p.esm_export_keyword.len = 5;
+                                            }
+                                            p.commonjs_named_exports_deoptimized = false;
+                                            break;
+                                        }
+
+                                        if let js_ast::ExprData::EBinary(rb) = right.data {
+                                            bin = rb;
+                                            continue;
+                                        }
+
+                                        break;
+                                    }
+                                    let _ = bin_ptr;
+                                }
+                            }
+                        }
+                        let _ = &mut *part;
+                        continue 'outer_part_loop;
+                    }
+                }
+            } else if p.options.bundle && parts.is_empty() {
+                // This flag is disabled because it breaks circular export * as from
+                //
+                //  entry.js:
+                //
+                //    export * from './foo';
+                //
+                //  foo.js:
+                //
+                //    export const foo = 123
+                //    export * as ns from './foo'
+                //
+                // This is permanently disabled (see the circular-export breakage above).
+                if false {
+                    // If the file only contains "export * from './blah'
+                    // we pretend the file never existed in the first place.
+                    // the semantic difference here is in export default statements
+                    // note: export_star_import_records are not filled in yet
+
+                    if !before.is_empty() && p.import_records.len() == 1 {
+                        let export_star_redirect: Option<&S::ExportStar> = 'brk: {
+                            let mut export_star: Option<&S::ExportStar> = None;
+                            for part in before.iter() {
+                                for stmt in part.stmts.iter() {
+                                    match &stmt.data {
+                                        js_ast::StmtData::SExportStar(star) => {
+                                            if star.alias.is_some() {
+                                                break 'brk None;
+                                            }
+
+                                            if export_star.is_some() {
+                                                break 'brk None;
+                                            }
+
+                                            export_star = Some(&**star);
+                                        }
+                                        js_ast::StmtData::SEmpty(_)
+                                        | js_ast::StmtData::SComment(_) => {}
+                                        _ => {
+                                            break 'brk None;
+                                        }
+                                    }
+                                }
+                            }
+                            export_star
+                        };
+
+                        if let Some(star) = export_star_redirect {
+                            return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
+                                import_records: p.import_records.move_to_baby_list(p.arena),
+                                redirect_import_record_index: Some(star.import_record_index),
+                                named_imports: core::mem::take(&mut *p.named_imports),
+                                named_exports: core::mem::take(&mut p.named_exports),
+                                ..js_ast::Ast::empty_in(p.arena)
+                            })));
+                        }
+                    }
+                }
+            }
+
+            // Analyze cross-part dependencies for tree shaking and code splitting.
+            // The if/else-if/else-match below exhaustively assigns this on every path.
+            let mut exports_kind: js_ast::ExportsKind;
+            let exports_ref_usage_count =
+                p.symbols.as_slice()[p.exports_ref.inner_index() as usize].use_count_estimate;
+            let uses_exports_ref = exports_ref_usage_count > 0;
+
+            if uses_exports_ref && p.commonjs_named_exports.count() > 0 && !force_esm {
+                p.deoptimize_commonjs_named_exports();
+            }
+
+            let uses_module_ref =
+                p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate > 0;
+
+            let mut wrap_mode: WrapMode = WrapMode::None;
+
+            if p.is_deoptimized_commonjs() {
+                exports_kind = js_ast::ExportsKind::Cjs;
+            } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
+                exports_kind = js_ast::ExportsKind::Esm;
+            } else if uses_exports_ref
+                || uses_module_ref
+                || p.has_top_level_return
+                || p.has_with_scope
+            {
+                exports_kind = js_ast::ExportsKind::Cjs;
+                if p.options.features.commonjs_at_runtime {
+                    wrap_mode = WrapMode::BunCommonjs;
+
+                    let import_record: Option<&ImportRecord> = 'brk: {
+                        for import_record in p.import_records.items() {
+                            if import_record.flags.intersects(
+                                ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED,
+                            ) {
+                                continue;
+                            }
+                            if import_record.kind == bun_ast::ImportKind::Stmt {
+                                break 'brk Some(import_record);
+                            }
+                        }
+
+                        None
+                    };
+
+                    // make it an error to use an import statement with a commonjs exports usage
+                    if let Some(record) = import_record {
+                        // find the usage of the export symbol
+
+                        let mut notes = BumpVec::<bun_ast::Data>::new_in(p.arena);
+
+                        notes.push(bun_ast::Data {
+                            text: {
+                                use std::io::Write;
+                                let mut v = Vec::<u8>::new();
+                                let _ = write!(
+                                    &mut v,
+                                    "Try require({}) instead",
+                                    bun_core::fmt::QuotedFormatter {
+                                        text: record.path.text
+                                    }
+                                );
+                                std::borrow::Cow::Owned(v)
+                            },
+                            ..Default::default()
+                        });
+
+                        if uses_module_ref {
+                            notes.push(bun_ast::Data {
+                                text: std::borrow::Cow::Borrowed(
+                                    b"This file is CommonJS because 'module' was used",
+                                ),
+                                ..Default::default()
+                            });
+                        }
+
+                        if uses_exports_ref {
+                            notes.push(bun_ast::Data {
+                                text: std::borrow::Cow::Borrowed(
+                                    b"This file is CommonJS because 'exports' was used",
+                                ),
+                                ..Default::default()
+                            });
+                        }
+
+                        if p.has_top_level_return {
+                            notes.push(bun_ast::Data {
+                                text: std::borrow::Cow::Borrowed(
+                                    b"This file is CommonJS because top-level return was used",
+                                ),
+                                ..Default::default()
+                            });
+                        }
+
+                        if p.has_with_scope {
+                            notes.push(bun_ast::Data {
+                                text: std::borrow::Cow::Borrowed(
+                                    b"This file is CommonJS because a \"with\" statement is used",
+                                ),
+                                ..Default::default()
+                            });
+                        }
+
+                        p.log().add_range_error_with_notes(
+                            Some(p.source),
+                            record.range,
+                            b"Cannot use import statement with CommonJS-only features".as_slice(),
+                            notes.into_iter().collect::<Vec<_>>().into_boxed_slice(),
+                        );
+                    }
+                }
+            } else {
+                match p.options.module_type {
+                    // ".cjs" or ".cts" or ("type: commonjs" and (".js" or ".jsx" or ".ts" or ".tsx"))
+                    options::ModuleType::Cjs => {
+                        // There are no commonjs-only features used (require is allowed in ESM)
+                        debug_assert!(
+                            !uses_exports_ref
+                                && !uses_module_ref
+                                && !p.has_top_level_return
+                                && !p.has_with_scope
+                        );
+                        // Use ESM if the file has ES module syntax (import)
+                        exports_kind = if p.has_es_module_syntax {
+                            js_ast::ExportsKind::Esm
+                        } else {
+                            js_ast::ExportsKind::Cjs
+                        };
+                    }
+                    options::ModuleType::Esm => {
+                        exports_kind = js_ast::ExportsKind::Esm;
+                    }
+                    options::ModuleType::Unknown => {
+                        // Divergence from esbuild and Node.js: we default to ESM
+                        // when there are no exports.
+                        //
+                        // However, this breaks certain packages.
+                        // For example, the checkpoint-client used by
+                        // Prisma does an eval("__dirname") but does not export
+                        // anything.
+                        //
+                        // If they use an import statement, we say it's ESM because that's not allowed in CommonJS files.
+                        let uses_any_import_statements = 'brk: {
+                            for import_record in p.import_records.items() {
+                                if import_record.flags.intersects(
+                                    ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED,
+                                ) {
+                                    continue;
+                                }
+                                if import_record.kind == bun_ast::ImportKind::Stmt {
+                                    break 'brk true;
+                                }
+                            }
+
+                            false
+                        };
+
+                        if uses_any_import_statements {
+                            exports_kind = js_ast::ExportsKind::Esm;
+                        }
+                        // Otherwise, if they use CommonJS features its CommonJS.
+                        // If you add a 'use strict'; at the top, you probably meant CommonJS because "use strict"; does nothing in ESM.
+                        else if p.symbols.as_slice()[p.require_ref.inner_index() as usize]
+                            .use_count_estimate
+                            > 0
+                            || uses_dirname
+                            || uses_filename
+                            || (!p.options.bundle
+                            // SAFETY: `module_scope` is non-null after `prepare_for_visit_pass`.
+                            && p.module_scope().strict_mode
+                                == bun_ast::StrictModeKind::ExplicitStrictMode)
+                        {
+                            exports_kind = js_ast::ExportsKind::Cjs;
+                        } else {
+                            // If unknown, we default to ESM
+                            exports_kind = js_ast::ExportsKind::Esm;
+                        }
+                    }
+                }
+
+                if exports_kind == js_ast::ExportsKind::Cjs
+                    && p.options.features.commonjs_at_runtime
+                {
+                    wrap_mode = WrapMode::BunCommonjs;
+                }
+            }
+
+            // Handle dirname and filename at runtime.
+            //
+            // If we reach this point, it means:
+            //
+            // 1) we are building an ESM file that uses __dirname or __filename
+            // 2) we are targeting bun's runtime.
+            // 3) we are not bundling.
+            //
+            if exports_kind == js_ast::ExportsKind::Esm && (uses_dirname || uses_filename) {
+                debug_assert!(!p.options.bundle);
                 let count = (uses_dirname as usize) + (uses_filename as usize);
                 let mut declared_symbols =
                     bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
@@ -1105,6 +1817,8 @@ impl<'a> Parser<'a> {
                     .arena
                     .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
                 if uses_dirname {
+                    // var __dirname = import.meta
+                    let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
                     decls[0] = G::Decl {
                         binding: p.b(
                             B::Identifier {
@@ -1113,8 +1827,10 @@ impl<'a> Parser<'a> {
                             bun_ast::Loc::EMPTY,
                         ),
                         value: Some(p.new_expr(
-                            E::String {
-                                data: p.source.path.name().dir.into(),
+                            E::Dot {
+                                name: b"dir".into(),
+                                name_loc: bun_ast::Loc::EMPTY,
+                                target: import_meta,
                                 ..Default::default()
                             },
                             bun_ast::Loc::EMPTY,
@@ -1126,6 +1842,8 @@ impl<'a> Parser<'a> {
                     });
                 }
                 if uses_filename {
+                    // var __filename = import.meta.path
+                    let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
                     decls[uses_dirname as usize] = G::Decl {
                         binding: p.b(
                             B::Identifier {
@@ -1134,8 +1852,10 @@ impl<'a> Parser<'a> {
                             bun_ast::Loc::EMPTY,
                         ),
                         value: Some(p.new_expr(
-                            E::String {
-                                data: p.source.path.text.into(),
+                            E::Dot {
+                                name: b"path".into(),
+                                name_loc: bun_ast::Loc::EMPTY,
+                                target: import_meta,
                                 ..Default::default()
                             },
                             bun_ast::Loc::EMPTY,
@@ -1169,1041 +1889,371 @@ impl<'a> Parser<'a> {
                     tag: bun_ast::PartTag::DirnameFilename,
                     ..Default::default()
                 });
-                uses_dirname = false;
-                uses_filename = false;
             }
-        }
 
-        // This is a workaround for broken module environment checks in packages like lodash-es
-        // https://github.com/lodash/lodash/issues/5660
-        let mut force_esm = false;
+            if exports_kind == js_ast::ExportsKind::Esm
+                && p.commonjs_named_exports.count() > 0
+                && !p.unwrap_all_requires
+                && !force_esm
+            {
+                exports_kind = js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
+            }
 
-        if p.should_unwrap_commonjs_to_esm() {
-            if !p.imports_to_convert_from_require.as_slice().is_empty() {
-                let all_stmts = p.arena.alloc_slice_fill_with::<Stmt, _>(
-                    p.imports_to_convert_from_require.len(),
-                    |_| Stmt {
-                        loc: bun_ast::Loc::EMPTY,
-                        data: js_ast::StmtData::SEmpty(S::Empty {}),
-                    },
-                );
-                before.reserve(p.imports_to_convert_from_require.len());
+            // Auto inject jest globals into the test file
+            'outer: {
+                if !p.options.features.inject_jest_globals {
+                    break 'outer;
+                }
 
-                let mut remaining_stmts: &mut [Stmt] = all_stmts;
+                for item in p.import_records.items() {
+                    // skip if they did import it
+                    if item.path.text == b"bun:test"
+                        || item.path.text == b"@jest/globals"
+                        || item.path.text == b"vitest"
+                    {
+                        if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
+                            // If we rewrote import paths, we need to disable the runtime transpiler cache
+                            if item.path.text != b"bun:test" {
+                                cache.input_hash = None;
+                            }
+                        }
 
-                for i in 0..p.imports_to_convert_from_require.len() {
-                    // borrowck — copy out the three Copy fields so the
-                    // immutable borrow of `p.imports_to_convert_from_require`
-                    // ends before `p.module_scope_mut()` takes `&mut self`.
-                    let (ns_ref, ns_loc, import_record_id) = {
-                        let deferred_import = &p.imports_to_convert_from_require[i];
-                        (
-                            deferred_import
-                                .namespace
-                                .ref_
-                                .expect("infallible: ref bound"),
-                            deferred_import.namespace.loc,
-                            deferred_import.import_record_id,
-                        )
-                    };
-                    let (import_part_stmts, rest) = remaining_stmts.split_at_mut(1);
-                    remaining_stmts = rest;
+                        break 'outer;
+                    }
+                }
 
-                    VecExt::append(&mut p.module_scope_mut().generated, ns_ref);
+                // if they didn't use any of the jest globals, don't inject it, I guess.
+                // Iterates the static `Jest::FIELDS`
+                // table (`&[(&'static str, fn(&Jest) -> Ref)]`); declaration order
+                // determines the emitted clause/property order.
+                let items_count: usize = {
+                    let mut count: usize = 0;
+                    for (_name, get_ref) in Jest::FIELDS {
+                        count += (p.symbols.as_slice()[get_ref(&p.jest).inner_index() as usize]
+                            .use_count_estimate
+                            > 0) as usize;
+                    }
+                    count
+                };
+                if items_count == 0 {
+                    break 'outer;
+                }
 
-                    import_part_stmts[0] = Stmt::alloc(
-                        S::Import {
-                            star_name_loc: Some(ns_loc),
+                let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+                declared_symbols.ensure_total_capacity(items_count)?;
+
+                // For CommonJS modules, use require instead of import
+                if exports_kind == js_ast::ExportsKind::Cjs {
+                    let import_record_id = p.add_import_record(
+                        bun_ast::ImportKind::Require,
+                        bun_ast::Loc::EMPTY,
+                        b"bun:test",
+                    );
+
+                    // Create object binding pattern for destructuring
+                    let mut properties =
+                        BumpVec::<B::Property>::with_capacity_in(items_count, p.arena);
+                    for (symbol_name, get_ref) in Jest::FIELDS {
+                        let r = get_ref(&p.jest);
+                        if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
+                            let key = p.new_expr(
+                                E::String {
+                                    data: symbol_name.as_bytes().into(),
+                                    ..Default::default()
+                                },
+                                bun_ast::Loc::EMPTY,
+                            );
+                            let value = p.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
+                            properties.push(B::Property {
+                                flags: bun_ast::flags::PROPERTY_NONE,
+                                key,
+                                value,
+                                default_value: None,
+                            });
+                            declared_symbols.append_assume_capacity(DeclaredSymbol {
+                                ref_: r,
+                                is_top_level: true,
+                            });
+                        }
+                    }
+                    let properties = bun_ast::StoreSlice::from_bump(properties);
+
+                    // Create: const { test, expect, ... } = require("bun:test")
+                    let binding = p.b(
+                        B::Object {
+                            properties,
+                            is_single_line: false,
+                        },
+                        bun_ast::Loc::EMPTY,
+                    );
+                    let value = p.new_expr(
+                        E::RequireString {
                             import_record_index: import_record_id,
-                            namespace_ref: ns_ref,
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    );
+                    let mut decls = G::DeclList::init_capacity(1);
+                    decls.append_assume_capacity(G::Decl {
+                        binding,
+                        value: Some(value),
+                    });
+
+                    let local_stmt = p.s(
+                        S::Local {
+                            kind: js_ast::LocalKind::KConst,
+                            decls,
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    );
+                    let part_stmts = p.arena.alloc_slice_fill_with(1, |_| local_stmt);
+
+                    before.push(js_ast::Part {
+                        stmts: part_stmts.into(),
+                        declared_symbols,
+                        import_record_indices: js_ast::PartImportRecordIndices::init_one(
+                            import_record_id,
+                        ),
+                        tag: bun_ast::PartTag::BunTest,
+                        ..Default::default()
+                    });
+                } else {
+                    let import_record_id = p.add_import_record(
+                        bun_ast::ImportKind::Stmt,
+                        bun_ast::Loc::EMPTY,
+                        b"bun:test",
+                    );
+
+                    // For ESM modules, use import statement
+                    let mut clauses =
+                        BumpVec::<js_ast::ClauseItem>::with_capacity_in(items_count, p.arena);
+                    for (symbol_name, get_ref) in Jest::FIELDS {
+                        let r = get_ref(&p.jest);
+                        if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
+                            clauses.push(js_ast::ClauseItem {
+                                name: js_ast::LocRef {
+                                    ref_: Some(r),
+                                    loc: bun_ast::Loc::EMPTY,
+                                },
+                                alias: js_ast::StoreStr::new(symbol_name.as_bytes()),
+                                alias_loc: bun_ast::Loc::EMPTY,
+                                original_name: js_ast::StoreStr::new(b""),
+                            });
+                            declared_symbols.append_assume_capacity(DeclaredSymbol {
+                                ref_: r,
+                                is_top_level: true,
+                            });
+                        }
+                    }
+                    let clauses = bun_ast::StoreSlice::from_bump(clauses);
+
+                    let namespace_ref = p
+                        .declare_symbol(
+                            js_ast::symbol::Kind::Unbound,
+                            bun_ast::Loc::EMPTY,
+                            b"bun_test_import_namespace_for_internal_use_only",
+                        )
+                        .expect("unreachable");
+                    let import_stmt = p.s(
+                        S::Import {
+                            namespace_ref,
+                            items: clauses,
+                            import_record_index: import_record_id,
                             default_name: None,
-                            items: bun_ast::StoreSlice::EMPTY,
+                            star_name_loc: None,
                             is_single_line: false,
                             phase_defer: false,
                         },
-                        ns_loc,
+                        bun_ast::Loc::EMPTY,
                     );
-                    let mut declared_symbols =
-                        bun_ast::DeclaredSymbolList::init_capacity(1).expect("unreachable");
-                    declared_symbols.append_assume_capacity(DeclaredSymbol {
-                        ref_: ns_ref,
-                        is_top_level: true,
-                    });
+
+                    let part_stmts = p.arena.alloc_slice_fill_with(1, |_| import_stmt);
                     before.push(js_ast::Part {
-                        stmts: import_part_stmts.into(),
+                        stmts: part_stmts.into(),
                         declared_symbols,
-                        tag: bun_ast::PartTag::ImportToConvertFromRequire,
-                        // This part has a single symbol, so it may be removed if unused.
-                        can_be_removed_if_unused: true,
+                        import_record_indices: js_ast::PartImportRecordIndices::init_one(
+                            import_record_id,
+                        ),
+                        tag: bun_ast::PartTag::BunTest,
                         ..Default::default()
                     });
                 }
-                debug_assert!(remaining_stmts.is_empty());
-            }
 
-            if p.commonjs_named_exports.count() > 0 {
-                // borrowck — `deoptimize_commonjs_named_exports` mut-borrows
-                // `self`, so the `values()`/`keys()` slices are read once into locals.
-                let export_names_len = p.commonjs_named_exports.keys().len();
-                let first_export_ref_loc = p.commonjs_named_exports.values()[0].loc_ref.loc;
-                let export_refs_len = p.commonjs_named_exports.values().len();
-
-                'break_optimize: {
-                    if !p.commonjs_named_exports_deoptimized {
-                        let mut needs_decl_count: usize = 0;
-                        for export_ref in p.commonjs_named_exports.values().iter() {
-                            needs_decl_count += export_ref.needs_decl as usize;
-                        }
-                        // This is a workaround for packages which have broken ESM checks
-                        // If they never actually assign to exports.foo, only check for it
-                        // and the package specifies type "module"
-                        // and the package uses ESM syntax
-                        // We should just say
-                        // You're ESM and lying about it.
-                        if p.options.module_type == options::ModuleType::Esm
-                            || p.has_es_module_syntax
-                        {
-                            if needs_decl_count == export_names_len {
-                                force_esm = true;
-                                break 'break_optimize;
-                            }
-                        }
-
-                        if needs_decl_count > 0 {
-                            p.symbols.as_mut_slice()[p.exports_ref.inner_index() as usize]
-                                .use_count_estimate += export_refs_len as u32;
-                            p.deoptimize_commonjs_named_exports();
-                        }
-                    }
-                }
-
-                if !p.commonjs_named_exports_deoptimized && p.esm_export_keyword.len == 0 {
-                    p.esm_export_keyword.loc = first_export_ref_loc;
-                    p.esm_export_keyword.len = 5;
-                }
-            }
-        }
-
-        if parts.len() < 4 && parts.len() > 0 && p.options.features.unwrap_commonjs_to_esm {
-            // Specially handle modules shaped like this:
-            //
-            //   CommonJS:
-            //
-            //    if (process.env.NODE_ENV === 'production')
-            //         module.exports = require('./foo.prod.js')
-            //     else
-            //         module.exports = require('./foo.dev.js')
-            //
-            // Find the part containing the actual module.exports = require() statement,
-            // skipping over parts that only contain comments, directives, and empty statements.
-            // This handles files like:
-            //
-            //    /*!
-            //     * express
-            //     * MIT Licensed
-            //     */
-            //    'use strict';
-            //    module.exports = require('./lib/express');
-            //
-            // When tree-shaking is enabled, each statement becomes its own part, so we need
-            // to look across all parts to find the single meaningful statement.
-            struct StmtAndPart {
-                stmt: Stmt,
-                part_idx: usize,
-            }
-            let stmt_and_part: Option<StmtAndPart> = 'brk: {
-                let mut found: Option<StmtAndPart> = None;
-                for (part_idx, part) in parts.iter().enumerate() {
-                    // `Part.stmts` is a `StoreSlice<Stmt>` (arena-owned). It is
-                    // only ever populated from bump-allocated slices in this fn.
-                    for s in part.stmts.iter() {
-                        match s.data {
-                            js_ast::StmtData::SComment(_)
-                            | js_ast::StmtData::SDirective(_)
-                            | js_ast::StmtData::SEmpty(_) => continue,
-                            _ => {
-                                // If we already found a non-trivial statement, there's more than one
-                                if found.is_some() {
-                                    break 'brk None;
-                                }
-                                found = Some(StmtAndPart { stmt: *s, part_idx });
-                            }
-                        }
-                    }
-                }
-                found
-            };
-            if let Some(found) = stmt_and_part {
-                let stmt = found.stmt;
-                let part = &mut parts[found.part_idx];
-                if p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
-                {
-                    if let js_ast::StmtData::SExpr(s_expr) = &stmt.data {
-                        let value: Expr = s_expr.value;
-
-                        if let js_ast::ExprData::EBinary(bin) = &value.data {
-                            let left = bin.left;
-                            let right = bin.right;
-                            if bin.op == js_ast::op::Code::BinAssign
-                                && matches!(&left.data, js_ast::ExprData::EDot(d)
-                                    if d.name == b"exports"
-                                        && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
-                                            if id.ref_.eql(p.module_ref)))
-                            {
-                                let redirect_import_record_index: Option<u32> = 'inner_brk: {
-                                    // general case:
-                                    //
-                                    //      module.exports = require("foo");
-                                    //
-                                    if let js_ast::ExprData::ERequireString(req) = &right.data {
-                                        break 'inner_brk Some(req.import_record_index);
-                                    }
-
-                                    // special case: a module for us to unwrap
-                                    //
-                                    //      module.exports = require("react/jsx-runtime")
-                                    //                       ^ was converted into:
-                                    //
-                                    //      import * as Foo from 'bar';
-                                    //      module.exports = Foo;
-                                    //
-                                    // This is what fixes #3537
-                                    if let js_ast::ExprData::EIdentifier(id) = &right.data {
-                                        if p.import_records.len() == 1
-                                            && p.imports_to_convert_from_require.len() == 1
-                                            && p.imports_to_convert_from_require.as_slice()[0]
-                                                .namespace
-                                                .ref_
-                                                .unwrap()
-                                                .eql(id.ref_)
-                                        {
-                                            // We know it's 0 because there is only one import in the whole file
-                                            // so that one import must be the one we're looking for
-                                            break 'inner_brk Some(0);
-                                        }
-                                    }
-
-                                    None
-                                };
-                                if let Some(id) = redirect_import_record_index {
-                                    part.symbol_uses = Default::default();
-                                    return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
-                                        import_records: p.import_records.move_to_baby_list(p.arena),
-                                        redirect_import_record_index: Some(id),
-                                        named_imports: core::mem::take(&mut *p.named_imports),
-                                        named_exports: core::mem::take(&mut p.named_exports),
-                                        ..js_ast::Ast::empty_in(p.arena)
-                                    })));
-                                }
-                            }
-                        }
-                    }
+                // If we injected jest globals, we need to disable the runtime transpiler cache
+                if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
+                    cache.input_hash = None;
                 }
             }
 
-            if p.commonjs_named_exports_deoptimized
-                && p.options.features.unwrap_commonjs_to_esm
-                && p.unwrap_all_requires
-                && p.imports_to_convert_from_require.len() == 1
-                && p.import_records.len() == 1
-                && p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
-            {
-                'outer_part_loop: for part in parts.iter_mut() {
-                    // Specially handle modules shaped like this:
-                    //
-                    //    doSomeStuff();
-                    //    module.exports = require('./foo.js');
-                    //
-                    // An example is react-dom/index.js, which does a DCE check.
-                    // Snapshot the StoreSlice (Copy) so the `&mut` borrow over the
-                    // arena slice doesn't conflict with the `part.stmts = …` rewrite
-                    // below.
-                    let part_stmts_ss = part.stmts;
-                    let part_stmts: &mut [Stmt] = part_stmts_ss.slice_mut();
-                    if part_stmts.len() > 1 {
-                        break;
-                    }
-
-                    for j in 0..part_stmts.len() {
-                        let stmt = &mut part_stmts[j];
-                        if let js_ast::StmtData::SExpr(s_expr) = &stmt.data {
-                            let value: Expr = s_expr.value;
-
-                            if let js_ast::ExprData::EBinary(bin_ptr) = value.data {
-                                let mut bin = bin_ptr;
-                                loop {
-                                    let left = bin.left;
-                                    let right = bin.right;
-
-                                    if bin.op == js_ast::op::Code::BinAssign
-                                        && matches!(right.data, js_ast::ExprData::ERequireString(_))
-                                        && matches!(&left.data, js_ast::ExprData::EDot(d)
-                                            if d.name == b"exports"
-                                                && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
-                                                    if id.ref_.eql(p.module_ref)))
-                                    {
-                                        let req = match &right.data {
-                                            js_ast::ExprData::ERequireString(r) => r,
-                                            _ => unreachable!(),
-                                        };
-                                        p.export_star_import_records.push(req.import_record_index);
-                                        let namespace_ref =
-                                            p.imports_to_convert_from_require.as_slice()
-                                                [req.unwrapped_id as usize]
-                                                .namespace
-                                                .ref_
-                                                .unwrap();
-
-                                        let stmt_loc = stmt.loc;
-                                        part.stmts = {
-                                            let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(
-                                                part.stmts.len() + 1,
-                                                p.arena,
-                                            );
-                                            new_stmts.extend_from_slice(&part_stmts[0..j]);
-
-                                            new_stmts.push(Stmt::alloc(
-                                                S::ExportStar {
-                                                    import_record_index: req.import_record_index,
-                                                    namespace_ref,
-                                                    alias: None,
-                                                },
-                                                stmt_loc,
-                                            ));
-                                            new_stmts.extend_from_slice(&part_stmts[j + 1..]);
-                                            bun_ast::StoreSlice::from_bump(new_stmts)
-                                        };
-
-                                        part.import_record_indices.push(req.import_record_index);
-                                        p.symbols.as_mut_slice()
-                                            [p.module_ref.inner_index() as usize]
-                                            .use_count_estimate = 0;
-                                        let ns_idx = namespace_ref.inner_index() as usize;
-                                        p.symbols.as_mut_slice()[ns_idx].use_count_estimate =
-                                            p.symbols.as_slice()[ns_idx]
-                                                .use_count_estimate
-                                                .saturating_sub(1);
-                                        let _ = part.symbol_uses.swap_remove(&namespace_ref);
-
-                                        for (i, before_part) in before.iter().enumerate() {
-                                            if before_part.tag
-                                                == bun_ast::PartTag::ImportToConvertFromRequire
-                                            {
-                                                let _ = before.swap_remove(i);
-                                                break;
-                                            }
-                                        }
-
-                                        if p.esm_export_keyword.len == 0 {
-                                            p.esm_export_keyword.loc = stmt_loc;
-                                            p.esm_export_keyword.len = 5;
-                                        }
-                                        p.commonjs_named_exports_deoptimized = false;
-                                        break;
-                                    }
-
-                                    if let js_ast::ExprData::EBinary(rb) = right.data {
-                                        bin = rb;
-                                        continue;
-                                    }
-
-                                    break;
-                                }
-                                let _ = bin_ptr;
-                            }
-                        }
-                    }
-                    let _ = &mut *part;
-                    continue 'outer_part_loop;
+            if p.has_called_runtime {
+                let mut runtime_imports: [u8; RuntimeImports::ALL.len()] =
+                    [0; RuntimeImports::ALL.len()];
+                let mut iter = p.runtime_imports.iter();
+                let mut i: usize = 0;
+                while let Some(entry) = iter.next() {
+                    runtime_imports[i] = u8::try_from(entry.key).expect("int cast");
+                    i += 1;
                 }
-            }
-        } else if p.options.bundle && parts.is_empty() {
-            // This flag is disabled because it breaks circular export * as from
-            //
-            //  entry.js:
-            //
-            //    export * from './foo';
-            //
-            //  foo.js:
-            //
-            //    export const foo = 123
-            //    export * as ns from './foo'
-            //
-            // This is permanently disabled (see the circular-export breakage above).
-            if false {
-                // If the file only contains "export * from './blah'
-                // we pretend the file never existed in the first place.
-                // the semantic difference here is in export default statements
-                // note: export_star_import_records are not filled in yet
 
-                if !before.is_empty() && p.import_records.len() == 1 {
-                    let export_star_redirect: Option<&S::ExportStar> = 'brk: {
-                        let mut export_star: Option<&S::ExportStar> = None;
-                        for part in before.iter() {
-                            for stmt in part.stmts.iter() {
-                                match &stmt.data {
-                                    js_ast::StmtData::SExportStar(star) => {
-                                        if star.alias.is_some() {
-                                            break 'brk None;
-                                        }
-
-                                        if export_star.is_some() {
-                                            break 'brk None;
-                                        }
-
-                                        export_star = Some(&**star);
-                                    }
-                                    js_ast::StmtData::SEmpty(_) | js_ast::StmtData::SComment(_) => {
-                                    }
-                                    _ => {
-                                        break 'brk None;
-                                    }
-                                }
-                            }
-                        }
-                        export_star
-                    };
-
-                    if let Some(star) = export_star_redirect {
-                        return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
-                            import_records: p.import_records.move_to_baby_list(p.arena),
-                            redirect_import_record_index: Some(star.import_record_index),
-                            named_imports: core::mem::take(&mut *p.named_imports),
-                            named_exports: core::mem::take(&mut p.named_exports),
-                            ..js_ast::Ast::empty_in(p.arena)
-                        })));
-                    }
-                }
-            }
-        }
-
-        // Analyze cross-part dependencies for tree shaking and code splitting.
-        // The if/else-if/else-match below exhaustively assigns this on every path.
-        let mut exports_kind: js_ast::ExportsKind;
-        let exports_ref_usage_count =
-            p.symbols.as_slice()[p.exports_ref.inner_index() as usize].use_count_estimate;
-        let uses_exports_ref = exports_ref_usage_count > 0;
-
-        if uses_exports_ref && p.commonjs_named_exports.count() > 0 && !force_esm {
-            p.deoptimize_commonjs_named_exports();
-        }
-
-        let uses_module_ref =
-            p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate > 0;
-
-        let mut wrap_mode: WrapMode = WrapMode::None;
-
-        if p.is_deoptimized_commonjs() {
-            exports_kind = js_ast::ExportsKind::Cjs;
-        } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
-            exports_kind = js_ast::ExportsKind::Esm;
-        } else if uses_exports_ref || uses_module_ref || p.has_top_level_return || p.has_with_scope
-        {
-            exports_kind = js_ast::ExportsKind::Cjs;
-            if p.options.features.commonjs_at_runtime {
-                wrap_mode = WrapMode::BunCommonjs;
-
-                let import_record: Option<&ImportRecord> = 'brk: {
-                    for import_record in p.import_records.items() {
-                        if import_record.flags.intersects(
-                            ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED,
-                        ) {
-                            continue;
-                        }
-                        if import_record.kind == bun_ast::ImportKind::Stmt {
-                            break 'brk Some(import_record);
-                        }
-                    }
-
-                    None
-                };
-
-                // make it an error to use an import statement with a commonjs exports usage
-                if let Some(record) = import_record {
-                    // find the usage of the export symbol
-
-                    let mut notes = BumpVec::<bun_ast::Data>::new_in(p.arena);
-
-                    notes.push(bun_ast::Data {
-                        text: {
-                            use std::io::Write;
-                            let mut v = Vec::<u8>::new();
-                            let _ = write!(
-                                &mut v,
-                                "Try require({}) instead",
-                                bun_core::fmt::QuotedFormatter {
-                                    text: record.path.text
-                                }
-                            );
-                            std::borrow::Cow::Owned(v)
-                        },
-                        ..Default::default()
-                    });
-
-                    if uses_module_ref {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because 'module' was used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    if uses_exports_ref {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because 'exports' was used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    if p.has_top_level_return {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because top-level return was used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    if p.has_with_scope {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because a \"with\" statement is used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    p.log().add_range_error_with_notes(
-                        Some(p.source),
-                        record.range,
-                        b"Cannot use import statement with CommonJS-only features".as_slice(),
-                        notes.into_iter().collect::<Vec<_>>().into_boxed_slice(),
-                    );
-                }
-            }
-        } else {
-            match p.options.module_type {
-                // ".cjs" or ".cts" or ("type: commonjs" and (".js" or ".jsx" or ".ts" or ".tsx"))
-                options::ModuleType::Cjs => {
-                    // There are no commonjs-only features used (require is allowed in ESM)
-                    debug_assert!(
-                        !uses_exports_ref
-                            && !uses_module_ref
-                            && !p.has_top_level_return
-                            && !p.has_with_scope
-                    );
-                    // Use ESM if the file has ES module syntax (import)
-                    exports_kind = if p.has_es_module_syntax {
-                        js_ast::ExportsKind::Esm
-                    } else {
-                        js_ast::ExportsKind::Cjs
-                    };
-                }
-                options::ModuleType::Esm => {
-                    exports_kind = js_ast::ExportsKind::Esm;
-                }
-                options::ModuleType::Unknown => {
-                    // Divergence from esbuild and Node.js: we default to ESM
-                    // when there are no exports.
-                    //
-                    // However, this breaks certain packages.
-                    // For example, the checkpoint-client used by
-                    // Prisma does an eval("__dirname") but does not export
-                    // anything.
-                    //
-                    // If they use an import statement, we say it's ESM because that's not allowed in CommonJS files.
-                    let uses_any_import_statements = 'brk: {
-                        for import_record in p.import_records.items() {
-                            if import_record.flags.intersects(
-                                ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED,
-                            ) {
-                                continue;
-                            }
-                            if import_record.kind == bun_ast::ImportKind::Stmt {
-                                break 'brk true;
-                            }
-                        }
-
-                        false
-                    };
-
-                    if uses_any_import_statements {
-                        exports_kind = js_ast::ExportsKind::Esm;
-                    }
-                    // Otherwise, if they use CommonJS features its CommonJS.
-                    // If you add a 'use strict'; at the top, you probably meant CommonJS because "use strict"; does nothing in ESM.
-                    else if p.symbols.as_slice()[p.require_ref.inner_index() as usize]
-                        .use_count_estimate
-                        > 0
-                        || uses_dirname
-                        || uses_filename
-                        || (!p.options.bundle
-                            // SAFETY: `module_scope` is non-null after `prepare_for_visit_pass`.
-                            && p.module_scope().strict_mode
-                                == bun_ast::StrictModeKind::ExplicitStrictMode)
-                    {
-                        exports_kind = js_ast::ExportsKind::Cjs;
-                    } else {
-                        // If unknown, we default to ESM
-                        exports_kind = js_ast::ExportsKind::Esm;
-                    }
-                }
-            }
-
-            if exports_kind == js_ast::ExportsKind::Cjs && p.options.features.commonjs_at_runtime {
-                wrap_mode = WrapMode::BunCommonjs;
-            }
-        }
-
-        // Handle dirname and filename at runtime.
-        //
-        // If we reach this point, it means:
-        //
-        // 1) we are building an ESM file that uses __dirname or __filename
-        // 2) we are targeting bun's runtime.
-        // 3) we are not bundling.
-        //
-        if exports_kind == js_ast::ExportsKind::Esm && (uses_dirname || uses_filename) {
-            debug_assert!(!p.options.bundle);
-            let count = (uses_dirname as usize) + (uses_filename as usize);
-            let mut declared_symbols =
-                bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
-            let decls = p
-                .arena
-                .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
-            if uses_dirname {
-                // var __dirname = import.meta
-                let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
-                decls[0] = G::Decl {
-                    binding: p.b(
-                        B::Identifier {
-                            r#ref: p.dirname_ref,
-                        },
-                        bun_ast::Loc::EMPTY,
-                    ),
-                    value: Some(p.new_expr(
-                        E::Dot {
-                            name: b"dir".into(),
-                            name_loc: bun_ast::Loc::EMPTY,
-                            target: import_meta,
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    )),
-                };
-                declared_symbols.append_assume_capacity(DeclaredSymbol {
-                    ref_: p.dirname_ref,
-                    is_top_level: true,
-                });
-            }
-            if uses_filename {
-                // var __filename = import.meta.path
-                let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
-                decls[uses_dirname as usize] = G::Decl {
-                    binding: p.b(
-                        B::Identifier {
-                            r#ref: p.filename_ref,
-                        },
-                        bun_ast::Loc::EMPTY,
-                    ),
-                    value: Some(p.new_expr(
-                        E::Dot {
-                            name: b"path".into(),
-                            name_loc: bun_ast::Loc::EMPTY,
-                            target: import_meta,
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    )),
-                };
-                declared_symbols.append_assume_capacity(DeclaredSymbol {
-                    ref_: p.filename_ref,
-                    is_top_level: true,
-                });
-            }
-
-            let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
-                p.s(
-                    S::Local {
-                        kind: js_ast::LocalKind::KVar,
-                        decls: {
-                            let mut dl = G::DeclList::init_capacity(decls.len());
-                            for d in decls.iter_mut() {
-                                dl.append_assume_capacity(core::mem::take(d));
-                            }
-                            dl
-                        },
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                )
-            });
-            before.push(js_ast::Part {
-                stmts: part_stmts.into(),
-                declared_symbols,
-                tag: bun_ast::PartTag::DirnameFilename,
-                ..Default::default()
-            });
-        }
-
-        if exports_kind == js_ast::ExportsKind::Esm
-            && p.commonjs_named_exports.count() > 0
-            && !p.unwrap_all_requires
-            && !force_esm
-        {
-            exports_kind = js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
-        }
-
-        // Auto inject jest globals into the test file
-        'outer: {
-            if !p.options.features.inject_jest_globals {
-                break 'outer;
-            }
-
-            for item in p.import_records.items() {
-                // skip if they did import it
-                if item.path.text == b"bun:test"
-                    || item.path.text == b"@jest/globals"
-                    || item.path.text == b"vitest"
-                {
-                    if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                        // If we rewrote import paths, we need to disable the runtime transpiler cache
-                        if item.path.text != b"bun:test" {
-                            cache.input_hash = None;
-                        }
-                    }
-
-                    break 'outer;
-                }
-            }
-
-            // if they didn't use any of the jest globals, don't inject it, I guess.
-            // Iterates the static `Jest::FIELDS`
-            // table (`&[(&'static str, fn(&Jest) -> Ref)]`); declaration order
-            // determines the emitted clause/property order.
-            let items_count: usize = {
-                let mut count: usize = 0;
-                for (_name, get_ref) in Jest::FIELDS {
-                    count += (p.symbols.as_slice()[get_ref(&p.jest).inner_index() as usize]
-                        .use_count_estimate
-                        > 0) as usize;
-                }
-                count
-            };
-            if items_count == 0 {
-                break 'outer;
-            }
-
-            let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-            declared_symbols.ensure_total_capacity(items_count)?;
-
-            // For CommonJS modules, use require instead of import
-            if exports_kind == js_ast::ExportsKind::Cjs {
-                let import_record_id = p.add_import_record(
-                    bun_ast::ImportKind::Require,
-                    bun_ast::Loc::EMPTY,
-                    b"bun:test",
-                );
-
-                // Create object binding pattern for destructuring
-                let mut properties = BumpVec::<B::Property>::with_capacity_in(items_count, p.arena);
-                for (symbol_name, get_ref) in Jest::FIELDS {
-                    let r = get_ref(&p.jest);
-                    if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
-                        let key = p.new_expr(
-                            E::String {
-                                data: symbol_name.as_bytes().into(),
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
-                        );
-                        let value = p.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
-                        properties.push(B::Property {
-                            flags: bun_ast::flags::PROPERTY_NONE,
-                            key,
-                            value,
-                            default_value: None,
-                        });
-                        declared_symbols.append_assume_capacity(DeclaredSymbol {
-                            ref_: r,
-                            is_top_level: true,
-                        });
-                    }
-                }
-                let properties = bun_ast::StoreSlice::from_bump(properties);
-
-                // Create: const { test, expect, ... } = require("bun:test")
-                let binding = p.b(
-                    B::Object {
-                        properties,
-                        is_single_line: false,
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                let value = p.new_expr(
-                    E::RequireString {
-                        import_record_index: import_record_id,
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                let mut decls = G::DeclList::init_capacity(1);
-                decls.append_assume_capacity(G::Decl {
-                    binding,
-                    value: Some(value),
+                runtime_imports[0..i].sort_unstable_by(|a, b| {
+                    RuntimeImports::ALL_SORTED_INDEX[*a as usize]
+                        .cmp(&RuntimeImports::ALL_SORTED_INDEX[*b as usize])
                 });
 
-                let local_stmt = p.s(
-                    S::Local {
-                        kind: js_ast::LocalKind::KConst,
-                        decls,
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                let part_stmts = p.arena.alloc_slice_fill_with(1, |_| local_stmt);
-
-                before.push(js_ast::Part {
-                    stmts: part_stmts.into(),
-                    declared_symbols,
-                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
-                        import_record_id,
-                    ),
-                    tag: bun_ast::PartTag::BunTest,
-                    ..Default::default()
-                });
-            } else {
-                let import_record_id = p.add_import_record(
-                    bun_ast::ImportKind::Stmt,
-                    bun_ast::Loc::EMPTY,
-                    b"bun:test",
-                );
-
-                // For ESM modules, use import statement
-                let mut clauses =
-                    BumpVec::<js_ast::ClauseItem>::with_capacity_in(items_count, p.arena);
-                for (symbol_name, get_ref) in Jest::FIELDS {
-                    let r = get_ref(&p.jest);
-                    if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
-                        clauses.push(js_ast::ClauseItem {
-                            name: js_ast::LocRef {
-                                ref_: Some(r),
-                                loc: bun_ast::Loc::EMPTY,
-                            },
-                            alias: js_ast::StoreStr::new(symbol_name.as_bytes()),
-                            alias_loc: bun_ast::Loc::EMPTY,
-                            original_name: js_ast::StoreStr::new(b""),
-                        });
-                        declared_symbols.append_assume_capacity(DeclaredSymbol {
-                            ref_: r,
-                            is_top_level: true,
-                        });
-                    }
-                }
-                let clauses = bun_ast::StoreSlice::from_bump(clauses);
-
-                let namespace_ref = p
-                    .declare_symbol(
-                        js_ast::symbol::Kind::Unbound,
-                        bun_ast::Loc::EMPTY,
-                        b"bun_test_import_namespace_for_internal_use_only",
+                if i > 0 {
+                    // snapshot to break the `&mut self` ↔ `&self.runtime_imports`
+                    // borrow overlap in `generate_import_stmt(symbols: &Sym)`; the callee
+                    // never touches `self.runtime_imports`, so the clone is purely a
+                    // borrow-checker workaround.
+                    let symbols = p.runtime_imports.clone();
+                    p.generate_import_stmt(
+                        RuntimeImports::NAME,
+                        &runtime_imports[0..i],
+                        &mut before,
+                        &symbols,
+                        None,
+                        b"import_",
+                        true,
                     )
                     .expect("unreachable");
-                let import_stmt = p.s(
-                    S::Import {
-                        namespace_ref,
-                        items: clauses,
-                        import_record_index: import_record_id,
-                        default_name: None,
-                        star_name_loc: None,
-                        is_single_line: false,
-                        phase_defer: false,
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-
-                let part_stmts = p.arena.alloc_slice_fill_with(1, |_| import_stmt);
-                before.push(js_ast::Part {
-                    stmts: part_stmts.into(),
-                    declared_symbols,
-                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
-                        import_record_id,
-                    ),
-                    tag: bun_ast::PartTag::BunTest,
-                    ..Default::default()
-                });
-            }
-
-            // If we injected jest globals, we need to disable the runtime transpiler cache
-            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                cache.input_hash = None;
-            }
-        }
-
-        if p.has_called_runtime {
-            let mut runtime_imports: [u8; RuntimeImports::ALL.len()] =
-                [0; RuntimeImports::ALL.len()];
-            let mut iter = p.runtime_imports.iter();
-            let mut i: usize = 0;
-            while let Some(entry) = iter.next() {
-                runtime_imports[i] = u8::try_from(entry.key).expect("int cast");
-                i += 1;
-            }
-
-            runtime_imports[0..i].sort_unstable_by(|a, b| {
-                RuntimeImports::ALL_SORTED_INDEX[*a as usize]
-                    .cmp(&RuntimeImports::ALL_SORTED_INDEX[*b as usize])
-            });
-
-            if i > 0 {
-                // snapshot to break the `&mut self` ↔ `&self.runtime_imports`
-                // borrow overlap in `generate_import_stmt(symbols: &Sym)`; the callee
-                // never touches `self.runtime_imports`, so the clone is purely a
-                // borrow-checker workaround.
-                let symbols = p.runtime_imports.clone();
-                p.generate_import_stmt(
-                    RuntimeImports::NAME,
-                    &runtime_imports[0..i],
-                    &mut before,
-                    &symbols,
-                    None,
-                    b"import_",
-                    true,
-                )
-                .expect("unreachable");
-            }
-        }
-
-        // handle new way to do automatic JSX imports which fixes symbol collision issues
-        if p.options.jsx.parse
-            && p.options.features.auto_import_jsx
-            && p.options.jsx.runtime == options::JSX::Runtime::Automatic
-        {
-            // `generate_import_stmt` takes `&mut self` plus `import_path: &'a [u8]`
-            // and `symbols: &Sym`, so the Pragma-owned `Box<[u8]>` paths are copied into the
-            // bump arena (giving them the required `'a` lifetime) and `jsx_imports` is moved
-            // out via `take` (it is `Default`) to avoid an overlapping `&self.jsx_imports`
-            // borrow. The callee never reads `self.jsx_imports`, so the take/restore is
-            // semantically a no-op.
-            let import_source: &'a [u8] = p.arena.alloc_slice_copy(p.options.jsx.import_source());
-            let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
-            let jsx_imports = core::mem::take(&mut p.jsx_imports);
-
-            let mut buf: [&'static [u8]; 3] = [b"", b"", b""];
-            let runtime_import_names = jsx_imports.runtime_import_names(&mut buf);
-
-            if !runtime_import_names.is_empty() {
-                p.generate_import_stmt(
-                    import_source,
-                    runtime_import_names,
-                    &mut before,
-                    &jsx_imports,
-                    None,
-                    b"",
-                    false,
-                )
-                .expect("unreachable");
-            }
-
-            let source_import_names = jsx_imports.source_import_names();
-            if !source_import_names.is_empty() {
-                p.generate_import_stmt(
-                    package_name,
-                    source_import_names,
-                    &mut before,
-                    &jsx_imports,
-                    None,
-                    b"",
-                    false,
-                )
-                .expect("unreachable");
-            }
-
-            p.jsx_imports = jsx_imports;
-        }
-
-        if p.server_components_wrap_ref.is_valid() {
-            let fw = p.options.framework.unwrap_or_else(|| {
-                panic!("server components requires a framework configured, but none was set")
-            });
-            let sc = fw.server_components.as_ref().unwrap();
-            p.generate_react_refresh_import(
-                &mut before,
-                &sc.server_runtime_import[..],
-                &[crate::p::ReactRefreshImportClause {
-                    name: &sc.server_register_client_reference[..],
-                    r#ref: p.server_components_wrap_ref,
-                    enabled: true,
-                }],
-            )?;
-        }
-
-        if p.react_refresh.register_used || p.react_refresh.signature_used {
-            p.generate_react_refresh_import(
-                &mut before,
-                match p.options.framework {
-                    Some(fw) => &fw.react_fast_refresh.as_ref().unwrap().import_source[..],
-                    None => b"react-refresh/runtime",
-                },
-                &[
-                    crate::p::ReactRefreshImportClause {
-                        name: b"register",
-                        enabled: p.react_refresh.register_used,
-                        r#ref: p.react_refresh.register_ref,
-                    },
-                    crate::p::ReactRefreshImportClause {
-                        name: b"createSignatureFunctionForTransform",
-                        enabled: p.react_refresh.signature_used,
-                        r#ref: p.react_refresh.create_signature_ref,
-                    },
-                ],
-            )?;
-        }
-
-        // Bake: transform global `Response` to use `import { Response } from 'bun:app'`
-        #[allow(deprecated)]
-        if !p.response_ref.is_null() && {
-            // We only want to do this if the symbol is used and didn't get
-            // bound to some other value
-            let symbol: &Symbol = &p.symbols.as_slice()[p.response_ref.inner_index() as usize];
-            !symbol.has_link() && symbol.use_count_estimate > 0
-        } {
-            p.generate_import_stmt_for_bake_response(&mut before)?;
-        }
-
-        if !before.is_empty() || !after.is_empty() {
-            // Single up-front reserve; the inner
-            // reserve() calls in prepend_from / append become no-ops.
-            parts.reserve(before.len() + after.len());
-            parts.prepend_from(&mut before);
-            parts.append(&mut after);
-        }
-
-        // Pop the module scope to apply the "ContainsDirectEval" rules
-        // p.popScope();
-
-        #[cfg(not(target_arch = "wasm32"))]
-        if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
-            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                if p.macro_call_count != 0 {
-                    // disable this for:
-                    // - macros
-                    cache.input_hash = None;
-                } else {
-                    cache.exports_kind = exports_kind;
                 }
             }
-        }
 
-        Ok(crate::Result::Ast(p.to_ast(
-            &mut parts,
-            exports_kind,
-            wrap_mode,
-            hashbang,
-        )?))
+            // handle new way to do automatic JSX imports which fixes symbol collision issues
+            if p.options.jsx.parse
+                && p.options.features.auto_import_jsx
+                && p.options.jsx.runtime == options::JSX::Runtime::Automatic
+            {
+                // `generate_import_stmt` takes `&mut self` plus `import_path: &'a [u8]`
+                // and `symbols: &Sym`, so the Pragma-owned `Box<[u8]>` paths are copied into the
+                // bump arena (giving them the required `'a` lifetime) and `jsx_imports` is moved
+                // out via `take` (it is `Default`) to avoid an overlapping `&self.jsx_imports`
+                // borrow. The callee never reads `self.jsx_imports`, so the take/restore is
+                // semantically a no-op.
+                let import_source: &'a [u8] =
+                    p.arena.alloc_slice_copy(p.options.jsx.import_source());
+                let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
+                let jsx_imports = core::mem::take(&mut p.jsx_imports);
+
+                let mut buf: [&'static [u8]; 3] = [b"", b"", b""];
+                let runtime_import_names = jsx_imports.runtime_import_names(&mut buf);
+
+                if !runtime_import_names.is_empty() {
+                    p.generate_import_stmt(
+                        import_source,
+                        runtime_import_names,
+                        &mut before,
+                        &jsx_imports,
+                        None,
+                        b"",
+                        false,
+                    )
+                    .expect("unreachable");
+                }
+
+                let source_import_names = jsx_imports.source_import_names();
+                if !source_import_names.is_empty() {
+                    p.generate_import_stmt(
+                        package_name,
+                        source_import_names,
+                        &mut before,
+                        &jsx_imports,
+                        None,
+                        b"",
+                        false,
+                    )
+                    .expect("unreachable");
+                }
+
+                p.jsx_imports = jsx_imports;
+            }
+
+            if p.server_components_wrap_ref.is_valid() {
+                let fw = p.options.framework.unwrap_or_else(|| {
+                    panic!("server components requires a framework configured, but none was set")
+                });
+                let sc = fw.server_components.as_ref().unwrap();
+                p.generate_react_refresh_import(
+                    &mut before,
+                    &sc.server_runtime_import[..],
+                    &[crate::p::ReactRefreshImportClause {
+                        name: &sc.server_register_client_reference[..],
+                        r#ref: p.server_components_wrap_ref,
+                        enabled: true,
+                    }],
+                )?;
+            }
+
+            if p.react_refresh.register_used || p.react_refresh.signature_used {
+                p.generate_react_refresh_import(
+                    &mut before,
+                    match p.options.framework {
+                        Some(fw) => &fw.react_fast_refresh.as_ref().unwrap().import_source[..],
+                        None => b"react-refresh/runtime",
+                    },
+                    &[
+                        crate::p::ReactRefreshImportClause {
+                            name: b"register",
+                            enabled: p.react_refresh.register_used,
+                            r#ref: p.react_refresh.register_ref,
+                        },
+                        crate::p::ReactRefreshImportClause {
+                            name: b"createSignatureFunctionForTransform",
+                            enabled: p.react_refresh.signature_used,
+                            r#ref: p.react_refresh.create_signature_ref,
+                        },
+                    ],
+                )?;
+            }
+
+            // Bake: transform global `Response` to use `import { Response } from 'bun:app'`
+            #[allow(deprecated)]
+            if !p.response_ref.is_null() && {
+                // We only want to do this if the symbol is used and didn't get
+                // bound to some other value
+                let symbol: &Symbol = &p.symbols.as_slice()[p.response_ref.inner_index() as usize];
+                !symbol.has_link() && symbol.use_count_estimate > 0
+            } {
+                p.generate_import_stmt_for_bake_response(&mut before)?;
+            }
+
+            if !before.is_empty() || !after.is_empty() {
+                // Single up-front reserve; the inner
+                // reserve() calls in prepend_from / append become no-ops.
+                parts.reserve(before.len() + after.len());
+                parts.prepend_from(&mut before);
+                parts.append(&mut after);
+            }
+
+            // Pop the module scope to apply the "ContainsDirectEval" rules
+            // p.popScope();
+
+            #[cfg(not(target_arch = "wasm32"))]
+            if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
+                if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
+                    if p.macro_call_count != 0 {
+                        // disable this for:
+                        // - macros
+                        cache.input_hash = None;
+                    } else {
+                        cache.exports_kind = exports_kind;
+                    }
+                }
+            }
+
+            Ok(crate::Result::Ast(p.to_ast(
+                &mut parts,
+                exports_kind,
+                wrap_mode,
+                hashbang,
+            )?))
+        };
+
+        run(&mut *p).map_err(|err| ParseFailure {
+            range: p.lexer.range(),
+            err,
+        })
     }
 
     // associated fn (was `&self` reading `self.lexer.source.contents`)

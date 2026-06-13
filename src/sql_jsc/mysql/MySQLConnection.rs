@@ -353,16 +353,19 @@ impl MySQLConnection {
         // the slot as `Option<NonNull<_>>`.
         let ext_size = core::mem::size_of::<Option<core::ptr::NonNull<JSMySQLConnection>>>() as i32;
 
-        // SAFETY: `raw` is a live connected `us_socket_t*`; adopt_tls may
-        // realloc and return a different ptr.
-        let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
-            tls_group,
-            bun_uws::SocketKind::MysqlTls,
-            ssl_ctx,
-            sni,
-            ext_size,
-            ext_size,
-        ) else {
+        // SAFETY: `raw` is a live connected socket, consumed here (adopt_tls
+        // may realloc; only `new_socket` is used after).
+        let Some(new_socket) = (unsafe {
+            uws::us_socket_t::adopt_tls(
+                raw,
+                tls_group,
+                bun_uws::SocketKind::MysqlTls,
+                ssl_ctx,
+                sni,
+                ext_size,
+                ext_size,
+            )
+        }) else {
             return Err(FlushQueueError::AuthenticationFailed);
         };
 

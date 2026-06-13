@@ -2835,8 +2835,8 @@ pub mod bv2_impl {
                 std::ptr::from_mut(this.arena().alloc(ThreadPool::default()));
             // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
 
-            // SAFETY: arena slot is live for the bundle pass; the default value
-            // written above has no Drop, so overwriting via `*pool = ...` is fine.
+            // SAFETY: arena slot is live for the bundle pass; the default
+            // value written above drops nothing.
             unsafe {
                 *pool = ThreadPool::init(&*this, thread_pool)?;
             }
@@ -3566,7 +3566,7 @@ pub mod bv2_impl {
             // `arena()` ends before we take `&mut self` below.
             let task: *mut ParseTask = self.arena().alloc(ParseTask {
                 path: task_path,
-                contents_or_fd: parse_task::ContentsOrFd::Contents(contents),
+                contents_or_fd: parse_task::ContentsOrFd::bundle_owned(contents),
                 side_effects: bun_ast::SideEffects::HasSideEffects,
                 jsx,
                 source_index: bun_ast::Index::init(source_index.get()),
@@ -4364,7 +4364,7 @@ pub mod bv2_impl {
                         .insert(crate::Graph::InputFileFlags::IS_PLUGIN_FILE);
                     let parse_task = load.parse_task_mut();
                     parse_task.loader = Some(code.loader);
-                    parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
+                    parse_task.contents_or_fd = parse_task::ContentsOrFd::bundle_owned(source_code);
                     this.graph.pool().schedule(parse_task);
 
                     if this.bun_watcher.is_some() {
@@ -4397,7 +4397,7 @@ pub mod bv2_impl {
                                 fd,
                                 &load.path,
                                 bun_wyhash::hash(load.path.as_ref()) as u32,
-                                bun_watcher::Loader(code.loader as u8),
+                                code.loader,
                                 bun_sys::Fd::INVALID,
                                 None,
                             );
@@ -5554,7 +5554,7 @@ pub mod bv2_impl {
                 // (after all ParseTasks have completed); the `Box<[u8]>` is heap-stable.
                 let decoded: &'static [u8] =
                     unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(self.free_list.last().unwrap()) };
-                parse.contents_or_fd = parse_task::ContentsOrFd::Contents(decoded);
+                parse.contents_or_fd = parse_task::ContentsOrFd::bundle_owned(decoded);
                 parse.loader = Some(match data_url.decode_mime_type().category {
                     bun_http_types::MimeType::Category::Javascript => Loader::Js,
                     bun_http_types::MimeType::Category::Css => Loader::Css,
@@ -6832,7 +6832,7 @@ pub mod bv2_impl {
                                 parse_result.watcher_data.fd,
                                 source_path,
                                 bun_wyhash::hash(source_path) as u32,
-                                bun_watcher::Loader(loader as u8),
+                                loader,
                                 parse_result.watcher_data.dir_fd,
                                 None,
                             );

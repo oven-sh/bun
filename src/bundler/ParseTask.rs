@@ -64,14 +64,49 @@ mod EventLoop {
 // ContentsOrFd
 // ───────────────────────────────────────────────────────────────────────────
 
+/// Backing provenance for [`ContentsOrFd::Contents`]. Neither variant owns
+/// the bytes; native-plugin (`onBeforeParse`) buffers never flow through here.
+#[derive(Copy, Clone)]
+pub enum ContentsBacking {
+    /// Truly `'static` bytes (embedded sources, empty placeholder).
+    Static(&'static [u8]),
+    /// Bytes kept alive by the owning `BundleV2` for the bundle pass
+    /// (`graph.input_files` / `free_list`); the `'static` is forged at the
+    /// construction site.
+    BundleOwned(&'static [u8]),
+}
+
+impl ContentsBacking {
+    #[inline]
+    pub fn as_slice(&self) -> &'static [u8] {
+        match *self {
+            ContentsBacking::Static(s) | ContentsBacking::BundleOwned(s) => s,
+        }
+    }
+}
+
 #[derive(bun_core::EnumTag)]
 #[enum_tag(existing = ContentsOrFdTag)]
 pub enum ContentsOrFd {
     Fd { dir: Fd, file: Fd },
-    // The `'static` is ownership-erased: contents may be arena-owned,
-    // plugin-owned, or truly static (runtime source). The producer keeps the
-    // backing allocation alive for the duration of the bundle pass.
-    Contents(&'static [u8]),
+    Contents(ContentsBacking),
+}
+
+impl ContentsOrFd {
+    pub const EMPTY: ContentsOrFd = ContentsOrFd::Contents(ContentsBacking::Static(b""));
+
+    /// Genuinely `'static` contents (embedded sources).
+    #[inline]
+    pub fn static_contents(bytes: &'static [u8]) -> ContentsOrFd {
+        ContentsOrFd::Contents(ContentsBacking::Static(bytes))
+    }
+
+    /// Contents the caller keeps alive for the bundle pass; see
+    /// [`ContentsBacking::BundleOwned`].
+    #[inline]
+    pub fn bundle_owned(bytes: &'static [u8]) -> ContentsOrFd {
+        ContentsOrFd::Contents(ContentsBacking::BundleOwned(bytes))
+    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
@@ -298,7 +333,7 @@ impl Default for ParseTask {
             ctx: None,
             path: Fs::Path::init(b""),
             secondary_path_for_commonjs_interop: None,
-            contents_or_fd: ContentsOrFd::Contents(b""),
+            contents_or_fd: ContentsOrFd::EMPTY,
             external_free_function: ExternalFreeFunction::NONE,
             side_effects: bun_ast::SideEffects::HasSideEffects,
             loader: None,
@@ -540,7 +575,7 @@ pub mod parse_worker {
                 parse: false,
                 ..Default::default()
             },
-            contents_or_fd: ContentsOrFd::Contents(runtime_code.as_bytes()),
+            contents_or_fd: ContentsOrFd::static_contents(runtime_code.as_bytes()),
             source_index: Index::RUNTIME,
             loader: Some(Loader::Js),
             known_target: target,
@@ -1508,14 +1543,19 @@ pub mod parse_worker {
                     }
                 };
             }
-            ContentsOrFd::Contents(contents) => Ok(CacheEntry {
-                contents: crate::cache::Contents::SharedBuffer {
-                    ptr: contents.as_ptr(),
-                    len: contents.len(),
-                },
-                fd: Fd::INVALID,
-                ..Default::default()
-            }),
+            ContentsOrFd::Contents(backing) => {
+                // Caller-kept-alive borrows → `SharedBuffer` provenance;
+                // `Entry::deinit` never frees it.
+                let contents = backing.as_slice();
+                Ok(CacheEntry {
+                    contents: crate::cache::Contents::SharedBuffer {
+                        ptr: contents.as_ptr(),
+                        len: contents.len(),
+                    },
+                    fd: Fd::INVALID,
+                    ..Default::default()
+                })
+            }
         }
     }
 

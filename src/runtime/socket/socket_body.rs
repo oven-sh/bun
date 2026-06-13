@@ -2891,11 +2891,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             .as_mut()
             .rare_data()
             .bun_connect_group::<true>(vm);
-        // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
-        // `InternalSocket::Connected` above; `owned_ssl_ctx` is the +1 ref
-        // taken from SecureContext/ssl_ctx_cache and never null here.
+        // SAFETY: `raw_socket` is live and consumed here (only `new_raw` is
+        // used after); `owned_ssl_ctx` is a +1 ref, never null here.
         let new_raw: NonNull<uws::us_socket_t> = match unsafe {
-            (*raw_socket).adopt_tls(
+            uws::us_socket_t::adopt_tls(
+                raw_socket,
                 group,
                 uws::SocketKind::BunSocketTls,
                 &mut *((*tls_ptr).owned_ssl_ctx.get().unwrap()),

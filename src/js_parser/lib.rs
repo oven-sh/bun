@@ -32,7 +32,7 @@ pub mod typescript;
 pub mod visit;
 
 pub use p::P;
-pub use parse::parse_entry::{Options as ParserOptions, Parser};
+pub use parse::parse_entry::{Options as ParserOptions, ParseFailure, Parser};
 
 // Full impl lives in *_jsc; this stub re-exposes the JSC-free constants and a
 // placeholder `MacroContext` so lower-tier crates (bundler, transpiler) that

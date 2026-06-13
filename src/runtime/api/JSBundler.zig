@@ -1431,6 +1431,7 @@ pub const JSBundler = struct {
         pub fn deinit(this: *Load) void {
             debug("Deinit Load(0{x}, {s})", .{ @intFromPtr(this), this.path });
             this.value.deinit();
+            bun.default_allocator.destroy(this);
         }
 
         const AnyTask = jsc.AnyTask.New(@This(), runOnJSThread);

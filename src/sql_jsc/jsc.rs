@@ -622,7 +622,7 @@ pub use bun_jsc::JsClass;
 
 pub mod codegen {
     ::bun_jsc::js_class_module!(JSPostgresSQLConnection = "PostgresSQLConnection"
-        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose });
+        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose, onnotification });
     ::bun_jsc::js_class_module!(
         JSPostgresSQLQuery = "PostgresSQLQuery" as crate::postgres::PostgresSQLQuery,
         impl_js_class {

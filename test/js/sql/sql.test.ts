@@ -12501,6 +12501,483 @@ CREATE TABLE ${table_name} (
         expect(e.message).toContain("65535");
       }
     });
+    describe("LISTEN/NOTIFY", () => {
+      test("sql.listen and sql.notify round-trip a payload", async () => {
+        await using db = postgres(options);
+        const { promise, resolve } = Promise.withResolvers<string>();
+
+        await db.listen("test_listen_basic", payload => resolve(payload));
+        await db.notify("test_listen_basic", "hello-bun");
+
+        const received = await promise;
+        expect(received).toBe("hello-bun");
+        await db.unlisten("test_listen_basic");
+      });
+
+      test("sql.listen receives multiple notifications in order", async () => {
+        await using db = postgres(options);
+        const received: string[] = [];
+        let resolver: (() => void) | null = null;
+
+        await db.listen("test_listen_multi", payload => {
+          received.push(payload);
+          if (received.length >= 3) resolver?.();
+        });
+
+        const { promise, resolve } = Promise.withResolvers<void>();
+        resolver = resolve;
+
+        await db.notify("test_listen_multi", "one");
+        await db.notify("test_listen_multi", "two");
+        await db.notify("test_listen_multi", "three");
+
+        await promise;
+        expect(received).toEqual(["one", "two", "three"]);
+        await db.unlisten("test_listen_multi");
+      });
+
+      test("sql.listen invokes onlisten callback on registration", async () => {
+        await using db = postgres(options);
+        const { promise, resolve } = Promise.withResolvers<void>();
+
+        await db.listen("test_listen_onlisten", () => {}, resolve);
+        await promise;
+        await db.unlisten("test_listen_onlisten");
+      });
+
+      test("sql.listen returns state with pid/secret and unlisten", async () => {
+        await using db = postgres(options);
+        const result = await db.listen("test_listen_state", () => {});
+        expect(result).toBeObject();
+        expect(result.state).toBeDefined();
+        // state.pid should be a positive integer (PG backend PID, populated from BackendKeyData)
+        expect(typeof result.state.pid).toBe("number");
+        expect(result.state.pid).toBeGreaterThan(0);
+        // state.secret is the cancellation secret key
+        expect(typeof result.state.secret).toBe("number");
+        expect(typeof result.unlisten).toBe("function");
+        await result.unlisten();
+      });
+
+      test("sql.listen state is shared across listeners and updates on reconnect", async () => {
+        await using db = postgres(options);
+
+        // First subscription on the listen connection
+        const r1 = await db.listen("test_listen_state_shared", () => {});
+        const initialPid = r1.state.pid;
+        expect(initialPid).toBeGreaterThan(0);
+
+        // Second subscription should hand back the SAME state object reference,
+        // so users holding either reference always see the live backend pid/secret.
+        const r2 = await db.listen("test_listen_state_shared_2", () => {});
+        expect(r2.state).toBe(r1.state);
+        expect(r2.state.pid).toBe(initialPid);
+
+        // Drive a reconnect by terminating the listen backend from a pool query.
+        // onlisten fires once on registration AND again on reconnect — count fires
+        // and resolve only on the second (post-reconnect) firing.
+        const { promise: reconnected, resolve: resolveReconnect } = Promise.withResolvers<void>();
+        let onlistenFires = 0;
+        await db.listen(
+          "test_listen_state_shared_observer",
+          () => {},
+          () => {
+            if (++onlistenFires === 2) resolveReconnect();
+          },
+        );
+
+        // pg_terminate_backend may itself report an error on the kicking
+        // connection — narrow the catch to that one query so unrelated bugs
+        // (e.g. db being undefined) still surface as a real test failure.
+        await db.unsafe("SELECT pg_terminate_backend($1)", [initialPid]).catch(() => {});
+
+        await reconnected;
+
+        // Same object reference, but pid is now the *new* backend's PID.
+        expect(r1.state).toBe(r2.state);
+        expect(r1.state.pid).toBeGreaterThan(0);
+        expect(r1.state.pid).not.toBe(initialPid);
+
+        await db.unlisten("test_listen_state_shared");
+        await db.unlisten("test_listen_state_shared_2");
+        await db.unlisten("test_listen_state_shared_observer");
+      });
+
+      test("sql.listen reconnects and resumes notification delivery", async () => {
+        await using db = postgres(options);
+        const received: string[] = [];
+        const { promise: gotBefore, resolve: resolveBefore } = Promise.withResolvers<void>();
+        const { promise: gotAfter, resolve: resolveAfter } = Promise.withResolvers<void>();
+        const { promise: secondListen, resolve: resolveSecondListen } = Promise.withResolvers<void>();
+
+        let onlistenCount = 0;
+        const sub = await db.listen(
+          "test_listen_reconnect",
+          payload => {
+            received.push(payload);
+            if (payload === "before") resolveBefore();
+            if (payload === "after") resolveAfter();
+          },
+          () => {
+            onlistenCount++;
+            if (onlistenCount === 2) resolveSecondListen();
+          },
+        );
+        expect(onlistenCount).toBe(1);
+        const initialPid = sub.state.pid;
+
+        await db.notify("test_listen_reconnect", "before");
+        await gotBefore;
+
+        // Force the listen connection to drop server-side
+        await db.unsafe("SELECT pg_terminate_backend($1)", [initialPid]).catch(() => {});
+
+        // Wait for reconnect to issue LISTEN again (onlisten fires twice: original + reconnect)
+        await secondListen;
+        expect(sub.state.pid).not.toBe(initialPid);
+
+        // Notifications on the same channel should now be delivered via the new backend
+        await db.notify("test_listen_reconnect", "after");
+        await gotAfter;
+
+        expect(received).toEqual(["before", "after"]);
+        await sub.unlisten();
+      });
+
+      test("sql.listen reconnect re-fires onlisten for every channel", async () => {
+        await using db = postgres(options);
+        const fires: string[] = [];
+        const { promise: allReconnected, resolve } = Promise.withResolvers<void>();
+
+        let total = 0;
+        const onlisten = (channel: string) => () => {
+          fires.push(channel);
+          // 2 channels × 2 fires each (initial + after reconnect) = 4
+          if (++total === 4) resolve();
+        };
+
+        const r1 = await db.listen("test_reconnect_a", () => {}, onlisten("a"));
+        await db.listen("test_reconnect_b", () => {}, onlisten("b"));
+        const initialPid = r1.state.pid;
+
+        await db.unsafe("SELECT pg_terminate_backend($1)", [initialPid]).catch(() => {});
+
+        await allReconnected;
+
+        // Each channel's onlisten fired exactly twice (initial + post-reconnect)
+        expect(fires.filter(c => c === "a").length).toBe(2);
+        expect(fires.filter(c => c === "b").length).toBe(2);
+
+        await db.unlisten("test_reconnect_a");
+        await db.unlisten("test_reconnect_b");
+      });
+
+      test("sql.unlisten stops receiving notifications", async () => {
+        await using db = postgres(options);
+        const received: string[] = [];
+        const { promise: gotBefore, resolve: resolveBefore } = Promise.withResolvers<void>();
+        const { promise: gotBarrier, resolve: resolveBarrier } = Promise.withResolvers<void>();
+
+        await db.listen("test_listen_unlisten", payload => {
+          received.push(payload);
+          if (payload === "before") resolveBefore();
+        });
+        // Barrier channel shares the same listen connection; messages on a single
+        // connection are delivered in order, so when the barrier arrives we know
+        // any pending "after" message would already have been delivered.
+        await db.listen("test_listen_unlisten_barrier", () => resolveBarrier());
+
+        await db.notify("test_listen_unlisten", "before");
+        await gotBefore;
+
+        await db.unlisten("test_listen_unlisten");
+
+        await db.notify("test_listen_unlisten", "after");
+        await db.notify("test_listen_unlisten_barrier", "go");
+        await gotBarrier;
+
+        expect(received).toEqual(["before"]);
+
+        await db.unlisten("test_listen_unlisten_barrier");
+      });
+
+      test("multiple listeners on the same channel all receive notifications", async () => {
+        await using db = postgres(options);
+        const { promise: p1, resolve: r1 } = Promise.withResolvers<string>();
+        const { promise: p2, resolve: r2 } = Promise.withResolvers<string>();
+
+        const fn1 = (payload: string) => r1(payload);
+        const fn2 = (payload: string) => r2(payload);
+
+        await db.listen("test_listen_multi_listeners", fn1);
+        await db.listen("test_listen_multi_listeners", fn2);
+        await db.notify("test_listen_multi_listeners", "broadcast");
+
+        const [got1, got2] = await Promise.all([p1, p2]);
+        expect(got1).toBe("broadcast");
+        expect(got2).toBe("broadcast");
+
+        await db.unlisten("test_listen_multi_listeners");
+      });
+
+      test("sql.notify with pg_notify empty payload works", async () => {
+        await using db = postgres(options);
+        const { promise, resolve } = Promise.withResolvers<string>();
+
+        await db.listen("test_listen_empty", payload => resolve(payload));
+        await db.notify("test_listen_empty", "");
+
+        const received = await promise;
+        expect(received).toBe("");
+        await db.unlisten("test_listen_empty");
+      });
+
+      test("sql.listen rejects invalid channel names", async () => {
+        await using db = postgres(options);
+        // empty string
+        await expect(db.listen("", () => {})).rejects.toThrow();
+        // null bytes are forbidden by PostgreSQL identifiers
+        await expect(db.listen("with\0null", () => {})).rejects.toThrow();
+        // non-callable onnotify
+        await expect(db.listen("ch", 42 as any)).rejects.toThrow();
+        // non-callable onlisten
+        await expect(db.listen("ch", () => {}, 42 as any)).rejects.toThrow();
+      });
+
+      test("sql.notify validates arguments", async () => {
+        await using db = postgres(options);
+        expect(() => db.notify("", "payload")).toThrow();
+        expect(() => db.notify("with\0null", "payload")).toThrow();
+        expect(() => db.notify("ch", null as any)).toThrow();
+        expect(() => db.notify("ch", 42 as any)).toThrow();
+      });
+
+      test("sql.unlisten validates arguments", async () => {
+        await using db = postgres(options);
+        await expect(db.unlisten("")).rejects.toThrow();
+        await expect(db.unlisten("with\0null")).rejects.toThrow();
+        await expect(db.unlisten("ch", 42 as any)).rejects.toThrow();
+      });
+
+      test("unlisten() returned from listen() is idempotent", async () => {
+        await using db = postgres(options);
+        const { unlisten } = await db.listen("test_double_unlisten", () => {});
+        await unlisten();
+        // Calling again must not throw and must not send a second UNLISTEN.
+        await unlisten();
+        await unlisten();
+      });
+
+      test("unlisten() returned from listen() removes only that listener", async () => {
+        await using db = postgres(options);
+        const received: string[] = [];
+
+        const fn1 = (payload: string) => received.push(`fn1:${payload}`);
+        const fn2 = (payload: string) => received.push(`fn2:${payload}`);
+
+        const sub1 = await db.listen("test_partial_unlisten", fn1);
+        await db.listen("test_partial_unlisten", fn2);
+
+        // Remove only fn1
+        await sub1.unlisten();
+
+        // Use a barrier channel for synchronization
+        const { promise: gotBarrier, resolve: resolveBarrier } = Promise.withResolvers<void>();
+        await db.listen("test_partial_unlisten_barrier", () => resolveBarrier());
+
+        await db.notify("test_partial_unlisten", "after_unlisten");
+        await db.notify("test_partial_unlisten_barrier", "go");
+        await gotBarrier;
+
+        // fn2 should still receive, fn1 should not
+        expect(received).toEqual(["fn2:after_unlisten"]);
+
+        await db.unlisten("test_partial_unlisten");
+        await db.unlisten("test_partial_unlisten_barrier");
+      });
+
+      test("close during in-flight listen does not leak the connection", async () => {
+        // Force a fresh adapter (no shared pool) and start listen + close in the same tick.
+        const db = postgres(options);
+        const listenPromise = db.listen("test_close_during_listen", () => {}).catch(() => {});
+        await db.close({ timeout: 0 });
+        await listenPromise; // should resolve/reject cleanly without leaking
+      });
+
+      test("tx.notify participates in the transaction: delivered on commit, dropped on rollback", async () => {
+        await using db = postgres(options);
+        const received: string[] = [];
+        const { promise: gotCommitted, resolve: resolveCommitted } = Promise.withResolvers<void>();
+        const { promise: gotBarrier, resolve: resolveBarrier } = Promise.withResolvers<void>();
+
+        await db.listen("test_tx_notify", payload => {
+          received.push(payload);
+          if (payload === "committed") resolveCommitted();
+        });
+        await db.listen("test_tx_notify_barrier", () => resolveBarrier());
+
+        // NOTIFY inside a rolled-back transaction must never be delivered.
+        await expect(
+          db.begin(async tx => {
+            await tx.notify("test_tx_notify", "rolled-back");
+            throw new Error("force rollback");
+          }),
+        ).rejects.toThrow("force rollback");
+
+        // NOTIFY inside a committed transaction is queued until COMMIT.
+        await db.begin(async tx => {
+          await tx.notify("test_tx_notify", "committed");
+        });
+        await gotCommitted;
+
+        // Barrier on the same ordered listen connection: once it arrives, a
+        // pending "rolled-back" delivery would already have been observed.
+        await db.notify("test_tx_notify_barrier", "go");
+        await gotBarrier;
+
+        expect(received).toEqual(["committed"]);
+        await db.unlisten("test_tx_notify");
+        await db.unlisten("test_tx_notify_barrier");
+      });
+
+      test("reserved.listen and reserved.notify work from a reserved connection", async () => {
+        await using db = postgres(options);
+        await using reserved = await db.reserve();
+
+        const { promise: gotPayload, resolve } = Promise.withResolvers<string>();
+        const sub = await reserved.listen("test_reserved_listen", p => resolve(p));
+        await reserved.notify("test_reserved_listen", "from-reserved");
+        expect(await gotPayload).toBe("from-reserved");
+        await sub.unlisten();
+      });
+
+      test("sql.listen onlisten fires after server-side LISTEN is registered", async () => {
+        await using db = postgres(options);
+        const { promise: onlistenFired, resolve } = Promise.withResolvers<void>();
+        await db.listen("test_onlisten_timing", () => {}, resolve);
+        await onlistenFired;
+
+        // At this point, pg_listening_channels() on the listen connection
+        // must include our channel. Since we can't query the dedicated
+        // listen connection directly, the next-best assertion is that an
+        // immediate notify is received.
+        const { promise: gotPayload, resolve: resolvePayload } = Promise.withResolvers<string>();
+        await db.listen("test_onlisten_timing", p => resolvePayload(p));
+        await db.notify("test_onlisten_timing", "after_onlisten");
+        expect(await gotPayload).toBe("after_onlisten");
+
+        await db.unlisten("test_onlisten_timing");
+      });
+
+      test("close with an invalid timeout rejects without tearing down subscriptions", async () => {
+        await using db = postgres(options);
+        const { promise: gotFirst, resolve: resolveFirst } = Promise.withResolvers<string>();
+        const { promise: gotSecond, resolve: resolveSecond } = Promise.withResolvers<string>();
+
+        await db.listen("test_close_invalid_timeout", payload => {
+          if (payload === "first") resolveFirst(payload);
+          if (payload === "second") resolveSecond(payload);
+        });
+        await db.notify("test_close_invalid_timeout", "first");
+        expect(await gotFirst).toBe("first");
+
+        // Validation must happen before any teardown: the failed close must not
+        // destroy the existing subscription or the dedicated listen connection.
+        await expect(db.close({ timeout: -1 })).rejects.toThrow();
+
+        await db.notify("test_close_invalid_timeout", "second");
+        expect(await gotSecond).toBe("second");
+
+        await db.unlisten("test_close_invalid_timeout");
+      });
+
+      test("unlisten(channel, fn) also removes that subscription's onlisten on reconnect", async () => {
+        await using db = postgres(options);
+        const { promise: reconnected, resolve: resolveReconnect } = Promise.withResolvers<void>();
+        let onlisten1Fires = 0;
+        let onlisten2Fires = 0;
+
+        const fn1 = () => {};
+        const fn2 = () => {};
+        const sub = await db.listen("test_unlisten_onlisten_pair", fn1, () => {
+          onlisten1Fires++;
+        });
+        await db.listen("test_unlisten_onlisten_pair", fn2, () => {
+          if (++onlisten2Fires === 2) resolveReconnect();
+        });
+        expect(onlisten1Fires).toBe(1);
+        expect(onlisten2Fires).toBe(1);
+
+        // Removing fn1 must also remove its paired onlisten.
+        await db.unlisten("test_unlisten_onlisten_pair", fn1);
+
+        // Force a reconnect; the channel is still live through fn2.
+        await db.unsafe("SELECT pg_terminate_backend($1)", [sub.state.pid]).catch(() => {});
+        await reconnected;
+
+        expect(onlisten2Fires).toBe(2);
+        // fn1's onlisten must not have re-fired after its subscription was removed.
+        expect(onlisten1Fires).toBe(1);
+
+        await db.unlisten("test_unlisten_onlisten_pair");
+      });
+
+      test("unlisten racing an in-flight listen resolves cleanly and skips onlisten", async () => {
+        await using db = postgres(options);
+        let onlistenFired = false;
+
+        // listen() registers synchronously, then awaits the connection; unlisten
+        // immediately after removes the channel before LISTEN is sent.
+        const listenPromise = db.listen(
+          "test_unlisten_inflight",
+          () => {},
+          () => {
+            onlistenFired = true;
+          },
+        );
+        await db.unlisten("test_unlisten_inflight");
+
+        const sub = await listenPromise;
+        expect(onlistenFired).toBe(false);
+
+        // The channel must still be usable by a fresh subscription afterwards.
+        const { promise: gotPayload, resolve: resolvePayload } = Promise.withResolvers<string>();
+        await db.listen("test_unlisten_inflight", p => resolvePayload(p));
+        await db.notify("test_unlisten_inflight", "fresh");
+        expect(await gotPayload).toBe("fresh");
+
+        await sub.unlisten();
+        await db.unlisten("test_unlisten_inflight");
+      });
+
+      test("listen() subscription disposes with await using", async () => {
+        await using db = postgres(options);
+        const received: string[] = [];
+        const { promise: gotInside, resolve: resolveInside } = Promise.withResolvers<string>();
+
+        {
+          await using sub = await db.listen("test_await_using", p => {
+            received.push(p);
+            resolveInside(p);
+          });
+          expect(typeof sub[Symbol.asyncDispose]).toBe("function");
+          await db.notify("test_await_using", "inside");
+          expect(await gotInside).toBe("inside");
+        }
+
+        // The subscription was removed on scope exit: further notifies are not
+        // delivered. The barrier channel shares the ordered listen connection,
+        // so once it fires any pending "after" would already have arrived.
+        const { promise: gotBarrier, resolve: resolveBarrier } = Promise.withResolvers<void>();
+        await db.listen("test_await_using_barrier", () => resolveBarrier());
+        await db.notify("test_await_using", "after");
+        await db.notify("test_await_using_barrier", "go");
+        await gotBarrier;
+
+        expect(received).toEqual(["inside"]);
+        await db.unlisten("test_await_using_barrier");
+      });
+    });
   }); // Close "PostgreSQL tests" describe
 } // Close if (isDockerEnabled())
 
@@ -12879,3 +13356,757 @@ console.log("FIXTURE_DONE");
   expect(filteredStderr).toBe("");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// ASAN debug builds print a benign interception warning at startup; everything
+// else on the spawned child's stderr is a real failure.
+function filterSpawnStderr(stderr: string): string {
+  return stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+}
+
+// Minimal PostgreSQL wire-protocol backend for LISTEN/NOTIFY tests without
+// docker. The startup message gets AuthenticationOk + BackendKeyData(pid,
+// secret) + ReadyForQuery; every simple query is acked with CommandComplete +
+// ReadyForQuery, and a `LISTEN "x"` query additionally pushes the
+// NotificationResponse ('A') messages configured under `notificationsOnListen.x`,
+// unless `x` is in `options.errorOnListen`, in which case the LISTEN is
+// rejected with an ErrorResponse. Received query texts are recorded in `queries`.
+async function createMockListenServer(
+  notificationsOnListen: Record<string, Array<{ channel: string; payload: string }>>,
+  options: { errorOnListen?: string[] } = {},
+) {
+  const pkt = (type: string, body: Buffer) => {
+    const header = Buffer.alloc(5);
+    header.write(type, 0);
+    header.writeInt32BE(body.length + 4, 1);
+    return Buffer.concat([header, body]);
+  };
+  const int32 = (n: number) => {
+    const b = Buffer.alloc(4);
+    b.writeInt32BE(n, 0);
+    return b;
+  };
+  const cstr = (s: string) => Buffer.concat([Buffer.from(s), Buffer.from([0])]);
+  const field = (type: string, value: string) => Buffer.concat([Buffer.from(type), cstr(value)]);
+
+  const pid = 7777;
+  const secret = 424242;
+  const authenticationOk = pkt("R", int32(0));
+  const backendKeyData = pkt("K", Buffer.concat([int32(pid), int32(secret)]));
+  const readyForQuery = pkt("Z", Buffer.from("I"));
+  const commandComplete = (tag: string) => pkt("C", cstr(tag));
+  const notification = (channel: string, payload: string) =>
+    pkt("A", Buffer.concat([int32(pid), cstr(channel), cstr(payload)]));
+  // ErrorResponse body is a sequence of <field type byte><cstring value>
+  // pairs closed by a single zero byte; S/V/C/M are the fields libpq requires.
+  const errorResponse = (message: string) =>
+    pkt(
+      "E",
+      Buffer.concat([
+        field("S", "ERROR"),
+        field("V", "ERROR"),
+        field("C", "42601"),
+        field("M", message),
+        Buffer.from([0]),
+      ]),
+    );
+
+  const queries: string[] = [];
+  const queryWaiters: Array<{ matches: (queries: string[]) => boolean; resolve: () => void }> = [];
+  // Channels whose LISTEN/UNLISTEN ack is withheld until releaseHeldAcks()
+  // (lets tests freeze the adapter mid-round-trip to exercise interleavings).
+  let holdAckChannels: string[] = [];
+  const heldAcks: Array<() => void> = [];
+  const recordQuery = (query: string) => {
+    queries.push(query);
+    for (let i = queryWaiters.length - 1; i >= 0; i--) {
+      if (queryWaiters[i].matches(queries)) queryWaiters.splice(i, 1)[0].resolve();
+    }
+  };
+  let closedConnections = 0;
+  const closeWaiters: Array<() => void> = [];
+  const liveSockets = new Set<net.Socket>();
+  const server = net.createServer(socket => {
+    let startup = true;
+    liveSockets.add(socket);
+    socket.on("data", data => {
+      if (startup) {
+        startup = false;
+        socket.write(Buffer.concat([authenticationOk, backendKeyData, readyForQuery]));
+        return;
+      }
+      if (data[0] === 0x50 /* 'P' (Parse, extended protocol) */) {
+        // Parse carries <cstr statement name><cstr query text>; record the
+        // query so tests can observe extended-protocol traffic arriving. The
+        // mock never acks it.
+        const nameEnd = data.indexOf(0, 5);
+        const queryEnd = data.indexOf(0, nameEnd + 1);
+        recordQuery(data.toString("utf8", nameEnd + 1, queryEnd));
+        return;
+      }
+      if (data[0] !== 0x51 /* 'Q' */) return;
+      // The Q message may be followed by Flush/Sync in the same segment; the
+      // int32 after the type byte covers itself plus the body, so the query
+      // text (sans trailing NUL) ends at offset `length`.
+      const length = data.readInt32BE(1);
+      const query = data.toString("utf8", 5, length);
+      recordQuery(query);
+      if (query.startsWith("LISTEN")) {
+        const listened = query.slice('LISTEN "'.length, -1);
+        if (options.errorOnListen?.includes(listened)) {
+          socket.write(Buffer.concat([errorResponse(`listen failure for ${listened}`), readyForQuery]));
+          return;
+        }
+        const toSend = notificationsOnListen[listened] ?? [];
+        const ack = Buffer.concat([
+          commandComplete("LISTEN"),
+          readyForQuery,
+          ...toSend.map(n => notification(n.channel, n.payload)),
+        ]);
+        if (holdAckChannels.includes(listened)) {
+          heldAcks.push(() => socket.write(ack));
+          return;
+        }
+        socket.write(ack);
+      } else {
+        // Echo the command word as the tag (UNLISTEN, BEGIN, COMMIT, ...).
+        const tag = query.split(" ", 1)[0].toUpperCase();
+        const ack = Buffer.concat([commandComplete(tag), readyForQuery]);
+        if (query.startsWith('UNLISTEN "') && holdAckChannels.includes(query.slice('UNLISTEN "'.length, -1))) {
+          heldAcks.push(() => socket.write(ack));
+          return;
+        }
+        socket.write(ack);
+      }
+    });
+    socket.on("close", () => {
+      liveSockets.delete(socket);
+      closedConnections++;
+      for (const resolve of closeWaiters.splice(0)) resolve();
+    });
+    socket.on("error", () => {});
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as net.AddressInfo).port;
+
+  return {
+    port,
+    pid,
+    secret,
+    queries,
+    get closedConnections() {
+      return closedConnections;
+    },
+    waitForClose: () =>
+      closedConnections > 0 ? Promise.resolve() : new Promise<void>(resolve => closeWaiters.push(resolve)),
+    // Resolves once the recorded query log satisfies the predicate (checked
+    // immediately and after every received query).
+    waitForQuery: (matches: (queries: string[]) => boolean) =>
+      matches(queries) ? Promise.resolve() : new Promise<void>(resolve => queryWaiters.push({ matches, resolve })),
+    // Push a NotificationResponse to every live connection, independent of any
+    // LISTEN ack (tests asynchronous NOTIFY delivery).
+    notify: (channel: string, payload: string) => {
+      for (const socket of liveSockets) socket.write(notification(channel, payload));
+    },
+    // Abruptly drop every live connection (simulates the backend dying) while
+    // keeping the server around for reconnect attempts.
+    destroyConnections: () => {
+      for (const socket of liveSockets) socket.destroy();
+    },
+    // Withhold LISTEN/UNLISTEN acks for the given channels from now on;
+    // released acks are written in arrival order.
+    holdAcksFor: (channels: string[]) => {
+      holdAckChannels = channels;
+    },
+    releaseHeldAcks: () => {
+      for (const release of heldAcks.splice(0)) release();
+    },
+    [Symbol.asyncDispose]: () => new Promise<void>(resolve => server.close(() => resolve())),
+  };
+}
+
+// LISTEN/NOTIFY delivery does not require a live PostgreSQL server: a mock
+// backend speaking the wire protocol exercises the whole path end to end
+// without docker. BackendKeyData ('K') populates state.pid/state.secret, the
+// LISTEN simple-query ack resolves listen() and fires onlisten, pushed
+// NotificationResponse ('A') messages reach the onnotify callback (and are
+// dropped for channels without listeners), and tearing down the subscription
+// sends UNLISTEN on the dedicated listen connection.
+test("sql.listen delivers NotificationResponse payloads from a mock server", async () => {
+  await using mock = await createMockListenServer({
+    mock_channel: [
+      // No listener is registered for this channel: must be ignored.
+      { channel: "mock_other_channel", payload: "ignore-me" },
+      { channel: "mock_channel", payload: "first" },
+      { channel: "mock_channel", payload: "sécond 🎉" },
+    ],
+  });
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  const received: string[] = [];
+  const { promise: gotBoth, resolve } = Promise.withResolvers<void>();
+  let onlistenCount = 0;
+  const sub = await db.listen(
+    "mock_channel",
+    payload => {
+      received.push(payload);
+      if (received.length === 2) resolve();
+    },
+    () => {
+      onlistenCount++;
+    },
+  );
+  // A second channel keeps the dedicated connection alive when the first one
+  // is unlistened, so the UNLISTEN wire message is observable.
+  const keepalive = await db.listen("mock_keepalive", () => {});
+
+  expect(onlistenCount).toBe(1);
+  // pid/secret come from the BackendKeyData message via the native
+  // processId/secretKey getters.
+  expect(sub.state).toEqual({ pid: mock.pid, secret: mock.secret });
+
+  await gotBoth;
+  expect(received).toEqual(["first", "sécond 🎉"]);
+
+  await sub.unlisten();
+  expect(mock.queries).toEqual(['LISTEN "mock_channel"', 'LISTEN "mock_keepalive"', 'UNLISTEN "mock_channel"']);
+
+  // Removing the last subscription closes the dedicated connection instead of
+  // sending another UNLISTEN.
+  await keepalive.unlisten();
+  await mock.waitForClose();
+  expect(mock.closedConnections).toBe(1);
+  expect(mock.queries).toEqual(['LISTEN "mock_channel"', 'LISTEN "mock_keepalive"', 'UNLISTEN "mock_channel"']);
+});
+
+// The subscription returned by listen() is an async disposable: leaving an
+// `await using` scope removes the listener; as the last subscription, that
+// also closes the dedicated listen connection.
+test("sql.listen subscription works with await using and unlistens on scope exit", async () => {
+  await using mock = await createMockListenServer({
+    mock_using_channel: [{ channel: "mock_using_channel", payload: "disposable" }],
+  });
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  const { promise: gotPayload, resolve } = Promise.withResolvers<string>();
+  {
+    await using sub = await db.listen("mock_using_channel", p => resolve(p));
+    expect(typeof sub[Symbol.asyncDispose]).toBe("function");
+    expect(await gotPayload).toBe("disposable");
+    expect(mock.queries).toEqual(['LISTEN "mock_using_channel"']);
+    expect(mock.closedConnections).toBe(0);
+  }
+  // Scope exit disposed the last subscription: the dedicated listen
+  // connection is closed rather than left holding the event loop.
+  await mock.waitForClose();
+  expect(mock.closedConnections).toBe(1);
+});
+
+// Without an explicit sql.close(), the ref()'d dedicated listen connection
+// must not keep the process alive once the last subscription is removed.
+test("process exits after the last unlisten without an explicit close", async () => {
+  await using mock = await createMockListenServer({});
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { SQL } from "bun";
+      const sql = new SQL({
+        url: "postgres://u@127.0.0.1:${mock.port}/db",
+        max: 1,
+        idleTimeout: 5,
+        connectionTimeout: 5,
+      });
+      const sub = await sql.listen("exit_chan", () => {});
+      await sub.unlisten();
+      console.log("UNLISTENED");
+      // Deliberately no sql.close(): the process must exit on its own.
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Bounds the child if the listen connection regresses into holding the
+    // event loop open forever.
+    timeout: 15_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("UNLISTENED\n");
+  expect(filterSpawnStderr(stderr)).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/32127: a process whose only pending
+// work is an active listen() subscription must stay alive waiting for
+// notifications instead of exiting once the LISTEN round-trip completes. The
+// notification is only sent after the child printed SUBSCRIBED (top-level
+// await resolved, event loop otherwise empty), so the child can only see it if
+// the subscription held the process open; removing the last subscription in
+// the notify callback then frees the process again.
+test("process stays alive while subscribed and exits after the notification is handled", async () => {
+  await using mock = await createMockListenServer({});
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { SQL } from "bun";
+      const sql = new SQL({
+        url: "postgres://u@127.0.0.1:${mock.port}/db",
+        max: 1,
+        idleTimeout: 5,
+        connectionTimeout: 5,
+      });
+      const sub = await sql.listen("stay_alive_chan", async payload => {
+        console.log("GOT " + payload);
+        // Last subscription: closes the dedicated connection, freeing the process.
+        await sub.unlisten();
+      });
+      console.log("SUBSCRIBED");
+      // Deliberately nothing else keeping the event loop alive.
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Bounds the child if notification delivery or the unlisten teardown regresses.
+    timeout: 15_000,
+    killSignal: "SIGKILL",
+  });
+
+  const stderrPromise = proc.stderr.text();
+  let stdout = "";
+  let notified = false;
+  const decoder = new TextDecoder();
+  for await (const chunk of proc.stdout) {
+    stdout += decoder.decode(chunk, { stream: true });
+    if (!notified && stdout.includes("SUBSCRIBED\n")) {
+      notified = true;
+      mock.notify("stay_alive_chan", "ping");
+    }
+  }
+  const [stderr, exitCode] = await Promise.all([stderrPromise, proc.exited]);
+
+  // An exit before GOT means the subscription did not keep the process alive.
+  expect(stdout).toBe("SUBSCRIBED\nGOT ping\n");
+  expect(filterSpawnStderr(stderr)).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// A LISTEN the server rejects (ErrorResponse on a live connection) rolls back
+// the registration it made; when that rollback drains the last subscription,
+// the freshly-created ref()'d dedicated connection must be released too or the
+// process would hang forever with zero subscriptions.
+test("process exits after a rejected listen without an explicit close", async () => {
+  await using mock = await createMockListenServer({}, { errorOnListen: ["bad_chan"] });
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { SQL } from "bun";
+      const sql = new SQL({
+        url: "postgres://u@127.0.0.1:${mock.port}/db",
+        max: 1,
+        idleTimeout: 5,
+        connectionTimeout: 5,
+      });
+      try {
+        await sql.listen("bad_chan", () => {});
+        console.log("LISTEN DID NOT FAIL");
+      } catch (err) {
+        console.log("CAUGHT " + err.message);
+      }
+      // Deliberately no sql.close(): the process must exit on its own.
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Bounds the child if the failed-listen rollback regresses into leaving
+    // the dedicated connection holding the event loop open forever.
+    timeout: 15_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("CAUGHT listen failure for bad_chan\n");
+  expect(filterSpawnStderr(stderr)).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// Losing the dedicated listen connection arms a backoff timer before the
+// reconnect attempt. During that window the timer is the only thing keeping a
+// subscribed-but-disconnected process alive; if it were unref()'d the child
+// would exit after the drop and never see the post-reconnect notification.
+test("process survives the reconnect backoff window and gets notifications after reconnecting", async () => {
+  await using mock = await createMockListenServer({});
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { SQL } from "bun";
+      const sql = new SQL({
+        url: "postgres://u@127.0.0.1:${mock.port}/db",
+        max: 1,
+        idleTimeout: 5,
+        connectionTimeout: 5,
+      });
+      const sub = await sql.listen("reconnect_chan", async payload => {
+        console.log("GOT " + payload);
+        // Last subscription: closes the reconnected dedicated connection,
+        // freeing the process.
+        await sub.unlisten();
+      });
+      console.log("SUBSCRIBED");
+      // Deliberately nothing else keeping the event loop alive.
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Bounds the child if reconnect or the unlisten teardown regresses.
+    timeout: 15_000,
+    killSignal: "SIGKILL",
+  });
+
+  const stderrPromise = proc.stderr.text();
+  let stdout = "";
+  let dropped = false;
+  const decoder = new TextDecoder();
+  for await (const chunk of proc.stdout) {
+    stdout += decoder.decode(chunk, { stream: true });
+    if (!dropped && stdout.includes("SUBSCRIBED\n")) {
+      dropped = true;
+      // Deliver the notification only once the child re-LISTENed on the
+      // reconnect connection (the channel's second LISTEN); not awaited so a
+      // child that wrongly exits during the backoff window ends the stdout
+      // loop and fails the assertions below instead of deadlocking the test.
+      mock
+        .waitForQuery(qs => qs.filter(q => q === 'LISTEN "reconnect_chan"').length >= 2)
+        .then(() => mock.notify("reconnect_chan", "after-reconnect"));
+      mock.destroyConnections();
+    }
+  }
+  const [stderr, exitCode] = await Promise.all([stderrPromise, proc.exited]);
+
+  // An exit before GOT means the process died during the backoff window
+  // instead of staying alive to reconnect.
+  expect(stdout).toBe("SUBSCRIBED\nGOT after-reconnect\n");
+  expect(filterSpawnStderr(stderr)).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// The scoped handles returned by reserve() and begin() inherit
+// listen/unlisten/notify from SQL in the type declarations, so the runtime
+// objects must carry them too: listen/unlisten delegate to the adapter-wide
+// dedicated listen connection, notify is bound to the handle's own connection.
+test("reserved and transaction handles expose listen/unlisten/notify", async () => {
+  await using mock = await createMockListenServer({
+    reserved_chan: [{ channel: "reserved_chan", payload: "via-reserved" }],
+  });
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  // reserve(): listen works end to end through the shared dedicated connection.
+  {
+    await using reserved = await db.reserve();
+    expect(typeof reserved.listen).toBe("function");
+    expect(typeof reserved.unlisten).toBe("function");
+    expect(typeof reserved.notify).toBe("function");
+
+    const { promise: gotPayload, resolve } = Promise.withResolvers<string>();
+    const sub = await reserved.listen("reserved_chan", p => resolve(p));
+    expect(await gotPayload).toBe("via-reserved");
+    // Last subscription: tears down the dedicated listen connection.
+    await sub.unlisten();
+    await mock.waitForClose();
+  }
+
+  // begin(): the transaction handle carries the same surface (the
+  // notification methods exist; BEGIN/COMMIT run as simple queries against
+  // the mock). notify's transactional wire behavior needs a real server and
+  // is covered in the docker-gated suite.
+  await db.begin(async tx => {
+    expect(typeof tx.listen).toBe("function");
+    expect(typeof tx.unlisten).toBe("function");
+    expect(typeof tx.notify).toBe("function");
+  });
+
+  expect(mock.queries).toContain('LISTEN "reserved_chan"');
+  expect(mock.queries.some(q => q.startsWith("BEGIN"))).toBe(true);
+  expect(mock.queries.some(q => q.startsWith("COMMIT"))).toBe(true);
+});
+
+// Bun.SQL queries are lazy (they run on await/.then/.execute), so notify()
+// must start its query eagerly or a fire-and-forget sql.notify() would
+// silently never reach the server.
+test("sql.notify executes without being awaited", async () => {
+  await using mock = await createMockListenServer({});
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  const gotNotify = mock.waitForQuery(qs => qs.some(q => q.includes("pg_notify")));
+  // Deliberately NOT awaited: the query must still be sent.
+  const pending = db.notify("lazy_chan", "payload");
+  await gotNotify;
+  // The mock never acks extended-protocol queries. Swallow the rejection the
+  // teardown produces, then drop the connection so close() does not wait on
+  // the stuck query.
+  (pending as Promise<unknown>).catch(() => {});
+  mock.destroyConnections();
+});
+
+// A listen() that lands while the reconnect backoff timer is armed creates
+// the replacement connection itself. The armed timer must be fast-forwarded
+// so previously-tracked channels are re-LISTENed on the new connection
+// immediately (not after the stale backoff, up to ~32s), and the sweep must
+// skip channels the in-flight listen() already registered so their onlisten
+// does not re-fire for a connection that never dropped.
+test("listen during the reconnect backoff window re-subscribes old channels without double-registering the new one", async () => {
+  await using mock = await createMockListenServer({});
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  const received: string[] = [];
+  let onlistenA = 0;
+  const { promise: relistenedA, resolve: resolveRelistenA } = Promise.withResolvers<void>();
+  const { promise: gotA, resolve: resolveGotA } = Promise.withResolvers<void>();
+  await db.listen(
+    "chan_a",
+    p => {
+      received.push(p);
+      resolveGotA();
+    },
+    () => {
+      // Initial LISTEN plus the sweep's re-registration on the replacement
+      // connection.
+      if (++onlistenA === 2) resolveRelistenA();
+    },
+  );
+
+  mock.destroyConnections();
+
+  // The drop becomes visible to the adapter only when its close event runs;
+  // a listen() issued before that rejects against the dead connection. Retry
+  // until one lands on the replacement connection (created by this listen()
+  // itself while the reconnect timer is still armed).
+  let onlistenB = 0;
+  let subB: { unlisten: () => Promise<void> } | undefined;
+  for (let i = 0; i < 50 && !subB; i++) {
+    try {
+      subB = await db.listen(
+        "chan_b",
+        () => {},
+        () => {
+          onlistenB++;
+        },
+      );
+    } catch {}
+  }
+  expect(subB).toBeDefined();
+
+  // The fast-forwarded sweep re-LISTENs chan_a on the new connection without
+  // waiting out the stale backoff, and delivery resumes.
+  await relistenedA;
+  mock.notify("chan_a", "after-reconnect");
+  await gotA;
+
+  // Barrier: anything the sweep wrote on this connection precedes this
+  // UNLISTEN, so once it is acked the sweep's full output has reached the
+  // mock and the counts below are final.
+  await db.unlisten("chan_a");
+
+  expect(mock.queries.filter(q => q === 'LISTEN "chan_b"')).toHaveLength(1);
+  expect(onlistenB).toBe(1);
+  expect(received).toEqual(["after-reconnect"]);
+
+  await subB!.unlisten();
+});
+
+// A listen() landing while the reconnect sweep is mid-await on the same
+// channel's LISTEN must not get its onlisten fired twice: the sweep fires
+// every onlisten registered for the channel when its own ack arrives, so the
+// new callback is only registered once listen()'s own ack succeeds.
+test("listen() during an in-flight sweep re-LISTEN fires its onlisten exactly once", async () => {
+  await using mock = await createMockListenServer({});
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  await db.listen("held_chan", () => {});
+
+  // Freeze the sweep mid-LISTEN on held_chan, then drop the connection so a
+  // sweep is owed.
+  mock.holdAcksFor(["held_chan"]);
+  mock.destroyConnections();
+
+  // Land a listen() on another channel to create the replacement connection
+  // (fast-forwarding the sweep); retry until the drop is visible.
+  let subOther: { unlisten: () => Promise<void> } | undefined;
+  for (let i = 0; i < 50 && !subOther; i++) {
+    try {
+      subOther = await db.listen("other_chan", () => {});
+    } catch {}
+  }
+  expect(subOther).toBeDefined();
+
+  // The sweep's re-LISTEN for held_chan reached the server and is now held
+  // (count 1 was the initial LISTEN on the first connection).
+  await mock.waitForQuery(qs => qs.filter(q => q === 'LISTEN "held_chan"').length >= 2);
+
+  // While the sweep is suspended on that ack, add a new subscription with an
+  // onlisten to the same channel.
+  let onlistenCount = 0;
+  const secondListen = db.listen(
+    "held_chan",
+    () => {},
+    () => {
+      onlistenCount++;
+    },
+  );
+
+  // Let the sweep's ack (and any held ack for the new LISTEN) through.
+  mock.holdAcksFor([]);
+  mock.releaseHeldAcks();
+
+  await secondListen;
+  expect(onlistenCount).toBe(1);
+
+  await db.unlisten("held_chan");
+  await subOther!.unlisten();
+});
+
+// When the dedicated connection dies while the re-LISTEN sweep is iterating,
+// the remaining channels' rejections are connection-level failures; they must
+// not be booked (and warned about) as per-channel LISTEN failures, or one
+// drop counts N times toward the 10-strikes drop cap.
+test("a mid-sweep connection drop is not booked as per-channel LISTEN failures", async () => {
+  const warns: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warns.push(args.join(" "));
+  };
+  try {
+    await using mock = await createMockListenServer({});
+    await using db = postgres({
+      url: `postgres://u@127.0.0.1:${mock.port}/db`,
+      max: 1,
+      idleTimeout: 5,
+      connectionTimeout: 5,
+    });
+
+    let onlistenA = 0;
+    const { promise: recoveredA, resolve: resolveRecoveredA } = Promise.withResolvers<void>();
+    await db.listen(
+      "sweep_a",
+      () => {},
+      () => {
+        // Fires on the initial LISTEN and again when the post-drop sweep
+        // finally re-registers the channel on the recovered connection.
+        if (++onlistenA === 2) resolveRecoveredA();
+      },
+    );
+    await db.listen("sweep_b", () => {});
+    await db.listen("sweep_c", () => {});
+
+    // Freeze the reconnect sweep mid-LISTEN on its first channel, then kill
+    // the connection it is sweeping.
+    mock.holdAcksFor(["sweep_a"]);
+    mock.destroyConnections();
+    await mock.waitForQuery(qs => qs.filter(q => q === 'LISTEN "sweep_a"').length >= 2);
+    mock.holdAcksFor([]);
+    mock.destroyConnections();
+
+    // The next reconnect re-registers everything; onlisten for sweep_a fires
+    // again only once that sweep's LISTEN acks on the recovered connection.
+    await recoveredA;
+
+    // The drop is a connection-level failure: no channel may be blamed with
+    // a per-channel "failed (attempt N/10)" warning for it.
+    expect(warns).toEqual([]);
+
+    await db.unlisten("sweep_a");
+    await db.unlisten("sweep_b");
+    await db.unlisten("sweep_c");
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+// When other channels remain subscribed, unlisten() sends a wire UNLISTEN.
+// If the connection dies during that round-trip the removal is already final
+// (local bookkeeping is updated and the sweep will not re-LISTEN the
+// channel), so unlisten() must not reject; via Symbol.asyncDispose that
+// rejection would make an await-using scope throw for a teardown that
+// already took effect.
+test("unlisten() resolves even when the connection drops during the UNLISTEN round-trip", async () => {
+  await using mock = await createMockListenServer({});
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  let onlistenB = 0;
+  const { promise: recoveredB, resolve: resolveRecoveredB } = Promise.withResolvers<void>();
+  await db.listen("u_a", () => {});
+  await db.listen(
+    "u_b",
+    () => {},
+    () => {
+      // Initial LISTEN plus the sweep's re-registration after the drop.
+      if (++onlistenB === 2) resolveRecoveredB();
+    },
+  );
+
+  // Freeze the UNLISTEN ack, then kill the connection mid-round-trip.
+  mock.holdAcksFor(["u_a"]);
+  const pendingUnlisten = db.unlisten("u_a");
+  await mock.waitForQuery(qs => qs.includes('UNLISTEN "u_a"'));
+  mock.holdAcksFor([]);
+  mock.destroyConnections();
+
+  // The removal already took effect; the wire failure must be swallowed.
+  await pendingUnlisten;
+
+  // The remaining subscription recovers on the replacement connection.
+  await recoveredB;
+  await db.unlisten("u_b");
+});

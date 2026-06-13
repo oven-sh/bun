@@ -520,6 +520,488 @@ class PostgresAdapter
     }
     return pushBindParam(this, value, binding_values, index);
   }
+
+  // --- LISTEN/NOTIFY ---
+  // A single dedicated connection is created and reused for all listeners
+  // on this adapter. It reconnects automatically with exponential backoff
+  // (250ms → 32s) when the connection drops, and re-issues LISTEN for every
+  // tracked channel. notify() goes through the regular pool via pg_notify().
+
+  #listenConnection: $ZigGeneratedClasses.PostgresSQLConnection | null = null;
+  #listenConnectPromise: Promise<$ZigGeneratedClasses.PostgresSQLConnection> | null = null;
+  // Per-channel listener sets. The presence of a key means LISTEN should be
+  // active for that channel on the dedicated connection.
+  #listenChannels: Map<string, Set<(payload: string) => void>> = new Map();
+  // Per-channel onlisten callbacks (fired on every successful LISTEN ack,
+  // including reconnects), keyed by the onnotify they were registered with so
+  // unlisten(channel, onnotify) removes the paired onlisten too.
+  #listenOnlistenCallbacks: Map<
+    string,
+    Map<(payload: string) => void, Set<(state: { pid: number; secret: number }) => void>>
+  > = new Map();
+  // Shared by concurrent listen() calls on the same channel so they all await
+  // the same LISTEN ack instead of skipping it and resolving early.
+  #listenInFlight: Map<string, Promise<void>> = new Map();
+  // Channels whose LISTEN has been acked on the CURRENT connection. The
+  // reconnect sweep skips these so it only (re-)registers channels that are
+  // not yet live on this connection, instead of re-firing onlisten for
+  // channels that never lost it (e.g. one registered by a concurrent listen()
+  // on the same fresh connection, or one that already succeeded on a previous
+  // partial-failure retry tick). Cleared whenever the connection changes.
+  #listenRegisteredChannels: Set<string> = new Set();
+  #listenReconnectDelay: number = 250;
+  #listenReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  // Track consecutive per-channel LISTEN failures during reconnect. A channel
+  // that fails this many times in a row is dropped to avoid an infinite retry
+  // loop on a permanently-misconfigured channel.
+  #listenChannelFailures: Map<string, number> = new Map();
+  readonly #listenMaxChannelFailures: number = 10;
+  // Shared state object returned from every listen() call. The same reference
+  // is handed out to all listeners and mutated in-place on each (re)connect, so
+  // user code holding `state` from a stale listen() always sees current pid/secret.
+  // This matches the postgres.js `state.pid` shape but with auto-update semantics.
+  #listenState: { pid: number; secret: number } = { pid: 0, secret: 0 };
+
+  #closeListen() {
+    if (this.#listenReconnectTimer) {
+      clearTimeout(this.#listenReconnectTimer);
+      this.#listenReconnectTimer = null;
+    }
+    const conn = this.#listenConnection;
+    this.#listenConnection = null;
+    // The in-flight create promise self-clears via .finally(), but null it here
+    // for symmetry so post-close synchronous reads don't see a stale promise.
+    this.#listenConnectPromise = null;
+    this.#listenChannels.clear();
+    this.#listenOnlistenCallbacks.clear();
+    this.#listenChannelFailures.clear();
+    this.#listenInFlight.clear();
+    this.#listenRegisteredChannels.clear();
+    this.#listenReconnectDelay = 250;
+    // Intentionally do NOT zero #listenState here — user code holding a `state`
+    // reference from a previous listen() should be able to inspect the last-known
+    // pid/secret after close (e.g. to log "shut down on backend N"). The next
+    // (re)connect overwrites these in place.
+    if (conn) {
+      try {
+        conn.close();
+      } catch {}
+    }
+  }
+
+  // BaseSQLAdapter.close() calls this after validating its arguments and
+  // marking the pool closed, so an invalid timeout cannot tear down the
+  // LISTEN state and an in-flight listen connect sees `closed` and rejects.
+  protected closeDedicatedConnections(): void {
+    this.#closeListen();
+  }
+
+  async #createListenConnection(): Promise<$ZigGeneratedClasses.PostgresSQLConnection> {
+    if (this.closed) throw this.connectionClosedError();
+
+    const { promise, resolve, reject } = Promise.withResolvers<$ZigGeneratedClasses.PostgresSQLConnection>();
+    let connected = false;
+    let thisConn: $ZigGeneratedClasses.PostgresSQLConnection | null = null;
+    // The shared helper resolves the password and marshals the native
+    // createConnection arguments; the overrides pin the dedicated listen
+    // connection open (never idle out, never recycle) and keep prepared
+    // statements named (only LISTEN/UNLISTEN run here).
+    createPooledConnectionHandle(
+      createPostgresConnection,
+      { ...this.connectionInfo, idleTimeout: 0, maxLifetime: 0, prepare: true },
+      (err, conn) => {
+        if (err) {
+          reject(wrapPostgresError(err));
+          return;
+        }
+        // If close() ran while the native side was connecting, the adapter
+        // is gone — close the orphan connection rather than leaking it.
+        if (this.closed) {
+          try {
+            conn.close();
+          } catch {}
+          reject(this.connectionClosedError());
+          return;
+        }
+        connected = true;
+        thisConn = conn;
+        this.#listenConnection = conn;
+        this.#listenReconnectDelay = 250;
+        this.#listenRegisteredChannels.clear();
+        // A listen() arriving during the backoff window establishes the
+        // replacement connection before the armed reconnect timer fires;
+        // fast-forward it so every previously-tracked channel is re-LISTENed
+        // on this connection now instead of up to ~32s later.
+        if (this.#listenReconnectTimer) {
+          clearTimeout(this.#listenReconnectTimer);
+          this.#listenReconnectTimer = null;
+          this.#scheduleListenReconnect(true);
+        }
+        // Mutate the shared #listenState in place so every previously-returned
+        // listen() result sees the new connection's pid/secret on reconnect.
+        const connWithIds = conn as unknown as { processId: number; secretKey: number };
+        this.#listenState.pid = connWithIds.processId;
+        this.#listenState.secret = connWithIds.secretKey;
+        // Generated `.d.ts` marks `onnotification` readonly because the codegen
+        // produces a getter regardless of setter presence (same for onclose/onconnect).
+        // The native setter exists; cast through a writable shape rather than `any`.
+        (conn as { onnotification: (channel: string, payload: string) => void }).onnotification = (
+          channel: string,
+          payload: string,
+        ) => this.#dispatchNotification(channel, payload);
+        conn.ref();
+        resolve(conn);
+      },
+      err => {
+        if (!connected) {
+          // Errors before the first successful connect (including password
+          // resolution failures caught inside the shared helper) must reject
+          // the pending listen() instead of scheduling a reconnect. The
+          // connection was never published to #listenConnection, so there is
+          // nothing to clear.
+          reject(wrapPostgresError(err ?? this.connectionClosedError()));
+          return;
+        }
+        // A deliberately-closed connection's onClose can fire on a later tick
+        // (TLS defers the raw close until the close_notify round-trip ends).
+        // By then a new listen() may have repopulated the channel set and even
+        // connected a replacement; a stale callback must not null out that
+        // replacement or arm a spurious reconnect on its behalf.
+        if (this.#listenConnection !== thisConn) return;
+        this.#listenConnection = null;
+        this.#listenRegisteredChannels.clear();
+        this.#scheduleListenReconnect();
+      },
+    );
+    return promise;
+  }
+
+  async #ensureListenConnection(): Promise<$ZigGeneratedClasses.PostgresSQLConnection> {
+    if (this.#listenConnection) return this.#listenConnection;
+    if (!this.#listenConnectPromise) {
+      this.#listenConnectPromise = this.#createListenConnection().finally(() => {
+        this.#listenConnectPromise = null;
+      });
+    }
+    return this.#listenConnectPromise;
+  }
+
+  #dispatchNotification(channel: string, payload: string) {
+    const listeners = this.#listenChannels.get(channel);
+    if (!listeners) return;
+    for (const fn of listeners) {
+      try {
+        fn.$call(undefined, payload);
+      } catch {}
+    }
+  }
+
+  #scheduleListenReconnect(immediate = false) {
+    // Reconnect retries indefinitely as long as there are tracked channels and
+    // the adapter is open. There is no global attempt cap — if PG is permanently
+    // down, this will keep firing every ≤32s forever (capped delay below). Stops
+    // immediately when:
+    //   - the adapter is closed (#closeListen clears channels and the timer), or
+    //   - the last channel is unlistened (#listenChannels becomes empty), or
+    //   - all permanently-failing channels exceed #listenMaxChannelFailures and get
+    //     dropped, draining #listenChannels.
+    // This matches postgres.js, which also retries indefinitely.
+    if (this.closed || this.#listenChannels.size === 0 || this.#listenReconnectTimer) return;
+    // Apply ±25% jitter (multiplier in [0.75, 1.25]) to the base delay to avoid
+    // synchronized retry storms when many adapters in the same process lose their
+    // listen connection at once. `immediate` skips the backoff entirely (used
+    // when the connection is already live and only the re-LISTEN pass is owed).
+    const jitter = 0.75 + Math.random() * 0.5;
+    const delayMs = immediate ? 0 : Math.max(1, Math.floor(this.#listenReconnectDelay * jitter));
+    const timer = setTimeout(async () => {
+      this.#listenReconnectTimer = null;
+      if (this.closed || this.#listenChannels.size === 0) return;
+      // Snapshot before any await so #closeListen() cannot clear the map under us.
+      const channels = Array.from(this.#listenChannels.keys());
+      let anyChannelFailed = false;
+      try {
+        const conn = await this.#ensureListenConnection();
+        for (const channel of channels) {
+          // Connection dropped mid-sweep: the remaining rejections are
+          // connection-level, not per-channel, and onClose already armed the
+          // next tick for the replacement connection.
+          if (this.#listenConnection !== conn) break;
+          // Channel may have been unlistened while we awaited the connection.
+          if (!this.#listenChannels.has(channel)) continue;
+          // Already acked on this connection (by a concurrent listen() or a
+          // previous partial-failure retry tick): re-issuing would re-fire
+          // onlisten for a subscription that never lost its connection.
+          if (this.#listenRegisteredChannels.has(channel)) continue;
+          try {
+            await this.#runListenQuery(conn, `LISTEN ${this.#quoteChannel(channel)}`);
+            this.#listenRegisteredChannels.add(channel);
+            const failures = this.#listenChannelFailures.get(channel);
+            if (failures !== undefined) this.#listenChannelFailures.delete(channel);
+            const onlistenPairs = this.#listenOnlistenCallbacks.get(channel);
+            if (onlistenPairs) {
+              for (const onlistens of onlistenPairs.values()) {
+                for (const fn of onlistens) {
+                  try {
+                    fn.$call(undefined, this.#listenState);
+                  } catch {}
+                }
+              }
+            }
+          } catch (err) {
+            // The rejection came from the connection dying, not from this
+            // channel: don't blame the channel; onClose owns the reschedule.
+            if (this.#listenConnection !== conn) break;
+            // Per-channel LISTEN failed on a live connection (transient PG error,
+            // permissions blip, etc). Surface the error and track consecutive
+            // failures — drop the channel after #listenMaxChannelFailures so we
+            // don't retry forever for a permanently-misconfigured channel.
+            const failures = (this.#listenChannelFailures.get(channel) ?? 0) + 1;
+            this.#listenChannelFailures.set(channel, failures);
+            const errMsg = (err as Error)?.message ?? String(err);
+            if (failures >= this.#listenMaxChannelFailures) {
+              console.warn(
+                `bun:sql LISTEN to channel "${channel}" failed ${failures} times in a row; ` +
+                  `giving up and removing the subscription. Last error: ${errMsg}`,
+              );
+              this.#listenChannels.delete(channel);
+              this.#listenOnlistenCallbacks.delete(channel);
+              this.#listenChannelFailures.delete(channel);
+            } else {
+              console.warn(
+                `bun:sql LISTEN to channel "${channel}" failed (attempt ${failures}/${this.#listenMaxChannelFailures}): ${errMsg}`,
+              );
+              anyChannelFailed = true;
+            }
+          }
+        }
+        if (anyChannelFailed && this.#listenChannels.size > 0) {
+          // Connection is alive but at least one channel did not register.
+          // Schedule another tick; PG tolerates duplicate LISTENs as no-ops.
+          this.#listenReconnectDelay = Math.min(this.#listenReconnectDelay * 2, 32000);
+          this.#scheduleListenReconnect();
+        } else if (this.#listenConnection === conn) {
+          // All channels reconnected successfully — reset backoff for the next failure.
+          this.#listenReconnectDelay = 250;
+          // Dropping permanently-failing channels above may have drained the
+          // set; release the connection in that case.
+          this.#closeListenConnectionIfIdle();
+        }
+      } catch {
+        this.#listenReconnectDelay = Math.min(this.#listenReconnectDelay * 2, 32000);
+        this.#scheduleListenReconnect();
+      }
+    }, delayMs);
+    // Deliberately NOT unref()'d: during the backoff window this timer is the
+    // only thing keeping a subscribed-but-disconnected process alive, and it
+    // can never outlive the subscriptions it serves (armed only while
+    // channels are tracked; cleared by #closeListen and
+    // #closeListenConnectionIfIdle when they drain).
+    this.#listenReconnectTimer = timer;
+  }
+
+  // PG channel identifiers must be double-quoted to preserve case and allow
+  // characters outside the unquoted-identifier grammar; embedded `"` doubles up.
+  #quoteChannel(channel: string): string {
+    return `"${channel.replaceAll('"', '""')}"`;
+  }
+
+  async #runListenQuery(conn: $ZigGeneratedClasses.PostgresSQLConnection, sql: string): Promise<void> {
+    const pendingValue = new SQLResultArray();
+    const handle = createPostgresQuery(sql, [], pendingValue, undefined, false, true);
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    // Fake query object — bypasses the user-facing Query class because LISTEN/UNLISTEN
+    // don't fit the tagged-template path (no result rows, no Promise interface needed).
+    //
+    // CONTRACT (must stay in sync with src/js/internal/sql/postgres.ts initPostgres):
+    //   onResolvePostgresQuery (this file, ~line 237):
+    //     - is_last branch:    reads `query[_results]`, calls `query.resolve(...)`.
+    //                          May call `queries.indexOf(query)`+`splice` IF the
+    //                          connection has a JS-cached `queries` array — the
+    //                          dedicated listen connection does not, so this branch
+    //                          is skipped.
+    //     - !is_last branch:   reads `query[_handle]`, calls `setPendingValue` on it,
+    //                          mutates `query[_results]`. LISTEN/UNLISTEN produce a
+    //                          single CommandComplete + ReadyForQuery so this is not
+    //                          reached in practice — but we delegate setPendingValue
+    //                          to the real native handle just in case.
+    //   onRejectPostgresQuery (this file, ~line 300):
+    //     - calls `query.reject(err)`. May call `queries.indexOf(query)` (same
+    //       no-op as above for the listen connection).
+    //
+    // If either callback grows to access more fields (e.g. `query.cancel?.()`,
+    // `query.done()`, etc.), those fields MUST be added here or LISTEN/UNLISTEN
+    // will silently break. The native side never references this object directly —
+    // it only flows through the two JS callbacks above.
+    handle.run(conn, {
+      resolve: () => resolve(),
+      reject: (err: any) => reject(wrapPostgresError(err)),
+      [_results]: null,
+      [_handle]: {
+        setPendingValue: (v: SQLResultArray) => handle.setPendingValue(v),
+      },
+    });
+    return promise;
+  }
+
+  async listen(
+    channel: string,
+    onnotify: (payload: string) => void,
+    onlisten?: (state: { pid: number; secret: number }) => void,
+  ): Promise<{ state: { pid: number; secret: number }; unlisten: () => Promise<void> }> {
+    if (typeof channel !== "string" || !channel)
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
+    if (channel.indexOf("\0") !== -1) throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
+    if (!$isCallable(onnotify)) throw $ERR_INVALID_ARG_TYPE("onnotify", "function", onnotify);
+    if (onlisten !== undefined && !$isCallable(onlisten)) throw $ERR_INVALID_ARG_TYPE("onlisten", "function", onlisten);
+
+    if (!this.#listenChannels.has(channel)) this.#listenChannels.set(channel, new Set());
+    this.#listenChannels.get(channel)!.add(onnotify);
+    // The onlisten is deliberately NOT inserted into #listenOnlistenCallbacks
+    // yet: the reconnect sweep fires every onlisten in that map after a
+    // successful LISTEN, so inserting before our own ack would let a sweep
+    // that is mid-flight on this channel fire the new callback first and this
+    // call fire it again. It is inserted after the ack, below, right before
+    // its initial fire.
+
+    try {
+      // Always issue LISTEN (idempotent server-side) and share the in-flight
+      // promise so concurrent callers can't resolve before the ack and can't
+      // miss the case where the connection dropped mid-handoff.
+      let inFlight = this.#listenInFlight.get(channel);
+      if (!inFlight) {
+        inFlight = (async () => {
+          const conn = await this.#ensureListenConnection();
+          // Channel may have been unlistened while we awaited the connection;
+          // don't subscribe the dedicated connection to a dead channel, and
+          // don't leave the freshly-created connection behind if nothing is
+          // subscribed anymore.
+          if (!this.#listenChannels.has(channel)) {
+            this.#closeListenConnectionIfIdle();
+            return;
+          }
+          await this.#runListenQuery(conn, `LISTEN ${this.#quoteChannel(channel)}`);
+          this.#listenRegisteredChannels.add(channel);
+          this.#listenChannelFailures.delete(channel);
+        })().finally(() => {
+          if (this.#listenInFlight.get(channel) === inFlight) this.#listenInFlight.delete(channel);
+        });
+        this.#listenInFlight.set(channel, inFlight);
+      }
+      await inFlight;
+    } catch (err) {
+      // Roll back only the registration this call made — siblings keep theirs.
+      // (The onlisten needs no rollback: it is only inserted after a
+      // successful LISTEN.)
+      const set = this.#listenChannels.get(channel);
+      set?.delete(onnotify);
+      if (set && set.size === 0) {
+        this.#listenChannels.delete(channel);
+        this.#listenOnlistenCallbacks.delete(channel);
+      }
+      // The LISTEN can fail on a live connection (server ErrorResponse); if
+      // this rollback drained the last subscription, drop the now-idle
+      // ref()'d connection or it would hold the event loop open forever.
+      this.#closeListenConnectionIfIdle();
+      throw err;
+    }
+
+    // Skip the registration and initial onlisten if this subscription was
+    // unlistened while the LISTEN ack was in flight — it is already gone.
+    if (this.#listenChannels.get(channel)?.has(onnotify)) {
+      if (onlisten) {
+        if (!this.#listenOnlistenCallbacks.has(channel)) this.#listenOnlistenCallbacks.set(channel, new Map());
+        const pairs = this.#listenOnlistenCallbacks.get(channel)!;
+        if (!pairs.has(onnotify)) pairs.set(onnotify, new Set());
+        pairs.get(onnotify)!.add(onlisten);
+      }
+      try {
+        onlisten?.(this.#listenState);
+      } catch {}
+    }
+
+    // unlistened is checked then set synchronously inside the closure; no await
+    // sits between the check and the assignment, so two simultaneous calls on a
+    // single isolate cannot both pass the gate. If an `await` is ever introduced
+    // before the flag flip, this becomes a TOCTOU bug — be careful.
+    let unlistened = false;
+    const unlisten = async () => {
+      if (unlistened) return;
+      unlistened = true;
+      // unlisten(channel, onnotify) also drops the onlisten callbacks paired
+      // with this onnotify, so no separate cleanup is needed here.
+      await this.unlisten(channel, onnotify);
+    };
+    return {
+      state: this.#listenState,
+      unlisten,
+      // `await using sub = await sql.listen(...)` removes the subscription on
+      // scope exit.
+      [Symbol.asyncDispose]: unlisten,
+    };
+  }
+
+  async unlisten(channel: string, onnotify?: (payload: string) => void): Promise<void> {
+    if (typeof channel !== "string" || !channel)
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
+    if (channel.indexOf("\0") !== -1) throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
+    if (onnotify !== undefined && !$isCallable(onnotify)) throw $ERR_INVALID_ARG_TYPE("onnotify", "function", onnotify);
+
+    if (!onnotify) {
+      this.#listenChannels.delete(channel);
+      this.#listenOnlistenCallbacks.delete(channel);
+      this.#listenChannelFailures.delete(channel);
+    } else {
+      this.#listenChannels.get(channel)?.delete(onnotify);
+      // Drop the onlisten callbacks paired with this onnotify so they stop
+      // firing on reconnect once their subscription is gone.
+      const pairs = this.#listenOnlistenCallbacks.get(channel);
+      pairs?.delete(onnotify);
+      if (pairs && pairs.size === 0) this.#listenOnlistenCallbacks.delete(channel);
+      if (this.#listenChannels.get(channel)?.size === 0) {
+        this.#listenChannels.delete(channel);
+        this.#listenOnlistenCallbacks.delete(channel);
+        this.#listenChannelFailures.delete(channel);
+      }
+    }
+
+    if (this.#listenChannels.size === 0) {
+      // Closing the connection implicitly drops every server-side LISTEN
+      // registration, so no UNLISTEN round-trip is needed.
+      this.#closeListenConnectionIfIdle();
+    } else if (this.#listenConnection && !this.#listenChannels.has(channel)) {
+      this.#listenRegisteredChannels.delete(channel);
+      try {
+        await this.#runListenQuery(this.#listenConnection, `UNLISTEN ${this.#quoteChannel(channel)}`);
+      } catch {
+        // The local bookkeeping above is already final and the reconnect
+        // sweep will not re-LISTEN this channel, so a wire failure here
+        // (connection drop mid-round-trip) changes nothing; surfacing it
+        // would make await-using disposal throw for a removal that already
+        // took effect. Mirrors the last-subscription branch, which closes
+        // the connection without throwing.
+      }
+    }
+  }
+
+  // After the last subscription is removed there is nothing left to receive:
+  // drop the dedicated connection (and any pending reconnect) rather than
+  // keeping an idle ref()'d backend session that would hold the event loop
+  // open. The next listen() recreates it.
+  #closeListenConnectionIfIdle() {
+    if (this.#listenChannels.size > 0) return;
+    if (this.#listenReconnectTimer) {
+      clearTimeout(this.#listenReconnectTimer);
+      this.#listenReconnectTimer = null;
+    }
+    const conn = this.#listenConnection;
+    this.#listenConnection = null;
+    this.#listenRegisteredChannels.clear();
+    if (conn) {
+      try {
+        conn.close();
+      } catch {}
+    }
+  }
 }
 
 export default {

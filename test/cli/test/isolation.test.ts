@@ -311,6 +311,26 @@ describe.concurrent("bun test --isolate", () => {
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
+
+  test("with --isolate, top-level await in shared module resolves correctly", async () => {
+    using dir = tempDir("isolate-tla", {
+      "tla-module.ts": `export const value = await Promise.resolve(42);`,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        import { value } from "./tla-module.ts";
+        test("TLA resolves in file a", () => { expect(value).toBe(42); });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { value } from "./tla-module.ts";
+        test("TLA resolves in file b", () => { expect(value).toBe(42); });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // The eviction test below proves the SourceProvider cache is active (control:

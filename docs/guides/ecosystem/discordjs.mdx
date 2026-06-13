@@ -77,7 +77,7 @@ const commands = [new SlashCommandBuilder().setName("ping").setDescription("Repl
 
 const rest = new REST().setToken(DISCORD_TOKEN);
 
-// register them in your server, where they appear instantly
+// register them in your test server
 await rest.put(Routes.applicationGuildCommands(DISCORD_CLIENT_ID, DISCORD_GUILD_ID), { body: commands });
 
 console.log("Registered /ping");
@@ -89,7 +89,7 @@ Run it once.
 bun run deploy-commands.ts
 ```
 
-You only run this again when you add a command or change its name or description, not every time the bot starts. Registering to your server instead of globally is what makes the command show up right away.
+You only run this again when you add a command or change its name or description, not every time the bot starts. Registering to your server instead of globally keeps the command scoped to where you're testing.
 
 ---
 

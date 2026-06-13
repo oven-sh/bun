@@ -461,6 +461,18 @@ export function windowsEnv(
   });
 }
 
+export function getRawDebug() {
+  // process._rawDebug(...args) — undocumented-but-depended-on Node API used by
+  // Node's own test suite and libraries like pino/thread-stream. Behaves like
+  // `console.error(util.format(...args))` but writes synchronously to fd 2 so
+  // it works even while the event loop is blocked or during shutdown.
+  const { format } = require("node:util");
+  const { writeSync } = require("node:fs");
+  return function _rawDebug(...args) {
+    writeSync(2, format.$apply(null, args) + "\n");
+  };
+}
+
 export function getChannel() {
   const EventEmitter = require("node:events");
   const setRef = $newZigFunction("node_cluster_binding.zig", "setRef", 1);

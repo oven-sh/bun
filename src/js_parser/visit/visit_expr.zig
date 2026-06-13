@@ -891,7 +891,15 @@ pub fn VisitExpr(
                     };
                 }
 
-                if (e_.optional_chain == null) {
+                // `import.meta` is always an object, so `import.meta?.x` is
+                // equivalent to `import.meta.x`. Allow the rewrite through
+                // the optional chain so the transpiler can constant-fold
+                // `import.meta?.main` to `true`/`false` under `--compile`
+                // (see #30084). Other optional chains still skip the rewrite
+                // because their target may be nullish at runtime.
+                const target_is_always_object = e_.target.data == .e_import_meta;
+
+                if (e_.optional_chain == null or target_is_always_object) {
                     if (p.maybeRewritePropertyAccess(
                         expr.loc,
                         e_.target,

@@ -56,6 +56,37 @@ macro_rules! init_p {
     }};
 }
 
+/// `init_p!` plus the shared `&mut self` prologue of `_scan_imports`,
+/// `to_lazy_export_ast`, and `analyze`: `Lexer` owns `Vec`s and `Options`
+/// owns `jsx: Pragma` boxes, so a bitwise `ptr::read` would double-free when
+/// `self` later drops. Move them out, leaving inert placeholders, build the
+/// parser in place, and bind `$p` to it.
+///
+/// The inert placeholder lexer is given its *own* arena-allocated `Log`
+/// (empty `Vec`, arena-leaked) so it does not alias `self.log` at all —
+/// keeps the placeholder fully disjoint from the real `Log` handed to `P`
+/// and never read again.
+macro_rules! take_and_init_p {
+    (let $p:ident: $ty:ty = $self:ident) => {
+        let lexer = core::mem::replace(
+            &mut $self.lexer,
+            js_lexer::Lexer::init_without_reading(
+                $self.bump.alloc(bun_ast::Log::default()),
+                $self.source,
+                $self.bump,
+            ),
+        );
+        let options = core::mem::take(&mut $self.options);
+        // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
+        // field docs), so handing the same raw pointer to both is defined —
+        // no `&mut` is materialized.
+        let mut __p = init_p!($ty;
+            $self.bump, $self.log, $self.source, $self.define, lexer, options);
+        // SAFETY: `init_p!` only yields after `init` succeeded.
+        let $p: &mut $ty = unsafe { __p.assume_init_mut() };
+    };
+}
+
 pub struct Parser<'a> {
     pub options: Options<'a>,
     pub lexer: js_lexer::Lexer<'a>,
@@ -387,31 +418,7 @@ impl<'a> Parser<'a> {
         scan_pass: &'a mut ScanPassResult,
     ) -> Result<(), Error> {
         type Pi<'a, const TS: bool> = P<'a, TS, true>;
-        // `Lexer` owns `Vec`s and `Options` owns
-        // `jsx: Pragma` boxes, so a bitwise `ptr::read` would double-free
-        // when `self` later drops. Move them out, leaving inert placeholders.
-        //
-        // The inert placeholder lexer is given its *own* arena-allocated `Log`
-        // so it does not alias `self.log` at all — keeps the placeholder fully
-        // disjoint from the real `Log` handed to `P` and never read again.
-        let lexer = core::mem::replace(
-            &mut self.lexer,
-            js_lexer::Lexer::init_without_reading(
-                // Disjoint dummy `Log` (empty `Vec`, arena-leaked); the
-                // placeholder is never read after this point.
-                self.bump.alloc(bun_ast::Log::default()),
-                self.source,
-                self.bump,
-            ),
-        );
-        let options = core::mem::take(&mut self.options);
-        // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
-        // field docs), so handing the same raw pointer to both is defined —
-        // no `&mut` is materialized.
-        let mut __p = init_p!(Pi<'_, TS>;
-            self.bump, self.log, self.source, self.define, lexer, options);
-        // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut Pi<'_, TS> = unsafe { __p.assume_init_mut() };
+        take_and_init_p!(let p: Pi<'_, TS> = self);
         p.import_records = crate::p::ImportRecordList::Borrowed(&mut scan_pass.import_records);
         p.named_imports = crate::p::NamedImportsType::Borrowed(&mut scan_pass.named_imports);
 
@@ -531,29 +538,7 @@ impl<'a> Parser<'a> {
         runtime_api_call: &'static [u8],
         symbols: js_ast::symbol::List<'a>,
     ) -> Result<crate::Result<'a>, Error> {
-        // Move lexer/options out and leave inert
-        // placeholders so `self` may drop without double-free.
-        //
-        // The placeholder lexer gets its own arena `Log` so it does not alias
-        // `self.log` (see `_scan_imports`).
-        let lexer = core::mem::replace(
-            &mut self.lexer,
-            js_lexer::Lexer::init_without_reading(
-                // Disjoint dummy `Log` (empty `Vec`, arena-leaked); the
-                // placeholder is never read after this point.
-                self.bump.alloc(bun_ast::Log::default()),
-                self.source,
-                self.bump,
-            ),
-        );
-        let options = core::mem::take(&mut self.options);
-        // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
-        // field docs), so handing the same raw pointer to both is defined —
-        // no `&mut` is materialized.
-        let mut __p = init_p!(JavaScriptParser<'_>;
-            self.bump, self.log, self.source, self.define, lexer, options);
-        // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut JavaScriptParser<'_> = unsafe { __p.assume_init_mut() };
+        take_and_init_p!(let p: JavaScriptParser<'_> = self);
 
         // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
         // Let's enable this flag file-wide
@@ -622,29 +607,7 @@ impl<'a> Parser<'a> {
         context: *mut c_void,
         callback: &dyn Fn(*mut c_void, &mut TSXParser, &mut [js_ast::Part]) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        // See `_scan_imports`: move lexer/options out, leaving inert
-        // placeholders so `self` may drop without double-free.
-        //
-        // The placeholder lexer gets its own arena `Log` so it does not alias
-        // `self.log` (see `_scan_imports`).
-        let lexer = core::mem::replace(
-            &mut self.lexer,
-            js_lexer::Lexer::init_without_reading(
-                // Disjoint dummy `Log` (empty `Vec`, arena-leaked); the
-                // placeholder is never read after this point.
-                self.bump.alloc(bun_ast::Log::default()),
-                self.source,
-                self.bump,
-            ),
-        );
-        let options = core::mem::take(&mut self.options);
-        // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
-        // field docs), so handing the same raw pointer to both is defined —
-        // no `&mut` is materialized.
-        let mut __p = init_p!(TSXParser<'_>;
-            self.bump, self.log, self.source, self.define, lexer, options);
-        // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut TSXParser<'_> = unsafe { __p.assume_init_mut() };
+        take_and_init_p!(let p: TSXParser<'_> = self);
 
         // Consume a leading hashbang comment
         let mut hashbang: &[u8] = b"";

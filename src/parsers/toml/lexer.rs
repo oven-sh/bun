@@ -2,7 +2,6 @@ use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_alloc::ArenaVecExt as _;
 use bun_ast as js_ast;
 use bun_ast::LexerLog;
-use bun_core::fmt::hex_digit_value_u32;
 use bun_core::strings;
 use bun_core::strings::CodePoint;
 
@@ -126,6 +125,44 @@ impl<'a> LexerLog<'a> for Lexer<'a> {
     #[inline]
     fn syntax_err() -> Error {
         Error::SyntaxError
+    }
+}
+
+impl<'a> bun_ast::lexer_log::EscapeLexer<'a> for Lexer<'a> {
+    type Buf = bun_alloc::ArenaVec<'a, u8>;
+    const LEGACY_ERROR_SPANS: bool = true;
+    #[inline]
+    fn end_mut(&mut self) -> &mut usize {
+        &mut self.end
+    }
+    #[inline]
+    fn push_codepoint(buf: &mut Self::Buf, c: u32) {
+        if c <= 127 {
+            buf.push(c as u8);
+        } else {
+            let mut part: [u8; 4] = [0; 4];
+            let len = strings::encode_wtf8_rune(&mut part, c);
+            buf.extend_from_slice(&part[0..len]);
+        }
+    }
+}
+
+impl<'a> crate::number_scan::DecimalLexer<'a> for Lexer<'a> {
+    #[inline]
+    fn code_point(&self) -> CodePoint {
+        self.code_point
+    }
+    #[inline]
+    fn end(&self) -> usize {
+        self.end
+    }
+    #[inline]
+    fn end_mut(&mut self) -> &mut usize {
+        &mut self.end
+    }
+    #[inline]
+    fn step(&mut self) {
+        Lexer::step(self)
     }
 }
 
@@ -318,115 +355,9 @@ impl<'a> Lexer<'a> {
             }
         } else {
             // Floating-point literal;
-            let is_invalid_legacy_octal_literal = first == '0' as CodePoint
-                && (self.code_point == '8' as CodePoint || self.code_point == '9' as CodePoint);
-
-            // Initial digits;
-            loop {
-                if self.code_point < '0' as CodePoint || self.code_point > '9' as CodePoint {
-                    match self.code_point {
-                        // '-' => {
-                        //     if (lexer.raw().len == 5) {
-                        //         // Is this possibly a datetime literal that begins with a 4 digit year?
-                        //         lexer.step();
-                        //         while (!lexer.has_newline_before) {
-                        //             switch (lexer.code_point) {
-                        //                 ',' => {
-                        //                     lexer.string_literal_slice = lexer.raw();
-                        //                     lexer.token = T.t_string_literal;
-                        //                     break;
-                        //                 },
-                        //             }
-                        //         }
-                        //     }
-                        // },
-                        c if c == '_' as CodePoint => {}
-                        _ => break,
-                    }
-                    if self.code_point != '_' as CodePoint {
-                        break;
-                    }
-
-                    // Cannot have multiple underscores in a row;
-                    if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
-                        self.syntax_error()?;
-                    }
-
-                    // The specification forbids underscores in this case;
-                    if is_invalid_legacy_octal_literal {
-                        self.syntax_error()?;
-                    }
-
-                    last_underscore_end = self.end;
-                    underscore_count += 1;
-                }
-                self.step();
-            }
-
-            // Fractional digits;
-            if first != '.' as CodePoint && self.code_point == '.' as CodePoint {
-                // An underscore must not come last;
-                if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
-                    self.end -= 1;
-                    self.syntax_error()?;
-                }
-
-                has_dot_or_exponent = true;
-                self.step();
-                if self.code_point == '_' as CodePoint {
-                    self.syntax_error()?;
-                }
-                loop {
-                    if self.code_point < '0' as CodePoint || self.code_point > '9' as CodePoint {
-                        if self.code_point != '_' as CodePoint {
-                            break;
-                        }
-
-                        // Cannot have multiple underscores in a row;
-                        if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
-                            self.syntax_error()?;
-                        }
-
-                        last_underscore_end = self.end;
-                        underscore_count += 1;
-                    }
-                    self.step();
-                }
-            }
-
-            // Exponent;
-            if self.code_point == 'e' as CodePoint || self.code_point == 'E' as CodePoint {
-                // An underscore must not come last;
-                if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
-                    self.end -= 1;
-                    self.syntax_error()?;
-                }
-
-                has_dot_or_exponent = true;
-                self.step();
-                if self.code_point == '+' as CodePoint || self.code_point == '-' as CodePoint {
-                    self.step();
-                }
-                if self.code_point < '0' as CodePoint || self.code_point > '9' as CodePoint {
-                    self.syntax_error()?;
-                }
-                loop {
-                    if self.code_point < '0' as CodePoint || self.code_point > '9' as CodePoint {
-                        if self.code_point != '_' as CodePoint {
-                            break;
-                        }
-
-                        // Cannot have multiple underscores in a row;
-                        if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
-                            self.syntax_error()?;
-                        }
-
-                        last_underscore_end = self.end;
-                        underscore_count += 1;
-                    }
-                    self.step();
-                }
-            }
+            let scan = crate::number_scan::scan_decimal_digits(self, first)?;
+            underscore_count = scan.underscore_count;
+            has_dot_or_exponent = scan.has_dot_or_exponent;
 
             // Take a slice of the text to parse;
             let mut text: &[u8] = self.raw();
@@ -854,327 +785,11 @@ impl<'a> Lexer<'a> {
         text: &[u8],
         buf: &mut bun_alloc::ArenaVec<'a, u8>,
     ) -> Result<(), Error> {
-        let iterator = strings::CodepointIterator::init(text);
-        let mut iter = strings::Cursor::default();
-        while iterator.next(&mut iter) {
-            let width = iter.width;
-            match iter.c {
-                c if c == '\r' as CodePoint => {
-                    // Convert '\r\n' into '\n'. After `next()` returns for `\r`,
-                    // `iter.i` is the start byte of the `\r` itself — the `\n`
-                    // we're looking for is at `iter.i + 1`. Reading `text[iter.i]`
-                    // would always be `\r`, so the check never fired and a literal
-                    // CRLF in a slow-path multiline basic string decoded to two LFs.
-                    // Match the JS lexer (js_parser/lexer.rs:660-661).
-                    let next_i: usize = iter.i as usize + 1;
-                    if next_i < text.len() && text[next_i] == b'\n' {
-                        iter.i += 1;
-                    }
-
-                    // Convert '\r' into '\n'
-                    buf.push(b'\n');
-                    continue;
-                }
-
-                c if c == '\\' as CodePoint => {
-                    if !iterator.next(&mut iter) {
-                        return Ok(());
-                    }
-
-                    let c2 = iter.c;
-
-                    let width2 = iter.width;
-                    match c2 {
-                        // https://mathiasbynens.be/notes/javascript-escapes#single
-                        c if c == 'b' as CodePoint => {
-                            buf.push(8);
-                            continue;
-                        }
-                        c if c == 'f' as CodePoint => {
-                            // Form feed: U+000C
-                            buf.push(12);
-                            continue;
-                        }
-                        c if c == 'n' as CodePoint => {
-                            buf.push(10);
-                            continue;
-                        }
-                        c if c == 'v' as CodePoint => {
-                            // Vertical tab is invalid JSON
-                            // We're going to allow it.
-                            buf.push(11);
-                            continue;
-                        }
-                        c if c == 't' as CodePoint => {
-                            // Horizontal tab: U+0009
-                            buf.push(9);
-                            continue;
-                        }
-                        c if c == 'r' as CodePoint => {
-                            buf.push(13);
-                            continue;
-                        }
-
-                        // legacy octal literals
-                        c if ('0' as CodePoint..='7' as CodePoint).contains(&c) => {
-                            let octal_start = (iter.i as usize + width2 as usize).saturating_sub(2);
-
-                            // 1-3 digit octal
-                            let mut is_bad = false;
-                            let mut value: i64 = (c2 - '0' as CodePoint) as i64;
-                            let mut restore = iter;
-
-                            if !iterator.next(&mut iter) {
-                                if value == 0 {
-                                    buf.push(0);
-                                    return Ok(());
-                                }
-
-                                self.syntax_error()?;
-                                return Ok(());
-                            }
-
-                            let c3: CodePoint = iter.c;
-
-                            match c3 {
-                                c if ('0' as CodePoint..='7' as CodePoint).contains(&c) => {
-                                    value = value * 8 + (c3 - '0' as CodePoint) as i64;
-                                    restore = iter;
-                                    if !iterator.next(&mut iter) {
-                                        return self.syntax_error();
-                                    }
-
-                                    let c4 = iter.c;
-                                    match c4 {
-                                        c if ('0' as CodePoint..='7' as CodePoint).contains(&c) => {
-                                            let temp = value * 8 + (c4 - '0' as CodePoint) as i64;
-                                            if temp < 256 {
-                                                value = temp;
-                                            } else {
-                                                iter = restore;
-                                            }
-                                        }
-                                        c if c == '8' as CodePoint || c == '9' as CodePoint => {
-                                            is_bad = true;
-                                        }
-                                        _ => {
-                                            iter = restore;
-                                        }
-                                    }
-                                }
-                                c if c == '8' as CodePoint || c == '9' as CodePoint => {
-                                    is_bad = true;
-                                }
-                                _ => {
-                                    iter = restore;
-                                }
-                            }
-
-                            iter.c = i32::try_from(value).expect("int cast");
-                            if is_bad {
-                                self.add_range_error(
-                                    bun_ast::Range {
-                                        loc: bun_ast::Loc {
-                                            start: i32::try_from(octal_start).expect("int cast"),
-                                        },
-                                        len: i32::try_from(iter.i as usize - octal_start)
-                                            .expect("int cast"),
-                                    },
-                                    format_args!("Invalid legacy octal literal"),
-                                )
-                                .expect("unreachable");
-                            }
-                        }
-                        c if c == '8' as CodePoint || c == '9' as CodePoint => {
-                            iter.c = c2;
-                        }
-                        // 2-digit hexadecimal
-                        c if c == 'x' as CodePoint => {
-                            if ALLOW_MULTILINE {
-                                self.end =
-                                    (start + iter.i as usize).saturating_sub(width2 as usize);
-                                self.syntax_error()?;
-                            }
-
-                            let mut value: CodePoint = 0;
-                            let mut c3: CodePoint;
-                            let mut width3: u8;
-
-                            if !iterator.next(&mut iter) {
-                                return self.syntax_error();
-                            }
-                            c3 = iter.c;
-                            width3 = iter.width;
-                            match hex_digit_value_u32(c3 as u32) {
-                                Some(d) => value = (value * 16) | d as CodePoint,
-                                None => {
-                                    self.end =
-                                        (start + iter.i as usize).saturating_sub(width3 as usize);
-                                    return self.syntax_error();
-                                }
-                            }
-
-                            if !iterator.next(&mut iter) {
-                                return self.syntax_error();
-                            }
-                            c3 = iter.c;
-                            width3 = iter.width;
-                            match hex_digit_value_u32(c3 as u32) {
-                                Some(d) => value = (value * 16) | d as CodePoint,
-                                None => {
-                                    self.end =
-                                        (start + iter.i as usize).saturating_sub(width3 as usize);
-                                    return self.syntax_error();
-                                }
-                            }
-
-                            iter.c = value;
-                        }
-                        c if c == 'u' as CodePoint => {
-                            // We're going to make this an i64 so we don't risk integer overflows
-                            // when people do weird things
-                            let mut value: i64 = 0;
-
-                            if !iterator.next(&mut iter) {
-                                return self.syntax_error();
-                            }
-                            let mut c3 = iter.c;
-                            let mut width3 = iter.width;
-
-                            // variable-length
-                            if c3 == '{' as CodePoint {
-                                let hex_start = (iter.i as usize)
-                                    .saturating_sub(width as usize)
-                                    .saturating_sub(width2 as usize)
-                                    .saturating_sub(width3 as usize);
-                                let mut is_first = true;
-                                let mut is_out_of_range = false;
-                                'variable_length: loop {
-                                    if !iterator.next(&mut iter) {
-                                        break 'variable_length;
-                                    }
-                                    c3 = iter.c;
-
-                                    if c3 == '}' as CodePoint {
-                                        if is_first {
-                                            self.end = (start + iter.i as usize)
-                                                .saturating_sub(width3 as usize);
-                                            return self.syntax_error();
-                                        }
-                                        break 'variable_length;
-                                    }
-                                    match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = (value * 16) | d as i64,
-                                        None => {
-                                            self.end = (start + iter.i as usize)
-                                                .saturating_sub(width3 as usize);
-                                            return self.syntax_error();
-                                        }
-                                    }
-
-                                    // '\U0010FFFF
-                                    // copied from golang utf8.MaxRune
-                                    if value > 1114111 {
-                                        is_out_of_range = true;
-                                    }
-                                    is_first = false;
-                                }
-
-                                if is_out_of_range {
-                                    self.add_range_error(
-                                        bun_ast::Range {
-                                            loc: bun_ast::Loc {
-                                                start: i32::try_from(start + hex_start)
-                                                    .expect("int cast"),
-                                            },
-                                            len: i32::try_from(
-                                                (iter.i as usize).saturating_sub(hex_start),
-                                            )
-                                            .unwrap(),
-                                        },
-                                        format_args!("Unicode escape sequence is out of range"),
-                                    )?;
-                                    return Ok(());
-                                }
-
-                                // fixed-length
-                            } else {
-                                // Fixed-length
-                                let mut j: usize = 0;
-                                while j < 4 {
-                                    match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = (value * 16) | d as i64,
-                                        None => {
-                                            self.end = (start + iter.i as usize)
-                                                .saturating_sub(width3 as usize);
-                                            return self.syntax_error();
-                                        }
-                                    }
-
-                                    if j < 3 {
-                                        if !iterator.next(&mut iter) {
-                                            return self.syntax_error();
-                                        }
-                                        c3 = iter.c;
-
-                                        width3 = iter.width;
-                                    }
-                                    j += 1;
-                                }
-                            }
-
-                            iter.c = value as CodePoint; // @truncate
-                        }
-                        c if c == '\r' as CodePoint => {
-                            if !ALLOW_MULTILINE {
-                                self.end =
-                                    (start + iter.i as usize).saturating_sub(width2 as usize);
-                                self.add_default_error(b"Unexpected end of line")?;
-                            }
-
-                            // Ignore line continuations. A line continuation is not an escaped newline.
-                            // Match the JS lexer (js_parser/lexer.rs:660-661, 937-939): guard on
-                            // the index we actually read (`iter.i + 1`), not `iter.i`. Without
-                            // this, a multiline basic string ending in `\<CR>` right before `"""`
-                            // reads `text[len]` and panics even in release (slice bounds checks
-                            // always run).
-                            let next_i: usize = iter.i as usize + 1;
-                            if next_i < text.len() && text[next_i] == b'\n' {
-                                // Make sure Windows CRLF counts as a single newline
-                                iter.i += 1;
-                            }
-                            continue;
-                        }
-                        c if c == '\n' as CodePoint || c == 0x2028 || c == 0x2029 => {
-                            // Ignore line continuations. A line continuation is not an escaped newline.
-                            if !ALLOW_MULTILINE {
-                                self.end =
-                                    (start + iter.i as usize).saturating_sub(width2 as usize);
-                                self.add_default_error(b"Unexpected end of line")?;
-                            }
-                            continue;
-                        }
-                        _ => {
-                            iter.c = c2;
-                        }
-                    }
-                }
-                _ => {}
-            }
-
-            match iter.c {
-                -1 => return self.add_default_error(b"Unexpected end of file"),
-                0..=127 => {
-                    buf.push(u8::try_from(iter.c).expect("int cast"));
-                }
-                _ => {
-                    let mut part: [u8; 4] = [0; 4];
-                    let len = strings::encode_wtf8_rune(&mut part, iter.c as u32);
-                    buf.extend_from_slice(&part[0..len]);
-                }
-            }
-        }
-        Ok(())
+        // Multiline basic strings permit line continuations but reject `\x`;
+        // single-line basic strings are the inverse.
+        bun_ast::lexer_log::decode_escape_sequences::<_, ALLOW_MULTILINE, ALLOW_MULTILINE>(
+            self, start, text, buf,
+        )
     }
 
     pub fn expected(&mut self, token: T) -> Result<(), Error> {

@@ -87,3 +87,57 @@ test("Bun.TOML.parse rejects array values without comma separators (#31252)", ()
   // Trailing comma is legal TOML.
   expect(Bun.TOML.parse("a = [1, 2,]")).toEqual({ a: [1, 2] });
 });
+
+// Digit scanning lives in parsers/number_scan.rs (shared with the json lexer).
+// These pin the underscore-separator rules: legal between digits, illegal
+// doubled, adjacent to the decimal point, or at the start of the exponent.
+test("Bun.TOML.parse accepts underscore digit separators in numbers", () => {
+  expect(Bun.TOML.parse("a = 1_000")).toEqual({ a: 1000 });
+  expect(Bun.TOML.parse("a = 5_349_221")).toEqual({ a: 5349221 });
+  expect(Bun.TOML.parse("a = 1_000.000_1")).toEqual({ a: 1000.0001 });
+  expect(Bun.TOML.parse("a = 1e1_0")).toEqual({ a: 1e10 });
+  expect(Bun.TOML.parse("a = 9_224_617.445_991_228")).toEqual({ a: 9224617.445991228 });
+});
+
+test("Bun.TOML.parse rejects misplaced underscores in numbers", () => {
+  expect(() => Bun.TOML.parse("a = 1__0")).toThrow();
+  expect(() => Bun.TOML.parse("a = 1_.5")).toThrow();
+  expect(() => Bun.TOML.parse("a = 1._5")).toThrow();
+  expect(() => Bun.TOML.parse("a = 1.5_e3")).toThrow();
+  expect(() => Bun.TOML.parse("a = 1.5e_3")).toThrow();
+});
+
+test("Bun.TOML.parse rejects an exponent with no digits", () => {
+  expect(() => Bun.TOML.parse("a = 1e")).toThrow();
+  expect(() => Bun.TOML.parse("a = 1e+")).toThrow();
+  // Signed exponents with digits are fine.
+  expect(Bun.TOML.parse("a = 6.626e-34")).toEqual({ a: 6.626e-34 });
+  expect(Bun.TOML.parse("a = 1e+6")).toEqual({ a: 1e6 });
+});
+
+// decode_escape_sequences is instantiated with REJECT_HEX_ESCAPE and
+// ALLOW_LINE_CONTINUATIONS both keyed to multiline-ness: multiline basic
+// strings permit `\<newline>` but reject `\x`, single-line basic strings do
+// the opposite (`\x` is a historical extension; TOML proper has neither).
+test("Bun.TOML.parse allows \\x escapes in single-line basic strings only", () => {
+  expect(Bun.TOML.parse('a = "\\x41"')).toEqual({ a: "A" });
+  expect(() => Bun.TOML.parse('a = """\\x41"""')).toThrow();
+});
+
+test("Bun.TOML.parse allows line continuations in multiline basic strings only", () => {
+  // Note: only the `\<newline>` pair is dropped. TOML proper also trims the
+  // next line's leading whitespace; Bun's decoder keeps it (JS semantics).
+  expect(Bun.TOML.parse('a = """line \\\n   joined"""')).toEqual({ a: "line    joined" });
+  // CRLF after the backslash is a single continuation too.
+  expect(Bun.TOML.parse('a = """line \\\r\n   joined"""')).toEqual({ a: "line    joined" });
+  expect(() => Bun.TOML.parse('a = "line \\\n   joined"')).toThrow();
+});
+
+test("Bun.TOML.parse decodes unicode escapes and rejects out-of-range ones", () => {
+  expect(Bun.TOML.parse('a = "\\u0041\\u00e9\\u2764"')).toEqual({ a: "A\u00e9\u2764" });
+  expect(Bun.TOML.parse('a = "\\u{1F600}"')).toEqual({ a: "\u{1F600}" });
+  // Above U+10FFFF.
+  expect(() => Bun.TOML.parse('a = "\\u{110000}"')).toThrow();
+  // Non-hex digits in a fixed-length escape.
+  expect(() => Bun.TOML.parse('a = "\\uZZZZ"')).toThrow();
+});

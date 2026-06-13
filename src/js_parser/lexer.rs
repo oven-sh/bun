@@ -5,7 +5,6 @@ use core::fmt;
 use bun_ast as js_ast;
 use bun_ast::lexer_tables as tables;
 use bun_ast::{LexerLog, Loc, Log, Range, Source};
-use bun_core::fmt::hex_digit_value_u32;
 use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use bun_core::{Environment, feature_flags as FeatureFlags};
@@ -448,6 +447,41 @@ impl<
     }
 }
 
+impl<
+    'a,
+    const IS_JSON: bool,
+    const ALLOW_COMMENTS: bool,
+    const ALLOW_TRAILING_COMMAS: bool,
+    const IGNORE_LEADING_ESCAPE_SEQUENCES: bool,
+    const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
+    const JSON_WARN_DUPLICATE_KEYS: bool,
+    const WAS_ORIGINALLY_MACRO: bool,
+    const GUESS_INDENTATION: bool,
+> bun_ast::lexer_log::EscapeLexer<'a>
+    for LexerType<
+        'a,
+        IS_JSON,
+        ALLOW_COMMENTS,
+        ALLOW_TRAILING_COMMAS,
+        IGNORE_LEADING_ESCAPE_SEQUENCES,
+        IGNORE_TRAILING_ESCAPE_SEQUENCES,
+        JSON_WARN_DUPLICATE_KEYS,
+        WAS_ORIGINALLY_MACRO,
+        GUESS_INDENTATION,
+    >
+{
+    type Buf = Vec<u16>;
+    const IS_JSON: bool = IS_JSON;
+    #[inline]
+    fn end_mut(&mut self) -> &mut usize {
+        &mut self.end
+    }
+    #[inline]
+    fn push_codepoint(buf: &mut Vec<u16>, c: u32) {
+        strings::push_codepoint_utf16(buf, c);
+    }
+}
+
 lexer_impl_header! {
     /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
     /// other `self.*` fields as arguments without a borrow-checker conflict;
@@ -605,344 +639,7 @@ lexer_impl_header! {
         if IS_JSON {
             self.is_ascii_only = false;
         }
-
-        let iterator = CodepointIterator::init(text);
-        let mut iter = strings::Cursor::default();
-        while iterator.next(&mut iter) {
-            let width = iter.width;
-            match iter.c {
-                0x0D => {
-                    // From the specification:
-                    //
-                    // 11.8.6.1 Static Semantics: TV and TRV
-                    //
-                    // TV excludes the code units of LineContinuation while TRV includes
-                    // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
-                    // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
-                    // include a <CR> or <CR><LF> sequence.
-
-                    // Convert '\r\n' into '\n'
-                    let next_i: usize = iter.i as usize + 1;
-                    iter.i += (next_i < text.len() && text[next_i] == b'\n') as u32;
-
-                    // Convert '\r' into '\n'
-                    buf.push(u16::from(b'\n'));
-                    continue;
-                }
-
-                0x5C => {
-                    if !iterator.next(&mut iter) {
-                        return Ok(());
-                    }
-
-                    let c2 = iter.c;
-                    let width2 = iter.width;
-                    match c2 {
-                        // https://mathiasbynens.be/notes/javascript-escapes#single
-                        0x62 => {
-                            buf.push(0x08);
-                            continue;
-                        }
-                        0x66 => {
-                            buf.push(0x0C);
-                            continue;
-                        }
-                        0x6E => {
-                            buf.push(0x0A);
-                            continue;
-                        }
-                        0x76 => {
-                            // Vertical tab is invalid JSON
-                            // We're going to allow it.
-                            buf.push(0x0B);
-                            continue;
-                        }
-                        0x74 => {
-                            buf.push(0x09);
-                            continue;
-                        }
-                        0x72 => {
-                            buf.push(0x0D);
-                            continue;
-                        }
-
-                        // legacy octal literals
-                        0x30..=0x37 => {
-                            let octal_start =
-                                (iter.i as usize + width2 as usize).saturating_sub(2);
-                            if IS_JSON {
-                                self.end = (start + iter.i as usize)
-                                    .saturating_sub(width2 as usize);
-                                self.syntax_error()?;
-                            }
-
-                            // 1-3 digit octal
-                            let mut is_bad = false;
-                            let mut value: i64 = (c2 - 0x30) as i64;
-                            let mut prev = iter;
-
-                            if !iterator.next(&mut iter) {
-                                if value == 0 {
-                                    buf.push(0);
-                                    return Ok(());
-                                }
-                                self.syntax_error()?;
-                                return Ok(());
-                            }
-
-                            let c3: CodePoint = iter.c;
-
-                            match c3 {
-                                0x30..=0x37 => {
-                                    value = value * 8 + (c3 - 0x30) as i64;
-                                    prev = iter;
-                                    if !iterator.next(&mut iter) {
-                                        return self.syntax_error();
-                                    }
-
-                                    let c4 = iter.c;
-                                    match c4 {
-                                        0x30..=0x37 => {
-                                            let temp =
-                                                value * 8 + (c4 - 0x30) as i64;
-                                            if temp < 256 {
-                                                value = temp;
-                                            } else {
-                                                iter = prev;
-                                            }
-                                        }
-                                        0x38 | 0x39 => {
-                                            is_bad = true;
-                                        }
-                                        _ => {
-                                            iter = prev;
-                                        }
-                                    }
-                                }
-                                0x38 | 0x39 => {
-                                    is_bad = true;
-                                }
-                                _ => {
-                                    iter = prev;
-                                }
-                            }
-
-                            iter.c = i32::try_from(value).expect("int cast");
-                            if is_bad {
-                                // `octal_start` is text-relative like `iter.i`;
-                                // map back to absolute source position the same
-                                // way every sibling error path does (e.g.
-                                // `start + hex_start` in the `\u{}` branch).
-                                self.add_range_error(
-                                    Range {
-                                        loc: Loc {
-                                            start: i32::try_from(start + octal_start).expect("int cast"),
-                                        },
-                                        len: i32::try_from(
-                                            iter.i as usize - octal_start,
-                                        )
-                                        .unwrap(),
-                                    },
-                                    format_args!("Invalid legacy octal literal"),
-                                )
-                                .expect("unreachable");
-                            }
-                        }
-                        0x38 | 0x39 => {
-                            iter.c = c2;
-                        }
-                        // 2-digit hexadecimal
-                        0x78 => {
-                            let mut value: CodePoint = 0;
-                            let mut c3: CodePoint;
-                            let mut width3: u8;
-
-                            if !iterator.next(&mut iter) {
-                                return self.syntax_error();
-                            }
-                            c3 = iter.c;
-                            width3 = iter.width;
-                            match hex_digit_value_u32(c3 as u32) {
-                                Some(d) => value = (value * 16) | d as CodePoint,
-                                None => {
-                                    self.end = (start + iter.i as usize)
-                                        .saturating_sub(width3 as usize);
-                                    return self.syntax_error();
-                                }
-                            }
-
-                            if !iterator.next(&mut iter) {
-                                return self.syntax_error();
-                            }
-                            c3 = iter.c;
-                            width3 = iter.width;
-                            match hex_digit_value_u32(c3 as u32) {
-                                Some(d) => value = (value * 16) | d as CodePoint,
-                                None => {
-                                    self.end = (start + iter.i as usize)
-                                        .saturating_sub(width3 as usize);
-                                    return self.syntax_error();
-                                }
-                            }
-
-                            iter.c = value;
-                        }
-                        0x75 => {
-                            // We're going to make this an i64 so we don't risk integer overflows
-                            // when people do weird things
-                            let mut value: i64 = 0;
-
-                            if !iterator.next(&mut iter) {
-                                return self.syntax_error();
-                            }
-                            let mut c3 = iter.c;
-                            let mut width3 = iter.width;
-
-                            // variable-length
-                            if c3 == 0x7B {
-                                if IS_JSON {
-                                    self.end = (start + iter.i as usize)
-                                        .saturating_sub(width2 as usize);
-                                    self.syntax_error()?;
-                                }
-
-                                // `iter.i` is the byte offset of `{` inside `text`;
-                                // back up past `\` and `u` only. `width3` is the
-                                // width of `{` itself, which `iter.i` already points
-                                // at — subtracting it lands one character too early.
-                                let hex_start = (iter.i as usize)
-                                    .saturating_sub(width as usize)
-                                    .saturating_sub(width2 as usize);
-                                let mut is_first = true;
-                                let mut is_out_of_range = false;
-                                'variable_length: loop {
-                                    if !iterator.next(&mut iter) {
-                                        break 'variable_length;
-                                    }
-                                    c3 = iter.c;
-
-                                    if c3 == 0x7D {
-                                        if is_first {
-                                            self.end = (start + iter.i as usize)
-                                                .saturating_sub(width3 as usize);
-                                            return self.syntax_error();
-                                        }
-                                        break 'variable_length;
-                                    }
-                                    match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = (value * 16) | d as i64,
-                                        None => {
-                                            self.end = (start + iter.i as usize)
-                                                .saturating_sub(width3 as usize);
-                                            return self.syntax_error();
-                                        }
-                                    }
-
-                                    // '\U0010FFFF
-                                    // copied from golang utf8.MaxRune
-                                    if value > 1_114_111 {
-                                        is_out_of_range = true;
-                                    }
-                                    is_first = false;
-                                }
-
-                                if is_out_of_range {
-                                    self.add_range_error(
-                                        Range {
-                                            loc: Loc {
-                                                start: i32::try_from(start + hex_start)
-                                                    .unwrap(),
-                                            },
-                                            len: i32::try_from(
-                                                (iter.i as usize).saturating_sub(hex_start),
-                                            )
-                                            .unwrap(),
-                                        },
-                                        format_args!(
-                                            "Unicode escape sequence is out of range"
-                                        ),
-                                    )?;
-
-                                    return Ok(());
-                                }
-
-                                // fixed-length
-                            } else {
-                                // Fixed-length
-                                let mut j: usize = 0;
-                                while j < 4 {
-                                    match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = (value * 16) | d as i64,
-                                        None => {
-                                            self.end = (start + iter.i as usize)
-                                                .saturating_sub(width3 as usize);
-                                            return self.syntax_error();
-                                        }
-                                    }
-
-                                    if j < 3 {
-                                        if !iterator.next(&mut iter) {
-                                            return self.syntax_error();
-                                        }
-                                        c3 = iter.c;
-                                        width3 = iter.width;
-                                    }
-                                    j += 1;
-                                }
-                                let _ = width3;
-                            }
-
-                            iter.c = value as CodePoint; // @truncate
-                        }
-                        0x0D => {
-                            if IS_JSON {
-                                self.end = (start + iter.i as usize)
-                                    .saturating_sub(width2 as usize);
-                                self.syntax_error()?;
-                            }
-
-                            // Make sure Windows CRLF counts as a single newline
-                            let next_i: usize = iter.i as usize + 1;
-                            iter.i +=
-                                (next_i < text.len() && text[next_i] == b'\n') as u32;
-
-                            // Ignore line continuations. A line continuation is not an escaped newline.
-                            continue;
-                        }
-                        0x0A | 0x2028 | 0x2029 => {
-                            if IS_JSON {
-                                self.end = (start + iter.i as usize)
-                                    .saturating_sub(width2 as usize);
-                                self.syntax_error()?;
-                            }
-
-                            // Ignore line continuations. A line continuation is not an escaped newline.
-                            continue;
-                        }
-                        _ => {
-                            if IS_JSON {
-                                match c2 {
-                                    0x22 | 0x5C | 0x2F => {}
-                                    _ => {
-                                        self.end = (start + iter.i as usize)
-                                            .saturating_sub(width2 as usize);
-                                        self.syntax_error()?;
-                                    }
-                                }
-                            }
-                            iter.c = c2;
-                        }
-                    }
-                }
-                _ => {}
-            }
-
-            match iter.c {
-                -1 => return self.add_default_error(b"Unexpected end of file"),
-                c => strings::push_codepoint_utf16(buf, c as u32),
-            }
-        }
-        Ok(())
+        bun_ast::lexer_log::decode_escape_sequences::<_, true, false>(self, start, text, buf)
     }
 
     // PERF: heavy sub-scanner — the per-byte string body loop plus the

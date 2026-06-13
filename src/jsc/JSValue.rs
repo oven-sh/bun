@@ -2519,10 +2519,12 @@ impl JSValue {
     /// value's own *enumerable* properties and never walks the prototype
     /// chain. A function's intrinsic `name`/`length`/`prototype` are
     /// `DontEnum`, so this skips them while visiting user-assigned
-    /// properties; used to print `[Function: x] { ... }`.
+    /// properties; used to print `[Function: x] { ... }`. When `ordered` the
+    /// keys are sorted by code point (the `sorted: true` inspect option).
     pub fn for_each_property_enumerable_own(
         self,
         global: &JSGlobalObject,
+        ordered: bool,
         ctx: *mut c_void,
         callback: ForEachPropertyCallback,
     ) -> JsResult<()> {
@@ -2532,11 +2534,12 @@ impl JSValue {
                 this: JSValue,
                 global: &JSGlobalObject,
                 ctx: *mut c_void,
+                ordered: bool,
                 callback: ForEachPropertyCallback,
             );
         }
         crate::top_scope!(scope, global);
-        JSC__JSValue__forEachPropertyEnumerableOwn(self, global, ctx, callback);
+        JSC__JSValue__forEachPropertyEnumerableOwn(self, global, ctx, ordered, callback);
         scope.return_if_exception()
     }
     /// `JSValue.isBuffer` — `instanceof Buffer` check via

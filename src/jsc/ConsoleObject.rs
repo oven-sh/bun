@@ -5588,6 +5588,7 @@ pub mod formatter {
             if is_callable {
                 value.for_each_property_enumerable_own(
                     global_this,
+                    ordered_properties,
                     (&raw mut iter).cast::<c_void>(),
                     PropertyIteratorCtx::<C>::for_each,
                 )?;

@@ -614,6 +614,23 @@ describe("functions and classes with own enumerable properties", () => {
     expect(Bun.inspect(Foo)).toBe("[class Foo] {\n  a: 1,\n}");
   });
 
+  it("prints a function's own enumerable symbol properties", () => {
+    const k = Symbol("k");
+    function fn() {}
+    fn[k] = 123;
+    expect(Bun.inspect(fn)).toBe("[Function: fn] {\n  [Symbol(k)]: 123,\n}");
+  });
+
+  it("honors the sorted option for callable properties", () => {
+    function fn() {}
+    fn.b = 1;
+    fn.a = 2;
+    // Insertion order by default.
+    expect(Bun.inspect(fn)).toBe("[Function: fn] {\n  b: 1,\n  a: 2,\n}");
+    // Sorted by code point when requested (matches Node's util.inspect).
+    expect(Bun.inspect(fn, { sorted: true })).toBe("[Function: fn] {\n  a: 2,\n  b: 1,\n}");
+  });
+
   it("leaves property-less functions and classes unchanged", () => {
     function noProps() {}
     class Empty {}

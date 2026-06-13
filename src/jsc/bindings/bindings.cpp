@@ -5630,13 +5630,14 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     properties.releaseData();
 }
 
-// Enumerate a value's own *enumerable* string and symbol properties in spec
-// order, without walking the prototype chain. Unlike forEachProperty this
-// excludes DontEnum properties, so a function's intrinsic `name`/`length`/
-// `prototype` are skipped while user-assigned properties are visited. Used to
-// print `[Function: x] { ... }` / `[class X] { ... }` the way Node's
-// util.inspect does.
-extern "C" void JSC__JSValue__forEachPropertyEnumerableOwn(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+// Enumerate a value's own *enumerable* string and symbol properties, without
+// walking the prototype chain. Unlike forEachProperty this excludes DontEnum
+// properties, so a function's intrinsic `name`/`length`/`prototype` are skipped
+// while user-assigned properties are visited. Used to print
+// `[Function: x] { ... }` / `[class X] { ... }` the way Node's util.inspect
+// does. When `ordered` the keys are sorted by code point (the `sorted: true`
+// inspect option); otherwise they are visited in spec/insertion order.
+extern "C" void JSC__JSValue__forEachPropertyEnumerableOwn(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, bool ordered, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -5657,7 +5658,16 @@ extern "C" void JSC__JSValue__forEachPropertyEnumerableOwn(JSC::EncodedJSValue J
 
     auto clientData = WebCore::clientData(vm);
 
-    for (const auto& property : properties.data()->propertyNameVector()) {
+    auto vector = properties.data()->propertyNameVector();
+    if (ordered) {
+        std::sort(vector.begin(), vector.end(), [&](Identifier a, Identifier b) -> bool {
+            const WTF::StringImpl* aImpl = a.isSymbol() && !a.isPrivateName() ? a.impl() : a.string().impl();
+            const WTF::StringImpl* bImpl = b.isSymbol() && !b.isPrivateName() ? b.impl() : b.string().impl();
+            return codePointCompare(aImpl, bImpl) < 0;
+        });
+    }
+
+    for (const auto& property : vector) {
         if (property.isNull()) [[unlikely]]
             continue;
 
@@ -5694,6 +5704,13 @@ extern "C" void JSC__JSValue__forEachPropertyEnumerableOwn(JSC::EncodedJSValue J
 
         JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
         iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), property.isPrivateName());
+
+        // The callback recurses into the formatter, which can throw (a nested
+        // throwing getter, a stack overflow). Stop before the next iteration's
+        // value extraction clears the pending exception via tryClearException;
+        // the caller propagates it.
+        if (scope.exception()) [[unlikely]]
+            break;
     }
     properties.releaseData();
 }

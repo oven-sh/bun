@@ -3,14 +3,43 @@ title: "Lifecycle scripts"
 description: "How Bun handles package lifecycle scripts securely"
 ---
 
-Packages on `npm` can define _lifecycle scripts_ in their `package.json`. Some of the most common are below, but there are [many others](https://docs.npmjs.com/cli/v10/using-npm/scripts).
+Packages on `npm` can define _lifecycle scripts_ in their `package.json`. These scripts are arbitrary shell commands that the package manager is expected to read and execute at the appropriate time. Because executing arbitrary scripts represents a potential security risk, Bun—unlike other `npm` clients—does not execute arbitrary lifecycle scripts by default.
 
-- `preinstall`: Runs before the package is installed
-- `postinstall`: Runs after the package is installed
-- `preuninstall`: Runs before the package is uninstalled
-- `prepublishOnly`: Runs before the package is published
+## Supported lifecycle scripts
 
-These scripts are arbitrary shell commands that the package manager is expected to read and execute at the appropriate time. But executing arbitrary scripts represents a potential security risk, so—unlike other `npm` clients—Bun does not execute arbitrary lifecycle scripts by default.
+Bun invokes a fixed subset of the [npm lifecycle scripts](https://docs.npmjs.com/cli/v10/using-npm/scripts). Other package-manager hooks from that page (for example `dependencies`, `preuninstall`, `postuninstall`) are **not** invoked by Bun.
+
+Note that this section is about _package-manager_ hooks. Generic `pre<name>` / `post<name>` wrappers still run around any matching `bun run <name>` — so for example `bun run build` will still invoke `prebuild` and `postbuild` if they exist.
+
+During `bun install`, `bun add`, `bun remove`, and `bun update`, Bun runs these scripts in this order:
+
+- `preinstall`
+- `install`
+- `postinstall`
+- `preprepare` (root, `git:`, and `github:` packages only)
+- `prepare` (root, `git:`, `github:`, and workspace packages)
+- `postprepare` (root, `git:`, and `github:` packages only)
+
+The prepare-family hooks (`preprepare`, `prepare`, `postprepare`) are not run for tarballs fetched from the npm registry — by convention those scripts are only meaningful for source checkouts.
+
+<Note>
+  Unlike npm, Bun runs the **root** project's install-time scripts as a single batch **after** `node_modules` is
+  populated, the lockfile is saved, and dependency scripts have finished. Root `preinstall` does **not** run before
+  dependencies are fetched. This means common npm patterns (e.g. writing `.npmrc` from a root `preinstall` so dependency
+  downloads pick it up) don't work under Bun — configure registry credentials before invoking `bun install` instead.
+</Note>
+
+During `bun publish` and `bun pm pack`, Bun runs:
+
+- `prepublishOnly`: Before packing (only on publish, not on plain pack)
+- `prepack`: Before packing
+- `prepare`: Before packing
+- `postpack`: After packing
+- `publish` / `postpublish`: After the tarball is uploaded (publish only)
+
+During `bun pm version`, Bun runs `preversion`, `version`, and `postversion`.
+
+Lifecycle scripts of installed dependencies only run for packages on Bun's default trusted list or in your project's `trustedDependencies` (see below). Workspace packages are always trusted.
 
 ---
 

@@ -268,5 +268,17 @@ console.log("Hello %i %j", [1, 2, 3, 4], 1);
 console.log("Hello \\%i %i,", 5, 6);
 console.log("Hello %%i %i", 5, 6);
 
+// https://github.com/oven-sh/bun/issues/31777 — %i/%d/%f must coerce the
+// argument the way parseInt/parseFloat/Number do (matching node + util.format),
+// instead of running Number() for every case.
+console.log("%i %i", [1, 2, 3, 4, 5]); // 1 %i
+console.log("%i", "42abc"); // 42
+console.log("%i", "0xff"); // 255
+console.log("%d", [3.9]); // 3.9 (Number, not parseInt-truncated)
+console.log("%d", "42abc"); // NaN
+console.log("%f", "3.14xyz"); // 3.14
+console.log("%f", [1.5, 2, 3]); // 1.5
+console.log("%i %d %f", 123n, 456n, 789n); // 123n 456n 789
+
 // doesn't go out of bounds when printing
 console.log("%%d", 1);

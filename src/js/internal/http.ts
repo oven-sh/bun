@@ -478,6 +478,88 @@ function filterEnvForProxies(env) {
   };
 }
 
+// Stub members shared by `FakeSocket` (internal/http/FakeSocket.ts) and
+// `NodeHTTPServerSocket` (node/_http_server.ts). They are copied onto each
+// class's prototype (instead of using a base class) so the prototype chain
+// stays `Socket.prototype -> Duplex.prototype`, matching `net.Socket`.
+const { constructor: _socketStubConstructor, ...socketStubDescriptors } = Object.getOwnPropertyDescriptors(
+  class {
+    declare connecting: boolean;
+    declare readable: boolean;
+    declare writable: boolean;
+    declare writableLength: number;
+    declare address: () => any;
+
+    connect(_port, _host, _connectListener) {
+      return this;
+    }
+
+    get bufferSize() {
+      return this.writableLength;
+    }
+
+    get pending() {
+      return this.connecting;
+    }
+
+    get readyState() {
+      if (this.connecting) return "opening";
+      if (this.readable) {
+        return this.writable ? "open" : "readOnly";
+      } else {
+        return this.writable ? "writeOnly" : "closed";
+      }
+    }
+
+    ref() {
+      return this;
+    }
+
+    get remoteAddress() {
+      return this.address()?.address;
+    }
+
+    set remoteAddress(val) {
+      // initialize the object so that other properties wouldn't be lost
+      this.address().address = val;
+    }
+
+    get remotePort() {
+      return this.address()?.port;
+    }
+
+    set remotePort(val) {
+      // initialize the object so that other properties wouldn't be lost
+      this.address().port = val;
+    }
+
+    get remoteFamily() {
+      return this.address()?.family;
+    }
+
+    set remoteFamily(val) {
+      // initialize the object so that other properties wouldn't be lost
+      this.address().family = val;
+    }
+
+    resetAndDestroy() {}
+
+    setKeepAlive(_enable = false, _initialDelay = 0) {}
+
+    setNoDelay(_noDelay = true) {
+      return this;
+    }
+
+    unref() {
+      return this;
+    }
+  }.prototype,
+);
+
+function installSocketStubs(SocketClass: { prototype: object }) {
+  Object.defineProperties(SocketClass.prototype, socketStubDescriptors);
+}
+
 export {
   Headers,
   METHODS,
@@ -507,6 +589,7 @@ export {
   headerStateSymbol,
   headersSymbol,
   headersTuple,
+  installSocketStubs,
   isAbortError,
   isTlsSymbol,
   kAbortController,

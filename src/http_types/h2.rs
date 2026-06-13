@@ -336,3 +336,41 @@ impl Default for FullSettingsPayload {
 impl FullSettingsPayload {
     pub(crate) const BYTE_SIZE: usize = 42;
 }
+
+// ─── field validation (RFC 9113 §8.2.1) ─────────
+
+/// RFC 9110 §5.6.2 `tchar`, restricted to lowercase: RFC 9113 §8.2.1 requires
+/// HTTP/2 field names to be lowercase, so uppercase tchars are rejected (or
+/// normalized) by callers rather than accepted here.
+#[inline]
+pub const fn is_lower_tchar(c: u8) -> bool {
+    matches!(
+        c,
+        b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'!'
+            | b'#'
+            | b'$'
+            | b'%'
+            | b'&'
+            | b'\''
+            | b'*'
+            | b'+'
+            | b'-'
+            | b'.'
+            | b'^'
+            | b'_'
+            | b'`'
+            | b'|'
+            | b'~'
+    )
+}
+
+/// RFC 9113 §8.2.1: a field value MUST NOT contain NUL (0x00), LF (0x0a), or
+/// CR (0x0d). HPACK is length-prefixed so these would otherwise pass through
+/// verbatim, breaking the no-CR/LF invariant the HTTP/1.1 parser provides and
+/// enabling header injection when values are forwarded downstream.
+#[inline]
+pub fn is_malformed_field_value(value: &[u8]) -> bool {
+    value.iter().any(|&c| matches!(c, 0 | b'\r' | b'\n'))
+}

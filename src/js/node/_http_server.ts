@@ -47,6 +47,7 @@ const {
   setServerIdleTimeout,
   setServerCustomOptions,
   getMaxHTTPHeaderSize,
+  installSocketStubs,
 } = require("internal/http");
 const NumberIsNaN = Number.isNaN;
 
@@ -963,14 +964,6 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this[kHandle]?.remoteAddress || null;
   }
 
-  get bufferSize() {
-    return this.writableLength;
-  }
-
-  connect(_port, _host, _connectListener) {
-    return this;
-  }
-
   _destroy(err, callback) {
     const handle = this[kHandle];
     if (!handle) {
@@ -1013,10 +1006,6 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this[kHandle]?.localAddress?.port;
   }
 
-  get pending() {
-    return this.connecting;
-  }
-
   #resumeSocket() {
     const handle = this[kHandle];
     const response = handle?.response;
@@ -1044,54 +1033,6 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this.#resumeSocket();
   }
 
-  get readyState() {
-    if (this.connecting) return "opening";
-    if (this.readable) {
-      return this.writable ? "open" : "readOnly";
-    } else {
-      return this.writable ? "writeOnly" : "closed";
-    }
-  }
-
-  ref() {
-    return this;
-  }
-
-  get remoteAddress() {
-    return this.address()?.address;
-  }
-
-  set remoteAddress(val) {
-    // initialize the object so that other properties wouldn't be lost
-    this.address().address = val;
-  }
-
-  get remotePort() {
-    return this.address()?.port;
-  }
-
-  set remotePort(val) {
-    // initialize the object so that other properties wouldn't be lost
-    this.address().port = val;
-  }
-
-  get remoteFamily() {
-    return this.address()?.family;
-  }
-
-  set remoteFamily(val) {
-    // initialize the object so that other properties wouldn't be lost
-    this.address().family = val;
-  }
-
-  resetAndDestroy() {}
-
-  setKeepAlive(_enable = false, _initialDelay = 0) {}
-
-  setNoDelay(_noDelay = true) {
-    return this;
-  }
-
   setTimeout(_timeout, _callback) {
     return this;
   }
@@ -1100,10 +1041,6 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     const err = new Error("Changing the socket encoding is not allowed per RFC7230 Section 3.");
     err.code = "ERR_HTTP_SOCKET_ENCODING";
     throw err;
-  }
-
-  unref() {
-    return this;
   }
 
   _write(_chunk, _encoding, _callback) {
@@ -1229,6 +1166,7 @@ function _writeHead(statusCode, reason, obj, response) {
   updateHasBody(response, statusCode);
 }
 
+installSocketStubs(NodeHTTPServerSocket);
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
 
 function ServerResponse(req, options): void {

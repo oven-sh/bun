@@ -38,6 +38,14 @@ export function initializeWritableStreamDefaultController(this) {
   return this;
 }
 
+$getter;
+export function signal(this) {
+  if ($getByIdDirectPrivate(this, "abortSteps") === undefined)
+    throw $makeGetterTypeError("WritableStreamDefaultController", "signal");
+
+  return $getByIdDirectPrivate(this, "signal");
+}
+
 export function error(this, e) {
   if ($getByIdDirectPrivate(this, "abortSteps") === undefined)
     throw $ERR_INVALID_THIS("WritableStreamDefaultController");

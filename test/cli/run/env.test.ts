@@ -1,6 +1,17 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, bunTest, isLinux, isWindows, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  bunRunAsScript,
+  bunTest,
+  isLinux,
+  isPosix,
+  isWindows,
+  tempDirWithFiles,
+} from "harness";
+import { mkfifo } from "mkfifo";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
@@ -575,6 +586,65 @@ describe("--env-file", () => {
   test("should ignore a file that doesn't exist", () => {
     const res = bunRun(["--env-file=.env.nonexisting"]);
     expect(res.stdout).toBe("");
+  });
+
+  // Regression for https://github.com/oven-sh/bun/issues/30520 — --env-file on
+  // a FIFO used to short-circuit on `stat.size == 0` and silently load nothing.
+  // 1Password's `local-env-file` integration streams secrets through a FIFO,
+  // which is how this surfaced.
+  describe.skipIf(!isPosix)("FIFO-backed env file", () => {
+    test("reads variables from a FIFO with a writer attached", async () => {
+      const fifoPath = path.join(dir, "fifo.env");
+      try {
+        fs.unlinkSync(fifoPath);
+      } catch {}
+      mkfifo(fifoPath, 0o600);
+
+      // Write to the FIFO from a sibling Bun process so the reader can proceed.
+      await using writer = Bun.spawn({
+        cmd: [bunExe(), "-e", `require("fs").writeFileSync(${JSON.stringify(fifoPath)}, "BUNTEST_FIFO=hello-fifo\\n")`],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+
+      const res = bunRun(["--env-file", fifoPath], { BUNTEST_FIFO: undefined });
+      expect(await writer.exited).toBe(0);
+      expect(res.stdout).toBe("BUNTEST_FIFO=hello-fifo");
+
+      fs.unlinkSync(fifoPath);
+    });
+
+    test("reads FIFO content larger than the initial read buffer", async () => {
+      const fifoPath = path.join(dir, "fifo-large.env");
+      try {
+        fs.unlinkSync(fifoPath);
+      } catch {}
+      mkfifo(fifoPath, 0o600);
+
+      // Generate enough env entries to exceed the 4 KiB initial read buffer
+      // and force the read loop to grow the allocation.
+      const pad = Buffer.alloc(32, "x").toString();
+      const entries: string[] = [];
+      for (let i = 0; i < 500; i++) {
+        entries.push(`BUNTEST_K${i}=v${i}_${pad}`);
+      }
+      const payload = entries.join("\n") + "\n";
+
+      await using writer = Bun.spawn({
+        cmd: [bunExe(), "-e", `require("fs").writeFileSync(${JSON.stringify(fifoPath)}, ${JSON.stringify(payload)})`],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+
+      const res = bunRun(["--env-file", fifoPath]);
+      expect(await writer.exited).toBe(0);
+      // Spot-check the first and last entries to confirm the whole file was read.
+      const loaded = new Set(res.stdout.split(","));
+      expect(loaded.has(`BUNTEST_K0=v0_${pad}`)).toBe(true);
+      expect(loaded.has(`BUNTEST_K499=v499_${pad}`)).toBe(true);
+
+      fs.unlinkSync(fifoPath);
+    });
   });
 });
 

@@ -145,8 +145,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
     WorkerOptions options {};
     JSValue nodeWorkerObject {};
-    if (callFrame->argumentCount() == 3) {
+    JSValue mainThreadPort {};
+    if (callFrame->argumentCount() >= 3) {
         nodeWorkerObject = callFrame->argument(2);
+        mainThreadPort = callFrame->argument(3);
         options.kind = WorkerOptions::Kind::Node;
     }
     JSValue workerData = jsUndefined();
@@ -307,13 +309,22 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         }
     }
 
+    // The internal port linking this worker to the main thread for worker_threads.postMessageToThread.
+    // Only present when constructed via node:worker_threads.
+    if (mainThreadPort && mainThreadPort.isObject()) {
+        transferList.append({ vm, mainThreadPort.getObject() });
+    } else {
+        mainThreadPort = jsUndefined();
+    }
+
     Vector<RefPtr<MessagePort>> ports;
-    auto* valueToTransfer = constructEmptyArray(globalObject, nullptr, 2);
+    auto* valueToTransfer = constructEmptyArray(globalObject, nullptr, 3);
     RETURN_IF_EXCEPTION(throwScope, {});
     valueToTransfer->putDirectIndex(globalObject, 0, workerData);
     auto* environmentData = globalObject->nodeWorkerEnvironmentData();
     // If node:worker_threads has not been imported, environment data will not be set up yet.
     valueToTransfer->putDirectIndex(globalObject, 1, environmentData ? environmentData : jsUndefined());
+    valueToTransfer->putDirectIndex(globalObject, 2, mainThreadPort);
 
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, valueToTransfer, WTF::move(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException()) {

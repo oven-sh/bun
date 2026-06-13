@@ -53,7 +53,10 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          OVERLAY_CSS: css("../runtime/bake/client/overlay.css", !!debug),
+          // JSON.stringify so the value is an explicit JS string literal;
+          // relying on Bun's define auto-quote fallback breaks when the
+          // bootstrap bun predates the `*`/`?` JSON-lexer fix (314d044c0a).
+          OVERLAY_CSS: JSON.stringify(css("../runtime/bake/client/overlay.css", !!debug)),
         },
         minify: {
           syntax: !debug,

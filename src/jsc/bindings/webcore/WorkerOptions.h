@@ -24,10 +24,11 @@ struct WorkerOptions {
     // Blob URL.
     bool evalMode { false };
     Kind kind { Kind::Web };
-    // Serialized array containing [workerData, environmentData]
-    // (environmentData is always a Map)
+    // Serialized array containing [workerData, environmentData, mainThreadPort]
+    // (environmentData is always a Map; mainThreadPort is the worker's end of the
+    // postMessageToThread channel, or undefined for Web workers)
     RefPtr<SerializedScriptValue> workerDataAndEnvironmentData;
-    // Objects transferred for either data or environmentData in the transferList
+    // Objects transferred for data, environmentData, or mainThreadPort in the transferList
     Vector<TransferredMessagePort> dataMessagePorts;
     Vector<String> preloadModules;
     std::optional<HashMap<String, String>> env; // TODO(@190n) allow shared

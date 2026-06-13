@@ -107,7 +107,7 @@ public:
 
     void jsRef(JSGlobalObject*);
     void jsUnref(JSGlobalObject*);
-    bool jsHasRef() { return m_hasRef; }
+    bool jsHasRef() { return m_isRefingEventLoop; }
 
 private:
     MessagePort(ScriptExecutionContext&, Ref<MessagePortPipe>&&, uint8_t side);
@@ -128,9 +128,26 @@ private:
     bool m_started { false };
     bool m_isDetached { false };
     bool m_hasMessageEventListener { false };
-    bool m_hasRef { false };
+
+    // Event-loop ref state machine. A port holds a single event-loop ref iff
+    //   m_hasRef && (m_messageEventCount > 0 || m_wantsExplicitRef) && !m_isDetached
+    // updateEventLoopRef() reconciles m_isRefingEventLoop with that predicate.
+    //
+    // m_hasRef: default true. .unref() clears, .ref() sets; on transferred ports the
+    //   first/last 'message' listener also sets/clears it (mirroring Node's
+    //   setupPortReferencing newListener/removeListener → this.ref()/this.unref()). So
+    //   on(); unref() stays unref'd, while unref(); on() re-refs — both matching Node.
+    // m_wantsExplicitRef: set by .ref() or onmessage=fn (so .ref() on a fresh port refs
+    //   even without a listener); cleared by .unref(), onmessage=null, or removing the
+    //   last 'message' listener on a transferred port.
+    // m_messageEventCount: only tracked for transferred ports (onDidChangeListener wired in
+    //   entangle()); fresh ports don't hold the process open via listeners alone.
+    bool m_hasRef { true };
+    bool m_wantsExplicitRef { false };
+    bool m_isRefingEventLoop { false };
 
     uint32_t m_messageEventCount { 0 };
+    void updateEventLoopRef();
     static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
 };
 

@@ -30,15 +30,22 @@ export const symbols = [
   "uv_check_stop",
   "uv_clock_gettime",
   "uv_close",
-  "uv_cond_broadcast",
-  "uv_cond_destroy",
-  "uv_cond_init",
-  "uv_cond_signal",
-  "uv_cond_timedwait",
-  "uv_cond_wait",
+  // Defined in uv-posix-polyfills.c
+  // "uv_cond_broadcast",
+  // Defined in uv-posix-polyfills.c
+  // "uv_cond_destroy",
+  // Defined in uv-posix-polyfills.c
+  // "uv_cond_init",
+  // Defined in uv-posix-polyfills.c
+  // "uv_cond_signal",
+  // Defined in uv-posix-polyfills.c
+  // "uv_cond_timedwait",
+  // Defined in uv-posix-polyfills.c
+  // "uv_cond_wait",
   "uv_cpu_info",
   "uv_cpumask_size",
-  "uv_cwd",
+  // Defined in uv-posix-polyfills.c
+  // "uv_cwd",
   "uv_default_loop",
   "uv_disable_stdio_inheritance",
   "uv_dlclose",
@@ -50,7 +57,8 @@ export const symbols = [
   "uv_exepath",
   "uv_fileno",
   "uv_free_cpu_info",
-  "uv_free_interface_addresses",
+  // Defined in uv-posix-polyfills.c
+  // "uv_free_interface_addresses",
   "uv_freeaddrinfo",
   "uv_fs_access",
   "uv_fs_chmod",
@@ -107,7 +115,8 @@ export const symbols = [
   "uv_get_available_memory",
   "uv_get_constrained_memory",
   "uv_get_free_memory",
-  "uv_get_osfhandle",
+  // Defined in uv-posix-polyfills.c
+  // "uv_get_osfhandle",
   "uv_get_process_title",
   "uv_get_total_memory",
   "uv_getaddrinfo",
@@ -130,14 +139,22 @@ export const symbols = [
   "uv_idle_stop",
   "uv_if_indextoiid",
   "uv_if_indextoname",
-  "uv_inet_ntop",
-  "uv_inet_pton",
-  "uv_interface_addresses",
-  "uv_ip4_addr",
-  "uv_ip4_name",
-  "uv_ip6_addr",
-  "uv_ip6_name",
-  "uv_ip_name",
+  // Defined in uv-posix-polyfills.c
+  // "uv_inet_ntop",
+  // Defined in uv-posix-polyfills.c
+  // "uv_inet_pton",
+  // Defined in uv-posix-polyfills.c
+  // "uv_interface_addresses",
+  // Defined in uv-posix-polyfills.c
+  // "uv_ip4_addr",
+  // Defined in uv-posix-polyfills.c
+  // "uv_ip4_name",
+  // Defined in uv-posix-polyfills.c
+  // "uv_ip6_addr",
+  // Defined in uv-posix-polyfills.c
+  // "uv_ip6_name",
+  // Defined in uv-posix-polyfills.c
+  // "uv_ip_name",
   "uv_is_active",
   "uv_is_closing",
   "uv_is_readable",
@@ -172,7 +189,8 @@ export const symbols = [
   "uv_now",
   // Defined in uv-posix-polyfills.cpp
   // "uv_once",
-  "uv_open_osfhandle",
+  // Defined in uv-posix-polyfills.c
+  // "uv_open_osfhandle",
   "uv_os_environ",
   "uv_os_free_environ",
   "uv_os_free_group",
@@ -231,19 +249,32 @@ export const symbols = [
   "uv_req_type_name",
   "uv_resident_set_memory",
   "uv_run",
-  "uv_rwlock_destroy",
-  "uv_rwlock_init",
-  "uv_rwlock_rdlock",
-  "uv_rwlock_rdunlock",
-  "uv_rwlock_tryrdlock",
-  "uv_rwlock_trywrlock",
-  "uv_rwlock_wrlock",
-  "uv_rwlock_wrunlock",
-  "uv_sem_destroy",
-  "uv_sem_init",
-  "uv_sem_post",
-  "uv_sem_trywait",
-  "uv_sem_wait",
+  // Defined in uv-posix-polyfills.c
+  // "uv_rwlock_destroy",
+  // Defined in uv-posix-polyfills.c
+  // "uv_rwlock_init",
+  // Defined in uv-posix-polyfills.c
+  // "uv_rwlock_rdlock",
+  // Defined in uv-posix-polyfills.c
+  // "uv_rwlock_rdunlock",
+  // Defined in uv-posix-polyfills.c
+  // "uv_rwlock_tryrdlock",
+  // Defined in uv-posix-polyfills.c
+  // "uv_rwlock_trywrlock",
+  // Defined in uv-posix-polyfills.c
+  // "uv_rwlock_wrlock",
+  // Defined in uv-posix-polyfills.c
+  // "uv_rwlock_wrunlock",
+  // Defined in uv-posix-polyfills.c
+  // "uv_sem_destroy",
+  // Defined in uv-posix-polyfills.c
+  // "uv_sem_init",
+  // Defined in uv-posix-polyfills.c
+  // "uv_sem_post",
+  // Defined in uv-posix-polyfills.c
+  // "uv_sem_trywait",
+  // Defined in uv-posix-polyfills.c
+  // "uv_sem_wait",
   "uv_send_buffer_size",
   "uv_set_process_title",
   "uv_setup_args",
@@ -274,13 +305,15 @@ export const symbols = [
   "uv_thread_create",
   "uv_thread_create_ex",
   "uv_thread_detach",
-  "uv_thread_equal",
+  // Defined in uv-posix-polyfills.c
+  // "uv_thread_equal",
   "uv_thread_getaffinity",
   "uv_thread_getcpu",
   "uv_thread_getname",
   "uv_thread_getpriority",
   "uv_thread_join",
-  "uv_thread_self",
+  // Defined in uv-posix-polyfills.c
+  // "uv_thread_self",
   "uv_thread_setaffinity",
   "uv_thread_setname",
   "uv_thread_setpriority",
@@ -328,8 +361,10 @@ export const symbols = [
   "uv_uptime",
   "uv_utf16_length_as_wtf8",
   "uv_utf16_to_wtf8",
-  "uv_version",
-  "uv_version_string",
+  // Defined in uv-posix-polyfills.c
+  // "uv_version",
+  // Defined in uv-posix-polyfills.c
+  // "uv_version_string",
   "uv_walk",
   "uv_write",
   "uv_write2",

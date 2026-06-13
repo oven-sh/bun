@@ -57,7 +57,9 @@ describe.if(!isWindows)("uv stubs", () => {
     await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
 
     nativeModule = require(path.join(tempdir, "./build/Release/uv_test.node"));
-  });
+    // Building the addon with node-gyp takes much longer than the default
+    // per-test timeout.
+  }, 300_000);
 
   afterEach(() => {
     process.chdir(cwd);
@@ -89,6 +91,140 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(nativeModule.testUvOnce()).toBe(1);
     expect(nativeModule.testUvOnce()).toBe(1);
     expect(nativeModule.testUvOnce()).toBe(1);
+  });
+
+  test("uv_version and uv_version_string", () => {
+    const r = nativeModule.testVersion();
+    expect(r.major).toBe(1);
+    expect(r.version).toBe((r.major << 16) | (r.minor << 8) | r.patch);
+    expect(r.versionString).toStartWith(`${r.major}.${r.minor}.${r.patch}`);
+  });
+
+  test("uv_cwd", () => {
+    const r = nativeModule.testCwd();
+    const cwdByteLength = Buffer.byteLength(r.cwd);
+    expect(r.rcBig).toBe(0);
+    expect(r.cwd).toBe(process.cwd());
+    expect(r.bigSize).toBe(cwdByteLength);
+    // A too-small buffer reports UV_ENOBUFS and the required size (including
+    // the NUL terminator).
+    expect(r.rcSmall).toBe(nativeModule.constants.UV_ENOBUFS);
+    expect(r.smallSize).toBe(cwdByteLength + 1);
+    expect(r.rcInvalid).toBe(nativeModule.constants.UV_EINVAL);
+  });
+
+  test("uv_get_osfhandle and uv_open_osfhandle", () => {
+    expect(nativeModule.testOsfhandle()).toBe(true);
+  });
+
+  test("uv_thread_self and uv_thread_equal", () => {
+    expect(nativeModule.testThreadSelf()).toEqual({
+      selfEqualsSelf: true,
+      selfMatchesPthread: true,
+      otherThreadDiffers: true,
+    });
+  });
+
+  test("uv_ip4_addr, uv_ip4_name, uv_ip_name", () => {
+    const { UV_EINVAL } = nativeModule.constants;
+    expect(nativeModule.testIp4()).toEqual({
+      rc: 0,
+      familyOk: true,
+      port: 8080,
+      addrRaw: 0x7f000001,
+      nameRc: 0,
+      name: "127.0.0.1",
+      genericRc: 0,
+      genericName: "127.0.0.1",
+      invalidOctetRc: UV_EINVAL,
+      invalidStringRc: UV_EINVAL,
+    });
+  });
+
+  test("uv_ip6_addr, uv_ip6_name", () => {
+    expect(nativeModule.testIp6()).toEqual({
+      rc: 0,
+      familyOk: true,
+      port: 9090,
+      isLoopback: true,
+      nameRc: 0,
+      name: "::1",
+      rc2: 0,
+      name2Rc: 0,
+      name2: "2001:db8:85a3::8a2e:370:7334",
+      invalidRc: nativeModule.constants.UV_EINVAL,
+    });
+  });
+
+  test("uv_inet_pton and uv_inet_ntop", () => {
+    const { UV_ENOSPC, UV_EINVAL, UV_EAFNOSUPPORT } = nativeModule.constants;
+    expect(nativeModule.testInet()).toEqual({
+      pton4Rc: 0,
+      bytesOk: true,
+      ntop4Rc: 0,
+      round4: "192.168.100.200",
+      pton6Rc: 0,
+      ntop6Rc: 0,
+      round6: "2001:db8::ff00:42:8329",
+      nospcRc: UV_ENOSPC,
+      einvalRc: UV_EINVAL,
+      eafnosupportRc: UV_EAFNOSUPPORT,
+    });
+  });
+
+  test("uv_cond wait/signal", () => {
+    expect(nativeModule.testCondSignal()).toBe(1);
+  });
+
+  test("uv_cond broadcast", () => {
+    expect(nativeModule.testCondBroadcast()).toBe(2);
+  });
+
+  test("uv_cond_timedwait times out", () => {
+    const r = nativeModule.testCondTimedwait();
+    expect(r.rc).toBe(nativeModule.constants.UV_ETIMEDOUT);
+    // 20ms requested; anything way below means the deadline computation used
+    // the wrong clock.
+    expect(r.elapsedMs).toBeGreaterThanOrEqual(10);
+  });
+
+  test("uv_sem", () => {
+    const { UV_EAGAIN } = nativeModule.constants;
+    // testSem also exercises a blocking uv_sem_wait satisfied by uv_sem_post
+    // from another thread; returning at all proves it woke up.
+    expect(nativeModule.testSem()).toEqual({
+      try1: 0,
+      try2: 0,
+      tryEmpty: UV_EAGAIN,
+      tryAfterPost: 0,
+    });
+  });
+
+  test("uv_rwlock", () => {
+    const { UV_EBUSY } = nativeModule.constants;
+    expect(nativeModule.testRwlock()).toEqual({
+      secondReaderRc: 0,
+      tryrdWhileWriterRc: UV_EBUSY,
+      trywrWhileWriterRc: UV_EBUSY,
+      trywrAfterUnlockRc: 0,
+    });
+  });
+
+  test("uv_interface_addresses", () => {
+    const r = nativeModule.testInterfaceAddresses();
+    expect(r.rc).toBe(0);
+    expect(r.interfaces).toHaveLength(r.count);
+    expect(r.count).toBeGreaterThanOrEqual(1);
+    for (const iface of r.interfaces) {
+      expect(iface.name.length).toBeGreaterThan(0);
+      expect(["ipv4", "ipv6"]).toContain(iface.family);
+      expect(iface.addressRc).toBe(0);
+      expect(iface.address.length).toBeGreaterThan(0);
+    }
+    // Every environment we test in has a loopback interface up.
+    const internal = r.interfaces.filter((iface: any) => iface.isInternal);
+    expect(internal.length).toBeGreaterThanOrEqual(1);
+    expect(internal.some((iface: any) => iface.address === "127.0.0.1" || iface.address === "::1")).toBe(true);
   });
 
   test("hrtime", () => {

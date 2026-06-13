@@ -24,13 +24,27 @@ process: *bun.spawn.Process,
 var instance: ?*ChromeProcess = null;
 
 /// Called from WebView.closeAll() and dispatchOnExit. Chrome spawns its own
-/// renderer/gpu/utility children (the "process model" zygote tree) — tracked
-/// by Chrome's own ProcessSingleton, they exit when the browser process
-/// dies. SIGKILL here takes the browser process, the zygote tree follows.
-/// The C++ side doesn't touch JS state; EVFILT_PROC → Bun__Chrome__died →
-/// rejectAllAndMarkDead handles promise rejection on the next loop tick.
+/// renderer/gpu/utility/crashpad children; only zygote-forked renderers get
+/// PR_SET_PDEATHSIG from the browser (base/process/launch_posix.cc's
+/// `kill_on_parent_death` is opt-in and most helpers skip it). Signalling
+/// the browser pid alone leaves GPU/network/utility/crashpad reparented to
+/// PID 1 on Linux — in a container where PID 1 isn't a real init, they
+/// accumulate forever (#30475).
+///
+/// Spawn sets `new_process_group = true`, so the browser is the leader of
+/// its own pgroup (pgid == pid) and every helper inherits that pgid.
+/// `kill(-pid, SIGKILL)` on POSIX takes the whole tree down atomically;
+/// the browser's own exit path still runs and EVFILT_PROC → Bun__Chrome__died
+/// → rejectAllAndMarkDead handles promise rejection on the next loop tick.
 pub export fn Bun__Chrome__kill() void {
-    if (instance) |i| {
+    const i = instance orelse return;
+    if (comptime bun.Environment.isPosix) {
+        // kill(-pgid, sig) signals every process in the group. Chrome is
+        // the group leader because of the setpgid(0, 0) done in the child
+        // before exec (SpawnOptions.new_process_group). ESRCH — the group
+        // is already gone — is a no-op, same as the single-pid path.
+        _ = std.c.kill(-i.process.pid, std.posix.SIG.KILL);
+    } else {
         _ = i.process.kill(9);
     }
 }
@@ -69,6 +83,18 @@ pub export fn Bun__Chrome__ensure(
 
 pub fn onProcessExit(this: *ChromeProcess, _: *bun.spawn.Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
     log("chrome exited: {f}", .{status});
+    // Browser-crash path: segfault, OOM, external SIGKILL. Bun__Chrome__kill
+    // only runs from closeAll() / dispatchOnExit — a straight-up browser
+    // crash never goes through it, so without a pgroup-kill here the
+    // helpers lose their parent-death coupling and reparent to PID 1 (same
+    // #30475 leak, different trigger). Same setpgid(0, 0) at spawn makes
+    // the browser the pgroup leader; signalling -pid reaches every helper
+    // that inherited that pgid. ESRCH is harmless if no helper survived
+    // the browser's own death. Must happen BEFORE deref/destroy — after
+    // destroy `this` is freed and the pid is gone.
+    if (comptime bun.Environment.isPosix) {
+        _ = std.c.kill(-this.process.pid, std.posix.SIG.KILL);
+    }
     const signo: i32 = if (status.signalCode()) |sig| @intFromEnum(sig) else 0;
     Bun__Chrome__died(signo);
     this.process.deref();
@@ -329,6 +355,13 @@ fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*
         // the same socket at both positions.
         .extra_fds = &.{ .{ .pipe = fds[1] }, .{ .pipe = fds[1] } },
         .argv0 = chrome.ptr,
+        // setpgid(0, 0) in the child so Chrome leads its own process
+        // group. Bun__Chrome__kill then does kill(-pid, SIGKILL) to reap
+        // GPU/network/utility/crashpad helpers along with the browser
+        // (they only get PR_SET_PDEATHSIG from the browser for zygote-
+        // forked renderers; everything else would reparent to PID 1 on
+        // Linux otherwise — see #30475).
+        .new_process_group = true,
     };
 
     var spawned = try (try bun.spawn.spawnProcess(

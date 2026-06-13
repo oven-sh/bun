@@ -195,13 +195,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     if (pooled.ssl_config) |*s| s.deinit();
                     pooled.ssl_config = null;
                     if (pooled.proxy_tunnel) |*rp| {
-                        // Do NOT call rp.data.shutdown() here — it drives
-                        // SSLWrapper.shutdown → triggerCloseCallback →
-                        // onClose(handlers.ctx), and handlers.ctx is the
-                        // stale HTTPClient pointer from detachOwner(). That
-                        // client is freed by now. http_socket.close(.failure)
-                        // below force-closes the TCP without triggering the
-                        // callback, same as addMemoryBackToPool().
+                        // No shutdown() needed — http_socket.close(.failure)
+                        // below force-closes the TCP, same as addMemoryBackToPool().
+                        // (onClose would no-op anyway: owner was cleared in
+                        // detachOwner().)
                         rp.deref();
                     }
                     pooled.proxy_tunnel = null;
@@ -697,6 +694,25 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     if (http_socket.isShutdown() or http_socket.getError() != 0) {
                         terminateSocket(http_socket);
                         continue;
+                    }
+
+                    // A pooled tunnel's inner TLS session can die after the
+                    // request that pooled it completed — a close_notify or
+                    // SSL error arriving in the same handleReading() call,
+                    // after detachOwner(). tunnel_poolable's snapshot can't
+                    // see that. Don't hand back a dead wrapper: adopt() →
+                    // proxy.write() would swallow error.ConnectionClosed
+                    // (closed_notified is already true so onClose no-ops)
+                    // and the request would hang until timeout.
+                    if (socket.proxy_tunnel) |rp| {
+                        const w = &(rp.data.wrapper orelse {
+                            terminateSocket(http_socket);
+                            continue;
+                        });
+                        if (w.isShutdown() or w.flags.fatal_error) {
+                            terminateSocket(http_socket);
+                            continue;
+                        }
                     }
 
                     // Release the pool's strong ref (caller has its own via tls_props)

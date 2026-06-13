@@ -1642,7 +1642,14 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
     }
 
     if (this.proxy_tunnel) |proxy| {
+        // onWritable → flush() → handleTraffic() can drain a response that
+        // completes the request and frees `this` synchronously. Keep the
+        // tunnel alive across the call and bail if it detached from us.
+        proxy.ref();
         proxy.onWritable(is_ssl, socket);
+        const detached = proxy.owner != this;
+        proxy.deref();
+        if (detached) return;
     }
 
     switch (this.state.request_stage) {
@@ -2309,7 +2316,7 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
         const tunnel_poolable = if (this.proxy_tunnel) |t|
             this.state.request_stage == .done and
                 t.write_buffer.isEmpty() and
-                if (t.wrapper) |*w| !w.isShutdown() else false
+                if (t.wrapper) |*w| !w.isShutdown() and !w.flags.fatal_error else false
         else
             true;
 

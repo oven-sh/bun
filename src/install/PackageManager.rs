@@ -916,7 +916,7 @@ impl PackageManager {
     }
 
     pub fn tls_reject_unauthorized(&mut self) -> bool {
-        self.env_mut().get_tls_reject_unauthorized()
+        self.options.strict_ssl && self.env_mut().get_tls_reject_unauthorized()
     }
 
     pub fn compute_is_continuous_integration(&self) -> bool {

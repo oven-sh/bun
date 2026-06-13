@@ -1,6 +1,6 @@
 import { color } from "bun";
 import { describe, expect, test } from "bun:test";
-import { withoutAggressiveGC } from "harness";
+import { isDebug, withoutAggressiveGC } from "harness";
 
 const namedColors = ["red", "green", "blue", "yellow", "purple", "orange", "pink", "brown", "gray"];
 
@@ -203,16 +203,58 @@ test("0 args", () => {
 });
 
 test("fuzz ansi256", () => {
+  // Exhaustive over all 2^24 RGB values on release. A debug+ASAN build runs
+  // ~100x slower, so the full sweep blows past the test runner timeout there;
+  // stride the channels on debug to keep it representative but runnable.
+  const step = isDebug ? 8 : 1;
   withoutAggressiveGC(() => {
-    for (let i = 0; i < 256; i++) {
+    for (let i = 0; i < 256; i += step) {
       const iShifted = i << 16;
-      for (let j = 0; j < 256; j++) {
+      for (let j = 0; j < 256; j += step) {
         const jShifted = j << 8;
-        for (let k = 0; k < 256; k++) {
+        for (let k = 0; k < 256; k += step) {
           const int = iShifted | jShifted | k;
           if (color(int, "ansi256") === null) {
             throw new Error(`color(${i}, ${j}, ${k}, "ansi256") is null`);
           }
+        }
+      }
+    }
+  });
+});
+
+// The string parser reuses one per-thread scratch arena across calls instead
+// of creating a fresh mimalloc heap each time. Most color literals allocate
+// nothing into it, but a CSS escape sequence (`\72\65\64` == "red") or a
+// function token (`url(...)`) forces the tokenizer to allocate copy-on-write
+// buffers there. This interleaves those arena-allocating inputs with cheap ones
+// and invalid ones in a tight loop: if the arena reset/reuse leaked state
+// between calls, an escaped-ident or function-token parse would corrupt a later
+// call's result. Every call must return exactly what it returns in isolation.
+test("reused parse arena stays correct across interleaved calls", () => {
+  // [input, expected `css` output] — covers escapes (arena copy-on-write),
+  // plain literals (no arena alloc), and invalid/function tokens.
+  const cases: Array<[string, string | null]> = [
+    ["\\72\\65\\64", "red"], // "red" via hex escapes -> arena copy-on-write
+    ["#f00", "red"], // plain literal -> no arena allocation
+    ["re\\64", "red"], // "red" with a single escaped 'd'
+    ["rgb(0, 0, 255)", "#00f"], // plain literal
+    ["\\62\\6c\\75\\65", "#00f"], // "blue" via escapes -> arena copy-on-write
+    ["hsl(0, 100%, 50%)", "red"], // plain literal
+    ["url(#bad)", null], // function token -> arena, invalid -> null
+    ["bad color input", null], // invalid
+  ];
+
+  // Sanity: each result in isolation matches the expectation.
+  for (const [input, expected] of cases) {
+    expect(color(input, "css")).toBe(expected);
+  }
+
+  withoutAggressiveGC(() => {
+    for (let i = 0; i < 10_000; i++) {
+      for (const [input, expected] of cases) {
+        if (color(input, "css") !== expected) {
+          throw new Error(`color(${JSON.stringify(input)}, "css") !== ${JSON.stringify(expected)} on iteration ${i}`);
         }
       }
     }

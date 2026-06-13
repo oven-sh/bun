@@ -3121,6 +3121,10 @@ pub mod formatter {
         pub single_line: bool,
         pub always_newline: bool,
         pub parent: JSValue,
+        /// Whether `parent` is callable, computed once by the caller so
+        /// `handle_first_property` does not re-run the FFI `is_callable` /
+        /// `is_class` checks on the common non-callable path.
+        pub is_callable: bool,
     }
 
     impl<'a, 'b, const C: bool> PropertyIteratorCtx<'a, 'b, C> {
@@ -3133,13 +3137,16 @@ pub mod formatter {
             // `[Function: x]` / `[class X]` label (so their properties render as
             // `[Function: x] { ... }`); other objects get their constructor
             // name. Kept in sync with the no-property header in
-            // `print_object_tail`.
-            if value.is_class(global_this) {
-                self.formatter.print_class::<C>(&mut *self.writer, value)?;
-                let _ = self.writer.write_all(b" ");
-            } else if value.is_callable() {
-                self.formatter
-                    .print_function::<C>(&mut *self.writer, value)?;
+            // `print_object_tail`. `is_callable` is precomputed by the caller;
+            // `is_class` implies callable, so the non-callable path pays no FFI
+            // here.
+            if self.is_callable {
+                if value.is_class(global_this) {
+                    self.formatter.print_class::<C>(&mut *self.writer, value)?;
+                } else {
+                    self.formatter
+                        .print_function::<C>(&mut *self.writer, value)?;
+                }
                 let _ = self.writer.write_all(b" ");
             } else if value.is_cell() {
                 let mut writer = WrappedWriter {
@@ -4671,6 +4678,8 @@ pub mod formatter {
                         single_line,
                         parent: value,
                         i: i as usize,
+                        // `value` is an array here, never callable.
+                        is_callable: false,
                     };
                     value.for_each_property_non_indexed(
                         global_this,
@@ -5583,6 +5592,7 @@ pub mod formatter {
                 single_line,
                 parent: value,
                 i: 0,
+                is_callable,
             };
 
             if is_callable {

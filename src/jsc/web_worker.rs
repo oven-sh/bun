@@ -215,6 +215,7 @@ unsafe extern "C" {
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
     safe fn WebWorker__dispatchOnline(cpp_worker: *mut c_void, global: &JSGlobalObject);
     safe fn WebWorker__fireEarlyMessages(cpp_worker: *mut c_void, global: &JSGlobalObject);
+    safe fn WebWorker__hasMessageListener(global: &JSGlobalObject) -> bool;
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         cpp_worker: *mut c_void,
@@ -1078,11 +1079,14 @@ impl WebWorker {
             return self.shutdown();
         }
 
+        // Start loading the entry point module. This kicks off module
+        // resolution and evaluation but does not wait for top-level await.
+        //
         // `path` borrows the resolver's process-lifetime string store, the
         // standalone module graph, or `self.unresolved_specifier` — all of
         // which outlive the worker VM. `vm.main` stores it as a raw BACKREF
         // (see `VirtualMachine::set_main`); no lifetime extension needed.
-        let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
+        let initial_promise = match vm.as_mut().reload_entry_point(path) {
             Ok(p) => p,
             Err(_) => {
                 // process.exit() may have run during load; don't clobber its code.
@@ -1093,10 +1097,135 @@ impl WebWorker {
                 return self.shutdown();
             }
         };
+        vm.event_loop_mut().perform_gc();
 
-        // SAFETY: `promise` is a live JSC heap cell.
+        // Spin the event loop until the module has progressed far enough to
+        // register a 'message' listener, the module promise settles (normal
+        // completion or synchronous module with no TLA), or termination is
+        // requested. Without this, a worker whose entry point imports a
+        // userland module would dispatch 'online' and fire buffered messages
+        // before the module body has had a chance to run its listener
+        // registration — messages would be dropped into an empty event scope.
+        //
+        // Once a listener exists (or the module finishes), the buffered
+        // inbox drain will reach live handlers. If the module's TLA never
+        // settles AND it never registers a listener, this loop blocks in
+        // auto_tick() the same way wait_for_promise_with_termination would.
+        //
+        // Drain microtasks once unconditionally first: hasMessageListener
+        // is satisfied by ANY listener on the global event scope, and
+        // load_preloads inside reload_entry_point already ran any preload
+        // bodies to completion. A preload that registers a 'message'
+        // listener would otherwise short-circuit the loop before the main
+        // module body runs, and buffered messages would dispatch to the
+        // preload's listener instead of the main module's.
+        vm.as_mut().event_loop_mut().tick();
+        // SAFETY: `initial_promise` is a live JSC heap cell stored on the VM.
+        while !self.has_requested_terminate()
+            && unsafe { (*initial_promise).status() } == jsc::js_promise::Status::Pending
+            && !WebWorker__hasMessageListener(vm.global())
+        {
+            vm.as_mut().event_loop_mut().tick();
+            if self.has_requested_terminate()
+                || unsafe { (*initial_promise).status() } != jsc::js_promise::Status::Pending
+                || WebWorker__hasMessageListener(vm.global())
+            {
+                break;
+            }
+            vm.as_mut().event_loop_mut().auto_tick();
+        }
+
+        if self.has_requested_terminate() {
+            // Terminate arrived after the module started running — exit
+            // code 1 because evaluation was forcibly interrupted (matches
+            // Node.js worker.terminate() semantics, and makes CloseEvent
+            // report wasClean:false on the parent). Don't clobber a
+            // user-chosen exit code from process.exit(N) inside the module
+            // body.
+            if !self.exit_called.load(Ordering::Relaxed) {
+                vm.as_mut().exit_handler.exit_code = 1;
+            }
+            self.flush_logs(vm);
+            return self.shutdown();
+        }
+
+        // If the module already rejected synchronously, handle the rejection
+        // before dispatchOnline. Unhandled rejection terminates the worker
+        // (via uncaught_exception → shutdown(), noreturn). A handled
+        // rejection falls through to dispatchOnline — matching Node.js
+        // semantics where process.on('uncaughtException') can keep the
+        // worker alive. This mirrors the post-TLA rejection path below, so
+        // a worker whose module throws behaves the same way whether the
+        // throw is synchronous or after an await.
+        //
+        // Track whether we already dispatched a rejection so the post-TLA
+        // check below doesn't double-fire. Re-reading the promise status
+        // isn't sufficient — `fireEarlyMessages` can synchronously run JS
+        // (drainInbox) which may resolve an awaited promise, run the TLA
+        // continuation, and transition `initial_promise` `Pending → Rejected`
+        // in between. Using a flag ensures: the sync-rejection dispatched
+        // here isn't re-dispatched later, and a rejection that happens during
+        // or after `fireEarlyMessages` still gets reported.
+        let mut rejection_dispatched = false;
+        // SAFETY: `initial_promise` is a live JSC heap cell.
+        if unsafe { (*initial_promise).status() } == jsc::js_promise::Status::Rejected {
+            rejection_dispatched = true;
+            let handled = unsafe {
+                vm.as_mut().uncaught_exception(
+                    vm.global(),
+                    (*initial_promise).result(vm.jsc_vm()),
+                    true,
+                )
+            };
+            if !handled {
+                vm.as_mut().exit_handler.exit_code = 1;
+                self.flush_logs(vm);
+                return self.shutdown();
+            }
+        }
+
+        self.flush_logs(vm);
+        log!("[{}] event loop start", self.execution_context_id);
+        // Dispatch 'online' and fire buffered messages BEFORE (potentially
+        // still) waiting for top-level await. The event loop spins during
+        // wait_for_promise_with_termination, so messages posted to the worker
+        // are processed even while TLA is pending. This matches Node.js
+        // and browser semantics (issue #21101).
+        WebWorker__dispatchOnline(self.cpp_worker, vm.global());
+        WebWorker__fireEarlyMessages(self.cpp_worker, vm.global());
+        self.set_status(Status::Running);
+
+        // Wait for the module's top-level await to settle (or termination).
+        // No-op on an already-settled promise, so this is safe to run
+        // unconditionally; the rejection_dispatched flag prevents the
+        // post-TLA check from firing twice on sync-rejection.
+        vm.event_loop_mut()
+            .wait_for_promise_with_termination(jsc::AnyPromise::Internal(initial_promise));
+
+        if self.has_requested_terminate() {
+            // Terminate arrived while TLA was pending — exit code 1, same
+            // reasoning as the pre-online check above.
+            if !self.exit_called.load(Ordering::Relaxed) {
+                vm.as_mut().exit_handler.exit_code = 1;
+            }
+            // Drain any CppTask fireEarlyMessages posted (else-branch of
+            // the no-listener case) before shutdown() runs — otherwise
+            // the heap-allocated EventLoopTask and the Ref<Worker> it
+            // captures would leak, since shutdown() is noreturn and
+            // EventLoop.deinit frees only the fifo buffer.
+            vm.as_mut().tick();
+            self.flush_logs(vm);
+            return self.shutdown();
+        }
+
+        let promise = vm.pending_internal_promise.unwrap();
+
+        // Handle rejection from TLA (or from JS run during
+        // fireEarlyMessages) — but only if we didn't already dispatch it
+        // above.
+        // SAFETY: `promise` is a live JSC heap cell on the VM.
         unsafe {
-            if (*promise).status() == jsc::js_promise::Status::Rejected {
+            if (*promise).status() == jsc::js_promise::Status::Rejected && !rejection_dispatched {
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
@@ -1104,25 +1233,15 @@ impl WebWorker {
                 );
                 if !handled {
                     vm.as_mut().exit_handler.exit_code = 1;
+                    self.flush_logs(vm);
                     return self.shutdown();
                 }
-            } else {
+            } else if (*promise).status() == jsc::js_promise::Status::Fulfilled {
                 let _ = (*promise).result(vm.jsc_vm());
             }
         }
 
         self.flush_logs(vm);
-        log!("[{}] event loop start", self.execution_context_id);
-        // dispatchOnline fires the parent-side 'open' event and flips the C++
-        // state to Running (which routes postMessage directly instead of
-        // queuing). It is placed after the entry point has loaded so the parent
-        // observes 'online' only once the worker's top-level code has completed;
-        // moving it earlier would change that observable ordering.
-        // `cpp_worker` is the opaque C++-owned handle round-tripped via `safe fn`;
-        // `vm.global()` yields the live `&JSGlobalObject` published in start_vm.
-        WebWorker__dispatchOnline(self.cpp_worker, vm.global());
-        WebWorker__fireEarlyMessages(self.cpp_worker, vm.global());
-        self.set_status(Status::Running);
 
         // don't run the GC if we don't actually need to
         if vm.is_event_loop_alive() || vm.event_loop_mut().tick_concurrent_with_count() > 0 {
@@ -1132,8 +1251,10 @@ impl WebWorker {
             let _ = vm.global().vm().run_gc(false);
         }
 
-        // Always do a first tick so we call CppTask without delay after
-        // dispatchOnline.
+        // Tick once so the drain CppTask that fireEarlyMessages may have
+        // posted (synchronous module with no message listener) runs even
+        // when wait_for_promise_with_termination above was a no-op because
+        // the module promise was already settled.
         vm.as_mut().tick();
 
         while vm.is_event_loop_alive() {

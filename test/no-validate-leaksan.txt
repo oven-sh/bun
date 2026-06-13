@@ -447,3 +447,8 @@ test/js/node/test/parallel/test-https-localaddress-bind-error.js
 test/js/node/test/parallel/test-crypto-op-during-process-exit.js
 
 test/js/third_party/prisma/prisma.test.ts
+
+# Worker with preload exposes pre-existing async-transpile leak
+# (RuntimeTranspilerStore::TranspilerJob::run → sourcemap::Builder::finalize).
+# Unrelated to this fix; already existing suppressions only cover the sync path.
+test/regression/issue/21101.test.ts

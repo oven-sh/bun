@@ -115,6 +115,27 @@ pub(crate) fn install_hoisted_packages(
     // block above, so no other borrow of `*mgr_ptr` is live here.
     let this = unsafe { &mut *mgr_ptr };
 
+    // Remove stale packages from workspace `node_modules` directories before
+    // the install loop runs. A previous install (especially a package-local
+    // one) may have placed packages inside `packages/<workspace>/node_modules`
+    // that the current hoisted layout no longer expects — those directories
+    // would shadow the hoisted copies during module resolution. The installer
+    // only visits trees that still have dependencies, so without this sweep the
+    // stale entries are never seen, let alone removed.
+    //
+    // We build the expected set from the *unfiltered* `original_trees` on
+    // purpose: with `--filter` the filtered tree omits excluded workspaces
+    // entirely, but those workspaces' `node_modules` still belong to them and
+    // must not be wiped based on what the _current_ install would re-create.
+    // (Issue #29793.)
+    //
+    // Skipped when `packages_to_install` narrows the pass (the security
+    // scanner's pre-install of just the scanner package) — the full install
+    // that follows performs the same prune.
+    if packages_to_install.is_none() && this.lockfile.workspace_paths.count() > 0 {
+        prune_stale_workspace_node_modules(&this.lockfile, &original_trees, &original_tree_dep_ids);
+    }
+
     let _restore_buffers = scopeguard::guard(
         (original_trees, original_tree_dep_ids),
         move |(trees, dep_ids)| {
@@ -619,3 +640,258 @@ pub(crate) fn install_hoisted_packages(
 
     Ok(summary)
 }
+
+/// Walks each workspace's `node_modules/` directory on disk and deletes any
+/// package folder the current hoisted tree does not list as belonging there.
+///
+/// A previous package-local install (or a manual edit) may have left
+/// `packages/<workspace>/node_modules/<pkg>` behind. When the current install
+/// hoists `<pkg>` to the root, the leftover workspace-local copy shadows the
+/// hoisted one during module resolution. The tree iterator only visits
+/// `node_modules` directories that still contain entries, so those stale
+/// folders are otherwise never seen, let alone removed.
+///
+/// Only operates on top-level entries of each workspace's `node_modules/`
+/// (plus one level into `@scope/` directories). Transitive `node_modules`
+/// nested inside surviving packages are handled by the normal install
+/// verify/uninstall path.
+///
+/// `trees`/`tree_dep_ids` are the **unfiltered** buffers captured before
+/// `Lockfile::filter()` runs, so entries a `--filter`-excluded workspace
+/// legitimately owns stay put (see the call site / issue #29793).
+fn prune_stale_workspace_node_modules(
+    lockfile: &crate::lockfile::Lockfile,
+    trees: &[tree::Tree],
+    tree_dep_ids: &[DependencyID],
+) {
+    if trees.is_empty() {
+        return;
+    }
+
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let packages_slice = lockfile.packages.slice();
+    let pkg_resolutions = packages_slice.items_resolution();
+
+    // Resolve every workspace to (package id, filesystem-relative path). Only
+    // workspaces that resolve cleanly are walked — if `get_workspace_package_id`
+    // returns 0 (name-hash collision, stale lockfile, workspace dropped from
+    // `packages`) we leave that directory alone rather than wipe it with an
+    // empty expected set.
+    let mut workspaces_to_walk: Vec<(PackageID, Vec<u8>)> = Vec::new();
+    {
+        let hashes = lockfile.workspace_paths.keys();
+        let paths = lockfile.workspace_paths.values();
+        for (name_hash, ws_path) in hashes.iter().zip(paths.iter()) {
+            let pkg_id = lockfile.get_workspace_package_id(Some(*name_hash));
+            if pkg_id == 0 {
+                continue;
+            }
+            let fs_path = ws_path.slice(string_buf);
+            if fs_path.is_empty() {
+                continue;
+            }
+            workspaces_to_walk.push((pkg_id, fs_path.to_vec()));
+        }
+    }
+
+    if workspaces_to_walk.is_empty() {
+        return;
+    }
+
+    // Map of workspace filesystem-relative `node_modules` path (posix
+    // separators) to the set of folder names the tree places directly there.
+    // Only workspace-scope trees are indexed — transitive nested trees aren't
+    // workspace node_modules we need to prune.
+    let mut expected_by_ws_path: StringHashMap<StringHashMap<()>> = StringHashMap::default();
+
+    // Quick lookup from workspace package id → filesystem path for the tree loop.
+    let fs_path_for = |pkg_id: PackageID| -> Option<&[u8]> {
+        workspaces_to_walk
+            .iter()
+            .find(|(id, _)| *id == pkg_id)
+            .map(|(_, p)| p.as_slice())
+    };
+
+    for t in trees {
+        // Only trees whose `dependency_id` resolves to a workspace package
+        // correspond to a workspace's `node_modules` directory.
+        if t.dependency_id == crate::invalid_dependency_id {
+            continue;
+        }
+        if t.dependency_id == tree::ROOT_DEP_ID {
+            continue;
+        }
+        let dep_idx = t.dependency_id as usize;
+        if dep_idx >= deps.len() || dep_idx >= resolutions.len() {
+            continue;
+        }
+        let pkg_id = resolutions[dep_idx];
+        let pkg_idx = pkg_id as usize;
+        if pkg_idx >= pkg_resolutions.len() {
+            continue;
+        }
+        if pkg_resolutions[pkg_idx].tag != crate::resolution::Tag::Workspace {
+            continue;
+        }
+        let Some(ws_fs_path) = fs_path_for(pkg_id) else {
+            continue;
+        };
+
+        let key = workspace_node_modules_key(ws_fs_path);
+        let set = match expected_by_ws_path.get_or_put_value(&key, StringHashMap::default()) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let tree_deps = t.dependencies.get(tree_dep_ids);
+        for &dep_id in tree_deps {
+            let d = dep_id as usize;
+            if d >= deps.len() {
+                continue;
+            }
+            let dep_name = deps[d].name.slice(string_buf);
+            if dep_name.is_empty() {
+                continue;
+            }
+            let _ = set.put(dep_name, ());
+        }
+    }
+
+    // Walk only the workspaces we resolved above.
+    for (_pkg_id, fs_path) in &workspaces_to_walk {
+        let key = workspace_node_modules_key(fs_path);
+        let expected = expected_by_ws_path.get(key.as_slice());
+        prune_node_modules_at(&key, expected);
+    }
+}
+
+/// Builds the normalized `<ws_path>/node_modules` key used both to index the
+/// expected-set map and to look it up during the walk. Single source of truth
+/// so the two call sites can't silently diverge — a mismatch would route
+/// pruning through the `expected == None` branch and delete legitimate entries.
+fn workspace_node_modules_key(ws_path: &[u8]) -> Vec<u8> {
+    // Tolerate a stray trailing separator (either `/` or `\`).
+    let trimmed = match ws_path.last() {
+        Some(b'/') | Some(b'\\') => &ws_path[..ws_path.len() - 1],
+        _ => ws_path,
+    };
+    let mut key = Vec::with_capacity(trimmed.len() + b"/node_modules".len());
+    key.extend_from_slice(trimmed);
+    key.extend_from_slice(b"/node_modules");
+    // The on-disk walk uses the key as-is; normalize any backslash separators
+    // to forward slashes so the hash lookup is canonical on Windows.
+    if cfg!(windows) {
+        for b in key.iter_mut() {
+            if *b == b'\\' {
+                *b = b'/';
+            }
+        }
+    }
+    key
+}
+
+/// Opens `<cwd>/<rel_path>` and removes each top-level directory entry whose
+/// name is not present in `expected`. Also descends one level into `@scope/`
+/// directories so scoped packages are handled. Missing directories are ignored.
+fn prune_node_modules_at(rel_path: &[u8], expected: Option<&StringHashMap<()>>) {
+    let cwd = Fd::cwd();
+    // `Dir` owns the fd (closes on drop) — no separate scopeguard, or we'd
+    // double-close.
+    let dir = match sys::open_dir_for_iteration(cwd, rel_path) {
+        Ok(fd) => Dir::from_fd(fd),
+        Err(_) => return,
+    };
+
+    // Snapshot the directory listing before deleting anything. `delete_tree`
+    // mutates the parent directory, and the platform readdir iterators read in
+    // batches — deleting the current entry is fine, but a batch refill after a
+    // delete can re-surface entries on some filesystems. Iterating an owned
+    // list keeps the loop independent of the underlying directory shape.
+    let mut names: Vec<Vec<u8>> = Vec::new();
+    let mut iter = sys::iterate_dir(dir.fd());
+    loop {
+        let entry = match iter.next() {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(_) => return,
+        };
+        let name = entry.name.slice_u8();
+        if name.is_empty() || name[0] == b'.' {
+            continue;
+        }
+        names.push(name.to_vec());
+    }
+
+    for name in &names {
+        if name[0] == b'@' {
+            // Scoped package directory. Recurse one level; the expected set
+            // stores scoped packages as `@scope/pkg`.
+            prune_scoped_node_modules(dir.fd(), name, expected);
+            continue;
+        }
+        if let Some(exp) = expected {
+            if exp.contains_key(name.as_slice()) {
+                continue;
+            }
+        }
+        let _ = dir.delete_tree(name);
+    }
+}
+
+fn prune_scoped_node_modules(parent_dir: Fd, scope: &[u8], expected: Option<&StringHashMap<()>>) {
+    let scope_dir = match sys::open_dir_for_iteration(parent_dir, scope) {
+        Ok(fd) => Dir::from_fd(fd),
+        Err(_) => return,
+    };
+
+    let mut names: Vec<Vec<u8>> = Vec::new();
+    let mut has_remaining = false;
+    let mut iter = sys::iterate_dir(scope_dir.fd());
+    loop {
+        let entry = match iter.next() {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(_) => return,
+        };
+        let name = entry.name.slice_u8();
+        if name.is_empty() {
+            continue;
+        }
+        if name[0] == b'.' {
+            has_remaining = true;
+            continue;
+        }
+        names.push(name.to_vec());
+    }
+
+    for name in &names {
+        let mut full_name = Vec::with_capacity(scope.len() + 1 + name.len());
+        full_name.extend_from_slice(scope);
+        full_name.push(b'/');
+        full_name.extend_from_slice(name);
+
+        if let Some(exp) = expected {
+            if exp.contains_key(full_name.as_slice()) {
+                has_remaining = true;
+                continue;
+            }
+        }
+
+        if scope_dir.delete_tree(name).is_err() {
+            has_remaining = true;
+        }
+    }
+
+    // Remove the scope directory if it ended up empty.
+    if !has_remaining {
+        let mut scope_z = Vec::with_capacity(scope.len() + 1);
+        scope_z.extend_from_slice(scope);
+        scope_z.push(0);
+        let z = bun_core::ZStr::from_buf(&scope_z, scope.len());
+        let _ = sys::rmdirat(parent_dir, z);
+    }
+}
+
+// ported from: src/install/hoisted_install.zig

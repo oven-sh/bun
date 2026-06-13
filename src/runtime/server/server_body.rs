@@ -2496,6 +2496,19 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
+    #[bun_jsc::host_fn(method)]
+    pub fn close_all_connections(
+        &mut self,
+        _global: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if self.app.is_none() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        self.app_mut().close_all_connections();
+        Ok(JSValue::UNDEFINED)
+    }
+
     pub fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {
         let rc = self.get_all_closed_promise(&self.global());
 

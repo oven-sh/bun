@@ -104,6 +104,12 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw())
     }
 
+    /// Closes all client connections (idle and in-flight) without touching
+    /// the listening socket. Equivalent to Node's `Server#closeAllConnections`.
+    pub fn close_all_connections(&mut self) {
+        c::uws_app_close_all_connections(Self::SSL_FLAG, self.as_raw())
+    }
+
     pub fn create(opts: &BunSocketContextOptions) -> Option<*mut Self> {
         // SAFETY: FFI call; uws_create_app returns null on failure.
         let app = unsafe { c::uws_create_app(Self::SSL_FLAG, *opts) };
@@ -496,6 +502,7 @@ pub mod c {
     unsafe extern "C" {
         pub(crate) safe fn uws_app_close(ssl: i32, app: &mut uws_app_s);
         pub(crate) safe fn uws_app_close_idle(ssl: i32, app: &mut uws_app_s);
+        pub(crate) safe fn uws_app_close_all_connections(ssl: i32, app: &mut uws_app_s);
         // safe: `&mut uws_app_s` is ABI-identical to a non-null `*mut`;
         // `handler`/`user_data` are stored opaquely (never dereferenced by the
         // C++ shim itself) — no preconditions on this call.

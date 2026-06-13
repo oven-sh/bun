@@ -310,14 +310,10 @@ Server.prototype.closeAllConnections = function () {
   if (!server) {
     return;
   }
-  this[serverSymbol] = undefined;
-  const connectionsCheckingInterval = this[kConnectionsCheckingInterval];
-  if (connectionsCheckingInterval) {
-    connectionsCheckingInterval._destroyed = true;
-  }
-  this.listening = false;
-
-  server.stop(true);
+  // Per Node, this only closes established HTTP(S) connections (idle and
+  // in-flight). The listening socket must stay open so subsequent requests
+  // can still be accepted — see https://nodejs.org/api/http.html#serverclosealllconnections.
+  server.closeAllConnections?.();
 };
 
 Server.prototype.closeIdleConnections = function () {

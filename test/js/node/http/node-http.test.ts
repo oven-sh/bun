@@ -1410,6 +1410,75 @@ it.skip("should be able to stream huge amounts of data", async () => {
   }
 }, 30_000);
 
+describe("Server.closeAllConnections", () => {
+  // Per https://nodejs.org/api/http.html#serverclosealllconnections this should
+  // forcefully close every established connection but leave the listener open.
+  it("closes established connections but keeps the listener accepting new ones", async () => {
+    const handlerCalls: number[] = [];
+    const server = http.createServer((req, res) => {
+      handlerCalls.push(1);
+      res.end("ok");
+    });
+    try {
+      server.listen(0);
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+
+      // Open a keep-alive connection and finish one request so the socket
+      // is established and idle.
+      const keepAlive = connect(port);
+      await once(keepAlive, "connect");
+      const firstResponse = new Promise<string>(resolve => {
+        let buf = "";
+        keepAlive.setEncoding("utf8");
+        keepAlive.on("data", chunk => {
+          buf += chunk;
+          if (buf.endsWith("ok")) resolve(buf);
+        });
+      });
+      keepAlive.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+      await firstResponse;
+
+      // Sanity: the socket is still open from the client's view.
+      expect(keepAlive.destroyed).toBe(false);
+      expect(server.listening).toBe(true);
+
+      const closed = once(keepAlive, "close");
+      server.closeAllConnections();
+      await closed;
+      expect(keepAlive.destroyed).toBe(true);
+
+      // Listener must still accept new connections after closeAllConnections.
+      expect(server.listening).toBe(true);
+      const followup = await fetch(`http://localhost:${port}/`);
+      expect(followup.status).toBe(200);
+      expect(await followup.text()).toBe("ok");
+      expect(handlerCalls.length).toBe(2);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("is a no-op when no connections are established", async () => {
+    const server = http.createServer((req, res) => res.end("ok"));
+    try {
+      server.listen(0);
+      await once(server, "listening");
+      const port = (server.address() as AddressInfo).port;
+
+      // No client has connected yet — must not throw and must not affect the listener.
+      expect(() => server.closeAllConnections()).not.toThrow();
+      expect(server.listening).toBe(true);
+
+      const res = await fetch(`http://localhost:${port}/`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("ok");
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe("HTTP Server Security Tests - Advanced", () => {
   // Setup and teardown utilities
   let server;

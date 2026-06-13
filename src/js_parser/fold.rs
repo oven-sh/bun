@@ -512,6 +512,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         });
                     }
 
+                    // Lower import.meta.env to process.env when bundling for bun/node targets.
+                    // Skip for assignment/delete targets to avoid destructive semantics on
+                    // `delete import.meta.env` or `import.meta.env = x` becoming operations
+                    // on the real `process.env`. Also skip if `process` is shadowed by a
+                    // local binding in the current scope chain — leaving `import.meta.env`
+                    // as-is lets Bun's runtime resolve it correctly.
+                    if p.options.lower_import_meta_env_to_process_env
+                        && name == b"env"
+                        && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                        && !identifier_opts.is_delete_target()
+                    {
+                        let process_ref = p
+                            .find_symbol(target.loc, b"process")
+                            .expect("unreachable")
+                            .r#ref;
+                        if p.symbols[process_ref.inner_index() as usize].kind
+                            == js_ast::symbol::Kind::Unbound
+                        {
+                            let process_target = p.new_expr(
+                                E::Identifier {
+                                    ref_: process_ref,
+                                    ..Default::default()
+                                },
+                                target.loc,
+                            );
+                            return Some(p.new_expr(
+                                E::Dot {
+                                    target: process_target,
+                                    name: b"env".into(),
+                                    name_loc,
+                                    can_be_removed_if_unused: true,
+                                    ..Default::default()
+                                },
+                                loc,
+                            ));
+                        }
+                        // find_symbol recorded a usage on the local `process` binding; undo it
+                        // since we're not actually emitting a reference to it.
+                        p.ignore_usage(process_ref);
+                    }
+
                     // Inline import.meta properties for Bake
                     if p.options.framework.is_some()
                         || (p.options.bundle

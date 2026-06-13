@@ -24,7 +24,15 @@ const DEFAULT_COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
   dirname(TSCONFIG_SOURCE_PATH),
 ).options;
 
-const $ = Shell.cwd(BUN_REPO_ROOT);
+// The shell below spawns `bun run build` / `bun pm pack` through $PATH. On CI
+// and most developer machines $PATH's `bun` is a release build whose
+// `Bun.version` differs from the debug / ASAN build running this test (e.g.
+// `1.3.14` vs `1.3.14-debug`). Without pinning the version every child
+// process agrees on, the build script stamps `package.json` with whatever
+// `$PATH`'s bun reports, `bun pm pack` names the tarball accordingly, and
+// our subsequent `bun add bun-types@${BUN_TYPES_TARBALL_NAME}` references a
+// filename that no longer exists.
+const $ = Shell.cwd(BUN_REPO_ROOT).env({ ...process.env, BUN_VERSION });
 
 let TEMP_DIR: string;
 let BASE_FIXTURE_DIR: string;
@@ -313,6 +321,73 @@ describe("@types/bun integration test", () => {
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
       diagnostics: [],
     });
+  });
+
+  // Regression test for https://github.com/oven-sh/bun/issues/30503.
+  //
+  // `bun-types/bun.ns.d.ts` used to do `import * as BunModule from "bun"` to
+  // build the global `Bun` namespace alias. With TypeScript 6's tighter module
+  // resolution and the DefinitelyTyped `@types/bun` stub installed alongside
+  // (the layout `bun add -d @types/bun` produces — the stub depends on
+  // `bun-types`), the `"bun"` specifier here resolves to the stub's
+  // `index.d.ts` (a one-line `/// <reference types="bun-types" />`) rather
+  // than the `declare module "bun"` block in `bun-types/bun.d.ts`.
+  //
+  // Type-checking often still appears to work because TypeScript merges the
+  // ambient `declare module "bun"` into the resolved module's symbol table —
+  // but that merge is fragile and layout-dependent (monorepos in particular
+  // hit layouts where it no longer rescues the namespace). The only reliable
+  // signal is the module resolution itself: `bun.ns.d.ts` must not reach the
+  // `@types/bun` stub as the source of its `BunModule` binding.
+  //
+  // The fix routes the binding through an ambient `"bun-types:internal"`
+  // module whose `:` makes TypeScript skip file-based module resolution.
+  test("bun.ns.d.ts does not resolve through the @types/bun stub (#30503)", async () => {
+    const fixtureDir = await createIsolatedFixture();
+    const bunNsPath = join(fixtureDir, "node_modules", "bun-types", "bun.ns.d.ts");
+    const atTypesBunStub = join(fixtureDir, "node_modules", "@types", "bun", "index.d.ts");
+
+    // Sanity check: both files exist (the `beforeAll` hook is supposed to
+    // have installed `bun-types` from the freshly packed tarball and written
+    // the DefinitelyTyped stub).
+    expect(await Bun.file(bunNsPath).exists()).toBe(true);
+    expect(await Bun.file(atTypesBunStub).exists()).toBe(true);
+
+    // Parse `bun.ns.d.ts` and pull out the specifier of the sole namespace
+    // import. We verify the specifier itself rather than trusting only that
+    // the compiler "worked", because ambient-module merging can paper over
+    // the misresolution in the fresh-install layout.
+    const nsSource = ts.createSourceFile(bunNsPath, readFileSync(bunNsPath, "utf8"), ts.ScriptTarget.ESNext, true);
+    let specifier: string | undefined;
+    nsSource.forEachChild(node => {
+      if (
+        ts.isImportDeclaration(node) &&
+        node.importClause?.namedBindings &&
+        ts.isNamespaceImport(node.importClause.namedBindings)
+      ) {
+        specifier = (node.moduleSpecifier as ts.StringLiteral).text;
+      }
+    });
+    expect(specifier).toBeDefined();
+
+    // Resolve that specifier from `bun.ns.d.ts`'s location using the same
+    // compiler options the rest of the integration suite uses. Two things
+    // must hold:
+    //   1. The resolution does not land on `@types/bun/index.d.ts`. That
+    //      file is the stub with nothing but a triple-slash reference, so
+    //      using it as the source of the namespace alias empties `Bun`.
+    //   2. Either the specifier is unresolvable (ambient-only, like our
+    //      `bun-types:internal` alias) or it points at a real bun-types
+    //      declaration file.
+    const resolved = ts.resolveModuleName(specifier!, bunNsPath, DEFAULT_COMPILER_OPTIONS, {
+      fileExists: ts.sys.fileExists,
+      readFile: ts.sys.readFile,
+    }).resolvedModule?.resolvedFileName;
+
+    expect(resolved).not.toBe(atTypesBunStub);
+    if (resolved !== undefined) {
+      expect(resolved).toMatch(/bun-types[\\/].+\.d\.ts$/);
+    }
   });
 
   // TypeScript 7's native (Go-based) compiler does not expose a JS compiler API yet,

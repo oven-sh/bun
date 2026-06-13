@@ -146,9 +146,10 @@ static void us_ssl_reneg_state_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   us_free(ptr);
 }
 
-/* Defined in Zig (`SSLContextCache.zig`): tombstones the cache entry on
+/* Defined in Rust (`SSLContextCache.rs`): tombstones the cache entry on
  * SSL_CTX refcount→0 so the per-VM weak SSL_CTX cache learns the pointer is
- * dead without holding a ref of its own. */
+ * dead without holding a ref of its own. Runs on whichever thread dropped the
+ * last ref; the Rust side asserts that is the cache's owning JS thread. */
 extern void bun_ssl_ctx_cache_on_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                                       int index, long argl, void *argp);
 

@@ -838,7 +838,7 @@ it.if(isWindows)(
     }
 
     const batch = [];
-    const before = heapStats().objectTypeCounts.TLSSocket || 0;
+    const before = heapStats().objectTypeCounts.TCPSocket || 0;
     for (let i = 0; i < 100; i++) {
       batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
       batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
@@ -853,7 +853,11 @@ it.if(isWindows)(
       }
     }
     await Promise.all(batch);
-    expectMaxObjectTypeCount(expect, "TCPSocket", before);
+    // Allow a few stragglers: server.close() can resolve before the last
+    // accepted pipe socket's finalizer runs (same margin as
+    // node-tls-namedpipes.test.ts). A leak on this path would leave hundreds
+    // of sockets behind.
+    await expectMaxObjectTypeCount(expect, "TCPSocket", before + 10, 5000);
   },
   20_000,
 );

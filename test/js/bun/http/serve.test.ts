@@ -2206,6 +2206,67 @@ it.concurrent("#6462", async () => {
   ]);
 });
 
+it.concurrent("combines duplicate request headers per the Fetch spec", async () => {
+  // WHATWG Fetch requires repeated header fields to be combined with ", " when
+  // read via Headers.get(). Previously Bun.serve overwrote duplicate non-common
+  // request header names with the last value, dropping earlier values.
+  let seen: Record<string, string | null> = {};
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen = {
+        xdup: req.headers.get("x-dup"),
+        xonce: req.headers.get("x-once"),
+        xgap: req.headers.get("x-gap"),
+        xempty: req.headers.get("x-empty"),
+        accept: req.headers.get("accept"),
+      };
+      return new Response("ok");
+    },
+  });
+
+  const { promise, resolve } = Promise.withResolvers<void>();
+  await Bun.connect({
+    port: server.port,
+    hostname: server.hostname,
+    socket: {
+      open(socket) {
+        socket.write(
+          "GET / HTTP/1.1\r\n" +
+            `Host: ${server.hostname}\r\n` +
+            "X-Dup: first\r\n" +
+            "X-Dup: second\r\n" +
+            "X-Dup: third\r\n" +
+            "X-Once: only\r\n" +
+            "X-Gap: a\r\n" +
+            "X-Gap:\r\n" +
+            "X-Gap: c\r\n" +
+            "X-Empty:\r\n" +
+            "Accept: text/html\r\n" +
+            "Accept: application/json\r\n" +
+            "Connection: close\r\n" +
+            "\r\n",
+        );
+      },
+      data() {},
+      close() {
+        resolve();
+      },
+    },
+  });
+  await promise;
+
+  expect(seen).toEqual({
+    xdup: "first, second, third",
+    xonce: "only",
+    // the combine step has no empty-value exception, and a lone empty header
+    // is still visible — Node reports "a, , c" and "", not "a, c" and null
+    xgap: "a, , c",
+    xempty: "",
+    accept: "text/html, application/json",
+  });
+});
+
 it.concurrent("#6583", async () => {
   const callback = mock();
   using server = Bun.serve({

@@ -2545,6 +2545,49 @@ it("rejects a response with an unparseable Content-Length instead of treating it
   expect(await ok.text()).toBe("hello");
 });
 
+it("combines duplicate response headers per the Fetch spec", async () => {
+  // WHATWG Fetch requires repeated header fields to be combined with ", " when
+  // read via Headers.get(), except Set-Cookie which is stored as separate
+  // values exposed by getSetCookie(). Previously Bun overwrote duplicate
+  // non-common header names with the last value, dropping earlier values.
+  await using server = net.createServer(socket => {
+    socket.once("data", () => {
+      socket.end(
+        "HTTP/1.1 200 OK\r\n" +
+          "Content-Length: 2\r\n" +
+          "X-Dup: first\r\n" +
+          "X-Dup: second\r\n" +
+          "X-Dup: third\r\n" +
+          "X-Once: only\r\n" +
+          "X-Gap: a\r\n" +
+          "X-Gap:\r\n" +
+          "X-Gap: c\r\n" +
+          "X-Empty:\r\n" +
+          "Accept: text/html\r\n" +
+          "Accept: application/json\r\n" +
+          "Set-Cookie: a=1\r\n" +
+          "Set-Cookie: b=2\r\n" +
+          "Connection: close\r\n" +
+          "\r\n" +
+          "ok",
+      );
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const res = await fetch(`http://127.0.0.1:${port}/`);
+  expect(await res.text()).toBe("ok");
+  expect(res.headers.get("x-dup")).toBe("first, second, third");
+  expect(res.headers.get("x-once")).toBe("only");
+  // the combine step has no empty-value exception, and a lone empty header is
+  // still visible — undici returns "a, , c" and "" here, not "a, c" and null
+  expect(res.headers.get("x-gap")).toBe("a, , c");
+  expect(res.headers.get("x-empty")).toBe("");
+  expect(res.headers.get("accept")).toBe("text/html, application/json");
+  expect(res.headers.getSetCookie()).toEqual(["a=1", "b=2"]);
+});
+
 it("drops a custom Host header when following a cross-origin redirect", async () => {
   // A per-request Host override must not survive a change of origin: the
   // follow-up request's Host header (and the TLS SNI / certificate identity

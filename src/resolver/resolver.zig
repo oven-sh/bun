@@ -1063,8 +1063,11 @@ pub const Resolver = struct {
 
             if (dir.enclosing_tsconfig_json) |tsconfig| {
                 result.jsx = tsconfig.mergeJSX(result.jsx);
-                result.flags.emit_decorator_metadata = result.flags.emit_decorator_metadata or tsconfig.emit_decorator_metadata;
-                result.flags.experimental_decorators = result.flags.experimental_decorators or tsconfig.experimental_decorators;
+                // The `?bool` on TSConfigJSON is collapsed to bool here — only
+                // an explicit `true` in the (already-merged) tsconfig enables
+                // the feature.
+                result.flags.emit_decorator_metadata = result.flags.emit_decorator_metadata or (tsconfig.emit_decorator_metadata orelse false);
+                result.flags.experimental_decorators = result.flags.experimental_decorators or (tsconfig.experimental_decorators orelse false);
             }
 
             // If you use mjs or mts, then you're using esm
@@ -4204,9 +4207,16 @@ pub const Resolver = struct {
             }
 
             if (tsconfig_path) |tsconfigpath| {
+                // Pass .invalid for --tsconfig-override: the override path may
+                // live outside the directory we're iterating, so `fd` isn't its
+                // parent. Using it would trip the `openat(dirname_fd, basename(path))`
+                // path in cache.zig and log an "Internal error: directory mismatch"
+                // warning before falling back to an absolute-path open.
+                const is_override = r.opts.tsconfig_override != null and parent == null;
+                const tsconfig_dir_fd: FD = if (FeatureFlags.store_file_descriptors and !is_override) fd else .invalid;
                 info.tsconfig_json = r.parseTSConfig(
                     tsconfigpath,
-                    if (FeatureFlags.store_file_descriptors) fd else .zero,
+                    tsconfig_dir_fd,
                 ) catch |err| brk: {
                     const pretty = tsconfigpath;
                     if (err == error.ENOENT or err == error.FileNotFound) {
@@ -4241,10 +4251,18 @@ pub const Resolver = struct {
                     }
 
                     var merged_config = parent_configs.pop().?;
-                    // starting from the base config (end of the list)
-                    // successively apply the inheritable attributes to the next config
+                    // parent_configs was built child-first and then walked up
+                    // the extends chain, so `merged_config` starts as the
+                    // deepest base and each iteration folds in a progressively
+                    // more-specific (closer-to-child) config on top. TypeScript's
+                    // extends semantics are per-key override: a child's explicit
+                    // value wins over the parent's, even when the value is
+                    // `false`. A plain `or` on `bool` can't express that, so
+                    // these fields are `?bool` and we overwrite only when the
+                    // more-specific config set the key explicitly.
                     while (parent_configs.pop()) |parent_config| {
-                        merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
+                        if (parent_config.emit_decorator_metadata) |v| merged_config.emit_decorator_metadata = v;
+                        if (parent_config.experimental_decorators) |v| merged_config.experimental_decorators = v;
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;
                         }

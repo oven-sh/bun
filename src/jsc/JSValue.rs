@@ -2522,6 +2522,7 @@ impl JSValue {
     /// `DontEnum`, so this skips them while visiting user-assigned
     /// properties; used to print `[Function: x] { ... }`. When `ordered` the
     /// keys are sorted by code point (the `sorted: true` inspect option).
+    #[inline(always)]
     pub fn for_each_property_enumerable_own(
         self,
         global: &JSGlobalObject,

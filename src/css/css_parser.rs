@@ -694,16 +694,24 @@ pub trait QualifiedRuleParser {
     /// Parse the prelude of a qualified rule. For style rules, this is a
     /// Selector list. The given `input` is a "delimited" parser that ends
     /// where the prelude should end (before the next `{`).
-    fn parse_prelude(this: &mut Self, input: &mut Parser) -> CssResult<Self::Prelude>;
+    ///
+    /// The default implementation rejects all qualified rules.
+    fn parse_prelude(_this: &mut Self, input: &mut Parser) -> CssResult<Self::Prelude> {
+        Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
+    }
 
     /// Parse the content of a `{ /* ... */ }` block for the body of the
     /// qualified rule.
+    ///
+    /// The default implementation rejects all qualified rules.
     fn parse_block(
-        this: &mut Self,
-        prelude: Self::Prelude,
-        start: &ParserState,
+        _this: &mut Self,
+        _prelude: Self::Prelude,
+        _start: &ParserState,
         input: &mut Parser,
-    ) -> CssResult<Self::QualifiedRule>;
+    ) -> CssResult<Self::QualifiedRule> {
+        Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
+    }
 }
 
 #[derive(Default, Clone, Copy, crate::DeepClone)]
@@ -766,22 +774,34 @@ pub trait CustomAtRuleParser {
 }
 
 /// At rules are rules that have the `@` symbol.
+///
+/// The default method implementations reject all at-rules.
 pub trait AtRuleParser {
     type Prelude;
     type AtRule;
 
-    fn parse_prelude(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<Self::Prelude>;
-    fn rule_without_block(
-        this: &mut Self,
-        prelude: Self::Prelude,
-        start: &ParserState,
-    ) -> Maybe<Self::AtRule, ()>;
-    fn parse_block(
-        this: &mut Self,
-        prelude: Self::Prelude,
-        start: &ParserState,
+    fn parse_prelude(
+        _this: &mut Self,
+        name: &[u8],
         input: &mut Parser,
-    ) -> CssResult<Self::AtRule>;
+    ) -> CssResult<Self::Prelude> {
+        Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name)))
+    }
+    fn rule_without_block(
+        _this: &mut Self,
+        _prelude: Self::Prelude,
+        _start: &ParserState,
+    ) -> Maybe<Self::AtRule, ()> {
+        Err(())
+    }
+    fn parse_block(
+        _this: &mut Self,
+        _prelude: Self::Prelude,
+        _start: &ParserState,
+        input: &mut Parser,
+    ) -> CssResult<Self::AtRule> {
+        Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
+    }
 }
 
 #[derive(Default)]

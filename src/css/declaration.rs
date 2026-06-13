@@ -324,49 +324,11 @@ pub(crate) struct PropertyDeclarationParser<'a, 'bump> {
 impl<'a, 'bump> css::AtRuleParser for PropertyDeclarationParser<'a, 'bump> {
     type Prelude = ();
     type AtRule = ();
-
-    fn parse_prelude(
-        _this: &mut Self,
-        name: &[u8],
-        input: &mut css::Parser,
-    ) -> Result<Self::Prelude> {
-        Err(input.new_error(css::BasicParseErrorKind::at_rule_invalid(name)))
-    }
-
-    fn parse_block(
-        _this: &mut Self,
-        _: Self::Prelude,
-        _: &css::ParserState,
-        input: &mut css::Parser,
-    ) -> Result<Self::AtRule> {
-        Err(input.new_error(css::BasicParseErrorKind::at_rule_body_invalid))
-    }
-
-    fn rule_without_block(
-        _this: &mut Self,
-        _: Self::Prelude,
-        _: &css::ParserState,
-    ) -> css::Maybe<Self::AtRule, ()> {
-        Err(())
-    }
 }
 
 impl<'a, 'bump> css::QualifiedRuleParser for PropertyDeclarationParser<'a, 'bump> {
     type Prelude = ();
     type QualifiedRule = ();
-
-    fn parse_prelude(_this: &mut Self, input: &mut css::Parser) -> Result<Self::Prelude> {
-        Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid))
-    }
-
-    fn parse_block(
-        _this: &mut Self,
-        _prelude: Self::Prelude,
-        _start: &css::ParserState,
-        input: &mut css::Parser,
-    ) -> Result<Self::QualifiedRule> {
-        Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid))
-    }
 }
 
 impl<'a, 'bump> css::DeclarationParser for PropertyDeclarationParser<'a, 'bump> {

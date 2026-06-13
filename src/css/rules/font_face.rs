@@ -707,58 +707,16 @@ const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
-    use css::{BasicParseErrorKind, Maybe, Parser, ParserOptions, ParserState, Result};
+    use css::{Parser, ParserOptions, Result};
 
     impl AtRuleParser for FontFaceDeclarationParser {
         type Prelude = ();
         type AtRule = FontFaceProperty;
-
-        fn parse_prelude(
-            _this: &mut Self,
-            name: &[u8],
-            input: &mut Parser,
-        ) -> Result<Self::Prelude> {
-            Err(
-                input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<
-                    [u8],
-                >(name))),
-            )
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _: Self::Prelude,
-            _: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::AtRule> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
-        }
-
-        fn rule_without_block(
-            _this: &mut Self,
-            _: Self::Prelude,
-            _: &ParserState,
-        ) -> Maybe<Self::AtRule, ()> {
-            Err(())
-        }
     }
 
     impl QualifiedRuleParser for FontFaceDeclarationParser {
         type Prelude = ();
         type QualifiedRule = FontFaceProperty;
-
-        fn parse_prelude(_this: &mut Self, input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _: Self::Prelude,
-            _: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::QualifiedRule> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
     }
 
     impl DeclarationParser for FontFaceDeclarationParser {

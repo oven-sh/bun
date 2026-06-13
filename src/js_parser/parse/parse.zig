@@ -1041,6 +1041,18 @@ pub fn Parse(
         }
 
         pub fn parsePath(p: *P) !ParsedPath {
+            return parsePathInner(p, false);
+        }
+
+        /// For TypeScript type-only imports (`import type X from "p" with { ... }`).
+        /// The whole import gets erased, so we must not emit a hard parse error
+        /// for unsupported attribute keys — TS 5.3+'s `resolution-mode` lives
+        /// in exactly this shape.
+        pub fn parseTypeOnlyPath(p: *P) !ParsedPath {
+            return parsePathInner(p, true);
+        }
+
+        fn parsePathInner(p: *P, is_type_only: bool) !ParsedPath {
             const path_text = try p.lexer.toUTF8EString();
             var path = ParsedPath{
                 .loc = p.lexer.loc(),
@@ -1075,6 +1087,8 @@ pub fn Parse(
                 var has_seen_embed_true = false;
 
                 while (p.lexer.token != .t_close_brace) {
+                    const key_range = p.lexer.range();
+                    var unsupported_key: ?[]const u8 = null;
                     const supported_attribute: ?SupportedAttribute = brk: {
                         // Parse the key
                         if (p.lexer.isIdentifierOrKeyword()) {
@@ -1083,13 +1097,15 @@ pub fn Parse(
                                     break :brk t;
                                 }
                             }
+                            unsupported_key = p.lexer.identifier;
                         } else if (p.lexer.token == .t_string_literal) {
-                            const string_literal_text = (try p.lexer.toUTF8EString()).slice8();
+                            const key_text = (try p.lexer.toUTF8EString()).slice8();
                             inline for (comptime std.enums.values(SupportedAttribute)) |t| {
-                                if (strings.eqlComptime(string_literal_text, @tagName(t))) {
+                                if (strings.eqlComptime(key_text, @tagName(t))) {
                                     break :brk t;
                                 }
                             }
+                            unsupported_key = key_text;
                         } else {
                             try p.lexer.expect(.t_identifier);
                         }
@@ -1102,6 +1118,24 @@ pub fn Parse(
 
                     try p.lexer.expect(.t_string_literal);
                     const string_literal_text = (try p.lexer.toUTF8EString()).slice8();
+
+                    // Suppress the "unsupported attribute" error for TypeScript
+                    // type-only imports (e.g. `import type X from "p" with {
+                    // "resolution-mode": "require" }`) — the whole import gets
+                    // erased, and TS 5.3+ uses attributes like `resolution-mode`
+                    // that are meaningful to the type checker only.
+                    if (unsupported_key) |key| {
+                        if (!is_type_only) {
+                            try p.log.addRangeErrorFmt(
+                                p.source,
+                                key_range,
+                                p.allocator,
+                                "Import attribute \"{s}\" with value \"{s}\" is not supported",
+                                .{ key, string_literal_text },
+                            );
+                        }
+                    }
+
                     if (supported_attribute) |attr| {
                         switch (attr) {
                             .type => {

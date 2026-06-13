@@ -126,7 +126,10 @@ pub struct Printer<'a> {
     pub sources: Option<&'a Vec<Box<[u8]>>>,
     pub dest: &'a mut dyn Write,
     pub loc: Location,
-    pub indent_amt: u8,
+    /// Two per nesting level. `u32` because valid stylesheets can nest rules
+    /// hundreds of levels deep (bounded only by input size), which overflows a
+    /// `u8` at 128 levels.
+    pub indent_amt: u32,
     pub line: u32,
     pub col: u32,
     pub minify: bool,

@@ -1,57 +1,110 @@
 use bun_core::strings;
 use bun_url::PercentEncoding;
 
-// TODO: lifetime — every `&'static [u8]` field below actually borrows from
-// either the `parse()` input slice or, when the input was percent-encoded, from
-// `_decoded_storage`. Add a
-// lifetime param to `URLPath` so the input-borrow case is checked.
+/// Byte range into [`URLPath::backing`]; `Default` is the empty sentinel.
+#[derive(Clone, Copy, Default)]
+struct Span {
+    start: usize,
+    end: usize,
+}
+
+/// Parsed request path. Fully owned: every component is a byte range into
+/// `backing`, so the struct can be stored anywhere.
 #[derive(Default)]
 pub struct URLPath {
-    pub extname: &'static [u8],
-    pub path: &'static [u8],
-    pub pathname: &'static [u8],
-    pub first_segment: &'static [u8],
-    pub query_string: &'static [u8],
+    extname: Span,
+    path: Span,
+    pathname: Span,
+    first_segment: Span,
+    query_string: Span,
+    /// The normalized `path` is the literal `"."` (root), which is not a
+    /// subslice of `backing`.
+    path_is_dot: bool,
     pub needs_redirect: bool,
     /// Treat URLs as non-sourcemap URLS
     /// Then at the very end, we check.
     pub is_source_map: bool,
-    /// Owned backing storage for the slice fields when `parse()` had to
-    /// percent-decode. Heap-stable: the slice fields above point into this
-    /// allocation, which is never resized and lives exactly as long as `self`.
-    /// Owning the decode buffer
-    /// per-URLPath removes the use-after-free that a shared growable buffer
-    /// would introduce on the next `parse()` call.
-    ///
-    /// `URLPath` must not be `Clone`: copying the slice fields without this
-    /// owner would re-introduce the dangling hazard.
-    _decoded_storage: Option<Box<[u8]>>,
+    /// Owned backing bytes for every span above; `None` only for `default()`.
+    backing: Option<Box<[u8]>>,
 }
 
 impl URLPath {
-    /// Take ownership of the percent-decode buffer, if `parse()` had to
-    /// allocate one. The slice fields of `self` keep pointing into the
-    /// returned allocation — the caller must keep it alive for as long as any
-    /// of those slices (or sub-slices of them) are read; dropping it while
-    /// they are still in use leaves them dangling.
-    #[must_use = "dropping the returned storage dangles the slice fields of this URLPath"]
-    pub fn take_decoded_storage(&mut self) -> Option<Box<[u8]>> {
-        self._decoded_storage.take()
+    #[inline]
+    fn slice(&self, s: Span) -> &[u8] {
+        match &self.backing {
+            Some(b) => &b[s.start..s.end],
+            None => &[],
+        }
+    }
+
+    /// File extension without the leading dot; empty when there is none.
+    #[inline]
+    pub fn extname(&self) -> &[u8] {
+        self.slice(self.extname)
+    }
+
+    /// Normalized path: pathname without the leading `/` or query string;
+    /// `"."` for the root path.
+    #[inline]
+    pub fn path(&self) -> &[u8] {
+        if self.path_is_dot {
+            return b".";
+        }
+        self.slice(self.path)
+    }
+
+    /// The full (decoded) pathname, including the query string if present.
+    #[inline]
+    pub fn pathname(&self) -> &[u8] {
+        self.slice(self.pathname)
+    }
+
+    /// First path segment (between the leading `/` and the next `/`).
+    #[inline]
+    pub fn first_segment(&self) -> &[u8] {
+        self.slice(self.first_segment)
+    }
+
+    /// Query string, starting at `?`; empty when there is none.
+    #[inline]
+    pub fn query_string(&self) -> &[u8] {
+        self.slice(self.query_string)
+    }
+
+    /// Take ownership of the backing allocation; slices previously read
+    /// through the accessors stay valid against the returned `Box`. Afterwards
+    /// the accessors return empty (except the root `"."` case of `path()`).
+    #[must_use = "dropping the returned storage frees the bytes previously returned by this URLPath's accessors"]
+    pub fn take_backing(&mut self) -> Option<Box<[u8]>> {
+        self.backing.take()
     }
 }
 
-// Design note: a growable shared (e.g. threadlocal) decode buffer cannot work
-// here — the next `parse()` may reallocate it and dangle every prior URLPath —
-// so instead each URLPath that needs decoding owns its decode buffer in
-// `_decoded_storage`. This costs one small allocation only on the
-// percent-encoded path, which is the rare case.
+/// Offset range of `sub` within `parent`; `sub` must be a subslice of `parent`.
+#[inline]
+fn span_of(parent: &[u8], sub: &[u8]) -> Span {
+    debug_assert!(
+        sub.is_empty() || {
+            let p = parent.as_ptr() as usize;
+            let s = sub.as_ptr() as usize;
+            s >= p && s + sub.len() <= p + parent.len()
+        }
+    );
+    if sub.is_empty() {
+        return Span::default();
+    }
+    let start = sub.as_ptr() as usize - parent.as_ptr() as usize;
+    Span {
+        start,
+        end: start + sub.len(),
+    }
+}
 
 pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::DecodeError> {
-    let mut decoded_pathname: &[u8] = possibly_encoded_pathname_;
-    let mut decoded_storage: Option<Box<[u8]>> = None;
     let mut needs_redirect = false;
 
-    if strings::index_of_char(decoded_pathname, b'%').is_some() {
+    // Own the bytes up front; all spans below index into this one allocation.
+    let backing: Box<[u8]> = if strings::index_of_char(possibly_encoded_pathname_, b'%').is_some() {
         // The in-place decode buffer is capped at 16384 bytes of input.
         let capped = &possibly_encoded_pathname_[..possibly_encoded_pathname_.len().min(16384)];
 
@@ -63,16 +116,11 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         )?;
         debug_assert!(n as usize <= buf.len());
         buf.truncate(n as usize);
-        // Freeze into a heap-stable Box and park it in `decoded_storage` before
-        // borrowing: the slice fields in the returned URLPath borrow from this
-        // allocation, and the Box is later moved into that same URLPath, so the
-        // borrow is valid for the struct's whole lifetime (Box heap address is
-        // stable across moves). NLL releases the local borrow after the last
-        // use of `decoded_pathname` in the struct-literal field initialisers,
-        // before `_decoded_storage` is moved.
-        decoded_storage = Some(buf.into_boxed_slice());
-        decoded_pathname = decoded_storage.as_deref().unwrap();
-    }
+        buf.into_boxed_slice()
+    } else {
+        Box::from(possibly_encoded_pathname_)
+    };
+    let decoded_pathname: &[u8] = &backing;
 
     let mut question_mark_i: i32 = -1;
     let mut period_i: i32 = -1;
@@ -152,38 +200,35 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         }
     }
 
-    // TODO: lifetime — see struct-level note. `extend` launders the borrow
-    // to `'static` to match the field type; remove once URLPath gains a
-    // proper lifetime parameter for the input-borrow case.
-    #[inline(always)]
-    fn extend(s: &[u8]) -> &'static [u8] {
-        // SAFETY: local fn-item — every call below passes a slice that borrows
-        // either the parser's input or `decoded_storage`, both of which are
-        // moved into / outlive the returned `URLPath` (self-referential store).
-        unsafe { bun_collections::detach_lifetime(s) }
-    }
-
+    let path_is_dot = decoded_pathname.len() == 1;
     Ok(URLPath {
-        extname: extend(if !is_source_map {
-            extname
-        } else {
-            backup_extname
-        }),
+        extname: span_of(
+            decoded_pathname,
+            if !is_source_map {
+                extname
+            } else {
+                backup_extname
+            },
+        ),
         is_source_map,
-        pathname: extend(decoded_pathname),
-        first_segment: extend(first_segment),
-        path: extend(if decoded_pathname.len() == 1 {
-            b"."
+        pathname: span_of(decoded_pathname, decoded_pathname),
+        first_segment: span_of(decoded_pathname, first_segment),
+        path_is_dot,
+        path: if path_is_dot {
+            Span::default()
         } else {
-            path
-        }),
-        query_string: extend(if question_mark_i > -1 {
-            &decoded_pathname
-                [usize::try_from(question_mark_i).expect("int cast")..decoded_pathname.len()]
-        } else {
-            b""
-        }),
+            span_of(decoded_pathname, path)
+        },
+        query_string: span_of(
+            decoded_pathname,
+            if question_mark_i > -1 {
+                &decoded_pathname
+                    [usize::try_from(question_mark_i).expect("int cast")..decoded_pathname.len()]
+            } else {
+                b""
+            },
+        ),
         needs_redirect,
-        _decoded_storage: decoded_storage,
+        backing: Some(backing),
     })
 }

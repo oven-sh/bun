@@ -247,9 +247,7 @@ impl PatchTask {
                 "failed to apply patchfile ({})",
                 format_args!("{}", BStr::new(&apply.patchfilepath)),
             );
-            let _ = apply
-                .logger
-                .print(std::ptr::from_mut(Output::error_writer()));
+            let _ = Output::with_error_writer(|w| apply.logger.print(w));
         }
     }
 
@@ -266,9 +264,7 @@ impl PatchTask {
         let Some(hash) = calc_hash.result else {
             if log_level != LogLevel::Silent {
                 if calc_hash.logger.has_errors() {
-                    let _ = calc_hash
-                        .logger
-                        .print(std::ptr::from_mut(Output::error_writer()));
+                    let _ = Output::with_error_writer(|w| calc_hash.logger.print(w));
                 } else {
                     Output::err_generic(
                         "Failed to calculate hash for patch <b>{}<r>",
@@ -483,15 +479,9 @@ impl PatchTask {
 
         // 3. copy the unpatched files into temp dir
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath_without_patch_hash.as_zstr();
-        // Borrowck — `tempdir_name` borrows `tmpname_buf` mutably, but
-        // `PackageInstall` also wants `&mut tmpname_buf[..]` for
-        // `destination_dir_subpath_buf`. `PackageInstall` assumes
-        // `destination_dir_subpath` is a prefix slice *into*
-        // `destination_dir_subpath_buf` (see `verifyGitResolution` /
-        // `verifyPackageJSONNameAndVersion`), and that aliasing can't be
-        // expressed with `&ZStr` + `&mut [u8]`, so use a separate buffer but
-        // mirror the prefix bytes so the invariant holds for any future call
-        // that reaches those paths.
+        // `PackageInstall` re-derives the subpath view from buffer + length,
+        // so copy the tempdir name into a dedicated buffer rather than
+        // borrowing `tmpname_buf` twice.
         let mut dest_subpath_buf = [0u8; 1024];
         dest_subpath_buf[..tempdir_name.len() + 1]
             .copy_from_slice(tempdir_name.as_bytes_with_nul());
@@ -501,7 +491,7 @@ impl PatchTask {
         let mut pkg_install = PackageInstall {
             cache_dir: patch.cache_dir,
             cache_dir_subpath: cache_dir_subpath_z,
-            destination_dir_subpath: tempdir_name,
+            destination_dir_subpath_len: tempdir_name.len(),
             destination_dir_subpath_buf: &mut dest_subpath_buf[..],
             patch: None,
             progress: None,

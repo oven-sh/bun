@@ -223,6 +223,12 @@ pub(crate) fn install_isolated_packages(
 ) -> Result<crate::package_install::Summary, AllocError> {
     analytics::features::isolated_bun_install.fetch_add(1, Ordering::Relaxed);
 
+    // Provenance root for the progress-node cleanup scopeguard below;
+    // reborrow `manager` through it so the guard's later deref stays valid.
+    let mgr_root: *mut PackageManager = manager;
+    // SAFETY: `mgr_root` is freshly derived from the unique `&mut` fn param.
+    let manager = unsafe { &mut *mgr_root };
+
     // Take a raw pointer so column borrows below don't tie up `&mut manager`
     // (which owns the lockfile).
     let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
@@ -1943,6 +1949,17 @@ pub(crate) fn install_isolated_packages(
             manager.downloads_node = Some(&raw mut download_node);
         }
 
+        // The stored pointers target the stack locals above; clear them on
+        // every exit path so `PackageManager` never retains pointers into a
+        // dead frame. Declared after the node locals so it drops before them.
+        let _clear_progress_nodes = scopeguard::guard(mgr_root, |mgr| {
+            // SAFETY: the manager outlives this frame; no `&mut PackageManager`
+            // is live at drop.
+            let m = unsafe { &mut *mgr };
+            m.scripts_node = None;
+            m.downloads_node = None;
+        });
+
         let nodes_slice = store.nodes.slice();
         let node_pkg_ids = nodes_slice.items_pkg_id();
         let node_dep_ids = nodes_slice.items_dep_id();
@@ -2576,11 +2593,6 @@ pub(crate) fn install_isolated_packages(
             progress.root.end();
             *progress = Progress::default();
         }
-        // Defensive: clear the stack-local progress-node pointers so the
-        // accessors can't observe dangling pointers after this frame returns.
-        installer.manager_mut().scripts_node = None;
-        installer.manager_mut().downloads_node = None;
-
         if Environment::CI_ASSERT {
             let mut done = true;
             'next_entry: for (_entry_id, entry_step) in

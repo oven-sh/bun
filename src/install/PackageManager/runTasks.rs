@@ -940,7 +940,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
             // not `&mut Writer` (the underlying `Writer` is the FFI shape).
             // Propagate the write error (WriteFailed) out of `run_tasks`.
-            task.log.print(std::ptr::from_mut(Output::error_writer()))?;
+            Output::with_error_writer(|w| task.log.print(w))?;
             if task.log.errors > 0 {
                 manager.any_failed_to_install = true;
             }
@@ -949,13 +949,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
         match task.tag {
             Task::Tag::PackageManifest => {
-                // capture the `*mut NetworkTask` up front — the
-                // `&'a mut NetworkTask` field can't be moved out through
-                // `ManuallyDrop`'s immutable `Deref` inside the defer body.
-                let net_ptr: *mut NetworkTask = {
-                    let req = task.request_package_manifest_mut();
-                    &raw mut *req.network
-                };
+                // capture the `*mut NetworkTask` up front for the defer body.
+                let net_ptr: *mut NetworkTask = task.request_package_manifest().network;
                 scopeguard::defer! {
                     // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
                     // function-scope provenance root; `net_ptr` is the network task
@@ -976,7 +971,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task.err.unwrap_or_else(|| bun_core::err!("Failed"));
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
-                        C::on_package_manifest_error(extract_ctx, name, err, &req.network.url_buf);
+                        // SAFETY: the pool slot is returned only by the `defer!`
+                        // above, which runs after this read.
+                        let url_buf = unsafe { &(*req.network).url_buf };
+                        C::on_package_manifest_error(extract_ctx, name, err, url_buf);
                     } else {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
@@ -1034,11 +1032,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             }
             Task::Tag::Extract | Task::Tag::LocalTarball => {
                 // capture the `*mut NetworkTask` up front (only for the
-                // Extract arm) so the defer body need not move the `&mut` out
-                // through `ManuallyDrop`'s immutable `Deref`.
+                // Extract arm) for the defer body.
                 let net_ptr: *mut NetworkTask = if task.tag == Task::Tag::Extract {
-                    let req = task.request_extract_mut();
-                    &raw mut *req.network
+                    task.request_extract().network
                 } else {
                     core::ptr::null_mut()
                 };

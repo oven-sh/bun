@@ -127,6 +127,51 @@ impl IOReader {
             .expect("IOReader::keepalive after last Arc dropped")
     }
 
+    /// Like [`Self::keepalive`], but a final ref hops to the event loop
+    /// ([`Self::async_deinit`]) instead of dropping under the read-loop frame.
+    #[inline]
+    fn callback_keepalive(&self) -> CallbackKeepalive {
+        CallbackKeepalive(Some(self.keepalive()))
+    }
+
+    /// Hands the final strong ref to the event loop so `Drop` runs on the
+    /// next tick, with no bun_io frame on the stack.
+    fn async_deinit(this: std::sync::Arc<IOReader>) {
+        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTaskPtr};
+        let evtloop = this.state().evtloop;
+        let raw: *mut IOReader = std::sync::Arc::into_raw(this).cast_mut();
+        match evtloop {
+            EventLoopHandle::Js { .. } => {
+                let payload = bun_core::heap::into_raw(Box::new(
+                    crate::shell::dispatch_tasks::AsyncDeinitReader {
+                        reader: raw,
+                        concurrent_task: Default::default(),
+                    },
+                ));
+                // SAFETY: `payload` ownership transfers to the queue; reclaimed
+                // once by `AsyncDeinitReader::run_from_main_thread`.
+                unsafe {
+                    let ct = (*payload)
+                        .concurrent_task
+                        .from(payload, AutoDeinit::ManualDeinit);
+                    evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
+                        js: std::ptr::from_mut(ct),
+                    });
+                }
+            }
+            EventLoopHandle::Mini(_) => {
+                fn deinit_mini(reader: *mut IOReader, _: *mut core::ffi::c_void) {
+                    IOReader::deinit_on_main_thread(reader);
+                }
+                let any = bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from_callback_auto_deinit(
+                    raw,
+                    deinit_mini,
+                );
+                evtloop.enqueue_task_concurrent(EventLoopTaskPtr { mini: any });
+            }
+        }
+    }
+
     pub fn init(fd: Fd, evtloop: EventLoopHandle) -> std::sync::Arc<IOReader> {
         let mut reader = ReaderImpl::init::<IOReader>();
         #[cfg(not(windows))]
@@ -276,7 +321,7 @@ impl IOReader {
         // external Arc; hold one across the whole body so the trailing
         // `state()` accesses (and `run_yield`'s re-read of `interp`) see live
         // memory.
-        let _keepalive = self.keepalive();
+        let _keepalive = self.callback_keepalive();
         self.set_reading(false);
         // NOTE: reshaped for borrowck — `dispatch_read_chunk`/`run_yield`
         // both re-derive `state()` (and the interpreter callback may re-enter
@@ -321,7 +366,7 @@ impl IOReader {
     fn on_reader_error(&self, err: &sys::Error) {
         // `dispatch_reader_done` may drop the last external Arc; keep `self`
         // alive across the loop.
-        let _keepalive = self.keepalive();
+        let _keepalive = self.callback_keepalive();
         self.set_reading(false);
         let s = self.state();
         s.err = Some(err.to_shell_system_error());
@@ -342,7 +387,7 @@ impl IOReader {
         // `Arc<IOReader>`; if that was the last external ref, `self` is freed
         // mid-loop and `run_yield`'s `state().interp` reads 0xdfdf poison.
         // Hold a strong ref across the body.
-        let _keepalive = self.keepalive();
+        let _keepalive = self.callback_keepalive();
         self.set_reading(false);
         let s = self.state();
         let readers: Vec<ChildPtr> = s.readers.clone();
@@ -396,12 +441,8 @@ bun_io::impl_buffered_reader_parent! {
 
 impl Drop for IOReader {
     fn drop(&mut self) {
-        // With `Arc` the last ref drops after the callback returns, so this
-        // does not run from inside a read callback while BufferedReader is
-        // still iterating.
-        // TODO: revisit if a child callback can drop the last Arc while
-        // BufferedReader is still on the stack — would need the
-        // EventLoopTask hop once the shell EventLoopHandle shim is real.
+        // Never runs under a bun_io read-loop frame: callbacks hold a
+        // `callback_keepalive` guard that hops a final ref to the event loop.
         let s = self.state.get_mut();
         let r = self.reader.get_mut();
         if s.fd != Fd::INVALID {
@@ -463,5 +504,26 @@ fn dispatch_reader_done(
         ReaderTag::Cat => {
             crate::shell::builtins::cat::Cat::on_io_reader_done(interp, child.node, err)
         }
+    }
+}
+
+impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::AsyncDeinitReader {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellIOReaderAsyncDeinit;
+}
+
+/// Keepalive taken inside a bun_io callback; a final ref is handed to
+/// [`IOReader::async_deinit`] so teardown never runs under the read loop.
+/// The `strong_count == 1` check is not racy: all `IOReader` handles are
+/// confined to the shell event-loop thread. If the loop never ticks again
+/// (shutdown), the final ref leaks — the intended trade.
+struct CallbackKeepalive(Option<std::sync::Arc<IOReader>>);
+
+impl Drop for CallbackKeepalive {
+    fn drop(&mut self) {
+        let Some(ka) = self.0.take() else { return };
+        if std::sync::Arc::strong_count(&ka) > 1 {
+            return;
+        }
+        IOReader::async_deinit(ka);
     }
 }

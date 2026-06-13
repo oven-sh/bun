@@ -1202,22 +1202,18 @@ impl<'a> PackageInstaller<'a> {
             return;
         }
 
-        // `PackageInstall` stores both `destination_dir_subpath: &mut ZStr`
-        // and `destination_dir_subpath_buf: &mut [u8]` aliasing the same bytes.
-        // Derive BOTH from a single `*mut PathBuffer`
-        // so neither `&mut` invalidates the other under stacked-borrows.
+        // Write the alias prefix + NUL into the subpath buffer up front;
+        // taken via raw pointer because `progress_mut()` below reborrows all
+        // of `self`.
         let subpath_buf_ptr: *mut PathBuffer = &raw mut self.destination_dir_subpath_buf;
-        let destination_dir_subpath: &mut ZStr = {
+        let destination_dir_subpath_len: usize = {
             let alias_slice = alias.slice(string_buf!());
             // SAFETY: `subpath_buf_ptr` is the unique borrow of the field; valid for
             // the lifetime of this fn body.
             let buf = unsafe { &mut *subpath_buf_ptr };
             buf[..alias_slice.len()].copy_from_slice(alias_slice);
             buf[alias_slice.len()] = 0;
-            // SAFETY: buf[alias_slice.len()] == 0 written above; pointer derives from
-            // `subpath_buf_ptr` so it shares provenance with `destination_dir_subpath_buf`
-            // below.
-            unsafe { ZStr::from_raw_mut((*subpath_buf_ptr).as_mut_ptr(), alias_slice.len()) }
+            alias_slice.len()
         };
 
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
@@ -1307,10 +1303,9 @@ impl<'a> PackageInstaller<'a> {
                 None
             },
             cache_dir: Fd::INVALID, // assigned below
-            destination_dir_subpath,
+            destination_dir_subpath_len,
             // SAFETY: `subpath_buf_ptr` = `&raw mut self.destination_dir_subpath_buf`; the
-            // field outlives `installer`. `destination_dir_subpath` above derives from the
-            // same raw pointer, so this `&mut` does not invalidate it under stacked-borrows.
+            // field outlives `installer` and this is the only live reference into it.
             destination_dir_subpath_buf: unsafe { (*subpath_buf_ptr).as_mut_slice() },
             package_name: pkg_name,
             patch: patch_patch.map(|_| package_install::Patch {

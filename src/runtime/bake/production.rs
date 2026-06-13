@@ -254,7 +254,7 @@ fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
     // `vm.log` is the process-lifetime ctx.log set in build_command;
     // `log_ref()` is the safe accessor encapsulating the NonNull deref.
     if let Some(log) = vm.log_ref() {
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        let _ = Output::with_error_writer(|w| log.print(w));
     }
     Global::exit(1);
 }
@@ -533,9 +533,7 @@ pub(super) fn build_with_vm(
             }
             bun_core::err_generic!("Failed to resolve all imports required by the framework");
             Output::flush();
-            let _ = server_transpiler
-                .log()
-                .print(std::ptr::from_mut(Output::error_writer()));
+            let _ = Output::with_error_writer(|w| server_transpiler.log().print(w));
             Global::crash();
         }
     };

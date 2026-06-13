@@ -176,7 +176,7 @@ pub fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
     // `parent` is the backref stashed via `set_parent` in `IOWriter::init`;
     // `writer` is a field of `*parent`, so the pointee is live. Re-enter via
     // `&self` (UnsafeCell aliasing model). `ParentRef::Deref → &IOWriter`.
-    let _keepalive = parent.keepalive();
+    let _keepalive = parent.callback_keepalive();
     writer.on_poll(size_hint, hup);
 }
 
@@ -263,8 +263,53 @@ impl IOWriter {
             .expect("IOWriter::keepalive after last Arc dropped")
     }
 
-    /// Read-only accessor for the `is_socket` flag (used by
-    /// `ShellSubprocess::spawn` to decide `no_sigpipe`).
+    /// Like [`Self::keepalive`], but a final ref hops to the event loop
+    /// ([`Self::async_deinit`]) instead of dropping under a writer frame.
+    #[inline]
+    fn callback_keepalive(&self) -> CallbackKeepalive {
+        CallbackKeepalive(Some(self.keepalive()))
+    }
+
+    /// Hands the final strong ref to the event loop so `Drop` runs on the
+    /// next tick, with no PipeWriter/poll frame on the stack.
+    fn async_deinit(this: std::sync::Arc<IOWriter>) {
+        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTaskPtr};
+        let evtloop = this.state().evtloop;
+        let raw: *mut IOWriter = std::sync::Arc::into_raw(this).cast_mut();
+        match evtloop {
+            EventLoopHandle::Js { .. } => {
+                let payload = bun_core::heap::into_raw(Box::new(
+                    crate::shell::dispatch_tasks::AsyncDeinitWriter {
+                        writer: raw,
+                        concurrent_task: Default::default(),
+                    },
+                ));
+                // SAFETY: `payload` ownership transfers to the queue; reclaimed
+                // once by `AsyncDeinitWriter::run_from_main_thread`.
+                unsafe {
+                    let ct = (*payload)
+                        .concurrent_task
+                        .from(payload, AutoDeinit::ManualDeinit);
+                    evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
+                        js: std::ptr::from_mut(ct),
+                    });
+                }
+            }
+            EventLoopHandle::Mini(_) => {
+                fn deinit_mini(writer: *mut IOWriter, _: *mut core::ffi::c_void) {
+                    IOWriter::deinit_on_main_thread(writer);
+                }
+                let any = bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from_callback_auto_deinit(
+                    raw,
+                    deinit_mini,
+                );
+                evtloop.enqueue_task_concurrent(EventLoopTaskPtr { mini: any });
+            }
+        }
+    }
+
+    /// Whether the underlying fd is a socket (`ShellSubprocess::spawn` uses
+    /// this to decide `no_sigpipe`).
     #[inline]
     pub fn is_socket(&self) -> bool {
         self.state().flags.is_socket
@@ -368,7 +413,25 @@ impl IOWriter {
     fn __start(&self) -> sys::Result<()> {
         let s = self.state();
         crate::shell_log!("IOWriter(fd={}) __start()", s.fd);
-        if let Err(e) = s.writer.start(s.fd, s.flags.pollable) {
+        // On Windows, libuv takes ownership of the HANDLE when the source
+        // opens as a uv pipe/tty; the taken slot tells us to disarm `s.fd` so
+        // Drop doesn't double-close. On POSIX this is identical to `start`.
+        let mut movable_fd = bun_sys::MovableIfWindowsFd::init(s.fd);
+        let start_result = s.writer.start_movable(&mut movable_fd, s.flags.pollable);
+        #[cfg(windows)]
+        {
+            if !movable_fd.is_owned() {
+                // libuv owns the HANDLE from `uv_pipe_open`/`uv_tty_init`
+                // onward, even if a later start step fails — so key the
+                // disarm on the slot, not on `start_result`.
+                s.fd = Fd::INVALID;
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = &movable_fd;
+        }
+        if let Err(e) = start_result {
             #[cfg(not(windows))]
             {
                 // We get this if we pass in a file descriptor that is not
@@ -425,25 +488,6 @@ impl IOWriter {
                 }
             }
             return Err(e);
-        }
-        #[cfg(windows)]
-        {
-            // When `Source::open` produced a uv pipe/tty, libuv has TAKEN
-            // OWNERSHIP of the underlying HANDLE
-            // (`uv_pipe_open`/`uv_tty_init`) and `uv_close` (issued by
-            // `s.writer.close()` in Drop) will close it.
-            // `BaseWindowsPipeWriter::start` does not invalidate the stored
-            // fd (TODO at PipeWriter.rs:1277), so disarm the Drop close here
-            // instead. The `Source::File`/`SyncFile` case (incl. the
-            // EBADF→`start_with_file` fallback above, which `return`s early)
-            // keeps `s.fd` valid: with `owns_fd=false` PipeWriter does NOT
-            // close it there, so Drop must.
-            if matches!(
-                s.writer.source,
-                Some(bun_io::Source::Pipe(_) | bun_io::Source::Tty(_))
-            ) {
-                s.fd = Fd::INVALID;
-            }
         }
         #[cfg(not(windows))]
         {
@@ -692,7 +736,7 @@ impl IOWriter {
         // `drain_buffered_data`/`on_error` below re-enter the interpreter and
         // may drop the last external Arc; hold one across the whole body so the
         // trailing `set_writing(false)` defer runs on a live `self`.
-        let _keepalive = self.keepalive();
+        let _keepalive = self.callback_keepalive();
         {
             let s = self.state();
             debug_assert!(!s.flags.pollable);
@@ -847,7 +891,7 @@ impl IOWriter {
     }
 
     fn on_error(&self, err: &sys::Error) {
-        let _keepalive = self.keepalive();
+        let _keepalive = self.callback_keepalive();
         self.set_writing(false);
         let s = self.state();
         if err.get_errno() == E::EPIPE {
@@ -1052,7 +1096,7 @@ bun_io::impl_buffered_writer_parent! {
     // Hold a keepalive across Windows on_write re-entry: `on_write_pollable` →
     // `run_yield` → `bump` may fire `on_io_writer_chunk`, which can drop the
     // last external `Arc<IOWriter>` (and the inline `uv_write_t`) mid-callback.
-    win_on_write_guard = |this| (&*this).keepalive(),
+    win_on_write_guard = |this| (&*this).callback_keepalive(),
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1131,12 +1175,9 @@ fn drain_buffered_data(
 
 impl Drop for IOWriter {
     fn drop(&mut self) {
-        // With `Arc` the last ref drops *after* the callback returns, so the
-        // synchronous path is safe (PipeWriter cannot touch us after free).
-        // TODO: if a PipeWriter callback is on the stack when the last
-        // Arc drops (possible via re-entrant child deinit), we need the async
-        // hop. Revisit once `bun_event_loop::EventLoopTask` is wired to the
-        // shell's `EventLoopHandle` shim.
+        // Never runs under a PipeWriter/poll callback frame: those frames
+        // hold a `callback_keepalive` guard that hops a final ref to the
+        // event loop.
         let s = self.state.get_mut();
         crate::shell_log!("IOWriter(fd={}) deinit", s.fd);
         #[cfg(not(windows))]
@@ -1204,5 +1245,26 @@ pub(crate) fn on_io_writer_chunk(
             let cw = unsafe { &mut *child.raw.cast::<crate::shell::subproc::CapturedWriter>() };
             cw.on_iowriter_chunk(written, err)
         }
+    }
+}
+
+impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::AsyncDeinitWriter {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellIOWriterAsyncDeinit;
+}
+
+/// Keepalive taken inside a PipeWriter/poll callback; a final ref is handed
+/// to [`IOWriter::async_deinit`] so teardown never runs under a writer frame.
+/// The `strong_count == 1` check is not racy: all `IOWriter` handles are
+/// confined to the shell event-loop thread. If the loop never ticks again
+/// (shutdown), the final ref leaks — the intended trade.
+struct CallbackKeepalive(Option<std::sync::Arc<IOWriter>>);
+
+impl Drop for CallbackKeepalive {
+    fn drop(&mut self) {
+        let Some(ka) = self.0.take() else { return };
+        if std::sync::Arc::strong_count(&ka) > 1 {
+            return;
+        }
+        IOWriter::async_deinit(ka);
     }
 }

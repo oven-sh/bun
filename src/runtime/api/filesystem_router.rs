@@ -587,16 +587,7 @@ impl FileSystemRouter {
             };
         }
 
-        // SAFETY: self-ref construction prelude — `route` below borrows these bytes via
-        // `URLPath`, and `path` is then MOVED into the same `MatchedRoute` Box that stores
-        // `route`. Borrowck can't see that the allocation travels with the borrow, so we
-        // detach the slice from `path`'s ownership here. The bytes stay valid: `path` is
-        // never dropped on any path between here and `MatchedRoute::init` taking ownership
-        // (early returns above this point already dropped/replaced `path`), except when
-        // `URLPath::parse` percent-decoded — in that case nothing borrows `path_bytes`
-        // anymore and `path` is swapped for the decode buffer below.
-        let path_bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(path.slice()) };
-        let mut url_path = match URLPath::parse(path_bytes) {
+        let mut url_path = match URLPath::parse(path.slice()) {
             Ok(v) => v,
             Err(err) => {
                 return Err(global_this.throw(format_args!(
@@ -610,7 +601,7 @@ impl FileSystemRouter {
         // `defer params.deinit(allocator)` → Drop
         // SAFETY: R-2 — short-lived `&mut Router` for the route lookup;
         // `match_page_with_allocator` is pure (no JS re-entry), and the returned
-        // `Match<'p>` borrows `params`/`path_bytes`, not `*router`, so the
+        // `Match<'p>` borrows `params`/`url_path`, not `*router`, so the
         // exclusive borrow ends at the `;`.
         let Some(route) = unsafe { this.router.get_mut() }
             .routes
@@ -619,15 +610,14 @@ impl FileSystemRouter {
             return Ok(JSValue::NULL);
         };
 
-        // If `URLPath::parse` had to percent-decode, `route.pathname`/`query_string` and
-        // the param values borrow the decode buffer — not `path` — and that buffer would
-        // be freed when `url_path` drops at the end of this call. Take ownership of it and
-        // make it the backing allocation instead. (`Box<[u8]>` -> `Vec<u8>` ->
-        // `ZigStringSlice::Owned` reuses the same heap allocation, so the borrowed slices
-        // stay valid; nothing in `route` points into the original encoded `path` once a
-        // decode happened.)
-        if let Some(decoded) = url_path.take_decoded_storage() {
-            path = ZigStringSlice::init_owned(decoded.into_vec());
+        // The match borrows `url_path`'s backing, which would drop at the end
+        // of this call; take ownership and make it the `MatchedRoute` backing.
+        // SAFETY: every borrowed slice points into the backing moved (via
+        // `path`) into the same Box that stores this match, or into the
+        // process-lifetime DirnameStore.
+        let route: RouterMatch<'static> = unsafe { route.detach_lifetime() };
+        if let Some(backing) = url_path.take_backing() {
+            path = ZigStringSlice::init_owned(backing.into_vec());
         }
 
         // MOVE `path`

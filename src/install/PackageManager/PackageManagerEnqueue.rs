@@ -353,8 +353,7 @@ pub unsafe fn enqueue_parse_npm_package(
     network_task: *mut NetworkTask,
 ) -> *mut ThreadPool::Task {
     // SAFETY: `this` is a live `&mut PackageManager`; `network_task` is a
-    // freshly-vended pool slot whose `'static` reborrow matches the
-    // `Task<'static>` slot lifetime.
+    // freshly-vended pool slot that outlives the resolve task.
     let task_value = unsafe {
         Task::Task {
             package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
@@ -365,7 +364,7 @@ pub unsafe fn enqueue_parse_npm_package(
             request: crate::package_manager_task::Request {
                 package_manifest: ManuallyDrop::new(
                     crate::package_manager_task::PackageManifestRequest {
-                        network: &mut *network_task,
+                        network: network_task,
                         name,
                     },
                 ),
@@ -1622,10 +1621,9 @@ fn init_extract_task(
     this: &mut PackageManager,
     tarball: &ExtractTarball,
     network_task: *mut NetworkTask,
-) -> *mut Task::Task<'static> {
+) -> *mut Task::Task {
     // SAFETY: `this` is a live `&mut PackageManager`; `network_task` is a
-    // freshly-vended pool slot whose `'static` reborrow matches the
-    // `Task<'static>` slot lifetime.
+    // freshly-vended pool slot that outlives the resolve task.
     let task_value = unsafe {
         Task::Task {
             package_manager: Some(bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<
@@ -1635,7 +1633,7 @@ fn init_extract_task(
             tag: crate::package_manager_task::Tag::Extract,
             request: crate::package_manager_task::Request {
                 extract: ManuallyDrop::new(crate::package_manager_task::ExtractRequest {
-                    network: &mut *network_task,
+                    network: network_task,
                     tarball: ExtractTarball {
                         skip_verify: !this
                             .options
@@ -1672,7 +1670,7 @@ pub fn create_extract_task_for_streaming(
     this: &mut PackageManager,
     tarball: &ExtractTarball,
     network_task: *mut NetworkTask,
-) -> *mut Task::Task<'static> {
+) -> *mut Task::Task {
     init_extract_task(this, tarball, network_task)
 }
 
@@ -2957,7 +2955,7 @@ impl PackageManager {
         &mut self,
         tarball: &ExtractTarball,
         network_task: *mut NetworkTask,
-    ) -> *mut Task::Task<'static> {
+    ) -> *mut Task::Task {
         create_extract_task_for_streaming(self, tarball, network_task)
     }
 

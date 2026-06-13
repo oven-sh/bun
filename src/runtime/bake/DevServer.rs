@@ -1247,6 +1247,9 @@ impl Drop for DevServer {
                     // SAFETY: stored ref from `init_from_any_blob`; no live borrow.
                     unsafe { StaticRoute::deref_(cached.as_ptr()) };
                 }
+                // Release the ref taken in `get_or_put_route_bundle`
+                // (`RefPtr` has no Drop).
+                html.html_bundle.deref();
             }
         }
 
@@ -2472,8 +2475,7 @@ impl DevServer {
                 }
             }
             route_bundle::Data::Html(html) => {
-                // SAFETY: html_bundle is a live *mut HTMLBundleRoute (held strong by route_bundle::Html)
-                let bundle_path = unsafe { &(&(*html.html_bundle).bundle).path };
+                let bundle_path = &html.html_bundle.bundle.path;
                 entry_points.append(bundle_path, entry_point_list::Flags::CLIENT)?;
             }
         }
@@ -2878,10 +2880,7 @@ impl DevServer {
         // is read-only in this fn — `&RouteBundle` suffices.
         let html = route_bundle.data.html();
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
-        debug_assert!(
-            // SAFETY: `html_bundle` is a live `*mut HTMLBundleRoute` held strong by `route_bundle::Html`.
-            unsafe { (*html.html_bundle).dev_server_id.get() } == Some(route_bundle_index)
-        );
+        debug_assert!(html.html_bundle.dev_server_id.get() == Some(route_bundle_index));
         debug_assert!(html.cached_response.is_none());
         let script_injection_offset = html.script_injection_offset.unwrap().get_usize();
         let bundled_html = html.bundled_html_text.as_ref().unwrap();
@@ -2893,8 +2892,7 @@ impl DevServer {
         let after_head_end = &bundled_html[script_injection_offset..];
 
         let mut display_name = strings::without_suffix_comptime(
-            // SAFETY: html_bundle is a live *mut HTMLBundleRoute (held strong by route_bundle::Html)
-            paths::basename(unsafe { &(&(*html.html_bundle).bundle).path }),
+            paths::basename(&html.html_bundle.bundle.path),
             b".html",
         );
         // TODO: function for URL safe chars
@@ -3431,7 +3429,7 @@ impl DevServer {
             if cfg!(debug_assertions) {
                 bun_core::debug_warn!("dev.log should not be written into when using DevServer");
             }
-            let _ = self.log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = Output::with_error_writer(|w| self.log.print(w));
         }
         Ok(())
     }
@@ -4859,11 +4857,7 @@ pub(super) fn finalize_bundle(
                     // / `dev.router` / `dev.server_graph` reads below stay disjoint.
                     break 'brk match &dev.route_bundles[route_bundle_index.get() as usize].data {
                         route_bundle::Data::Html(html) => {
-                            Some(dev.relative_path(
-                                &mut *buf,
-                                // SAFETY: `html_bundle` is held strong by `route_bundle::Html`; live here.
-                                &unsafe { &*html.html_bundle }.bundle.path,
-                            ))
+                            Some(dev.relative_path(&mut *buf, &html.html_bundle.bundle.path))
                         }
                         route_bundle::Data::Framework(fw) => 'file_name: {
                             let route = dev.router.route_ptr(fw.route_index);
@@ -5376,12 +5370,11 @@ impl DevServer {
                     let file = &mut self.client_graph.bundled_files.values_mut()
                         [incremental_graph_index.get() as usize];
                     file.html_route_bundle_index = Some(bundle_index);
-                    // Bump the intrusive refcount; matched by
-                    // `RouteBundle::deinit`'s deref of `html_bundle`.
-                    // SAFETY: `html` is a live IntrusiveRc-managed allocation.
-                    unsafe { bun_ptr::RefCount::<HTMLBundleRoute>::ref_(html) };
                     break 'brk route_bundle::Data::Html(route_bundle::Html {
-                        html_bundle: html,
+                        // Ref released by `deinit`'s route-bundle teardown
+                        // (`RefPtr` has no Drop).
+                        // SAFETY: caller guarantees `html` is a live allocation.
+                        html_bundle: unsafe { bun_ptr::RefPtr::<HTMLBundleRoute>::init_ref(html) },
                         bundled_file: incremental_graph_index,
                         script_injection_offset: None,
                         cached_response: None,

@@ -1778,10 +1778,7 @@ impl<'a> Printer<'a> {
                     ),
                 }
                 if log.errors > 0 {
-                    // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
-                    // not `&mut &mut Writer` — pass the raw vtable pointer.
-                    let ew: *mut bun_core::io::Writer = Output::error_writer();
-                    log.print(ew)?;
+                    Output::with_error_writer(|w| log.print(w))?;
                 }
                 Global::crash();
             }
@@ -1797,8 +1794,10 @@ impl<'a> Printer<'a> {
             crate::lockfile::LoadResult::Ok(_) => {}
         }
 
-        let writer = Output::writer_buffered();
-        match Self::print_with_lockfile(&lockfile, format, writer) {
+        // SAFETY: `print_with_lockfile` never re-enters `bun_core::output`.
+        match Output::with_writer_buffered(|w| {
+            Self::print_with_lockfile(&lockfile, format, unsafe { &mut *w })
+        }) {
             Ok(()) => {}
             Err(e) if e == err!("OutOfMemory") => bun_core::out_of_memory(),
             Err(e) if e == err!("BrokenPipe") || e == err!("WriteFailed") => return Ok(()),
@@ -3146,8 +3145,8 @@ impl Lockfile {
         if print_name_version_string {
             Output::flush();
             Output::disable_buffering();
-            Output::writer()
-                .write_all(alphabetized_name_version_string)
+            // SAFETY: `write_all` does not re-enter `bun_core::output`.
+            Output::with_writer(|w| unsafe { &mut *w }.write_all(alphabetized_name_version_string))
                 .expect("unreachable");
             Output::enable_buffering();
         }

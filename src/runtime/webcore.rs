@@ -307,7 +307,8 @@ pub use byte_blob_loader::ByteBlobLoader;
 pub use byte_stream::ByteStream;
 
 // TODO: make this pool per-JSGlobalObject so recycled buffers are not shared
-// across realms (the pool is process-global).
+// across realms on one thread (storage is already thread-local via
+// `threadsafe` mode, so workers don't share it).
 // `object_pool!` wires the per-monomorphization
 // thread-local storage; the bare `ObjectPool<Vec<u8>, true, 8>` alias used to
 // default to `UnwiredStorage` and panic on first `get_if_exists()`/`full()`

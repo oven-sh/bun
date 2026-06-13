@@ -21,8 +21,7 @@ use core::cell::Cell;
 use crate::jsc::virtual_machine::VirtualMachine;
 
 use super::{
-    ElTimespec, EventLoopTimer, EventLoopTimerState, ID, ImmediateObject, Kind, KindBig,
-    TimeoutObject,
+    EventLoopTimer, EventLoopTimerState, ID, ImmediateObject, Kind, KindBig, TimeoutObject,
 };
 
 /// Data that TimerObject and ImmediateObject have in common.
@@ -471,7 +470,7 @@ impl TimerObjectInternals {
     /// `this` points at a live `TimerObjectInternals` embedded in its
     /// `TimeoutObject`/`ImmediateObject` parent (FIRE_TIMER hook contract);
     /// `vm` is the live per-thread VM.
-    pub unsafe fn fire(this: *mut Self, _now: &ElTimespec, vm: *mut VirtualMachine) {
+    pub unsafe fn fire(this: *mut Self, _now: &Timespec, vm: *mut VirtualMachine) {
         // SAFETY: per fn contract — `this` live. `&Self` (NOT `&mut`) — fields
         // are `Cell`/`JsCell` so re-entrant JS touching this object via another
         // `&Self` is sound (no `noalias`; LLVM cannot cache `Cell` reads across

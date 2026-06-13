@@ -1235,7 +1235,7 @@ impl WebWorker {
                 // SAFETY: `vm_ptr` was unpublished under `vm_lock` above, so
                 // this thread is the sole owner; `runtime_state` for this
                 // worker thread is still installed (torn down in `destroy()`).
-                unsafe { (hooks.cancel_all_timers)(vm_ptr) };
+                unsafe { (hooks.cancel_all_timers)(vm_ptr, true) };
             }
             // Embedded socket groups must drain while JSC is still alive —
             // closeAll() fires on_close → JS callbacks. RareData.deinit() runs

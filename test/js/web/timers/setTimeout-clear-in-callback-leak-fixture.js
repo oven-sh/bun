@@ -3,21 +3,22 @@
 // before the callback runs; any transition away from .FIRED during the callback
 // (cancel() -> .CANCELLED, or reschedule() -> .ACTIVE via refresh/convertToInterval) left
 // the heap ref unreleased because the post-callback cleanup only checked for .FIRED.
+//
+// The leak is detected via bun:jsc heapStats(): leaked TimeoutObjects keep their JS
+// Timeout wrappers protected (gcProtect without a matching unprotect), so after a full
+// GC the protected Timeout count would be ~BATCH * iterations instead of 0. RSS deltas
+// are intentionally not asserted — debug/ASAN allocator overhead makes them unreliable.
 
 const mode = process.argv[2];
 if (mode !== "clear" && mode !== "refresh" && mode !== "repeat") {
   throw new Error("usage: <clear|refresh|repeat>");
 }
 
-// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
-// run far higher under bun-asan; widen the threshold to avoid false positives.
-const isASAN = process.execPath.includes("bun-asan");
-
 const BATCH = 2_000;
+const ITERATIONS = 20;
 
 function gc() {
-  if (typeof Bun !== "undefined") Bun.gc(true);
-  else if (typeof globalThis.gc !== "undefined") globalThis.gc();
+  Bun.gc(true);
 }
 
 async function runBatch() {
@@ -58,28 +59,25 @@ async function runBatch() {
 }
 
 // warmup
-for (let i = 0; i < 15; i++) await runBatch();
-gc();
-const initial = process.memoryUsage.rss();
+for (let i = 0; i < 3; i++) await runBatch();
 
-for (let i = 0; i < 100; i++) await runBatch();
+for (let i = 0; i < ITERATIONS; i++) await runBatch();
 gc();
-const final = process.memoryUsage.rss();
-const deltaMB = (final - initial) / 1024 / 1024;
+gc();
+
+const heapStats = require("bun:jsc").heapStats();
+const protectedTimeouts = heapStats.protectedObjectTypeCounts.Timeout ?? 0;
+const liveTimeouts = heapStats.objectTypeCounts.Timeout ?? 0;
 console.log("mode:", mode);
-console.log("initial RSS:", (initial / 1024 / 1024) | 0, "MB");
-console.log("final RSS:", (final / 1024 / 1024) | 0, "MB");
-console.log("delta:", deltaMB.toFixed(1), "MB");
+console.log("protected Timeout count:", protectedTimeouts);
+console.log("live Timeout count:", liveTimeouts);
 
-if (globalThis.Bun) {
-  const heapStats = require("bun:jsc").heapStats();
-  if (heapStats.protectedObjectTypeCounts.Timeout) {
-    throw new Error("Expected 0 protected Timeout but received " + heapStats.protectedObjectTypeCounts.Timeout);
-  }
+// Before the fix, every timer in every batch stayed protected: ~BATCH * (ITERATIONS + warmup).
+if (protectedTimeouts !== 0) {
+  throw new Error("Expected 0 protected Timeout but received " + protectedTimeouts);
 }
-
-// Before the fix, 100 * 2_000 leaked TimeoutObjects (~100 bytes each) ≈ 20 MB.
-// After the fix the delta is ~0 MB (noise).
-if (deltaMB > (isASAN ? 128 : 10)) {
-  throw new Error("Memory leak detected: RSS grew by " + deltaMB.toFixed(1) + " MB");
+// Live (unprotected) objects can linger from conservative stack scanning, but a leak
+// would retain tens of thousands; allow well under one batch worth of stragglers.
+if (liveTimeouts >= BATCH) {
+  throw new Error("Expected fewer than " + BATCH + " live Timeout objects but received " + liveTimeouts);
 }

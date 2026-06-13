@@ -245,3 +245,74 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")]).toRun();
 });
+
+it("timers fire correctly inside worker_threads alongside the main thread", async () => {
+  // Each worker thread owns its own VM, event loop, and timer heap (on
+  // Windows the heap arms a lazily-initialized libuv timer that must target
+  // the OWNING thread's loop, not whichever thread happens to touch the heap
+  // first). Spin several workers that run timeouts + intervals concurrently
+  // with main-thread timers and assert every timer fires on its own thread.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Worker, isMainThread, parentPort } = require("node:worker_threads");
+        const workerBody = \`
+          const { parentPort } = require("node:worker_threads");
+          let ticks = 0;
+          const t = setInterval(() => {
+            ticks++;
+            if (ticks === 3) {
+              clearInterval(t);
+              setTimeout(() => parentPort.postMessage("done"), 1);
+            }
+          }, 1);
+        \`;
+        async function main() {
+          const workers = [];
+          for (let i = 0; i < 4; i++) {
+            const w = new Worker(workerBody, { eval: true });
+            workers.push(
+              new Promise((resolve, reject) => {
+                w.on("message", m => (m === "done" ? resolve() : reject(new Error("bad message: " + m))));
+                w.on("error", reject);
+              }),
+            );
+          }
+          // Main thread timers keep firing while workers run theirs.
+          let mainTicks = 0;
+          const done = Promise.withResolvers();
+          const t = setInterval(() => {
+            mainTicks++;
+            if (mainTicks === 5) {
+              clearInterval(t);
+              done.resolve();
+            }
+          }, 1);
+          await Promise.all([...workers, done.promise]);
+          console.log("all timers fired");
+        }
+        main().then(
+          () => process.exit(0),
+          err => {
+            console.error(err);
+            process.exit(1);
+          },
+        );
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrLines).toBe("");
+  expect(stdout).toBe("all timers fired\n");
+  expect(exitCode).toBe(0);
+}, 60_000);

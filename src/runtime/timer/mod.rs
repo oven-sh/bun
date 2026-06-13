@@ -23,10 +23,8 @@ use bun_threading::Mutex;
 pub use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
-// bun_event_loop carries a local `Timespec` stub instead of
-// `bun_core::Timespec`. Same `{sec: i64, nsec: i64}` shape; alias it here so
-// `fire()`/`next` accesses type-check without a transmute.
-// TODO: remove this alias once the lower tier switches to `bun_core::Timespec`.
+// Pure rename of `bun_core::Timespec`, kept for out-of-module importers; new
+// code should use `bun_core::Timespec` directly.
 pub(crate) use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
 
 use crate::jsc::JSValue;
@@ -412,34 +410,26 @@ impl DateHeaderTimer {
         let now = Timespec::now(TimespecMockMode::AllowMockedTime);
 
         // Record when we last ran it.
-        self.event_loop_timer.next = ElTimespec {
-            sec: now.sec,
-            nsec: now.nsec,
-        };
+        self.event_loop_timer.next = now;
 
         // updateDate() is an expensive function.
         loop_.update_date();
 
         if loop_.internal_loop_data.sweep_timer_count > 0 {
             // Reschedule it automatically for 1 second later.
-            let next = now.add_ms(1000);
-            self.event_loop_timer.next = ElTimespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            };
+            self.event_loop_timer.next = now.add_ms(1000);
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
-            // `fake_timers`, disjoint from `date_header_timer` which `self` aliases.
+            // SAFETY: single JS thread; the `All` re-entry invalidates
+            // `&mut self` and is the last use of `self`.
             unsafe { (*Self::timer_all()).insert(elt) };
         }
     }
 }
 
 pub struct EventLoopDelayMonitor {
-    // TODO: bare `JSValue` heap field with no Strong/visitChildren rooting —
-    // the histogram object can be GC'd while `monitorEventLoopDelay` is active.
-    // Needs JsRef-style rooting.
-    js_histogram: JSValue,
+    /// Strong-rooted while `enabled` (the native fire path records into it);
+    /// cleared in `disable()`, finalized at VM teardown.
+    js_histogram: crate::jsc::JsCell<crate::jsc::JsRef>,
     pub event_loop_timer: EventLoopTimer,
     pub resolution_ms: i32,
     pub last_fire_ns: u64,
@@ -448,7 +438,7 @@ pub struct EventLoopDelayMonitor {
 impl Default for EventLoopDelayMonitor {
     fn default() -> Self {
         Self {
-            js_histogram: JSValue::default(),
+            js_histogram: crate::jsc::JsCell::new(crate::jsc::JsRef::empty()),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::EventLoopDelayMonitor),
             resolution_ms: 10,
             last_fire_ns: 0,
@@ -464,27 +454,34 @@ impl EventLoopDelayMonitor {
 
     pub(crate) fn enable(
         &mut self,
-        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+        vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         histogram: JSValue,
         resolution_ms: i32,
     ) {
         if self.enabled {
             return;
         }
-        self.js_histogram = histogram;
+        // No-op after teardown: a Strong created now would outlive the JSC
+        // heap.
+        if matches!(self.js_histogram.get(), crate::jsc::JsRef::Finalized) {
+            return;
+        }
+        // A Strong over an empty value is invalid; `on_fire` skips while
+        // the ref is empty.
+        if !histogram.is_empty_or_undefined_or_null() {
+            let global = vm.global();
+            self.js_histogram
+                .with_mut(|r| r.set_strong(histogram, global));
+        }
         self.resolution_ms = resolution_ms;
         self.enabled = true;
 
         // Schedule timer
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
-        let next = now.add_ms(i64::from(resolution_ms));
-        self.event_loop_timer.next = ElTimespec {
-            sec: next.sec,
-            nsec: next.nsec,
-        };
+        self.event_loop_timer.next = now.add_ms(i64::from(resolution_ms));
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
-        // `fake_timers`, disjoint from `event_loop_delay` which `self` aliases.
+        // SAFETY: single JS thread; the `All` re-entry invalidates `&mut self`
+        // and is the last use of `self` (true of every method on this type).
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 
@@ -493,11 +490,57 @@ impl EventLoopDelayMonitor {
             return;
         }
         self.enabled = false;
-        self.js_histogram = JSValue::default();
+        // Drop the Strong root; `Finalized` stays sticky.
+        self.js_histogram.with_mut(|r| {
+            if !matches!(r, crate::jsc::JsRef::Finalized) {
+                *r = crate::jsc::JsRef::empty();
+            }
+        });
         self.last_fire_ns = 0;
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: see `enable` — disjoint-field access on `All`.
+        // SAFETY: see `enable` — the `All` re-entry is the last use of `self`.
         unsafe { (*Self::timer_all()).remove(elt) };
+    }
+
+    /// Non-sticky reset between isolated test files
+    /// (`swap_global_for_test_isolation`): drop the Strong (the histogram
+    /// belongs to the outgoing global's graph) and stop the timer, leaving
+    /// `enable()` usable for the next file's global — the JSC heap stays
+    /// alive across the swap.
+    pub(crate) fn reset_for_isolation(&mut self) {
+        if !self.enabled {
+            return;
+        }
+        self.enabled = false;
+        self.last_fire_ns = 0;
+        self.js_histogram.with_mut(|r| {
+            if !matches!(r, crate::jsc::JsRef::Finalized) {
+                *r = crate::jsc::JsRef::empty();
+            }
+        });
+        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
+        // SAFETY: see `enable` — the `All` re-entry is the last use of `self`.
+        unsafe { (*Self::timer_all()).remove(elt) };
+    }
+
+    /// Release the histogram root and stop the timer at VM teardown, while
+    /// the JSC heap is still alive (`All` itself is dropped after JSC
+    /// teardown, too late to release a Strong).
+    pub(crate) fn finalize_for_teardown(&mut self) {
+        // Pins the ref `Finalized` so a late `enable()` is a no-op. Must run
+        // before the `remove` below — the `All` re-entry invalidates
+        // `&mut self`, so it must be the last use of `self`.
+        self.js_histogram.with_mut(crate::jsc::JsRef::finalize);
+        if self.enabled {
+            self.enabled = false;
+            self.last_fire_ns = 0;
+            if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+                let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
+                // SAFETY: see `enable` — the `All` re-entry is the last use
+                // of `self`.
+                unsafe { (*Self::timer_all()).remove(elt) };
+            }
+        }
     }
 
     /// Record `now - last_fire_ns`
@@ -507,9 +550,12 @@ impl EventLoopDelayMonitor {
         _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         now: &bun_event_loop::EventLoopTimer::Timespec,
     ) {
-        if !self.enabled || self.js_histogram.is_empty() {
+        if !self.enabled {
             return;
         }
+        let Some(histogram) = self.js_histogram.get().try_get() else {
+            return;
+        };
 
         let now_ns = now.ns();
         if self.last_fire_ns > 0 {
@@ -527,24 +573,16 @@ impl EventLoopDelayMonitor {
                         delay_ns: i64,
                     );
                 }
-                JSNodePerformanceHooksHistogram_recordDelay(self.js_histogram, delay_ns);
+                JSNodePerformanceHooksHistogram_recordDelay(histogram, delay_ns);
             }
         }
 
         self.last_fire_ns = now_ns;
 
         // Reschedule
-        let next = Timespec {
-            sec: now.sec,
-            nsec: now.nsec,
-        }
-        .add_ms(i64::from(self.resolution_ms));
-        self.event_loop_timer.next = ElTimespec {
-            sec: next.sec,
-            nsec: next.nsec,
-        };
+        self.event_loop_timer.next = now.add_ms(i64::from(self.resolution_ms));
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: see `enable` — disjoint-field access on `All`.
+        // SAFETY: see `enable` — the `All` re-entry is the last use of `self`.
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 }
@@ -616,6 +654,11 @@ pub use wtf_timer::WTFTimer;
 // ─── All ─────────────────────────────────────────────────────────────────────
 
 pub struct All {
+    /// Owning-VM back-pointer (outlives this `All`); lets `ensure_uv_timer`
+    /// reach the owning loop without TLS, which cross-thread entry points
+    /// (WTFTimer insert/update) would resolve to the wrong VM.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    vm: *mut bun_jsc::virtual_machine::VirtualMachine,
     pub last_id: i32,
     pub lock: Mutex,
     pub thread_id: std::thread::ThreadId,
@@ -640,8 +683,9 @@ pub struct All {
 }
 
 impl All {
-    pub fn init() -> Self {
+    pub fn init(vm: *mut bun_jsc::virtual_machine::VirtualMachine) -> Self {
         Self {
+            vm,
             last_id: 1,
             lock: Mutex::default(),
             thread_id: std::thread::current().id(),
@@ -701,50 +745,43 @@ impl All {
     /// On Windows there is no epoll/kqueue fallback; this `uv_timer_t` is the
     /// ONLY thing that wakes `uv_run` for JS timers.
     ///
-    /// Note (jsc/runtime crate cycle): `All` is a field
-    /// of `RuntimeState` (not `VirtualMachine`) and `RuntimeState` carries no
-    /// back-pointer to the owning VM, so the lazy-init block falls back to the
-    /// calling thread's
-    /// TLS VM/loop. That equivalence holds **only** on the owning JS thread;
-    /// `All.lock` exists precisely because `insert`/`update` may be entered
-    /// cross-thread (WTFTimer), where TLS would resolve to the wrong loop or
-    /// panic. The `debug_assert!` below makes that precondition loud. Once
-    /// initialized, the re-arm path reads the loop back from the handle itself
-    /// (`uv_handle_get_loop`), so the hot path is TLS-free and always targets
-    /// the loop the timer was actually registered on.
+    /// Lazy-init arms the OWNING VM's loop via the `vm` back-pointer, not the
+    /// calling thread's TLS (wrong loop for cross-thread WTFTimer callers);
+    /// once initialized the re-arm path reads the loop from the handle itself.
     ///
-    /// TODO: thread `vm: *mut VirtualMachine` through
-    /// `insert`/`insert_lock_held`/`update` once
-    /// the `RuntimeHooks::timer_insert` slot widens — see jsc_hooks.rs.
+    /// Off the owning thread this is a no-op (with a debug assert): uv handle
+    /// init/start are not thread-safe against the running loop, and spawnSync
+    /// can transiently repoint `event_loop_handle` at a loop that is destroyed
+    /// when it returns. Bailing is safe — the heap insert already happened and
+    /// the owning thread's next insert/drain re-arm picks the node up.
     #[cfg(windows)]
     fn ensure_uv_timer(&mut self) {
-        // `vm` here means the OWNING VM (the one this timer is embedded in),
-        // not the calling thread's. Guard the TLS fallback so a cross-thread
-        // caller fails loudly instead of silently arming a fresh `uv_loop_t`
-        // on the wrong thread.
-        debug_assert!(
-            self.thread_id == std::thread::current().id(),
-            "ensure_uv_timer: called off the owning JS thread; TLS loop/VM would diverge from vm.event_loop_handle",
-        );
+        if self.thread_id != std::thread::current().id() {
+            debug_assert!(
+                false,
+                "ensure_uv_timer: called off the owning JS thread; uv_timer_init/start are not thread-safe against the running loop",
+            );
+            return;
+        }
         if self.uv_timer.data.is_null() {
-            self.uv_timer.init(uv::Loop::get());
-            self.uv_timer.data =
-                bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
+            // SAFETY: `self.vm` outlives this `All`; on-thread (guard above),
+            // and `event_loop_handle` is set by `ensure_waker()` before any
+            // timer can be scheduled.
+            let uv_loop = unsafe { (*self.vm).event_loop_handle }
+                .expect("ensure_uv_timer: owning VM's event_loop_handle is null");
+            self.uv_timer.init(uv_loop);
+            self.uv_timer.data = self.vm.cast::<core::ffi::c_void>();
             self.uv_timer.unref();
         }
 
         if let Some(timer) = self.timers.peek() {
             // SAFETY: `uv_timer.data` is non-null past the lazy-init block, so
             // `uv_timer_init` has run and the handle's `loop` field points at
-            // the owning VM's live `uv_loop_t` (== `vm.uvLoop()` per spec).
+            // the owning VM's live `uv_loop_t`.
             unsafe { uv::uv_update_time(self.uv_timer.get_loop()) };
             let now = Timespec::now(TimespecMockMode::ForceRealTime);
             // SAFETY: `peek` returns a live heap node.
-            let next = unsafe { &(*timer).next };
-            let next_ts = Timespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            };
+            let next_ts = unsafe { (*timer).next };
             let wait = if next_ts.greater(&now) {
                 next_ts.duration(&now)
             } else {
@@ -780,8 +817,8 @@ impl All {
         // SAFETY: callback fires on the JS thread (libuv invokes on the loop's
         // thread); `all` is live for the VM lifetime. `drain_timers` may
         // re-enter `(*runtime_state()).timer` — it forms only short-lived
-        // `&mut All` around heap pop/peek, so the raw-ptr deref here is sound.
-        unsafe { (*all).drain_timers(vm) };
+        // `&mut All` around heap pop/peek, so passing the raw ptr is sound.
+        unsafe { All::drain_timers(all, vm) };
         // SAFETY: see above; re-arm for the next-soonest deadline (if any).
         unsafe { (*all).ensure_uv_timer() };
     }
@@ -834,17 +871,17 @@ impl All {
             self.remove_lock_held(timer);
         }
 
+        // `time` must not alias `timer.next` — the earlier `remove_lock_held`
+        // would have invalidated it, and the copy below would overlap.
+        // SAFETY (addr_of!): `timer` is live (caller contract); no reference formed.
+        debug_assert!(
+            !core::ptr::eq(unsafe { core::ptr::addr_of!((*timer).next) }, time),
+            "All::update: `time` must not point at `timer.next` (threadsafety)",
+        );
         // SAFETY: `timer` is still a valid live EventLoopTimer; safe to derive
         // an exclusive reference now that no other borrow is outstanding.
-        // `time` cannot alias `timer.next`: `time` is a `&bun_core::Timespec`
-        // while `next` is `ElTimespec` — distinct types, so safe code cannot
-        // construct the alias. Re-add a
-        // `debug_assert!(!core::ptr::eq(time as *const _ as *const u8, &raw const (*timer).next as *const u8))`
-        // when the Timespec types unify (see the ElTimespec alias TODO at the
-        // top of this file).
         let timer_ref = unsafe { &mut *timer };
-        timer_ref.next.sec = time.sec;
-        timer_ref.next.nsec = time.nsec;
+        timer_ref.next = *time;
 
         // Bump the global epoch and write it back
         // into the per-timer flags so equal-deadline JS timers fire in
@@ -870,14 +907,16 @@ impl All {
     /// it needs — `event_loop.immediate_tasks.len()` and the QUIC tick — are
     /// passed in pre-computed until the cycle is broken.
     ///
+    /// Takes `this: *mut Self`, not `&mut self`: `fire()` may re-enter
+    /// `(*runtime_state()).timer`, so no `&mut All` may be live across it.
+    /// The body forms short-lived `&mut` only around `peek()`/`delete_min()`.
+    ///
     /// # Safety
-    /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
-    /// must remain live across any `EventLoopTimer::fire` re-entry.
-    // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn get_timeout(
-        &mut self,
+    /// `this` points at the live per-thread `All`; `vm` is the erased
+    /// `*mut VirtualMachine` for the calling JS thread and must remain live
+    /// across any `EventLoopTimer::fire` re-entry.
+    pub unsafe fn get_timeout(
+        this: *mut Self,
         spec: &mut Timespec,
         has_pending_immediate: bool,
         quic_next_tick_us: Option<i64>,
@@ -891,24 +930,10 @@ impl All {
         #[cfg(not(unix))]
         let _ = has_pending_immediate;
 
-        // Note (§Forbidden aliased-&mut): the WTFTimer arm below calls
-        // `(*min).fire(...)` → `WTFTimer__fire` → C++ may call back into
-        // `WTFTimer__update` → `(*runtime_state()).timer.update(...)`, minting
-        // a fresh `&mut All` to this same allocation while the outer
-        // `&mut self` is live → aliased-`&mut` UB. Mirror `drain_timers`:
-        // convert `self` to a raw pointer up-front and form *short-lived*
-        // `&mut *this` borrows only around `peek()`/`delete_min()`, dropping
-        // them before `fire()` so no `&mut All` is held across the re-entrant
-        // call.
-        //
-        // TODO: same caveat as `drain_timers` — the call-site auto-ref
-        // still creates a `&mut All` for the call frame; switch the signature
-        // to `this: *mut Self` (see the `get_timeout` call sites in jsc_hooks.rs).
-        let this: *mut Self = self;
         let mut maybe_now: Option<Timespec> = None;
         loop {
-            // SAFETY: `this` derived from `&mut self`; short-lived exclusive
-            // borrow scoped to this `peek()` call only.
+            // SAFETY: `this` is the live per-thread `All` (fn contract);
+            // short-lived exclusive borrow scoped to this `peek()` call only.
             let Some(min) = (unsafe { &mut *this }).timers.peek() else {
                 break;
             };
@@ -917,16 +942,10 @@ impl All {
             // `(*min).heap` through a fresh `&mut EventLoopTimer`, so we must
             // NOT hold a `&mut *min` across it. Read `next`/`tag` via raw
             // deref and fire via raw deref (mirroring `drain_timers`).
-            let (min_next_sec, min_next_nsec, min_tag) =
-                unsafe { ((*min).next.sec, (*min).next.nsec, (*min).tag) };
+            let (min_next, min_tag) = unsafe { ((*min).next, (*min).tag) };
             let now =
                 *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::AllowMockedTime));
 
-            // bun_event_loop carries its own Timespec stub; compare field-wise.
-            let min_next = Timespec {
-                sec: min_next_sec,
-                nsec: min_next_nsec,
-            };
             match now.order(&min_next) {
                 core::cmp::Ordering::Greater | core::cmp::Ordering::Equal => {
                     // Side-effect: potentially call the StopIfNecessary timer.
@@ -934,14 +953,10 @@ impl All {
                         // SAFETY: short-lived `&mut All` scoped to
                         // `delete_min()`; dropped before `fire()`.
                         let _ = unsafe { &mut *this }.timers.delete_min();
-                        let el_now = ElTimespec {
-                            sec: now.sec,
-                            nsec: now.nsec,
-                        };
                         // SAFETY: `min` was just popped and is live; no `&mut`
                         // to `All` or to `*min` is held across `fire()`, which
                         // may re-enter `(*runtime_state()).timer`.
-                        unsafe { EventLoopTimer::fire(min, &el_now, vm) };
+                        unsafe { EventLoopTimer::fire(min, &now, vm) };
                         continue;
                     }
                     *spec = Timespec { sec: 0, nsec: 0 };
@@ -992,13 +1007,7 @@ impl All {
                 *has_set_now = true;
             }
             // SAFETY: peek returns a live heap node
-            let next = unsafe { &(*timer).next };
-            if (Timespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            })
-            .greater(now)
-            {
+            if unsafe { (*timer).next }.greater(now) {
                 return None;
             }
             let deleted = self.timers.delete_min().expect("peek succeeded");
@@ -1009,48 +1018,31 @@ impl All {
         out
     }
 
+    /// Pop and fire every due timer.
+    ///
+    /// Takes `this: *mut Self`, not `&mut self`: fired handlers may re-enter
+    /// `(*runtime_state()).timer`, so no `&mut All` may be live across
+    /// `fire()`. The body forms a short-lived `&mut` only around `next()`.
+    ///
     /// # Safety
-    /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
-    /// must remain live across any `EventLoopTimer::fire` re-entry.
-    // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
-        // Note (§Forbidden aliased-&mut): fired handlers re-enter `vm.timer`
-        // (e.g. setInterval reschedule → `vm.timer.update(...)`, `cancel()` →
-        // `vm.timer.remove(...)`). In Rust those re-entrant calls resolve to
-        // `(*runtime_state()).timer.{update,remove}()`, minting a fresh
-        // `&mut All` to this same allocation while the outer `&mut self` is
-        // live → UB under Stacked Borrows. Convert `self` to a raw pointer
-        // up-front and form a *short-lived* `&mut` only around `next()`,
-        // dropping it before `fire()` so no `&mut All` is held across the
-        // re-entrant call (mirroring the raw-ptr pattern in
-        // `TimerObjectInternals::run_immediate_task`).
-        //
-        // TODO: the call-site auto-ref at jsc_hooks.rs (`(*state).timer
-        // .drain_timers(...)`) still creates a `&mut All` for the call frame
-        // itself; switch it to `All::drain_timers(core::ptr::addr_of_mut!(
-        // (*state).timer), vm)` and change this signature to `this: *mut Self`.
-        let this: *mut Self = self;
+    /// `this` points at the live per-thread `All`; `vm` is the erased
+    /// `*mut VirtualMachine` for the calling JS thread and must remain live
+    /// across any `EventLoopTimer::fire` re-entry.
+    pub unsafe fn drain_timers(this: *mut Self, vm: *mut () /* erased *mut VirtualMachine */) {
         let mut now = Timespec { sec: 0, nsec: 0 };
         let mut has_set_now = false;
         loop {
-            // SAFETY: `this` derived from `&mut self`; short-lived exclusive
-            // borrow scoped to this `next()` call only — dropped before fire().
+            // SAFETY: `this` is the live per-thread `All` (fn contract);
+            // short-lived exclusive borrow scoped to this `next()` call only —
+            // dropped before fire().
             let Some(t) = (unsafe { &mut *this }).next(&mut has_set_now, &mut now) else {
                 break;
-            };
-            // Note: re-pack into bun_event_loop's local Timespec stub
-            // until the lower tier unifies on bun_core::Timespec.
-            let el_now = ElTimespec {
-                sec: now.sec,
-                nsec: now.nsec,
             };
             // SAFETY: `t` was just popped from the intrusive heap and is live.
             // `fire` dispatches through the FIRE_TIMER hook (§Dispatch hot
             // path) and may re-enter `(*runtime_state()).timer` — no `&mut`
             // to `All` is live here.
-            unsafe { EventLoopTimer::fire(t, &el_now, vm) };
+            unsafe { EventLoopTimer::fire(t, &now, vm) };
         }
     }
 
@@ -1153,9 +1145,16 @@ impl All {
     /// BEFORE `runtime_state` is nulled — the GC sweep frees the
     /// `TimeoutObject` boxes whose `event_loop_timer` fields the heap nodes
     /// alias.
+    ///
+    /// `is_teardown` distinguishes true VM teardown (`global_exit`,
+    /// `WebWorker::shutdown`) — where the delay monitor's histogram ref is
+    /// pinned `Finalized` — from the per-file isolation swap
+    /// (`swap_global_for_test_isolation`), where the JSC heap survives and
+    /// the monitor must stay re-enableable.
     pub unsafe fn cancel_all_timeout_objects(
         this: *mut Self,
         vm: *mut crate::jsc::virtual_machine::VirtualMachine,
+        is_teardown: bool,
     ) {
         let mut to_cancel: Vec<*const TimerObjectInternals> = Vec::new();
         let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
@@ -1241,6 +1240,22 @@ impl All {
                 if !signal.is_null() {
                     crate::jsc::abort_signal::AbortSignal::opaque_ref(signal).unref();
                 }
+            }
+        }
+
+        // Release the delay monitor's histogram root while the JSC heap is
+        // still alive; this `All` is dropped after JSC teardown
+        // (`deinit_runtime_state`), too late to release a Strong. Only true
+        // teardown pins `Finalized` — the isolation swap keeps the heap alive
+        // and the next test file may call `enable()` again.
+        // SAFETY: `this` is the live per-thread `All` (fn contract); no
+        // `&mut All` is live across the monitor's `All` re-entry.
+        unsafe {
+            let monitor = core::ptr::addr_of_mut!((*this).event_loop_delay);
+            if is_teardown {
+                (*monitor).finalize_for_teardown();
+            } else {
+                (*monitor).reset_for_isolation();
             }
         }
     }

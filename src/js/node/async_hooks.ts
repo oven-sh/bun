@@ -26,6 +26,21 @@ const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHo
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
 
+// Monotonic async id counter. Node reserves ids 0 and 1 (root), so the first
+// user-created resource is assigned id 2.
+let nextAsyncId = 2;
+function newAsyncId() {
+  return nextAsyncId++;
+}
+
+// The execution/trigger async id of the current scope. At the top level Node
+// reports executionAsyncId() === 1 (root) and triggerAsyncId() === 0.
+// AsyncResource.prototype.runInAsyncScope swaps these to the resource's ids for
+// the duration of the callback, keeping the invariant that inside a scope
+// `executionAsyncId() === resource.asyncId()`.
+let currentExecutionAsyncId = 1;
+let currentTriggerAsyncId = 0;
+
 // Only run during debug
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
   // undefined is OK
@@ -256,18 +271,24 @@ if (IS_BUN_DEVELOPMENT) {
 class AsyncResource {
   type;
   #snapshot;
+  #asyncId;
+  #triggerAsyncId;
 
   constructor(type, opts?) {
     validateString(type, "type");
 
+    // Node defaults triggerAsyncId to the current executionAsyncId() (1 at the
+    // top level, or the enclosing resource's id inside a runInAsyncScope).
     let triggerAsyncId = opts;
     if (opts != null) {
       if (typeof opts !== "number") {
-        triggerAsyncId = opts.triggerAsyncId === undefined ? 1 : opts.triggerAsyncId;
+        triggerAsyncId = opts.triggerAsyncId === undefined ? currentExecutionAsyncId : opts.triggerAsyncId;
       }
       if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
         throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
       }
+    } else {
+      triggerAsyncId = currentExecutionAsyncId;
     }
     if (hasEnabledCreateHook && type.length === 0) {
       throw $ERR_ASYNC_TYPE(type);
@@ -276,6 +297,8 @@ class AsyncResource {
     setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
+    this.#asyncId = newAsyncId();
+    this.#triggerAsyncId = triggerAsyncId;
   }
 
   emitBefore() {
@@ -287,24 +310,30 @@ class AsyncResource {
   }
 
   asyncId() {
-    return 0;
+    return this.#asyncId;
   }
 
   triggerAsyncId() {
-    return 0;
+    return this.#triggerAsyncId;
   }
 
   emitDestroy() {
-    //
+    return this;
   }
 
   runInAsyncScope(fn, thisArg, ...args) {
     var prev = get();
+    const prevExecutionAsyncId = currentExecutionAsyncId;
+    const prevTriggerAsyncId = currentTriggerAsyncId;
     set(this.#snapshot);
+    currentExecutionAsyncId = this.#asyncId;
+    currentTriggerAsyncId = this.#triggerAsyncId;
     try {
       return fn.$apply(thisArg, args);
     } finally {
       set(prev);
+      currentExecutionAsyncId = prevExecutionAsyncId;
+      currentTriggerAsyncId = prevTriggerAsyncId;
     }
   }
 
@@ -389,15 +418,15 @@ function createHook(hook) {
 }
 
 const executionAsyncIdNotImpl = createWarning(
-  "async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It will return 0 every time.",
+  "async_hooks.executionAsyncId/triggerAsyncId are only partially implemented in Bun. They track AsyncResource.runInAsyncScope but not other async resources.",
 );
 function executionAsyncId() {
   executionAsyncIdNotImpl();
-  return 0;
+  return currentExecutionAsyncId;
 }
 
 function triggerAsyncId() {
-  return 0;
+  return currentTriggerAsyncId;
 }
 
 const executionAsyncResourceWarning = createWarning(

@@ -792,7 +792,6 @@ function addAbortListener(signal, listener) {
 }
 
 class EventEmitterAsyncResource extends EventEmitter {
-  triggerAsyncId;
   asyncResource;
 
   constructor(options) {
@@ -801,8 +800,17 @@ class EventEmitterAsyncResource extends EventEmitter {
     }
     var { captureRejections = false, triggerAsyncId, name = new.target.name, requireManualDestroy } = options || {};
     super({ captureRejections });
-    this.triggerAsyncId = triggerAsyncId ?? 0;
     this.asyncResource = new AsyncResource(name, { triggerAsyncId, requireManualDestroy });
+  }
+
+  // Delegate to the underlying AsyncResource so these never drift out of sync
+  // with it (matches Node, where both are getters).
+  get asyncId() {
+    return this.asyncResource.asyncId();
+  }
+
+  get triggerAsyncId() {
+    return this.asyncResource.triggerAsyncId();
   }
 
   emit(...args) {

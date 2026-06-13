@@ -124,19 +124,19 @@ it.if(isWindows)(
     server.listen(pipe_name);
     await once(server, "listening");
 
-    const { promise, resolve } = Promise.withResolvers<{ upgrades: number; message: string }>();
+    const { promise, resolve } = Promise.withResolvers<{ upgrades: number; outcome: string; message: string }>();
 
     let upgrades = 0;
     let upgraded = false;
 
     const socket = net.connect(pipe_name);
     try {
-      // Errors are an expected outcome here: OpenSSL rejects the mock handshake
-      // bytes (the TLS socket emits `error`) and the pipe may reset during
-      // teardown. Every terminal event settles `promise`, so a regression
-      // surfaces as a failed assertion rather than a hang.
+      // The mock records (record-layer version 0x1616) must reach the TLS parser,
+      // which rejects them with an `error`. A bare socket close or a completed
+      // handshake would mean the post-upgrade bytes never reached the parser, so
+      // those outcomes are tagged and fail the final `outcome` assertion.
       socket.on("error", () => {});
-      socket.on("close", () => resolve({ upgrades, message: "" }));
+      socket.on("close", () => resolve({ upgrades, outcome: "socket-close", message: "" }));
 
       socket.on("data", data => {
         if (!upgraded && data.toString("latin1").includes("SERVER_GREETING")) {
@@ -148,9 +148,9 @@ it.if(isWindows)(
         upgraded = true;
         upgrades++;
         const tlsSocket = connect({ socket, rejectUnauthorized: false });
-        tlsSocket.on("error", err => resolve({ upgrades, message: err.message }));
-        tlsSocket.on("secureConnect", () => resolve({ upgrades, message: "" }));
-        tlsSocket.on("close", () => resolve({ upgrades, message: "" }));
+        tlsSocket.on("error", err => resolve({ upgrades, outcome: "tls-error", message: err.message }));
+        tlsSocket.on("secureConnect", () => resolve({ upgrades, outcome: "secure-connect", message: "" }));
+        tlsSocket.on("close", () => resolve({ upgrades, outcome: "tls-close", message: "" }));
       });
 
       const result = await promise;
@@ -159,6 +159,7 @@ it.if(isWindows)(
       // so exactly one upgrade is attempted and it never fails with "Invalid
       // socket". A re-emitted post-upgrade chunk would push `upgrades` past 1.
       expect(result.message).not.toContain("Invalid socket");
+      expect(result.outcome).toBe("tls-error");
       expect(result.upgrades).toBe(1);
     } finally {
       socket.destroy();
@@ -178,7 +179,7 @@ it.if(isWindows)(
     // re-enter this handler and attempt a second upgrade.
     const pipe_name = `\\\\.\\pipe\\test\\${randomUUID()}`;
 
-    const { promise, resolve } = Promise.withResolvers<{ upgrades: number; message: string }>();
+    const { promise, resolve } = Promise.withResolvers<{ upgrades: number; outcome: string; message: string }>();
 
     let upgrades = 0;
     let upgraded = false;
@@ -187,7 +188,9 @@ it.if(isWindows)(
     const server = net.createServer(serverSocket => {
       accepted = serverSocket;
       serverSocket.on("error", () => {});
-      serverSocket.on("close", () => resolve({ upgrades, message: "" }));
+      // A bare close means the mock records never reached the TLS parser (a
+      // dropped feeder), which must fail the final `outcome` assertion.
+      serverSocket.on("close", () => resolve({ upgrades, outcome: "accepted-close", message: "" }));
       serverSocket.on("data", data => {
         if (!upgraded && data.toString("latin1").includes("PEER_GREETING")) {
           serverSocket.write("STARTTLS");
@@ -198,9 +201,9 @@ it.if(isWindows)(
         upgraded = true;
         upgrades++;
         const tlsSocket = connect({ socket: serverSocket, rejectUnauthorized: false });
-        tlsSocket.on("error", err => resolve({ upgrades, message: err.message }));
-        tlsSocket.on("secureConnect", () => resolve({ upgrades, message: "" }));
-        tlsSocket.on("close", () => resolve({ upgrades, message: "" }));
+        tlsSocket.on("error", err => resolve({ upgrades, outcome: "tls-error", message: err.message }));
+        tlsSocket.on("secureConnect", () => resolve({ upgrades, outcome: "secure-connect", message: "" }));
+        tlsSocket.on("close", () => resolve({ upgrades, outcome: "tls-close", message: "" }));
       });
     });
 
@@ -225,7 +228,11 @@ it.if(isWindows)(
 
       const result = await promise;
 
+      // The mock records must reach the accepted socket's TLS parser (via the
+      // ServerHandlers.data feeder), which rejects them with an `error`; a bare
+      // close would mean the feeder dropped them. Exactly one upgrade happens.
       expect(result.message).not.toContain("Invalid socket");
+      expect(result.outcome).toBe("tls-error");
       expect(result.upgrades).toBe(1);
     } finally {
       peer.destroy();

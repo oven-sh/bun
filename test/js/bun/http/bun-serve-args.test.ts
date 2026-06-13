@@ -670,3 +670,47 @@ describe("Bun.serve unix socket validation", () => {
     }
   });
 });
+
+describe("app.bundlerOptions validation", () => {
+  test.each([
+    ["bundlerOptions is not an object", { bundlerOptions: 123 }, "Expected 'bundlerOptions' to be an object"],
+    [
+      "bundlerOptions.server is not an object",
+      { bundlerOptions: { server: 123 } },
+      "Expected 'bundlerOptions.server' to be an object",
+    ],
+    [
+      "bundlerOptions.client is not an object",
+      { bundlerOptions: { client: "abc" } },
+      "Expected 'bundlerOptions.client' to be an object",
+    ],
+    [
+      "bundlerOptions.ssr is not an object",
+      { bundlerOptions: { ssr: true } },
+      "Expected 'bundlerOptions.ssr' to be an object",
+    ],
+    [
+      "minify is not a boolean or object",
+      { bundlerOptions: { ssr: { minify: 10 } } },
+      "Expected minify to be a boolean or an object",
+    ],
+  ])("throws when %s", (_, app, message) => {
+    expect(() => {
+      // @ts-expect-error - Testing invalid runtime input
+      serve({ port: 0, app });
+    }).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message,
+      }),
+    );
+  });
+
+  test("minify: false does not crash", () => {
+    expect(() => {
+      // @ts-expect-error - Testing runtime input
+      serve({ port: 0, app: { bundlerOptions: { ssr: { minify: false } } } });
+    }).toThrow("'app' is missing 'framework'");
+  });
+});

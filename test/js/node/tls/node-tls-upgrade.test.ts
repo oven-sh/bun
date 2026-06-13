@@ -60,3 +60,71 @@ test("should be able to upgrade a paused socket and also have backpressure on it
 
   expect().pass();
 });
+
+test("tls.connect({ socket }) does not re-emit post-upgrade bytes on the original socket (STARTTLS) #32239", async () => {
+  // Mock STARTTLS server: greet, reply PROCEED to STARTTLS, then send mock TLS
+  // bytes in reply to the client's ClientHello. Those mock bytes must reach
+  // the TLS layer (OpenSSL rejects them) rather than re-surface as cleartext
+  // `data` on the original socket, which in the issue re-entered the handler
+  // and threw "Invalid socket".
+  const server = net.createServer(serverSocket => {
+    serverSocket.on("error", () => {});
+    serverSocket.write("SERVER_GREETING");
+    let phase = "greeting";
+    serverSocket.on("data", data => {
+      if (phase === "greeting" && data.toString().includes("STARTTLS")) {
+        phase = "proceed";
+        serverSocket.write("PROCEED");
+      } else if (phase === "proceed") {
+        phase = "done";
+        serverSocket.write(Buffer.alloc(50, 0x16));
+      }
+    });
+  });
+
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as net.AddressInfo;
+
+  const { promise, resolve } = Promise.withResolvers<{ upgrades: number; message: string }>();
+
+  let upgrades = 0;
+  let upgraded = false;
+
+  const socket = net.connect(port, "127.0.0.1");
+  try {
+    // Errors are an expected outcome here: OpenSSL rejects the mock handshake
+    // bytes (the TLS socket emits `error`) and the underlying socket may reset
+    // during teardown. Every terminal event settles `promise`, so a regression
+    // surfaces as a failed assertion on the resolved values rather than a hang.
+    socket.on("error", () => {});
+    socket.on("close", () => resolve({ upgrades, message: "" }));
+
+    socket.on("data", data => {
+      if (!upgraded && data.toString("latin1").includes("SERVER_GREETING")) {
+        socket.write("STARTTLS");
+        return;
+      }
+      // The legitimate upgrade (on PROCEED) and the buggy re-entry (on
+      // re-emitted ciphertext) both land here, mirroring the issue's handler.
+      upgraded = true;
+      upgrades++;
+      const tlsSocket = tls.connect({ socket, host: "127.0.0.1", rejectUnauthorized: false });
+      tlsSocket.on("error", err => resolve({ upgrades, message: err.message }));
+      tlsSocket.on("secureConnect", () => resolve({ upgrades, message: "" }));
+      tlsSocket.on("close", () => resolve({ upgrades, message: "" }));
+    });
+
+    const result = await promise;
+
+    // The original socket must go quiet after the upgrade: once TLS owns the
+    // stream no further `data` event re-enters the handler, so exactly one
+    // upgrade is attempted and it never fails with "Invalid socket". (A
+    // re-emitted post-upgrade chunk would land in the upgrade branch and push
+    // `upgrades` past 1.)
+    expect(result.message).not.toContain("Invalid socket");
+    expect(result.upgrades).toBe(1);
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});

@@ -1176,9 +1176,24 @@ impl Drop for DevServer {
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
 
-        if self.current_bundle.is_some() {
-            debug_assert!(false); // impossible to de-initialize this state correctly.
-        }
+        // An async bundle may still be in flight: its ParseTasks on the shared
+        // `WorkPool` hold pointers into `bv2`, the bundle heap, and the
+        // `AstAllocState`, and they can be neither cancelled nor waited for
+        // here (the event loop that would drain their completions is tearing
+        // down). Zig deliberately leaked this state (DevServer.zig `deinit`,
+        // `.current_bundle` arm: "impossible to de-initialize this state
+        // correctly"); letting the field drop instead frees mi-heaps under a
+        // running parse — observed as scattered segfaults inside parser
+        // codegen (e.g. `generate_react_refresh_import_hmr`). Leak it.
+        // `VirtualMachine::pending_async_bundles` intentionally stays nonzero
+        // so a worker-thread teardown leaks the VM too (`WebWorker::shutdown`).
+        let bundle_in_flight = if let Some(bundle) = self.current_bundle.take() {
+            debug_log!("deinit with an in-flight bundle; leaking it");
+            let _ = ::core::mem::ManuallyDrop::new(bundle);
+            true
+        } else {
+            false
+        };
 
         {
             let mut r = self.next_bundle.requests.first;
@@ -1222,12 +1237,21 @@ impl Drop for DevServer {
             .server_components
             .as_ref()
             .is_some_and(|sc| sc.separate_ssr_graph);
-        // SAFETY: each transpiler is initialized exactly once in `init()`.
-        unsafe {
-            self.server_transpiler.assume_init_drop();
-            self.client_transpiler.assume_init_drop();
-            if separate_ssr_graph {
-                self.ssr_transpiler.assume_init_drop();
+        // A leaked in-flight `bv2` holds `&mut` borrows of these inline
+        // transpilers (see `CurrentBundle::bv2`), and straggler ParseTasks
+        // read them (`ctx.transpiler().options`, worker transpiler clones) —
+        // don't run their destructors out from under those tasks. This only
+        // preserves the transpilers' heap-side state; keeping the *inline
+        // storage* alive requires the owner to leak the whole `Box<DevServer>`
+        // (`DevServer::drop_or_leak`), which every drop site goes through.
+        if !bundle_in_flight {
+            // SAFETY: each transpiler is initialized exactly once in `init()`.
+            unsafe {
+                self.server_transpiler.assume_init_drop();
+                self.client_transpiler.assume_init_drop();
+                if separate_ssr_graph {
+                    self.ssr_transpiler.assume_init_drop();
+                }
             }
         }
 
@@ -1256,6 +1280,33 @@ impl Drop for DevServer {
 }
 
 impl DevServer {
+    /// `true` while an async bundle is running on the shared `WorkPool`. Its
+    /// ParseTasks borrow the transpilers stored inline in this box (see
+    /// `CurrentBundle::bv2`), so the `Box<DevServer>` must not be freed while
+    /// this holds.
+    #[inline]
+    pub fn has_in_flight_bundle(&self) -> bool {
+        self.current_bundle.is_some()
+    }
+
+    /// Drop `dev`, or — when an async bundle is still in flight — leak the
+    /// whole box. The bundle's ParseTasks on the shared `WorkPool` hold
+    /// `&mut` borrows of the transpilers stored *inline* in the `DevServer`
+    /// allocation (`CurrentBundle::bv2` doc) plus the watcher and the
+    /// `dev_server` handle; they can be neither cancelled nor waited for, so
+    /// freeing the box would dangle all of them (same UAF class as freeing
+    /// the bundle heap). Normally unreachable: `start_async_bundle` refs the
+    /// server (`on_pending_request`) for every bundle, which gates
+    /// `deinit_if_we_can` — this is the backstop for forced teardowns.
+    pub fn drop_or_leak(dev: Box<DevServer>) {
+        if dev.has_in_flight_bundle() {
+            debug_log!("leaking the DevServer: a bundle is still in flight");
+            let _ = Box::leak(dev);
+        } else {
+            drop(dev);
+        }
+    }
+
     /// Everything is `Box`/`Vec` on the global mimalloc, so this just
     /// returns the default `StdAllocator`. Kept for the few call sites
     /// that still want a `StdAllocator` handle.
@@ -3386,6 +3437,16 @@ impl DevServer {
             promise: ::core::mem::take(&mut self.next_bundle.promise),
             resolution_failure_entries: Default::default(),
         });
+        // Tasks for this bundle are now queued on the shared `WorkPool`, each
+        // holding pointers into `bv2`/`heap` and this VM's event loop. Keep
+        // the VM's in-flight count in sync so a forced teardown
+        // (`WebWorker::shutdown`) knows it must leak the VM instead of
+        // freeing it under those tasks; `finalize_bundle` decrements.
+        {
+            let vm = self.vm();
+            vm.pending_async_bundles
+                .set(vm.pending_async_bundles.get() + 1);
+        }
 
         self.next_bundle.promise = DeferredPromise::default();
         self.next_bundle.requests = deferred_request::List::default();
@@ -3886,6 +3947,14 @@ pub(super) fn finalize_bundle(
         bv2.deinit_without_freeing_arena();
         if let Some(cb) = &mut dev.current_bundle {
             cb.promise.deinit_idempotently();
+        }
+        // The bundle ran to completion (`pending_items == 0`), so no task on
+        // the `WorkPool` references it anymore — releasing the VM's in-flight
+        // count makes a later teardown free the VM normally again.
+        {
+            let vm = dev.vm();
+            vm.pending_async_bundles
+                .set(vm.pending_async_bundles.get().saturating_sub(1));
         }
         // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
         dev.current_bundle = None;

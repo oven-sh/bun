@@ -133,6 +133,14 @@ public:
         }
     }
 
+    /* Keep the lazily-created loop alive past thread exit (a deliberate
+     * leak): disarms the thread_local LoopCleaner so its destructor — which
+     * runs via __cxa_thread_atexit regardless of how the thread returns —
+     * does not us_loop_free() a loop that other threads may still wake up. */
+    static void leakLoopAtThreadExit() {
+        getLazyLoop().cleanMe = false;
+    }
+
     /* Freeing the default loop should be done once */
     void free() {
         LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);

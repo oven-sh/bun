@@ -1197,6 +1197,8 @@ impl WebWorker {
 
         // Snapshot everything we'll need after `this` may be freed (step 4).
         let cpp_worker = self.cpp_worker;
+        // For the leak-the-VM log in step 5 — `self.*` must not be read there.
+        let execution_context_id = self.execution_context_id;
         // worker-thread only field; no other thread reads `arena`.
         let mut arena = self.arena.replace(None);
         let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
@@ -1282,6 +1284,48 @@ impl WebWorker {
             // SAFETY: loop owned by this thread's VM; no concurrent access.
             unsafe { (*loop_).internal_loop_data.jsc_vm = core::ptr::null_mut() };
         }
+        // A Bake DevServer bundle may still be in flight on the shared
+        // `WorkPool`. Its ParseTasks hold pointers into this VM: the bundle's
+        // `AnyEventLoop::Js` handle points at `vm.event_loop` (a value field
+        // of the VM box), result enqueues go through
+        // `EventLoop::enqueue_task_concurrent`, and the resolver reads the
+        // worker env. Those tasks can be neither cancelled nor waited for —
+        // the loop above stopped draining, so the bundle completion that
+        // would decrement `pending_async_bundles` can never run. Freeing the
+        // VM / env / uws loop here is a use-after-free on the pool threads
+        // (observed as segfaults inside parser codegen, e.g.
+        // `generate_react_refresh_import_hmr`); leak them instead — the same
+        // doctrine as Zig's DevServer `.current_bundle` teardown arm
+        // ("impossible to de-initialize this state correctly").
+        // `has_terminated` turns the stragglers' enqueues into no-ops (see
+        // `EventLoop::enqueue_task_concurrent`).
+        if !vm_ptr.is_null()
+            // SAFETY: vm_ptr valid; sole owner (unpublished under vm_lock).
+            && unsafe { &*vm_ptr }.pending_async_bundles.get() > 0
+        {
+            log!(
+                "[{}] leaking the VM: a dev server bundle is still in flight",
+                execution_context_id
+            );
+            // SAFETY: vm_ptr valid; sole owner. Flag store (the VM is leaked,
+            // not `destroy()`ed) so concurrent enqueues bail out; `Release`
+            // pairs with the `Acquire` loads in
+            // `EventLoop::enqueue_task_concurrent{,_batch}`.
+            unsafe { &*vm_ptr }
+                .has_terminated
+                .store(true, core::sync::atomic::Ordering::Release);
+            // Early-returning skips `bun_uws::on_thread_exit()` below, but
+            // that alone does NOT leak the loop: the C++ `thread_local
+            // LoopCleaner` destructor still runs at thread exit (via
+            // `__cxa_thread_atexit`, independent of the unwind-free return
+            // path) and would `us_loop_free()` it — under a straggler that
+            // loaded `has_terminated == false` and is about to `wakeup()`
+            // this loop. Disarm it explicitly.
+            bun_uws::leak_loop_on_thread_exit();
+            virtual_machine::VMHolder::set_vm(None);
+            let _ = core::mem::ManuallyDrop::new(arena.take());
+            return;
+        }
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr valid; sole owner.
             // Must precede Loop.shutdown so uv_close isn't called twice on the
@@ -1333,12 +1377,12 @@ impl WebWorker {
         }
         bun_core::delete_all_pools_for_thread_exit();
         // Free this thread's lazily-created uWS loop and its 512 KiB recv
-        // buffer. The C++ thread_local `~LoopCleaner` does not fire here:
-        // we return normally and
-        // unwinding never crosses the `extern "C"` frame, so the destructor is
-        // skipped on glibc; under BUN_DESTRUCT_VM_ON_EXIT it would also gate
-        // on `!bun_is_exiting()`. Everything that registers polls on the loop
-        // (gc_controller, sockets, timers) has been deinit'd above.
+        // buffer. This nulls `getLazyLoop().loop`, so the C++ `thread_local
+        // ~LoopCleaner` — which DOES run at thread exit via
+        // `__cxa_thread_atexit` (see c-bindings.cpp `shared_header_buffer_get`
+        // note), independent of this unwind-free return path — becomes a
+        // no-op instead of double-freeing. Everything that registers polls on
+        // the loop (gc_controller, sockets, timers) has been deinit'd above.
         bun_uws::on_thread_exit();
         drop(arena.take());
 

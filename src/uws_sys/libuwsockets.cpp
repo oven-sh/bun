@@ -1934,5 +1934,12 @@ __attribute__((callback (corker, ctx)))
       uWS::Loop::clearLoopAtThreadExit();
   }
 
+  // Deliberately leak this thread's loop instead (see Loop.h
+  // leakLoopAtThreadExit): used when other threads may still wake the loop
+  // after this thread exits.
+  extern "C" void bun_leak_loop_at_thread_exit() {
+      uWS::Loop::leakLoopAtThreadExit();
+  }
+
 #pragma clang attribute pop
 }

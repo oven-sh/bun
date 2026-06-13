@@ -273,6 +273,14 @@ const SocketHandlers: SocketHandler = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    // See SocketHandlers2.data: a named-pipe socket upgraded via
+    // `tls.connect({ socket })` feeds post-upgrade bytes to the TLS layer here
+    // instead of re-emitting them as cleartext `data`.
+    const feedTLSData = self[kDuplexTLSData];
+    if (feedTLSData !== undefined) {
+      feedTLSData(buffer);
+      return;
+    }
     if (!self.push(buffer)) {
       socket.pause();
     }
@@ -600,6 +608,15 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    // A server-accepted named-pipe socket upgraded via `tls.connect({ socket })`
+    // keeps this handler active (its native handle is not swapped out). Feed the
+    // post-upgrade bytes to the TLS layer instead of re-emitting them as
+    // cleartext `data`. See SocketHandlers2.data.
+    const feedTLSData = self[kDuplexTLSData];
+    if (feedTLSData !== undefined) {
+      feedTLSData(buffer);
+      return;
+    }
     if (!self.push(buffer)) {
       socket.pause();
     }
@@ -1622,7 +1639,7 @@ Socket.prototype.connect = function connect(...args) {
         const socket = connection._handle;
         // A named-pipe net.Socket reuses the Duplex TLS wrapper, but unlike a
         // plain Duplex its native pipe handle is left in place and keeps firing
-        // SocketHandlers2.data after the upgrade.
+        // its raw data handler after the upgrade.
         const namedPipe = !upgradeDuplex && !!socket && isNamedPipeSocket(socket);
         if (namedPipe) {
           upgradeDuplex = true;

@@ -1844,8 +1844,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return server;
         }
 
-        noinline fn onListenFailed(this: *ThisServer) void {
-            httplog("onListenFailed", .{});
+        noinline fn onListenFailed(this: *ThisServer, errno: c_int) void {
+            httplog("onListenFailed errno={d}", .{errno});
 
             const globalThis = this.globalThis;
 
@@ -1906,30 +1906,56 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (error_instance == .zero) {
+                // errno comes from the bind/listen syscall, plumbed up through
+                // the uSockets listen callback. On Windows it's a Winsock code
+                // (WSAEADDRINUSE=10048, …) which isn't a tag of the exhaustive
+                // `bun.sys.E` enum, so go through `SystemErrno.init` which
+                // translates WSA→POSIX. On POSIX it's a straight pass-through.
+                // The integer values of `SystemErrno` and `E` are 1:1 on both
+                // platforms (see Listener.zig for prior art). errno may be 0
+                // when uSockets failed without a syscall (e.g. getaddrinfo) —
+                // keep the historical EADDRINUSE message for that.
+                const e: bun.sys.E = if (errno != 0) blk: {
+                    const se = bun.sys.SystemErrno.init(errno) orelse bun.sys.SystemErrno.EINVAL;
+                    break :blk @enumFromInt(@intFromEnum(se));
+                } else .SUCCESS;
+                // Match Node.js / libuv convention: `errno` on the JS error is
+                // the negated POSIX errno (e.g. EACCES=13 → errno:-13).
+                const js_errno: c_int = -@as(c_int, @intCast(@intFromEnum(e)));
                 switch (this.config.address) {
                     .tcp => |tcp| {
-                        error_set: {
-                            if (comptime Environment.isLinux) {
-                                const rc: i32 = -1;
-                                const code = Sys.getErrno(rc);
-                                if (code == bun.sys.E.ACCES) {
-                                    error_instance = (jsc.SystemError{
-                                        .message = bun.String.init(std.fmt.bufPrint(&output_buf, "permission denied {s}:{d}", .{ tcp.hostname orelse "0.0.0.0", tcp.port }) catch "Failed to start server"),
-                                        .code = bun.String.static("EACCES"),
-                                        .syscall = bun.String.static("listen"),
-                                    }).toErrorInstance(globalThis);
-                                    break :error_set;
-                                }
-                            }
-                            error_instance = (jsc.SystemError{
-                                .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
-                                .code = bun.String.static("EADDRINUSE"),
-                                .syscall = bun.String.static("listen"),
-                            }).toErrorInstance(globalThis);
+                        const hostname: []const u8 = if (tcp.hostname) |h| bun.span(h) else "0.0.0.0";
+                        switch (e) {
+                            .SUCCESS, .ADDRINUSE => {
+                                error_instance = (jsc.SystemError{
+                                    .errno = if (e == .ADDRINUSE) js_errno else 0,
+                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
+                                    .code = bun.String.static("EADDRINUSE"),
+                                    .syscall = bun.String.static("listen"),
+                                }).toErrorInstance(globalThis);
+                            },
+                            .ACCES => {
+                                error_instance = (jsc.SystemError{
+                                    .errno = js_errno,
+                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "permission denied {s}:{d}", .{ hostname, tcp.port }) catch "Failed to start server"),
+                                    .code = bun.String.static("EACCES"),
+                                    .syscall = bun.String.static("listen"),
+                                }).toErrorInstance(globalThis);
+                            },
+                            else => {
+                                const sys_err = bun.sys.Error.fromCode(e, .listen);
+                                error_instance = sys_err.toJS(globalThis) catch return;
+                            },
                         }
+                        // `bun.sys.Error.path` is the unix-socket / filesystem field;
+                        // for TCP, Node sets `.address` and `.port` on the JS error
+                        // regardless of errno (EADDRINUSE, EACCES, EADDRNOTAVAIL, …),
+                        // matching `Bun.listen` in Listener.zig:273-274.
+                        error_instance.put(globalThis, jsc.ZigString.static("address"), jsc.ZigString.initUTF8(hostname).toJS(globalThis));
+                        error_instance.put(globalThis, jsc.ZigString.static("port"), .jsNumber(tcp.port));
                     },
                     .unix => |unix| {
-                        switch (bun.sys.getErrno(@as(i32, -1))) {
+                        switch (e) {
                             .SUCCESS => {
                                 error_instance = (jsc.SystemError{
                                     .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {f}", .{bun.fmt.QuotedFormatter{ .text = unix }}) catch "Failed to start server"),
@@ -1937,7 +1963,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                     .syscall = bun.String.static("listen"),
                                 }).toErrorInstance(globalThis);
                             },
-                            else => |e| {
+                            else => {
                                 var sys_err = bun.sys.Error.fromCode(e, .listen);
                                 sys_err.path = unix;
                                 error_instance = sys_err.toJS(globalThis) catch return;
@@ -1951,9 +1977,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             globalThis.throwValue(error_instance) catch {};
         }
 
-        pub fn onListen(this: *ThisServer, socket: ?*App.ListenSocket) void {
+        pub fn onListen(this: *ThisServer, socket: ?*App.ListenSocket, errno: c_int) void {
             if (socket == null) {
-                return this.onListenFailed();
+                return this.onListenFailed(errno);
             }
 
             this.listener = socket;
@@ -3809,7 +3835,6 @@ extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
 
 const string = []const u8;
 
-const Sys = @import("../../sys/sys.zig");
 const options = @import("../../bundler/options.zig");
 const std = @import("std");
 const URL = @import("../../url/url.zig").URL;

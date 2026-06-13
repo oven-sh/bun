@@ -439,16 +439,16 @@ extern "C"
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
       uwsApp->listen(port, [handler,
-                            user_data](struct us_listen_socket_t *listen_socket)
-                     { handler((struct us_listen_socket_t *)listen_socket, user_data); });
+                            user_data](struct us_listen_socket_t *listen_socket, int error)
+                     { handler((struct us_listen_socket_t *)listen_socket, error, user_data); });
     }
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
 
       uwsApp->listen(port, [handler,
-                            user_data](struct us_listen_socket_t *listen_socket)
-                     { handler((struct us_listen_socket_t *)listen_socket, user_data); });
+                            user_data](struct us_listen_socket_t *listen_socket, int error)
+                     { handler((struct us_listen_socket_t *)listen_socket, error, user_data); });
     }
   }
 
@@ -462,9 +462,9 @@ extern "C"
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
       uwsApp->listen(
           hostname, port, options,
-          [handler, user_data](struct us_listen_socket_t *listen_socket)
+          [handler, user_data](struct us_listen_socket_t *listen_socket, int error)
           {
-            handler((struct us_listen_socket_t *)listen_socket, user_data);
+            handler((struct us_listen_socket_t *)listen_socket, error, user_data);
           });
     }
     else
@@ -472,9 +472,9 @@ extern "C"
       uWS::App *uwsApp = (uWS::App *)app;
       uwsApp->listen(
           hostname, port, options,
-          [handler, user_data](struct us_listen_socket_t *listen_socket)
+          [handler, user_data](struct us_listen_socket_t *listen_socket, int error)
           {
-            handler((struct us_listen_socket_t *)listen_socket, user_data);
+            handler((struct us_listen_socket_t *)listen_socket, error, user_data);
           });
     }
   }
@@ -485,15 +485,15 @@ extern "C"
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->listen(0,[handler, domain, user_data](struct us_listen_socket_t *listen_socket)
-                     { handler((struct us_listen_socket_t *)listen_socket, domain, 0, user_data); },
+      uwsApp->listen(0,[handler, domain, user_data](struct us_listen_socket_t *listen_socket, int error)
+                     { handler((struct us_listen_socket_t *)listen_socket, domain, 0, error, user_data); },
                      {domain, pathlen});
     }
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->listen(0, [handler, domain, user_data](struct us_listen_socket_t *listen_socket)
-                     { handler((struct us_listen_socket_t *)listen_socket, domain, 0, user_data); },
+      uwsApp->listen(0, [handler, domain, user_data](struct us_listen_socket_t *listen_socket, int error)
+                     { handler((struct us_listen_socket_t *)listen_socket, domain, 0, error, user_data); },
                      {domain, pathlen});
     }
   }
@@ -505,16 +505,16 @@ extern "C"
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
       uwsApp->listen(
-          options, [handler, domain, options, user_data](struct us_listen_socket_t *listen_socket)
-          { handler((struct us_listen_socket_t *)listen_socket, domain, options, user_data); },
+          options, [handler, domain, options, user_data](struct us_listen_socket_t *listen_socket, int error)
+          { handler((struct us_listen_socket_t *)listen_socket, domain, options, error, user_data); },
           {domain, pathlen});
     }
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
       uwsApp->listen(
-          options, [handler, domain, options, user_data](struct us_listen_socket_t *listen_socket)
-          { handler((struct us_listen_socket_t *)listen_socket, domain, options, user_data); },
+          options, [handler, domain, options, user_data](struct us_listen_socket_t *listen_socket, int error)
+          { handler((struct us_listen_socket_t *)listen_socket, domain, options, error, user_data); },
           {domain, pathlen});
     }
   }

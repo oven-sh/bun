@@ -110,6 +110,7 @@ static bool canPerformFastEnumeration(Structure* s)
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
+extern "C" void Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
@@ -121,6 +122,12 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         throwException(globalObject, scope, createError(globalObject, "Failed to evaluate module"_s));
         return false;
     }
+
+    // Node reports a top-level throw from a CJS entry with origin
+    // "uncaughtException" rather than "unhandledRejection"; record that the
+    // entry point is being evaluated as CommonJS so the run command picks
+    // the right origin if this evaluation throws.
+    Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(filename));
 
     JSFunction* resolveFunction = nullptr;
     JSFunction* requireFunction = nullptr;
@@ -161,7 +168,17 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
         globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
 
-        JSValue result = JSC::evaluate(globalObject, code, jsUndefined());
+        // The two-argument JSC::evaluate overload catches the script's
+        // uncaught exception into an unused NakedPtr and drops it, which
+        // made a top-level throw from a CommonJS-sniffed --eval/--stdin
+        // entry exit 0 silently. Capture and rethrow it so the entry
+        // promise rejects and the error is reported with exit code 1.
+        NakedPtr<JSC::Exception> returnedException;
+        JSValue result = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
+        if (returnedException) [[unlikely]] {
+            scope.throwException(globalObject, returnedException.get());
+            return false;
+        }
         RETURN_IF_EXCEPTION(scope, false);
         ASSERT(result);
 

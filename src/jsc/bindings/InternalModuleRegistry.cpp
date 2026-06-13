@@ -76,14 +76,18 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
 ALWAYS_INLINE JSC::JSValue generateNativeModule(
     JSC::JSGlobalObject* globalObject,
     JSC::VM& vm,
-    const SyntheticSourceProvider::SyntheticSourceGenerator& generator)
+    const SyntheticSourceProvider::SyntheticSourceGenerator& generator,
+    WTF::ASCIILiteral moduleName)
 {
     Vector<JSC::Identifier, 4> propertyNames;
     JSC::MarkedArgumentBuffer arguments;
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    // The key must be the module's public specifier: the generators cache
+    // their default-export object per key so that require(id) and
+    // import(id).default observe the same object.
     generator(
         globalObject,
-        vm.propertyNames->emptyIdentifier, // Our generators do not do anything with the key
+        JSC::Identifier::fromString(vm, moduleName),
         propertyNames,
         arguments);
     RETURN_IF_EXCEPTION(throwScope, {});

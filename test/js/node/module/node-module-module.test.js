@@ -6,7 +6,9 @@ import path from "path";
 describe.concurrent("node-module-module", () => {
   test("builtinModules exists", () => {
     expect(Array.isArray(builtinModules)).toBe(true);
-    expect(builtinModules).toHaveLength(76);
+    // "bun:wrap" is no longer listed: it is internal transpiler plumbing,
+    // not a requireable public module.
+    expect(builtinModules).toHaveLength(75);
   });
 
   test("isBuiltin() works", () => {

@@ -3158,6 +3158,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
         for (auto& guarded : thisObject->m_guardedObjects)
             guarded->visitAggregate(visitor);
+
+        for (auto& object : thisObject->m_nativeModuleDefaultObjects.values())
+            visitor.append(object);
     }
 
 #define VISIT_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
@@ -3177,6 +3180,7 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
 
     if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
         vm.dateCache.resetIfNecessarySlow();
+        Bun::invalidateLiveDateInstanceCaches(vm);
         return true;
     }
 

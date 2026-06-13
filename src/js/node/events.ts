@@ -865,4 +865,24 @@ Object.assign(EventEmitter, {
   listenerCount,
 });
 
+// In Node, `process` is an instance of an EventEmitter subclass, so
+// `Object.getPrototypeOf(process) instanceof EventEmitter` holds. Bun's
+// process object uses the native JSEventEmitter prototype (only process uses
+// it); link that prototype to this module's EventEmitter so the chain
+// matches. The native methods stay first in the chain and keep winning
+// lookups.
+try {
+  const processPrototype = Object.getPrototypeOf(process);
+  if (
+    processPrototype !== null &&
+    processPrototype !== Object.prototype &&
+    !(processPrototype instanceof EventEmitter)
+  ) {
+    Object.setPrototypeOf(processPrototype, EventEmitter.prototype);
+  }
+} catch {
+  // If the prototype is not relinkable, process simply keeps its native
+  // chain; everything else about this module still works.
+}
+
 export default EventEmitter as any as typeof import("node:events");

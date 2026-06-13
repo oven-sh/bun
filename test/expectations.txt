@@ -8,6 +8,18 @@ test/cli/install/bunx.test.ts [ FAIL ] # should handle package that requires nod
 test/bundler/native-plugin.test.ts [ FAIL ] # prints name when plugin crashes
 test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > segfault should report
 
+# Exposed by the bun -e/--eval fix that stopped swallowing uncaught exceptions (see PR #31831):
+# the spawned child needs process.binding('inspector'), which is not implemented
+test/js/node/test/parallel/test-inspector-enabled.js [ FAIL ]
+
+# Pre-existing fs.watch leak unmasked by the same eval-entry exception fix:
+# the macOS leak-check children are CJS-sniffed -e scripts whose thrown
+# "fs.watch(dir) leaked N MB" error used to exit 0 with empty stderr, so the
+# test false-passed; the growth reproduces on unmodified main once the error
+# actually surfaces (see the matching investigation in PR #31826). Needs a
+# PathWatcher fix.
+[ DARWIN ] test/js/node/watch/fs.watch.test.ts [ FAIL ] # pre-existing leak, false-positive pass before the eval exception fix
+
 # Tests that are flaky
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 

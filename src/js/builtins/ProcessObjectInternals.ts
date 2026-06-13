@@ -402,17 +402,34 @@ export function windowsEnv(
     return o;
   };
 
-  (internalEnv as any).toJSON = () => {
-    return { ...internalEnv };
-  };
+  // No toJSON helper: process.env.toJSON is undefined in Node, and
+  // JSON.stringify(process.env) already yields original-case keys through
+  // the ownKeys/getOwnPropertyDescriptor/get traps.
 
   return new Proxy(internalEnv, {
     get(_, p) {
-      return typeof p === "string" ? internalEnv[p.toUpperCase()] : undefined;
+      if (typeof p !== "string") return undefined;
+      const k = p.toUpperCase();
+      // Own env vars first (case-insensitive); otherwise fall through to an
+      // ordinary lookup with the original key so inherited Object.prototype
+      // methods (hasOwnProperty, toString, ...) resolve like in Node.
+      if (Object.prototype.hasOwnProperty.$call(internalEnv, k)) {
+        return internalEnv[k];
+      }
+      return internalEnv[p];
     },
     set(_, p, value) {
-      const k = String(p).toUpperCase();
-      $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      // Node's process.env throws a TypeError for symbol keys and symbol
+      // values (ToString on a Symbol throws).
+      if (typeof p === "symbol" || typeof value === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
+      }
+      const k = p.toUpperCase();
+      // Node silently ignores assignments to an empty variable name
+      // (https://github.com/nodejs/node/issues/32920).
+      if (k === "") {
+        return true;
+      }
       value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
       // Track the key for enumeration if it isn't already there. Don't gate on
       // `k in internalEnv`: the proxy-related env-var accessors (HTTP_PROXY,
@@ -434,22 +451,63 @@ export function windowsEnv(
       return typeof p !== "symbol" ? String(p).toUpperCase() in internalEnv : false;
     },
     deleteProperty(_, p) {
+      // Deleting a symbol key is a no-op that reports success in Node.
+      if (typeof p === "symbol") {
+        return true;
+      }
       const k = String(p).toUpperCase();
       const i = envMapList.findIndex(x => x.toUpperCase() === k);
       if (i !== -1) {
         envMapList.splice(i, 1);
       }
       editWindowsEnvVar(k, null);
-      return typeof p !== "symbol" ? delete internalEnv[k] : false;
+      return delete internalEnv[k];
     },
     defineProperty(_, p, attributes) {
-      const k = String(p).toUpperCase();
-      $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
+      // String(symbol) does not throw (it returns the descriptive string), so
+      // reject symbol keys explicitly like the set trap does.
+      if (typeof p === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
+      }
+      // Same validation as JSEnvironmentVariableMap::defineOwnProperty on
+      // POSIX: only plain, fully-permissive data descriptors are accepted.
+      if ("get" in attributes || "set" in attributes) {
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+          "'process.env' does not accept an accessor(getter/setter) descriptor",
+        );
+      }
+      // Node also requires a [[Value]]: a value-less data descriptor is
+      // rejected rather than defining the property as undefined.
+      if (
+        !("value" in attributes) ||
+        attributes.configurable !== true ||
+        attributes.writable !== true ||
+        attributes.enumerable !== true
+      ) {
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+          "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
+        );
+      }
+      if (typeof attributes.value === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
+      }
+      const k = p.toUpperCase();
+      // Node silently ignores an empty variable name, like the set trap.
+      if (k === "") {
+        return true;
+      }
+      const value = String(attributes.value);
+      // Same tracking rule as the set trap: don't gate on `k in internalEnv`,
+      // because the proxy-related env-var accessors (HTTP_PROXY etc.) always
+      // exist there as DontEnum CustomAccessors even when the variable was
+      // never in the OS env block; a first definition must still become
+      // enumerable.
+      if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
         envMapList.push(p);
       }
-      editWindowsEnvVar(k, internalEnv[k]);
-      return $Object.$defineProperty(internalEnv, k, attributes);
+      const result = $Object.$defineProperty(internalEnv, k, { ...attributes, value });
+      editWindowsEnvVar(k, value);
+      return result;
     },
     getOwnPropertyDescriptor(target, p) {
       return typeof p === "string" ? Reflect.getOwnPropertyDescriptor(target, p.toUpperCase()) : undefined;
@@ -477,4 +535,180 @@ export function getChannel() {
       setRef(false);
     }
   })();
+}
+
+export function rawDebug() {
+  // process._rawDebug: util.format the arguments and write straight to fd 2,
+  // bypassing the process.stderr stream (which may be hijacked or broken).
+  // No rest parameter: builtins are strict functions and the parser rejects
+  // non-simple parameter lists.
+  // os.EOL, not "\n": Node's native _rawDebug writes through the CRT's
+  // text-mode stderr, which emits \r\n on Windows, and the upstream test
+  // asserts the platform line ending. fs.writeSync writes raw bytes, so the
+  // translation has to happen here.
+  const { formatWithOptions } = require("node:util");
+  const { writeSync } = require("node:fs");
+  const { EOL } = require("node:os");
+  writeSync(2, formatWithOptions({}, ...arguments) + EOL);
+}
+
+export function loadEnvFile(path) {
+  // process.loadEnvFile(path = ".env"): parse a dotenv file and apply it to
+  // process.env. Reading with fs gives the Node-shaped ENOENT error
+  // ({ code, syscall: "open", path }) for missing files.
+  if (path === undefined) {
+    path = ".env";
+  } else {
+    const { validateString } = require("internal/validators");
+    validateString(path, "path");
+  }
+  const content = require("node:fs").readFileSync(path, "utf8");
+  const parsed = require("node:util").parseEnv(content);
+  for (const key of Object.keys(parsed)) {
+    // Node's Dotenv::SetEnvironment: variables already present in the
+    // environment (including ones from --env-file) take precedence; the
+    // file only fills in missing keys. Compare the read value with
+    // undefined instead of using \`in\`: keys like TZ and HTTP_PROXY always
+    // exist as custom accessors on process.env even when the variable is
+    // unset (and \`in\` would also see Object.prototype members), while an
+    // unset accessor reads back as undefined and an existing empty-string
+    // value reads as "" and correctly takes precedence.
+    if (process.env[key] === undefined) {
+      process.env[key] = parsed[key];
+    }
+  }
+}
+
+export function createProcessFinalization(process) {
+  const { validateObject, validateFunction } = require("internal/validators");
+  let entries: Array<{ ref: WeakRef<object>; fn: Function; evt: string }> = [];
+  let installed = false;
+
+  function runFinalization(event) {
+    for (const entry of entries.slice()) {
+      if (entry.evt !== event) continue;
+      const obj = entry.ref.deref();
+      if (obj === undefined) continue;
+      if (event === "exit") {
+        const index = entries.indexOf(entry);
+        if (index !== -1) entries.splice(index, 1);
+      }
+      entry.fn(obj, event);
+    }
+  }
+
+  function ensureInstalled() {
+    if (installed) return;
+    installed = true;
+    process.prependListener("exit", () => runFinalization("exit"));
+    process.prependListener("beforeExit", () => runFinalization("beforeExit"));
+  }
+
+  function registerWithEvent(ref, fn, evt) {
+    validateObject(ref, "ref");
+    validateFunction(fn, "fn");
+    ensureInstalled();
+    entries.push({ ref: new WeakRef(ref), fn, evt });
+  }
+
+  return {
+    register(ref, fn) {
+      registerWithEvent(ref, fn, "exit");
+    },
+    registerBeforeExit(ref, fn) {
+      registerWithEvent(ref, fn, "beforeExit");
+    },
+    unregister(ref) {
+      validateObject(ref, "ref");
+      entries = entries.filter(entry => entry.ref.deref() !== ref);
+    },
+  };
+}
+
+export function buildAllowedNodeEnvironmentFlags() {
+  // Node's process.allowedNodeEnvironmentFlags: a frozen Set whose has()
+  // normalizes underscores to dashes, tolerates missing leading dashes, and
+  // strips "=value" suffixes. The canonical entries are kept in a closure so
+  // Set.prototype.add.call(...) cannot make new entries observable.
+  const canonical = [
+    "--conditions",
+    "--diagnostic-dir",
+    "--disable-warning",
+    "--dns-result-order",
+    "--enable-source-maps",
+    "--import",
+    "--inspect",
+    "--inspect-brk",
+    "--inspect-port",
+    "--max-http-header-size",
+    "--no-addons",
+    "--no-deprecation",
+    "--no-warnings",
+    "--pending-deprecation",
+    "--perf-basic-prof",
+    "--perf-basic-prof-only-functions",
+    "--perf-prof",
+    "--perf-prof-unwinding-info",
+    "--preserve-symlinks",
+    "--preserve-symlinks-main",
+    "--redirect-warnings",
+    "--require",
+    "-r",
+    "--stack-trace-limit",
+    "--throw-deprecation",
+    "--title",
+    "--trace-deprecation",
+    "--trace-warnings",
+    "--use-bundled-ca",
+    "--use-openssl-ca",
+    "--use-system-ca",
+    "--zero-fill-buffers",
+  ];
+  const canonicalSet = new Set(canonical);
+
+  class NodeEnvironmentFlagsSet extends Set {
+    add() {
+      return this;
+    }
+    delete() {
+      return false;
+    }
+    clear() {}
+    has(key) {
+      if (typeof key === "string") {
+        key = key.replaceAll("_", "-");
+        if (/^--?[^-]/.test(key)) {
+          key = key.replace(/=.*$/, "");
+          return canonicalSet.has(key);
+        }
+        if (!key.startsWith("-")) {
+          if (canonicalSet.has(`--${key}`)) return true;
+          return canonicalSet.has(`-${key}`);
+        }
+      }
+      return false;
+    }
+    forEach(callback, thisArg) {
+      for (const flag of canonical) {
+        callback.$call(thisArg, flag, flag, this);
+      }
+    }
+    get size() {
+      return canonicalSet.size;
+    }
+    *[Symbol.iterator]() {
+      yield* canonical;
+    }
+    *values() {
+      yield* canonical;
+    }
+    *keys() {
+      yield* canonical;
+    }
+    *entries() {
+      for (const flag of canonical) yield [flag, flag];
+    }
+  }
+
+  return Object.freeze(new NodeEnvironmentFlagsSet());
 }

@@ -91,7 +91,11 @@ private:
     void finishCreation(JSC::VM&);
 
 public:
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::IsImmutablePrototypeExoticObject;
+    // No IsImmutablePrototypeExoticObject: node:events relinks this
+    // prototype under its JS EventEmitter so that
+    // Object.getPrototypeOf(process) instanceof EventEmitter holds (only
+    // process uses this prototype).
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEventEmitterPrototype, JSEventEmitterPrototype::Base);
 

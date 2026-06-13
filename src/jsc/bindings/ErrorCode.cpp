@@ -259,6 +259,50 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
 
 extern "C" BunString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
 
+// Mirrors the escaping util.inspect applies inside quoted strings: named
+// escapes for common control characters, \xNN for the rest, and the active
+// quote character.
+template<typename CharType>
+static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, char quote)
+{
+    switch (c) {
+    case '\b':
+        builder.append("\\b"_s);
+        return;
+    case '\t':
+        builder.append("\\t"_s);
+        return;
+    case '\n':
+        builder.append("\\n"_s);
+        return;
+    case '\f':
+        builder.append("\\f"_s);
+        return;
+    case '\r':
+        builder.append("\\r"_s);
+        return;
+    case '\\':
+        builder.append("\\\\"_s);
+        return;
+    default:
+        if (c == static_cast<CharType>(quote)) {
+            builder.append('\\');
+            builder.append(quote);
+            return;
+        }
+        // Node escapes C0 (0x00-0x1F), DEL, and the C1 range (0x80-0x9F);
+        // its meta table runs through index 0x9F.
+        if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) {
+            static constexpr char hex[] = "0123456789abcdef";
+            builder.append("\\x"_s);
+            builder.append(hex[(c >> 4) & 0xf]);
+            builder.append(hex[c & 0xf]);
+            return;
+        }
+        builder.append(c);
+    }
+}
+
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue arg, bool quotesLikeInspect = false)
 {
     ASSERT(!arg.isEmpty());
@@ -276,34 +320,16 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
         auto str = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, );
         if (quotesLikeInspect) {
-            if (str->contains('\'')) {
-                builder.append('"');
-                if (str->is8Bit()) {
-                    const auto span = str->span<Latin1Character>();
-                    for (const auto c : span) {
-                        if (c == '"') {
-                            builder.append("\\\""_s);
-                        } else {
-                            builder.append(c);
-                        }
-                    }
-                } else {
-                    const auto span = str->span<char16_t>();
-                    for (const auto c : span) {
-                        if (c == '"') {
-                            builder.append("\\\""_s);
-                        } else {
-                            builder.append(c);
-                        }
-                    }
-                }
-                builder.append('"');
-                return;
+            const char quote = str->contains('\'') ? '"' : '\'';
+            builder.append(quote);
+            if (str->is8Bit()) {
+                for (const auto c : str->span<Latin1Character>())
+                    appendEscapedQuotedChar(builder, c, quote);
+            } else {
+                for (const auto c : str->span<char16_t>())
+                    appendEscapedQuotedChar(builder, c, quote);
             }
-
-            builder.append('\'');
-            builder.append(str);
-            builder.append('\'');
+            builder.append(quote);
             return;
         }
         builder.append(str);
@@ -340,6 +366,34 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
 
     auto bstring = Bun__inspect(globalObject, arg);
     auto&& str = bstring.transferToWTFString();
+    // Node renders small objects inline in error messages
+    // ("Received { abc: 123 }"); Bun.inspect always breaks lines. Collapse
+    // short multi-line output to match.
+    if (str.contains('\n') && str.length() <= 96) {
+        WTF::StringBuilder collapsed;
+        bool pendingSpace = false;
+        for (unsigned i = 0; i < str.length(); i++) {
+            char16_t c = str[i];
+            if (c == '\n') {
+                // drop a trailing comma right before a closing brace/bracket
+                while (i + 1 < str.length() && (str[i + 1] == ' ' || str[i + 1] == '\t'))
+                    i++;
+                if (i + 1 < str.length() && (str[i + 1] == '}' || str[i + 1] == ']')) {
+                    if (!collapsed.isEmpty() && collapsed[collapsed.length() - 1] == ',')
+                        collapsed.shrink(collapsed.length() - 1);
+                }
+                pendingSpace = true;
+                continue;
+            }
+            if (pendingSpace) {
+                collapsed.append(' ');
+                pendingSpace = false;
+            }
+            collapsed.append(c);
+        }
+        builder.append(collapsed.toString());
+        return;
+    }
     builder.append(str);
 }
 

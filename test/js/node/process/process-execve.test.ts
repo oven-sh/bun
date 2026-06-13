@@ -79,7 +79,7 @@ describe.concurrent("process.execve", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("aborts with ENOENT when the path does not exist", async () => {
+  test.skipIf(isWindows)("throws ENOENT when the path does not exist", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -93,7 +93,10 @@ describe.concurrent("process.execve", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain("process.execve failed with error code ENOENT");
+    // Node >= 26 throws a SystemError from process.execve instead of
+    // printing and aborting.
+    expect(stderr).toContain("execve() failed: ENOENT");
+    expect(stderr).toContain('syscall: "execve"');
     expect(exitCode).not.toBe(0);
   });
 
@@ -135,6 +138,45 @@ describe.concurrent("process.execve", () => {
 
     expect(stderr).not.toContain("LISTEN_ERROR");
     expect(stdout).toContain("RELISTENED:");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("accepts an omitted args parameter", async () => {
+    // Node declares execve(execPath, args = [], env = process.env): a
+    // one-argument call is valid and must reach execve (failing with ENOENT
+    // here, not ERR_INVALID_ARG_TYPE).
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.execve(process.execPath + "_does_not_exist");`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("ERR_INVALID_ARG_TYPE");
+    expect(stderr).toContain("execve() failed: ENOENT");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.skipIf(isWindows)("inherits process.env when env is omitted", async () => {
+    // Node declares execve(execPath, args = [], env = process.env): the
+    // current environment is the default, not an empty one.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.execve(process.execPath, [process.execPath, "-e", "console.log(process.env.EXECVE_INHERITED)"]);`,
+      ],
+      env: { ...bunEnv, EXECVE_INHERITED: "yes-inherited" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("yes-inherited");
     expect(exitCode).toBe(0);
   });
 

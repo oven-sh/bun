@@ -82,20 +82,51 @@
   Zig::GlobalObject *globalObject =                                            \
       static_cast<Zig::GlobalObject *>(lexicalGlobalObject);                   \
   JSC::VM &vm = globalObject->vm();                                            \
-  JSC::JSObject *defaultObject = JSC::constructEmptyObject(                    \
-      globalObject, globalObject->objectPrototype(), numberOfExportNames);     \
+  /* Node guarantees require(id), import(id).default and                       \
+     process.getBuiltinModule(id) are the same object; the generator runs      \
+     once per registry, so reuse one default object per module key. The        \
+     structural map mutation happens under the GC lock because the GC          \
+     thread iterates this map in visitChildrenImpl. */                         \
+  auto &nativeModuleDefaultSlot =                                              \
+      ([&]() -> JSC::WriteBarrier<JSC::JSObject> & {                           \
+        WTF::Locker locker { globalObject->gcLock() };                         \
+        return globalObject->nativeModuleDefaultObjects()                      \
+            .add(moduleKey.string(), JSC::WriteBarrier<JSC::JSObject>())       \
+            .iterator->value;                                                  \
+      })();                                                                    \
+  [[maybe_unused]] const bool defaultObjectWasCached = !!nativeModuleDefaultSlot; \
+  JSC::JSObject *defaultObject = defaultObjectWasCached                        \
+      ? nativeModuleDefaultSlot.get()                                          \
+      : JSC::constructEmptyObject(                                             \
+            globalObject, globalObject->objectPrototype(), numberOfExportNames); \
+  if (!defaultObjectWasCached)                                                 \
+    nativeModuleDefaultSlot.set(vm, globalObject, defaultObject);              \
   __NATIVE_MODULE_ASSERT_DECL(numberOfExportNames);                            \
   [[maybe_unused]] const auto put = [&](JSC::Identifier name, JSC::JSValue value) {                   \
-    defaultObject->putDirect(vm, name, value);                                 \
+    if (defaultObjectWasCached) {                                              \
+      if (JSC::JSValue cached = defaultObject->getDirect(vm, name))            \
+        value = cached;                                                        \
+    } else {                                                                   \
+      defaultObject->putDirect(vm, name, value);                               \
+    }                                                                          \
     exportNames.append(name);                                                  \
     exportValues.append(value);                                                \
     __NATIVE_MODULE_ASSERT_INCR                                                \
   };                                                                           \
   [[maybe_unused]] const auto putNativeFn = [&](JSC::Identifier name, JSC::NativeFunction ptr) {      \
-    JSC::JSFunction *value = JSC::JSFunction::create(                          \
-        vm, globalObject, 1, name.string(), ptr,                               \
-        JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, ptr);         \
-    defaultObject->putDirect(vm, name, value);                                 \
+    JSC::JSValue value;                                                        \
+    if (defaultObjectWasCached)                                                \
+      value = defaultObject->getDirect(vm, name);                              \
+    if (!value) {                                                              \
+      auto *function = JSC::JSFunction::create(                                \
+          vm, globalObject, 1, name.string(), ptr,                             \
+          JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, ptr);       \
+      /* Match `put`: only populate the shared object on first build; a       \
+         user-deleted property on the cached object stays deleted. */         \
+      if (!defaultObjectWasCached)                                             \
+        defaultObject->putDirect(vm, name, function);                          \
+      value = function;                                                        \
+    }                                                                          \
     exportNames.append(name);                                                  \
     exportValues.append(value);                                                \
     __NATIVE_MODULE_ASSERT_INCR                                                \

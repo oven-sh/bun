@@ -4183,6 +4183,13 @@ declare module "bun" {
      * Whether to compact the output
      */
     compact?: boolean;
+    /**
+     * Maximum number of array elements to include when formatting. Set to
+     * `null` or `Infinity` to show all elements.
+     *
+     * @default 100
+     */
+    maxArrayLength?: number | null;
   }
 
   type WebSocketOptionsProtocolsOrProtocol =

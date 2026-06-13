@@ -575,6 +575,11 @@ fn message_with_type_and_level_(
                     print_options.enable_colors = colors_prop.to_boolean();
                 }
             }
+            if let Some(max_array_length_prop) = opts.get(global, b"maxArrayLength")? {
+                if let Some(max) = resolve_max_array_length(max_array_length_prop) {
+                    print_options.max_array_length = max;
+                }
+            }
         }
     }
 
@@ -1287,6 +1292,44 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
 // FormatOptions
 // ───────────────────────────────────────────────────────────────────────────
 
+/// Default number of array elements printed before eliding the rest. Matches
+/// Node's `util.inspect` default (`maxArrayLength: 100`).
+pub const DEFAULT_MAX_ARRAY_LENGTH: u32 = 100;
+
+/// Pluralize the `... N more item(s)` elision message. Node prints the
+/// singular "item" only when exactly one element remains
+/// (`remaining === 1 ? "" : "s"` in `util.inspect`).
+fn more_items_plural(remaining: u64) -> &'static str {
+    if remaining == 1 { "" } else { "s" }
+}
+
+/// Resolve a user-supplied `maxArrayLength` option to the element cap.
+///
+/// Matches Node's `util.inspect` semantics: `null` means no limit
+/// (`Infinity`, represented here as `u32::MAX`), negative values clamp to 0,
+/// and non-integers / `NaN` are floored. A missing / `undefined` value leaves
+/// the current cap unchanged (handled by the caller via `JSValue::get`).
+fn resolve_max_array_length(value: JSValue) -> Option<u32> {
+    if value.is_null() {
+        return Some(u32::MAX);
+    }
+    if value.is_number() {
+        let v = value.as_number();
+        if v.is_nan() {
+            return Some(0);
+        }
+        if v >= f64::from(u32::MAX) {
+            return Some(u32::MAX);
+        }
+        if v <= 0.0 {
+            return Some(0);
+        }
+        // Node floors the value (`output.length` is integer-indexed).
+        return Some(v as u32);
+    }
+    None
+}
+
 #[derive(Clone, Copy)]
 pub struct FormatOptions {
     pub enable_colors: bool,
@@ -1295,6 +1338,7 @@ pub struct FormatOptions {
     pub ordered_properties: bool,
     pub quote_strings: bool,
     pub max_depth: u16,
+    pub max_array_length: u32,
     pub single_line: bool,
     pub default_indent: u16,
     pub error_display_level: ErrorDisplayLevel,
@@ -1309,6 +1353,7 @@ impl Default for FormatOptions {
             ordered_properties: false,
             quote_strings: false,
             max_depth: 2,
+            max_array_length: DEFAULT_MAX_ARRAY_LENGTH,
             single_line: false,
             default_indent: 0,
             error_display_level: ErrorDisplayLevel::Full,
@@ -1420,6 +1465,11 @@ impl FormatOptions {
             if let Some(opt) = arg1.get_boolean_loose(global_this, "compact")? {
                 self.single_line = opt;
             }
+            if let Some(opt) = arg1.get(global_this, "maxArrayLength")? {
+                if let Some(max) = resolve_max_array_length(opt) {
+                    self.max_array_length = max;
+                }
+            }
         } else {
             // formatOptions.show_hidden = arg1.toBoolean();
             if !arguments.is_empty() {
@@ -1475,6 +1525,7 @@ pub fn format2(
         fmt.ordered_properties = options.ordered_properties;
         fmt.quote_strings = options.quote_strings;
         fmt.max_depth = options.max_depth;
+        fmt.max_array_length = options.max_array_length;
         fmt.single_line = options.single_line;
         fmt.indent = u32::from(options.default_indent);
         fmt.stack_check = StackCheck::init();
@@ -1538,6 +1589,7 @@ pub fn format2(
     fmt.ordered_properties = options.ordered_properties;
     fmt.quote_strings = options.quote_strings;
     fmt.max_depth = options.max_depth;
+    fmt.max_array_length = options.max_array_length;
     fmt.single_line = options.single_line;
     fmt.indent = u32::from(options.default_indent);
     fmt.stack_check = StackCheck::init();
@@ -1731,6 +1783,7 @@ pub mod formatter {
         pub indent: u32,
         pub depth: u16,
         pub max_depth: u16,
+        pub max_array_length: u32,
         pub quote_strings: bool,
         pub quote_keys: bool,
         pub failed: bool,
@@ -1761,6 +1814,7 @@ pub mod formatter {
                 indent: 0,
                 depth: 0,
                 max_depth: 8,
+                max_array_length: DEFAULT_MAX_ARRAY_LENGTH,
                 quote_strings: false,
                 quote_keys: false,
                 failed: false,
@@ -1799,6 +1853,7 @@ pub mod formatter {
                 indent: self.indent,
                 depth: self.depth,
                 max_depth: self.max_depth,
+                max_array_length: self.max_array_length,
                 quote_strings: self.quote_strings,
                 quote_keys: self.quote_keys,
                 failed: self.failed,
@@ -4492,7 +4547,48 @@ pub mod formatter {
                 self.quote_strings = true;
                 let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 let mut empty_start: Option<u32> = None;
+                // Index of the next element to consider. Doubles as the
+                // "entries printed so far" signal for the named-property pass
+                // below (a leading comma is emitted when it is > 0).
+                let mut i: u32 = 1;
                 'first: {
+                    // `maxArrayLength: 0` elides every element — print
+                    // `[ ... N more items` and fall through to the
+                    // named-property pass (Node: `[ ... N more items, foo: 1 ]`).
+                    if self.max_array_length == 0 {
+                        // Mirror the normal first-element opener (below) so the
+                        // brackets stay symmetric with the close. Nothing is
+                        // printed, so the element-count heuristic (`len > 10`)
+                        // should not apply, but the close also honors
+                        // `ordered_properties` and the content-driven
+                        // `good_time_for_a_new_line` wrap — capture the latter
+                        // here exactly as the normal opener does.
+                        was_good_time = writer.good_time_for_a_new_line(self.indent);
+                        if !self.single_line && (self.ordered_properties || was_good_time) {
+                            writer.reset_line(self.indent);
+                            writer.write_all(b"[\n");
+                            writer.write_indent(self.indent);
+                            writer.add_for_new_line(1);
+                        } else {
+                            writer.write_all(b"[ ");
+                            writer.add_for_new_line(2);
+                        }
+                        writer.pretty::<C>(
+                            "... N more items".len(),
+                            format_args!(
+                                "{}... {} more item{}{}",
+                                pf!("<r><d>"),
+                                len,
+                                more_items_plural(len),
+                                pf!("<r>")
+                            ),
+                        );
+                        // Past the end so the element loop is skipped; `i > 0`
+                        // still makes the named-property pass emit a comma.
+                        i = len as u32;
+                        break 'first;
+                    }
+
                     let element = value.get_direct_index(self.global_this, 0);
 
                     let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
@@ -4529,9 +4625,10 @@ pub mod formatter {
                     }
                 }
 
-                let mut i: u32 = 1;
                 let mut nonempty_count: u32 = 1;
 
+                // `i` is already past the end when `maxArrayLength: 0` elided
+                // everything, so this loop is naturally skipped in that case.
                 while (i as u64) < len {
                     let element = value.get_direct_index(self.global_this, i);
                     if element.is_empty() {
@@ -4541,17 +4638,33 @@ pub mod formatter {
                         i += 1;
                         continue;
                     }
-                    if nonempty_count >= 100 {
-                        writer.print_comma::<C>();
-                        writer.write_all(b"\n"); // we want the line break to be unconditional here
-                        *writer.estimated_line_length = 0;
-                        writer.write_indent(self.indent);
+                    if nonempty_count >= self.max_array_length {
+                        // Elide everything from here to the end. A pending run
+                        // of holes (`empty_start`) is part of the elided tail,
+                        // so count from its start and clear it so it doesn't
+                        // also leak into the trailing `N x empty items` summary.
+                        let elided_from = u64::from(empty_start.unwrap_or(i));
+                        let remaining = len - elided_from;
+                        empty_start = None;
+                        // Only emit the separator if something was already
+                        // printed inside the brackets. When the array starts
+                        // with an elided hole (`elided_from == 0`) nothing
+                        // precedes the elision, so a comma would dangle after
+                        // `[` — mirror the `if empty > 0` guard used by the
+                        // hole-flush path below.
+                        if elided_from > 0 {
+                            writer.print_comma::<C>();
+                            writer.write_all(b"\n"); // we want the line break to be unconditional here
+                            *writer.estimated_line_length = 0;
+                            writer.write_indent(self.indent);
+                        }
                         writer.pretty::<C>(
                             "... N more items".len(),
                             format_args!(
-                                "{}... {} more items{}",
+                                "{}... {} more item{}{}",
                                 pf!("<r><d>"),
-                                len - u64::from(i),
+                                remaining,
+                                more_items_plural(remaining),
                                 pf!("<r>")
                             ),
                         );

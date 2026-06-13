@@ -32,38 +32,35 @@ import { isLinux } from "harness";
 // One-shot pipe polls are the POSIX event-loop path; on Windows libuv drives
 // readiness. The deterministic repro relies on EPOLLONESHOT pipe readers, so gate
 // it to Linux like the sibling pidfd regression test.
-test.skipIf(!isLinux)(
-  "a batch of Bun.$ commands survives a nested tick from one command's continuation",
-  async () => {
-    const N = 34;
-    let nested = false;
+test.skipIf(!isLinux)("a batch of Bun.$ commands survives a nested tick from one command's continuation", async () => {
+  const N = 34;
+  let nested = false;
 
-    const cmds = Array.from({ length: N }, (_, i) => {
-      const cmd = Bun.$`printf %s out-${i}`.quiet();
-      // The first command to settle runs this continuation inline, during the
-      // poll dispatch (finish() -> loop.exit() -> drainMicrotasks). Waiting on a
-      // promise here forces a nested us_loop_run_bun_tick; without the fix it
-      // clobbers the outer batch and drops sibling commands' one-shot pipe-EOF
-      // events, which EPOLLONESHOT has already disarmed in the kernel.
-      cmd.then(
-        () => {
-          if (!nested) {
-            nested = true;
-            expect(Bun.sleep(1)).resolves.toBe(undefined);
-          }
-        },
-        () => {},
-      );
-      return cmd;
-    });
+  const cmds = Array.from({ length: N }, (_, i) => {
+    const cmd = Bun.$`printf %s out-${i}`.quiet();
+    // The first command to settle runs this continuation inline, during the
+    // poll dispatch (finish() -> loop.exit() -> drainMicrotasks). Waiting on a
+    // promise here forces a nested us_loop_run_bun_tick; without the fix it
+    // clobbers the outer batch and drops sibling commands' one-shot pipe-EOF
+    // events, which EPOLLONESHOT has already disarmed in the kernel.
+    cmd.then(
+      () => {
+        if (!nested) {
+          nested = true;
+          expect(Bun.sleep(1)).resolves.toBe(undefined);
+        }
+      },
+      () => {},
+    );
+    return cmd;
+  });
 
-    // With the dropped-slot bug, the commands whose pipe-EOF was skipped never
-    // finish and this hangs until the test times out. There is no other wake
-    // source for a disarmed one-shot pipe.
-    const results = await Promise.all(cmds);
+  // With the dropped-slot bug, the commands whose pipe-EOF was skipped never
+  // finish and this hangs until the test times out. There is no other wake
+  // source for a disarmed one-shot pipe.
+  const results = await Promise.all(cmds);
 
-    for (let i = 0; i < N; i++) {
-      expect(results[i].stdout.toString()).toBe(`out-${i}`);
-    }
-  },
-);
+  for (let i = 0; i < N; i++) {
+    expect(results[i].stdout.toString()).toBe(`out-${i}`);
+  }
+});

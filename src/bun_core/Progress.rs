@@ -627,10 +627,14 @@ impl Progress {
                                 &mut end,
                                 format_args!("[{}/{} files] ", current_item, eti),
                             ),
-                            // Raw byte counts are printed until an IEC-units
-                            // (KiB/MiB) formatting helper lands.
-                            Unit::Bytes => self
-                                .buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti)),
+                            Unit::Bytes => self.buf_write(
+                                &mut end,
+                                format_args!(
+                                    "[{}/{}] ",
+                                    crate::fmt::size_bi(current_item as u64),
+                                    crate::fmt::size_bi(eti as u64),
+                                ),
+                            ),
                         }
                         need_ellipse = false;
                     } else if completed_items != 0 {
@@ -644,10 +648,10 @@ impl Progress {
                             Unit::Files => {
                                 self.buf_write(&mut end, format_args!("[{} files] ", current_item))
                             }
-                            // Raw byte counts; see the note above.
-                            Unit::Bytes => {
-                                self.buf_write(&mut end, format_args!("[{}] ", current_item))
-                            }
+                            Unit::Bytes => self.buf_write(
+                                &mut end,
+                                format_args!("[{}] ", crate::fmt::size_bi(current_item as u64)),
+                            ),
                         }
                         need_ellipse = false;
                     }

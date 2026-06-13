@@ -178,7 +178,7 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
         }
 
         if (typeof view === "string") {
-          return new TextEncoder().encode(view);
+          return new TextEncoder().encode(view).buffer;
         }
       }
       default: {
@@ -191,7 +191,7 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
         }
 
         if (!anyStrings) {
-          return Bun.concatArrayBuffers(result, false);
+          return Bun.concatArrayBuffers(result, Infinity, false);
         }
 
         const sink = new Bun.ArrayBufferSink();
@@ -269,7 +269,7 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
         }
 
         if (!anyStrings) {
-          return Bun.concatArrayBuffers(result, true);
+          return Bun.concatArrayBuffers(result, Infinity, true);
         }
 
         const sink = new Bun.ArrayBufferSink();

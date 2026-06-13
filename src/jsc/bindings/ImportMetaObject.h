@@ -64,10 +64,8 @@ public:
 
         return WebCore::subspaceForImpl<ImportMetaObject, UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForImportMeta.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForImportMeta = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForImportMeta.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForImportMeta = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForImportMeta; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForImportMeta; });
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isBake = false);

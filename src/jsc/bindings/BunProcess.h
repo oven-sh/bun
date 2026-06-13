@@ -102,10 +102,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<Process, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForProcessObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForProcessObject = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForProcessObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForProcessObject = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForProcessObject; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForProcessObject; });
     }
 
     void finishCreation(JSC::VM& vm);

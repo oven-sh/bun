@@ -735,10 +735,8 @@ JSC::GCClient::IsoSubspace* JSWorker::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSWorker, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWorker.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWorker = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWorker.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWorker = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForWorker; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForWorker; });
 }
 
 void JSWorker::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

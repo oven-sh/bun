@@ -795,10 +795,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<NapiClass, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNapiClass.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiClass = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNapiClass.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiClass = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForNapiClass; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForNapiClass; });
     }
 
     DECLARE_EXPORT_INFO;

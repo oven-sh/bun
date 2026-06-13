@@ -52,10 +52,8 @@ JSC::GCClient::IsoSubspace* JSHmac::subspaceFor(JSC::VM& vm)
 
     return WebCore::subspaceForImpl<JSHmac, WebCore::UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSHmac.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSHmac = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSHmac.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSHmac = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSHmac; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForJSHmac; });
 }
 
 JSHmac* JSHmac::create(JSC::VM& vm, JSC::Structure* structure)

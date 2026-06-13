@@ -25,10 +25,8 @@ JSC::GCClient::IsoSubspace* JSNextTickQueue::subspaceFor(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSNextTickQueue, WebCore::UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSNextTickQueue.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSNextTickQueue = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSNextTickQueue.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSNextTickQueue = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSNextTickQueue; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForJSNextTickQueue; });
 }
 
 JSNextTickQueue* JSNextTickQueue::create(VM& vm, Structure* structure)

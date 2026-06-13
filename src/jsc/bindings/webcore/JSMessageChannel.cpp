@@ -217,10 +217,8 @@ JSC::GCClient::IsoSubspace* JSMessageChannel::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSMessageChannel, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForMessageChannel.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMessageChannel = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForMessageChannel.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForMessageChannel = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForMessageChannel; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForMessageChannel; });
 }
 
 template<typename Visitor>

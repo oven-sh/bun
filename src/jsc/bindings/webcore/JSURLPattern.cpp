@@ -462,7 +462,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLPatternPrototypeFunction_exec, (JSGlobalObject * l
 
 JSC::GCClient::IsoSubspace* JSURLPattern::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSURLPattern, UseCustomHeapCellType::No>(vm, [](auto& spaces) { return spaces.m_clientSubspaceForURLPattern.get(); }, [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForURLPattern = std::forward<decltype(space)>(space); }, [](auto& spaces) { return spaces.m_subspaceForURLPattern.get(); }, [](auto& spaces, auto&& space) { spaces.m_subspaceForURLPattern = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSURLPattern, UseCustomHeapCellType::No>(vm, [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForURLPattern; }, [](auto& spaces) -> auto& { return spaces.m_subspaceForURLPattern; });
 }
 
 void JSURLPattern::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

@@ -85,10 +85,8 @@ JSC::GCClient::IsoSubspace* JSSign::subspaceFor(JSC::VM& vm)
         return nullptr;
     return WebCore::subspaceForImpl<JSSign, WebCore::UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSSign.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSign = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSSign.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSign = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSSign; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForJSSign; });
 }
 
 // JSSignPrototype implementation

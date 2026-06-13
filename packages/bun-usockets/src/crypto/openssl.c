@@ -456,14 +456,15 @@ static void ssl_ctx_build_fail(SSL_CTX *ctx) {
 
 /* BoringSSL's default accepted signature-algorithm list for verifying a peer's
  * certificate (kVerifySignatureAlgorithms in its ssl/extensions.cc) omits
- * Ed25519, even though its signing list includes it. A client therefore never
- * advertises Ed25519 in the signature_algorithms extension, so a TLS 1.3
- * handshake against an Ed25519 server certificate cannot complete and the peer
- * certificate comes back empty, surfacing as a bogus hostname-verification
- * failure. OpenSSL (and therefore Node.js) accepts Ed25519 by default, so mirror
- * that: BoringSSL's default list plus Ed25519. The same list governs verifying
- * client certificates when this mode-neutral CTX backs a server doing mTLS, so
- * Ed25519 client certs are accepted there too, matching Node. */
+ * Ed25519 and ECDSA P-521, even though its signing list includes both. A client
+ * therefore never advertises them in the signature_algorithms extension, so a
+ * TLS 1.3 handshake against an Ed25519 or P-521 server certificate cannot
+ * complete: the peer certificate comes back empty and surfaces as a bogus
+ * hostname-verification failure. OpenSSL (and therefore Node.js) accepts both by
+ * default, so mirror that: BoringSSL's default list plus Ed25519 and P-521. The
+ * same list governs verifying client certificates when this mode-neutral CTX
+ * backs a server doing mTLS, so those client certs are accepted there too,
+ * matching Node. */
 static const uint16_t us_verify_signature_algorithms[] = {
     SSL_SIGN_ED25519,
     SSL_SIGN_ECDSA_SECP256R1_SHA256,
@@ -472,6 +473,7 @@ static const uint16_t us_verify_signature_algorithms[] = {
     SSL_SIGN_ECDSA_SECP384R1_SHA384,
     SSL_SIGN_RSA_PSS_RSAE_SHA384,
     SSL_SIGN_RSA_PKCS1_SHA384,
+    SSL_SIGN_ECDSA_SECP521R1_SHA512,
     SSL_SIGN_RSA_PSS_RSAE_SHA512,
     SSL_SIGN_RSA_PKCS1_SHA512,
     SSL_SIGN_RSA_PKCS1_SHA1,

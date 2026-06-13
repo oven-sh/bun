@@ -651,6 +651,30 @@ AwEHoUQDQgAEEO1h4b5OSHMtVLsIM8xX70DHx9xZxjQXMbyDV7URujzrYnHOI6hA
 7mT12aPhZrxgxe8vWL8Q1432RS8yGy/7Jg==
 -----END EC PRIVATE KEY-----`,
   },
+  "p521": {
+    cert: `-----BEGIN CERTIFICATE-----
+MIICLDCCAY6gAwIBAgIULMKSgCPMb6GMkhK/ZpfRas9lTPkwCgYIKoZIzj0EAwIw
+GTEXMBUGA1UEAwwOcDUyMS1sb2NhbGhvc3QwIBcNMjYwNjEzMTcwNDQyWhgPMjEy
+NjA1MjAxNzA0NDJaMBkxFzAVBgNVBAMMDnA1MjEtbG9jYWxob3N0MIGbMBAGByqG
+SM49AgEGBSuBBAAjA4GGAAQA/PIq4LR4n0p8/94YQowNcGwk6GAs625n0ufFQ/ib
+G7uEPD/KUhJTMg/SJRwrq6lOSebbdVjIindagm4mFJtOFpwBk46G1TDMOA8goAGZ
+qTp15B5Cte0AnedrSjJ8L24CQeh3P8jrzSpkf/FTKlWbvtl5Mlj4+PVMh+Q0hZkC
+UpJoPVWjbzBtMB0GA1UdDgQWBBT18yyESC3nxaPyz7oA8dyBGEHJ/TAfBgNVHSME
+GDAWgBT18yyESC3nxaPyz7oA8dyBGEHJ/TAPBgNVHRMBAf8EBTADAQH/MBoGA1Ud
+EQQTMBGCCWxvY2FsaG9zdIcEfwAAATAKBggqhkjOPQQDAgOBiwAwgYcCQSyY3lFD
+f0N7631iLceyvBQ62U1+cQyDTUNEt9B/YW1TPiUONCfbdHB0IOzBwUBhVPYUcwYR
+s+yBvABruLk1OzrQAkIB+twMGvX6ZD8llMA5Ac/lYrIvfL2RiAInaN8Oin194cKP
+A148UijZM1s3nxvhjqQZtX/NnS4VrIkmY4PtCY89Rr0=
+-----END CERTIFICATE-----`,
+    key: `-----BEGIN PRIVATE KEY-----
+MIHuAgEAMBAGByqGSM49AgEGBSuBBAAjBIHWMIHTAgEBBEIASR7GbUoVvpY4c+bL
+oPGX1Cd+K49MA3BD+pl/eukQuImXGa9PLDrJXyrVrKfjdoKF0EupRxoLOGqFfWO3
+A/lGId+hgYkDgYYABAD88irgtHifSnz/3hhCjA1wbCToYCzrbmfS58VD+Jsbu4Q8
+P8pSElMyD9IlHCurqU5J5tt1WMiKd1qCbiYUm04WnAGTjobVMMw4DyCgAZmpOnXk
+HkK17QCd52tKMnwvbgJB6Hc/yOvNKmR/8VMqVZu+2XkyWPj49UyH5DSFmQJSkmg9
+VQ==
+-----END PRIVATE KEY-----`,
+  },
 };
 
 describe("tls.connect verifies server certificates of every key algorithm (#32234)", () => {
@@ -680,7 +704,7 @@ describe("tls.connect verifies server certificates of every key algorithm (#3223
         expect(result.san).toBe("DNS:localhost, IP Address:127.0.0.1");
         expect(result.authorized).toBe(true);
       } finally {
-        server.close();
+        await new Promise<void>(resolve => server.close(() => resolve()));
       }
     });
   }

@@ -411,13 +411,27 @@ impl FilePoll {
     }
 
     fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, force_unregister: bool) {
+        // `unregister` below only drops us from the kernel; it does not touch
+        // `loop->ready_polls`. If we are being torn down while a dispatch (or a
+        // nested tick) is mid-iteration over that batch, the outer loop would
+        // re-dispatch our now-freed slot. Drop ourselves from the live batch
+        // and every saved outer snapshot first, while `self` is still valid.
+        // Only a registered poll can appear in a batch, and `unregister` leaves
+        // `WasEverRegistered` set, so this read is stable across it.
+        let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
+        if was_ever_registered {
+            let tagged = Pollable::init(self).ptr();
+            // SAFETY: `loop_()` is the live C-owned uws loop; `tagged` is the
+            // exact tagged pointer stored in `ready_polls` for this FilePoll.
+            unsafe { Loop::invalidate_ready_poll(vm.loop_(), tagged) };
+        }
+
         // `loop_mut()` is the crate-private nonnull-asref accessor (single
         // deref in `EventLoopCtx`); the `&mut Loop` is consumed by `unregister`
         // and dropped before any `&mut Store` is materialised.
         let _ = self.unregister(vm.loop_mut(), force_unregister);
 
         self.owner.clear();
-        let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
         self.flags = FlagsSet::empty();
         self.fd = INVALID_FD;
         // `self` may live inside the `Store.hive` inline array, so a

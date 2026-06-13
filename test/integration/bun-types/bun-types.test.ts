@@ -543,6 +543,28 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/30754 — Bun.WebView's runtime
+  // exposes goBack()/goForward(); the types once advertised back()/forward()
+  // which didn't exist at runtime. Pin the names so the mismatch can't
+  // regress.
+  describe("Bun.WebView history navigation (#30754)", () => {
+    typeTest("goBack() and goForward() exist and return Promise<void>", {
+      files: {
+        "webview-30754.ts": `
+          import { expectType } from "./utilities";
+          declare const view: Bun.WebView;
+          expectType(view.goBack()).is<Promise<void>>();
+          expectType(view.goForward()).is<Promise<void>>();
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: diagnostics => {
+        const relevant = diagnostics.filter(d => d.line?.startsWith("webview-30754.ts"));
+        expect(relevant).toEqual([]);
+      },
+    });
+  });
+
   describe("lib configuration", () => {
     typeTest("checks with no lib at all", {
       options: {

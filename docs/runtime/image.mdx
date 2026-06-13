@@ -131,11 +131,18 @@ await img.write(Bun.s3("bucket/out.webp"));
 
 ## Placeholders
 
-For a low-quality placeholder to inline in HTML before the real image loads, `.placeholder()` returns a [ThumbHash](https://evanw.github.io/thumbhash/)-rendered ≤32px blur as a `data:` URL — ~400–700 bytes, no client-side decoder needed:
+For a low-quality placeholder to inline in HTML before the real image loads, `.placeholder()` returns a [ThumbHash](https://evanw.github.io/thumbhash/)-rendered ≤32px blur as a `data:image/webp` URL — a few hundred bytes, no client-side decoder needed:
 
 ```ts
 const lqip = await Bun.file("hero.jpg").image().placeholder();
 // <img src={lqip} … /> — then swap to the real URL on load.
+```
+
+For many placeholders on one page, `.placeholder("hash")` returns the raw 5–25 byte ThumbHash as a `Uint8Array` instead — pair with the ~800-byte client-side [ThumbHash decoder](https://github.com/evanw/thumbhash) and per-image cost drops to ≤36 base64 characters, smaller than embedding a WebP `data:` URL per image:
+
+```ts
+const hash = await Bun.file("hero.jpg").image().placeholder("hash");
+const b64 = Buffer.from(hash).toString("base64"); // "HQgKNZiAd3dxd4eHd3eGh3GQCPiI"
 ```
 
 For coarse-to-fine rendering of the image _itself_, encode a progressive JPEG:
@@ -144,7 +151,7 @@ For coarse-to-fine rendering of the image _itself_, encode a progressive JPEG:
 img.jpeg({ progressive: true });
 ```
 
-After the first terminal resolves, `img.width` and `img.height` reflect the _output_ dimensions (they're `-1` before).
+After the first terminal resolves, `img.width` and `img.height` reflect the _output_ dimensions (they're `-1` before). `.placeholder("hash")` is the one exception: the hash is OF the source, so `img.width` / `img.height` afterwards report the original source — matching `.metadata()` on the same instance.
 
 ## `Bun.serve` integration
 

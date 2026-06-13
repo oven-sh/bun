@@ -5,11 +5,11 @@
 //! opponent-colour planes, optionally A) of a ≤100×100 image. Decoding gives a
 //! ≤32px blur with the right average colour, aspect ratio and rough structure.
 //!
-//! `Bun.Image.placeholder()` runs `decode → box-resize ≤100 → encode()` →
-//! `decode()` → PNG-encode → `data:` URL, all on the work pool. The hash
-//! itself is exposed as the intermediate so a future `as: "hash"` option is
-//! one switch away. The encode/decode are scalar f32 and tiny (≤100²·7² mults
-//! at the absolute most); not worth a Highway kernel.
+//! `Bun.Image.placeholder(kind)` runs `decode → box-resize ≤100 → encode()`,
+//! then either returns the raw hash bytes (`"hash"`) or continues through
+//! `decode()` → lossy-WebP → `data:` URL (`"dataurl"`), all on the work
+//! pool. The encode/decode are scalar f32 and tiny (≤100²·7² mults at the
+//! absolute most); not worth a Highway kernel.
 
 /// Maximum hash length: 5-byte header + (has_alpha ? 1 : 0) + ceil((L+P+Q+A
 /// AC counts)/2). Worst case (has_alpha, square) is 5+1+ceil((14+5+5+14)/2)=25.

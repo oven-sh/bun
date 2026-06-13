@@ -128,6 +128,18 @@ unsafe extern "C" {
         add_ptr_property: bool,
         input_function_ptr: *mut c_void,
     ) -> JSValue;
+
+    /// `JSFFIFunction::invalidate` — nulls the function pointer so the
+    /// trampoline throws on later calls. No-op for non-`JSFFIFunction` values.
+    fn Bun__JSFFIFunction__invalidate(value: JSValue);
+}
+
+/// `Bun__JSFFIFunction__invalidate` thin wrapper.
+#[inline]
+fn invalidate_js_function(value: JSValue) {
+    // SAFETY: thin FFI wrapper; `value` is a by-value tagged i64 and the C++
+    // side type-checks it with `dynamicDowncast`.
+    unsafe { Bun__JSFFIFunction__invalidate(value) }
 }
 
 /// Raw extern fn pointers fed to
@@ -177,6 +189,29 @@ fn symbols_value_set_cached(js_object: JSValue, global: &JSGlobalObject, obj: JS
     crate::generated_classes::js_FFI::symbols_value_set_cached(js_object, global, obj)
 }
 
+/// Create the JS function for a compiled symbol, root it on `function` so
+/// teardown can invalidate it (see `Function::js_function`), and define it on
+/// the symbols object. The symbols object additionally roots it via the
+/// `symbolsValue` cached own-property the callers set.
+fn attach_compiled_symbol(
+    global: &JSGlobalObject,
+    symbols_obj: JSValue,
+    function: &mut Function,
+    name: &ZigString,
+    compiled_ptr: *const c_void,
+) {
+    let cb = new_runtime_function(
+        global,
+        name,
+        u32::try_from(function.arg_types.len()).expect("int cast"),
+        compiled_ptr,
+        true,
+        function.symbol_from_dynamic_library,
+    );
+    function.js_function = Some(jsc::Strong::create(cb, global));
+    symbols_obj.put(global, name.slice(), cb);
+}
+
 impl Offsets {
     fn load_once() {
         // SAFETY: extern "C" fn populating a static
@@ -216,12 +251,14 @@ impl Default for FFI {
 
 impl FFI {
     pub fn finalize(self: Box<Self>) {
-        // INTENTIONAL no-op when not closed. Compiled trampolines / dlopen'd
+        // INTENTIONAL leak when not closed. Compiled trampolines / dlopen'd
         // symbols may still be reachable from JS after the wrapper is GC'd
         // (e.g. `const { fn } = dlopen(...).symbols`); teardown is owned by
         // `close()`. Dropping the Box would run `Function::drop` →
         // `tcc_delete()`, freeing the executable pages those JSFunctions still
-        // jump into.
+        // jump into. Only the `js_function` Strong roots are released — the
+        // leaked TCC states keep the executable memory valid, and without
+        // this the JS functions themselves would leak too.
         //
         // When `close()` HAS run, the functions map is empty and the dylib /
         // shared TCC state are already gone, so the Box only owns the (empty)
@@ -229,6 +266,11 @@ impl FFI {
         if self.closed.get() {
             drop(self);
         } else {
+            self.functions.with_mut(|functions| {
+                for function in functions.values_mut() {
+                    drop(function.js_function.take());
+                }
+            });
             let _ = bun_core::heap::release(self);
         }
     }
@@ -1226,17 +1268,9 @@ impl FFI {
                     );
                 }
                 Step::Compiled(compiled) => {
+                    let compiled_ptr = compiled.ptr.cast_const();
                     let str = ZigString::init(function_name.as_bytes());
-                    let cb = new_runtime_function(
-                        global_this,
-                        &str,
-                        u32::try_from(function.arg_types.len()).expect("int cast"),
-                        compiled.ptr.cast_const(),
-                        true,
-                        function.symbol_from_dynamic_library,
-                    );
-                    // `cb` is rooted by the `symbolsValue` cached own-property set below.
-                    obj.put(global_this, str.slice(), cb);
+                    attach_compiled_symbol(global_this, obj, function, &str, compiled_ptr);
                 }
             }
         }
@@ -1331,16 +1365,21 @@ impl FFI {
             return Ok(JSValue::UNDEFINED);
         }
         self.closed.set(true);
-        if let Some(dylib) = self.dylib.replace(None) {
-            dylib.close();
-        }
+
+        // Dropping each `Function` invalidates its JS function before freeing
+        // the per-function TCC state, so do this before the shared state (the
+        // `cc()` path, where the executable memory of every symbol lives) and
+        // the dylib go away.
+        self.functions.with_mut(|f| f.clear_retaining_capacity());
 
         if let Some(state) = self.shared_state.take() {
             // SAFETY: state is a valid TCC::State pointer; we have exclusive ownership
             unsafe { TCC::State::destroy(state.as_ptr()) };
         }
 
-        self.functions.with_mut(|f| f.clear_retaining_capacity());
+        if let Some(dylib) = self.dylib.replace(None) {
+            dylib.close();
+        }
 
         Ok(JSValue::UNDEFINED)
     }
@@ -1588,17 +1627,9 @@ impl FFI {
                         .to_error_instance(global);
                 }
                 Step::Compiled(compiled) => {
+                    let compiled_ptr = compiled.ptr.cast_const();
                     let str = ZigString::init(function_name.as_bytes());
-                    let cb = new_runtime_function(
-                        global,
-                        &str,
-                        u32::try_from(function.arg_types.len()).expect("int cast"),
-                        compiled.ptr.cast_const(),
-                        true,
-                        function.symbol_from_dynamic_library,
-                    );
-                    // `cb` is rooted by the `symbolsValue` cached own-property set below.
-                    obj.put(global, str.slice(), cb);
+                    attach_compiled_symbol(global, obj, function, &str, compiled_ptr);
                 }
             }
         }
@@ -1683,18 +1714,9 @@ impl FFI {
                         .to_error_instance(global);
                 }
                 Step::Compiled(compiled) => {
+                    let compiled_ptr = compiled.ptr.cast_const();
                     let name = ZigString::init(function_name.as_bytes());
-
-                    let cb = new_runtime_function(
-                        global,
-                        &name,
-                        u32::try_from(function.arg_types.len()).expect("int cast"),
-                        compiled.ptr.cast_const(),
-                        true,
-                        function.symbol_from_dynamic_library,
-                    );
-                    // `cb` is rooted by the `symbolsValue` cached own-property set below.
-                    obj.put(global, name.slice(), cb);
+                    attach_compiled_symbol(global, obj, function, &name, compiled_ptr);
                 }
             }
         }
@@ -1903,6 +1925,14 @@ pub struct Function {
     pub arg_types: Vec<ABIType>,
     pub step: Step,
     pub threadsafe: bool,
+    /// The `JSFFIFunction` whose host function is the TinyCC-compiled wrapper.
+    /// Held so `Drop` can invalidate it before the executable memory is freed
+    /// (`close()` clears the functions map while the JS function is still
+    /// reachable — e.g. `const { fn } = dlopen(...).symbols`). The symbols
+    /// object can't serve that purpose: `src/js/bun/ffi.ts` replaces its
+    /// entries with plain JS wrappers. `Function` is only created and dropped
+    /// on the JS thread, which `Strong` requires.
+    pub js_function: Option<jsc::Strong>,
     // allocator field dropped — global mimalloc
 }
 
@@ -1916,6 +1946,7 @@ impl Default for Function {
             arg_types: Vec::new(),
             step: Step::Pending,
             threadsafe: false,
+            js_function: None,
         }
     }
 }
@@ -1927,6 +1958,13 @@ unsafe extern "C" {
 impl Drop for Function {
     fn drop(&mut self) {
         // base_name, arg_types, Step::Failed.msg are owned and freed by drop glue.
+        // The JS function keeps executing the TinyCC-compiled wrapper whose
+        // executable memory is freed below (per-function `state` here, the
+        // shared state in `FFI::close`). Invalidate it first so later calls
+        // throw instead of jumping into freed memory.
+        if let Some(js_function) = self.js_function.take() {
+            invalidate_js_function(js_function.get());
+        }
         if let Some(state) = self.state.take() {
             // SAFETY: state is a valid TCC::State pointer; we own it
             unsafe { TCC::State::destroy(state.as_ptr()) };

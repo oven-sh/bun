@@ -561,7 +561,10 @@ function CFunction(options) {
   };
 
   cFunctionRegistry ||= new FinalizationRegistry(onCloseCFunction);
-  cFunctionRegistry.register(result.symbols[identifier], result.symbols[identifier].close);
+  // Key collection on the native function rather than the wrapper: `.native`
+  // (the function that jumps into TinyCC-compiled memory) can outlive the
+  // wrapper, and the library must not be freed while it is still callable.
+  cFunctionRegistry.register(result.symbols[identifier].native, result.symbols[identifier].close);
 
   return result.symbols[identifier];
 }

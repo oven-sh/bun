@@ -666,7 +666,9 @@ describe.concurrent(() => {
             configurable: true,
             get() {
               return function (event, ...args) {
-                if (event === "exit") console.log("accessor:exit");
+                if (event === "beforeExit" || event === "exit") {
+                  console.log("accessor:" + event + ":" + args[0]);
+                }
                 return originalEmit.call(this, event, ...args);
               };
             },
@@ -682,7 +684,11 @@ describe.concurrent(() => {
         .split("\n")
         .map(line => line.trim())
         .filter(Boolean);
-      expect({ lines, stderr, exitCode }).toEqual({ lines: ["accessor:exit"], stderr: "", exitCode: 0 });
+      expect({ lines, stderr, exitCode }).toEqual({
+        lines: ["accessor:beforeExit:0", "accessor:exit:0"],
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 

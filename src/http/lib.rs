@@ -1374,6 +1374,19 @@ impl<'a> HTTPClient<'a> {
         // `result.body` and `state.reset()` are disjoint.
         let result = unsafe { self.to_result().detach_lifetime() };
         self.state.reset();
+        // `state.reset()` returns every stage field to Pending, which makes
+        // this finished client indistinguishable from a fresh one. Every
+        // caller reaches here with `stage == Fail` (a terminal state), and the
+        // final result dispatched below frees the HTTP-thread AsyncHTTP clone
+        // that embeds this client. Restore the terminal stage so a late event
+        // on a still-reachable reference (socket tag, timer, tracker entry)
+        // hits the `stage != Done && stage != Fail` guards and becomes a
+        // no-op instead of delivering a second final result into freed
+        // memory. The success path (`send_progress_update_without_stage_check`)
+        // already restores `Stage::Done` the same way after its reset.
+        self.state.request_stage = RequestStage::Fail;
+        self.state.response_stage = ResponseStage::Fail;
+        self.state.stage = Stage::Fail;
         if clear_proxy_tunneling {
             self.flags.proxy_tunneling = false;
         }
@@ -1867,7 +1880,12 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        if self.allow_retry
+        // `in_progress` also keeps a client whose final result was already
+        // delivered (stage Done/Fail) from restarting; the AsyncHTTP clone
+        // that embeds it is freed once that result is dispatched, so a late
+        // close event must not re-enter `start()`.
+        if in_progress
+            && self.allow_retry
             && self.method.is_idempotent()
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
@@ -1894,8 +1912,14 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         bun_core::scoped_log!(fetch, "Timeout  {}\n", BStr::new(self.url.href));
-        self.fail(err!(Timeout));
+        // Terminate (mark dead + close) BEFORE failing, matching
+        // `close_and_fail`: `fail()` dispatches the final result, which frees
+        // the HTTP-thread AsyncHTTP clone that embeds `self`, so nothing may
+        // run after it, and the socket must already be de-tagged so the
+        // synchronous close callbacks (TLS close fires on_handshake for a
+        // mid-handshake socket) cannot re-enter this client.
         GenHttpContext::<IS_SSL>::terminate_socket(socket);
+        self.fail(err!(Timeout));
     }
 
     pub fn on_connect_error(&mut self) {

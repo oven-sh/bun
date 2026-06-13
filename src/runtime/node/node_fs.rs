@@ -19,6 +19,7 @@ use bun_jsc::EventLoopTaskPtr;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsResult, Task, ThreadSafe, Unprotect};
+use bun_libuv_sys::uv_raw_errno;
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
@@ -4857,9 +4858,9 @@ impl NodeFS {
     }
 
     pub fn uv_close(&mut self, args: &args::Close, rc: i64) -> Maybe<ret::Close> {
-        if rc < 0 {
+        if let Some(errno) = uv_raw_errno(rc) {
             return Err(sys::Error {
-                errno: (-rc) as _,
+                errno,
                 syscall: sys::Tag::close,
                 fd: args.fd,
                 #[cfg(windows)]
@@ -6107,9 +6108,9 @@ impl NodeFS {
     }
 
     pub fn uv_open(&mut self, args: &args::Open, rc: i64) -> Maybe<ret::Open> {
-        if rc < 0 {
+        if let Some(errno) = uv_raw_errno(rc) {
             return Err(sys::Error {
-                errno: (-rc) as _,
+                errno,
                 syscall: sys::Tag::open,
                 path: args.path.slice().into(),
                 #[cfg(windows)]
@@ -6127,10 +6128,10 @@ impl NodeFS {
         req: &mut uv::fs_t,
         rc: i64,
     ) -> Maybe<ret::StatFS> {
-        if rc < 0 {
+        if let Some(errno) = uv_raw_errno(rc) {
             return Err(sys::Error {
-                errno: (-rc) as _,
-                syscall: sys::Tag::open,
+                errno,
+                syscall: sys::Tag::statfs,
                 path: args.path.slice().into(),
                 #[cfg(windows)]
                 from_libuv: true,
@@ -6206,9 +6207,9 @@ impl NodeFS {
     }
 
     pub fn uv_read(&mut self, args: &args::Read, rc: i64) -> Maybe<ret::Read> {
-        if rc < 0 {
+        if let Some(errno) = uv_raw_errno(rc) {
             return Err(sys::Error {
-                errno: (-rc) as _,
+                errno,
                 syscall: sys::Tag::read,
                 fd: args.fd,
                 #[cfg(windows)]
@@ -6222,9 +6223,9 @@ impl NodeFS {
     }
 
     pub fn uv_readv(&mut self, args: &args::Readv, rc: i64) -> Maybe<ret::Readv> {
-        if rc < 0 {
+        if let Some(errno) = uv_raw_errno(rc) {
             return Err(sys::Error {
-                errno: (-rc) as _,
+                errno,
                 syscall: sys::Tag::readv,
                 fd: args.fd,
                 #[cfg(windows)]
@@ -6268,9 +6269,9 @@ impl NodeFS {
     }
 
     pub fn uv_write(&mut self, args: &args::Write, rc: i64) -> Maybe<ret::Write> {
-        if rc < 0 {
+        if let Some(errno) = uv_raw_errno(rc) {
             return Err(sys::Error {
-                errno: (-rc) as _,
+                errno,
                 syscall: sys::Tag::write,
                 fd: args.fd,
                 #[cfg(windows)]
@@ -6284,9 +6285,9 @@ impl NodeFS {
     }
 
     pub fn uv_writev(&mut self, args: &args::Writev, rc: i64) -> Maybe<ret::Writev> {
-        if rc < 0 {
+        if let Some(errno) = uv_raw_errno(rc) {
             return Err(sys::Error {
-                errno: (-rc) as _,
+                errno,
                 syscall: sys::Tag::writev,
                 fd: args.fd,
                 #[cfg(windows)]

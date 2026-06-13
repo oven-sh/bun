@@ -75,6 +75,54 @@ pub mod TestingAPIs {
         }
     }
 
+    /// Exposes `bun_libuv_sys::uv_raw_errno`, the libuv-result to raw
+    /// `Error.errno` magnitude conversion used by the Windows async node:fs
+    /// completion handlers, so tests can feed out-of-range negative results
+    /// (NTSTATUS-shaped codes libuv passes through untranslated) and verify
+    /// they clamp to `|UV_UNKNOWN|` instead of truncating into an aliased
+    /// errno. Pure integer logic, available on every platform.
+    #[bun_jsc::host_fn]
+    pub fn uv_raw_errno(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let arguments = frame.arguments();
+        if arguments.is_empty() || !arguments[0].is_number() {
+            return Err(global.throw(format_args!("uvRawErrno: expected 1 number argument")));
+        }
+        // f64 → i64 `as` casts saturate, which matches the helper's clamping
+        // contract for out-of-range magnitudes.
+        let rc = arguments[0].as_number() as i64;
+        match bun_libuv_sys::uv_raw_errno(rc) {
+            Some(errno) => Ok(JSValue::js_number(f64::from(errno))),
+            None => Ok(JSValue::UNDEFINED),
+        }
+    }
+
+    /// Exposes `ReturnCode::errno()`, the translated libuv-result to POSIX
+    /// `E` discriminant conversion used by the synchronous uv_fs_* call
+    /// sites, so tests can verify unmapped negative results resolve to
+    /// EUNKNOWN instead of `None` (which callers treat as success).
+    /// Windows-only.
+    #[bun_jsc::host_fn]
+    pub fn uv_translated_errno(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let arguments = frame.arguments();
+        if arguments.is_empty() || !arguments[0].is_number() {
+            return Err(global.throw(format_args!(
+                "uvTranslatedErrno: expected 1 number argument"
+            )));
+        }
+        #[cfg(not(windows))]
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        #[cfg(windows)]
+        {
+            let rc = bun_sys::windows::libuv::ReturnCode::from_raw(arguments[0].to_int32());
+            return match rc.errno() {
+                Some(errno) => Ok(JSValue::js_number(f64::from(errno))),
+                None => Ok(JSValue::UNDEFINED),
+            };
+        }
+    }
+
     /// Exposes libuv -> `bun.sys.E` translation so tests can feed out-of-range
     /// negative values and verify it does not panic. Windows-only.
     #[bun_jsc::host_fn]

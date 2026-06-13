@@ -32,6 +32,34 @@ pub const UV_DIRENT_BLOCK: core::ffi::c_int = 7;
 // subset so `bun_errno`'s per-OS `uv_e` modules can reference a single source
 // of truth instead of inlining the magic numbers.
 // ──────────────────────────────────────────────────────────────────────────
+/// `UV_UNKNOWN` (uv/errno.h `UV__UNKNOWN`): libuv's synthetic "unknown
+/// error" code. Lives at crate root (not the Windows-only `libuv` module)
+/// because [`uv_raw_errno`] below is compiled on every platform.
+pub const UV_UNKNOWN: core::ffi::c_int = -4094;
+
+/// Raw `|UV_E*|` magnitude of a negative libuv result, in the form stored in
+/// `bun_sys::Error.errno` alongside `from_libuv: true`. Returns `None` for
+/// non-negative (success) results.
+///
+/// On Windows, libuv's `uv_translate_sys_error` returns already-negative
+/// inputs unchanged (vendor/libuv/src/win/error.c), so `req->result` can
+/// carry system codes far outside the `UV_E*` range (NTSTATUS-shaped values
+/// have been observed in the wild). A magnitude that does not fit the u16
+/// errno field maps to `|UV_UNKNOWN|` instead of truncating, because a
+/// truncated magnitude aliases a real errno (e.g. `-0x10002` would read back
+/// as `ENOENT`).
+pub const fn uv_raw_errno(rc: i64) -> Option<u16> {
+    if rc >= 0 {
+        return None;
+    }
+    let magnitude = rc.unsigned_abs();
+    if magnitude <= u16::MAX as u64 {
+        Some(magnitude as u16)
+    } else {
+        Some(UV_UNKNOWN.unsigned_abs() as u16)
+    }
+}
+
 #[cfg(not(windows))]
 pub const UV_ECHARSET: core::ffi::c_int = -4080;
 #[cfg(not(windows))]

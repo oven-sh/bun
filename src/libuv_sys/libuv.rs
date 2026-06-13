@@ -20,6 +20,12 @@ use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, c_void};
 use core::mem::MaybeUninit;
 use core::{fmt, mem, ptr};
 
+pub use crate::UV_UNKNOWN;
+
+/// `bun_errno::E::UNKNOWN` discriminant (layering forbids naming `E` here).
+/// Keep in sync with the `UV_UNKNOWN` row in [`uv_err_to_e_discriminant`].
+const E_UNKNOWN_DISCRIMINANT: u16 = 134;
+
 // ──────────────────────────────────────────────────────────────────────────
 // Debug log scope (`bun.Output.scoped(.uv, .hidden)`). This crate is leaf
 // (no `bun_output` dep), so the macro compiles to nothing in release and to
@@ -2203,7 +2209,7 @@ pub const fn uv_err_to_e_discriminant(code: c_int) -> Option<u16> {
         UV_ECANCELED => 125,      // E::CANCELED
         UV_ECHARSET => 135,       // E::CHARSET
         UV_EOF => 136,            // E::EOF
-        UV_UNKNOWN => 134,        // E::UNKNOWN
+        UV_UNKNOWN => E_UNKNOWN_DISCRIMINANT,
         // EAI_* codes — `bun_errno::E::UV_EAI_*` discriminants are defined as
         // `(-UV_EAI_*) as u16`, i.e. the raw magnitude is the discriminant.
         UV_EAI_ADDRFAMILY => (-UV_EAI_ADDRFAMILY) as u16,
@@ -2268,27 +2274,28 @@ impl ReturnCode {
         self.0
     }
     /// `Some(|UV_E*|)` when negative — the **raw** libuv error magnitude
-    /// (e.g. 4082 for `UV_EBUSY`). Use [`errno`] for the translated POSIX
-    /// `bun.sys.E` value (e.g. 16 for `BUSY`).
+    /// (e.g. 4082 for `UV_EBUSY`), clamped to `|UV_UNKNOWN|` when out of u16
+    /// range (see [`crate::uv_raw_errno`]). Use [`errno`] for the translated
+    /// POSIX `bun.sys.E` value (e.g. 16 for `BUSY`).
     #[inline]
     pub const fn raw_errno(self) -> Option<u16> {
-        if self.0 < 0 {
-            Some(self.0.unsigned_abs() as u16)
-        } else {
-            None
-        }
+        crate::uv_raw_errno(self.0 as i64)
     }
     /// When negative, map the
     /// `UV_E*` code to the small POSIX `bun.sys.E` discriminant (e.g.
-    /// `UV_ENOENT (-4058)` → `2`). Returns `None` for non-negative *or*
-    /// unmapped negative codes. Downstream callers
-    /// (`node_fs`, `sys::Fd`, `write_file`, …) store this directly into
-    /// `bun_sys::Error.errno`, so it MUST be the translated value, not the raw
-    /// `|UV_E*|` magnitude — see [`raw_errno`] for the latter.
+    /// `UV_ENOENT (-4058)` → `2`); unmapped negative codes resolve to the
+    /// `E::UNKNOWN` discriminant so a failed result is never mistaken for
+    /// success. Returns `None` only for non-negative codes. Downstream
+    /// callers (`node_fs`, `sys::Fd`, `write_file`, …) store this directly
+    /// into `bun_sys::Error.errno`, so it MUST be the translated value, not
+    /// the raw `|UV_E*|` magnitude — see [`raw_errno`] for the latter.
     #[inline]
     pub const fn errno(self) -> Option<u16> {
         if self.0 < 0 {
-            uv_err_to_e_discriminant(self.0)
+            match uv_err_to_e_discriminant(self.0) {
+                Some(d) => Some(d),
+                None => Some(E_UNKNOWN_DISCRIMINANT),
+            }
         } else {
             None
         }
@@ -2330,22 +2337,29 @@ impl ReturnCodeI64 {
     pub const fn int(self) -> i64 {
         self.0
     }
+    /// `Some(|UV_E*|)` when negative, clamped to `|UV_UNKNOWN|` when out of
+    /// u16 range (see [`crate::uv_raw_errno`]).
     #[inline]
     pub const fn errno(self) -> Option<u16> {
-        if self.0 < 0 {
-            Some(self.0.unsigned_abs() as u16)
-        } else {
-            None
-        }
+        crate::uv_raw_errno(self.0)
     }
     /// Translated `bun_sys::E`
     /// discriminant via [`uv_err_to_e_discriminant`] (matching
-    /// [`ReturnCode::err_enum`]). For the typed `bun_sys::E` use
+    /// [`ReturnCode::err_enum`]); unmapped negative codes resolve to the
+    /// `E::UNKNOWN` discriminant. For the typed `bun_sys::E` use
     /// `bun_sys::ReturnCodeExt::err_enum_e` (layering: `E` lives upstream).
     #[inline]
     pub const fn err_enum(self) -> Option<u16> {
         if self.0 < 0 {
-            uv_err_to_e_discriminant(self.0 as c_int)
+            // An i64 below c_int range cannot be a `UV_E*` code, and a
+            // wrapping `as c_int` cast could alias one.
+            if self.0 < c_int::MIN as i64 {
+                return Some(E_UNKNOWN_DISCRIMINANT);
+            }
+            match uv_err_to_e_discriminant(self.0 as c_int) {
+                Some(d) => Some(d),
+                None => Some(E_UNKNOWN_DISCRIMINANT),
+            }
         } else {
             None
         }
@@ -2582,7 +2596,6 @@ pub const UV_ESRCH: c_int = -4040;
 pub const UV_ETIMEDOUT: c_int = -4039;
 pub const UV_ETXTBSY: c_int = -4038;
 pub const UV_EXDEV: c_int = -4037;
-pub const UV_UNKNOWN: c_int = -4094;
 pub const UV_EOF: c_int = -4095;
 pub const UV_ENXIO: c_int = -4033;
 pub const UV_EMLINK: c_int = -4032;

@@ -61,9 +61,7 @@ import { Client, Events, GatewayIntentBits, SlashCommandBuilder } from "discord.
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 // the command people see when they type "/" in your server
-const ping = new SlashCommandBuilder()
-  .setName("ping")
-  .setDescription("Replies with Pong!");
+const ping = new SlashCommandBuilder().setName("ping").setDescription("Replies with Pong!");
 
 // runs once, right after the bot connects
 client.once(Events.ClientReady, async readyClient => {

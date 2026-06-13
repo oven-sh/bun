@@ -1168,13 +1168,21 @@ pub const Dirent = struct {
     path: bun.String,
     // not publicly exposed
     kind: Kind,
+    /// When true, emit `name` as a `Buffer` instead of a `String`. Set when
+    /// `readdir` was called with `{ encoding: "buffer" }`. The bytes in `name`
+    /// are stored as Latin-1 in that case to preserve raw filesystem bytes 1:1.
+    name_as_buffer: bool = false,
+    /// When true, emit `path`/`parentPath` as a `Buffer` instead of a `String`.
+    /// Set when the caller passed a `Buffer` as the `path` argument to
+    /// `readdir`, matching Node.js semantics.
+    path_as_buffer: bool = false,
 
     pub const Kind = std.fs.File.Kind;
 
     extern fn Bun__JSDirentObjectConstructor(*jsc.JSGlobalObject) jsc.JSValue;
     pub const getConstructor = Bun__JSDirentObjectConstructor;
 
-    extern fn Bun__Dirent__toJS(*jsc.JSGlobalObject, i32, *bun.String, *bun.String, cached_previous_path_jsvalue: ?*?*jsc.JSString) jsc.JSValue;
+    extern fn Bun__Dirent__toJS(*jsc.JSGlobalObject, i32, *bun.String, *bun.String, cached_previous_path_jsvalue: ?*?*jsc.JSString, name_as_buffer: bool, path_as_buffer: bool) jsc.JSValue;
     pub fn toJS(this: *Dirent, globalObject: *jsc.JSGlobalObject, cached_previous_path_jsvalue: ?*?*jsc.JSString) bun.JSError!jsc.JSValue {
         return bun.jsc.fromJSHostCall(globalObject, @src(), Bun__Dirent__toJS, .{
             globalObject,
@@ -1192,6 +1200,8 @@ pub const Dirent = struct {
             &this.name,
             &this.path,
             cached_previous_path_jsvalue,
+            this.name_as_buffer,
+            this.path_as_buffer,
         });
     }
 

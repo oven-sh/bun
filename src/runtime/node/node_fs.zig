@@ -2231,6 +2231,11 @@ pub const Arguments = struct {
         encoding: Encoding = .utf8,
         with_file_types: bool = false,
         recursive: bool = false,
+        /// True when the user-supplied `path` was a Buffer/TypedArray/ArrayBuffer.
+        /// Matches Node's `Dirent.parentPath` semantics: when the path arg was a
+        /// Buffer, `parentPath` is emitted as a Buffer too — independent of the
+        /// `encoding` option.
+        path_is_buffer: bool = false,
 
         pub fn deinit(this: Readdir) void {
             this.path.deinit();
@@ -2245,12 +2250,13 @@ pub const Arguments = struct {
         }
 
         pub fn tag(this: *const Readdir) Return.Readdir.Tag {
+            // withFileTypes takes priority regardless of encoding; the buffer
+            // encoding is then threaded through Dirent so `name` is emitted as
+            // a Buffer instead of a String.
+            if (this.with_file_types) return .with_file_types;
             return switch (this.encoding) {
                 .buffer => .buffers,
-                else => if (this.with_file_types)
-                    .with_file_types
-                else
-                    .files,
+                else => .files,
             };
         }
 
@@ -2295,6 +2301,7 @@ pub const Arguments = struct {
                 .encoding = encoding,
                 .with_file_types = with_file_types,
                 .recursive = recursive,
+                .path_is_buffer = path == .buffer,
             };
         }
     };
@@ -4609,7 +4616,18 @@ pub const NodeFS = struct {
         }) |current| : (entry = iterator.next()) {
             if (ExpectedType == jsc.Node.Dirent) {
                 if (dirent_path.isEmpty()) {
-                    dirent_path = jsc.WebCore.encoding.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(basename)), basename), args.encoding);
+                    // Storage is gated on `path_is_buffer`, not on `encoding`:
+                    // - When the path arg was a Buffer, `parentPath` is emitted as
+                    //   a Buffer, so we store the raw bytes 1:1 as Latin-1 to
+                    //   survive the round-trip without UTF-8 replacement.
+                    // - Otherwise `parentPath` is emitted as a JS string, so the
+                    //   stored `bun.String` must be a correctly-decoded string —
+                    //   use `toBunString(args.encoding)`. `encoding: "buffer"` on
+                    //   a string path is only a hint for how `name` is decoded.
+                    dirent_path = if (args.path_is_buffer)
+                        bun.String.cloneLatin1(strings.withoutNTPrefix(std.meta.Child(@TypeOf(basename)), basename))
+                    else
+                        jsc.WebCore.encoding.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(basename)), basename), args.encoding);
                 }
             }
             if (comptime !is_u16) {
@@ -4627,9 +4645,14 @@ pub const NodeFS = struct {
                         else
                             current.kind;
                         entries.append(.{
-                            .name = jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
+                            .name = if (args.encoding == .buffer)
+                                bun.String.cloneLatin1(utf8_name)
+                            else
+                                jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
                             .path = dirent_path,
                             .kind = kind,
+                            .name_as_buffer = args.encoding == .buffer,
+                            .path_as_buffer = args.path_is_buffer,
                         }) catch |err| bun.handleOom(err);
                     },
                     Buffer => {
@@ -4645,10 +4668,21 @@ pub const NodeFS = struct {
                 switch (ExpectedType) {
                     jsc.Node.Dirent => {
                         dirent_path.ref();
+                        // On Windows, filesystem names are UTF-16. For encoding=buffer,
+                        // transcode to UTF-8 (libuv's POSIX behavior) and store as
+                        // Latin-1 so the bytes round-trip 1:1 to a Buffer. The outer
+                        // `re_encoding_buffer` is already allocated for this case
+                        // (`is_u16 and encoding != .utf8`) — reuse it.
+                        const name_str = if (args.encoding == .buffer)
+                            bun.String.cloneLatin1(bun.strings.fromWPath(re_encoding_buffer.?, utf16_name))
+                        else
+                            bun.String.cloneUTF16(utf16_name);
                         entries.append(.{
-                            .name = bun.String.cloneUTF16(utf16_name),
+                            .name = name_str,
                             .path = dirent_path,
                             .kind = current.kind,
+                            .name_as_buffer = args.encoding == .buffer,
+                            .path_as_buffer = args.path_is_buffer,
                         }) catch |err| bun.handleOom(err);
                     },
                     bun.String => switch (args.encoding) {
@@ -4803,14 +4837,25 @@ pub const NodeFS = struct {
                     const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
                     if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
                         dirent_path_prev.deref();
-                        dirent_path_prev = bun.String.cloneUTF8(path_u8);
+                        // Storage tracks path_is_buffer to match emission, and
+                        // honors args.encoding for string paths to stay aligned
+                        // with the non-recursive and sync-recursive paths.
+                        dirent_path_prev = if (args.path_is_buffer)
+                            bun.String.cloneLatin1(path_u8)
+                        else
+                            jsc.WebCore.encoding.toBunString(path_u8, args.encoding);
                     }
                     dirent_path_prev.ref();
 
                     entries.append(.{
-                        .name = bun.String.cloneUTF8(utf8_name),
+                        .name = if (args.encoding == .buffer)
+                            bun.String.cloneLatin1(utf8_name)
+                        else
+                            jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
                         .path = dirent_path_prev,
                         .kind = effective_kind,
+                        .name_as_buffer = args.encoding == .buffer,
+                        .path_as_buffer = args.path_is_buffer,
                     }) catch |err| bun.handleOom(err);
                 },
                 Buffer => {
@@ -4964,13 +5009,22 @@ pub const NodeFS = struct {
                         const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
                         if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
                             dirent_path_prev.deref();
-                            dirent_path_prev = jsc.WebCore.encoding.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(path_u8)), path_u8), args.encoding);
+                            // Storage tracks path_is_buffer to match emission.
+                            dirent_path_prev = if (args.path_is_buffer)
+                                bun.String.cloneLatin1(strings.withoutNTPrefix(std.meta.Child(@TypeOf(path_u8)), path_u8))
+                            else
+                                jsc.WebCore.encoding.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(path_u8)), path_u8), args.encoding);
                         }
                         dirent_path_prev.ref();
                         entries.append(.{
-                            .name = jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
+                            .name = if (args.encoding == .buffer)
+                                bun.String.cloneLatin1(utf8_name)
+                            else
+                                jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
                             .path = dirent_path_prev,
                             .kind = effective_kind,
+                            .name_as_buffer = args.encoding == .buffer,
+                            .path_as_buffer = args.path_is_buffer,
                         }) catch |err| bun.handleOom(err);
                     },
                     Buffer => {

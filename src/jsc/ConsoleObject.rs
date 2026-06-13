@@ -741,10 +741,7 @@ impl<'a> TablePrinter<'a> {
     /// Compute the printed width of a `JSValue` along with the `Tag` and
     /// quoting decision used to measure it, so `print_row` can reuse them for
     /// the render instead of recomputing the now non-trivial quoting scan.
-    fn get_width_and_tag(
-        &mut self,
-        value: JSValue,
-    ) -> JsResult<(u32, formatter::TagResult, bool)> {
+    fn get_width_and_tag(&mut self, value: JSValue) -> JsResult<(u32, formatter::TagResult, bool)> {
         let mut width: usize = 0;
         // PERF: writes straight into the counter with no buffering between
         // the generic writer adapter and the counter. Profile if hot.

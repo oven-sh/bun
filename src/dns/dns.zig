@@ -175,12 +175,21 @@ pub const GetAddrInfo = struct {
             .{ "getaddrinfo", .libc },
         });
 
+        // `dns.lookup` is specified to behave like getaddrinfo(3), which
+        // consults nsswitch.conf / /etc/hosts. On Linux the default
+        // backend used to be `c_ares`, which produced results that did
+        // not match Node for names defined only in /etc/hosts — see
+        // https://github.com/oven-sh/bun/issues/29227.
+        //
+        // Only `dns.lookup` routes through this default. `dns.resolve*`
+        // (and all record-type queries) use c-ares directly, matching
+        // Node's behavior.
         pub const default: GetAddrInfo.Backend = switch (bun.Environment.os) {
             .mac, .windows => .system,
             // Android: c-ares can't discover nameservers (no /etc/resolv.conf,
             // no JNI for ares_library_init_android). bionic getaddrinfo proxies
             // through netd which knows the real resolvers.
-            else => if (bun.Environment.isAndroid) .system else .c_ares,
+            else => if (bun.Environment.isAndroid) .system else .libc,
         };
 
         pub const FromJSError = JSError || error{

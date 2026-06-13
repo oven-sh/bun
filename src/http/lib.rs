@@ -44,8 +44,6 @@ pub mod thread_safe_stream_buffer;
 pub mod websocket;
 #[path = "websocket_http_client.rs"]
 pub mod websocket_http_client;
-#[path = "zlib.rs"]
-pub mod zlib;
 
 // ── crate-root re-exports (real types from un-gated modules) ──
 pub use async_http::AsyncHTTP;

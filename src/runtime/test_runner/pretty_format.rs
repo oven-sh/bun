@@ -293,8 +293,7 @@ pub mod visited {
     // `HashMap<JSValue, ()>` is a foreign type, so we cannot impl the foreign
     // `ObjectPoolType` trait on it directly (orphan rule). A `#[repr(transparent)]`
     // newtype with `Deref`/`DerefMut` keeps every call site (`.clear()`,
-    // `.get_or_put()`, `.remove()`, `mem::take`) unchanged. Same trick as
-    // `src/http/zlib.rs::PooledMutableString`.
+    // `.get_or_put()`, `.remove()`, `mem::take`) unchanged.
     #[repr(transparent)]
     #[derive(Default)]
     pub struct Map(pub HashMap<JSValue, ()>);

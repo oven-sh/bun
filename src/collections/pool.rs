@@ -392,11 +392,6 @@ where
         })
     }
 
-    pub fn first() -> *mut T {
-        // SAFETY: `get_node()` always returns a valid, exclusively-owned node
-        unsafe { (*Self::get_node()).data.as_mut_ptr() }
-    }
-
     /// Pop a node from the free list or allocate a fresh one.
     ///
     /// When `T::INIT == None` and a fresh node is allocated, the returned
@@ -453,24 +448,12 @@ where
         }
     }
 
-    /// `value` must point to the `data` field of a live `Node<T>` previously
-    /// handed out by this pool (e.g. via `first()`).
-    pub fn release_value(value: &mut T) {
-        // SAFETY: `value` points to the `data` field of a live `Node<T>`.
-        let node = unsafe { bun_core::from_field_ptr!(Node<T>, data, value) };
-        // SAFETY: `node` is the parent of the `data` field, exclusively owned.
-        // `data` is initialized: the caller handed us `&mut T`, which is only
-        // possible to form (without UB on the caller's side) if `data` holds a
-        // valid `T`.
-        unsafe { Self::release(&mut *node) };
-    }
-
     /// Return a node to the pool's free list (or free it if the pool is full).
     ///
     /// # Safety
     ///
     /// `node` must be a live, exclusively-owned `Node<T>` previously handed out
-    /// by this pool (e.g. via `get` / `get_node` / `first`), and `node.data`
+    /// by this pool (e.g. via `get` / `get_node`), and `node.data`
     /// must be initialized. The free list assumes every stored node carries a
     /// valid `T` so it can `assume_init_mut().reset()` on reuse and
     /// `assume_init_drop()` on teardown — releasing a node that was obtained

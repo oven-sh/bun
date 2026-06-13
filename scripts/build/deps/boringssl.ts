@@ -29,6 +29,7 @@ const BORINGSSL_COMMIT = "0c5fce43b7ed5eb6001487ee48ac65766f5ddcd1";
 export const boringssl: Dependency = {
   name: "boringssl",
   versionMacro: "BORINGSSL",
+  patches: ["patches/boringssl/p5_pbev2.cc.patch"],
 
   source: () => ({
     kind: "github-archive",

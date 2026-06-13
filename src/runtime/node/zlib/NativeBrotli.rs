@@ -57,7 +57,9 @@ mod _impl {
         StrongOptional, WorkPoolTask,
     };
 
-    use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
+    use crate::node::node_zlib_binding::{
+        CompressionStream, CountedKeepAlive, Error, InputSpan, OutputSpan,
+    };
     use crate::node::util::validators;
 
     // Intrusive refcount: the handle type is `bun_ptr::IntrusiveRc<NativeBrotli>`; the
@@ -398,14 +400,13 @@ mod _impl {
             self.state = None;
         }
 
-        pub fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
-            self.next_in = in_.map_or(ptr::null(), |p| p.as_ptr());
-            self.avail_in = in_.map_or(0, |p| p.len());
-            // Reshaped for borrowck — compute ptr/len before consuming `out`.
+        pub(crate) fn set_buffers(&mut self, in_: Option<InputSpan>, out: Option<OutputSpan>) {
+            self.next_in = in_.map_or(ptr::null(), |s| s.ptr());
+            self.avail_in = in_.map_or(0, |s| s.len());
             match out {
-                Some(p) => {
-                    self.avail_out = p.len();
-                    self.next_out = p.as_mut_ptr();
+                Some(s) => {
+                    self.avail_out = s.len();
+                    self.next_out = s.ptr();
                 }
                 None => {
                     self.avail_out = 0;

@@ -11,7 +11,9 @@ mod _impl {
     };
     use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
-    use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
+    use crate::node::node_zlib_binding::{
+        CompressionStream, CountedKeepAlive, Error, InputSpan, OutputSpan,
+    };
     use crate::node::util::validators;
     // #[repr(u8)] enum shared by all native-zlib stream types.
     use bun_zlib::NodeMode;
@@ -398,14 +400,14 @@ mod _impl {
             self.state = None;
         }
 
-        pub fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
-            self.input.src = in_.map_or(ptr::null(), |p| p.as_ptr().cast());
-            self.input.size = in_.map_or(0, |p| p.len());
+        pub(crate) fn set_buffers(&mut self, in_: Option<InputSpan>, out: Option<OutputSpan>) {
+            self.input.src = in_.map_or(ptr::null(), |s| s.ptr().cast());
+            self.input.size = in_.map_or(0, |s| s.len());
             self.input.pos = 0;
             match out {
-                Some(p) => {
-                    self.output.size = p.len();
-                    self.output.dst = p.as_mut_ptr().cast();
+                Some(s) => {
+                    self.output.size = s.len();
+                    self.output.dst = s.ptr().cast();
                 }
                 None => {
                     self.output.size = 0;

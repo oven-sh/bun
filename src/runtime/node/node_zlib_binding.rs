@@ -199,10 +199,58 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 // Each `Native{Zlib,Brotli,Zstd}` implements this
 // trait to expose its fields + per-class codegen accessors.
 
+/// Raw input/output spans handed to the native compressors. Built from a JS
+/// `ArrayBuffer`'s `ptr + offset` after bounds checks, deliberately *not* as
+/// `&[u8]` / `&mut [u8]`: safe JS (via `_processChunk` + `_outBuffer`) can pass
+/// views over the same backing store as both input and output, and a live
+/// shared + mutable reference pair over overlapping bytes is undefined behavior.
+///
+/// These are short-lived handoff values, consumed immediately by `set_buffers`,
+/// which copies the pointer/length into the native compressor's own buffer
+/// struct. They carry no borrow and intentionally stay `!Send` / `!Sync`: buffer
+/// lifetime is provided by the existing model — pinning for async, call-stack
+/// rooting for sync — so the spans must not be stored or treated as transferable
+/// ownership handles.
+#[derive(Clone, Copy)]
+pub(crate) struct InputSpan {
+    ptr: *const u8,
+    len: usize,
+}
+
+impl InputSpan {
+    #[inline]
+    pub(crate) fn ptr(self) -> *const u8 {
+        self.ptr
+    }
+
+    #[inline]
+    pub(crate) fn len(self) -> usize {
+        self.len
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct OutputSpan {
+    ptr: *mut u8,
+    len: usize,
+}
+
+impl OutputSpan {
+    #[inline]
+    pub(crate) fn ptr(self) -> *mut u8 {
+        self.ptr
+    }
+
+    #[inline]
+    pub(crate) fn len(self) -> usize {
+        self.len
+    }
+}
+
 /// Backing-stream surface used by [`CompressionStream`] (zlib / brotli / zstd
 /// `Context` types).
 pub(crate) trait CompressionContext {
-    fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>);
+    fn set_buffers(&mut self, in_: Option<InputSpan>, out: Option<OutputSpan>);
     fn set_flush(&mut self, flush: i32);
     fn do_work(&mut self);
     fn reset(&mut self) -> Error;
@@ -404,24 +452,34 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // FastTypedArray's backing store can fail on OOM, and failing here
         // leaves nothing to unwind.
         let in_buf: jsc::ArrayBuffer;
-        let in_: Option<&[u8]> = if arguments[1].is_null() {
+        let in_: Option<InputSpan> = if arguments[1].is_null() {
             None
         } else {
             let Some(buf) = arguments[1].as_pinned_arraybuffer(global_this) else {
                 return Err(global_this.throw_out_of_memory());
             };
             in_buf = buf;
-            Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize])
+            // Bounds checked above. Build a raw span from `ptr + offset` rather
+            // than a `&[u8]`: input and output may alias the same backing store,
+            // and a live `&[u8]`/`&mut [u8]` pair over overlapping bytes is UB.
+            // The buffer stays alive via the pin + pending-input cache below.
+            Some(InputSpan {
+                ptr: in_buf.ptr.wrapping_add(in_off as usize).cast_const(),
+                len: in_len as usize,
+            })
         };
-        let Some(mut out_buf) = arguments[4].as_pinned_arraybuffer(global_this) else {
+        let Some(out_buf) = arguments[4].as_pinned_arraybuffer(global_this) else {
             if !arguments[1].is_null() {
                 arguments[1].unpin_array_buffer();
             }
             return Err(global_this.throw_out_of_memory());
         };
-        let out: Option<&mut [u8]> = Some(
-            &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
-        );
+        // Bounds checked above; raw span (not `&mut [u8]`) for the same overlap
+        // reason. Kept alive via the pin + pending-output cache below.
+        let out: Option<OutputSpan> = Some(OutputSpan {
+            ptr: out_buf.ptr.wrapping_add(out_off as usize),
+            len: out_len as usize,
+        });
 
         this.write_in_progress().set(true);
         this.ref_();
@@ -589,7 +647,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         let in_off: u32;
         let in_len: u32;
-        let in_: Option<&[u8]>;
+        let in_: Option<InputSpan>;
 
         if arguments[0].is_undefined() {
             return Err(global_this
@@ -642,12 +700,17 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                     )
                     .throw());
             }
-            // Bounds checked above; `byte_slice` is the safe accessor for the JS
-            // ArrayBuffer's backing store (rooted via `arguments[1]` on the call stack).
-            in_ = Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
+            // Bounds checked above. Build a raw span from `ptr + offset` rather
+            // than a `&[u8]`: input and output may alias the same backing store,
+            // and a live `&[u8]`/`&mut [u8]` pair over overlapping bytes is UB.
+            // The buffer is rooted via `arguments[1]` on the call stack.
+            in_ = Some(InputSpan {
+                ptr: in_buf.ptr.wrapping_add(in_off as usize).cast_const(),
+                len: in_len as usize,
+            });
         }
 
-        let Some(mut out_buf) = arguments[4].as_array_buffer(global_this) else {
+        let Some(out_buf) = arguments[4].as_array_buffer(global_this) else {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_TYPE,
@@ -669,11 +732,12 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
-        // ArrayBuffer's backing store (rooted via `arguments[4]` on the call stack).
-        let out: Option<&mut [u8]> = Some(
-            &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
-        );
+        // Bounds checked above; raw span (not `&mut [u8]`) for the same overlap
+        // reason. The buffer is rooted via `arguments[4]` on the call stack.
+        let out: Option<OutputSpan> = Some(OutputSpan {
+            ptr: out_buf.ptr.wrapping_add(out_off as usize),
+            len: out_len as usize,
+        });
         let _ = (in_off, in_len, out_off, out_len);
 
         if this.write_in_progress().get() {
@@ -993,7 +1057,7 @@ macro_rules! __impl_compression_stream {
         }
 
         impl $crate::node::node_zlib_binding::CompressionContext for $ctx {
-            #[inline] fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) { Self::set_buffers(self, in_, out) }
+            #[inline] fn set_buffers(&mut self, in_: Option<$crate::node::node_zlib_binding::InputSpan>, out: Option<$crate::node::node_zlib_binding::OutputSpan>) { Self::set_buffers(self, in_, out) }
             #[inline] fn set_flush(&mut self, flush: i32) { Self::set_flush(self, flush) }
             #[inline] fn do_work(&mut self) { Self::do_work(self) }
             #[inline] fn reset(&mut self) -> $crate::node::node_zlib_binding::Error { Self::reset(self) }

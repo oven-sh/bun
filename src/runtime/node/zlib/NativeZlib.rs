@@ -3,7 +3,7 @@ use core::mem;
 
 use bun_zlib as c; // bun.zlib — C zlib FFI (NodeMode, z_stream, ReturnCode, FlushValue, deflate*, inflate*)
 
-use crate::node::node_zlib_binding::Error;
+use crate::node::node_zlib_binding::{Error, InputSpan, OutputSpan};
 
 // ─── gated: JsClass payload + host fns ────────────────────────────────────
 // `NativeZlib` carries `#[bun_jsc::JsClass]` and its methods are
@@ -430,21 +430,21 @@ impl Context {
         self.set_dictionary()
     }
 
-    pub fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
+    pub(crate) fn set_buffers(&mut self, in_: Option<InputSpan>, out: Option<OutputSpan>) {
         self.state.avail_in = match &in_ {
-            Some(p) => u32::try_from(p.len()).expect("int cast"),
+            Some(s) => u32::try_from(s.len()).expect("int cast"),
             None => 0,
         };
         self.state.next_in = match in_ {
-            Some(p) => p.as_ptr(),
+            Some(s) => s.ptr(),
             None => core::ptr::null(),
         };
         self.state.avail_out = match &out {
-            Some(p) => u32::try_from(p.len()).expect("int cast"),
+            Some(s) => u32::try_from(s.len()).expect("int cast"),
             None => 0,
         };
         self.state.next_out = match out {
-            Some(p) => p.as_mut_ptr(),
+            Some(s) => s.ptr(),
             None => core::ptr::null_mut(),
         };
     }

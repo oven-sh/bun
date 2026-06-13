@@ -2414,7 +2414,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
 
     auto& names = WebCore::builtinNames(vm);
 
-    JSC::JSObject* result = createError(globalObject, ErrorType::Error, message);
+    JSC::JSObject* result = Zig::createErrorAllowEmptyMessage(globalObject, ErrorType::Error, message);
 
     auto clientData = WebCore::clientData(vm);
 
@@ -6103,17 +6103,17 @@ CPP_DECL void JSC__VM__performOpportunisticallyScheduledTasks(JSC::VM* vm, doubl
 
 extern "C" EncodedJSValue JSC__createError(JSC::JSGlobalObject* globalObject, const BunString* str)
 {
-    return JSValue::encode(JSC::createError(globalObject, str->toWTFString(BunString::ZeroCopy)));
+    return JSValue::encode(Zig::createErrorAllowEmptyMessage(globalObject, JSC::ErrorType::Error, str->toWTFString(BunString::ZeroCopy)));
 }
 
 extern "C" EncodedJSValue JSC__createTypeError(JSC::JSGlobalObject* globalObject, const BunString* str)
 {
-    return JSValue::encode(JSC::createTypeError(globalObject, str->toWTFString(BunString::ZeroCopy)));
+    return JSValue::encode(Zig::createErrorAllowEmptyMessage(globalObject, JSC::ErrorType::TypeError, str->toWTFString(BunString::ZeroCopy)));
 }
 
 extern "C" EncodedJSValue JSC__createRangeError(JSC::JSGlobalObject* globalObject, const BunString* str)
 {
-    return JSValue::encode(JSC::createRangeError(globalObject, str->toWTFString(BunString::ZeroCopy)));
+    return JSValue::encode(Zig::createErrorAllowEmptyMessage(globalObject, JSC::ErrorType::RangeError, str->toWTFString(BunString::ZeroCopy)));
 }
 
 extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)

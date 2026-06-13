@@ -1065,7 +1065,16 @@ pub const FFI = struct {
             return global.toInvalidArguments("Expected at least one symbol", .{});
         }
 
+        // Some shared libraries (notably Go `-buildmode=c-shared`) install
+        // their own signal handlers at dlopen time, overwriting Bun's
+        // handlers for SIGPIPE, SIGCHLD, crash handlers, and any user-
+        // registered process.on("SIG…") listeners. Snapshot and restore
+        // around the dlopen call. See issue #29843 and
+        // Bun__saveSignalHandlersForDlopen in c-bindings.cpp.
         var dylib: std.DynLib = brk: {
+            if (comptime Environment.isPosix) saveSignalHandlersForDlopen();
+            defer if (comptime Environment.isPosix) restoreSignalHandlersAfterDlopen();
+
             // First try using the name directly
             break :brk std.DynLib.open(name) catch {
                 const backup_name = Fs.FileSystem.instance.abs(&[1]string{name});
@@ -2436,6 +2445,19 @@ fn makeNapiEnvIfNeeded(functions: []const FFI.Function, globalThis: *JSGlobalObj
     }
 
     return null;
+}
+
+// See c-bindings.cpp — protects Bun's signal handlers across dlopen()
+// calls so that libraries like Go `-buildmode=c-shared` can't clobber
+// SIGPIPE/SIGCHLD/crash handlers etc. (issue #29843).
+extern "c" fn Bun__saveSignalHandlersForDlopen() void;
+extern "c" fn Bun__restoreSignalHandlersAfterDlopen() void;
+
+fn saveSignalHandlersForDlopen() void {
+    if (comptime Environment.isPosix) Bun__saveSignalHandlersForDlopen();
+}
+fn restoreSignalHandlersAfterDlopen() void {
+    if (comptime Environment.isPosix) Bun__restoreSignalHandlersAfterDlopen();
 }
 
 const string = []const u8;

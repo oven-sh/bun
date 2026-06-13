@@ -520,7 +520,9 @@ Valid values are:
 
 ### `install.frozenLockfile`
 
-When true, `bun install` will not update `bun.lock`. Default `false`. If `package.json` and the existing `bun.lock` are not in agreement, this will error.
+When true, plain `bun install` (with no package arguments) will not update `bun.lock`. Default `false`. If `package.json` and the existing `bun.lock` are not in agreement, this will error.
+
+Explicit mutation commands — `bun add`, `bun remove`, `bun update`, and `bun install <pkg>` — ignore this setting so they can still change the lockfile. Use the `--frozen-lockfile` CLI flag if you need to force the behavior on those subcommands too.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]

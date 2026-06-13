@@ -222,6 +222,10 @@ pub fn transpileSourceCode(
             };
 
             var input_file_fd: FD = bun.invalid_fd;
+
+            // Per-file JSX/decorator settings follow the nearest enclosing tsconfig.json, not just the root.
+            const per_file = jsc_vm.transpiler.perFileFeatures(path);
+
             var parse_options = Transpiler.ParseOptions{
                 .allocator = allocator,
                 .path = path,
@@ -231,9 +235,9 @@ pub fn transpileSourceCode(
                 .file_fd_ptr = &input_file_fd,
                 .file_hash = hash,
                 .macro_remappings = macro_remappings,
-                .jsx = jsc_vm.transpiler.options.jsx,
-                .emit_decorator_metadata = jsc_vm.transpiler.options.emit_decorator_metadata,
-                .experimental_decorators = jsc_vm.transpiler.options.experimental_decorators,
+                .jsx = per_file.jsx,
+                .emit_decorator_metadata = per_file.emit_decorator_metadata,
+                .experimental_decorators = per_file.experimental_decorators,
                 .virtual_source = virtual_source,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,

@@ -65,7 +65,7 @@ client.login(process.env.DISCORD_TOKEN);
 
 ---
 
-Now we can run our bot with `bun run`. It may take a several seconds for the client to initialize the first time you run the file.
+Now we can run our bot with `bun run`. It may take several seconds for the client to initialize the first time you run the file.
 
 ```sh terminal icon="terminal"
 bun run bot.ts
@@ -78,3 +78,18 @@ Ready! Logged in as my-bot#1234
 ---
 
 You're up and running with a bare-bones Discord.js bot! This is a basic guide to setting up your bot with Bun; we recommend the [official discord.js docs](https://discordjs.guide/) for complete information on the `discord.js` API.
+
+---
+
+When you're ready to deploy, you don't need a bundling or build step. Bun runs `bot.ts` and every file it imports directly, so you can ship your source as-is and start the bot with the same `bun run bot.ts` command you use in development.
+
+To keep the bot online and restart it after a crash or reboot, run it under a process manager:
+
+<Columns cols={2}>
+  <Card title="systemd" href="/guides/ecosystem/systemd" icon="server">
+    Run your bot as a Linux daemon
+  </Card>
+  <Card title="PM2" href="/guides/ecosystem/pm2" icon="cog">
+    Manage your bot with PM2
+  </Card>
+</Columns>

@@ -396,6 +396,50 @@ const IncomingMessagePrototype = {
   set trailers(value) {
     // noop
   },
+  get headersDistinct() {
+    // https://nodejs.org/api/http.html#messageheadersdistinct
+    // Parallel to `req.headers`, but every value is an array so multi-value
+    // headers (set-cookie, proxy-authenticate, ...) aren't lossy.
+    //
+    // Null-prototype is deliberate: the lookup below does `out[key]` against
+    // untrusted header names, and field-names like `constructor` or `toString`
+    // are valid RFC 9110 tokens. With `Object.prototype` those reach `Object`
+    // methods, making the `else existing.push(...)` branch throw. Node has the
+    // same hazard; we take the safer deviation.
+    const rawHeaders = this.rawHeaders;
+    const out = { __proto__: null };
+    if ($isJSArray(rawHeaders)) {
+      for (let i = 0, n = rawHeaders.length; i + 1 < n; i += 2) {
+        const key = String(rawHeaders[i]).toLowerCase();
+        const value = String(rawHeaders[i + 1]);
+        const existing = out[key];
+        if (existing === undefined) {
+          out[key] = [value];
+        } else {
+          existing.push(value);
+        }
+      }
+    }
+    // Memoize through the setter so `req.headersDistinct === req.headersDistinct`
+    // and user mutations persist across reads, matching Node's lazy-cached getter.
+    this.headersDistinct = out;
+    return out;
+  },
+  set headersDistinct(value) {
+    $Object.defineProperty(this, "headersDistinct", {
+      __proto__: null,
+      value,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    });
+  },
+  get trailersDistinct() {
+    return kEmptyObject;
+  },
+  set trailersDistinct(value) {
+    // noop
+  },
   setTimeout(msecs, callback) {
     void this.take;
     const req = this[kHandle] || this[webRequestOrResponse];

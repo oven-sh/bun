@@ -453,6 +453,29 @@ const fixture = [
     ),
 ];
 
+describe("Proxy in prototype chain", () => {
+  it("inspecting an object whose prototype is a Proxy with a throwing getPrototypeOf trap does not crash", () => {
+    const obj = {};
+    const proto = Object.getPrototypeOf(obj);
+    Object.setPrototypeOf(
+      obj,
+      new Proxy(proto, {
+        getPrototypeOf() {
+          throw new Error("nope");
+        },
+      }),
+    );
+    expect(() => Bun.inspect(obj)).not.toThrow();
+  });
+
+  it("inspecting an object whose prototype is a Proxy wrapping a native prototype does not crash", () => {
+    const e = expect({});
+    const proto = Object.getPrototypeOf(e);
+    Object.setPrototypeOf(e, new Proxy(proto, {}));
+    expect(() => Bun.inspect(e)).not.toThrow();
+  });
+});
+
 describe("crash testing", () => {
   for (let input of fixture) {
     it(`inspecting "${input.toString().slice(0, 20).replaceAll("\n", "\\n")}" doesn't crash`, async () => {

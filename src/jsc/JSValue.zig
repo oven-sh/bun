@@ -67,6 +67,23 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__getDirectIndex(this, globalThis, i);
     }
 
+    extern fn JSC__JSValue__findNextPopulatedIndex(JSValue, u32, u32) u32;
+    /// For an indexed JSObject, returns the next index in `[start, end)` that
+    /// *may* hold a value, or `end` if every slot in the range is provably a
+    /// hole. Inspects the butterfly directly, so `new Array(N)` style sparse
+    /// arrays are handled in O(1) instead of O(N).
+    ///
+    /// Callers must still verify via `getDirectIndex` before treating a
+    /// returned index as populated: for indexing shapes that cannot be
+    /// safely scanned without tripping on user-visible sentinels (e.g.
+    /// `ArrayWithDouble`, where holes and user NaN share the same bit
+    /// pattern), and for `ArrayStorage` with a sparse map, the function
+    /// conservatively returns `start` instead of proving the slot is a
+    /// hole. A `result < end` answer is a lower bound, not a guarantee.
+    pub fn findNextPopulatedIndex(this: JSValue, start: u32, end: u32) u32 {
+        return JSC__JSValue__findNextPopulatedIndex(this, start, end);
+    }
+
     pub fn isFalsey(this: JSValue) bool {
         return !this.toBoolean();
     }

@@ -6823,19 +6823,24 @@ pub mod bv2_impl {
                         .text;
                     let loader = this.graph.input_files.items_loader()[source_index as usize];
                     if this.should_add_watcher(source_path) {
-                        // const generic `CLONE_FILE_PATH = isWindows`
-                        // matches `cfg!(windows)` at compile time.
-                        let _ = this
-                            .bun_watcher_mut()
-                            .unwrap()
-                            .add_file::<{ cfg!(windows) }>(
-                                parse_result.watcher_data.fd,
-                                source_path,
-                                bun_wyhash::hash(source_path) as u32,
-                                bun_watcher::Loader(loader as u8),
-                                parse_result.watcher_data.dir_fd,
-                                None,
-                            );
+                        // CLONE_FILE_PATH=true: `source_path` is only interned
+                        // process-lifetime in the common case. `dupe_alloc`'s
+                        // disjoint text/pretty branch (imports outside the
+                        // project root, bake's `ssr:`-prefixed pretty paths)
+                        // allocates `path.text` in the per-build arena
+                        // (`graph.heap`), which DevServer frees at the end of
+                        // every build — while the watcher keeps the path for
+                        // the process lifetime and reads it on the watcher
+                        // thread. Borrowing here (Zig passed
+                        // `Environment.isWindows`) dangled those entries.
+                        let _ = this.bun_watcher_mut().unwrap().add_file::<true>(
+                            parse_result.watcher_data.fd,
+                            source_path,
+                            bun_wyhash::hash(source_path) as u32,
+                            bun_watcher::Loader(loader as u8),
+                            parse_result.watcher_data.dir_fd,
+                            None,
+                        );
                     }
                 }
             }

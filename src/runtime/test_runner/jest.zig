@@ -161,7 +161,9 @@ pub const TestRunner = struct {
     }
 
     pub fn getOrPutFile(this: *TestRunner, file_path: string) struct { file_id: File.ID } {
-        const entry = this.index.getOrPut(this.allocator, @as(u32, @truncate(bun.hash(file_path)))) catch unreachable; // TODO: this is wrong. you can't put a hash as the key in a hashmap.
+        // Callers pass paths interned in FileSystem's filename_store, so the
+        // borrowed key slice outlives this map.
+        const entry = this.index.getOrPut(this.allocator, file_path) catch unreachable;
         if (entry.found_existing) {
             return .{ .file_id = entry.value_ptr.* };
         }
@@ -177,7 +179,7 @@ pub const TestRunner = struct {
 
         pub const List = std.MultiArrayList(File);
         pub const ID = u32;
-        pub const Map = std.ArrayHashMapUnmanaged(u32, u32, ArrayIdentityContext, false);
+        pub const Map = bun.StringArrayHashMapUnmanaged(File.ID);
     };
 };
 
@@ -505,7 +507,6 @@ const Expect = expect.Expect;
 const ExpectTypeOf = expect.ExpectTypeOf;
 
 const bun = @import("bun");
-const ArrayIdentityContext = bun.ArrayIdentityContext;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;

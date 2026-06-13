@@ -772,6 +772,37 @@ test("serve html with JSX runtime in production mode", async () => {
   expect(js).toContain(`("h1",{children:"Hello from JSX"})`);
 });
 
+test("serve html does not include sourcemaps in production mode", async () => {
+  const dir = join(import.meta.dir, "jsx-runtime");
+  const { default: html } = await import(join(dir, "index.html"));
+
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    static: {
+      "/": html,
+    },
+    fetch(req) {
+      return new Response("Not found", { status: 404 });
+    },
+  });
+
+  const response = await fetch(server.url);
+  expect(response.status).toBe(200);
+  const htmlText = await response.text();
+  const jsSrc = htmlText.match(/<script type="module" crossorigin src="([^"]+)"/)?.[1]!;
+  const jsResponse = await fetch(new URL(jsSrc, server.url));
+  expect(jsResponse.status).toBe(200);
+  expect(jsResponse.headers.has("sourcemap")).toBe(false);
+
+  const js = await jsResponse.text();
+  expect(js).not.toContain("# debugId=");
+  expect(js).not.toContain("# sourceMappingURL=");
+
+  const sourceMapResponse = await fetch(new URL(`${jsSrc}.map`, server.url));
+  expect(sourceMapResponse.status).toBe(404);
+});
+
 test("you can have HTML imports apply to only specific methods outside of the dev server", async () => {
   const dir = join(import.meta.dir, "jsx-runtime");
   const { default: html } = await import(join(dir, "index.html"));

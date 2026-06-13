@@ -825,10 +825,8 @@ impl<'a> Lexer<'a> {
                     self.parse_numeric_literal_or_dot()?;
                 }
 
-                c if c == '@' as CodePoint
-                    || ('a' as CodePoint..='z' as CodePoint).contains(&c)
+                c if ('a' as CodePoint..='z' as CodePoint).contains(&c)
                     || ('A' as CodePoint..='Z' as CodePoint).contains(&c)
-                    || c == '$' as CodePoint
                     || c == '_' as CodePoint =>
                 {
                     self.step();
@@ -836,10 +834,24 @@ impl<'a> Lexer<'a> {
                         self.step();
                     }
                     self.identifier = self.raw();
-                    self.token = KEYWORDS
-                        .get(self.identifier)
-                        .copied()
-                        .unwrap_or(T::t_identifier);
+                    // TOML 1.0.0 float values: `inf` and `nan` become numeric
+                    // literals (they need `self.number` set, which the static
+                    // KEYWORDS map can't express). The signed forms `+inf` /
+                    // `-inf` / `+nan` / `-nan` are handled by the existing
+                    // `t_plus` / `t_minus` arms in the parser, which consume a
+                    // following `t_numeric_literal`.
+                    self.token = if self.identifier == b"inf" {
+                        self.number = f64::INFINITY;
+                        T::t_numeric_literal
+                    } else if self.identifier == b"nan" {
+                        self.number = f64::NAN;
+                        T::t_numeric_literal
+                    } else {
+                        KEYWORDS
+                            .get(self.identifier)
+                            .copied()
+                            .unwrap_or(T::t_identifier)
+                    };
                 }
 
                 _ => self.unexpected()?,
@@ -1184,17 +1196,35 @@ impl<'a> Lexer<'a> {
     pub fn unexpected(&mut self) -> Result<(), Error> {
         let found: &[u8] = 'finder: {
             self.start = self.start.min(self.end);
+            let contents = &self.source.contents;
 
-            if self.start == self.source.contents.len() {
+            if self.start == contents.len() {
                 break 'finder b"end of file";
+            } else if self.start == self.end {
+                // Called from `next()`'s `_` arm: the bad character hasn't been
+                // consumed yet (`self.start = self.end` at the top of `next()`
+                // and no `step()` ran). Advance `end` past the codepoint so the
+                // reported slice includes the offending character instead of
+                // an empty range.
+                let cp_width =
+                    strings::wtf8_byte_sequence_length_with_invalid(contents[self.start]) as usize;
+                self.end = (self.start + cp_width).min(contents.len());
+                break 'finder &contents[self.start..self.end];
             } else {
-                break 'finder self.raw();
+                // Called from the parser with a full token already lexed
+                // (e.g. `parse_value_inner`'s `_` arm); `start..end` already
+                // spans the token's bytes — don't truncate it.
+                break 'finder &contents[self.start..self.end];
             }
         };
 
         // Compute the range before borrowing `found` from source.
         let range = self.range();
-        self.add_range_error(range, format_args!("Unexpected {}", bstr::BStr::new(found)))
+        self.add_range_error(range, format_args!("Unexpected {}", bstr::BStr::new(found)))?;
+        // `add_range_error` only logs and returns `Ok(())`; abort the lex so
+        // the top-level parser loop doesn't observe a synthetic `t_end_of_file`
+        // after an invalid character and silently treat the source as empty.
+        Err(Error::SyntaxError)
     }
 
     pub fn expected_string(&mut self, text: &[u8]) -> Result<(), Error> {
@@ -1270,14 +1300,16 @@ impl<'a> Lexer<'a> {
 }
 
 pub(crate) fn is_identifier_part(code_point: CodePoint) -> bool {
+    // TOML 1.0.0 bare keys: [A-Za-z0-9_-]+. Everything else (including `@`,
+    // `$`, `:`) must be a quoted key. `true`/`false` keywords share this
+    // tokenizer but only match on exact spelling, so no other characters
+    // need to be admitted here.
     matches!(code_point as u32 as u8 as char,
         '0'..='9'
         | 'a'..='z'
         | 'A'..='Z'
-        | '$'
         | '_'
         | '-'
-        | ':'
     ) && (0..=127).contains(&code_point)
     // The `(0..=127)` bound is required for the byte cast above to be sound.
 }

@@ -158,6 +158,17 @@ pub struct Printer<'a> {
     /// `serialize::serialize_nesting` so deeply nested rules with multiple
     /// `&` references per level cannot expand exponentially.
     pub nesting_expansions: u32,
+    /// Running total of bytes emitted by `&` parent-selector substitutions
+    /// (accumulated across the whole stylesheet, never reset). Complements
+    /// `nesting_expansions`: the count bounds how many substitutions happen,
+    /// this bounds what they emit: each substitution writes the parent
+    /// selector list, whose size is input-controlled. Bounded in
+    /// `serialize::serialize_nesting`.
+    pub nesting_expansion_bytes: usize,
+    /// Recursion depth of in-progress `serialize_nesting` substitutions; only
+    /// the outermost one measures its byte span into
+    /// `nesting_expansion_bytes` (inner substitutions are contained in it).
+    pub nesting_expansion_meter_depth: u32,
     /// Running total of bytes emitted by duplicate vendor-prefix passes. A rule
     /// whose selector list carries more than one vendor prefix (e.g. a list
     /// mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a single
@@ -347,6 +358,8 @@ impl<'a> Printer<'a> {
             css_module: None,
             ctx: None,
             nesting_expansions: 0,
+            nesting_expansion_bytes: 0,
+            nesting_expansion_meter_depth: 0,
             prefix_expansion_bytes: 0,
             error_kind: None,
         }

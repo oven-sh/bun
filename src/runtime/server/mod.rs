@@ -734,14 +734,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx_mut.request_body = Some(body_hive.clone());
 
         let global = server.global_this();
-        let signal = jsc::AbortSignal::new(global);
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        ctx_mut.signal = core::ptr::NonNull::new(signal);
-        bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
-
-        // SAFETY: `signal.ref_()` bumps the intrusive count and returns +1.
-        let signal_ref =
-            unsafe { jsc::AbortSignalRef::adopt(bun_opaque::opaque_deref_mut(signal).ref_()) };
+        // The AbortSignal is created lazily on first `request.signal` access
+        // (`Request::materialize_server_signal`) or WebSocket upgrade.
         // ownership: `Request::new` is `bun.TrivialNew` — the heap
         // allocation is handed to the JS GC via `to_js`/`to_js_for_bake` (C++
         // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained
@@ -753,7 +747,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 ctx_mut.method,
                 AnyRequestContext::init(ctx),
                 SSL,
-                Some(signal_ref),
+                None,
                 body_hive,
             )));
         // SAFETY: freshly allocated; uniquely owned here.

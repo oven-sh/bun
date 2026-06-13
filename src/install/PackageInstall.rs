@@ -2346,8 +2346,25 @@ impl<'a> PackageInstall<'a> {
         manager: &mut PackageManager,
         package_id: PackageID,
         resolution_tag: resolution::Tag,
+        force_refresh_tarball: bool,
     ) -> bool {
         let state = manager.get_preinstall_state(package_id);
+        // `force_refresh_tarball` is set by the caller when a URL/local tarball
+        // must re-fetch its bytes (`--force`, or the dependency was explicitly
+        // named on the command line): the cache folder is keyed by the URL/path
+        // hash, so an unchanged key hides changed content behind a stale
+        // extraction. Report it as missing so a download/read task is enqueued.
+        //
+        // Gated on the state not already being `Done`: once this run has
+        // downloaded and extracted the tarball, its state is `Done` (set after
+        // extraction) and the cache is fresh, so the package must install from
+        // cache rather than re-enqueue into an already-drained/deduped task.
+        // Without the `Done` guard, a first-time `--force` install (no lockfile)
+        // where the resolve phase fetched the tarball would re-enqueue and
+        // silently skip installing it.
+        if force_refresh_tarball && state != crate::PreinstallState::Done {
+            return true;
+        }
         match state {
             crate::PreinstallState::Done => false,
             _ => 'brk: {

@@ -2231,6 +2231,10 @@ pub(crate) fn install_isolated_packages(
                         };
 
                     let needs_install = installer.manager().options.enable.force_install()
+                        // A URL/local tarball named on the command line re-fetches
+                        // its bytes; see `force_refresh_tarball` below.
+                        || (pkg_res_tag.is_tarball_cache_keyed_by_url()
+                            && installer.manager().dependency_is_update_request(dep_id))
                         // A freshly-created `node_modules/.bun` only implies the
                         // *project-local* entries are missing; global virtual-
                         // store entries persist across `rm -rf node_modules` and
@@ -2345,41 +2349,75 @@ pub(crate) fn install_isolated_packages(
                         installer.manager_mut().get_cache_directory_and_abs_path();
                     let _ = &cache_dir_path; // dropped at scope exit
 
-                    let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
-                    {
-                        install::PreinstallState::Done => false,
-                        _ => 'missing_from_cache: {
-                            if matches!(patch_info, installer::PatchInfo::None) {
-                                let exists = match pkg_res_tag {
-                                    ResolutionTag::Npm => {
-                                        // Reshaped for borrowck — capture length
-                                        // instead of `save()` so the path stays unborrowed.
-                                        let cache_dir_path_save = pkg_cache_dir_subpath.len();
-                                        pkg_cache_dir_subpath.append(b"package.json").assume_ok();
-                                        let exists = sys::exists_at(
+                    let preinstall_state = installer.manager().get_preinstall_state(pkg_id);
+                    // `--force`, or explicitly naming the dependency on the command
+                    // line, must re-fetch a URL/local tarball: its cache folder is
+                    // keyed by URL/path hash, so changed content hides behind the
+                    // same key. Treat it as missing so a download/read task is
+                    // enqueued. Gated on the state not already being `Done`: once this
+                    // run has fetched+extracted the tarball the cache is fresh, so it
+                    // must install from cache rather than re-enqueue. Mirrors
+                    // `PackageInstall::package_missing_from_cache`.
+                    let force_refresh_tarball = preinstall_state != install::PreinstallState::Done
+                        && pkg_res_tag.is_tarball_cache_keyed_by_url()
+                        && (installer.manager().options.enable.force_install()
+                            || installer.manager().dependency_is_update_request(dep_id))
+                        && {
+                            // Skip when this run already fetched the tarball (a task
+                            // for it is already in the queue, e.g. from the resolve
+                            // phase after `bun update` invalidated the resolution) --
+                            // the cache is fresh; install from it rather than
+                            // re-enqueue into the already-drained task.
+                            let url = if pkg_res_tag == ResolutionTag::RemoteTarball {
+                                pkg_res.remote_tarball().slice(string_buf)
+                            } else {
+                                pkg_res.local_tarball().slice(string_buf)
+                            };
+                            !installer.manager().tarball_task_enqueued_this_run(url)
+                        };
+                    let missing_from_cache = if force_refresh_tarball {
+                        true
+                    } else {
+                        match preinstall_state {
+                            install::PreinstallState::Done => false,
+                            _ => 'missing_from_cache: {
+                                if matches!(patch_info, installer::PatchInfo::None) {
+                                    let exists = match pkg_res_tag {
+                                        ResolutionTag::Npm => {
+                                            // Reshaped for borrowck — capture length
+                                            // instead of `save()` so the path stays unborrowed.
+                                            let cache_dir_path_save = pkg_cache_dir_subpath.len();
+                                            pkg_cache_dir_subpath
+                                                .append(b"package.json")
+                                                .assume_ok();
+                                            let exists = sys::exists_at(
+                                                cache_dir,
+                                                pkg_cache_dir_subpath.slice_z(),
+                                            );
+                                            pkg_cache_dir_subpath.set_length(cache_dir_path_save);
+                                            exists
+                                        }
+                                        _ => sys::directory_exists_at(
                                             cache_dir,
                                             pkg_cache_dir_subpath.slice_z(),
+                                        )
+                                        .unwrap_or(false),
+                                    };
+                                    if exists {
+                                        installer.manager_mut().set_preinstall_state(
+                                            pkg_id,
+                                            install::PreinstallState::Done,
                                         );
-                                        pkg_cache_dir_subpath.set_length(cache_dir_path_save);
-                                        exists
                                     }
-                                    _ => sys::directory_exists_at(
-                                        cache_dir,
-                                        pkg_cache_dir_subpath.slice_z(),
-                                    )
-                                    .unwrap_or(false),
-                                };
-                                if exists {
-                                    installer.manager_mut().set_preinstall_state(
-                                        pkg_id,
-                                        install::PreinstallState::Done,
-                                    );
+                                    break 'missing_from_cache !exists;
                                 }
-                                break 'missing_from_cache !exists;
-                            }
 
-                            // TODO: why does this look like it will never work?
-                            break 'missing_from_cache true;
+                                // Patched packages: the non-`None` patch_info
+                                // branch unconditionally reports missing (ported
+                                // as-is from isolated_install.zig; its
+                                // effectiveness is an open question upstream).
+                                break 'missing_from_cache true;
+                            }
                         }
                     };
 

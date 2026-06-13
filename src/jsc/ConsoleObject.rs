@@ -738,8 +738,13 @@ impl<'a> TablePrinter<'a> {
         })
     }
 
-    /// Compute how much horizontal space a `JSValue` will take when printed.
-    fn get_width_for_value(&mut self, value: JSValue) -> JsResult<u32> {
+    /// Compute the printed width of a `JSValue` along with the `Tag` and
+    /// quoting decision used to measure it, so `print_row` can reuse them for
+    /// the render instead of recomputing the now non-trivial quoting scan.
+    fn get_width_and_tag(
+        &mut self,
+        value: JSValue,
+    ) -> JsResult<(u32, formatter::TagResult, bool)> {
         let mut width: usize = 0;
         // PERF: writes straight into the counter with no buffering between
         // the generic writer adapter and the counter. Profile if hot.
@@ -753,7 +758,12 @@ impl<'a> TablePrinter<'a> {
         // VisibleCharacterCounter write cannot fail.
         let _ = bun_io::Write::flush(&mut counter);
 
-        Ok(width as u32)
+        Ok((width as u32, tag, quote_strings))
+    }
+
+    /// Compute how much horizontal space a `JSValue` will take when printed.
+    fn get_width_for_value(&mut self, value: JSValue) -> JsResult<u32> {
+        Ok(self.get_width_and_tag(value)?.0)
     }
 
     /// Update the sizes of the columns for the values of a given row, and
@@ -920,11 +930,9 @@ impl<'a> TablePrinter<'a> {
                     .splat_byte_all(b' ', (col.width + PADDING * 2) as usize)
                     .ok();
             } else {
-                let len: u32 = self.get_width_for_value(value)?;
+                let (len, tag, quote_strings) = self.get_width_and_tag(value)?;
                 let needed = col.width.saturating_sub(len);
                 writer.splat_byte_all(b' ', PADDING as usize).ok();
-                let tag = formatter::Tag::get(value, self.global_object)?;
-                let quote_strings = self.should_quote_string_cell(value, tag)?;
                 let mut value_formatter = self.value_formatter.shallow_clone();
 
                 value_formatter.quote_strings = quote_strings;

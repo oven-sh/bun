@@ -177,7 +177,7 @@ pub fn checkX509ServerIdentity(
 
                 if (boring.X509V3_EXT_d2i(ext)) |names_| {
                     const names: *boring.struct_stack_st_GENERAL_NAME = bun.cast(*boring.struct_stack_st_GENERAL_NAME, names_);
-                    defer boring.sk_GENERAL_NAME_pop_free(names, boring.sk_GENERAL_NAME_free);
+                    defer boring.sk_GENERAL_NAME_pop_free(names, boring.sk_GENERAL_NAME_element_free);
                     for (0..boring.sk_GENERAL_NAME_num(names)) |i| {
                         const gen = boring.sk_GENERAL_NAME_value(names, i);
                         if (gen) |name| {
@@ -199,7 +199,7 @@ pub fn checkX509ServerIdentity(
             } else {
                 if (boring.X509V3_EXT_d2i(ext)) |names_| {
                     const names: *boring.struct_stack_st_GENERAL_NAME = bun.cast(*boring.struct_stack_st_GENERAL_NAME, names_);
-                    defer boring.sk_GENERAL_NAME_pop_free(names, boring.sk_GENERAL_NAME_free);
+                    defer boring.sk_GENERAL_NAME_pop_free(names, boring.sk_GENERAL_NAME_element_free);
                     for (0..boring.sk_GENERAL_NAME_num(names)) |i| {
                         const gen = boring.sk_GENERAL_NAME_value(names, i);
                         if (gen) |name| {

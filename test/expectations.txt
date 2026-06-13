@@ -10,6 +10,12 @@ test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > seg
 
 # Tests that are flaky
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
+# Worker entry-point load races terminate(): debug invariant panic "JavaScript
+# functions were called outside of the microtask queue without draining
+# microtasks" in tick_queue_with_count (load_entry_point_for_web_worker →
+# wait_for_promise_with_termination). Reproduces on unmodified origin/main;
+# timing-dependent (fails reliably on a quiet machine, passes under load).
+test/js/node/test/parallel/test-worker-terminate-http2-respond-with-file.js [ FLAKY ]
 
 # Tests skipped due to different log/line outputs
 [ ASAN ] test/js/bun/util/reportError.test.ts [ SKIP ] # log line mismatch

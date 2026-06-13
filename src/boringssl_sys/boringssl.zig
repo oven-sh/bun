@@ -2967,6 +2967,15 @@ pub fn sk_GENERAL_NAME_free(arg_sk: ?*struct_stack_st_GENERAL_NAME) callconv(.c)
     const sk = arg_sk;
     sk_free(@as([*c]_STACK, @ptrCast(@alignCast(sk))));
 }
+pub extern fn GENERAL_NAME_free(name: ?*GENERAL_NAME) void;
+/// Element destructor for `sk_GENERAL_NAME_pop_free`: frees one GENERAL_NAME
+/// and its nested ASN1 values. The parameter is spelled as the erased stack
+/// alias to match `stack_GENERAL_NAME_free_func`, but the pointer is a stack
+/// *element* (`GENERAL_NAME*`). Passing the container free
+/// (`sk_GENERAL_NAME_free`) there instead leaks every nested ASN1_STRING.
+pub fn sk_GENERAL_NAME_element_free(name: ?*struct_stack_st_GENERAL_NAME) callconv(.c) void {
+    GENERAL_NAME_free(@as(?*GENERAL_NAME, @ptrCast(name)));
+}
 pub const stack_GENERAL_NAME_free_func = ?*const fn (?*struct_stack_st_GENERAL_NAME) callconv(.c) void;
 
 pub fn sk_GENERAL_NAME_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.c) void {

@@ -1385,11 +1385,37 @@ mod vm_loader_ctx {
     }
 }
 
+/// Hook: drop the JSC `Strong` handles held inside `RuntimeState` while the
+/// JSC VM (and its HandleSet) is still alive. Idempotent — `deinit()` leaves
+/// the `StrongOptional`s empty so the later `RuntimeState` drop is a no-op.
+unsafe fn release_runtime_state_js_handles(_vm: *mut VirtualMachine) {
+    let state = runtime_state();
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: `state` is the live per-thread `RuntimeState`; this runs on the
+    // JS thread during `global_exit`, before any teardown frees it.
+    let state = unsafe { &mut *state };
+    state.sql_rare.mysql_context.on_query_resolve_fn.deinit();
+    state.sql_rare.mysql_context.on_query_reject_fn.deinit();
+    state
+        .sql_rare
+        .postgresql_context
+        .on_query_resolve_fn
+        .deinit();
+    state
+        .sql_rare
+        .postgresql_context
+        .on_query_reject_fn
+        .deinit();
+}
+
 /// The static `RuntimeHooks` instance handed to `bun_jsc`.
 #[unsafe(no_mangle)]
 pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     init_runtime_state,
     deinit_runtime_state,
+    release_runtime_state_js_handles,
     generate_entry_point,
     load_preloads,
     ensure_debugger,

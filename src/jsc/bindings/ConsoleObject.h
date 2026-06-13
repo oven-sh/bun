@@ -21,6 +21,11 @@ using namespace JSC;
 
 class ConsoleObject final : public JSC::ConsoleClient {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ConsoleObject);
+    // ConsoleClient is CanMakeThreadSafeCheckedPtr; deletion must go through
+    // the checked-ptr destroying-delete or ~CanMakeCheckedPtrBase asserts
+    // (m_didBeginDeletion). FAST_ALLOCATED above shadows the base override,
+    // so redeclare it here (JSGlobalObjectConsoleClient does the same).
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ConsoleObject);
 
 public:
     ~ConsoleObject() final {}

@@ -761,6 +761,10 @@ private:
     Lock m_gcLock;
     Ref<WebCore::DOMWrapperWorld> m_world;
     RefPtr<WebCore::Performance> m_performance { nullptr };
+    // Owns the ConsoleClient installed by setConsole(). JSGlobalObject only
+    // keeps a WeakPtr, so without an owner every global (notably each
+    // ShadowRealm-derived one) leaks its ConsoleObject and buffered messages.
+    std::unique_ptr<JSC::ConsoleClient> m_ownedConsoleClient;
 
 public:
     // De-optimization once `require("module")._resolveFilename` is written to

@@ -860,6 +860,20 @@ impl Subprocess<'_> {
                 }
             }
         }
+
+        // Exposing a raw fd hands it to JS, which wraps it in
+        // `net.Socket({ fd })` (child_process.ts `"pipe"` case) — the socket
+        // takes ownership and closes the fd on destroy. Downgrade our entries
+        // so `finalize_streams` doesn't close them again (fd-UAF assert).
+        #[cfg(not(windows))]
+        this.stdio_pipes.with_mut(|v| {
+            for item in v.iter_mut() {
+                if let ExtraPipe::OwnedFd(fd) = item {
+                    *item = ExtraPipe::UnownedFd(*fd);
+                }
+            }
+        });
+
         Ok(array)
     }
 

@@ -1578,6 +1578,19 @@ impl VirtualMachine {
             // JSC `Strong`/`Weak` handles against a live HandleSet.
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
+            // RareData's and RuntimeState's JSC `Strong` handles must release
+            // while the HandleSet is still alive. `destroy()` below runs after
+            // `destructOnExit`, where dropping them reads freed handle storage
+            // (ASAN UAF in `Bun__StrongRef__delete`).
+            if let Some(rare) = self.rare_data.as_deref_mut() {
+                rare.s3_default_client.deinit();
+            }
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: JS thread, live VM; the hook only touches the
+                // per-thread RuntimeState it owns.
+                unsafe { (hooks.release_runtime_state_js_handles)(core::ptr::from_mut(self)) };
+            }
+
             Zig__GlobalObject__destructOnExit(self.global());
 
             // lastChanceToFinalize() above runs Listener/Server finalize →
@@ -1633,6 +1646,11 @@ pub struct RuntimeHooks {
     /// `heap::take`s it and clears its thread-local cache. Without this slot
     /// every worker leaked one box.
     pub deinit_runtime_state: unsafe fn(vm: *mut VirtualMachine, state: RuntimeState),
+    /// Release every JSC `Strong` handle owned by `RuntimeState` (the SQL
+    /// contexts' on_query callbacks). Must run before the JSC VM teardown
+    /// (`destructOnExit`); dropping them in `deinit_runtime_state` afterwards
+    /// reads freed HandleSet storage (ASAN UAF in `Bun__StrongRef__delete`).
+    pub release_runtime_state_js_handles: unsafe fn(vm: *mut VirtualMachine),
     /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
     /// `bun:main` module body for `entry_path`. Returns `false` on error
     /// (error already logged into `vm.log`).

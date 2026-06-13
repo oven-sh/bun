@@ -148,7 +148,7 @@ To add another command, define it in `deploy-commands.ts`, run that script again
 
 When you deploy, there's no build or bundling step. Bun runs `bot.ts` and every file it imports directly, so you ship your source as-is and start it with the same `bun run bot.ts` you use while developing.
 
-`deploy-commands.ts` registers `/ping` in your test server, which is the right scope while you're building. To publish the bot to every server it joins, register globally instead: change the route from `Routes.applicationGuildCommands(...)` to `Routes.applicationCommands(...)`, passing just the application ID.
+`deploy-commands.ts` registers `/ping` in your test server, which is the right scope while you're building. To publish the bot to every server it joins, register globally instead: change the route to `Routes.applicationCommands(DISCORD_CLIENT_ID)`. Global registration doesn't use a server, so you can also drop `DISCORD_GUILD_ID` from the script's check and from `.env.local`.
 
 To keep the bot online and bring it back after a crash or reboot, run it under a process manager.
 

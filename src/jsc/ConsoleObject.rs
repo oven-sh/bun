@@ -692,19 +692,50 @@ impl bun_io::Write for VisibleCharacterCounter<'_> {
 }
 
 impl<'a> TablePrinter<'a> {
+    /// Whether a string cell value should be rendered in quoted/escaped form.
+    ///
+    /// `console.table` normally prints plain string cells without surrounding
+    /// quotes, but a string containing a C0 control character (0x00-0x1F)
+    /// corrupts the output: `\n`/`\r` push the rest of the row past the
+    /// border, `\t` expands to a terminal-dependent width, and ANSI escape
+    /// sequences (which begin with ESC, 0x1B) are interpreted by the terminal
+    /// instead of shown. Promoting such a cell to the quoted form has the
+    /// formatter escape the whole string, so the table stays rectangular and
+    /// the value is shown literally, matching Node (issue #32223).
+    fn should_quote_string_cell(
+        &self,
+        value: JSValue,
+        tag: formatter::TagResult,
+    ) -> JsResult<bool> {
+        use crate::StringJsc as _;
+        if !matches!(
+            tag.tag,
+            TagPayload::String | TagPayload::StringPossiblyFormatted
+        ) {
+            return Ok(true);
+        }
+        if !value.is_string() {
+            return Ok(false);
+        }
+        let str = OwnedString::new(BunString::from_js(value, self.global_object)?);
+        Ok(if str.is_utf16() {
+            str.utf16().iter().any(|&c| c < 0x20)
+        } else {
+            str.byte_slice().iter().any(|&b| b < 0x20)
+        })
+    }
+
     /// Compute how much horizontal space a `JSValue` will take when printed.
     fn get_width_for_value(&mut self, value: JSValue) -> JsResult<u32> {
         let mut width: usize = 0;
         // PERF: writes straight into the counter with no buffering between
         // the generic writer adapter and the counter. Profile if hot.
         let mut counter = VisibleCharacterCounter { width: &mut width };
-        let mut value_formatter = self.value_formatter.shallow_clone();
 
         let tag = formatter::Tag::get(value, self.global_object)?;
-        value_formatter.quote_strings = !(matches!(
-            tag.tag,
-            TagPayload::String | TagPayload::StringPossiblyFormatted
-        ));
+        let quote_strings = self.should_quote_string_cell(value, tag)?;
+        let mut value_formatter = self.value_formatter.shallow_clone();
+        value_formatter.quote_strings = quote_strings;
         let _ = value_formatter.format::<false>(tag, &mut counter, value, self.global_object);
         // VisibleCharacterCounter write cannot fail.
         let _ = bun_io::Write::flush(&mut counter);
@@ -880,12 +911,10 @@ impl<'a> TablePrinter<'a> {
                 let needed = col.width.saturating_sub(len);
                 writer.splat_byte_all(b' ', PADDING as usize).ok();
                 let tag = formatter::Tag::get(value, self.global_object)?;
+                let quote_strings = self.should_quote_string_cell(value, tag)?;
                 let mut value_formatter = self.value_formatter.shallow_clone();
 
-                value_formatter.quote_strings = !(matches!(
-                    tag.tag,
-                    TagPayload::String | TagPayload::StringPossiblyFormatted
-                ));
+                value_formatter.quote_strings = quote_strings;
 
                 // Release pooled visit map after formatting.
                 // `shallow_clone()` guarantees the source's `map_node` is

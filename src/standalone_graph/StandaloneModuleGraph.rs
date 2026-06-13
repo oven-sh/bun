@@ -1308,16 +1308,32 @@ pub(crate) fn inject(
                 512 * 1024,
                 bun_sys::FileWriter(cloned_executable_fd),
             );
-            if let Err(e) = macho_file.build_and_sign(&mut buffered_writer) {
-                bun_core::pretty_errorln!(
-                    "Error writing standalone module graph: {}",
-                    bstr::BStr::new(e.name())
-                );
+            let written = match macho_file.build_and_sign(&mut buffered_writer) {
+                Ok(n) => n,
+                Err(e) => {
+                    bun_core::pretty_errorln!(
+                        "Error writing standalone module graph: {}",
+                        bstr::BStr::new(e.name())
+                    );
+                    cleanup(zname, cloned_executable_fd);
+                    return Fd::INVALID;
+                }
+            };
+            if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
+                bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
-            if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
-                bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
+            // The file still holds the template copy, which is longer than the
+            // signed output whenever the template's signature was larger than
+            // the ad-hoc one `build_and_sign` writes. codesign's strict
+            // validation rejects any bytes past the signature ("main executable
+            // failed strict validation"), so cut the file to the exact output.
+            if let Err(err) = Syscall::ftruncate(
+                cloned_executable_fd,
+                i64::try_from(written).expect("int cast"),
+            ) {
+                bun_core::pretty_errorln!("Error truncating temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }

@@ -556,3 +556,61 @@ describe("slice bounds are respected when streaming and serving", () => {
     expect(await get.text()).toBe("3456");
   });
 });
+
+// Acceptance/behavior coverage for SharedArrayBuffer- and resizable-backed Blob
+// input. The fix copies such backing in C++ before Rust borrows it as a &[u8] (a
+// shared-aliasing UB that Miri catches but JS cannot observe, since Blob always
+// copies its bytes synchronously); these assert the observable contract: the
+// input is accepted and only the view's range is materialized.
+test("Blob copies a nonzero-offset SharedArrayBuffer view", async () => {
+  // The 0xff guard bytes around the view must not appear in the Blob.
+  const sab = new SharedArrayBuffer(16);
+  const bytes = new Uint8Array(sab);
+  bytes.fill(0xff);
+  bytes.set([1, 2, 3, 4], 6);
+
+  const blob = new Blob([new Uint8Array(sab, 6, 4)]);
+  expect(Array.from(new Uint8Array(await blob.arrayBuffer()))).toEqual([1, 2, 3, 4]);
+});
+
+test("Blob copies SharedArrayBuffer parts in multi-part blobs", async () => {
+  const sab = new SharedArrayBuffer(16);
+  const bytes = new Uint8Array(sab);
+  bytes.fill(0xff);
+  bytes.set([1, 2, 3, 4], 6);
+
+  const blob = new Blob([new Uint8Array(sab, 6, 4), "x"]);
+  expect(Array.from(new Uint8Array(await blob.arrayBuffer()))).toEqual([1, 2, 3, 4, 120]);
+});
+
+test("Blob copies multiple SharedArrayBuffer parts", async () => {
+  const sab = new SharedArrayBuffer(16);
+  const bytes = new Uint8Array(sab);
+  bytes.fill(0xff);
+  bytes.set([1, 2], 4);
+  bytes.set([3, 4], 10);
+
+  const blob = new Blob([new Uint8Array(sab, 4, 2), new Uint8Array(sab, 10, 2)]);
+  expect(Array.from(new Uint8Array(await blob.arrayBuffer()))).toEqual([1, 2, 3, 4]);
+});
+
+test("Blob copies DataView parts over SharedArrayBuffer", async () => {
+  const sab = new SharedArrayBuffer(16);
+  const bytes = new Uint8Array(sab);
+  bytes.fill(0xff);
+  bytes.set([5, 6, 7], 8);
+
+  const blob = new Blob([new DataView(sab, 8, 3)]);
+  expect(Array.from(new Uint8Array(await blob.arrayBuffer()))).toEqual([5, 6, 7]);
+});
+
+test("Blob copies a resizable ArrayBuffer view", async () => {
+  // Resizable (non-shared) ArrayBuffer backing takes the same copy path as a SAB.
+  const rab = new ArrayBuffer(16, { maxByteLength: 32 });
+  const bytes = new Uint8Array(rab);
+  bytes.fill(0xff);
+  bytes.set([1, 2, 3, 4], 6);
+
+  const blob = new Blob([new Uint8Array(rab, 6, 4)]);
+  expect(Array.from(new Uint8Array(await blob.arrayBuffer()))).toEqual([1, 2, 3, 4]);
+});

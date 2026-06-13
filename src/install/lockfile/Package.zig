@@ -571,7 +571,8 @@ pub fn Package(comptime SemverIntType: type) type {
                 const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
                 var to_i: usize = 0;
 
-                if (from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count()) {
+                if (from_lockfile.overrides.global.count() != to_lockfile.overrides.global.count() or
+                    from_lockfile.overrides.scoped.count() != to_lockfile.overrides.scoped.count()) {
                     summary.overrides_changed = true;
 
                     if (PackageManager.verbose_install) {
@@ -580,11 +581,12 @@ pub fn Package(comptime SemverIntType: type) type {
                 } else {
                     from_lockfile.overrides.sort(from_lockfile);
                     to_lockfile.overrides.sort(to_lockfile);
+
                     for (
-                        from_lockfile.overrides.map.keys(),
-                        from_lockfile.overrides.map.values(),
-                        to_lockfile.overrides.map.keys(),
-                        to_lockfile.overrides.map.values(),
+                        from_lockfile.overrides.global.keys(),
+                        from_lockfile.overrides.global.values(),
+                        to_lockfile.overrides.global.keys(),
+                        to_lockfile.overrides.global.values(),
                     ) |from_k, *from_override, to_k, *to_override| {
                         if ((from_k != to_k) or (!from_override.eql(to_override, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items))) {
                             summary.overrides_changed = true;
@@ -592,6 +594,24 @@ pub fn Package(comptime SemverIntType: type) type {
                                 Output.prettyErrorln("Overrides changed since last install", .{});
                             }
                             break;
+                        }
+                    }
+
+                    if (!summary.overrides_changed) {
+                        for (
+                            from_lockfile.overrides.scoped.keys(),
+                            from_lockfile.overrides.scoped.values(),
+                            to_lockfile.overrides.scoped.keys(),
+                            to_lockfile.overrides.scoped.values(),
+                        ) |from_k, *from_override, to_k, *to_override| {
+                            if ((from_k.parent_name_hash != to_k.parent_name_hash or from_k.child_name_hash != to_k.child_name_hash) or
+                                (!from_override.eql(to_override, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items))) {
+                                summary.overrides_changed = true;
+                                if (PackageManager.verbose_install) {
+                                    Output.prettyErrorln("Overrides changed since last install", .{});
+                                }
+                                break;
+                            }
                         }
                     }
                 }

@@ -59,6 +59,9 @@ pub const Installer = struct {
 
     pub fn onPackageExtracted(this: *Installer, task_id: install.Task.Id) void {
         if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
+            var callbacks = removed.value;
+            defer callbacks.deinit(this.manager.allocator);
+
             const store = this.store;
 
             const node_pkg_ids = store.nodes.items(.pkg_id);
@@ -72,8 +75,8 @@ pub const Installer = struct {
             const pkg_name_hashes = pkgs.items(.name_hash);
             const pkg_resolutions = pkgs.items(.resolution);
 
-            for (removed.value.items) |install_ctx| {
-                const entry_id = install_ctx.isolated_package_install_context;
+            for (callbacks.items.items) |install_ctx| {
+                const entry_id = install_ctx.context.isolated_package_install_context;
 
                 const node_id = entry_node_ids[entry_id.get()];
                 const pkg_id = node_pkg_ids[node_id.get()];
@@ -117,8 +120,8 @@ pub const Installer = struct {
             defer callbacks.deinit(this.manager.allocator);
 
             const entry_steps = this.store.entries.items(.step);
-            for (callbacks.items) |install_ctx| {
-                const entry_id = install_ctx.isolated_package_install_context;
+            for (callbacks.items.items) |install_ctx| {
+                const entry_id = install_ctx.context.isolated_package_install_context;
                 entry_steps[entry_id.get()].store(.done, .monotonic);
                 this.onTaskFail(entry_id, .{ .download = .{
                     .err = err,

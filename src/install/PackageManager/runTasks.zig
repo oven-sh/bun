@@ -766,8 +766,8 @@ pub fn runTasks(
                         }
                     }
 
-                    for (dependency_list.items) |dep| {
-                        switch (dep) {
+                    for (dependency_list.items.items) |dep| {
+                        switch (dep.context) {
                             .dependency, .root_dependency => |id| {
                                 var version = &manager.lockfile.buffers.dependencies.items[id].version;
                                 switch (version.tag) {
@@ -785,11 +785,11 @@ pub fn runTasks(
                                     // will still have the original.
                                     else => {},
                                 }
-                                try manager.processDependencyListItem(dep, &any_root, install_peer);
+                                try manager.processDependencyListItem(dep.context, &any_root, install_peer, dep.parent_package_id);
                             },
                             else => {
                                 // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                dependency_list_entry.value_ptr.append(manager.allocator, dep) catch unreachable;
+                                dependency_list_entry.value_ptr.append(manager.allocator, null, dep.context) catch unreachable;
                             },
                         }
                     }
@@ -841,8 +841,8 @@ pub fn runTasks(
                             var waiters = removed.value;
                             defer waiters.deinit(manager.allocator);
                             const pkg_resolutions = manager.lockfile.packages.items(.resolution);
-                            for (waiters.items) |waiter| {
-                                const dep_id = switch (waiter) {
+                            for (waiters.items.items) |waiter| {
+                                const dep_id = switch (waiter.context) {
                                     .dependency => |id| id,
                                     else => continue,
                                 };
@@ -1030,17 +1030,17 @@ pub fn runTasks(
                         }
                     }
 
-                    for (dependency_list.items) |dep| {
-                        switch (dep) {
+                    for (dependency_list.items.items) |dep| {
+                        switch (dep.context) {
                             .dependency, .root_dependency => |id| {
                                 var repo = &manager.lockfile.buffers.dependencies.items[id].version.value.git;
                                 repo.resolved = pkg.resolution.value.git.resolved;
                                 repo.package_name = pkg.name;
-                                try manager.processDependencyListItem(dep, &any_root, install_peer);
+                                try manager.processDependencyListItem(dep.context, &any_root, install_peer, dep.parent_package_id);
                             },
                             else => {
                                 // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                dependency_list_entry.value_ptr.append(manager.allocator, dep) catch unreachable;
+                                dependency_list_entry.value_ptr.append(manager.allocator, null, dep.context) catch unreachable;
                             },
                         }
                     }
@@ -1097,9 +1097,9 @@ fn doFlushDependencyQueue(this: *PackageManager) void {
     var lockfile = this.lockfile;
     var dependency_queue = &lockfile.scratch.dependency_list_queue;
 
-    while (dependency_queue.readItem()) |dependencies_list| {
-        var i: u32 = dependencies_list.off;
-        const end = dependencies_list.off + dependencies_list.len;
+    while (dependency_queue.readItem()) |item| {
+        var i: u32 = item.dependencies.off;
+        const end = item.dependencies.off + item.dependencies.len;
         while (i < end) : (i += 1) {
             const dependency = lockfile.buffers.dependencies.items[i];
             this.enqueueDependencyWithMain(
@@ -1107,6 +1107,7 @@ fn doFlushDependencyQueue(this: *PackageManager) void {
                 &dependency,
                 lockfile.buffers.resolutions.items[i],
                 false,
+                item.package_id,
             ) catch {};
         }
     }

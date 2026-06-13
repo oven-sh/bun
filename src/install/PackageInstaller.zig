@@ -643,13 +643,13 @@ pub const PackageInstaller = struct {
             const prev_tree_id = this.current_tree_id;
             defer this.current_tree_id = prev_tree_id;
 
-            if (callbacks.items.len == 0) {
+            if (callbacks.items.items.len == 0) {
                 debug("Unexpected state: no callbacks for async task.", .{});
                 return;
             }
 
-            for (callbacks.items) |*cb| {
-                const context = cb.dependency_install_context;
+            for (callbacks.items.items) |*cb| {
+                const context = cb.context.dependency_install_context;
                 const callback_package_id = this.lockfile.buffers.resolutions.items[context.dependency_id];
                 const callback_resolution = &this.resolutions[callback_package_id];
                 this.node_modules.tree_id = context.tree_id;

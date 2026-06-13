@@ -120,11 +120,11 @@ pub fn resolveFromDiskCache(this: *PackageManager, package_name: []const u8, ver
             };
             switch (FolderResolution.getOrPut(.{ .cache_folder = npm_package_path }, dependency, ".", this)) {
                 .new_package_id => |id| {
-                    this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id]);
+                    this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id], id);
                     return id;
                 },
                 .package_id => |id| {
-                    this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id]);
+                    this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id], id);
                     return id;
                 },
                 .err => |err| {

@@ -300,7 +300,7 @@ pub const Stringifier = struct {
                 );
             }
 
-            if (lockfile.overrides.map.count() > 0) {
+            if (lockfile.overrides.global.count() > 0 or lockfile.overrides.scoped.count() > 0) {
                 lockfile.overrides.sort(lockfile);
 
                 try writeIndent(writer, indent);
@@ -309,12 +309,30 @@ pub const Stringifier = struct {
                     \\
                 );
                 indent.* += 1;
-                for (lockfile.overrides.map.values()) |override_dep| {
+                for (lockfile.overrides.global.values()) |override_dep| {
                     try writeIndent(writer, indent);
                     try writer.print(
                         \\{f}: {f},
                         \\
                     , .{ override_dep.name.fmtJson(buf, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
+                }
+                for (lockfile.overrides.scoped.keys(), lockfile.overrides.scoped.values()) |key, override_dep| {
+                    try writeIndent(writer, indent);
+                    const parent_name = if (key.parent_name.isEmpty()) parent_name: {
+                        for (lockfile.packages.items(.name_hash), lockfile.packages.items(.name)) |nh, n| {
+                            if (nh == key.parent_name_hash) {
+                                break :parent_name lockfile.str(&n);
+                            }
+                        }
+                        break :parent_name "";
+                    } else lockfile.str(&key.parent_name);
+                    bun.assert(parent_name.len != 0);
+                    const composite_key = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ parent_name, lockfile.str(&override_dep.name) });
+                    defer allocator.free(composite_key);
+                    try writer.print(
+                        \\{f}: {f},
+                        \\
+                    , .{ bun.fmt.formatJSONStringUTF8(composite_key, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
                 }
 
                 try decIndent(writer, indent);
@@ -1252,8 +1270,6 @@ pub fn parseIntoBinaryLockfile(
             }
 
             const name_str = key.asString(allocator).?;
-            const name_hash = String.Builder.stringHash(name_str);
-            const name = try string_buf.appendWithHash(name_str, name_hash);
 
             // TODO(dylan-conway) also accept object when supported
             if (!value.isString()) {
@@ -1266,24 +1282,76 @@ pub fn parseIntoBinaryLockfile(
             const version = try string_buf.appendWithHash(version_str, version_hash);
             const version_sliced = version.sliced(string_buf.bytes.items);
 
-            const dep: Dependency = .{
-                .name = name,
-                .name_hash = name_hash,
-                .version = Dependency.parse(
-                    allocator,
-                    name,
-                    name_hash,
-                    version_sliced.slice,
-                    &version_sliced,
-                    log,
-                    manager,
-                ) orelse {
-                    try log.addError(source, value.loc, "Invalid override version");
-                    return error.InvalidOverridesObject;
-                },
+            // Detect scoped override: parent/child format before building dep
+            const is_scoped = brk: {
+                if (name_str[0] == '@') {
+                    const first_slash = strings.indexOfChar(name_str, '/') orelse break :brk false;
+                    break :brk strings.indexOfChar(name_str[first_slash + 1 ..], '/') != null;
+                } else {
+                    break :brk strings.indexOfChar(name_str, '/') != null;
+                }
             };
 
-            try lockfile.overrides.map.put(allocator, name_hash, dep);
+            if (is_scoped) {
+                // Split at the first '/' (or first '/' after scope for scoped packages)
+                const split_at = split_at: {
+                    if (name_str[0] == '@') {
+                        const first_slash = strings.indexOfChar(name_str, '/') orelse unreachable;
+                        if (strings.indexOfChar(name_str[first_slash + 1 ..], '/')) |rel| {
+                            break :split_at first_slash + 1 + rel;
+                        }
+                    }
+                    break :split_at strings.indexOfChar(name_str, '/') orelse unreachable;
+                };
+                const parent_str = name_str[0..split_at];
+                const child_str = name_str[split_at + 1 ..];
+                const parent_name_stripped = OverrideMap.stripVersionSuffix(parent_str);
+                const parent_hash = String.Builder.stringHash(parent_name_stripped);
+                const child_hash = String.Builder.stringHash(child_str);
+                const child_name = try string_buf.appendWithHash(child_str, child_hash);
+                const child_dep: Dependency = .{
+                    .name = child_name,
+                    .name_hash = child_hash,
+                    .version = Dependency.parse(
+                        allocator,
+                        child_name,
+                        child_hash,
+                        version_sliced.slice,
+                        &version_sliced,
+                        log,
+                        manager,
+                    ) orelse {
+                        try log.addError(source, value.loc, "Invalid override version");
+                        return error.InvalidOverridesObject;
+                    },
+                };
+                const parent_name = try string_buf.append(parent_str);
+                try lockfile.overrides.scoped.put(allocator, .{
+                    .parent_name_hash = parent_hash,
+                    .child_name_hash = child_hash,
+                    .parent_name = parent_name,
+                }, child_dep);
+            } else {
+                const name_hash = String.Builder.stringHash(name_str);
+                const name = try string_buf.appendWithHash(name_str, name_hash);
+                const dep: Dependency = .{
+                    .name = name,
+                    .name_hash = name_hash,
+                    .version = Dependency.parse(
+                        allocator,
+                        name,
+                        name_hash,
+                        version_sliced.slice,
+                        &version_sliced,
+                        log,
+                        manager,
+                    ) orelse {
+                        try log.addError(source, value.loc, "Invalid override version");
+                        return error.InvalidOverridesObject;
+                    },
+                };
+                try lockfile.overrides.global.put(allocator, name_hash, dep);
+            }
         }
     }
 
@@ -2289,6 +2357,7 @@ const Resolution = Install.Resolution;
 const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
 const invalid_package_id = Install.invalid_package_id;
 
+const OverrideMap = bun.install.Lockfile.OverrideMap;
 const BinaryLockfile = bun.install.Lockfile;
 const DependencySlice = BinaryLockfile.DependencySlice;
 const LoadResult = BinaryLockfile.LoadResult;

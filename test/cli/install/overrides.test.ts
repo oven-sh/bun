@@ -1,7 +1,7 @@
 import { write } from "bun";
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 setDefaultTimeout(1000 * 60 * 5);
@@ -244,4 +244,224 @@ test("overrides do not apply to workspaces", async () => {
 
   expect(await exited).toBe(0);
   expect(await stderr.text()).not.toContain("Saved lockfile");
+});
+
+test("nested override applies only under matching parent", async () => {
+  using tmp = tempDir("overrides-nested-parent-match", {});
+  writeFileSync(
+    join(String(tmp), "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+      overrides: {
+        "raw-body": {
+          bytes: "1.0.0",
+        },
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
+});
+
+test("nested override does not apply under different parent", async () => {
+  using tmp = tempDir("overrides-nested-parent-mismatch", {});
+  writeFileSync(
+    join(String(tmp), "package.json"),
+    JSON.stringify({
+      dependencies: {
+        lodash: "4.17.21",
+        "raw-body": "2.5.2",
+      },
+      overrides: {
+        lodash: {
+          bytes: "1.0.0",
+        },
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  const bytesVersion = versionOf(String(tmp), "node_modules/bytes/package.json");
+  expect(bytesVersion).not.toBe("1.0.0");
+});
+
+test("nested override with dot and child handles both rules", async () => {
+  using tmp = tempDir("overrides-nested-dot-and-child", {});
+  writeFileSync(
+    join(String(tmp), "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+      overrides: {
+        "raw-body": {
+          ".": "2.5.2",
+          bytes: "1.0.0",
+        },
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
+  expect(versionOf(String(tmp), "node_modules/raw-body/package.json")).toBe("2.5.2");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
+});
+
+test("nested override added after install re-resolves child with parent context", async () => {
+  using tmp = tempDir("overrides-nested-added-later", {});
+  const packageJSON = join(String(tmp), "package.json");
+  writeFileSync(
+    packageJSON,
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).not.toBe("1.0.0");
+
+  writeFileSync(
+    packageJSON,
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+      overrides: {
+        "raw-body": {
+          bytes: "1.0.0",
+        },
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
+});
+
+test("nested override removed after install re-resolves child without scoped rule", async () => {
+  using tmp = tempDir("overrides-nested-removed-later", {});
+  const packageJSON = join(String(tmp), "package.json");
+  writeFileSync(
+    packageJSON,
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+      overrides: {
+        "raw-body": {
+          bytes: "1.0.0",
+        },
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
+
+  writeFileSync(
+    packageJSON,
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).not.toBe("1.0.0");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
+});
+
+test("Yarn-style nested resolution applies only under matching parent", async () => {
+  using tmp = tempDir("resolutions-nested-parent-match", {});
+  writeFileSync(
+    join(String(tmp), "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+      resolutions: {
+        "raw-body/bytes": "1.0.0",
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
+});
+
+test("Yarn-style nested resolution does not apply under different parent", async () => {
+  using tmp = tempDir("resolutions-nested-parent-mismatch", {});
+  writeFileSync(
+    join(String(tmp), "package.json"),
+    JSON.stringify({
+      dependencies: {
+        lodash: "4.17.21",
+        "raw-body": "2.5.2",
+      },
+      resolutions: {
+        "lodash/bytes": "1.0.0",
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).not.toBe("1.0.0");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
+});
+
+test("Yarn-style nested resolution with scoped parent package", async () => {
+  using tmp = tempDir("resolutions-nested-scoped-parent", {});
+  writeFileSync(
+    join(String(tmp), "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "@babel/core": "7.23.0",
+      },
+      resolutions: {
+        "@babel/core/semver": "7.5.4",
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/semver/package.json")).toBe("7.5.4");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
+});
+
+test("Yarn-style nested resolution with version-qualified parent key strips version suffix", async () => {
+  using tmp = tempDir("resolutions-version-qualified-parent", {});
+  writeFileSync(
+    join(String(tmp), "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+      resolutions: {
+        "raw-body@2.5.2/bytes": "1.0.0",
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
+});
+
+test("nested override with version-qualified parent key strips version suffix", async () => {
+  using tmp = tempDir("overrides-version-qualified-parent", {});
+  writeFileSync(
+    join(String(tmp), "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+      overrides: {
+        "raw-body@2.5.2": {
+          bytes: "1.0.0",
+        },
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
 });

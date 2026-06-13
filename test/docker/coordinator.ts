@@ -35,6 +35,7 @@ const prestartMap: Record<string, readonly ServiceName[]> = {
   "js/sql/local-sql": ["postgres_tls"],
   "js/sql/sql.test": ["postgres_plain"],
   "js/sql/sql-prepare-false": ["postgres_plain"],
+  "js/sql/postgres-binary-numeric": ["postgres_plain"],
   "js/valkey/": ["redis_unified"],
   "js/bun/s3/": ["minio"],
   "js/web/websocket/autobahn": ["autobahn"],

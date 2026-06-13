@@ -12,7 +12,6 @@ pub mod js_bindings {
     use super::*;
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 8);
         // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named `__jsc_host_<fn>`; that
         // shim is the `JSHostFn` value passed to `JSFunction::create`.
         const ENTRIES: &[(&str, bun_jsc::JSHostFn)] = &[
@@ -27,10 +26,15 @@ pub mod js_bindings {
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
             (
+                "infallibleOutOfMemory",
+                __jsc_host_js_infallible_out_of_memory,
+            ),
+            (
                 "raiseIgnoringPanicHandler",
                 __jsc_host_js_raise_ignoring_panic_handler,
             ),
         ];
+        let obj = JSValue::create_empty_object(global, ENTRIES.len());
         for &(name, func) in ENTRIES {
             obj.put(
                 global,
@@ -111,6 +115,25 @@ pub mod js_bindings {
     ) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         bun_core::out_of_memory();
+    }
+
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_infallible_out_of_memory(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        // Unlike `outOfMemory` above (the explicit `bun_core::out_of_memory()`
+        // entry), this exercises the global-allocator path: a reservation no
+        // 64-bit address space can satisfy makes the allocator return null, and
+        // `Vec` growth reports it via `std::alloc::handle_alloc_error`, which
+        // reaches the alloc-error hook installed by `crash_handler::init()`.
+        // Under ASAN, the interceptor hard-errors on impossible sizes instead
+        // of returning null unless `ASAN_OPTIONS=allocator_may_return_null=1`
+        // is set (the crash-handler test sets it).
+        let v = Vec::<u8>::with_capacity(1usize << 61);
+        core::hint::black_box(&v);
+        Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]

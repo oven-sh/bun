@@ -622,6 +622,16 @@ pub fn onReaderError(this: *FileReader, err: bun.sys.Error) void {
 
     this.pending.result = .{ .err = .{ .Error = err } };
     this.pending.run();
+
+    // onStart() increments the parent refcount and sets waiting_for_onReaderDone
+    // so the reader stays alive until I/O completes. PosixBufferedReader.onError
+    // only invokes this callback and does not follow up with done()/onReaderDone,
+    // so without this decrement the refcount never reaches 0 after JS finalize
+    // and the FileReader (plus its fd/poll) leaks.
+    if (this.waiting_for_onReaderDone) {
+        this.waiting_for_onReaderDone = false;
+        _ = this.parent().decrementCount();
+    }
 }
 
 pub fn setRawMode(this: *FileReader, flag: bool) bun.sys.Maybe(void) {

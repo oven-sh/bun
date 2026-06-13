@@ -631,6 +631,13 @@ pub fn init(
                     .{ .mode = if (need_write) .read_write else .read_only },
                 ) catch |err| switch (err) {
                     error.FileNotFound => {
+                        // For global installs, the install dir is self-contained.
+                        // Don't walk above it — a stray package.json/package-lock.json
+                        // in a parent directory (e.g. $HOME) isn't the "root package"
+                        // bun should be acting on. See #30658.
+                        if (cli.global) {
+                            break;
+                        }
                         if (std.fs.path.dirname(this_cwd)) |parent| {
                             this_cwd = strings.withoutTrailingSlash(parent);
                             continue;
@@ -684,7 +691,9 @@ pub fn init(
 
         // Check if this is a workspace; if so, use root package
         var found = false;
-        if (subcommand.shouldChdirToRoot()) {
+        // Global installs are self-contained — don't hop up into a parent
+        // workspace that happens to live above the global dir. See #30658.
+        if (subcommand.shouldChdirToRoot() and !cli.global) {
             if (!created_package_json) {
                 while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
                     const parent_without_trailing_slash = strings.withoutTrailingSlash(parent);

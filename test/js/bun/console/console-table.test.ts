@@ -183,6 +183,11 @@ const ansiObj = {
   [ansify("foo")]: ansify("bar"),
 };
 test("console.table ansi colors", () => {
+  // String cell *values* that contain a control character (ESC, 0x1B) are
+  // promoted to quoted/escaped form so the escape sequence is shown literally
+  // instead of being interpreted by the terminal (issue #32223), matching
+  // Node. The index-column *keys* are still rendered as-is, so their ANSI is
+  // stripped for width and left intact, exercising the width calculation.
   const actualOutput = renderTable(ansiObj)
     // todo: fix bug causing this to be necessary:
     .replaceAll("`", "'");
@@ -216,4 +221,104 @@ test("console.table repeat 50", () => {
   for (let i = 0; i < 50; i++) {
     expect(renderTable([{ n: 8 }])).toBe(expected);
   }
+});
+
+// https://github.com/oven-sh/bun/issues/32223
+// `console.table` used to write control characters in string cells raw, which
+// breaks the layout (\n, \r, \t) or is interpreted by the terminal (ANSI
+// escapes). Node escapes them instead. These tests drive the real
+// `console.table` through a subprocess and assert the table is undamaged.
+describe.concurrent("console.table escapes control characters in string cells", () => {
+  async function tableOutput(code: string): Promise<{ stdout: string; exitCode: number }> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error(stderr); // surface stderr in the failure output
+    return { stdout, exitCode };
+  }
+
+  // A well-formed table is rectangular: every non-empty line is framed by box
+  // drawing characters on both ends and has the same display width. A control
+  // character leaking into a cell breaks one or both of these.
+  function assertRectangular(out: string) {
+    const lines = out.split(/\r?\n/).filter(l => l.length > 0);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      expect(line).toMatch(/^[┌│├└]/u);
+      expect(line).toMatch(/[┐│┤┘]$/u);
+    }
+    expect(new Set(lines.map(l => Bun.stringWidth(l))).size).toBe(1);
+  }
+
+  test("ANSI escape sequences are shown literally, not rendered", async () => {
+    const { stdout, exitCode } = await tableOutput(String.raw`console.table([{ value: "\x1b[32mhello\x1b[0m" }]);`);
+    // The raw ESC byte must not leak into the output; it is escaped instead.
+    expect(stdout).not.toContain("\x1b");
+    expect(stdout).toContain("hello");
+    assertRectangular(stdout);
+    expect(exitCode).toBe(0);
+  });
+
+  test("embedded newline keeps the row on a single line", async () => {
+    const { stdout, exitCode } = await tableOutput(String.raw`console.table([{ v: "a\nb" }]);`);
+    // Before the fix the literal newline split the data row, leaving a line
+    // ("b │") that is not framed by the box border. assertRectangular catches it.
+    assertRectangular(stdout);
+    expect(exitCode).toBe(0);
+  });
+
+  test("embedded tab and carriage return do not corrupt the table", async () => {
+    const { stdout, exitCode } = await tableOutput(String.raw`console.table([{ v: "x\ty\rz" }]);`);
+    expect(stdout).not.toContain("\t");
+    // Normalize real CRLF line endings first; any remaining lone \r is a raw
+    // carriage return that leaked into a cell.
+    expect(stdout.replace(/\r\n/g, "\n")).not.toContain("\r");
+    assertRectangular(stdout);
+    expect(exitCode).toBe(0);
+  });
+
+  test("other C0 control characters (NUL, vertical tab, form feed) are escaped", async () => {
+    const { stdout, exitCode } = await tableOutput(String.raw`console.table([{ v: "a\x00b\x0bc\x0cd" }]);`);
+    expect(stdout).not.toContain("\x00");
+    expect(stdout).not.toContain("\x0b");
+    expect(stdout).not.toContain("\x0c");
+    assertRectangular(stdout);
+    expect(exitCode).toBe(0);
+  });
+
+  test("control character in a UTF-16-backed string is escaped", async () => {
+    // CJK codepoints (> 0xFF) force JSC to store the string as UTF-16, so this
+    // exercises the str.utf16() branch of should_quote_string_cell (the other
+    // cases are all Latin-1 and only hit the byte_slice() branch).
+    const { stdout, exitCode } = await tableOutput(String.raw`console.table([{ v: "日本\n語" }]);`);
+    expect(stdout).toContain("日本");
+    assertRectangular(stdout);
+    expect(exitCode).toBe(0);
+  });
+
+  test("boxed String cells keep their [String: ...] type indicator", async () => {
+    // `new String(...)` renders as `[String: "..."]`, which already escapes via
+    // print_string, so the control-char promotion must not strip the wrapper.
+    const { stdout, exitCode } = await tableOutput(String.raw`console.table([{ v: new String("a\nb") }]);`);
+    expect(stdout).toContain("[String:");
+    assertRectangular(stdout);
+    expect(exitCode).toBe(0);
+  });
+
+  test("plain string cells still render without surrounding quotes", async () => {
+    // Bun deliberately prints clean string cells unquoted; the fix must not
+    // change that for strings with no control characters (including non-ASCII
+    // printables like "café").
+    const { stdout, exitCode } = await tableOutput(`console.table([{ a: 42, b: "bun", c: "café" }]);`);
+    expect(stdout).toContain(" bun ");
+    expect(stdout).toContain("café");
+    expect(stdout).not.toContain('"bun"');
+    expect(stdout).not.toContain("'bun'");
+    assertRectangular(stdout);
+    expect(exitCode).toBe(0);
+  });
 });

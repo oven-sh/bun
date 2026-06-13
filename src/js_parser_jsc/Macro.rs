@@ -639,8 +639,13 @@ impl<'a> Run<'a> {
         match tag {
             T::Error => {
                 // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
-                let _ =
-                    unsafe { (*self.macro_.vm()).uncaught_exception(self.global, value, false) };
+                let _ = unsafe {
+                    (*self.macro_.vm()).uncaught_exception(
+                        self.global,
+                        value,
+                        bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+                    )
+                };
                 return Ok(self.caller);
             }
             T::Undefined => {
@@ -676,7 +681,11 @@ impl<'a> Run<'a> {
                     {
                         // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
                         let _ = unsafe {
-                            (*self.macro_.vm()).uncaught_exception(self.global, value, false)
+                            (*self.macro_.vm()).uncaught_exception(
+                                self.global,
+                                value,
+                                bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+                            )
                         };
                         return Err(MacroError::MacroFailed);
                     }

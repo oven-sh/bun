@@ -806,6 +806,50 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(42);
   });
 
+  it("--abort-on-uncaught-exception does not abort a rejection handled by an uncaughtException listener", async () => {
+    // node consults 'uncaughtException' listeners before aborting for the
+    // promise rejection path (unlike synchronous throws, which abort at
+    // throw time regardless of listeners).
+    const proc = Bun.spawn(
+      [
+        bunExe(),
+        "--abort-on-uncaught-exception",
+        "--unhandled-rejections=strict",
+        "-e",
+        `process.on("uncaughtException", () => console.log("listener handled it")); Promise.reject(new Error("x"));`,
+      ],
+      { env: bunEnv, stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("listener handled it");
+    // Like node, strict mode still emits the rejection warning when no
+    // 'unhandledRejection' listener claimed it, even though the
+    // 'uncaughtException' listener handled the error itself.
+    expect(stderr).toContain("UnhandledPromiseRejectionWarning");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--abort-on-uncaught-exception aborts an unhandled rejection with no listeners", async () => {
+    const cmd = [
+      bunExe(),
+      "--abort-on-uncaught-exception",
+      "--unhandled-rejections=strict",
+      "-e",
+      `Promise.reject(new Error("x"));`,
+    ];
+    // The abort is intentional: disable core dumps like the upstream node
+    // abort tests do, so CI lanes that collect core files at teardown don't
+    // flag this child's core as a crash.
+    const proc = Bun.spawn(isWindows ? cmd : ["sh", "-c", 'ulimit -c 0 && exec "$@"', "sh", ...cmd], {
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const exitCode = await proc.exited;
+    // SIGABRT on POSIX; _exit(134) on Windows.
+    expect(proc.signalCode === "SIGABRT" || exitCode === 134).toBe(true);
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",
@@ -818,7 +862,9 @@ describe.concurrent(() => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallbackAbort.js")], {
       stderr: "pipe",
     });
-    expect(await proc.exited).toBe(1);
+    // An exception thrown from the capture callback exits with code 7 like
+    // node (internal exception handler run-time failure).
+    expect(await proc.exited).toBe(7);
     expect(await proc.stderr.text()).toContain("bar");
   });
 });
@@ -1030,7 +1076,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todoIf(isWindows)("zeroExitWithUncaughtHandler", async () => {
+  it("zeroExitWithUncaughtHandler", async () => {
     await runInlineFixture(
       `
       process.on('exit', (code) => {
@@ -1051,7 +1097,7 @@ describe("process.exitCode", () => {
     );
   });
 
-  it.todoIf(isWindows)("changeCodeInUncaughtHandler", async () => {
+  it("changeCodeInUncaughtHandler", async () => {
     await runInlineFixture(
       `
       process.on('exit', (code) => {

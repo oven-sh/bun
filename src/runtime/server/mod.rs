@@ -1329,7 +1329,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let _ = unsafe { &mut *vm }.uncaught_exception(
                     global,
                     *err,
-                    matches!(http_result, HttpResult::Rejection(_)),
+                    if matches!(http_result, HttpResult::Rejection(_)) {
+                        bun_jsc::virtual_machine::UncaughtExceptionOrigin::Rejection
+                    } else {
+                        bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception
+                    },
                 );
 
                 if !node_http_response.is_null() {

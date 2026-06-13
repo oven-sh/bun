@@ -1100,7 +1100,7 @@ impl WebWorker {
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
-                    true,
+                    crate::virtual_machine::UncaughtExceptionOrigin::EntryPointRejection,
                 );
                 if !handled {
                     vm.as_mut().exit_handler.exit_code = 1;

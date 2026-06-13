@@ -104,7 +104,11 @@ impl Handler {
         let mut vm_ref = self.vm;
         // SAFETY: process-lifetime singleton; sole `&mut` on the JS thread.
         let vm_mut = unsafe { vm_ref.get_mut() };
-        let _ = vm_mut.uncaught_exception(global_object, error_value, false);
+        let _ = vm_mut.uncaught_exception(
+            global_object,
+            error_value,
+            bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+        );
     }
 
     pub fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {

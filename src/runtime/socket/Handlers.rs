@@ -253,11 +253,11 @@ impl Handlers {
 
         if on_error.is_empty() {
             // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single JS thread.
-            let _ =
-                global_object
-                    .bun_vm()
-                    .as_mut()
-                    .uncaught_exception(&global_object, args[1], false);
+            let _ = global_object.bun_vm().as_mut().uncaught_exception(
+                &global_object,
+                args[1],
+                bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+            );
             return false;
         }
 

@@ -166,3 +166,71 @@ it.if(isWindows)(
     }
   },
 );
+
+it.if(isWindows)(
+  "tls.connect({ socket }) does not re-emit post-upgrade bytes on a server-accepted named-pipe socket (STARTTLS) #32242",
+  async () => {
+    // Same regression as above, but the upgraded socket is the one a named-pipe
+    // *server* accepted (driven by ServerHandlers.data, not SocketHandlers2.data).
+    // The connecting side plays the mock peer; the accepted socket runs the
+    // STARTTLS handler and upgrades via `tls.connect({ socket })`. If the feeder
+    // were not consulted in ServerHandlers.data, the post-upgrade bytes would
+    // re-enter this handler and attempt a second upgrade.
+    const pipe_name = `\\\\.\\pipe\\test\\${randomUUID()}`;
+
+    const { promise, resolve } = Promise.withResolvers<{ upgrades: number; message: string }>();
+
+    let upgrades = 0;
+    let upgraded = false;
+    let accepted: ReturnType<typeof net.connect> | null = null;
+
+    const server = net.createServer(serverSocket => {
+      accepted = serverSocket;
+      serverSocket.on("error", () => {});
+      serverSocket.on("close", () => resolve({ upgrades, message: "" }));
+      serverSocket.on("data", data => {
+        if (!upgraded && data.toString("latin1").includes("PEER_GREETING")) {
+          serverSocket.write("STARTTLS");
+          return;
+        }
+        // The legitimate upgrade (on PROCEED) and the buggy re-entry (on
+        // re-emitted ciphertext) both land here.
+        upgraded = true;
+        upgrades++;
+        const tlsSocket = connect({ socket: serverSocket, rejectUnauthorized: false });
+        tlsSocket.on("error", err => resolve({ upgrades, message: err.message }));
+        tlsSocket.on("secureConnect", () => resolve({ upgrades, message: "" }));
+        tlsSocket.on("close", () => resolve({ upgrades, message: "" }));
+      });
+    });
+
+    server.listen(pipe_name);
+    await once(server, "listening");
+
+    // Mock peer: greet, reply PROCEED to STARTTLS, then send mock TLS records.
+    const peer = net.connect(pipe_name);
+    try {
+      peer.on("error", () => {});
+      peer.on("connect", () => peer.write("PEER_GREETING"));
+      let phase = "greeting";
+      peer.on("data", data => {
+        if (phase === "greeting" && data.toString().includes("STARTTLS")) {
+          phase = "proceed";
+          peer.write("PROCEED");
+        } else if (phase === "proceed") {
+          phase = "done";
+          peer.write(Buffer.alloc(50, 0x16));
+        }
+      });
+
+      const result = await promise;
+
+      expect(result.message).not.toContain("Invalid socket");
+      expect(result.upgrades).toBe(1);
+    } finally {
+      peer.destroy();
+      accepted?.destroy();
+      server.close();
+    }
+  },
+);

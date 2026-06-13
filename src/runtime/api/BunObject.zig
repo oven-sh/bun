@@ -646,7 +646,7 @@ pub fn openInEditor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
     }
 
     if (arguments.nextEat()) |opts| {
-        if (!opts.isUndefinedOrNull()) {
+        if (opts.isObject()) {
             if (try opts.getTruthy(globalThis, "editor")) |editor_val| {
                 var sliced = try editor_val.toSlice(globalThis, arguments.arena.allocator());
                 const prev_name = edit.name;
@@ -673,6 +673,8 @@ pub fn openInEditor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
             if (try opts.getTruthy(globalThis, "column")) |column_| {
                 column = (try column_.toSlice(globalThis, arguments.arena.allocator())).slice();
             }
+        } else if (!opts.isUndefinedOrNull()) {
+            return globalThis.throwInvalidArguments("Expected options to be an object", .{});
         }
     }
 

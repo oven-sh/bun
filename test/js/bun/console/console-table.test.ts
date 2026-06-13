@@ -236,8 +236,10 @@ describe.concurrent("console.table escapes control characters in string cells", 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Surface stderr if the subprocess failed so the crash is diagnosable. We
+    // don't assert stderr is empty: debug/ASAN builds emit benign startup noise.
+    if (exitCode !== 0) throw new Error(`console.table subprocess exited with ${exitCode}\nstderr:\n${stderr}`);
     return stdout;
   }
 

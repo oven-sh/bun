@@ -1469,6 +1469,92 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
     }
 }
 
+/// Decides, once per `ENew`, whether its callee must be printed inside
+/// parentheses: only when the callee chain contains a call or optional chain
+/// that `new` would otherwise capture.
+///
+/// `new a.b.c()` is identical to `new (a.b.c)()` — a plain member chain binds
+/// into the `new` target — so those parens may be dropped. But `new (a().b)()`
+/// must stay parenthesized: unwrapped, `new a().b()` reparses as
+/// `(new a()).b()`. Likewise an optional chain that reaches the `new`
+/// (`new (a?.b)()`) is a syntax error without the parens (`new` may not appear
+/// in an optional chain).
+///
+/// Returning `false` routes the callee through the `Level::New` + `ForbidCall`
+/// path unchanged, where a call at the base of a member chain still wraps just
+/// itself (`new (require("m")).f`). Walks the `EDot`/`EIndex`/`ETemplate`
+/// (tagged) chain toward its base:
+///
+/// - a non-optional `ECall`, or `import(...)`/`require(...)` reached through a
+///   template tag (which drops `ForbidCall`), always needs the parens — nothing
+///   else isolates a plain call from the `new` (`new a().b()` → `(new a()).b()`);
+/// - an optional-chain link (including an optional call) needs the parens only
+///   while it still reaches the top of the chain. Once a non-optional access (or
+///   a tagged template) sits above it, the inner chain is already parenthesized
+///   on its own — by the printer's `HasNonOptionalChainParent` handling
+///   (`(a?.b).c`) or the template-tag wrap (`(a?.b)`t``) — so it is inside those
+///   parens and no outer wrap is needed.
+fn new_callee_needs_parens(expr: &js_ast::Expr) -> bool {
+    use js_ast::ExprData;
+    let mut current = expr;
+    // Tracks whether a non-optional member/index access sits above `current`,
+    // which is exactly when `HasNonOptionalChainParent` isolates a nested
+    // optional chain for us.
+    let mut crossed_non_optional_access = false;
+    // `EDot`/`EIndex` forward `ForbidCall` to their target, so a call at the base
+    // of such a chain wraps itself (`new (require("m")).f`). A tagged template
+    // does not — it prints its tag with `ForbidCall` dropped — so a call reached
+    // only through template tags must be hoisted and wrapped here instead.
+    let mut crossed_template = false;
+    loop {
+        match &current.data {
+            ExprData::ECall(e) => {
+                // An optional-chain call below a crossed boundary is isolated the
+                // same way an optional `EDot`/`EIndex` is; a non-optional call is
+                // never isolated, so it always needs the parens.
+                if e.optional_chain.is_some() {
+                    return !crossed_non_optional_access;
+                }
+                return true;
+            }
+            // `import(...)`, `require(...)`, and `require.resolve(...)` also print
+            // as calls. Through an `EDot`/`EIndex` chain the forwarded `ForbidCall`
+            // already wraps them, so only hoist the wrap when they are reached
+            // through a template tag (none of them can be an optional chain).
+            ExprData::EImport(_)
+            | ExprData::ERequireString(_)
+            | ExprData::ERequireResolveString(_) => return crossed_template,
+            ExprData::EDot(e) => {
+                if e.optional_chain.is_some() {
+                    return !crossed_non_optional_access;
+                }
+                crossed_non_optional_access = true;
+                current = &e.target;
+            }
+            ExprData::EIndex(e) => {
+                if e.optional_chain.is_some() {
+                    return !crossed_non_optional_access;
+                }
+                crossed_non_optional_access = true;
+                current = &e.target;
+            }
+            ExprData::ETemplate(e) => match &e.tag {
+                // A tagged template isolates an optional-chain tag the same way a
+                // non-optional access does: the tag is independently parenthesized
+                // when printed (`(a?.b)`t``), making the whole template a member
+                // expression `new` accepts, so no outer wrap is needed below it.
+                Some(tag) => {
+                    crossed_non_optional_access = true;
+                    crossed_template = true;
+                    current = tag;
+                }
+                None => return false,
+            },
+            _ => return false,
+        }
+    }
+}
+
 pub enum PrintResult {
     Result(PrintResultSuccess),
     Err(bun_core::Error),
@@ -3457,7 +3543,16 @@ pub mod __gated_printer {
                     self.add_source_mapping(expr.loc);
                     self.print(b"new");
                     self.print_space();
-                    self.print_expr(e.target, Level::New, ExprFlag::forbid_call());
+                    // Deciding the callee's parens once here keeps it a single
+                    // O(depth) walk per `new`; leaving it to the member arms would
+                    // re-walk the chain at every level while `ForbidCall` forwards.
+                    if new_callee_needs_parens(&e.target) {
+                        self.print(b"(");
+                        self.print_expr(e.target, Level::Lowest, ExprFlag::none());
+                        self.print(b")");
+                    } else {
+                        self.print_expr(e.target, Level::New, ExprFlag::forbid_call());
+                    }
                     let args = e.args.slice();
                     if !args.is_empty() || level.gte(Level::Postfix) {
                         self.print(b"(");
@@ -3685,6 +3780,10 @@ pub mod __gated_printer {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
                             wrap = true;
                             self.print(b"(");
+                            // These parens isolate the whole optional chain, so a
+                            // call inside it no longer needs its own parens as a
+                            // `new` callee.
+                            flags.remove(ExprFlag::ForbidCall);
                         }
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
                     }
@@ -3739,6 +3838,10 @@ pub mod __gated_printer {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
                             wrap = true;
                             self.print(b"(");
+                            // These parens isolate the whole optional chain, so a
+                            // call inside it no longer needs its own parens as a
+                            // `new` callee.
+                            flags.remove(ExprFlag::ForbidCall);
                         }
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
                     }
@@ -4156,15 +4259,10 @@ pub mod __gated_printer {
 
                     if let Some(tag) = &e.tag {
                         self.add_source_mapping(expr.loc);
-                        // Optional chains are forbidden in template tags
-                        // `Expr::is_optional_chain` is gated upstream; inline its body.
-                        let is_optional_chain = match &expr.data {
-                            ExprData::EDot(d) => d.optional_chain.is_some(),
-                            ExprData::EIndex(i) => i.optional_chain.is_some(),
-                            ExprData::ECall(c) => c.optional_chain.is_some(),
-                            _ => false,
-                        };
-                        if is_optional_chain {
+                        // An optional chain may not directly tag a template literal
+                        // (`a?.b`t`` is a SyntaxError), so wrap the tag in parens.
+                        // The check is on the tag, not on this `ETemplate` node.
+                        if tag.is_optional_chain() {
                             self.print(b"(");
                             self.print_expr(*tag, Level::Lowest, ExprFlag::none());
                             self.print(b")");

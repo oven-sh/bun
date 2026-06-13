@@ -1561,8 +1561,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
             } else if (auto index = parseIndex(propertyKey)) {
-                // For indexed properties, set the mock directly instead of wrapping in GetterSetter
-                object->putDirectIndex(globalObject, *index, mock, attributes, PutDirectIndexLikePutDirect);
+                object->putDirectIndex(globalObject, *index, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes, PutDirectIndexLikePutDirect);
             } else {
                 object->putDirectAccessor(globalObject, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
             }

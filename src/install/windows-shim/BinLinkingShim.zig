@@ -195,8 +195,20 @@ pub const Shebang = struct {
         var tokenizer = std.mem.tokenizeScalar(u8, line, ' ');
         const first = tokenizer.next() orelse return parseFromBinPath(bin_path);
         if (eqlComptime(first, "/usr/bin/env") or eqlComptime(first, "/bin/env")) {
-            const rest = tokenizer.rest();
-            const program = tokenizer.next() orelse return parseFromBinPath(bin_path);
+            var rest = tokenizer.rest();
+            var program = tokenizer.next() orelse return parseFromBinPath(bin_path);
+            // `env -S` (a.k.a. `--split-string`) forwards the remainder as separate args to
+            // the interpreter — it's the standard way to pass flags through a shebang on
+            // Linux/BSD. Skip it so the actual interpreter becomes the program/launcher.
+            if (eqlComptime(program, "-S")) {
+                rest = tokenizer.rest();
+                program = tokenizer.next() orelse return parseFromBinPath(bin_path);
+            } else if (bun.strings.hasPrefixComptime(program, "-S")) {
+                // Joined short-option form (`-Sbun ...`): the optarg starts at
+                // byte 2 of the same token, so no lookahead is needed.
+                rest = rest[2..];
+                program = program[2..];
+            }
             const is_node_or_bun = eqlComptime(program, "bun") or eqlComptime(program, "node");
             return try Shebang.init(rest, is_node_or_bun);
         }

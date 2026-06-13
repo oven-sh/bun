@@ -82,6 +82,41 @@ pub export fn Bun__getDefaultLoader(global: *JSGlobalObject, str: *const bun.Str
     return loader;
 }
 
+/// Returns true when the watchlist-cached fd for this path no longer points at
+/// the inode that currently lives at the path on disk. An atomic rename (sed
+/// -i, vim default save, prettier, VSCode default, etc.) replaces the inode at
+/// the path, but the old fd still references the now-unlinked original inode.
+/// Reading through the stale fd yields pre-edit bytes even though the new file
+/// is present on disk. See oven-sh/bun#30449.
+///
+/// Windows doesn't expose POSIX inodes the same way, and atomic-rename hot
+/// reload is already handled by the Windows watcher, so skip there.
+pub fn cachedFdIsStale(path: *const Fs.Path, cached_fd: FD) bool {
+    if (comptime Environment.isWindows) return false;
+    if (!path.isFile()) return false;
+    if (path.text.len == 0 or path.text.len >= bun.MAX_PATH_BYTES) return false;
+
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
+    const path_z = bun.path.z(path.text, path_buf);
+
+    // If stat(path) fails (file removed, permissions changed, network FS
+    // transient) the fd is equally untrustworthy: still open on the old
+    // inode, but we can no longer confirm it matches what a fresh open
+    // would see. Drop it and let the caller's path-based open surface the
+    // real error instead of silently returning pre-removal bytes.
+    const on_disk = switch (bun.sys.stat(path_z)) {
+        .result => |st| st,
+        .err => return true,
+    };
+    // fstat on an already-closed fd fails — treat that as stale too.
+    const via_fd = switch (bun.sys.fstat(cached_fd)) {
+        .result => |st| st,
+        .err => return true,
+    };
+    return on_disk.ino != via_fd.ino or on_disk.dev != via_fd.dev;
+}
+
 pub fn transpileSourceCode(
     jsc_vm: *VirtualMachine,
     specifier: string,
@@ -173,6 +208,9 @@ pub fn transpileSourceCode(
             if (jsc_vm.bun_watcher.indexOf(hash)) |index| {
                 fd = jsc_vm.bun_watcher.watchlist().items(.fd)[index].unwrapValid();
                 package_json = jsc_vm.bun_watcher.watchlist().items(.package_json)[index];
+                if (fd) |cached_fd| {
+                    if (cachedFdIsStale(&path, cached_fd)) fd = null;
+                }
             }
 
             var cache = jsc.RuntimeTranspilerCache{

@@ -17,6 +17,17 @@ pub const WTF = struct {
         WTF__releaseFastMallocFreeMemoryForThisThread();
     }
 
+    extern fn WTF__releaseFastMallocFreeMemory() void;
+
+    /// Runs `bmalloc::api::scavenge()` -> `pas_scavenger_run_synchronously_now()`,
+    /// which decommits libpas/Gigacage free pages back to the OS. Without this,
+    /// freed ArrayBuffer backing stores and WTF::StringImpl bodies sit in libpas
+    /// page caches until the background scavenger thread runs.
+    pub fn releaseFastMallocFreeMemory() void {
+        jsc.markBinding(@src());
+        WTF__releaseFastMallocFreeMemory();
+    }
+
     pub fn parseDouble(buf: []const u8) !f64 {
         jsc.markBinding(@src());
 

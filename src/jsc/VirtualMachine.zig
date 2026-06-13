@@ -753,8 +753,29 @@ pub inline fn packageManager(this: *VirtualMachine) *PackageManager {
 pub fn garbageCollect(this: *const VirtualMachine, sync: bool) usize {
     @branchHint(.cold);
     Global.mimalloc_cleanup(false);
-    if (sync)
-        return this.global.vm().runGC(true);
+    if (sync) {
+        const size = this.global.vm().runGC(true);
+        // The sync GC above ran JS finalizers which freed external backing
+        // stores into the native allocators, but those allocators cache
+        // freed pages rather than returning them to the OS immediately:
+        //
+        // - JSC-native allocations (ArrayBuffer contents via Gigacage,
+        //   WTF::StringImpl bodies via FastCompactMalloc) land in libpas
+        //   page caches and are only decommitted when the background
+        //   pas_scavenger thread runs. Under sustained allocation churn
+        //   it never gets ahead and RSS ratchets toward OOM while the JS
+        //   heap stays flat.
+        // - Bun-native allocations (Blob bytes, external string payloads,
+        //   bun.default_allocator) land on mimalloc per-thread heaps and
+        //   are only `madvise(MADV_DONTNEED)`'d back after the segment
+        //   purge delay elapses.
+        //
+        // A user calling `Bun.gc(true)` expects RSS to drop, so scavenge
+        // both allocators synchronously. See #21560, #27514, #28741.
+        jsc.wtf.releaseFastMallocFreeMemory();
+        Global.mimalloc_cleanup(true);
+        return size;
+    }
 
     this.global.vm().collectAsync();
     return this.global.vm().heapSize();

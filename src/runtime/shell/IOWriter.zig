@@ -467,12 +467,26 @@ pub fn onError(this: *IOWriter, err__: bun.sys.Error) void {
         this.flags.broken_pipe = true;
     }
     log("IOWriter(0x{x}, fd={f}) onError errno={s} errmsg={f} errsyscall={f}", .{ @intFromPtr(this), this.fd, @tagName(ee.getErrno()), ee.message, ee.syscall });
+
+    // Move the pending writers out before iterating: the onIOWriterChunk callbacks below
+    // drive the Yield trampoline, which can re-enter enqueue(). Re-entrant enqueues are
+    // short-circuited by handleBrokenPipe via the stored this.err, but iterating a
+    // moved-out local guarantees slice stability regardless — SmolList promote/realloc
+    // would otherwise free the backing of any slice captured from this.writers.
+    const writer_idx = this.writer_idx;
+    var writers = this.writers;
+    this.writers = .{ .inlined = .{} };
+    this.writer_idx = 0;
+    this.total_bytes_written = 0;
+    this.buf.clearRetainingCapacity();
+    defer writers.deinit();
+
     var seen_alloc = std.heap.stackFallback(@sizeOf(usize) * 64, bun.default_allocator);
     var seen = bun.handleOom(std.array_list.Managed(usize).initCapacity(seen_alloc.get(), 64));
     defer seen.deinit();
     // Writers before writer_idx have already had their onIOWriterChunk callback fired and may
     // have been freed; only notify the still-pending ones.
-    writer_loop: for (this.writers.slice()[this.writer_idx..]) |w| {
+    writer_loop: for (writers.slice()[writer_idx..]) |w| {
         if (w.isDead()) continue;
         const ptr = w.ptr.ptr.ptr();
         if (seen.items.len < 8) {
@@ -492,11 +506,6 @@ pub fn onError(this: *IOWriter, err__: bun.sys.Error) void {
         // TODO: This probably shouldn't call .run()
         w.ptr.onIOWriterChunk(0, this.err).run();
     }
-
-    this.total_bytes_written = 0;
-    this.writer_idx = 0;
-    this.buf.clearRetainingCapacity();
-    this.writers.clearRetainingCapacity();
 }
 
 /// Returns the buffer of data that needs to be written
@@ -622,6 +631,16 @@ pub fn enqueueInternal(this: *IOWriter) Yield {
 }
 
 pub fn handleBrokenPipe(this: *IOWriter, ptr: ChildPtr) ?Yield {
+    // Once onError has fired, PosixBufferedWriter._onError will close() the poll handle
+    // immediately after onError returns. A re-entrant enqueue during onError's callback
+    // loop would append to this.writers and register a poll that is about to be torn
+    // down, stranding the new writer. Short-circuit with the stored error so the caller
+    // gets its onIOWriterChunk callback without touching the doomed handle.
+    if (this.err) |*e| {
+        log("IOWriter(0x{x}, fd={f}) prior error {s}(0x{x})", .{ @intFromPtr(this), this.fd, @tagName(ptr.ptr.tag()), @intFromPtr(ptr.ptr.ptr()) });
+        e.ref();
+        return .{ .on_io_writer_chunk = .{ .child = ptr.asAnyOpaque(), .written = 0, .err = e.* } };
+    }
     if (this.flags.broken_pipe) {
         const err: jsc.SystemError = bun.sys.Error.fromCode(.PIPE, .write).toSystemError();
         log("IOWriter(0x{x}, fd={f}) broken pipe {s}(0x{x})", .{ @intFromPtr(this), this.fd, @tagName(ptr.ptr.tag()), @intFromPtr(ptr.ptr.ptr()) });
@@ -669,12 +688,12 @@ pub fn enqueueFmt(
     comptime fmt: []const u8,
     args: anytype,
 ) Yield {
+    const childptr = if (@TypeOf(ptr) == ChildPtr) ptr else ChildPtr.init(ptr);
+    if (this.handleBrokenPipe(childptr)) |yield| return yield;
+
     var buf_writer = this.buf.writer(bun.default_allocator);
     const start = this.buf.items.len;
     bun.handleOom(buf_writer.print(fmt, args));
-
-    const childptr = if (@TypeOf(ptr) == ChildPtr) ptr else ChildPtr.init(ptr);
-    if (this.handleBrokenPipe(childptr)) |yield| return yield;
 
     const end = this.buf.items.len;
     const writer: Writer = .{

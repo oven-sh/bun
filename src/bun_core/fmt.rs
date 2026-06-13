@@ -3344,25 +3344,6 @@ pub fn itoa<T: ::itoa::Integer>(buf: &mut ItoaBuf, n: T) -> &[u8] {
     buf.format(n).as_bytes()
 }
 
-/// If `val` is exactly `10^e` for `e` in `4..=9`, return `Some(e)`; else `None`.
-///
-/// Used by `js_printer`'s non-negative-integer fast path to emit the
-/// minified-JS forms `1e4`..`1e9` (which are shorter than the full digit
-/// expansion). `e ≤ 3` is not shorter; `e ≥ 10` exceeds `u32::MAX` and is
-/// handled by the printer's f64 path.
-#[inline]
-pub const fn pow10_exp_1e4_to_1e9(val: u64) -> Option<u8> {
-    match val {
-        10_000 => Some(4),
-        100_000 => Some(5),
-        1_000_000 => Some(6),
-        10_000_000 => Some(7),
-        100_000_000 => Some(8),
-        1_000_000_000 => Some(9),
-        _ => None,
-    }
-}
-
 /// Format `value`
 /// into `buf` as base-10 ASCII and return the number of bytes written.
 /// Panics if `buf` is too small — callers size the buffer by the type's max

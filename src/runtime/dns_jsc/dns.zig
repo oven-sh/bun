@@ -84,14 +84,23 @@ const LibInfo = struct {
         const promise_value = request.head.promise.value();
 
         const hints = query.options.toLibC();
-        const errno = getaddrinfo_async_start_(
-            &request.backend.libinfo.machport,
-            name_z.ptr,
-            null,
-            if (hints != null) &hints.? else null,
-            GetAddrInfoRequest.getAddrInfoAsyncCallback,
-            request,
-        );
+        const errno: i32 = if (bun.feature_flag.BUN_INTERNAL_DNS_FORCE_LIBINFO_START_ERROR.get())
+            // Testing hook: exercise the synchronous error path below without
+            // needing mach-port exhaustion. The real getaddrinfo_async_start is
+            // skipped so no mach port is allocated. Any nonzero value works;
+            // the reject path calls bun.sys.getErrno(rc) which on darwin only
+            // inspects thread errno when rc == -1, so the specific value here
+            // is not surfaced in the error message.
+            1
+        else
+            getaddrinfo_async_start_(
+                &request.backend.libinfo.machport,
+                name_z.ptr,
+                null,
+                if (hints != null) &hints.? else null,
+                GetAddrInfoRequest.getAddrInfoAsyncCallback,
+                request,
+            );
 
         if (errno != 0) {
             request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))})) catch {}; // TODO: properly propagate exception upwards

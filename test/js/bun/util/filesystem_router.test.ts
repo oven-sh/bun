@@ -368,6 +368,41 @@ it("reload() works", () => {
   expect(router.match("/posts")!.name).toBe("/posts");
 });
 
+it("reload() preserves custom fileExtensions and assetPrefix across multiple reloads", () => {
+  // Regression: reload() shallow-copied the []string of extensions into the new arena but
+  // left the inner []const u8 pointing into the old arena (which is then freed). The second
+  // reload() would scan routes against dangling extension bytes, dropping every route (and
+  // tripping ASAN). asset_prefix_path was not copied at all.
+  const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+    fileExtensions: [".tsx"],
+    assetPrefix: "/_next/static/",
+    origin: "https://nextjs.org",
+  });
+
+  const expected = {
+    "/": `${dir}/index.tsx`,
+    "/posts": `${dir}/posts.tsx`,
+    "/posts/[id]": `${dir}/posts/[id].tsx`,
+  };
+
+  expect(router.routes).toEqual(expected);
+
+  // First reload() happens while the original arena is still live during loadRoutes,
+  // so it appears to work even with the shallow copy. The second and subsequent reloads
+  // read extension strings that were freed by the previous reload.
+  for (let i = 0; i < 5; i++) {
+    router.reload();
+    expect(router.routes).toEqual(expected);
+    const { name, src } = router.match("/posts/hello-world")!;
+    expect(name).toBe("/posts/[id]");
+    expect(src).toBe("https://nextjs.org/_next/static/posts/[id].tsx");
+  }
+});
+
 it("reload() works with new dirs/files", () => {
   const { dir } = make(["posts.tsx"]);
 

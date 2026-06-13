@@ -277,48 +277,54 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 }
 
 // Emit a process lifecycle event. When user code has replaced `process.emit`
-// with an own property (a monkey-patch, as signal-exit and similar libraries
-// do), invoke that override so it observes the event, matching Node, which
-// dispatches `beforeExit`/`exit` via `process.emit`. Otherwise emit directly on
-// the internal EventEmitter: `emit` then resolves to the prototype method that
-// reaches the same listeners, and the native return value is the exact "a
-// listener fired" signal the caller uses to decide whether to drain the nextTick
-// queue.
+// with a callable own property (a monkey-patch, as signal-exit and similar
+// libraries do), invoke that override so it observes the event, matching Node,
+// which dispatches `beforeExit`/`exit` via `process.emit`. Otherwise emit
+// directly on the internal EventEmitter, which reaches the same listeners; this
+// covers the common no-override case and a `process.emit` that was replaced with
+// a non-callable value, so lifecycle events still fire instead of throwing at
+// shutdown.
 //
 // Returns whether the caller should drain the nextTick/microtask queue after the
 // emit: on the native path the real "a listener fired" signal; on the override
 // path true, since the override ran arbitrary JS that may have scheduled
 // continuation work (its own return value is not meaningful for this decision).
 // Listener exceptions on the native path are reported inside
-// EventEmitter::fireEventListeners; a non-callable or throwing override leaves a
-// pending exception for the caller to report.
+// EventEmitter::fireEventListeners; a throwing override leaves a pending
+// exception for the caller to report.
 static bool emitProcessExitEvent(JSC::JSGlobalObject* globalObject, Process* process, ASCIILiteral eventName, int exitCode)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue emitOverride = process->getDirect(vm, Identifier::fromString(vm, "emit"_s));
-    if (!emitOverride) {
-        MarkedArgumentBuffer arguments;
-        arguments.append(jsNumber(exitCode));
-        ASSERT(!arguments.hasOverflowed());
-        RELEASE_AND_RETURN(scope, process->wrapped().emit(Identifier::fromString(vm, eventName), arguments));
-    }
+    if (emitOverride) {
+        // getDirect returns the raw slot, so an `emit` defined as an accessor
+        // (Object.defineProperty) yields a GetterSetter; invoke the getter with a
+        // full [[Get]] to reach the actual function, matching Node.
+        if (emitOverride.isGetterSetter() || emitOverride.isCustomGetterSetter()) [[unlikely]] {
+            emitOverride = process->get(globalObject, Identifier::fromString(vm, "emit"_s));
+            RETURN_IF_EXCEPTION(scope, false);
+        }
 
-    auto callData = JSC::getCallData(emitOverride);
-    if (callData.type == CallData::Type::None) {
-        scope.throwException(globalObject, createNotAFunctionError(globalObject, emitOverride));
-        return false;
+        auto callData = JSC::getCallData(emitOverride);
+        if (callData.type != CallData::Type::None) {
+            MarkedArgumentBuffer arguments;
+            arguments.append(jsString(vm, String(eventName)));
+            arguments.append(jsNumber(exitCode));
+            ASSERT(!arguments.hasOverflowed());
+
+            JSC::call(globalObject, emitOverride, callData, process, arguments);
+            RETURN_IF_EXCEPTION(scope, false);
+            return true;
+        }
+        // A non-callable override falls through to the internal emitter.
     }
 
     MarkedArgumentBuffer arguments;
-    arguments.append(jsString(vm, String(eventName)));
     arguments.append(jsNumber(exitCode));
     ASSERT(!arguments.hasOverflowed());
-
-    JSC::call(globalObject, emitOverride, callData, process, arguments);
-    RETURN_IF_EXCEPTION(scope, false);
-    return true;
+    RELEASE_AND_RETURN(scope, process->wrapped().emit(Identifier::fromString(vm, eventName), arguments));
 }
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)

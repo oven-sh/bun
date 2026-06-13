@@ -654,6 +654,36 @@ describe.concurrent(() => {
         .filter(Boolean);
       expect({ lines, stderr, exitCode }).toEqual({ lines: ["nexttick:ran"], stderr: "", exitCode: 0 });
     });
+
+    it("invokes a process.emit override defined as an accessor property", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const originalEmit = process.emit;
+          Object.defineProperty(process, "emit", {
+            configurable: true,
+            get() {
+              return function (event, ...args) {
+                if (event === "exit") console.log("accessor:exit");
+                return originalEmit.call(this, event, ...args);
+              };
+            },
+          });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
+      expect({ lines, stderr, exitCode }).toEqual({ lines: ["accessor:exit"], stderr: "", exitCode: 0 });
+    });
   });
 
   it("process.memoryUsage", () => {

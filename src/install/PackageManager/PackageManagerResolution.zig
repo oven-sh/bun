@@ -42,6 +42,50 @@ pub fn scopeForPackageName(this: *const PackageManager, name: string) *const Npm
     ) orelse &this.options.scope;
 }
 
+/// Find the `.npmrc` auth entry whose nerf-dart (`//host[/path]/`) is the
+/// longest path-segment prefix of `url_str`. Returns `null` when no entry
+/// matches the URL's host — callers fall back to the scope's pre-resolved
+/// credentials in that case. Matches npm's request-time lookup so that a
+/// token scoped to `/api/v4/projects/568/packages/npm/` authenticates
+/// tarball URLs under that path even when the scoped-registry URL lives at
+/// a different path (e.g. `/api/v4/packages/npm/`).
+pub fn matchAuthForUrl(this: *const PackageManager, url_str: string) ?Npm.Registry.AuthConfiguration.Match {
+    if (this.options.auth_configurations.len == 0) return null;
+
+    const url = URL.parse(url_str);
+    if (url.host.len == 0) return null;
+
+    const req_host = bun.strings.withoutTrailingSlash(url.host);
+    const req_path = bun.strings.withoutTrailingSlash(url.pathname);
+
+    var best: ?*const Npm.Registry.AuthConfiguration = null;
+    var best_path_len: usize = 0;
+
+    for (this.options.auth_configurations) |*entry| {
+        // Ignore entries that carry no usable credentials (e.g. a
+        // `username` without the matching `_password` half). An empty
+        // entry at a deeper path must not shadow a credentialed match
+        // at a shorter path — npm's rule is "longest nerf-dart with
+        // credentials wins".
+        if (entry.token.len == 0 and entry.auth.len == 0) continue;
+        if (!entry.matches(req_host, req_path)) continue;
+
+        if (best == null or entry.path.len > best_path_len) {
+            best = entry;
+            best_path_len = entry.path.len;
+        }
+    }
+
+    if (best) |entry| {
+        return .{
+            .token = entry.token,
+            .auth = entry.auth,
+            .path_len = entry.path.len,
+        };
+    }
+    return null;
+}
+
 pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.array_list.Managed(u8), package_name: []const u8, allocator: std.mem.Allocator) !std.array_list.Managed(Semver.Version) {
     var list = std.array_list.Managed(Semver.Version).init(allocator);
     var dir = this.getCacheDirectory().openDir(package_name, .{
@@ -225,6 +269,7 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const OOM = bun.OOM;
 const Output = bun.Output;
+const URL = bun.URL;
 const strings = bun.strings;
 
 const Semver = bun.Semver;

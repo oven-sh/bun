@@ -2977,6 +2977,13 @@ pub const api = struct {
         /// scoped
         scoped: ?NpmRegistryMap = null,
 
+        /// All `_authToken` / `_auth` / `username` / `_password` entries
+        /// parsed from `.npmrc`, keyed by their nerf-dart (`//host[/path]/`).
+        /// Used by the package manager to authenticate requests whose URL
+        /// (e.g. a tarball URL from a metadata response) lives at a different
+        /// path than the scoped registry URL. See `Npm.Registry.AuthConfiguration`.
+        auth_configurations: []bun.install.Npm.Registry.AuthConfiguration = &.{},
+
         /// lockfile_path
         lockfile_path: ?[]const u8 = null,
 

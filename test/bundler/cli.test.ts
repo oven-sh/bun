@@ -352,6 +352,40 @@ test("you can use --outfile=... and --sourcemap", async () => {
   `);
 });
 
+test("--outfile subdirectory is honored with --sourcemap (#30883)", async () => {
+  // Regression: `bun build --outfile ./dist/output.js --sourcemap` used to
+  // drop the `./dist/` prefix and emit `output.js` + `output.js.map` in cwd.
+  // The dirname of `--outfile` must be used as the output directory, even
+  // when the sourcemap adds a second output file.
+  using dir = tempDir("outfile-sourcemap-subdir", {
+    "index.ts": `console.log("hello");\n`,
+  });
+  const cwd = String(dir);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./index.ts", "--outfile", "./dist/output.js", "--sourcemap"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+
+  // Files must land in ./dist/, not cwd.
+  expect(fs.existsSync(path.join(cwd, "dist", "output.js"))).toBe(true);
+  expect(fs.existsSync(path.join(cwd, "dist", "output.js.map"))).toBe(true);
+  expect(fs.existsSync(path.join(cwd, "output.js"))).toBe(false);
+  expect(fs.existsSync(path.join(cwd, "output.js.map"))).toBe(false);
+
+  // Sourcemap link still points to the basename (relative to the JS file).
+  const outputContent = fs.readFileSync(path.join(cwd, "dist", "output.js"), "utf8");
+  expect(outputContent).toContain("//# sourceMappingURL=output.js.map");
+});
+
 test("some log cases", async () => {
   const tmpdir = tmpdirSync();
   const inputFile = path.join(tmpdir, "input.js");

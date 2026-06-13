@@ -1386,6 +1386,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // Memoize failed scans, but only for speculative attempts (log disabled
+        // means a backtracker above will restore the lexer and swallow the
+        // error, so failing early here never loses a diagnostic). The key is
+        // the byte offset of the `<` token: `expect_less_than` bumps
+        // `lexer.start` when it splits a compound token like `<<`, so the
+        // offset identifies the scan unambiguously. The JSX-element variant
+        // consumes the closing `>` differently, so it stays out of the memo.
+        let memoize = !IS_INSIDE_JSX_ELEMENT && self.lexer.is_log_disabled;
+        // Token offsets fit in 32 bits (`Loc` is an `i32`).
+        debug_assert!(self.lexer.start <= u32::MAX as usize);
+        let start = self.lexer.start as u32;
+        if memoize && self.ts_type_args_backtracks.contains(&start) {
+            return Err(err!("Backtrack"));
+        }
+
+        let result = self.skip_type_script_type_arguments_inner::<IS_INSIDE_JSX_ELEMENT>();
+        if memoize {
+            if let Err(e) = result {
+                // A stack-guard failure depends on the recursion depth at entry,
+                // not on the offset, so it must not be memoized: the same scan
+                // can succeed later from a shallower context.
+                if e != err!("StackOverflow") {
+                    self.ts_type_args_backtracks.insert(start);
+                }
+            }
+        }
+        result
+    }
+
+    fn skip_type_script_type_arguments_inner<const IS_INSIDE_JSX_ELEMENT: bool>(
+        &mut self,
+    ) -> Result<bool, Error> {
         self.lexer.expect_less_than::<false>()?;
 
         loop {

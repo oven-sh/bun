@@ -341,6 +341,19 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// until a constraint attempt actually backtracks, which is rare in real code.
     pub ts_infer_constraint_backtracks: Vec<u32>,
 
+    /// Speculative attempts to skip a type argument list that already failed,
+    /// keyed by the byte offset of the opening `<` token. The outcome of such a
+    /// scan is fully determined by that offset (the scan only consumes tokens),
+    /// so a repeated attempt can fail immediately instead of re-scanning.
+    /// Entries are recorded at every nesting level as a failed scan unwinds:
+    /// a chain like `a<T<T<T<...` makes the expression parser speculate on
+    /// "is this a type argument list?" at each `<`, and each failed speculation
+    /// re-scans the whole rest of the chain — quadratic without the memo (found
+    /// by fuzzing). A hash set rather than a sorted vec because a single unwind
+    /// inserts offsets in descending order; stays empty (no allocation) until a
+    /// speculative scan actually fails.
+    pub ts_type_args_backtracks: bun_collections::hashbrown::HashSet<u32, bun_wyhash::BuildHasher>,
+
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
     /// enabled inside each enum body block since TypeScript requires numeric
@@ -9113,6 +9126,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stack_check: bun_core::StackCheck::init(),
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
+            ts_type_args_backtracks: Default::default(),
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),

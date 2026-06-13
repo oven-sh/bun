@@ -5630,6 +5630,98 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     properties.releaseData();
 }
 
+// Enumerate a value's own *enumerable* string and symbol properties, without
+// walking the prototype chain. Unlike forEachProperty this excludes DontEnum
+// properties, so a function's intrinsic `name`/`length`/`prototype` are skipped
+// while user-assigned properties are visited. Used to print
+// `[Function: x] { ... }` / `[class X] { ... }` the way Node's util.inspect
+// does. When `ordered` the keys are sorted by code point (the `sorted: true`
+// inspect option); otherwise they are visited in spec/insertion order.
+extern "C" void JSC__JSValue__forEachPropertyEnumerableOwn(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, bool ordered, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    JSC::JSObject* object = value.getObject();
+    if (!object)
+        return;
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    {
+        JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return;
+        }
+    }
+
+    auto clientData = WebCore::clientData(vm);
+
+    auto vector = properties.data()->propertyNameVector();
+    if (ordered) {
+        std::sort(vector.begin(), vector.end(), [&](Identifier a, Identifier b) -> bool {
+            const WTF::StringImpl* aImpl = a.isSymbol() && !a.isPrivateName() ? a.impl() : a.string().impl();
+            const WTF::StringImpl* bImpl = b.isSymbol() && !b.isPrivateName() ? b.impl() : b.string().impl();
+            return codePointCompare(aImpl, bImpl) < 0;
+        });
+    }
+
+    for (const auto& property : vector) {
+        if (property.isNull()) [[unlikely]]
+            continue;
+
+        // Skip the internal native-pointer slot (a builtin "private name" that
+        // PrivateSymbolMode::Exclude does not filter). A user-defined own
+        // enumerable `constructor` is filtered by the shared console prelude,
+        // not here.
+        if (clientData->builtinNames().bunNativePtrPrivateName() == property)
+            continue;
+
+        // Own-only lookup: the keys came from getOwnPropertyNames, and a getter
+        // invoked while reading an earlier property could delete the own key and
+        // expose an inherited one. getPropertySlot would then read that
+        // prototype value; getOwnPropertySlot keeps this to own properties.
+        JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+        if (!object->getOwnPropertySlot(object, globalObject, property, slot)) {
+            (void)scope.tryClearException();
+            continue;
+        }
+        (void)scope.tryClearException();
+
+        JSC::JSValue propertyValue = jsUndefined();
+        if (slot.isAccessor()) {
+            // If we can't use getPureResult, let's at least say it was a [Getter]
+            if (!slot.isCacheableGetter()) {
+                propertyValue = slot.getterSetter();
+            } else {
+                propertyValue = slot.getPureResult();
+            }
+        } else {
+            propertyValue = slot.getValue(globalObject, property);
+        }
+
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            propertyValue = jsUndefined();
+        }
+
+        const WTF::StringImpl* name = property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string().impl();
+        ZigString key = toZigString(name);
+
+        JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
+        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), property.isPrivateName());
+
+        // The callback recurses into the formatter, which can throw (a nested
+        // throwing getter, a stack overflow). Stop before the next iteration's
+        // value extraction clears the pending exception via tryClearException;
+        // the caller propagates it.
+        if (scope.exception()) [[unlikely]]
+            break;
+    }
+    properties.releaseData();
+}
+
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isConstructor(JSC::EncodedJSValue JSValue0)
 {
     JSValue value = JSValue::decode(JSValue0);

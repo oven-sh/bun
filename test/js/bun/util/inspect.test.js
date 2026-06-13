@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -584,6 +584,110 @@ describe("console.logging class displays names and extends", async () => {
       expect(Bun.inspect(cases[i])).toBe(expected_logs[i]);
     });
   }
+});
+
+describe("functions and classes with own enumerable properties", () => {
+  // https://github.com/oven-sh/bun/issues/32226
+  // `console.log`/`Bun.inspect` must print a function's (or class's) own
+  // enumerable properties, the way graphql-tag attaches helpers to its
+  // exported `gql` function. Node's util.inspect does this too.
+  it("prints a function's own enumerable properties (graphql-tag shape)", () => {
+    function gql() {}
+    gql.gql = gql;
+    gql.resetCaches = function resetCaches() {};
+    gql.default = gql;
+    expect(Bun.inspect(gql)).toBe(
+      "[Function: gql] {\n  gql: [Circular],\n  resetCaches: [Function: resetCaches],\n  default: [Circular],\n}",
+    );
+  });
+
+  it("prints an arrow function's own enumerable properties", () => {
+    const arrow = () => {};
+    arrow.x = 1;
+    expect(Bun.inspect(arrow)).toBe("[Function: arrow] {\n  x: 1,\n}");
+  });
+
+  it("prints a class's own enumerable static properties", () => {
+    class Foo {
+      static a = 1;
+    }
+    expect(Bun.inspect(Foo)).toBe("[class Foo] {\n  a: 1,\n}");
+  });
+
+  it("prints a function's own enumerable symbol properties", () => {
+    const k = Symbol("k");
+    function fn() {}
+    fn[k] = 123;
+    expect(Bun.inspect(fn)).toBe("[Function: fn] {\n  [Symbol(k)]: 123,\n}");
+  });
+
+  it("honors the sorted option for callable properties", () => {
+    function fn() {}
+    fn.b = 1;
+    fn.a = 2;
+    // Insertion order by default.
+    expect(Bun.inspect(fn)).toBe("[Function: fn] {\n  b: 1,\n  a: 2,\n}");
+    // Sorted by code point when requested (matches Node's util.inspect).
+    expect(Bun.inspect(fn, { sorted: true })).toBe("[Function: fn] {\n  a: 2,\n  b: 1,\n}");
+  });
+
+  it("leaves property-less functions and classes unchanged", () => {
+    function noProps() {}
+    class Empty {}
+    expect(Bun.inspect(noProps)).toBe("[Function: noProps]");
+    expect(Bun.inspect(Empty)).toBe("[class Empty]");
+  });
+
+  it("omits a function's intrinsic name/length/prototype", () => {
+    // Only user-assigned *enumerable* properties show; the DontEnum
+    // name/length/prototype must not leak in.
+    function withProp() {}
+    withProp.shown = 1;
+    expect(Bun.inspect(withProp)).toBe("[Function: withProp] {\n  shown: 1,\n}");
+
+    // A non-enumerable own property is not printed either (matches Node).
+    function hidden() {}
+    Object.defineProperty(hidden, "secret", { value: 2, enumerable: false });
+    expect(Bun.inspect(hidden)).toBe("[Function: hidden]");
+  });
+
+  it("does not print [Circular] for Function.prototype", () => {
+    // Function.prototype is an InternalFunction with no enumerable own
+    // properties; it must render as a function header, not [Circular].
+    expect(Bun.inspect(Function.prototype)).toBe("[Function]");
+  });
+
+  it("console.log of a required CJS function export shows its properties", async () => {
+    // The exact scenario from the issue: `bun run main.cjs` logging a
+    // graphql-tag-style function export.
+    using dir = tempDir("inspect-cjs-fn", {
+      "gql.cjs": `
+        function gql() {}
+        gql.gql = gql;
+        gql.resetCaches = function resetCaches() {};
+        gql.default = gql;
+        module.exports = gql;
+      `,
+      "main.cjs": `
+        const gql = require('./gql.cjs');
+        console.log("typeof gql:", typeof gql);
+        console.log(gql);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(
+      "typeof gql: function\n" +
+        "[Function: gql] {\n  gql: [Circular],\n  resetCaches: [Function: resetCaches],\n  default: [Circular],\n}\n",
+    );
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("console.log on a Blob shows name", () => {

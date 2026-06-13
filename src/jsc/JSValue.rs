@@ -2514,6 +2514,35 @@ impl JSValue {
         unsafe { crate::TopExceptionScope::destroy(scope) };
         result
     }
+    /// `JSValue.forEachPropertyEnumerableOwn` — like
+    /// [`for_each_property`](Self::for_each_property) but visits only the
+    /// value's own *enumerable* properties and never walks the prototype
+    /// chain. A function's intrinsic `name`/`length`/`prototype` are
+    /// `DontEnum`, so this skips them while visiting user-assigned
+    /// properties; used to print `[Function: x] { ... }`. When `ordered` the
+    /// keys are sorted by code point (the `sorted: true` inspect option).
+    #[inline(always)]
+    pub fn for_each_property_enumerable_own(
+        self,
+        global: &JSGlobalObject,
+        ordered: bool,
+        ctx: *mut c_void,
+        callback: ForEachPropertyCallback,
+    ) -> JsResult<()> {
+        unsafe extern "C" {
+            // safe: same contract as `JSC__JSValue__forEachProperty` above.
+            safe fn JSC__JSValue__forEachPropertyEnumerableOwn(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                ordered: bool,
+                callback: ForEachPropertyCallback,
+            );
+        }
+        crate::top_scope!(scope, global);
+        JSC__JSValue__forEachPropertyEnumerableOwn(self, global, ctx, ordered, callback);
+        scope.return_if_exception()
+    }
     /// `JSValue.isBuffer` — `instanceof Buffer` check via
     /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side
     /// handles non-cells (returns false), so no precondition is asserted.

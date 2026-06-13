@@ -230,8 +230,11 @@ struct ProxyConfig {
     String host;
     uint16_t port { 0 };
     String authorization;
+    String username;
+    String password;
     Vector<std::pair<String, String>> headers;
     bool isHTTPS { false };
+    uint8_t kind { 0 }; // 1=http, 2=https, 3=socks5, 4=socks5h
 };
 
 static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders)
@@ -245,11 +248,25 @@ static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl
 
     ProxyConfig config;
     config.host = url.host().toString();
-    config.isHTTPS = url.protocolIs("https"_s);
-    config.port = url.port().value_or(config.isHTTPS ? 443 : 80);
+    config.username = url.user();
+    config.password = url.password();
+    if (url.protocolIs("https"_s)) {
+        config.isHTTPS = true;
+        config.kind = 2;
+        config.port = url.port().value_or(443);
+    } else if (url.protocolIs("socks5"_s)) {
+        config.kind = 3;
+        config.port = url.port().value_or(1080);
+    } else if (url.protocolIs("socks5h"_s)) {
+        config.kind = 4;
+        config.port = url.port().value_or(1080);
+    } else {
+        config.kind = 1;
+        config.port = url.port().value_or(80);
+    }
 
     // Compute Basic auth from proxy URL credentials
-    if (!url.user().isEmpty()) {
+    if (!url.user().isEmpty() && config.kind != 3 && config.kind != 4) {
         auto credentials = makeString(url.user(), ':', url.password());
         auto utf8 = credentials.utf8();
         auto encoded = base64EncodeToString(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()));
@@ -671,6 +688,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     // and remain valid for the duration of the connect() call.
     BunString proxyHost = hasProxy ? Bun::toString(proxyConfig->host) : BunString { BunStringTag::Empty };
     BunString proxyAuth = hasProxy ? Bun::toString(proxyConfig->authorization) : BunString { BunStringTag::Empty };
+    BunString proxyUsername = hasProxy ? Bun::toString(proxyConfig->username) : BunString { BunStringTag::Empty };
+    BunString proxyPassword = hasProxy ? Bun::toString(proxyConfig->password) : BunString { BunStringTag::Empty };
     uint16_t proxyPort = hasProxy ? proxyConfig->port : 0;
 
     Vector<BunString, 8> proxyHeaderNames;
@@ -708,7 +727,9 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<CppWebSocket*>(this),
             &host, port, &path, &clientProtocolString,
             headerNames.begin(), headerValues.begin(), headerNames.size(),
-            hasProxy ? &proxyHost : nullptr, proxyPort,
+            hasProxy ? &proxyHost : nullptr, proxyPort, hasProxy ? proxyConfig->kind : 0,
+            hasProxy ? &proxyUsername : nullptr,
+            hasProxy ? &proxyPassword : nullptr,
             (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
             sslConfig, is_secure,
@@ -720,7 +741,9 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<CppWebSocket*>(this),
             &host, port, &path, &clientProtocolString,
             headerNames.begin(), headerValues.begin(), headerNames.size(),
-            hasProxy ? &proxyHost : nullptr, proxyPort,
+            hasProxy ? &proxyHost : nullptr, proxyPort, hasProxy ? proxyConfig->kind : 0,
+            hasProxy ? &proxyUsername : nullptr,
+            hasProxy ? &proxyPassword : nullptr,
             (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
             sslConfig, is_secure,

@@ -273,7 +273,10 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !?New
                 client.setCustomSslCtx(entry.ctx);
                 // Keepalive is now supported for custom SSL contexts
                 if (client.http_proxy) |url| {
-                    return try entry.ctx.connect(client, url.hostname, url.getPortAuto());
+                    if (!(url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http") or strings.eqlComptime(url.protocol, "socks5") or strings.eqlComptime(url.protocol, "socks5h"))) {
+                        return error.UnsupportedProxyProtocol;
+                    }
+                    return try entry.ctx.connect(client, url.hostname, proxyPort(url));
                 } else {
                     return try entry.ctx.connect(client, client.url.hostname, client.url.getPortAuto());
                 }
@@ -312,8 +315,8 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !?New
             client.setCustomSslCtx(custom_context);
             // Keepalive is now supported for custom SSL contexts
             if (client.http_proxy) |url| {
-                if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
-                    return try custom_context.connect(client, url.hostname, url.getPortAuto());
+                if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http") or strings.eqlComptime(url.protocol, "socks5") or strings.eqlComptime(url.protocol, "socks5h")) {
+                    return try custom_context.connect(client, url.hostname, proxyPort(url));
                 }
                 return error.UnsupportedProxyProtocol;
             }
@@ -323,8 +326,8 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !?New
     if (client.http_proxy) |url| {
         if (url.href.len > 0) {
             // https://github.com/oven-sh/bun/issues/11343
-            if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
-                return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+            if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http") or strings.eqlComptime(url.protocol, "socks5") or strings.eqlComptime(url.protocol, "socks5h")) {
+                return try this.context(is_ssl).connect(client, url.hostname, proxyPort(url));
             }
             return error.UnsupportedProxyProtocol;
         }
@@ -525,6 +528,7 @@ fn drainEvents(this: *@This()) void {
     this.drainQueuedWrites();
     this.drainQueuedShutdowns();
     bun.http.H3.PendingConnect.drainResolved();
+    bun.http.SocksDNSPending.drainResolved();
 
     for (this.queued_threadlocal_proxy_derefs.items) |http| {
         http.deref();
@@ -728,6 +732,14 @@ pub fn schedule(this: *@This(), batch: Batch) void {
 }
 
 pub const Queue = UnboundedQueue(AsyncHTTP, .next);
+
+fn proxyPort(url: bun.URL) u16 {
+    if (strings.eqlComptime(url.protocol, "socks5") or strings.eqlComptime(url.protocol, "socks5h")) {
+        if (url.getPort()) |_| return url.getPortAuto();
+        return 1080;
+    }
+    return url.getPortAuto();
+}
 
 const log = Output.scoped(.HTTPThread, .visible);
 

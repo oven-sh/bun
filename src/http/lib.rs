@@ -698,8 +698,11 @@ impl Drop for HTTPClient<'_> {
         // only, no shutdown).
         self.close_proxy_tunnel(false);
         // The session detaches `h2` before any terminal callback, so this should
-        // be None by the time the result callback's deinit path runs.
+        // be None by the time the result callback's deinit path runs. Same for
+        // `pending_h2`: every terminal path resolves it (freeing the list entry
+        // whose `waiters` borrow other live clients) before teardown.
         debug_assert!(self.h2.is_none());
+        debug_assert!(self.pending_h2.is_none());
         // tls_props: Option<SharedPtr> — Drop releases strong ref.
         if let Some(ctx) = self.custom_ssl_ctx.take() {
             // Release the strong ref taken in set_custom_ssl_ctx.
@@ -3471,13 +3474,26 @@ impl<'a> HTTPClient<'a> {
         let Some(pc_ptr) = self.pending_h2.take() else {
             return;
         };
-        // `pc_ptr` is a backref into the context's `pending_h2_connects` Vec,
-        // set in `HTTPContext::connect`; unregister_from swaps the owning Box
-        // out so we can iterate and drop it here.
-        let Some(pc) = h2::PendingConnect::unregister_from(
-            pc_ptr.as_ptr(),
-            Self::ssl_ctx_mut(self.get_ssl_ctx::<true>()),
-        ) else {
+        // `pc_ptr` is a backref into the owning context's `pending_h2_connects`
+        // Vec, set in `HTTPContext::connect`; unregister_from swaps the owning
+        // Box out so we can iterate and drop it here. Unregister from the
+        // context recorded at registration (`pc.ctx`) — NOT `get_ssl_ctx()`,
+        // which reflects the client's *current* custom context and would miss
+        // the list (stranding the entry and its parked waiters forever) if
+        // that ever diverged from the registering one.
+        //
+        // SAFETY: `pending_h2` is non-null only while the entry is registered
+        // (every terminal path resolves it before the leader releases its
+        // context ref), so `pc_ptr` points at the live Box owned by
+        // `pc.ctx.pending_h2_connects` and `pc.ctx` is valid.
+        let ctx = unsafe { pc_ptr.as_ref() }.ctx;
+        let pc =
+            h2::PendingConnect::unregister_from(pc_ptr.as_ptr(), Self::ssl_ctx_mut(ctx.as_ptr()));
+        debug_assert!(
+            pc.is_some(),
+            "PendingConnect missing from the context it was registered in"
+        );
+        let Some(pc) = pc else {
             return;
         };
         // pc drops at scope exit (was `defer pc.deinit()`)

@@ -784,17 +784,38 @@ impl ClientSession {
         for client in core::mem::take(&mut self.pending_attach) {
             pending_client_mut(client).h2_fail(err);
         }
-        for &e in self.streams.values() {
-            let client = stream_mut(e).client.take();
-            if let Some(c) = client {
-                stream_client_mut(c).h2 = None;
+        if self.delivering {
+            // Re-entered from a terminal callback inside onData's deliver loop
+            // (the client teardown dropped the last ref on a custom SSL
+            // context, whose Drop force-closed this session's socket). The
+            // loop's current stream is still in `streams`, and the loop
+            // dereferences it — and calls `remove_stream` on it — after the
+            // callback returns, so freeing it here would be a use-after-free
+            // and double-free there. Fail the clients but leave the map
+            // entries: every remaining stream is client-less after this, so
+            // the deliver loop unlinks and frees each exactly once.
+            for &e in self.streams.values() {
+                let client = stream_mut(e).client.take();
+                if let Some(c) = client {
+                    stream_client_mut(c).h2 = None;
+                }
+                if let Some(c) = client {
+                    stream_client_mut(c).h2_fail(err);
+                }
             }
-            drop_stream(e);
-            if let Some(c) = client {
-                stream_client_mut(c).h2_fail(err);
+        } else {
+            for &e in self.streams.values() {
+                let client = stream_mut(e).client.take();
+                if let Some(c) = client {
+                    stream_client_mut(c).h2 = None;
+                }
+                drop_stream(e);
+                if let Some(c) = client {
+                    stream_client_mut(c).h2_fail(err);
+                }
             }
+            self.streams.clear_retaining_capacity();
         }
-        self.streams.clear_retaining_capacity();
         // SAFETY: `self: &mut Self` carries write provenance to the Box alloc.
         unsafe { ClientSession::deref(self) };
     }
@@ -820,6 +841,18 @@ impl ClientSession {
     /// Called from the HTTP thread's shutdown queue when a fetch on this
     /// session is aborted. RST_STREAMs that one request; siblings continue.
     pub fn abort_by_http_id(&mut self, async_http_id: u32) {
+        // Failing the aborted request runs its result callback synchronously
+        // (`fail_from_h2` → `dispatch_result_and_reset` →
+        // `on_async_http_callback_raw`), and that teardown releases the
+        // client's strong ref on its custom SSL context. When the context
+        // cache entry was already evicted and this was the last in-flight
+        // request, the context Drop runs re-entrantly and force-closes every
+        // socket in its group — including this session's — so `on_close`
+        // releases both the registry and socket-ext refs underneath us. Hold
+        // a ref for the duration so the `rearm_timeout`/`maybe_release` tail
+        // below doesn't run on a freed session (same guard as `on_data`/
+        // `on_writable`/`on_close`).
+        let _guard = self.ref_scope();
         // Find the index via a raw-ptr field read first, then swap_remove, so
         // no `&mut HTTPClient` is held across the Vec mutation and no `&mut`
         // is materialised during iteration.

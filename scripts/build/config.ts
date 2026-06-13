@@ -169,8 +169,20 @@ export interface Config {
   buildDir: string;
   /** Generated code output, e.g. buildDir/codegen/. */
   codegenDir: string;
-  /** Persistent cache for dep tarballs and builds. */
+  /**
+   * ccache + prebuilt extraction (webkit, nodejs-headers, cross-compile
+   * sysroots). Local: shared across checkouts. CI: per-build (ephemeral,
+   * under buildDir).
+   */
   cacheDir: string;
+  /**
+   * Downloaded tarballs (dep archives + prebuilt webkit/nodejs-headers).
+   * Defaults to cacheDir; CI agents that want fetches to survive across
+   * ephemeral runners point this elsewhere via BUN_DEPS_CACHE_PATH. Only
+   * tarballs land here — extraction stays in cacheDir so split-build
+   * artifact paths remain buildDir-relative.
+   */
+  downloadCacheDir: string;
   /** Vendored dependencies (gitignored). */
   vendorDir: string;
 
@@ -342,6 +354,7 @@ export interface PartialConfig {
   webkit?: WebKitMode;
   buildDir?: string;
   cacheDir?: string;
+  downloadCacheDir?: string;
   /** Override NDK location (default: $ANDROID_NDK_ROOT etc). Only used when abi=android. */
   androidNdk?: string;
   /** Override Android API level (default: ANDROID_API_LEVEL_DEFAULT). Only used when abi=android. */
@@ -890,6 +903,17 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       : ci
         ? resolve(buildDir, "cache")
         : resolve(bunInstall, "build-cache");
+  // Downloaded tarballs only — content-addressed/version-stamped, so safe
+  // to share across builds. Anchored to repo root for the same regen-rule
+  // reason as bunInstall above.
+  const downloadCacheDir =
+    partial.downloadCacheDir !== undefined
+      ? isAbsolute(partial.downloadCacheDir)
+        ? partial.downloadCacheDir
+        : resolve(cwd, partial.downloadCacheDir)
+      : process.env.BUN_DEPS_CACHE_PATH
+        ? resolve(cwd, process.env.BUN_DEPS_CACHE_PATH)
+        : cacheDir;
   const vendorDir = resolve(cwd, "vendor");
 
   // ─── Validation ───
@@ -1131,6 +1155,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     buildDir,
     codegenDir,
     cacheDir,
+    downloadCacheDir,
     vendorDir,
     cc: toolchain.cc,
     cxx: toolchain.cxx,

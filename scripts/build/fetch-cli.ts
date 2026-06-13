@@ -25,7 +25,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
+import { downloadWithRetry, extractTarGz, fetchPrebuilt, tarballListsCleanly } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 
@@ -76,13 +76,14 @@ async function main(): Promise<void> {
     }
 
     case "prebuilt": {
-      // fetch-cli.ts prebuilt <name> <url> <dest> <identity> [...rm_paths]
-      const [name, url, dest, identity, ...rmPaths] = args;
+      // fetch-cli.ts prebuilt <name> <url> <dest> <identity> <cache> [...rm_paths]
+      const [name, url, dest, identity, cache, ...rmPaths] = args;
       assert(
         name !== undefined && url !== undefined && dest !== undefined && identity !== undefined,
         "prebuilt: missing name/url/dest/identity",
       );
-      return fetchPrebuilt(name, url, dest, identity, rmPaths);
+      assert(cache !== undefined, "prebuilt: missing cache");
+      return fetchPrebuilt(name, url, dest, identity, cache, rmPaths);
     }
 
     case undefined:
@@ -102,8 +103,8 @@ Usage: bun fetch-cli.ts <kind> <args...>
 
 Kinds:
   dep      <name> <repo> <commit> <dest> <cache> [...patches]
-  prebuilt <name> <url> <dest> <identity> [...rm_paths]
   subst    <in> <out> [<from> <to>]...
+  prebuilt <name> <url> <dest> <identity> <cache> [...rm_paths]
 
 This is invoked by ninja build rules. You shouldn't need to call it
 directly — run ninja targets instead.
@@ -181,7 +182,20 @@ async function fetchDep(
   await mkdir(dest, { recursive: true });
 
   // Github archives have a top-level directory <repo>-<commit>/. Strip it.
-  await extractTarGz(tarballPath, dest);
+  // On failure, probe the archive: if `tar -tzf` ALSO fails the cached
+  // file is bad (drop it so the next run re-downloads); if it lists
+  // cleanly the failure was environmental (ENOSPC etc.) and the tarball —
+  // now possibly in a shared BUN_DEPS_CACHE_PATH — is kept. Swallow the
+  // rm rejection so the original extraction error surfaces.
+  try {
+    await extractTarGz(tarballPath, dest);
+  } catch (err) {
+    if (!tarballListsCleanly(tarballPath)) {
+      console.log(`dropping unreadable cached tarball ${tarballPath}`);
+      await rm(tarballPath, { force: true }).catch(() => {});
+    }
+    throw err;
+  }
 
   // ─── Apply patches / overlays ───
   for (let i = 0; i < patches.length; i++) {

@@ -11,9 +11,14 @@
 // handler pointer and flags round-trip. That property holds iff the Zig
 // struct agrees with libc's on this platform.
 import { expect, test } from "bun:test";
-import { isPosix } from "harness";
+import { isWindows } from "harness";
 
-test.skipIf(!isPosix)("bun.sys.Sigaction matches the host libc's struct sigaction", () => {
+// Gate on !isWindows rather than harness's `isPosix`: the latter is
+// `darwin || linux || freebsd`, which excludes Android (where Bun reports
+// process.platform === "android"), so the bionic round-trip this test
+// exists for would never run. Matches the Zig binding's own
+// `!Environment.isPosix` guard.
+test.skipIf(isWindows)("bun.sys.Sigaction matches the host libc's struct sigaction", () => {
   // Resolve lazily so a build without the binding fails this test rather
   // than erroring at module load (which the junit reporter counts as 0
   // failures).

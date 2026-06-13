@@ -257,8 +257,11 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
 
 /// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
 fn getEntryData(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocator: std.mem.Allocator) bun.JSError!jsc.ZigString.Slice {
-    // For Blob, use sharedView (no copy needed)
+    // For Blob, use sharedView for in-memory blobs, read file for file-backed blobs
     if (value.as(jsc.WebCore.Blob)) |blob_ptr| {
+        if (blob_ptr.needsToReadFile()) {
+            return readFileBackedBlob(globalThis, blob_ptr, allocator);
+        }
         return jsc.ZigString.Slice.fromUTF8NeverFree(blob_ptr.sharedView());
     }
 
@@ -269,6 +272,60 @@ fn getEntryData(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocator: 
 
     // For strings, convert (allocates)
     return value.toSlice(globalThis, allocator);
+}
+
+/// Reads data from a file-backed Blob synchronously, respecting blob offset and size.
+fn readFileBackedBlob(globalThis: *jsc.JSGlobalObject, blob_ptr: *const jsc.WebCore.Blob, allocator: std.mem.Allocator) bun.JSError!jsc.ZigString.Slice {
+    const store = blob_ptr.store orelse return jsc.ZigString.Slice.fromUTF8NeverFree("");
+    const file = store.data.file;
+    const file_data: []const u8 = switch (file.pathlike) {
+        .path => |path| switch (bun.sys.File.readFrom(bun.FD.cwd(), path.slice(), allocator)) {
+            .result => |b| b,
+            .err => |e| return globalThis.throwValue(e.toSystemError().toErrorInstance(globalThis)),
+        },
+        .fd => |fd| blk: {
+            const handle = bun.sys.File.from(fd);
+            var result = handle.readToEnd(allocator);
+            if (result.err) |e| {
+                result.bytes.deinit();
+                return globalThis.throwValue(e.toSystemError().toErrorInstance(globalThis));
+            }
+            if (result.bytes.items.len == 0) {
+                result.bytes.deinit();
+                break :blk "";
+            }
+            break :blk result.bytes.toOwnedSlice() catch {
+                result.bytes.deinit();
+                return globalThis.throwOutOfMemory();
+            };
+        },
+    };
+
+    if (file_data.len == 0) return jsc.ZigString.Slice.fromUTF8NeverFree("");
+
+    // Apply blob offset and size to support sliced file-backed blobs.
+    // Reads the full file first since bun.sys.File doesn't support offset/length reads.
+    const offset: usize = @intCast(blob_ptr.offset);
+    if (offset >= file_data.len) {
+        allocator.free(file_data);
+        return jsc.ZigString.Slice.fromUTF8NeverFree("");
+    }
+    const remaining = file_data.len - offset;
+    const size: usize = if (blob_ptr.size == jsc.WebCore.Blob.max_size)
+        remaining
+    else
+        @min(@as(usize, @intCast(blob_ptr.size)), remaining);
+
+    if (offset == 0 and size == file_data.len) {
+        return jsc.ZigString.Slice.init(allocator, file_data);
+    }
+
+    const sliced = allocator.dupe(u8, file_data[offset..][0..size]) catch {
+        allocator.free(file_data);
+        return globalThis.throwOutOfMemory();
+    };
+    allocator.free(file_data);
+    return jsc.ZigString.Slice.init(allocator, sliced);
 }
 
 /// Static method: Archive.write(path, data, options?)

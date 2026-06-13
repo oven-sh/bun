@@ -34,21 +34,23 @@ test("native ReadableStream reuses the pull buffer across small reads", async ()
   const chunks: Uint8Array[] = [];
   for await (const chunk of resp.body!) chunks.push(chunk);
 
-  // Some chunks coalesce on the wire; we just need a meaningful sample
-  // of small reads through the native pull path.
-  expect(chunks.length).toBeGreaterThan(20);
+  // Chunks coalesce on the wire — heavily so on a loaded CI machine (runs
+  // have seen anywhere from 8 to hundreds of chunks) — so the assertions
+  // below must not depend on how many reads the 2KB arrived in; any two
+  // reads are enough to observe buffer reuse.
+  expect(chunks.length).toBeGreaterThan(1);
 
   // Consecutive small reads should land in the same backing buffer (the
-  // tail subarray is reused until a read fills it). 2KB of ~few-byte
-  // chunks fits well inside one 256KB buffer, so the whole stream should
-  // share a handful at most. Pre-fix every chunk had its own 256KB
-  // buffer, so this was ~chunks.length.
+  // tail subarray is reused until a read fills it). 2KB of small chunks
+  // fits well inside one 256KB buffer, so at least some chunks must share
+  // a buffer. Pre-fix every chunk had its own fresh 256KB buffer, making
+  // this exactly chunks.length regardless of coalescing.
   const distinctBuffers = new Set(chunks.map(c => c.buffer));
-  expect(distinctBuffers.size).toBeLessThan(8);
+  expect(distinctBuffers.size).toBeLessThan(chunks.length);
 
   let backingBytes = 0;
   for (const buf of distinctBuffers) backingBytes += buf.byteLength;
-  // Pre-fix this was ~chunks.length * 256KB ≈ 25–250 MB.
+  // Pre-fix this was ~chunks.length * 256KB ≈ 2–250 MB.
   expect(backingBytes).toBeLessThan(4 * 1024 * 1024);
 });
 

@@ -1,21 +1,21 @@
 export function initializeDecompressionStream(this, format) {
-  const zlib = require("node:zlib");
-  const stream = require("node:stream");
-
-  const builders = {
-    "deflate": zlib.createInflate,
-    "deflate-raw": zlib.createInflateRaw,
-    "gzip": zlib.createGunzip,
-    "brotli": zlib.createBrotliDecompress,
-    "zstd": zlib.createZstdDecompress,
+  // node:zlib NodeMode values (INFLATE, GUNZIP, INFLATERAW, BROTLI_DECODE,
+  // ZSTD_DECOMPRESS) — see CompressionStream for the encode-side table.
+  const modes = {
+    "deflate": 2,
+    "deflate-raw": 6,
+    "gzip": 4,
+    "brotli": 8,
+    "zstd": 11,
   };
 
-  if (!(format in builders))
-    throw $ERR_INVALID_ARG_VALUE("format", format, "must be one of: " + Object.keys(builders).join(", "));
+  if (!(format in modes))
+    throw $ERR_INVALID_ARG_VALUE("format", format, "must be one of: " + Object.keys(modes).join(", "));
 
-  const handle = builders[format]();
-  $putByIdDirectPrivate(this, "readable", stream.Readable.toWeb(handle));
-  $putByIdDirectPrivate(this, "writable", stream.Writable.toWeb(handle));
+  const transform = $createCompressionTransform(modes[format]);
+
+  $putByIdDirectPrivate(this, "readable", $getByIdDirectPrivate(transform, "readable"));
+  $putByIdDirectPrivate(this, "writable", $getByIdDirectPrivate(transform, "writable"));
 
   return this;
 }

@@ -24,6 +24,7 @@ using namespace JSC;
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
     macro(AbortSignal) \
     macro(Buffer) \
+    macro(CompressionStreamTransformer) \
     macro(Loader) \
     macro(ReadableByteStreamController) \
     macro(ReadableStream) \
@@ -99,6 +100,7 @@ using namespace JSC;
     macro(fatal) \
     macro(fd) \
     macro(filename) \
+    macro(finishPromise) \
     macro(flushAlgorithm) \
     macro(format) \
     macro(fulfillModuleSync) \

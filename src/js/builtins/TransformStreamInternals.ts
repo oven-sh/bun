@@ -65,7 +65,9 @@ export function createTransformStream(
   );
 
   const controller = new TransformStreamDefaultController();
-  $setUpTransformStreamDefaultController(stream, controller, transformAlgorithm, flushAlgorithm);
+  $setUpTransformStreamDefaultController(stream, controller, transformAlgorithm, flushAlgorithm, () =>
+    Promise.$resolve(),
+  );
 
   startAlgorithm().$then(
     () => {
@@ -112,8 +114,7 @@ export function initializeTransformStream(
     return $transformStreamDefaultSourcePullAlgorithm(stream);
   };
   const cancelAlgorithm = reason => {
-    $transformStreamErrorWritableAndUnblockWrite(stream, reason);
-    return Promise.$resolve();
+    return $transformStreamDefaultSourceCancelAlgorithm(stream, reason);
   };
   const underlyingSource = {};
   $putByIdDirectPrivate(underlyingSource, "start", startAlgorithm);
@@ -151,6 +152,10 @@ export function transformStreamErrorWritableAndUnblockWrite(stream, e) {
   const writable = $getByIdDirectPrivate(stream, "internalWritable");
   $writableStreamDefaultControllerErrorIfNeeded($getByIdDirectPrivate(writable, "controller"), e);
 
+  $transformStreamUnblockWrite(stream);
+}
+
+export function transformStreamUnblockWrite(stream) {
   if ($getByIdDirectPrivate(stream, "backpressure")) $transformStreamSetBackpressure(stream, false);
 }
 
@@ -164,7 +169,13 @@ export function transformStreamSetBackpressure(stream, backpressure) {
   $putByIdDirectPrivate(stream, "backpressure", backpressure);
 }
 
-export function setUpTransformStreamDefaultController(stream, controller, transformAlgorithm, flushAlgorithm) {
+export function setUpTransformStreamDefaultController(
+  stream,
+  controller,
+  transformAlgorithm,
+  flushAlgorithm,
+  cancelAlgorithm,
+) {
   $assert($isTransformStream(stream));
   $assert($getByIdDirectPrivate(stream, "controller") === undefined);
 
@@ -172,6 +183,8 @@ export function setUpTransformStreamDefaultController(stream, controller, transf
   $putByIdDirectPrivate(stream, "controller", controller);
   $putByIdDirectPrivate(controller, "transformAlgorithm", transformAlgorithm);
   $putByIdDirectPrivate(controller, "flushAlgorithm", flushAlgorithm);
+  $putByIdDirectPrivate(controller, "cancelAlgorithm", cancelAlgorithm);
+  $putByIdDirectPrivate(controller, "finishPromise", undefined);
 }
 
 export function setUpTransformStreamDefaultControllerFromTransformer(stream, transformer, transformerDict) {
@@ -187,6 +200,9 @@ export function setUpTransformStreamDefaultControllerFromTransformer(stream, tra
   let flushAlgorithm = () => {
     return Promise.$resolve();
   };
+  let cancelAlgorithm = () => {
+    return Promise.$resolve();
+  };
 
   if ("transform" in transformerDict)
     transformAlgorithm = chunk => {
@@ -199,13 +215,20 @@ export function setUpTransformStreamDefaultControllerFromTransformer(stream, tra
     };
   }
 
-  $setUpTransformStreamDefaultController(stream, controller, transformAlgorithm, flushAlgorithm);
+  if ("cancel" in transformerDict) {
+    cancelAlgorithm = reason => {
+      return $promiseInvokeOrNoopMethod(transformer, transformerDict["cancel"], [reason]);
+    };
+  }
+
+  $setUpTransformStreamDefaultController(stream, controller, transformAlgorithm, flushAlgorithm, cancelAlgorithm);
 }
 
 export function transformStreamDefaultControllerClearAlgorithms(controller) {
   // We set transformAlgorithm to true to allow GC but keep the isTransformStreamDefaultController check.
   $putByIdDirectPrivate(controller, "transformAlgorithm", true);
   $putByIdDirectPrivate(controller, "flushAlgorithm", undefined);
+  $putByIdDirectPrivate(controller, "cancelAlgorithm", undefined);
 }
 
 export function transformStreamDefaultControllerEnqueue(controller, chunk) {
@@ -236,9 +259,29 @@ export function transformStreamDefaultControllerError(controller, e) {
 }
 
 export function transformStreamDefaultControllerPerformTransform(controller, chunk) {
+  const transformAlgorithm = $getByIdDirectPrivate(controller, "transformAlgorithm");
+
+  // The algorithms are cleared as soon as teardown starts, but a write can
+  // still get here when it races reader.cancel(): the writable only errors
+  // once the cancel algorithm settles. Reject the write with the teardown
+  // outcome instead of invoking a cleared algorithm (the spec reference
+  // implementation rejects with an internal TypeError on this race).
+  if (transformAlgorithm === true) {
+    const stream = $getByIdDirectPrivate(controller, "stream");
+    const writable = $getByIdDirectPrivate(stream, "internalWritable");
+    const promiseCapability = $newPromiseCapability(Promise);
+    const rejectWithStoredError = () => {
+      promiseCapability.reject.$call(undefined, $getByIdDirectPrivate(writable, "storedError"));
+    };
+    const finishPromise = $getByIdDirectPrivate(controller, "finishPromise");
+    if (finishPromise !== undefined) finishPromise.promise.$then(rejectWithStoredError, rejectWithStoredError);
+    else rejectWithStoredError();
+    return promiseCapability.promise;
+  }
+
   const promiseCapability = $newPromiseCapability(Promise);
 
-  const transformPromise = $getByIdDirectPrivate(controller, "transformAlgorithm").$call(undefined, chunk);
+  const transformPromise = transformAlgorithm.$call(undefined, chunk);
   transformPromise.$then(
     () => {
       promiseCapability.resolve();
@@ -304,21 +347,60 @@ export function transformStreamDefaultSinkWriteAlgorithm(stream, chunk) {
 }
 
 export function transformStreamDefaultSinkAbortAlgorithm(stream, reason) {
-  $transformStreamError(stream, reason);
-  return Promise.$resolve();
+  const controller = $getByIdDirectPrivate(stream, "controller");
+  const finishPromise = $getByIdDirectPrivate(controller, "finishPromise");
+  if (finishPromise !== undefined) return finishPromise.promise;
+
+  const cancelAlgorithm = $getByIdDirectPrivate(controller, "cancelAlgorithm");
+  // A transform error can clear the algorithms while a write is in flight;
+  // the writable machinery still performs its abort steps once that write
+  // settles. The stream is fully errored by then — nothing left to cancel.
+  // (The spec reference implementation crashes on this race.)
+  if (cancelAlgorithm === undefined) return Promise.$resolve();
+
+  const readable = $getByIdDirectPrivate(stream, "readable");
+
+  const promiseCapability = $newPromiseCapability(Promise);
+  $putByIdDirectPrivate(controller, "finishPromise", promiseCapability);
+
+  const cancelPromise = cancelAlgorithm.$call(undefined, reason);
+  $transformStreamDefaultControllerClearAlgorithms(controller);
+
+  cancelPromise.$then(
+    () => {
+      if ($getByIdDirectPrivate(readable, "state") === $streamErrored) {
+        promiseCapability.reject.$call(undefined, $getByIdDirectPrivate(readable, "storedError"));
+        return;
+      }
+
+      $readableStreamDefaultControllerError($getByIdDirectPrivate(readable, "readableStreamController"), reason);
+      promiseCapability.resolve.$call();
+    },
+    r => {
+      $readableStreamDefaultControllerError($getByIdDirectPrivate(readable, "readableStreamController"), r);
+      promiseCapability.reject.$call(undefined, r);
+    },
+  );
+
+  return promiseCapability.promise;
 }
 
 export function transformStreamDefaultSinkCloseAlgorithm(stream) {
-  const readable = $getByIdDirectPrivate(stream, "readable");
   const controller = $getByIdDirectPrivate(stream, "controller");
+  const finishPromise = $getByIdDirectPrivate(controller, "finishPromise");
+  if (finishPromise !== undefined) return finishPromise.promise;
+
+  const readable = $getByIdDirectPrivate(stream, "readable");
   const readableController = $getByIdDirectPrivate(readable, "readableStreamController");
+
+  const promiseCapability = $newPromiseCapability(Promise);
+  $putByIdDirectPrivate(controller, "finishPromise", promiseCapability);
 
   const flushAlgorithm = $getByIdDirectPrivate(controller, "flushAlgorithm");
   $assert(flushAlgorithm !== undefined);
-  const flushPromise = $getByIdDirectPrivate(controller, "flushAlgorithm").$call();
+  const flushPromise = flushAlgorithm.$call();
   $transformStreamDefaultControllerClearAlgorithms(controller);
 
-  const promiseCapability = $newPromiseCapability(Promise);
   flushPromise.$then(
     () => {
       if ($getByIdDirectPrivate(readable, "state") === $streamErrored) {
@@ -333,7 +415,11 @@ export function transformStreamDefaultSinkCloseAlgorithm(stream) {
     },
     r => {
       $transformStreamError($getByIdDirectPrivate(controller, "stream"), r);
-      promiseCapability.reject.$call(undefined, $getByIdDirectPrivate(readable, "storedError"));
+      // Reject with r per spec. The readable's storedError is normally the
+      // same value, but when a concurrent reader.cancel() already closed the
+      // readable, transformStreamError cannot error it and storedError is
+      // undefined — the flush error must not be swallowed.
+      promiseCapability.reject.$call(undefined, r);
     },
   );
   return promiseCapability.promise;
@@ -346,4 +432,141 @@ export function transformStreamDefaultSourcePullAlgorithm(stream) {
   $transformStreamSetBackpressure(stream, false);
 
   return $getByIdDirectPrivate(stream, "backpressureChangePromise").promise;
+}
+
+export function transformStreamDefaultSourceCancelAlgorithm(stream, reason) {
+  const controller = $getByIdDirectPrivate(stream, "controller");
+  const finishPromise = $getByIdDirectPrivate(controller, "finishPromise");
+  if (finishPromise !== undefined) return finishPromise.promise;
+
+  const cancelAlgorithm = $getByIdDirectPrivate(controller, "cancelAlgorithm");
+  // controller.terminate() clears the algorithms while the readable can
+  // still hold queued chunks — and stay cancelable — without a finishPromise
+  // ever being set. The transformer is already torn down; there is nothing
+  // left to cancel. (The spec reference implementation crashes on this.)
+  if (cancelAlgorithm === undefined) return Promise.$resolve();
+
+  const writable = $getByIdDirectPrivate(stream, "internalWritable");
+
+  const promiseCapability = $newPromiseCapability(Promise);
+  $putByIdDirectPrivate(controller, "finishPromise", promiseCapability);
+
+  const cancelPromise = cancelAlgorithm.$call(undefined, reason);
+  $transformStreamDefaultControllerClearAlgorithms(controller);
+
+  cancelPromise.$then(
+    () => {
+      if ($getByIdDirectPrivate(writable, "state") === "errored") {
+        promiseCapability.reject.$call(undefined, $getByIdDirectPrivate(writable, "storedError"));
+        return;
+      }
+
+      $writableStreamDefaultControllerErrorIfNeeded($getByIdDirectPrivate(writable, "controller"), reason);
+      $transformStreamUnblockWrite(stream);
+      promiseCapability.resolve.$call();
+    },
+    r => {
+      $writableStreamDefaultControllerErrorIfNeeded($getByIdDirectPrivate(writable, "controller"), r);
+      $transformStreamUnblockWrite(stream);
+      promiseCapability.reject.$call(undefined, r);
+    },
+  );
+
+  return promiseCapability.promise;
+}
+
+export function createCompressionTransform(mode) {
+  const { Buffer } = require("node:buffer");
+
+  const handle = new $CompressionStreamTransformer(mode);
+  const chunkSize = 16384; // node:zlib Z_DEFAULT_CHUNK — the native output granularity
+  let closed = false;
+
+  function close() {
+    if (!closed) {
+      closed = true;
+      handle.close();
+    }
+  }
+
+  // The consume/produce loop lives in the native transformer; this wrapper
+  // only normalizes chunk types, wraps engine errors, and enqueues the
+  // returned output chunks (each an exact-size Uint8Array, ≤ chunkSize).
+  // The accepted chunk types mirror node:zlib's Transform write path (which
+  // node's CompressionStream exposes): notably a bare ArrayBuffer is
+  // rejected and null gets its dedicated streams error.
+  function drive(chunk, isFinish, controller) {
+    if (typeof chunk === "string") chunk = Buffer.from(chunk);
+    else if (ArrayBuffer.$isView(chunk)) {
+      // A view over a detached buffer reports byteLength 0 but must reject
+      // like node (whose Buffer.from copy throws on detached buffers).
+      if (chunk.buffer.detached) throw $makeTypeError("Cannot perform Construct on a detached ArrayBuffer");
+    } else if (chunk === null) throw $ERR_STREAM_NULL_VALUES();
+    else throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk);
+
+    let outputs;
+    try {
+      outputs = handle.transform(chunk, isFinish);
+    } catch (error) {
+      // node surfaces engine failures as a TypeError carrying the error
+      // code (its webstreams adapter wraps them); match the class and
+      // code but keep the engine's message, which the adapter dropped.
+      const wrapped = $makeTypeError(error.message);
+      wrapped.code = error.code;
+      wrapped.errno = error.errno;
+      wrapped.cause = error;
+      throw wrapped;
+    }
+    for (let i = 0; i < outputs.length; i++) $transformStreamDefaultControllerEnqueue(controller, outputs[i]);
+  }
+
+  const emptyChunk = new Uint8Array(0);
+
+  return new TransformStream(
+    {
+      // Any failure (bad chunk type, engine error, enqueue on a torn-down
+      // readable) errors the stream and the transformer is never invoked
+      // again, so release the native handle on the way out.
+      transform(chunk, controller) {
+        try {
+          drive(chunk, false, controller);
+        } catch (e) {
+          close();
+          throw e;
+        }
+      },
+      flush(controller) {
+        try {
+          drive(emptyChunk, true, controller);
+        } catch (e) {
+          close();
+          throw e;
+        }
+        close();
+      },
+      // reader.cancel() / writer.abort() skip flush() — this is the
+      // teardown path that releases the native handle for them.
+      cancel() {
+        close();
+      },
+    },
+    undefined,
+    // The readable side buffers output before signalling backpressure; a
+    // gated write only proceeds once a reader drains the queue. Two
+    // constraints pick the budget:
+    //
+    // - With the spec-default strategy (highWaterMark 0, initial
+    //   backpressure), the first write would stall until a reader attaches.
+    //   The Node-adapter implementation this replaces resolved writes while
+    //   ~16KB of *input* was buffered — so a decompression write whose
+    //   output expands far past its input (and every write after it) still
+    //   resolved with no reader attached, and code in the wild awaits
+    //   writes before reading. A budget of one chunkSize of *output* would
+    //   deadlock the write that follows any >16KB expansion.
+    // - An unbounded queue would break producer throttling in piped flows.
+    //
+    // 64 chunkSizes (1MiB) of output covers the old input-side acceptance
+    // for typical expansion ratios while keeping piped flows bounded.
+    { highWaterMark: 64 * chunkSize, size: chunk => chunk.byteLength },
+  );
 }

@@ -868,6 +868,7 @@ interface QueuingStrategySize<T = any> {
 }
 
 interface Transformer<I = any, O = any> {
+  cancel?: Bun.TransformerCancelCallback;
   flush?: Bun.TransformerFlushCallback<O>;
   readableType?: undefined;
   start?: Bun.TransformerStartCallback<O>;

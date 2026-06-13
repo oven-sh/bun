@@ -48,6 +48,11 @@ mod _impl {
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
         pub pending_reset: Cell<bool>,
+        /// `(level, strategy)` requested by `params()` while a write was in
+        /// flight on the threadpool. Applied on the JS thread at the start of
+        /// the next write (see `apply_pending_params`). Only ever touched from
+        /// the JS thread, so a plain `Cell` suffices.
+        pub pending_params: Cell<Option<(c_int, c_int)>>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
     }
@@ -100,6 +105,7 @@ mod _impl {
                 write_in_progress: Cell::new(false),
                 pending_close: Cell::new(false),
                 pending_reset: Cell::new(false),
+                pending_params: Cell::new(None),
                 closed: Cell::new(false),
                 task: JsCell::new(WorkPoolTask {
                     node: Default::default(),
@@ -130,6 +136,20 @@ mod _impl {
                 )
                 .throw());
             }
+
+            // Re-initializing the z_stream while the worker thread is inside
+            // deflate()/inflate() would be a data race on the native state.
+            if self.write_in_progress.get() {
+                return Err(global
+                    .err(
+                        bun_jsc::ErrorCode::INVALID_STATE,
+                        format_args!("Cannot call init() while a write is in progress"),
+                    )
+                    .throw());
+            }
+            // A deferred params() request must not outlive the stream it was
+            // aimed at and override the level/strategy established below.
+            self.pending_params.set(None);
 
             let window_bits =
                 validators::validate_int32(global, arguments.ptr[0], "windowBits", None, None)?;
@@ -216,6 +236,22 @@ mod _impl {
             let strategy =
                 validators::validate_int32(global, arguments.ptr[1], "strategy", None, None)?;
 
+            // `paramsAfterFlushCallback` in zlib.ts can legitimately land here
+            // while a write is in flight (writable's `clearBuffer` starts the
+            // next buffered write before `afterWrite` runs the flush callback).
+            // Calling `deflateParams` now would race the worker thread inside
+            // `deflate()`, so defer it to the start of the next write
+            // (see `apply_pending_params`).
+            if self.write_in_progress.get() {
+                self.pending_params.set(Some((level, strategy)));
+                return Ok(JSValue::UNDEFINED);
+            }
+
+            // Drop any stale deferred request so it can't be re-applied by
+            // `apply_pending_params()` on the next write, overriding this
+            // newer immediate one.
+            self.pending_params.set(None);
+
             let err = self.stream.with_mut(|s| s.set_params(level, strategy));
             if err.is_error() {
                 // R-2: `&self` over `Cell`/`JsCell` fields — `emit_error` →
@@ -224,6 +260,20 @@ mod _impl {
                 CompressionStream::<Self>::emit_error(self, global, frame.this(), err);
             }
             Ok(JSValue::UNDEFINED)
+        }
+
+        /// Apply a `params()` request that was deferred because a write was in
+        /// flight when it arrived. Runs after `set_buffers` so the block
+        /// flushed by `deflateParams`'s internal `deflate(Z_BLOCK)` lands in
+        /// the new write's `avail_out`. The result is discarded: `Z_BUF_ERROR`
+        /// already means "params silently not applied" on the immediate path,
+        /// and `do_work()` overwrites `Context.err` before `check_error` reads
+        /// it.
+        pub(crate) fn apply_pending_params(&self) {
+            let Some((level, strategy)) = self.pending_params.take() else {
+                return;
+            };
+            let _ = self.stream.with_mut(|s| s.set_params(level, strategy));
         }
 
         /// RefCount destroy callback. Invoked when `ref_count` reaches zero.

@@ -153,6 +153,18 @@ mod _impl {
                     .throw());
             }
 
+            // Re-creating the ZSTD_CCtx/DCtx while the worker thread is inside
+            // ZSTD_compressStream2/ZSTD_decompressStream would be a data race
+            // on the native state.
+            if self.write_in_progress.get() {
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::INVALID_STATE,
+                        format_args!("Cannot call init() while a write is in progress"),
+                    )
+                    .throw());
+            }
+
             let init_params_array_value = arguments[0];
             let pledged_src_size_value = arguments[1];
             let write_state_value = arguments[2];
@@ -252,6 +264,10 @@ mod _impl {
             // intentionally left empty
             Ok(JSValue::UNDEFINED)
         }
+
+        /// Zstd parameters are init-only and the `params()` host_fn above is
+        /// intentionally empty, so there is never anything to defer.
+        pub(crate) fn apply_pending_params(&self) {}
     }
 
     // Called by RefCount when the count hits 0. `poll_ref` and `this_value`

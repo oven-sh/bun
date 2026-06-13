@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import path from "path";
 
-// Windows: self-referential symlinks behave differently and the recursive
-// walker takes a different open path there; this leak is posix-specific.
+// Windows: chmod(0o000) does not make a directory unreadable there and the
+// recursive walker takes a different open path; this leak is posix-specific.
 test.skipIf(isWindows)(
   "readdirSync({recursive:true, withFileTypes:true}) error path does not leak Dirent.path",
   async () => {

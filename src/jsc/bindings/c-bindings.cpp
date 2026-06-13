@@ -20,11 +20,25 @@
 #include <windows.h>
 #include <corecrt_io.h>
 #endif // !OS(WINDOWS)
+#if OS(DARWIN)
+#include <sys/sysctl.h>
+#endif
 #include <lshpack.h>
 
 #if CPU(X86_64) && !OS(WINDOWS)
 extern "C" void bun_warn_avx_missing(const char* url)
 {
+#if OS(DARWIN)
+    // Rosetta 2's translated CPUID/XGETBV hide AVX even though this binary
+    // runs fine under it (simdutf dispatch is recovered in
+    // simdutf__recover_implementation_under_rosetta), so suggesting the
+    // baseline build here would be misleading.
+    int translated = 0;
+    size_t translated_size = sizeof(translated);
+    if (sysctlbyname("sysctl.proc_translated", &translated, &translated_size, nullptr, 0) == 0 && translated == 1) {
+        return;
+    }
+#endif
     __builtin_cpu_init();
     if (__builtin_cpu_supports("avx")) {
         return;
@@ -40,6 +54,20 @@ extern "C" void bun_warn_avx_missing(const char* url)
     [[maybe_unused]] auto _ = write(STDERR_FILENO, buf, strlen(buf));
 }
 #endif
+
+// Called from main() before Output is initialized and before Windows has
+// converted its environment block to UTF-8, so this goes through the C
+// runtime's stderr/getenv directly. See abort_for_unsupported_simdutf in
+// src/bun_bin/lib.rs for the caller.
+extern "C" [[noreturn]] void bun_abort_missing_simd(const char* requirement, const char* hint)
+{
+    fprintf(stderr, "error: this CPU is missing %s support, which Bun requires for UTF-8 processing.\n%s", requirement, hint);
+    if (const char* forced = getenv("SIMDUTF_FORCE_IMPLEMENTATION")) {
+        fprintf(stderr, "  note: SIMDUTF_FORCE_IMPLEMENTATION is set to \"%s\"\n", forced);
+    }
+    fflush(stderr);
+    exit(134);
+}
 
 // Error condition is encoded as max int32_t.
 // The only error in this function is ESRCH (no process found)

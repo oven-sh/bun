@@ -35,6 +35,21 @@ pub fn main() void {
         _bun.debug_allocator_data.backing = .init;
     }
 
+    // Both Bun and WebKit trust simdutf unconditionally for UTF-8/UTF-16
+    // length computation, validation, and base64. If the runtime CPU lacks
+    // every instruction set simdutf was compiled for, it silently dispatches
+    // to a stub that returns 0/false for everything, and the process spends
+    // ~16 seconds churning through ~4 GB of bad allocations before crashing
+    // with an opaque SIGSEGV. Detect that up front and explain why.
+    //
+    // This must run before convertEnvToWTF8/initArgv on Windows — both
+    // convert UTF-16 via simdutf and would panic on a null unwrap before
+    // any diagnostic could be printed. It therefore cannot depend on
+    // Output.Source being initialized and writes to raw stderr instead.
+    if (!_bun.simdutf.hasAnyImplementation()) {
+        abortForUnsupportedSimdutf();
+    }
+
     // This should appear before we make any calls at all to libuv.
     // So it's safest to put it very early in the main function.
     if (Environment.isWindows) {
@@ -69,6 +84,38 @@ pub fn main() void {
 
 pub export fn Bun__panic(msg: [*]const u8, len: usize) noreturn {
     Output.panic("{s}", .{msg[0..len]});
+}
+
+extern fn bun_abort_missing_simd(requirement: [*:0]const u8, hint: [*:0]const u8) noreturn;
+
+/// Prints a CPU-requirement diagnostic and exits. Called from `main()` before
+/// `Output.Source` is initialized and before Windows has converted its
+/// environment block to UTF-8, so the actual write goes through the C
+/// runtime (fprintf(stderr)/getenv) in `bun_abort_missing_simd` rather than
+/// `bun.Output` / `bun.getenvZ`.
+fn abortForUnsupportedSimdutf() noreturn {
+    @branchHint(.cold);
+
+    // simdutf's minimum compiled-in kernel is westmere (SSE4.2) for the
+    // baseline build and haswell (AVX2) for the default build — the lower
+    // tiers are elided once __SSE4_2__ / __AVX2__ are defined.
+    const requirement = if (Environment.isX64)
+        (if (Environment.baseline) "SSE4.2" else "AVX2")
+    else if (Environment.isAarch64)
+        "NEON"
+    else
+        "SIMD";
+
+    const hint = if (Environment.isX64 and Environment.baseline)
+        "  Bun's baseline build targets Nehalem-class (2008+) x86_64 CPUs.\n" ++
+            "  If this is a VM, enable host CPU passthrough (e.g. -cpu host for QEMU/KVM).\n"
+    else if (Environment.isX64)
+        "  Install the baseline build, which only requires SSE4.2:\n" ++
+            "    " ++ _bun.cli.UpgradeCommand.Bun__githubBaselineURL ++ "\n"
+    else
+        "";
+
+    bun_abort_missing_simd(requirement, hint);
 }
 
 // -- Zig Standard Library Additions --

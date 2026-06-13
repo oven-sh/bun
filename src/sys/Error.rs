@@ -211,7 +211,6 @@ impl Error {
 
     #[inline]
     pub fn with_fd(&self, fd: Fd) -> Error {
-        debug_assert!(fd != Fd::INVALID);
         Error {
             errno: self.errno,
             syscall: self.syscall,
@@ -581,5 +580,17 @@ impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_fd_accepts_invalid() {
+        let err = Error::from_code(E::EBADF, Tag::fcntl).with_fd(Fd::INVALID);
+        assert_eq!(err.fd, Fd::INVALID);
+        assert_eq!(fd_unwrap_valid(err.fd), None);
     }
 }

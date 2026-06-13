@@ -1039,6 +1039,7 @@ pub(crate) fn download_stream(
                 crate::webcore::s3::download_stream::State::default().0,
             ),
             concurrent_task: Default::default(),
+            async_http_id: 0,
         },
     ));
     // SAFETY: just allocated via heap::alloc, non-null; lifetime owned by HTTP callback
@@ -1095,6 +1096,7 @@ pub(crate) fn download_stream(
     ));
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
     let http = unsafe { task.http.assume_init_mut() };
+    task.async_http_id = http.async_http_id;
     // enable streaming
     http.enable_response_body_streaming();
     // queue http request
@@ -1212,6 +1214,14 @@ pub fn readable_stream(
                         .signal_store
                         .aborted
                         .store(true, core::sync::atomic::Ordering::Relaxed);
+                    // Setting the signal alone isn't enough — the HTTP thread is blocked
+                    // waiting on the socket and won't observe it. Actively schedule a
+                    // shutdown so the connection is closed now and the final callback
+                    // fires promptly instead of whenever the server happens to hang up.
+                    // Use the id captured before scheduling (not `task.http`, which the
+                    // HTTP thread bulk-overwrites under `task.mutex`; taking that mutex
+                    // here would self-deadlock when this runs inside `on_response`).
+                    bun_http::http_thread().schedule_shutdown_by_id((*task).async_http_id);
                 }
             }
         }

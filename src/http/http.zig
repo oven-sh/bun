@@ -3009,13 +3009,27 @@ pub fn handleResponseMetadata(
                         defer url_arena.deinit();
                         var fba = std.heap.stackFallback(4096, url_arena.allocator());
                         const url_allocator = fba.get();
-                        if (strings.indexOf(location, "://")) |i| {
+
+                        // Only treat the Location as an absolute URL if "://" appears
+                        // in scheme position. Per RFC 3986 a scheme cannot contain
+                        // '/', '?' or '#', so if any of those occur before "://" the
+                        // match is inside a path/query/fragment (e.g. a relative
+                        // "/login?next=https://app.example.com") and must be resolved
+                        // against the request URL via bun.jsc.URL.join below.
+                        const scheme_end: ?usize = scheme: {
+                            const i = strings.indexOf(location, "://") orelse break :scheme null;
+                            if (strings.indexOfAny(location[0..i], "/?#") != null) break :scheme null;
+                            break :scheme i;
+                        };
+
+                        if (scheme_end) |i| {
                             var string_builder = bun.StringBuilder{};
 
                             const is_protocol_relative = i == 0;
                             const protocol_name = if (is_protocol_relative) this.url.displayProtocol() else location[0..i];
-                            const is_http = strings.eqlComptime(protocol_name, "http");
-                            if (is_http or strings.eqlComptime(protocol_name, "https")) {} else {
+                            // RFC 3986 section 3.1: scheme comparison is case-insensitive.
+                            const is_http = strings.eqlCaseInsensitiveASCII(protocol_name, "http", true);
+                            if (is_http or strings.eqlCaseInsensitiveASCII(protocol_name, "https", true)) {} else {
                                 return error.UnsupportedRedirectProtocol;
                             }
 
@@ -3074,7 +3088,8 @@ pub fn handleResponseMetadata(
                                 return error.RedirectURLTooLong;
                             }
 
-                            const is_http = strings.eqlComptime(protocol_name, "http");
+                            // RFC 3986 section 3.1: scheme comparison is case-insensitive.
+                            const is_http = strings.eqlCaseInsensitiveASCII(protocol_name, "http", true);
 
                             if (is_http) {
                                 string_builder.count("http:");
@@ -3123,7 +3138,17 @@ pub fn handleResponseMetadata(
                             const new_url = new_url_.toOwnedSlice(bun.default_allocator) catch {
                                 return error.RedirectURLTooLong;
                             };
-                            this.url = URL.parse(new_url);
+                            const parsed_url = URL.parse(new_url);
+                            // https://fetch.spec.whatwg.org/#http-redirect-fetch step 7:
+                            // "If locationURL's scheme is not an HTTP(S) scheme, then
+                            // return a network error." A scheme-bearing Location without
+                            // "://" (javascript:, data:, mailto:) resolves to an opaque
+                            // absolute URL here instead of being joined onto the base.
+                            if (!parsed_url.isHTTP() and !parsed_url.isHTTPS()) {
+                                bun.default_allocator.free(new_url);
+                                return error.UnsupportedRedirectProtocol;
+                            }
+                            this.url = parsed_url;
                             is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
                             bun.debugAssert(this.prev_redirect.len == 0);
                             this.prev_redirect = this.redirect;

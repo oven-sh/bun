@@ -1317,6 +1317,16 @@ impl<'a> Linker<'a> {
     fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
         // hoisted from `defer` block in create_symlink
         if err.is_none() {
+            // `UMASK` is populated by `ensure_umask()`, which the hoisted
+            // installer, isolated installer, and `bun link` / `bun unlink`
+            // all call on the main thread before scheduling bin-link work.
+            // If a future caller forgets to prime, `UMASK` stays at `0` and
+            // `0o777 & !0` silently widens bin perms to `0o777`. Assert in
+            // debug builds so a miss is loud.
+            debug_assert!(
+                HAS_SET_UMASK.load(Ordering::Acquire),
+                "Bin::Linker::ensure_umask() not primed before bin chmod — would widen to 0o777",
+            );
             let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
             let _ = sys::lchmod(abs_target, mode);
         }

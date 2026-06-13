@@ -371,6 +371,13 @@ macro_rules! cmd_strings_varargs {
             let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
 
             for arg in frame.arguments() {
+                // Skip undefined (optional trailing params like flushdb(mode?)),
+                // but still reject null so explicit bad values surface as a clear
+                // client-side error instead of a confusing server reply.
+                if arg.is_undefined() {
+                    continue;
+                }
+
                 let Some(another) = from_js(global, *arg)? else {
                     return Err(global.throw_invalid_argument_type(
                         bname($name),
@@ -1610,6 +1617,77 @@ impl JSValkeyClient {
         "newkey",
         NotSubscriber
     );
+
+    // Bitmap commands
+    cmd_strings_varargs!(bitop, b"bitop", "BITOP", NotSubscriber);
+    cmd_key_varargs!(bitpos, b"bitpos", "BITPOS", "key", NotSubscriber);
+    cmd_key_varargs!(bitfield, b"bitfield", "BITFIELD", "key", NotSubscriber);
+
+    // HyperLogLog commands
+    cmd_key_varargs!(pfcount, b"pfcount", "PFCOUNT", "key", NotSubscriber);
+    cmd_key_varargs!(pfmerge, b"pfmerge", "PFMERGE", "destkey", NotSubscriber);
+
+    // Geo commands
+    cmd_strings_varargs!(geoadd, b"geoadd", "GEOADD", NotSubscriber);
+    cmd_strings_varargs!(geodist, b"geodist", "GEODIST", NotSubscriber);
+    cmd_key_varargs!(geohash, b"geohash", "GEOHASH", "key", NotSubscriber);
+    cmd_key_varargs!(geopos, b"geopos", "GEOPOS", "key", NotSubscriber);
+    cmd_strings_varargs!(geosearch, b"geosearch", "GEOSEARCH", NotSubscriber);
+    cmd_strings_varargs!(
+        geosearchstore,
+        b"geosearchstore",
+        "GEOSEARCHSTORE",
+        NotSubscriber
+    );
+
+    // Scripting commands
+    cmd_strings_varargs!(eval, b"eval", "EVAL", NotSubscriber);
+    cmd_strings_varargs!(evalsha, b"evalsha", "EVALSHA", NotSubscriber);
+    cmd_strings_varargs!(fcall, b"fcall", "FCALL", NotSubscriber);
+    cmd_strings_varargs!(function, b"function", "FUNCTION", NotSubscriber);
+
+    // Server / connection commands
+    cmd_noargs!(dbsize, b"dbsize", "DBSIZE", NotSubscriber);
+    cmd_strings_varargs!(flushdb, b"flushdb", "FLUSHDB", NotSubscriber);
+    cmd_strings_varargs!(flushall, b"flushall", "FLUSHALL", NotSubscriber);
+    cmd_strings_varargs!(info, b"info", "INFO", NotSubscriber);
+    cmd_noargs!(time, b"time", "TIME", NotSubscriber);
+    cmd_key!(echo, b"echo", "ECHO", "message", NotSubscriber);
+    cmd_noargs!(lastsave, b"lastsave", "LASTSAVE", NotSubscriber);
+    cmd_strings_varargs!(js_client, b"client", "CLIENT", DontCare);
+    cmd_strings_varargs!(config, b"config", "CONFIG", NotSubscriber);
+    cmd_strings_varargs!(js_debug, b"debug", "DEBUG", NotSubscriber);
+    cmd_strings_varargs!(js_command, b"command", "COMMAND", NotSubscriber);
+
+    // Generic key commands
+    cmd_strings_varargs!(object, b"object", "OBJECT", NotSubscriber);
+    cmd_key_varargs!(sort, b"sort", "SORT", "key", NotSubscriber);
+    cmd_key_value!(
+        wait,
+        b"wait",
+        "WAIT",
+        "numreplicas",
+        "timeout",
+        NotSubscriber
+    );
+    cmd_strings_varargs!(lcs, b"lcs", "LCS", NotSubscriber);
+
+    // Stream commands
+    cmd_strings_varargs!(xadd, b"xadd", "XADD", NotSubscriber);
+    cmd_key!(xlen, b"xlen", "XLEN", "key", NotSubscriber);
+    cmd_strings_varargs!(xrange, b"xrange", "XRANGE", NotSubscriber);
+    cmd_strings_varargs!(xrevrange, b"xrevrange", "XREVRANGE", NotSubscriber);
+    cmd_strings_varargs!(xread, b"xread", "XREAD", NotSubscriber);
+    cmd_strings_varargs!(xreadgroup, b"xreadgroup", "XREADGROUP", NotSubscriber);
+    cmd_key_varargs!(xdel, b"xdel", "XDEL", "key", NotSubscriber);
+    cmd_strings_varargs!(xtrim, b"xtrim", "XTRIM", NotSubscriber);
+    cmd_strings_varargs!(xack, b"xack", "XACK", NotSubscriber);
+    cmd_strings_varargs!(xclaim, b"xclaim", "XCLAIM", NotSubscriber);
+    cmd_strings_varargs!(xautoclaim, b"xautoclaim", "XAUTOCLAIM", NotSubscriber);
+    cmd_strings_varargs!(xpending, b"xpending", "XPENDING", NotSubscriber);
+    cmd_strings_varargs!(xinfo, b"xinfo", "XINFO", NotSubscriber);
+    cmd_strings_varargs!(xgroup, b"xgroup", "XGROUP", NotSubscriber);
+    cmd_strings_varargs!(xsetid, b"xsetid", "XSETID", NotSubscriber);
 
     #[bun_jsc::host_fn(method)]
     pub fn publish(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

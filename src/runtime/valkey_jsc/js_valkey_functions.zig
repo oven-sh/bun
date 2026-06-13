@@ -985,6 +985,65 @@ pub const touch = compile.@"(key: RedisKey, ...args: RedisKey[])"("touch", "TOUC
 pub const rename = compile.@"(key: RedisKey, value: RedisValue)"("rename", "RENAME", "key", "newkey", .not_subscriber).call;
 pub const renamenx = compile.@"(key: RedisKey, value: RedisValue)"("renamenx", "RENAMENX", "key", "newkey", .not_subscriber).call;
 
+// Bitmap commands
+pub const bitop = compile.@"(...strings: string[])"("bitop", "BITOP", .not_subscriber).call;
+pub const bitpos = compile.@"(key: RedisKey, ...args: RedisKey[])"("bitpos", "BITPOS", "key", .not_subscriber).call;
+pub const bitfield = compile.@"(key: RedisKey, ...args: RedisKey[])"("bitfield", "BITFIELD", "key", .not_subscriber).call;
+
+// HyperLogLog commands
+pub const pfcount = compile.@"(key: RedisKey, ...args: RedisKey[])"("pfcount", "PFCOUNT", "key", .not_subscriber).call;
+pub const pfmerge = compile.@"(key: RedisKey, ...args: RedisKey[])"("pfmerge", "PFMERGE", "destkey", .not_subscriber).call;
+
+// Geo commands
+pub const geoadd = compile.@"(...strings: string[])"("geoadd", "GEOADD", .not_subscriber).call;
+pub const geodist = compile.@"(...strings: string[])"("geodist", "GEODIST", .not_subscriber).call;
+pub const geohash = compile.@"(key: RedisKey, ...args: RedisKey[])"("geohash", "GEOHASH", "key", .not_subscriber).call;
+pub const geopos = compile.@"(key: RedisKey, ...args: RedisKey[])"("geopos", "GEOPOS", "key", .not_subscriber).call;
+pub const geosearch = compile.@"(...strings: string[])"("geosearch", "GEOSEARCH", .not_subscriber).call;
+pub const geosearchstore = compile.@"(...strings: string[])"("geosearchstore", "GEOSEARCHSTORE", .not_subscriber).call;
+
+// Scripting commands
+pub const eval = compile.@"(...strings: string[])"("eval", "EVAL", .not_subscriber).call;
+pub const evalsha = compile.@"(...strings: string[])"("evalsha", "EVALSHA", .not_subscriber).call;
+pub const fcall = compile.@"(...strings: string[])"("fcall", "FCALL", .not_subscriber).call;
+pub const function = compile.@"(...strings: string[])"("function", "FUNCTION", .not_subscriber).call;
+
+// Server / connection commands
+pub const dbsize = compile.@"()"("dbsize", "DBSIZE", .not_subscriber).call;
+pub const flushdb = compile.@"(...strings: string[])"("flushdb", "FLUSHDB", .not_subscriber).call;
+pub const flushall = compile.@"(...strings: string[])"("flushall", "FLUSHALL", .not_subscriber).call;
+pub const info = compile.@"(...strings: string[])"("info", "INFO", .not_subscriber).call;
+pub const time = compile.@"()"("time", "TIME", .not_subscriber).call;
+pub const echo = compile.@"(key: RedisKey)"("echo", "ECHO", "message", .not_subscriber).call;
+pub const lastsave = compile.@"()"("lastsave", "LASTSAVE", .not_subscriber).call;
+pub const jsClient = compile.@"(...strings: string[])"("client", "CLIENT", .dont_care).call;
+pub const config = compile.@"(...strings: string[])"("config", "CONFIG", .not_subscriber).call;
+pub const jsDebug = compile.@"(...strings: string[])"("debug", "DEBUG", .not_subscriber).call;
+pub const jsCommand = compile.@"(...strings: string[])"("command", "COMMAND", .not_subscriber).call;
+
+// Generic key commands
+pub const object = compile.@"(...strings: string[])"("object", "OBJECT", .not_subscriber).call;
+pub const sort = compile.@"(key: RedisKey, ...args: RedisKey[])"("sort", "SORT", "key", .not_subscriber).call;
+pub const wait = compile.@"(key: RedisKey, value: RedisValue)"("wait", "WAIT", "numreplicas", "timeout", .not_subscriber).call;
+pub const lcs = compile.@"(...strings: string[])"("lcs", "LCS", .not_subscriber).call;
+
+// Stream commands
+pub const xadd = compile.@"(...strings: string[])"("xadd", "XADD", .not_subscriber).call;
+pub const xlen = compile.@"(key: RedisKey)"("xlen", "XLEN", "key", .not_subscriber).call;
+pub const xrange = compile.@"(...strings: string[])"("xrange", "XRANGE", .not_subscriber).call;
+pub const xrevrange = compile.@"(...strings: string[])"("xrevrange", "XREVRANGE", .not_subscriber).call;
+pub const xread = compile.@"(...strings: string[])"("xread", "XREAD", .not_subscriber).call;
+pub const xreadgroup = compile.@"(...strings: string[])"("xreadgroup", "XREADGROUP", .not_subscriber).call;
+pub const xdel = compile.@"(key: RedisKey, ...args: RedisKey[])"("xdel", "XDEL", "key", .not_subscriber).call;
+pub const xtrim = compile.@"(...strings: string[])"("xtrim", "XTRIM", .not_subscriber).call;
+pub const xack = compile.@"(...strings: string[])"("xack", "XACK", .not_subscriber).call;
+pub const xclaim = compile.@"(...strings: string[])"("xclaim", "XCLAIM", .not_subscriber).call;
+pub const xautoclaim = compile.@"(...strings: string[])"("xautoclaim", "XAUTOCLAIM", .not_subscriber).call;
+pub const xpending = compile.@"(...strings: string[])"("xpending", "XPENDING", .not_subscriber).call;
+pub const xinfo = compile.@"(...strings: string[])"("xinfo", "XINFO", .not_subscriber).call;
+pub const xgroup = compile.@"(...strings: string[])"("xgroup", "XGROUP", .not_subscriber).call;
+pub const xsetid = compile.@"(...strings: string[])"("xsetid", "XSETID", .not_subscriber).call;
+
 pub fn publish(
     this: *JSValkeyClient,
     globalObject: *jsc.JSGlobalObject,
@@ -1504,6 +1563,13 @@ const compile = struct {
                 }
 
                 for (callframe.arguments()) |arg| {
+                    // Skip undefined (optional trailing params like flushdb(mode?)),
+                    // but still reject null so explicit bad values surface as a clear
+                    // client-side error instead of a confusing server reply.
+                    if (arg.isUndefined()) {
+                        continue;
+                    }
+
                     const another = (try fromJS(globalObject, arg)) orelse {
                         return globalObject.throwInvalidArgumentType(name, "additional arguments", "string or buffer");
                     };

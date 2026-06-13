@@ -1199,6 +1199,17 @@ impl WindowsNamedPipe {
                 }
             }
         }
+        // `net.Socket.end()` on a plain (non-TLS) named pipe reaches here via
+        // endNT → socket.shutdown(). `src/io` has no `uv_shutdown`, so close
+        // the writer to signal EOF — this tears down both directions, identical
+        // to `close()` above. Without it the peer never sees EOF and a half-open
+        // peer waiting on 'end' hangs. TLS named pipes take the full-close path
+        // via $end()/close() instead, but keep the wrapper shutdown above too so
+        // a direct socket.shutdown() stays consistent with close(). True
+        // half-close on a libuv pipe would need uv_shutdown plumbing in src/io
+        // — follow-up.
+        // SAFETY: `this` is still live; `writer.end()` is idempotent.
+        unsafe { (*this).writer.end() };
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown_read")]

@@ -545,6 +545,32 @@ TLSSocket.prototype._start = function _start() {
   this.connect();
 };
 
+TLSSocket.prototype._final = function _final(callback) {
+  // net.Socket._final half-closes the write side with socket.shutdown() so a
+  // loopback echo peer's bytes (issue #31383) still arrive on a plain TCP/unix
+  // socket. That half-close model doesn't fit TLS: there is no TCP-level
+  // SHUT_WR analogue for an encrypted stream (the close_notify alert has to be
+  // driven through the SSL state machine), and routing TLS `.end()` through
+  // shutdown() left the SSL shutdown half-done across several transports
+  // (upgraded-duplex TLS-over-TLS, Windows named pipes, and a plain TLS server
+  // socket) — the peer saw neither a flushed close_notify nor a FIN and
+  // teardown hung. Keep the pre-#31383 behavior for TLS: socket.$end() runs
+  // the full write-then-graceful-SSL-close path (endBuffered → internalFlush →
+  // markInactive → closeAndDetach(.normal)), which sends close_notify and
+  // closes once the peer replies. A never-connected TLSSocket (e.g.
+  // new tls.TLSSocket().end(cb)) has no handle and nothing to flush.
+  if (this.connecting) {
+    return this.once("connect", () => this._final(callback));
+  }
+  const socket = this._handle;
+  if (!socket) return callback();
+  process.nextTick(tlsEndNT, socket, callback);
+};
+function tlsEndNT(socket, callback) {
+  socket.$end();
+  callback();
+}
+
 TLSSocket.prototype.getSession = function getSession() {
   return this._handle?.getSession?.();
 };

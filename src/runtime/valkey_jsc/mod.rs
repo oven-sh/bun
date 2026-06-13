@@ -72,11 +72,15 @@ use crate::generated_classes::js_RedisClient;
 impl JSValkeyClient {
     /// Wrap an already-heap-allocated client pointer in its JS object.
     /// Ownership transfers to the C++ wrapper (freed via `finalize`).
+    ///
+    /// # Safety
+    /// `ptr` must be the unique heap allocation produced by
+    /// `JSValkeyClient::new`, not yet owned by any JS wrapper; the wrapper's
+    /// finalizer frees it.
     #[inline]
-    pub fn ptr_to_js(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
-        // `ptr` was produced by `JSValkeyClient::new` (heap-allocated) and is
-        // hereby owned by the JS wrapper.
-        js_RedisClient::to_js(ptr, global)
+    pub unsafe fn ptr_to_js(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: ownership precondition forwarded to the caller.
+        unsafe { js_RedisClient::to_js(ptr, global) }
     }
 }
 

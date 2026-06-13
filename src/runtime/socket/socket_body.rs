@@ -253,16 +253,18 @@ impl<const SSL: bool> NewSocket<SSL> {
     // split and route through the codegen'd safe wrappers.
     pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         jsc::mark_binding!();
-        // `self` is a heap-allocated `NewSocket` (every caller goes through
-        // `NewSocket::new` → `heap::alloc`); ownership is adopted by the C++
-        // JSCell wrapper, which calls `finalize` on GC. The codegen wrappers are
-        // monomorphic in `TCPSocket`/`TLSSocket`, so cast through the concrete
-        // alias each branch is typed against.
+        // The codegen wrappers are monomorphic in `TCPSocket`/`TLSSocket`, so
+        // cast through the concrete alias each branch is typed against.
         let ptr = self.as_ctx_ptr();
-        let value = if SSL {
-            js_TLSSocket::to_js(ptr.cast(), global)
-        } else {
-            js_TCPSocket::to_js(ptr.cast(), global)
+        // SAFETY: `self` is a heap-allocated `NewSocket` (every caller goes
+        // through `NewSocket::new` → `heap::alloc`); ownership is adopted by
+        // the C++ JSCell wrapper, which calls `finalize` on GC.
+        let value = unsafe {
+            if SSL {
+                js_TLSSocket::to_js(ptr.cast(), global)
+            } else {
+                js_TCPSocket::to_js(ptr.cast(), global)
+            }
         };
         debug_assert!(
             Some(ptr.cast::<c_void>())
@@ -3319,9 +3321,10 @@ macro_rules! impl_socket_js_class {
                 $gen::from_js_direct(value).map(|p| p.as_ptr())
             }
             fn to_js(self, global: &JSGlobalObject) -> JSValue {
-                // Ownership of the boxed `NewSocket` transfers to the C++
-                // wrapper (freed via `${typeName}Class__finalize`).
-                $gen::to_js(bun_core::heap::into_raw(Box::new(self)), global)
+                // SAFETY: the `NewSocket` is boxed right here, so the pointer
+                // is the unique construct-path allocation; ownership transfers
+                // to the C++ wrapper (freed via `${typeName}Class__finalize`).
+                unsafe { $gen::to_js(bun_core::heap::into_raw(Box::new(self)), global) }
             }
             // `noConstructor: true` — no `${name}__getConstructor` export; trait default applies.
         }

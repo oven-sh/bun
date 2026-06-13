@@ -902,9 +902,13 @@ pub(crate) fn construct_internal_js(
     Ok(BlobExt::to_js(unsafe { &mut *blob }, global))
 }
 
-pub fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
+/// # Safety
+/// `this` must be the live heap-allocated `Blob` (see `Blob::new`), not yet
+/// owned by any JS wrapper; the JSS3File wrapper adopts it and its finalizer
+/// releases it exactly once.
+pub unsafe fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
     // C++ adopts `this` opaquely (stored as `void* m_ctx` in the JS wrapper);
-    // ownership-transfer contract lives on `to_js_unchecked`'s callers.
+    // the ownership-transfer precondition is carried by this `unsafe fn`.
     BUN__createJSS3FileUnsafely(global, this.cast::<core::ffi::c_void>())
 }
 

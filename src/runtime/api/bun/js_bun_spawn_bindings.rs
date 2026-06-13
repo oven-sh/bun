@@ -74,16 +74,19 @@ fn sys_system_error_to_js(err: &bun_sys::SystemError, global: &JSGlobalObject) -
 /// field-assignment paths share one pointer type with `existing_terminal`.
 pub(crate) struct TerminalCreateResult {
     /// BACKREF — the `IntrusiveRc<Terminal>` pointer leaked via `into_raw()`
-    /// when this struct was populated; the +1 ref is held until
-    /// `Subprocess::finalize` (or the spawn-error scopeguard's
-    /// `abandon_from_spawn`) releases it, so the pointee outlives this struct.
+    /// when this struct was populated. That ref aliases the Terminal JS
+    /// wrapper's +1 (released via its finalize → `deref_`), so this is a
+    /// non-owning borrow: the pointee is kept live by `js_value` (and, once
+    /// spawn succeeds, by the Subprocess wrapper's cached `terminal` slot);
+    /// the spawn-error scopeguard's `abandon_from_spawn` covers the error
+    /// path.
     pub terminal: bun_ptr::BackRef<Terminal>,
     pub js_value: JSValue,
 }
 
 impl TerminalCreateResult {
-    /// Shared borrow of the held `Terminal` (BackRef invariant: +1-ref'd
-    /// IntrusiveRc, live while this struct is held).
+    /// Shared borrow of the held `Terminal` (BackRef invariant: the Terminal
+    /// JS wrapper's ref keeps the pointee live while this struct is held).
     #[inline]
     pub(crate) fn term(&self) -> &Terminal {
         self.terminal.get()
@@ -763,10 +766,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                         match Terminal::create_from_spawn(global_this, &mut term_options) {
                             Ok(created) => {
                                 **terminal_info = Some(TerminalCreateResult {
-                                    // Transfer the +1 ref to `Subprocess.terminal` (released
-                                    // in `Subprocess::finalize`); the scopeguard's
-                                    // `abandon_from_spawn` path covers the error case.
-                                    // `IntrusiveRc::into_raw` is never null (NonNull-backed).
+                                    // `into_raw` leaks the IntrusiveRc's ref, which aliases
+                                    // the JS wrapper's +1 (adopted from `RefCount::init()` in
+                                    // `init_terminal`) — `Subprocess.terminal` is a borrow
+                                    // kept live by the cached `terminal` slot on the
+                                    // Subprocess wrapper, not an independent ref. The
+                                    // scopeguard's `abandon_from_spawn` path covers the
+                                    // error case. `IntrusiveRc::into_raw` is never null
+                                    // (NonNull-backed).
                                     terminal: bun_ptr::BackRef::from(
                                         core::ptr::NonNull::new(created.terminal.into_raw())
                                             .expect("IntrusiveRc non-null"),
@@ -1518,11 +1525,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     let out = if !IS_SYNC {
-        // `subprocess_ptr` came from `heap::alloc` above and has not yet been
-        // wrapped; ownership transfers to the C++ JS cell (released via
-        // `SubprocessClass__finalize`). Use the raw-ptr entrypoint instead of
-        // the by-value `JsClass::to_js` (which would re-box).
-        SubprocessT::to_js_from_ptr(subprocess_ptr, global_this)
+        // SAFETY: `subprocess_ptr` came from `heap::alloc` above and has not
+        // yet been wrapped; ownership transfers to the C++ JS cell (released
+        // via `SubprocessClass__finalize`). Use the raw-ptr entrypoint instead
+        // of the by-value `JsClass::to_js` (which would re-box).
+        unsafe { SubprocessT::to_js_from_ptr(subprocess_ptr, global_this) }
     } else {
         JSValue::ZERO
     };

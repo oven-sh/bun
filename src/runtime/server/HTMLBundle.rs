@@ -60,8 +60,10 @@ const _: () = {
     // `*mut HTMLBundle` is opaque to C++ (linked by symbol name only); the
     // pointee's Rust layout is irrelevant to the FFI boundary, but HTMLBundle
     // lacks `#[repr(C)]` so rustc lints anyway.
-    // `safe fn` to match `generated_classes.rs` / the `#[bun_jsc::JsClass]`
-    // macro (avoids `clashing_extern_declarations`).
+    // Call-safety qualifiers match `generated_classes.rs` / the
+    // `#[bun_jsc::JsClass]` macro (avoids `clashing_extern_declarations`):
+    // `__from_js*` are `safe fn`; `__create` is unsafe because it installs
+    // `ptr` into a GC cell whose finalizer later releases it.
     bun_jsc::jsc_abi_extern! {
         #[allow(improper_ctypes)]
         {
@@ -70,7 +72,7 @@ const _: () = {
             #[link_name = "HTMLBundle__fromJSDirect"]
             safe fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
             #[link_name = "HTMLBundle__create"]
-            safe fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
+            fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
         }
     }
 
@@ -99,13 +101,16 @@ const _: () = {
 
     impl HTMLBundle {
         /// `jsc.Codegen.JSHTMLBundle.toJS` — wraps an existing intrusive-
-        /// refcounted allocation. The JS wrapper takes one ref (released in
-        /// `finalize`), so callers must have already accounted for that ref.
-        pub fn to_js(this: *mut HTMLBundle, global: &JSGlobalObject) -> JSValue {
-            // `this` is a live `IntrusiveRc::new`-boxed allocation; ownership
-            // of one ref transfers to the C++ wrapper (deref'd via
-            // `HTMLBundleClass__finalize` → `finalize()`).
-            __create(global.as_mut_ptr(), this)
+        /// refcounted allocation.
+        ///
+        /// # Safety
+        /// `this` must be a live `IntrusiveRc::new`-boxed allocation carrying
+        /// a +1 ref the caller has already accounted for; ownership of that
+        /// ref transfers to the C++ wrapper (deref'd via
+        /// `HTMLBundleClass__finalize` → `finalize()`).
+        pub unsafe fn to_js(this: *mut HTMLBundle, global: &JSGlobalObject) -> JSValue {
+            // SAFETY: ownership precondition forwarded to the caller.
+            unsafe { __create(global.as_mut_ptr(), this) }
         }
     }
 };

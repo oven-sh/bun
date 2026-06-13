@@ -578,7 +578,12 @@ pub trait SourceContext: Sized {
     // Each context binds its per-type codegen module via `source_context_codegen!`.
     /// `js_${NAME}InternalReadableStreamSource::to_js` — `ptr` is the
     /// type-erased `*mut NewSource<Self>` (cast inside the macro impl).
-    fn js_create(ptr: *mut c_void, global: &JSGlobalObject) -> JSValue;
+    ///
+    /// # Safety
+    /// `ptr` must be the unique heap-allocated `NewSource<Self>`, not yet
+    /// owned by any JS wrapper; the wrapper's GC finalizer releases it
+    /// (`decrement_count` → `deinit`).
+    unsafe fn js_create(ptr: *mut c_void, global: &JSGlobalObject) -> JSValue;
     /// `js_${NAME}InternalReadableStreamSource::pending_promise_set_cached`
     fn js_pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     /// `js_${NAME}InternalReadableStreamSource::on_drain_callback_set_cached`
@@ -712,11 +717,13 @@ pub(crate) trait NewSourceCodegen {
 macro_rules! source_context_codegen {
     ($gen:ident) => {
         #[inline]
-        fn js_create(
+        unsafe fn js_create(
             ptr: *mut ::core::ffi::c_void,
             global: &$crate::webcore::jsc::JSGlobalObject,
         ) -> $crate::webcore::jsc::JSValue {
-            $crate::generated_classes::$gen::to_js(ptr.cast(), global)
+            // SAFETY: ownership precondition forwarded to the caller
+            // (`SourceContext::js_create` contract).
+            unsafe { $crate::generated_classes::$gen::to_js(ptr.cast(), global) }
         }
         #[inline]
         fn js_pending_promise_set_cached(
@@ -745,13 +752,16 @@ macro_rules! source_context_codegen {
 
 impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
     fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        // `self` is a heap-allocated `NewSource<C>` produced by [`NewSource::new`]
-        // (`heap::alloc`); ownership transfers to the JS wrapper as `m_ctx`. C++ side
-        // stores it as `void*` and the GC finalizer drives `decrement_count` → `deinit`.
-        C::js_create(
-            std::ptr::from_mut::<Self>(self).cast::<c_void>(),
-            global_this,
-        )
+        // SAFETY: `self` is a heap-allocated `NewSource<C>` produced by
+        // [`NewSource::new`] (`heap::alloc`); ownership transfers to the JS
+        // wrapper as `m_ctx`. C++ side stores it as `void*` and the GC
+        // finalizer drives `decrement_count` → `deinit`.
+        unsafe {
+            C::js_create(
+                std::ptr::from_mut::<Self>(self).cast::<c_void>(),
+                global_this,
+            )
+        }
     }
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         C::js_pending_promise_set_cached(this, global, value)

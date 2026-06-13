@@ -146,7 +146,9 @@ const _: () = {
             // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::to_js` for
             // S3-backed blobs; lower-tier callers never construct S3 blobs.
             let ptr = Blob::new(self);
-            JSBlob::to_js(ptr, global)
+            // SAFETY: `ptr` is the unique heap allocation made by `Blob::new`
+            // on the line above; ownership transfers to the JS wrapper.
+            unsafe { JSBlob::to_js(ptr, global) }
         }
         fn get_constructor(global: &JSGlobalObject) -> JSValue {
             JSBlob::get_constructor(global)

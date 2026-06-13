@@ -511,10 +511,15 @@ impl Request {
         // R-2: `to_js_unchecked` stores `self` as the C++ `m_ctx` payload (an
         // opaque `void*` never deref'd as `&mut Request` on the C++ side), so
         // forming `*mut` from `&self` here is provenance-safe.
-        let js_value = js_gen::to_js_unchecked(
-            global_object,
-            std::ptr::from_ref::<Request>(self).cast_mut().cast::<()>(),
-        );
+        // SAFETY: `self` is the heap allocation from `Request::new` (caller
+        // contract), not yet wrapped; the wrapper adopts it, released via
+        // `RequestClass__finalize`.
+        let js_value = unsafe {
+            js_gen::to_js_unchecked(
+                global_object,
+                std::ptr::from_ref::<Request>(self).cast_mut().cast::<()>(),
+            )
+        };
         self.js_ref.set(JsRef::init_weak(js_value));
 
         self.check_body_stream_ref(global_object);

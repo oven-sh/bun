@@ -191,17 +191,17 @@ const _: () = {
         /// wired before `subprocess.toJS(globalThis)` runs; this is the raw-ptr
         /// entrypoint that avoids re-boxing.
         ///
+        /// # Safety
         /// `ptr` must come from `heap::alloc(Box::new(Subprocess { .. }))` and
         /// not yet be owned by any JS wrapper; ownership transfers to the C++
-        /// side (released via `SubprocessClass__finalize`). Thin forwarder to
-        /// the (already safe) generated `js_Subprocess::to_js`, which
-        /// encapsulates the FFI `__create` call internally.
+        /// side (released via `SubprocessClass__finalize`).
         #[inline]
-        pub fn to_js_from_ptr(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
+        pub unsafe fn to_js_from_ptr(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
             // The codegen wrapper is monomorphized at `'static`; the lifetime
             // parameter is purely a borrow-checker artifact (C++ stores the
             // pointer as opaque `m_ctx`), so erase it via `cast`.
-            js::to_js(ptr.cast(), global)
+            // SAFETY: ownership precondition forwarded to the caller.
+            unsafe { js::to_js(ptr.cast(), global) }
         }
     }
 
@@ -608,7 +608,14 @@ impl Subprocess<'_> {
     #[bun_jsc::host_fn(getter)]
     pub fn get_terminal(this: &Self, global_this: &JSGlobalObject) -> JSValue {
         if let Some(terminal) = this.terminal.get() {
-            return crate::api::bun_terminal_body::to_js(terminal.as_ptr(), global_this);
+            // SAFETY: `terminal` is kept live by this Subprocess wrapper's
+            // cached `terminal` slot: the getter is `cache: true` and the
+            // spawn path pre-fills that slot (`terminal_set_cached`) with the
+            // Terminal JS wrapper, which owns the native +1 (released via its
+            // finalize → `deref_`). So at most one wrapper ever adopts the
+            // terminal's JS-side ref, and this fallback only runs while that
+            // wrapper is reachable.
+            return unsafe { crate::api::bun_terminal_body::to_js(terminal.as_ptr(), global_this) };
         }
         JSValue::UNDEFINED
     }

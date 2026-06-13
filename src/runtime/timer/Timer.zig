@@ -267,7 +267,14 @@ pub const All = struct {
         var maybe_now: ?timespec = null;
         while (this.timers.peek()) |min| {
             const now = maybe_now orelse now: {
-                const real_now = timespec.now(.allow_mocked_time);
+                // The real heap (this.timers) only ever contains timers whose deadlines
+                // are computed from real monotonic time: either fake timers were not
+                // active when the timer was inserted, or the timer's tag opts out of
+                // fake timers via allowFakeTimers(). Comparing against mocked time here
+                // would make real-time deadlines (e.g. the per-test timeout) appear to
+                // be in the far future while fake timers are active, so the event loop
+                // would sleep forever. Always compare the real heap against real time.
+                const real_now = timespec.now(.force_real_time);
                 maybe_now = real_now;
                 break :now real_now;
             };
@@ -329,7 +336,10 @@ pub const All = struct {
 
         if (this.timers.peek()) |timer| {
             if (!has_set_now.*) {
-                now.* = timespec.now(.allow_mocked_time);
+                // See the matching comment in getTimeout(): the real heap must be
+                // compared against real time even when fake timers are active, or
+                // real-time-based deadlines (test timeouts, WTFTimer, etc.) never fire.
+                now.* = timespec.now(.force_real_time);
                 has_set_now.* = true;
             }
             if (timer.next.greater(now)) {

@@ -87,8 +87,13 @@ public:
             return JSValue::encode(JSC::jsUndefined());
         }
 
-        return JSValue::encode(
-            WebCore::JSBlob::create(vm, globalObject, structure, ptr));
+        auto* object = WebCore::JSBlob::create(vm, globalObject, structure, ptr);
+        // File and Blob share a prototype, so File instances would otherwise
+        // inherit Blob's `Symbol.toStringTag`. Give each File instance its own
+        // "File" tag (matching Node and JSS3File's approach) so
+        // `Object.prototype.toString.call(file)` is "[object File]". See #14102.
+        object->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsOwnedString(vm, "File"_s), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+        return JSValue::encode(object);
     }
 
     static JSC_HOST_CALL_ATTRIBUTES EncodedJSValue call(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)

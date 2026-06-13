@@ -14,6 +14,11 @@ pub fn installHoistedPackages(
     try this.lockfile.filter(this.log, this, install_root_dependencies, workspace_filters, packages_to_install);
 
     defer {
+        // `filter` allocated fresh `trees` / `hoisted_dependencies` buffers —
+        // deinit them before swapping the originals back so we don't leak the
+        // filtered view for the lifetime of the package manager.
+        this.lockfile.buffers.trees.deinit(this.lockfile.allocator);
+        this.lockfile.buffers.hoisted_dependencies.deinit(this.lockfile.allocator);
         this.lockfile.buffers.trees = original_trees;
         this.lockfile.buffers.hoisted_dependencies = original_tree_dep_ids;
     }

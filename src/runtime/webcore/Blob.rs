@@ -382,7 +382,15 @@ pub trait BlobExt {
         Self: Sized;
     fn calculate_estimated_byte_size(&self);
     fn estimated_size(&self) -> usize;
-    fn to_js(&self, global_object: &JSGlobalObject) -> JSValue;
+    /// # Safety
+    ///
+    /// `self` must be the construct-path heap allocation ([`Blob::new`], which
+    /// sets the initial ref owed to the wrapper) and must not already have a
+    /// JS wrapper: the wrapper returned here adopts the pointer as its `m_ctx`
+    /// and releases that ref at GC finalize ([`Blob::finalize`] →
+    /// `Blob__deref`). Stack blobs (`is_heap_allocated() == false`) must never
+    /// reach this.
+    unsafe fn to_js(&self, global_object: &JSGlobalObject) -> JSValue;
     fn find_or_create_file_from_path(
         path_or_fd: &mut PathOrFileDescriptor,
         global_this: &JSGlobalObject,
@@ -2033,8 +2041,8 @@ impl BlobExt for Blob {
             .set(self.content_type_was_set.get() || content_type_was_allocated);
 
         let ptr = Blob::new(blob);
-        // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`. Explicit
-        // `&mut *` forces the inherent `Blob::to_js(&mut self)` (which calls
+        // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new` (no
+        // wrapper yet). UFCS picks `BlobExt::to_js(&self)` (which calls
         // `calculate_estimated_byte_size` and routes S3 blobs to
         // `S3File.toJSUnchecked`) over the by-value `JsClass::to_js`.
         unsafe { BlobExt::to_js(&*ptr, global_this) }
@@ -2048,8 +2056,8 @@ impl BlobExt for Blob {
 
         if self.size.get() == 0 {
             let ptr = Blob::new(Blob::init_empty(global_this));
-            // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force
-            // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.
+            // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new` (no
+            // wrapper yet); `BlobExt::to_js(&self)` over `JsClass::to_js`.
             return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
 
@@ -3732,8 +3740,8 @@ impl BlobExt for Blob {
         self.reported_estimated_size.get()
     }
 
-    fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
-        // if cfg!(debug_assertions) { debug_assert!(self.is_heap_allocated()); }
+    unsafe fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
+        debug_assert!(self.is_heap_allocated());
         self.calculate_estimated_byte_size();
 
         // R-2: `&self` receiver, but the FFI shims take `*mut Blob` (the
@@ -4330,8 +4338,9 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     let _ = content_type;
 
     let blob_ptr = scopeguard::ScopeGuard::into_inner(blob_guard);
-    // SAFETY: blob_ptr is valid; toJS is infallible. Explicit `&mut *` forces
-    // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js(self)`.
+    // SAFETY: `blob_ptr` is the fresh `Blob::new` heap allocation (guard
+    // disarmed above, no wrapper yet); `BlobExt::to_js(&self)` over
+    // `JsClass::to_js(self)`.
     Ok(unsafe { BlobExt::to_js(&*blob_ptr, global_this) })
 }
 
@@ -4851,9 +4860,9 @@ pub fn write_file_with_source_destination(
         // this is an edgecase
         // it will happen if someone did Bun.write(new Blob([123]), new Blob([456]))
         let cloned = Blob::new(source_blob.dupe());
-        // SAFETY: ptr was just produced by heap::alloc in Blob::new; the
-        // inherent `to_js(&mut self)` (not the by-value `JsClass` one) hands
-        // ownership to the C++ wrapper.
+        // SAFETY: `cloned` was just produced by `heap::alloc` in `Blob::new`
+        // (no wrapper yet); `BlobExt::to_js(&self)` (not the by-value
+        // `JsClass` one) hands ownership to the C++ wrapper.
         return Ok(JSPromise::resolved_promise_value(ctx, unsafe {
             BlobExt::to_js(&*cloned, ctx)
         }));
@@ -5801,8 +5810,8 @@ pub fn construct_bun_file(
     }
 
     let ptr = Blob::new(blob);
-    // SAFETY: ptr was just produced by heap::alloc in Blob::new. Explicit
-    // `&mut *` forces inherent `Blob::to_js(&mut self)` over `JsClass::to_js(self)`.
+    // SAFETY: `ptr` was just produced by `heap::alloc` in `Blob::new` (no
+    // wrapper yet); `BlobExt::to_js(&self)` over `JsClass::to_js(self)`.
     Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
 }
 
@@ -6564,11 +6573,11 @@ impl Any {
             streams::BufferActionTag::Blob => {
                 let result = Blob::new(self.to_blob(global_this));
                 // SAFETY: `Blob::new` returns a fresh heap allocation we own;
-                // `BlobExt::to_js` (the `&mut self` overload) consumes the
-                // pointer into a JS wrapper which takes ownership.
+                // `BlobExt::to_js(&self)` consumes the pointer into a JS
+                // wrapper which takes ownership.
                 unsafe { (*result).global_this.set(global_this) };
                 // SAFETY: same fresh `result` allocation; ownership transfers to the JS wrapper.
-                Ok(BlobExt::to_js(unsafe { &*result }, global_this))
+                Ok(unsafe { BlobExt::to_js(&*result, global_this) })
             }
             streams::BufferActionTag::ArrayBuffer => {
                 if matches!(self, Any::Blob(_)) {

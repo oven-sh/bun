@@ -251,11 +251,15 @@ impl<const SSL: bool> NewSocket<SSL> {
     // `#[bun_jsc::JsClass]` can't express the per-monomorphisation symbol
     // dispatch, so these hand-roll the `if (ssl) js_TLSSocket else js_TCPSocket`
     // split and route through the codegen'd safe wrappers.
-    pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+    /// # Safety
+    ///
+    /// `self` must be the construct-path heap allocation ([`NewSocket::new`])
+    /// and must not already have a JS wrapper: the C++ JSCell wrapper adopts
+    /// the pointer (holding the allocation's initial ref) and `finalize` on GC
+    /// ends in [`Self::deref`] → `deinit_and_destroy` → `heap::take`.
+    pub unsafe fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         jsc::mark_binding!();
-        // `self` is a heap-allocated `NewSocket` (every caller goes through
-        // `NewSocket::new` → `heap::alloc`); ownership is adopted by the C++
-        // JSCell wrapper, which calls `finalize` on GC. The codegen wrappers are
+        // The codegen wrappers are
         // monomorphic in `TCPSocket`/`TLSSocket`, so cast through the concrete
         // alias each branch is typed against.
         let ptr = self.as_ctx_ptr();
@@ -564,7 +568,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(JSValue::from(this.socket.get().set_no_delay(enabled)))
     }
 
-    pub fn handle_error(&self, err_value: JSValue) {
+    /// # Safety
+    ///
+    /// `self` must be the construct-path heap allocation ([`NewSocket::new`]):
+    /// dispatching the error handler may create the JS wrapper via
+    /// [`Self::get_this_value`].
+    pub unsafe fn handle_error(&self, err_value: JSValue) {
         log!("handleError");
         let handlers = self.get_handlers();
         let vm = handlers.vm;
@@ -575,7 +584,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // that way if we need to call the error handler, we can
         let scope = Handlers::enter_ref(handlers);
         let global = handlers.global_object;
-        let this_value = self.get_this_value(&global);
+        // SAFETY: forwarded caller contract (see `# Safety` above).
+        let this_value = unsafe { self.get_this_value(&global) };
         let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
         if scope.exit() {
             self.handlers.set(None);
@@ -635,7 +645,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         let scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
-        let this_value = this.get_this_value(&global);
+        // SAFETY: `this` reborrows the fn's `*mut Self` parameter, which is
+        // the construct-path heap allocation (fn contract).
+        let this_value = unsafe { this.get_this_value(&global) };
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
@@ -678,7 +690,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         let scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
-        let this_value = this.get_this_value(&global);
+        // SAFETY: `this` reborrows the fn's `*mut Self` parameter, which is
+        // the construct-path heap allocation (fn contract).
+        let this_value = unsafe { this.get_this_value(&global) };
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
@@ -896,7 +910,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        let this_value = this.get_this_value(&global);
+        // SAFETY: `this` reborrows the fn's `*mut Self` parameter, which is
+        // the construct-path heap allocation (fn contract).
+        let this_value = unsafe { this.get_this_value(&global) };
         this_value.ensure_still_alive();
         // Connection failed before open; allow the wrapper to be GC'd once this
         // callback returns. The on-stack `this_value` keeps it alive for the call.
@@ -1146,7 +1162,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         let handshake_callback = handlers.on_handshake;
 
         let global = handlers.global_object;
-        let this_value = this.get_this_value(&global);
+        // SAFETY: `this` reborrows the fn's `*mut Self` parameter, which is
+        // the construct-path heap allocation (fn contract).
+        let this_value = unsafe { this.get_this_value(&global) };
 
         this.mark_active();
         // TODO: properly propagate exception upwards
@@ -1195,7 +1213,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.deref();
     }
 
-    pub fn get_this_value(&self, global: &JSGlobalObject) -> JSValue {
+    /// # Safety
+    ///
+    /// `self` must be the construct-path heap allocation ([`NewSocket::new`]):
+    /// when no wrapper exists yet, this hands the pointer to [`Self::to_js`],
+    /// whose wrapper adopts it (see that method's `# Safety`). Receivers
+    /// reborrowed from the uSockets ext slot or the wrapper's `m_ctx` satisfy
+    /// this — both store the allocation-root pointer.
+    pub unsafe fn get_this_value(&self, global: &JSGlobalObject) -> JSValue {
         if let Some(value) = self.this_value.get().try_get() {
             return value;
         }
@@ -1204,7 +1229,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             // here would result in a second `finalize` (and double-deref) later.
             return JSValue::UNDEFINED;
         }
-        let value = self.to_js(global);
+        // SAFETY: forwarded caller contract (see `# Safety` above); the
+        // `this_value` memo above guarantees no wrapper exists yet.
+        let value = unsafe { self.to_js(global) };
         value.ensure_still_alive();
         // Hold strong until the socket is closed / marked inactive.
         self.this_value.with_mut(|r| r.set_strong(value, global));
@@ -1250,7 +1277,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         let scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
-        let this_value = this.get_this_value(&global);
+        // SAFETY: `this` reborrows the fn's `*mut Self` parameter, which is
+        // the construct-path heap allocation (fn contract).
+        let this_value = unsafe { this.get_this_value(&global) };
         if let Err(err) = callback.call(&global, this_value, &[this_value]) {
             let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
         }
@@ -1341,7 +1370,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         let scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
-        let this_value = this.get_this_value(&global);
+        // SAFETY: `this` reborrows the fn's `*mut Self` parameter, which is
+        // the construct-path heap allocation (fn contract).
+        let this_value = unsafe { this.get_this_value(&global) };
 
         let result: JSValue;
         // open callback only have 1 parameters and its the socket
@@ -1510,7 +1541,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         let scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
-        let this_value = this.get_this_value(&global);
+        // SAFETY: `this` reborrows the fn's `*mut Self` parameter, which is
+        // the construct-path heap allocation (fn contract).
+        let this_value = unsafe { this.get_this_value(&global) };
         let mut js_error: JSValue = JSValue::UNDEFINED;
         if err != 0 {
             // errors here are always a read error
@@ -1572,11 +1605,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let global = handlers.global_object;
-        let this_value = this.get_this_value(&global);
+        // SAFETY: `this` reborrows the fn's `*mut Self` parameter, which is
+        // the construct-path heap allocation (fn contract).
+        let this_value = unsafe { this.get_this_value(&global) };
         let output_value = match handlers.binary_type.to_js(data, &global) {
             Ok(v) => v,
             Err(err) => {
-                this.handle_error(global.take_exception(err));
+                // SAFETY: same `this` provenance as `get_this_value` above.
+                unsafe { this.handle_error(global.take_exception(err)) };
                 return;
             }
         };
@@ -1603,7 +1639,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(setter)]
     pub fn set_data(this: &Self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         log!("setData()");
-        Self::data_set_cached(this.get_this_value(global), global, value);
+        // SAFETY: host_fn receiver — `this` is the wrapper's `m_ctx`, the
+        // construct-path heap allocation.
+        Self::data_set_cached(unsafe { this.get_this_value(global) }, global, value);
         Ok(true)
     }
 
@@ -2949,7 +2987,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Capture before downgrade so the cached `data` (net.ts stores
         // `{self: net.Socket}` there) survives onto the raw twin.
         let original_data: JSValue =
-            Self::data_get_cached(this.get_this_value(global)).unwrap_or(JSValue::UNDEFINED);
+            // SAFETY: host_fn receiver — `this` is the wrapper's `m_ctx`, the
+            // construct-path heap allocation.
+            Self::data_get_cached(unsafe { this.get_this_value(global) })
+                .unwrap_or(JSValue::UNDEFINED);
         original_data.ensure_still_alive();
         if this.flags.get().contains(Flags::IS_ACTIVE) {
             this.poll_ref.with_mut(|p| p.disable());
@@ -3020,10 +3061,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: `new_raw` is the live adopted `us_socket_t`.
         unsafe { (*new_raw.as_ptr()).set_ssl_raw_tap(true) };
 
-        // SAFETY: short-lived reborrow; no dispatch can fire until
-        // `on_open`/`start_tls_handshake` below.
+        // SAFETY: `tls_ptr` and `raw_ref` are the freshly heap-allocated
+        // `TLSSocket::new` twins (no wrappers yet); short-lived reborrow — no
+        // dispatch can fire until `on_open`/`start_tls_handshake` below.
         let tls_js_value = unsafe { (*tls_ptr).get_this_value(global) };
-        let raw_js_value = raw_ref.get_this_value(global);
+        // SAFETY: see above.
+        let raw_js_value = unsafe { raw_ref.get_this_value(global) };
         TLSSocket::data_set_cached(tls_js_value, global, default_data);
         // `raw` keeps the pre-upgrade `data` so its callbacks emit on the
         // original net.Socket, not the TLS one.
@@ -3523,8 +3566,9 @@ impl DuplexUpgradeContext {
     fn on_error(&mut self, err_value: JSValue) {
         if self.is_open {
             if let Some(tls) = &self.tls {
-                // `RefPtr: Deref<Target = TLSSocket>`; `handle_error(&self)`.
-                tls.handle_error(err_value);
+                // SAFETY: `RefPtr: Deref<Target = TLSSocket>` over the
+                // intrusively-refcounted heap allocation from `TLSSocket::new`.
+                unsafe { tls.handle_error(err_value) };
             }
         } else {
             if let Some(tls) = self.tls.take() {
@@ -3863,9 +3907,10 @@ pub fn js_upgrade_duplex_to_tls(
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: JsCell::new(None),
     });
-    // SAFETY: tls just allocated via heap::alloc.
+    // SAFETY: tls just allocated via heap::alloc; no wrapper exists yet.
     let tls_ref: &TLSSocket = unsafe { &*tls };
-    let tls_js_value = tls_ref.get_this_value(global);
+    // SAFETY: see above.
+    let tls_js_value = unsafe { tls_ref.get_this_value(global) };
     TLSSocket::data_set_cached(tls_js_value, global, default_data);
 
     // Ownership of the +1 `SSL_CTX` ref transfers into

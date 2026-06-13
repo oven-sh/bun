@@ -134,7 +134,7 @@ pub fn to_fetch_headers(
         // and mojibake any UTF-8 header value bytes ≥0x80.
         &ZigString::from_bytes(this.buf.as_slice()),
         this.entries.len() as u32,
-    )
+    )?
     .ok_or(JsError::Thrown)
 }
 

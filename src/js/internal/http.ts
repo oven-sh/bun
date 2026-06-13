@@ -350,8 +350,8 @@ function emitErrorNt(msg, err, callback) {
     msg.emit("error", err);
   }
 }
-const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
-const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
+const setMaxHTTPHeaderSize = $newNativeFunction("node_http_binding.rs", "setMaxHTTPHeaderSize", 1);
+const getMaxHTTPHeaderSize = $newNativeFunction("node_http_binding.rs", "getMaxHTTPHeaderSize", 0);
 const kOutHeaders = Symbol("kOutHeaders");
 
 function ipToInt(ip) {

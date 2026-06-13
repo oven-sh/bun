@@ -138,7 +138,7 @@ test("(multi-file test) my feature", async () => {
 - **TypeScript** (`src/js/`): Built-in JavaScript modules with special syntax (see JavaScript Modules section)
 - **Generated code**: Many `.rs` and `.cpp` files are auto-generated from `.classes.ts` and other sources. The build regenerates them automatically when their inputs change.
 
-You will see `.zig` files alongside many `.rs` files (e.g. `fetch.zig` next to `fetch.rs`). These are the **original Zig implementation, kept only as a porting reference** — they are **not compiled** and **not shipped**. New code goes in `.rs`. When fixing a bug or porting a behavior, the `.zig` sibling is the source of truth for *intended semantics*: read it, then make the `.rs` match. Never add new behavior to a `.zig` file.
+You will see `.zig` files alongside many `.rs` files (e.g. `fetch.zig` next to `fetch.rs`). These are the **original Zig implementation, kept only as a porting reference** — they are **not compiled**, **not shipped**, and not read by the build or codegen (the `$native()` JS-binding macro resolves `.rs` files). New code goes in `.rs`. When fixing a bug or porting a behavior, the `.zig` sibling is the source of truth for *intended semantics*: read it, then make the `.rs` match. Never add new behavior to a `.zig` file.
 
 ### Core Source Organization
 

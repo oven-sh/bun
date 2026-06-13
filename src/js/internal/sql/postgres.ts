@@ -26,7 +26,7 @@ const {
   createConnection: createPostgresConnection,
   createQuery: createPostgresQuery,
   init: initPostgres,
-} = $zig("postgres.zig", "createBinding") as PostgresDotZig;
+} = $native("postgres.rs", "createBinding") as PostgresNativeBinding;
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
@@ -308,7 +308,7 @@ initPostgres(
   },
 );
 
-export interface PostgresDotZig {
+export interface PostgresNativeBinding {
   init: (
     onResolveQuery: (
       query: Query<any, any>,

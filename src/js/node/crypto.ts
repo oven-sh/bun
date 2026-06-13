@@ -65,9 +65,9 @@ const {
   getHashes,
   scrypt,
   scryptSync,
-} = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
+} = $native("node_crypto_binding.rs", "createNodeCryptoBindingZig");
 
-const normalizeEncoding = $newZigFunction("node_util_binding.zig", "normalizeEncoding", 1);
+const normalizeEncoding = $newNativeFunction("node_util_binding.rs", "normalizeEncoding", 1);
 
 const { validateString } = require("internal/validators");
 

@@ -463,7 +463,7 @@ export function windowsEnv(
 
 export function getChannel() {
   const EventEmitter = require("node:events");
-  const setRef = $newZigFunction("node_cluster_binding.zig", "setRef", 1);
+  const setRef = $newNativeFunction("node_cluster_binding.rs", "setRef", 1);
   return new (class Control extends EventEmitter {
     constructor() {
       super();

@@ -2,10 +2,10 @@
 
 const BufferModule = require("node:buffer");
 
-const crc32 = $newZigFunction("node_zlib_binding.zig", "crc32", 1);
-const NativeZlib = $zig("node_zlib_binding.zig", "NativeZlib");
-const NativeBrotli = $zig("node_zlib_binding.zig", "NativeBrotli");
-const NativeZstd = $zig("node_zlib_binding.zig", "NativeZstd");
+const crc32 = $newNativeFunction("node_zlib_binding.rs", "crc32", 1);
+const NativeZlib = $native("node_zlib_binding.rs", "NativeZlib");
+const NativeBrotli = $native("node_zlib_binding.rs", "NativeBrotli");
+const NativeZstd = $native("node_zlib_binding.rs", "NativeZstd");
 
 const ObjectKeys = Object.keys;
 const ArrayPrototypePush = Array.prototype.push;

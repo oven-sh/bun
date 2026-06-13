@@ -191,7 +191,7 @@ export function serialize(_message, _handle, _options) {
     // Remove handle from socket object, it will be closed when the socket
     // will be sent
     if (!options?.keepOpen) {
-      // we can use a $newZigFunction to have it unset the callback
+      // we can use a $newNativeFunction to have it unset the callback
       internal_handle.onread = nop;
       socket._handle = null;
       socket.setTimeout(0);
@@ -212,7 +212,7 @@ export function serialize(_message, _handle, _options) {
  * @returns {void}
  */
 export function parseHandle(target, serialized, fd) {
-  const emit = $newZigFunction("ipc.zig", "emitHandleIPCMessage", 3);
+  const emit = $newNativeFunction("ipc.rs", "emitHandleIPCMessage", 3);
   const net = require("node:net");
   // const dgram = require("node:dgram");
   switch (serialized.type) {

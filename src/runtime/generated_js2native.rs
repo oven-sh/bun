@@ -3,13 +3,12 @@
 //! `src/codegen/generate-js2native.ts::getJS2NativeRust()` (driven by
 //! `bundle-modules.ts`) writes `${BUN_CODEGEN_DIR}/generated_js2native.rs`;
 //! this module `include!`s it so the `#[unsafe(no_mangle)] extern "C"`
-//! `JS2Zig__*` symbols land in `bun_runtime` and satisfy the externs declared
-//! by `GeneratedJS2Native.h` (the JS-module → native dispatch table).
+//! `JS2Native__*` symbols land in `bun_runtime` and satisfy the externs
+//! declared by `GeneratedJS2Native.h` (the JS-module → native dispatch table).
 //!
-//! Mirrors `generated_classes.rs` exactly: thunks dispatch through a
-//! `Js2NativeImpl` trait whose default method bodies panic with a "not yet
-//! ported" message; porting a `$zig()` call site means overriding the
-//! matching method on `Js2Native`.
+//! Each thunk calls the Rust function named by its `$native()` call site
+//! directly (resolved from the `.rs` path + symbol); a missing function is a
+//! compile error in `cargo check -p bun_runtime`.
 #![allow(
     non_snake_case,
     non_camel_case_types,

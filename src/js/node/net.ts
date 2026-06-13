@@ -41,19 +41,19 @@ const MathMax = Math.max;
 const { UV_ECANCELED, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
 
-const getDefaultAutoSelectFamily = $zig("node_net_binding.zig", "getDefaultAutoSelectFamily");
-const setDefaultAutoSelectFamily = $zig("node_net_binding.zig", "setDefaultAutoSelectFamily");
-const getDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
-const setDefaultAutoSelectFamilyAttemptTimeout = $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
-const SocketAddress = $zig("node_net_binding.zig", "SocketAddress");
-const BlockList = $zig("node_net_binding.zig", "BlockList");
-const newDetachedSocket = $newZigFunction("node_net_binding.zig", "newDetachedSocket", 1);
-const doConnect = $newZigFunction("node_net_binding.zig", "doConnect", 2);
+const getDefaultAutoSelectFamily = $native("node_net_binding.rs", "getDefaultAutoSelectFamily");
+const setDefaultAutoSelectFamily = $native("node_net_binding.rs", "setDefaultAutoSelectFamily");
+const getDefaultAutoSelectFamilyAttemptTimeout = $native("node_net_binding.rs", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const setDefaultAutoSelectFamilyAttemptTimeout = $native("node_net_binding.rs", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+const SocketAddress = $native("node_net_binding.rs", "SocketAddress");
+const BlockList = $native("node_net_binding.rs", "BlockList");
+const newDetachedSocket = $newNativeFunction("node_net_binding.rs", "newDetachedSocket", 1);
+const doConnect = $newNativeFunction("node_net_binding.rs", "doConnect", 2);
 
-const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
-const upgradeDuplexToTLS = $newZigFunction("runtime/socket/socket.zig", "jsUpgradeDuplexToTLS", 2);
-const isNamedPipeSocket = $newZigFunction("runtime/socket/socket.zig", "jsIsNamedPipeSocket", 1);
-const getBufferedAmount = $newZigFunction("runtime/socket/socket.zig", "jsGetBufferedAmount", 1);
+const addServerName = $newNativeFunction("Listener.rs", "jsAddServerName", 3);
+const upgradeDuplexToTLS = $newNativeFunction("socket_body.rs", "jsUpgradeDuplexToTLS", 2);
+const isNamedPipeSocket = $newNativeFunction("socket_body.rs", "jsIsNamedPipeSocket", 1);
+const getBufferedAmount = $newNativeFunction("socket_body.rs", "jsGetBufferedAmount", 1);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");

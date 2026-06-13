@@ -174,5 +174,4 @@ declare function $${code}(message: string): ${namedError};\n`;
 
 writeIfNotChanged(path.join(outputDir, "ErrorCode+List.h"), enumHeader);
 writeIfNotChanged(path.join(outputDir, "ErrorCode+Data.h"), listHeader);
-writeIfNotChanged(path.join(outputDir, "ErrorCode.zig"), zig);
 writeIfNotChanged(path.join(outputDir, "ErrorCode.d.ts"), dts);

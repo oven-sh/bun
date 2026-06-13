@@ -5,11 +5,17 @@ map: std.AutoHashMap(UUID, *Entry) = std.AutoHashMap(UUID, *Entry).init(bun.defa
 
 pub const Entry = struct {
     blob: jsc.WebCore.Blob,
+    /// ScriptExecutionContext that registered this URL. Used to auto-revoke
+    /// all URLs created by a Worker when that Worker terminates, matching
+    /// the spec's "remove entries whose environment is the worker's settings
+    /// object" step and WebKit's BlobURLRegistry::unregisterURLsForContext.
+    context_id: u32,
 
     pub const new = bun.TrivialNew(@This());
-    pub fn init(blob: *const jsc.WebCore.Blob) *Entry {
+    pub fn init(blob: *const jsc.WebCore.Blob, context_id: u32) *Entry {
         return Entry.new(.{
             .blob = blob.dupeWithContentType(true),
+            .context_id = context_id,
         });
     }
 
@@ -21,12 +27,37 @@ pub const Entry = struct {
 
 pub fn register(this: *ObjectURLRegistry, vm: *jsc.VirtualMachine, blob: *const jsc.WebCore.Blob) UUID {
     const uuid = vm.rareData().nextUUID();
-    const entry = Entry.init(blob);
+    const entry = Entry.init(blob, vm.scriptExecutionContextId());
 
     this.lock.lock();
     defer this.lock.unlock();
     bun.handleOom(this.map.put(uuid, entry));
     return uuid;
+}
+
+/// Revoke every blob URL registered by the given ScriptExecutionContext.
+/// Called from worker teardown so entries created by a Worker don't leak
+/// after the Worker is terminated.
+pub fn revokeEntriesForContext(this: *ObjectURLRegistry, context_id: u32) void {
+    this.lock.lock();
+    defer this.lock.unlock();
+
+    // HashMap iteration does not support removal; collect keys first.
+    var to_remove: std.array_list.Managed(UUID) = .init(bun.default_allocator);
+    defer to_remove.deinit();
+
+    var it = this.map.iterator();
+    while (it.next()) |kv| {
+        if (kv.value_ptr.*.context_id == context_id) {
+            bun.handleOom(to_remove.append(kv.key_ptr.*));
+        }
+    }
+
+    for (to_remove.items) |uuid| {
+        if (this.map.fetchRemove(uuid)) |removed| {
+            removed.value.deinit();
+        }
+    }
 }
 
 pub fn singleton() *ObjectURLRegistry {

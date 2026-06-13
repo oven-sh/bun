@@ -64,6 +64,16 @@ node_fs_stat_watcher_scheduler: ?bun.ptr.RefPtr(StatWatcherScheduler) = null,
 listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FD) = .{},
 listening_sockets_for_watch_mode_lock: bun.Mutex = .{},
 
+/// PIDs of live `Bun.spawn` children while `--watch`/`--hot` is active.
+/// Before a watch-mode reload `execve`s over this process (or the watch loop
+/// exits on SIGINT/SIGTERM), these are sent SIGTERM so they don't accumulate
+/// across reloads. Mirrors `listening_sockets_for_watch_mode` — the reload
+/// path runs on the watcher thread so the list is mutex-protected.
+/// POSIX-only: on Windows the watch-manager parent owns a Job Object with
+/// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` which already reaps all descendants.
+spawned_subprocess_pids_for_watch_mode: if (bun.Environment.isPosix) std.ArrayListUnmanaged(std.posix.pid_t) else void = if (bun.Environment.isPosix) .{},
+spawned_subprocess_pids_for_watch_mode_lock: if (bun.Environment.isPosix) bun.Mutex else void = if (bun.Environment.isPosix) .{},
+
 fs_watchers_for_isolation: std.ArrayListUnmanaged(*FSWatcher) = .{},
 stat_watchers_for_isolation: std.ArrayListUnmanaged(*StatWatcher) = .{},
 
@@ -330,6 +340,40 @@ pub fn closeAllListenSocketsForWatchMode(this: *RareData) void {
         socket.close();
     }
     this.listening_sockets_for_watch_mode = .{};
+}
+
+pub fn addSubprocessForWatchMode(this: *RareData, pid: std.posix.pid_t) void {
+    if (comptime !bun.Environment.isPosix) return;
+    this.spawned_subprocess_pids_for_watch_mode_lock.lock();
+    defer this.spawned_subprocess_pids_for_watch_mode_lock.unlock();
+    this.spawned_subprocess_pids_for_watch_mode.append(bun.default_allocator, pid) catch {};
+}
+
+pub fn removeSubprocessForWatchMode(this: *RareData, pid: std.posix.pid_t) void {
+    if (comptime !bun.Environment.isPosix) return;
+    this.spawned_subprocess_pids_for_watch_mode_lock.lock();
+    defer this.spawned_subprocess_pids_for_watch_mode_lock.unlock();
+    if (std.mem.indexOfScalar(std.posix.pid_t, this.spawned_subprocess_pids_for_watch_mode.items, pid)) |i| {
+        _ = this.spawned_subprocess_pids_for_watch_mode.swapRemove(i);
+    }
+}
+
+/// Send SIGTERM to every tracked `Bun.spawn` child. Called from the
+/// watcher thread immediately before `execve` on file-change reload, and
+/// from the JS thread when the watch loop exits due to a terminating
+/// signal. PIDs are best-effort — if a child has already exited and its
+/// PID been recycled in the tiny window since `onSubprocessExit`, the
+/// stray SIGTERM is no worse than the status quo of leaking the process.
+pub fn killAllSubprocessesForWatchMode(this: *RareData) void {
+    if (comptime !bun.Environment.isPosix) return;
+    this.spawned_subprocess_pids_for_watch_mode_lock.lock();
+    defer this.spawned_subprocess_pids_for_watch_mode_lock.unlock();
+    for (this.spawned_subprocess_pids_for_watch_mode.items) |pid| {
+        if (pid > 0) {
+            _ = std.c.kill(pid, @intFromEnum(bun.SignalCode.SIGTERM));
+        }
+    }
+    this.spawned_subprocess_pids_for_watch_mode.clearRetainingCapacity();
 }
 
 pub fn addFSWatcherForIsolation(this: *RareData, watcher: *FSWatcher) void {

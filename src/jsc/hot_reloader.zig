@@ -255,9 +255,15 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
                 if (comptime reload_immediately) {
                     Output.flush();
-                    if (comptime Ctx == ImportWatcher) {
-                        if (this.reloader.ctx.rare_data) |rare|
+                    if (comptime Ctx == VirtualMachine) {
+                        if (this.reloader.ctx.rare_data) |rare| {
                             rare.closeAllListenSocketsForWatchMode();
+                            // `execve` preserves our PID, so `Bun.spawn`
+                            // children survive the reload with no handle in
+                            // the new process image — every save would leak
+                            // another generation of them.
+                            rare.killAllSubprocessesForWatchMode();
+                        }
                     }
                     flushChangedPathsForReload();
                     bun.reloadProcess(bun.default_allocator, clear_screen, false);

@@ -388,7 +388,22 @@ pub const Run = struct {
 
         switch (this.ctx.debug.hot_reload) {
             .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm, this.entry_path),
-            .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm, this.entry_path),
+            .watch => {
+                jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm, this.entry_path);
+                // On POSIX a `--watch` reload is a raw `execve` over the
+                // same PID. `killAllSubprocessesForWatchMode()` SIGTERMs the
+                // previous incarnation's `Bun.spawn` children just before
+                // that, but nothing `wait()`s them — they exit and sit as
+                // zombies parented to us. Reap them here (before the entry
+                // point runs, so no new children exist to confuse this).
+                // Uses `std.c.waitpid` directly — `std.posix.waitpid` treats
+                // ECHILD as `unreachable`, which is the normal first-run
+                // case with no prior incarnation.
+                if (comptime bun.Environment.isPosix) {
+                    var status: c_int = undefined;
+                    while (std.c.waitpid(-1, &status, std.c.W.NOHANG) > 0) {}
+                }
+            },
             else => {},
         }
 
@@ -488,11 +503,34 @@ pub const Run = struct {
                         vm.eventLoop().autoTickActive();
                     }
 
+                    // A JS `process.on('SIGINT'|'SIGTERM'|'SIGHUP')` listener
+                    // ran. Without this break the loop would go back to
+                    // `tickPossiblyForever()` and the process could never be
+                    // stopped short of SIGKILL. The handler (and any async
+                    // work it scheduled) has already drained above; now fall
+                    // through to the normal exit path.
+                    if (vm.watch_mode_terminating_signal != 0) break;
+
                     vm.onBeforeExit();
 
                     vm.reportExceptionInHotReloadedModuleIfNeeded();
 
+                    if (vm.watch_mode_terminating_signal != 0) break;
+
                     vm.eventLoop().tickPossiblyForever();
+                }
+
+                if (vm.watch_mode_terminating_signal != 0) {
+                    // Reap any `Bun.spawn` children the script's own cleanup
+                    // didn't get to, then exit `128 + signal` so callers see
+                    // the same code as default-disposition termination.
+                    if (comptime bun.Environment.isPosix) {
+                        if (vm.rare_data) |rare| rare.killAllSubprocessesForWatchMode();
+                    }
+                    if (vm.exit_handler.exit_code == 0) {
+                        const signal: bun.SignalCode = @enumFromInt(vm.watch_mode_terminating_signal);
+                        vm.exit_handler.exit_code = signal.toExitCode() orelse 0;
+                    }
                 }
             } else {
                 while (vm.isEventLoopAlive()) {

@@ -71,6 +71,11 @@ unsafe extern "C" {
         max_pixels: u64,
         out_w: *mut u32,
         out_h: *mut u32,
+        // Phase 1 writes 8 or 16 (driven by `kCGImagePropertyDepth`); phase 2
+        // reads it to size the VFmt/VBuf for either RGBA8 or RGBA16. Any
+        // source with depth ≥ 9 (HEIC 10/12, TIFF 16) maps to 16 so the
+        // extra precision survives through to PNG 16-bpc encode. #30462.
+        out_bit_depth: *mut u8,
         out: *mut u8, // nullable
     ) -> i32;
 
@@ -105,8 +110,11 @@ fn map_err(rc: i32) -> BackendError {
 pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
     let mut w: u32 = 0;
     let mut h: u32 = 0;
-    // Phase 1: dimensions only (out=null) so we can allocate in the global
-    // allocator like every other decode path.
+    let mut bit_depth: u8 = 8;
+    // Phase 1: dimensions + source depth (out=null) so we can allocate in
+    // the global allocator like every other decode path and size the buffer
+    // for either RGBA8 (4 B/px) or RGBA16 (8 B/px) before asking vImage to
+    // render into it.
     // SAFETY: bytes is a valid slice; out=null signals "probe only" to the shim.
     match unsafe {
         bun_coregraphics_decode(
@@ -115,18 +123,20 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
             max_pixels,
             &raw mut w,
             &raw mut h,
+            &raw mut bit_depth,
             core::ptr::null_mut(),
         )
     } {
         CG_OK => {}
         rc => return Err(map_err(rc)),
     }
+    let bytes_per_pixel: usize = if bit_depth == 16 { 8 } else { 4 };
     // PERF: vec![0u8; n] zero-fills — profile if hot.
-    let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
+    let mut out = vec![0u8; (w as usize) * (h as usize) * bytes_per_pixel];
     // Phase 2: render. The C side re-creates the CGImageSource (cheap — the
     // header parse is the only repeated work) so we don't have to thread an
     // opaque handle across the boundary.
-    // SAFETY: out has exactly w*h*4 bytes; shim writes that many.
+    // SAFETY: out has exactly w*h*bytes_per_pixel bytes; shim writes that many.
     match unsafe {
         bun_coregraphics_decode(
             bytes.as_ptr(),
@@ -134,6 +144,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
             max_pixels,
             &raw mut w,
             &raw mut h,
+            &raw mut bit_depth,
             out.as_mut_ptr(),
         )
     } {
@@ -144,6 +155,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
         rgba: out,
         width: w,
         height: h,
+        bit_depth,
         icc_profile: None,
     })
 }

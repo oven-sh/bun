@@ -1,6 +1,75 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug } from "harness";
 
+test("HTMLRewriter does not leak exceptions thrown from handlers", async () => {
+  const code = /* js */ `
+    const { heapStats } = require("bun:jsc");
+
+    async function settle() {
+      for (let i = 0; i < 8; i++) {
+        Bun.gc(true);
+        await Bun.sleep(0);
+      }
+    }
+
+    function counts() {
+      const stats = heapStats();
+      return {
+        Error: stats.objectTypeCounts.Error ?? 0,
+        Exception: stats.objectTypeCounts.Exception ?? 0,
+        protectedException: stats.protectedObjectTypeCounts.Exception ?? 0,
+      };
+    }
+
+    await settle();
+    const before = counts();
+
+    let caught = 0;
+    for (let i = 0; i < 100; i++) {
+      const rewriter = new HTMLRewriter().on("div", {
+        element() {
+          throw new Error("handler failed");
+        },
+      });
+
+      try {
+        rewriter.transform("<div>hello</div>");
+      } catch (error) {
+        if (error.message !== "handler failed") throw error;
+        caught++;
+      }
+
+      if (i % 25 === 0) {
+        await settle();
+      }
+    }
+
+    await settle();
+    const after = counts();
+
+    console.log(JSON.stringify({ caught, before, after }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+
+  const { caught, before, after } = JSON.parse(stdout.trim());
+  expect(caught).toBe(100);
+
+  expect(after.protectedException).toBeLessThanOrEqual(before.protectedException);
+  expect(after.Exception).toBeLessThanOrEqual(before.Exception + 1);
+  expect(after.Error).toBeLessThanOrEqual(before.Error + 1);
+  expect(exitCode).toBe(0);
+});
+
 // Each .on() / .onDocument() call heap-allocates an ElementHandler / DocumentHandler
 // struct via bun.default_allocator. When the HTMLRewriter is garbage-collected,
 // LOLHTMLContext.deinit() must destroy those allocations. Previously it only

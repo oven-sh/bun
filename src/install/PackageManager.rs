@@ -1812,14 +1812,21 @@ pub fn init(
     };
 
     env.load_process()?;
-    // Reborrow the BSSMap-owned `*DirEntry` for the
-    // call; `env.load` only reads it (`hasComptimeQuery` lookups for `.env*`).
+    // Reborrow the BSSMap-owned `*DirEntry` for the call; `env.load` only reads
+    // it (`hasComptimeQuery` lookups for `.env*`).
+    // `--env-file <path>...` (`cli.env_files`) overrides default `.env*` loading
+    // entirely. `--no-env-file` (CLI) and `env = false` in bunfig.toml
+    // (`ctx.args.disable_default_env_files`, written by `bunfig::load_env_config`
+    // at src/bunfig/bunfig.rs:285) both skip default loading. The hardcoded
+    // `.production` suffix mirrors prior install behaviour — see #12011 for the
+    // separate `NODE_ENV`-respect discussion.
+    let skip_default = cli.disable_default_env_files || ctx.args.disable_default_env_files;
     env.load(
         // SAFETY: see `entries_option` above — single-threaded init, BSSMap-owned.
         unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(entries_option) },
-        &[],
+        cli.env_files,
         dot_env::DotEnvFileSuffix::Production,
-        false,
+        skip_default,
     )?;
 
     initialize_store();

@@ -105,6 +105,12 @@ const SHARED_PARAMS: &[ParamType] = &[
     ),
     clap::param!("--save-text-lockfile                  Save a text-based lockfile"),
     clap::param!(
+        "--env-file <STR>...                   Load environment variables from the specified file(s) instead of `.env*`"
+    ),
+    clap::param!(
+        "--no-env-file                         Disable automatic loading of `.env*` files (also: `env = false` in bunfig.toml)"
+    ),
+    clap::param!(
         "--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install"
     ),
     clap::param!(
@@ -416,6 +422,15 @@ pub struct CommandLineArguments {
 
     pub save_text_lockfile: Option<bool>,
 
+    /// `--env-file <path>...` — explicit `.env*` paths to load instead of the
+    /// default `.env`/`.env.production`/`.env.local` set. Argv-backed `'static`.
+    pub env_files: &'static [&'static [u8]],
+
+    /// `--no-env-file` — skip default `.env*` loading at install time. ORs with
+    /// `ctx.args.disable_default_env_files`, which `bunfig.zig`'s `loadEnvConfig`
+    /// sets from `env = false` / `env.file = false` (src/bunfig/bunfig.rs:285).
+    pub disable_default_env_files: bool,
+
     pub lockfile_only: bool,
 
     pub node_linker: Option<Options::NodeLinker>,
@@ -502,6 +517,9 @@ impl Default for CommandLineArguments {
             ca_file_name: b"",
 
             save_text_lockfile: None,
+
+            env_files: &[],
+            disable_default_env_files: false,
 
             lockfile_only: false,
 
@@ -1048,6 +1066,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         cli.no_summary = args.flag(b"--no-summary");
         cli.ca = args.options(b"--ca");
         cli.lockfile_only = args.flag(b"--lockfile-only");
+        cli.env_files = args.options(b"--env-file");
+        cli.disable_default_env_files = args.flag(b"--no-env-file");
 
         if let Some(linker) = args.option(b"--linker") {
             cli.node_linker = Some(match Options::NodeLinker::from_str(linker) {

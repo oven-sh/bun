@@ -89,5 +89,11 @@
     "machine:windows:2019": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=windows --release=2019",
     "machine:freebsd": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=freebsd --release=14.3",
     "sync-webkit-source": "bun ./scripts/sync-webkit-source.ts"
-  }
+  },
+  "description": "Bun is an all-in-one JavaScript runtime and toolkit designed for speed, with a bundler, test runner, and Node.js-compatible package manager.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oven-sh/bun.git"
+  },
+  "homepage": "https://bun.sh"
 }

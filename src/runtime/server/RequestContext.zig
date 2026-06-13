@@ -405,6 +405,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     resp.writeHeader("content-type", MimeType.html.value);
                     resp.writeHeader("content-encoding", "gzip");
                     resp.writeHeaderInt("content-length", welcome_page_html_gz.len);
+                    // Tell uws we've written the Content-Length header so it
+                    // doesn't emit a second one in end(). See #29714.
+                    resp.markWroteContentLengthHeader();
                     ctx.end(welcome_page_html_gz, ctx.shouldCloseConnection());
                     return;
                 }
@@ -412,6 +415,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 resp.writeStatus("200 OK");
                 resp.writeHeader("content-type", MimeType.text.value);
                 resp.writeHeaderInt("content-length", missing_content.len);
+                // Tell uws we've written the Content-Length header so it
+                // doesn't emit a second one in end(). See #29714.
+                resp.markWroteContentLengthHeader();
                 ctx.flags.has_written_status = true;
                 ctx.end(missing_content, ctx.shouldCloseConnection());
             }

@@ -276,27 +276,51 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     return release;
 }
 
+// Emit a process lifecycle event through the JS-visible `process.emit` property
+// so that a user replacement of `process.emit` is invoked, matching Node (which
+// emits `beforeExit` and `exit` via `process.emit`). Listener exceptions are
+// reported inside EventEmitter::fireEventListeners; only a user-replaced `emit`
+// that itself throws leaves a pending exception for the caller to handle.
+static void emitProcessExitEvent(JSC::JSGlobalObject* globalObject, Process* process, ASCIILiteral eventName, int exitCode)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue emitValue = process->get(globalObject, Identifier::fromString(vm, "emit"_s));
+    RETURN_IF_EXCEPTION(scope, );
+
+    auto callData = JSC::getCallData(emitValue);
+    if (callData.type == CallData::Type::None)
+        return;
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(jsString(vm, String(eventName)));
+    arguments.append(jsNumber(exitCode));
+    ASSERT(!arguments.hasOverflowed());
+
+    JSC::call(globalObject, emitValue, callData, process, arguments);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
     static bool processIsExiting = false;
     if (processIsExiting)
         return;
     processIsExiting = true;
-    auto& emitter = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
 
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
-    auto event = Identifier::fromString(vm, "exit"_s);
-    if (!emitter.hasEventListeners(event)) {
-        return;
-    }
     process->putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(true), 0);
 
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(exitCode));
-    emitter.emit(event, arguments);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    emitProcessExitEvent(globalObject, process, "exit"_s, exitCode);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+    }
 }
 
 JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -827,11 +851,22 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
     auto& vm = JSC::getVM(globalObject);
     auto* process = globalObject->processObject();
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(exitCode));
     Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
-    auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
-    if (fired) {
+
+    // Capture whether there are listeners before emitting: a `once` listener
+    // removes itself while firing, so the queue must be drained afterwards based
+    // on the pre-emit state (matching the previous return value of emit()).
+    bool hadListeners = process->wrapped().hasEventListeners(Identifier::fromString(vm, "beforeExit"_s));
+
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    emitProcessExitEvent(globalObject, process, "beforeExit"_s, exitCode);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+        return;
+    }
+
+    if (hadListeners) {
         if (globalObject->m_nextTickQueue) {
             auto nextTickQueue = globalObject->m_nextTickQueue.get();
             nextTickQueue->drain(vm, globalObject);

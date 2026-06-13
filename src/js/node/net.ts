@@ -3523,6 +3523,9 @@ function initSocketHandle(self) {
   self._sockname = null;
   self[kclosed] = false;
   self[kended] = false;
+  // A reused socket may have been adopted by a TLS wrapper on a prior connect;
+  // clear the latch so its data handlers aren't silenced on the new connection.
+  self[kupgradedToTLS] = false;
 
   // Handle creation may be deferred to bind() or connect() time.
   if (self._handle) {

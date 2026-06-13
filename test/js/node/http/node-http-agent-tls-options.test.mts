@@ -15,9 +15,19 @@ import http from "node:http";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
+import os from "node:os";
 import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
+
+// Some CI hosts (and containers) have no IPv6 loopback; binding to ::1 there
+// emits EADDRNOTAVAIL instead of succeeding. Detect an internal (loopback)
+// IPv6 interface. Computed inline rather than via harness.isIPv6() because this
+// file must also run under `node --test`. Match on family (not address): the
+// loopback's address is not always rendered as "::1".
+const hasIPv6Loopback = Object.values(os.networkInterfaces())
+  .flat()
+  .some(iface => iface != null && iface.internal && (iface.family === "IPv6" || (iface.family as number) === 6));
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -629,6 +639,89 @@ describe("https.request agent TLS options inheritance", () => {
         }
       } finally {
         server.close();
+      }
+    });
+  });
+
+  describe("connection error handling", () => {
+    // https://github.com/oven-sh/bun/issues/31474
+    // When the proxy cannot be reached, the ClientRequest 'error' must carry
+    // the full Node.js shape (syscall/address/port and a
+    // `connect ECONNREFUSED <host>:<port>` message) rather than a bare
+    // `Error: ECONNREFUSED`. For a proxy agent the refused connection is to the
+    // proxy, so the address/port must be the proxy's.
+    test("HttpsProxyAgent with an unreachable proxy reports ECONNREFUSED for the proxy host", async () => {
+      // Connect through a proxy on a fixed port that nothing listens on so the
+      // connection is refused immediately and deterministically on every
+      // platform (a just-closed port can linger in TIME_WAIT on Windows). Below
+      // the ephemeral range so a concurrent listen(0) can't be assigned it.
+      const proxyPort = 18_324;
+      const agent = new HttpsProxyAgent(`http://127.0.0.1:${proxyPort}`);
+
+      const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
+      const req = https.request(
+        {
+          hostname: "127.0.0.1",
+          port: 443,
+          path: "/",
+          method: "GET",
+          agent,
+          timeout: 5000,
+        },
+        () => reject(new Error("Expected request to fail")),
+      );
+      req.on("error", resolve);
+      req.end();
+
+      const error = await promise;
+      if (error.code !== "ECONNREFUSED") {
+        throw new Error(`Expected code ECONNREFUSED, got ${error.code} (${error.message})`);
+      }
+      // uv errno is negative; its exact value differs by platform, so just
+      // assert it is present (the pre-fix bare error had no errno).
+      if (typeof error.errno !== "number" || error.errno >= 0) {
+        throw new Error(`Expected a negative numeric errno, got ${error.errno}`);
+      }
+      if (error.syscall !== "connect") {
+        throw new Error(`Expected syscall connect, got ${error.syscall}`);
+      }
+      if (error.address !== "127.0.0.1") {
+        throw new Error(`Expected address 127.0.0.1 (the proxy), got ${error.address}`);
+      }
+      if (error.port !== proxyPort) {
+        throw new Error(`Expected port ${proxyPort} (the proxy), got ${error.port}`);
+      }
+      if (error.message !== `connect ECONNREFUSED 127.0.0.1:${proxyPort}`) {
+        throw new Error(`Expected message "connect ECONNREFUSED 127.0.0.1:${proxyPort}", got "${error.message}"`);
+      }
+    });
+
+    test("HttpsProxyAgent with an IPv6 proxy reports the unbracketed address", async () => {
+      if (!hasIPv6Loopback) return; // no IPv6 loopback on this host — can't reach ::1
+
+      // Fixed IPv6 loopback port that nothing listens on (refused immediately).
+      // Below the ephemeral range so a concurrent listen(0) can't be assigned it.
+      const proxyPort = 18_325;
+      const agent = new HttpsProxyAgent(`http://[::1]:${proxyPort}`);
+
+      const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
+      const req = https.request(
+        { hostname: "127.0.0.1", port: 443, path: "/", method: "GET", agent, timeout: 5000 },
+        () => reject(new Error("Expected request to fail")),
+      );
+      req.on("error", resolve);
+      req.end();
+
+      const error = await promise;
+      if (error.code !== "ECONNREFUSED") {
+        throw new Error(`Expected code ECONNREFUSED, got ${error.code} (${error.message})`);
+      }
+      // URL.hostname keeps brackets for IPv6; Node's error.address is the bare IP.
+      if (error.address !== "::1") {
+        throw new Error(`Expected address ::1 (unbracketed), got ${error.address}`);
+      }
+      if (error.message !== `connect ECONNREFUSED ::1:${proxyPort}`) {
+        throw new Error(`Expected message "connect ECONNREFUSED ::1:${proxyPort}", got "${error.message}"`);
       }
     });
   });

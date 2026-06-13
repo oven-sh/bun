@@ -16,6 +16,7 @@ const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
 const { ConnResetException } = require("internal/shared");
+const { UV_ECONNREFUSED } = process.binding("uv");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -329,7 +330,7 @@ function ClientRequest(input, options, cb) {
       }
     };
 
-    const go = (url, proxy, softFail = false) => {
+    const go = (url, proxy, attemptedAddress = host, attemptedPort = this[kPort], softFail = false) => {
       const tls =
         protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
 
@@ -489,8 +490,45 @@ function ClientRequest(input, options, cb) {
         this[kFetchRequest]
           .catch(err => {
             if (err.code === "ConnectionRefused") {
-              err = new Error("ECONNREFUSED");
+              // Match Node's `connect ECONNREFUSED <address>:<port>` shape,
+              // including the errno/syscall/address/port fields. When a proxy
+              // is in use the refused connection is to the proxy, so report the
+              // proxy's host/port (as Node's agent does); otherwise report the
+              // attempted endpoint (the resolved address for the custom-lookup
+              // path, else the request target).
+              let address = attemptedAddress;
+              // Node reports the port as a number.
+              let failedPort: number | undefined = Number(attemptedPort);
+              if (proxy) {
+                try {
+                  const proxyUrl = new URL(proxy);
+                  // URL.hostname keeps brackets around IPv6 literals; Node's
+                  // error.address is the bare IP.
+                  address =
+                    proxyUrl.hostname.startsWith("[") && proxyUrl.hostname.endsWith("]")
+                      ? proxyUrl.hostname.slice(1, -1)
+                      : proxyUrl.hostname;
+                  failedPort = proxyUrl.port ? Number(proxyUrl.port) : proxyUrl.protocol === "https:" ? 443 : 80;
+                } catch {}
+              } else if (socketPath) {
+                // A unix-socket request was refused — report the socket path
+                // (no port), not the synthetic TCP host/port, as Node does.
+                address = socketPath;
+                failedPort = undefined;
+              }
+              // Build the error with the exact Node shape. We set `code` and the
+              // message explicitly rather than letting ExceptionWithHostPort
+              // derive them from the errno via getSystemErrorName: on Windows the
+              // uv errno table used by getSystemErrorName differs from
+              // process.binding("uv"), so deriving would yield "Unknown system
+              // error". The numeric errno is still reported for parity.
+              const details = failedPort && failedPort > 0 ? ` ${address}:${failedPort}` : address ? ` ${address}` : "";
+              err = new Error(`connect ECONNREFUSED${details}`);
+              err.errno = UV_ECONNREFUSED;
               err.code = "ECONNREFUSED";
+              err.syscall = "connect";
+              err.address = address;
+              if (failedPort) err.port = failedPort;
             } else if (err.code === "InvalidContentLength") {
               // The native client refuses to deliver a response with a
               // malformed or conflicting Content-Length. Node surfaces this
@@ -538,7 +576,7 @@ function ClientRequest(input, options, cb) {
         return false;
       }
       const [url, proxy] = getURL(host);
-      go(url, proxy, false);
+      go(url, proxy, host, this[kPort], false);
       return true;
     }
 
@@ -581,15 +619,18 @@ function ClientRequest(input, options, cb) {
         // an error to the user, we'll just skip to the next address.
         // The last address is required to work, and if it fails we'll throw an error.
 
+        // `candidates` is non-empty here (checked above) and is only drained by
+        // iterate() itself, one address per call.
         const iterate = () => {
-          if (candidates.length === 0) {
-            // If we get to this point, it means that none of the addresses could be connected to.
-            fail(`connect ECONNREFUSED ${host}:${port}`, "Error", "ECONNREFUSED", "connect");
-            return;
-          }
-
-          const [url, proxy] = getURL(candidates.shift().address);
-          go(url, proxy, candidates.length > 0).catch(iterate);
+          const candidate = candidates.shift();
+          const [url, proxy] = getURL(candidate.address);
+          const softFail = candidates.length > 0;
+          const attempt = go(url, proxy, candidate.address, this[kPort], softFail);
+          // Only advance to the next address while we're soft-failing. On the
+          // last candidate (softFail === false) go() owns the error emission, so
+          // iterate() is never re-entered and the array never empties underneath
+          // us.
+          if (softFail) attempt.catch(iterate);
         };
 
         iterate();

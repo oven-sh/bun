@@ -315,8 +315,10 @@ pub trait BlobExt {
         raw_bytes: *mut [u8],
     ) -> JsResult<JSValue>;
     /// # Safety
-    /// `buf` must be valid for reads for the duration of the call.
-    unsafe fn to_form_data_with_bytes<const _L: Lifetime>(
+    /// `buf` must be valid for reads for the duration of the call; when
+    /// `LIFETIME == Temporary` it must be a leaked default-allocator
+    /// `Box<[u8]>` whose ownership transfers to this call.
+    unsafe fn to_form_data_with_bytes<const LIFETIME: Lifetime>(
         &self,
         global: &JSGlobalObject,
         buf: *mut [u8],
@@ -2392,7 +2394,17 @@ impl BlobExt for Blob {
                     let store_size = file.max_size;
                     let offset = self.offset.get();
                     self.offset.set(store_size.min(offset));
-                    self.size.set(store_size.saturating_sub(offset));
+                    let available = store_size.saturating_sub(self.offset.get());
+                    // Matches the Bytes arm: only resolve an unknown size. A
+                    // slice already has a concrete `size`; overwriting it with
+                    // `store_size - offset` would widen the view to the end of
+                    // the file. Clamp a known size to `available` so it can't
+                    // report past EOF.
+                    if self.size.get() == MAX_SIZE {
+                        self.size.set(available);
+                    } else {
+                        self.size.set(self.size.get().min(available));
+                    }
                     return;
                 }
 
@@ -2447,8 +2459,17 @@ impl BlobExt for Blob {
                 let file = store.data_mut().as_file();
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
                     let store_size = file.max_size;
-                    let offset = self.offset.get();
-                    return (store_size.min(offset), store_size.saturating_sub(offset));
+                    let offset = store_size.min(self.offset.get());
+                    let available = store_size.saturating_sub(offset);
+                    // Matches `resolve_size`: a known size (a slice) is
+                    // authoritative; only an unknown size falls back to the
+                    // remainder of the file, clamped so it can't pass EOF.
+                    let size = if self.size.get() == MAX_SIZE {
+                        available
+                    } else {
+                        self.size.get().min(available)
+                    };
+                    return (offset, size);
                 }
                 if file.seekable == Some(false) {
                     return (self.offset.get(), self.size.get());
@@ -3010,11 +3031,15 @@ impl BlobExt for Blob {
     ///
     /// # Safety
     /// `buf` must be valid for reads for the duration of the call.
-    unsafe fn to_form_data_with_bytes<const _L: Lifetime>(
+    unsafe fn to_form_data_with_bytes<const LIFETIME: Lifetime>(
         &self,
         global: &JSGlobalObject,
         buf: *mut [u8],
     ) -> JSValue {
+        // Reclaim `Temporary` bytes (a leaked default-allocator `Box<[u8]>`
+        // handed over by the read path) after the parse below — including on
+        // the invalid-encoding early return.
+        let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(buf));
         let Some(encoder) = self.get_form_data_encoding() else {
             return ZigString::init(b"Invalid encoding").to_error_instance(global);
         };
@@ -3290,8 +3315,9 @@ impl BlobExt for Blob {
             return Ok(jsc::DOMFormData::create(global));
         }
         // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
-        // `to_form_data_with_bytes` only reads it.
-        Ok(unsafe { self.to_form_data_with_bytes::<{ Lifetime::Temporary }>(global, view_ptr) })
+        // `to_form_data_with_bytes` only reads it. `Share` (not `Temporary`):
+        // the bytes belong to the store and must not be reclaimed.
+        Ok(unsafe { self.to_form_data_with_bytes::<{ Lifetime::Share }>(global, view_ptr) })
     }
     #[inline]
     fn get<const MOVE: bool, const REQUIRE_ARRAY: bool>(

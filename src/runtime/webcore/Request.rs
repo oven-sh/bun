@@ -506,6 +506,15 @@ impl Request {
         <Self as BodyMixin>::detach_readable_stream(self, global_object)
     }
 
+    #[inline]
+    pub fn try_blob_from_resolved_stream(
+        &self,
+        global_object: &JSGlobalObject,
+        stream: &mut super::readable_stream::ReadableStream,
+    ) -> bool {
+        <Self as BodyMixin>::try_blob_from_resolved_stream(self, global_object, stream)
+    }
+
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
         // R-2: `to_js_unchecked` stores `self` as the C++ `m_ctx` payload (an

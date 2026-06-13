@@ -1,6 +1,7 @@
 import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite } from "harness";
+import { bunEnv, bunExe, exampleSite, tempDirWithFiles } from "harness";
+import { join } from "node:path";
 
 const exampleServer = exampleSite("http");
 
@@ -735,4 +736,253 @@ describe.concurrent("string body consumption does not leak", () => {
       expect(exitCode).toBe(0);
     });
   }
+});
+
+describe("Response wrapping a Bun.file() stream", () => {
+  // Position-dependent content so slice windows are verifiable. 1 MiB:
+  // on unfixed builds, consuming a Response wrapping a sliced stream of a
+  // file this large never resolves (the test then fails by timeout).
+  const SIZE = 1024 * 1024;
+  function makeFile(prefix: string) {
+    const bytes = new Uint8Array(SIZE);
+    for (let i = 0; i < SIZE; i++) bytes[i] = (i * 7) & 0xff;
+    const dir = tempDirWithFiles(prefix, { "body-file-stream.bin": Buffer.from(bytes) });
+    return { path: join(dir, "body-file-stream.bin"), bytes };
+  }
+
+  test(".bytes() returns a Uint8Array with the full contents", async () => {
+    const { path, bytes } = makeFile("body-file-stream");
+
+    const result = await new Response(file(path).stream()).bytes();
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(result.byteLength).toBe(SIZE);
+    expect(Buffer.compare(result, bytes)).toBe(0);
+  });
+
+  test(".bytes() on a sliced file stream resolves with exactly the slice", async () => {
+    const { path, bytes } = makeFile("body-file-stream-slice");
+
+    const start = 100;
+    const end = 1124;
+    const result = await new Response(file(path).slice(start, end).stream()).bytes();
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(result.byteLength).toBe(end - start);
+    expect(Buffer.compare(result, bytes.subarray(start, end))).toBe(0);
+  });
+
+  test(".text() and .arrayBuffer() on a sliced file stream resolve", async () => {
+    const dir = tempDirWithFiles("body-file-stream-text", { "text.txt": "0123456789".repeat(100) });
+    const path = join(dir, "text.txt");
+
+    const text = await new Response(file(path).slice(10, 30).stream()).text();
+    expect(text).toBe("01234567890123456789");
+
+    const ab = await new Response(file(path).slice(10, 30).stream()).arrayBuffer();
+    expect(ab.byteLength).toBe(20);
+  });
+
+  test("a disturbed file stream still throws at Response construction", async () => {
+    const { path } = makeFile("body-file-stream-read");
+
+    const stream = file(path).stream();
+    const reader = stream.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    reader.releaseLock();
+
+    expect(() => new Response(stream)).toThrow("ReadableStream has already been used");
+  });
+
+  test("a file stream with a held reader keeps rejecting consumption", async () => {
+    const { path } = makeFile("body-file-stream-locked");
+
+    const response = new Response(file(path).stream());
+    const reader = response.body!.getReader();
+    expect(response.body!.locked).toBe(true);
+    // the held reader must keep observing the stream; bytes() must not
+    // short-circuit to the blob path
+    expect(async () => {
+      await response.bytes();
+    }).toThrow();
+    reader.releaseLock();
+  });
+
+  test("a raw-constructor reader on a file stream keeps rejecting consumption", async () => {
+    const { path } = makeFile("body-file-stream-raw-reader");
+
+    const response = new Response(file(path).stream());
+    // unlike getReader(), new ReadableStreamDefaultReader() doesn't run the
+    // deferred $start thunk, so the stream is locked but not yet disturbed —
+    // the native blob conversion must still refuse to steal it
+    const reader = new ReadableStreamDefaultReader(response.body!);
+    expect(response.body!.locked).toBe(true);
+    expect(async () => {
+      await response.bytes();
+    }).toThrow("ReadableStream is locked");
+    // the reader is still attached; the stream wasn't detached out from
+    // under it, and the failed attempt marks the body used
+    expect(response.body!.locked).toBe(true);
+    expect(response.bodyUsed).toBe(true);
+  });
+
+  test("a raw-constructor reader on a blob-backed body stream keeps rejecting consumption", async () => {
+    const response = new Response(new Blob(["blob source data"]).stream());
+    const reader = new ReadableStreamDefaultReader(response.body!);
+    expect(response.body!.locked).toBe(true);
+    expect(async () => {
+      await response.bytes();
+    }).toThrow("ReadableStream is locked");
+    expect(response.body!.locked).toBe(true);
+    expect(response.bodyUsed).toBe(true);
+  });
+
+  test("response.body.cancel() still works and marks the body used", async () => {
+    const { path } = makeFile("body-file-stream-cancel");
+
+    const response = new Response(file(path).stream());
+    await response.body!.cancel();
+    expect(response.bodyUsed).toBe(true);
+    expect(response.body!.locked).toBe(false);
+    expect(async () => {
+      await response.bytes();
+    }).toThrow("Body already used");
+  });
+
+  test("a previously exposed .body behaves like a consumed body after .bytes()", async () => {
+    const { path, bytes } = makeFile("body-file-stream-exposed");
+
+    const response = new Response(file(path).stream());
+    const body = response.body!;
+    const result = await response.bytes();
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(Buffer.compare(result, bytes)).toBe(0);
+    // the exposed stream ends up in the same state the streaming path left
+    // it in: consumed and unusable
+    expect(response.bodyUsed).toBe(true);
+    expect(body.locked).toBe(true);
+    expect(() => body.getReader()).toThrow("ReadableStream is locked");
+    expect(() => new Response(body)).toThrow("ReadableStream has already been used");
+  });
+
+  test(".formData() on a file stream resolves with the parsed fields", async () => {
+    const payload = "a=hello&b=world";
+    const dir = tempDirWithFiles("body-file-stream-form", { "form.txt": payload });
+
+    const fd = await new Response(file(join(dir, "form.txt")).stream(), {
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    }).formData();
+    expect(fd.get("a")).toBe("hello");
+    expect(fd.get("b")).toBe("world");
+  });
+
+  test(".formData() on a direct file-backed body reads the file", async () => {
+    // file-backed blobs have no bytes in memory; the body must read the file
+    // before parsing rather than silently resolving with an empty FormData
+    const payload = "a=hello&b=world";
+    const dir = tempDirWithFiles("body-file-blob-form", { "form.txt": payload });
+
+    const fd = await new Response(file(join(dir, "form.txt")), {
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    }).formData();
+    expect([...fd.entries()]).toEqual([
+      ["a", "hello"],
+      ["b", "world"],
+    ]);
+  });
+
+  test(".formData() parses a multipart file-backed body", async () => {
+    const boundary = "----bodyfileformboundary";
+    const payload = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="field1"',
+      "",
+      "value1",
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="field2"',
+      "",
+      "value2",
+      `--${boundary}--`,
+      "",
+    ].join("\r\n");
+    const dir = tempDirWithFiles("body-file-multipart", { "form.bin": payload });
+    const headers = { "content-type": `multipart/form-data; boundary=${boundary}` };
+
+    const direct = await new Response(file(join(dir, "form.bin")), { headers }).formData();
+    expect([...direct.entries()]).toEqual([
+      ["field1", "value1"],
+      ["field2", "value2"],
+    ]);
+
+    const streamed = await new Response(file(join(dir, "form.bin")).stream(), { headers }).formData();
+    expect([...streamed.entries()]).toEqual([
+      ["field1", "value1"],
+      ["field2", "value2"],
+    ]);
+  });
+
+  test(".formData() on a missing file rejects instead of resolving empty", async () => {
+    const dir = tempDirWithFiles("body-file-form-missing", { "exists.txt": "x" });
+
+    expect(async () => {
+      await new Response(file(join(dir, "missing.txt")), {
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+      }).formData();
+    }).toThrow();
+  });
+
+  test("a failed .formData() encoding check doesn't consume the stream", async () => {
+    const payload = "a=hello&b=world";
+    const dir = tempDirWithFiles("body-file-form-badct", { "form.txt": payload });
+
+    // no content-type: the encoding check rejects before any conversion
+    const response = new Response(file(join(dir, "form.txt")).stream());
+    expect(async () => {
+      await response.formData();
+    }).toThrow("Can't decode form data from body because of incorrect MIME type/boundary");
+    expect(await response.text()).toBe(payload);
+  });
+
+  test("a consumed file stream can't be wrapped into a new Response", async () => {
+    const { path } = makeFile("body-file-stream-rewrap");
+
+    const stream = file(path).stream();
+    const first = await new Response(stream).bytes();
+    expect(first.byteLength).toBe(SIZE);
+    // the stream was consumed; wrapping it again must not re-read the file
+    expect(() => new Response(stream)).toThrow("ReadableStream has already been used");
+  });
+});
+
+describe("converted streams are marked disturbed", () => {
+  // When a body's stream is converted to a blob internally (the native
+  // fast path), a captured reference to it must behave like any consumed
+  // stream: wrapping it in a new Response and reading again must throw,
+  // not silently yield "".
+  test("re-wrapping a blob-bodied Response's consumed body throws", async () => {
+    const response = new Response(new Blob([Buffer.alloc(64 * 1024, 0x41)]));
+    const captured = response.body!;
+    expect(await response.text()).toHaveLength(64 * 1024);
+    expect(async () => {
+      await new Response(captured).text();
+    }).toThrow("already been used");
+  });
+
+  test("re-wrapping a consumed fetch body throws", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(Buffer.alloc(64 * 1024, 0x42)),
+    });
+    const response = await fetch(server.url);
+    const captured = response.body!;
+    // let the body buffer fully so consumption takes the Bytes conversion
+    // path; buffering completes on the HTTP client thread and every
+    // JS-observable probe of it would disturb the stream, so there is no
+    // condition to await (the assertions hold either way — an unbuffered
+    // body just takes the JS streaming path instead)
+    await Bun.sleep(50);
+    expect(await response.text()).toHaveLength(64 * 1024);
+    expect(async () => {
+      await new Response(captured).text();
+    }).toThrow("already been used");
+  });
 });

@@ -419,6 +419,46 @@ extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStr
     return stream != nullptr && WebCore::ReadableStream::isLocked(globalObject, stream);
 }
 
+// Reports lockedness the way the streams builtins define it
+// ($isReadableStreamLocked): the $reader private slot holds a value, either a
+// reader acquired via getReader() or the internal `{}` consumption sentinel.
+// isLocked() above only matches a literal `true`, and the public `locked`
+// getter can be shadowed by user code; this reads the private slot directly.
+extern "C" bool ReadableStream__hasReader(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+{
+    ASSERT(globalObject);
+    auto* stream = dynamicDowncast<WebCore::JSReadableStream>(JSValue::decode(possibleReadableStream));
+    if (!stream)
+        return false;
+
+    auto& vm = JSC::getVM(globalObject);
+    auto clientData = WebCore::clientData(vm);
+    JSValue reader = stream->getDirect(vm, clientData->builtinNames().readerPrivateName());
+    return reader && !reader.isUndefinedOrNull();
+}
+
+// Returns the stream's storedError when its state is $streamErrored, and an
+// empty JSValue otherwise (including when the value is not a ReadableStream).
+extern "C" JSC::EncodedJSValue ReadableStream__getStoredError(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+{
+    ASSERT(globalObject);
+    auto* stream = dynamicDowncast<WebCore::JSReadableStream>(JSValue::decode(possibleReadableStream));
+    if (!stream)
+        return {};
+
+    auto& vm = JSC::getVM(globalObject);
+    auto clientData = WebCore::clientData(vm);
+    JSValue state = stream->getDirect(vm, clientData->builtinNames().statePrivateName());
+    // $streamErrored === 3 (src/codegen/replacements.ts)
+    if (!state.isInt32() || state.asInt32() != 3)
+        return {};
+
+    JSValue storedError = stream->getDirect(vm, clientData->builtinNames().storedErrorPrivateName());
+    if (!storedError)
+        return JSValue::encode(JSC::jsUndefined());
+    return JSValue::encode(storedError);
+}
+
 extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream, void** ptr)
 {
     ASSERT(globalObject);

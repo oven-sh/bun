@@ -114,6 +114,14 @@ unsafe extern "C" {
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
     ) -> bool;
+    safe fn ReadableStream__hasReader(
+        possible_readable_stream: JSValue,
+        global_object: &JSGlobalObject,
+    ) -> bool;
+    safe fn ReadableStream__getStoredError(
+        possible_readable_stream: JSValue,
+        global_object: &JSGlobalObject,
+    ) -> JSValue;
     safe fn ReadableStream__empty(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__used(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__cancel(stream: JSValue, global: &JSGlobalObject);
@@ -270,6 +278,23 @@ impl ReadableStream {
     pub fn is_locked(&self, global_object: &JSGlobalObject) -> bool {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__isLocked(self.value, global_object)
+    }
+
+    /// Whether the `$reader` private slot is set, which is how the streams
+    /// builtins (`$isReadableStreamLocked`) define `locked`. Unlike
+    /// `is_locked`, this also reports readers acquired from JS and the
+    /// internal consumption sentinel, and it cannot be fooled by shadowing
+    /// the public `locked` getter.
+    pub fn has_reader(&self, global_object: &JSGlobalObject) -> bool {
+        ReadableStream__hasReader(self.value, global_object)
+    }
+
+    /// When the stream's state is errored, returns its `storedError`
+    /// (`undefined` when the stream errored without a stored value). Returns
+    /// `None` for every other state.
+    pub fn stored_error(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
+        let err = ReadableStream__getStoredError(self.value, global_object);
+        if err.is_empty() { None } else { Some(err) }
     }
 
     pub fn from_js(

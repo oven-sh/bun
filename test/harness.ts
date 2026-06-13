@@ -959,91 +959,96 @@ export async function describeWithContainer(
   },
   fn: (container: { port: number; host: string; ready: Promise<void> }) => void,
 ) {
-  // Skip if Docker is not available
-  if (!isDockerEnabled()) {
+  // Check if this is one of our docker-compose services
+  const services: Record<string, number> = {
+    "postgres_plain": 5432,
+    "postgres_tls": 5432,
+    "postgres_auth": 5432,
+    "mysql_plain": 3306,
+    "mysql_native_password": 3306,
+    "mysql_tls": 3306,
+    "mysql:8": 3306, // Map mysql:8 to mysql_plain
+    "mysql:9": 3306, // Map mysql:9 to mysql_native_password
+    "redis_plain": 6379,
+    "redis_unified": 6379,
+    "minio": 9000,
+    "autobahn": 9002,
+  };
+
+  const servicePort = services[image];
+  if (!servicePort) {
+    // No fallback - if the image isn't in docker-compose, it should fail
+    describe(label, () => {
+      throw new Error(
+        `Image "${image}" is not configured in docker-compose.yml. All test containers must use docker-compose.`,
+      );
+    });
+    return;
+  }
+
+  // Map mysql:8 and mysql:9 based on environment variables
+  let actualService = image;
+  if (image === "mysql:8" || image === "mysql:9") {
+    if (env.MYSQL_ROOT_PASSWORD === "bun") {
+      actualService = "mysql_native_password"; // Has password "bun"
+    } else if (env.MYSQL_ALLOW_EMPTY_PASSWORD === "yes") {
+      actualService = "mysql_plain"; // No password
+    } else {
+      actualService = "mysql_plain"; // Default to no password
+    }
+  }
+
+  // Skip only when no env override, no coordinator, and docker is unavailable.
+  // isDockerEnabled() may throw when docker is required but absent, so the
+  // env-override and coordinator checks must short-circuit before it.
+  if (!process.env["BUN_TEST_SERVICE_" + actualService] && !process.env.BUN_DOCKER_COORDINATOR && !isDockerEnabled()) {
     describe.todo(label);
     return;
   }
 
-  (concurrent && Bun.version !== "1.2.22" ? describe.concurrent : describe)(label, () => {
-    // Check if this is one of our docker-compose services
-    const services: Record<string, number> = {
-      "postgres_plain": 5432,
-      "postgres_tls": 5432,
-      "postgres_auth": 5432,
-      "mysql_plain": 3306,
-      "mysql_native_password": 3306,
-      "mysql_tls": 3306,
-      "mysql:8": 3306, // Map mysql:8 to mysql_plain
-      "mysql:9": 3306, // Map mysql:9 to mysql_native_password
-      "redis_plain": 6379,
-      "redis_unified": 6379,
-      "minio": 9000,
-      "autobahn": 9002,
+  (concurrent ? describe.concurrent : describe)(label, () => {
+    // Create a container descriptor with stable references and a ready promise
+    let readyResolver: () => void;
+    let readyRejecter: (error: any) => void;
+    const readyPromise = new Promise<void>((resolve, reject) => {
+      readyResolver = resolve;
+      readyRejecter = reject;
+    });
+
+    // Internal state that will be updated when container is ready
+    let _host = "127.0.0.1";
+    let _port = 0;
+
+    // Container descriptor with live getters and ready promise
+    const containerDescriptor = {
+      get host() {
+        return _host;
+      },
+      get port() {
+        return _port;
+      },
+      ready: readyPromise,
     };
 
-    const servicePort = services[image];
-    if (servicePort) {
-      // Map mysql:8 and mysql:9 based on environment variables
-      let actualService = image;
-      if (image === "mysql:8" || image === "mysql:9") {
-        if (env.MYSQL_ROOT_PASSWORD === "bun") {
-          actualService = "mysql_native_password"; // Has password "bun"
-        } else if (env.MYSQL_ALLOW_EMPTY_PASSWORD === "yes") {
-          actualService = "mysql_plain"; // No password
-        } else {
-          actualService = "mysql_plain"; // Default to no password
-        }
-      }
+    // Kick off `ensure()` at describe-define time so a file with multiple
+    // describeWithContainer blocks starts all of its containers in parallel.
+    // up() de-duplicates in-flight calls per service, so two describes for
+    // the same service share one `compose up`. beforeAll just awaits the
+    // result so test failures still surface there.
+    const startPromise = import("./docker/index.ts").then(h => h.ensure(actualService as any));
+    // Surface any rejection through `ready`; without a handler the runner
+    // would see an unhandled rejection before beforeAll re-throws it.
+    startPromise.catch(readyRejecter!);
 
-      // Create a container descriptor with stable references and a ready promise
-      let readyResolver: () => void;
-      let readyRejecter: (error: any) => void;
-      const readyPromise = new Promise<void>((resolve, reject) => {
-        readyResolver = resolve;
-        readyRejecter = reject;
-      });
+    beforeAll(async () => {
+      const info = await startPromise;
+      _host = info.host;
+      _port = info.ports[servicePort];
+      console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);
+      readyResolver!();
+    });
 
-      // Internal state that will be updated when container is ready
-      let _host = "127.0.0.1";
-      let _port = 0;
-
-      // Container descriptor with live getters and ready promise
-      const containerDescriptor = {
-        get host() {
-          return _host;
-        },
-        get port() {
-          return _port;
-        },
-        ready: readyPromise,
-      };
-
-      // Kick off `ensure()` at describe-define time so a file with multiple
-      // describeWithContainer blocks starts all of its containers in parallel.
-      // up() de-duplicates in-flight calls per service, so two describes for
-      // the same service share one `compose up`. beforeAll just awaits the
-      // result so test failures still surface there.
-      const startPromise = import("./docker/index.ts").then(h => h.ensure(actualService as any));
-      // Surface any rejection through `ready`; without a handler the runner
-      // would see an unhandled rejection before beforeAll re-throws it.
-      startPromise.catch(readyRejecter!);
-
-      beforeAll(async () => {
-        const info = await startPromise;
-        _host = info.host;
-        _port = info.ports[servicePort];
-        console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);
-        readyResolver!();
-      });
-
-      fn(containerDescriptor);
-      return;
-    }
-    // No fallback - if the image isn't in docker-compose, it should fail
-    throw new Error(
-      `Image "${image}" is not configured in docker-compose.yml. All test containers must use docker-compose.`,
-    );
+    fn(containerDescriptor);
   });
 }
 

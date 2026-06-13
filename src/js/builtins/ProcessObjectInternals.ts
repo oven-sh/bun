@@ -53,6 +53,7 @@ export function getStdioWriteStream(
   } else {
     const fs = require("node:fs");
     stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
+    stream.isTTY = false;
     stream.readable = false;
     stream._type = "fs";
 
@@ -165,6 +166,7 @@ export function getStdinStream(
 
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
   const stream = new ReadStream(null, { fd, autoClose: false });
+  if (!isTTY) stream.isTTY = false;
 
   const originalOn = stream.on;
 

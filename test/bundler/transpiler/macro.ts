@@ -23,3 +23,15 @@ export async function ireturnapromise() {
   setTimeout(() => resolve("aaa"), 100);
   return promise;
 }
+
+export function templateTag(strings: TemplateStringsArray, ...values: any[]) {
+  return {
+    cooked: [...strings],
+    raw: [...strings.raw],
+    values,
+  };
+}
+
+export function ico(name: TemplateStringsArray) {
+  return `/svg/spritesheet.svg#${name[0]}`;
+}

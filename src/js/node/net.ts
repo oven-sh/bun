@@ -885,6 +885,14 @@ Socket.prototype.connect = function connect(...args) {
       connection = socket;
     }
     if (fd) {
+      // Establish initial state BEFORE doConnect so the synchronous SocketHandlers.open
+      // callback (fired inline by Listener.connectInner on Windows for an existing pipe
+      // HANDLE) can flip connecting → false and set _handle. Setting connecting = true
+      // afterwards would clobber that, leaving the Socket stuck in the connecting state
+      // forever — _write then buffers writes into _pendingData and registers a
+      // "connect" listener for an event that has already fired, dropping subsequent
+      // writes silently. See child.stdio[3] regression in child_process.test.ts.
+      this.connecting = true;
       doConnect(this._handle, {
         data: this,
         fd: fd,
@@ -904,7 +912,9 @@ Socket.prototype.connect = function connect(...args) {
       process.nextTick(() => {
         this.resume();
       });
-      this.connecting = true;
+      if (!fd) {
+        this.connecting = true;
+      }
     }
     if (fd) {
       return this;

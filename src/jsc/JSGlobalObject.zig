@@ -284,47 +284,113 @@ pub const JSGlobalObject = opaque {
         return result;
     }
 
-    pub fn createErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
-        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
-            var buf = std.Io.Writer.Allocating.initCapacity(stack_fallback.get(), 2048) catch unreachable;
-            defer buf.deinit();
-            var writer = &buf.writer;
-            writer.print(fmt, args) catch {
-                // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error.
-                // Clear any pending JS exception (e.g. from Symbol.toPrimitive) so that throwValue doesn't hit assertNoException.
-                _ = this.clearExceptionExceptTermination();
-                return ZigString.static(fmt).toErrorInstance(this);
+    /// Error class selector for `createErrorInstanceWithFmtImpl`.
+    const ErrorKind = enum(u8) {
+        err,
+        type_error,
+        syntax_error,
+        range_error,
+
+        fn construct(kind: ErrorKind, str: *const ZigString, global: *JSGlobalObject) JSValue {
+            return switch (kind) {
+                .err => str.toErrorInstance(global),
+                .type_error => str.toTypeErrorInstance(global),
+                .syntax_error => str.toSyntaxErrorInstance(global),
+                .range_error => str.toRangeErrorInstance(global),
             };
-
-            // Ensure we clone it.
-            var str = ZigString.initUTF8(buf.written());
-
-            return str.toErrorInstance(this);
-        } else {
-            if (comptime strings.isAllASCII(fmt)) {
-                return String.static(fmt).toErrorInstance(this);
-            } else {
-                return ZigString.initUTF8(fmt).toErrorInstance(this);
-            }
         }
+    };
+
+    /// Type-erased printer invoked by `createErrorInstanceWithFmtImpl`. This is
+    /// the only bit that differs per comptime format string.
+    const PrintErrorFn = *const fn (*std.Io.Writer, *const anyopaque) std.Io.Writer.Error!void;
+
+    fn PrintThunk(comptime fmt: [:0]const u8, comptime Args: type) type {
+        return struct {
+            fn print(w: *std.Io.Writer, args: *const anyopaque) std.Io.Writer.Error!void {
+                const a: *const Args = @ptrCast(@alignCast(args));
+                return w.print(fmt, a.*);
+            }
+        };
+    }
+
+    /// Shared, format-independent body of `createErrorInstance` and siblings.
+    ///
+    /// The per-format wrappers are monomorphized hundreds of times across the
+    /// codebase; keeping the boilerplate (stack buffer setup, exception
+    /// handling, UTF-8 marking, cleanup) in a single `noinline` body keeps each
+    /// wrapper to a handful of instructions.
+    noinline fn createErrorInstanceWithFmtImpl(
+        this: *JSGlobalObject,
+        kind: ErrorKind,
+        print_fn: PrintErrorFn,
+        args_ptr: *const anyopaque,
+        fallback: [:0]const u8,
+        strip_ansi: bool,
+    ) JSValue {
+        var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+        var buf = std.Io.Writer.Allocating.initCapacity(stack_fallback.get(), 2048) catch unreachable;
+        defer buf.deinit();
+
+        print_fn(&buf.writer, args_ptr) catch {
+            // If an exception occurs while formatting the error message it's
+            // better to return the raw format string than an error about an
+            // error. Clear any pending JS exception (e.g. Symbol.toPrimitive)
+            // so that `throwValue` doesn't hit `assertNoException`.
+            _ = this.clearExceptionExceptTermination();
+            var fb = ZigString.initUTF8(fallback);
+            return kind.construct(&fb, this);
+        };
+
+        const msg = if (strip_ansi)
+            stripAnsiSgrInPlace(buf.written())
+        else
+            buf.written();
+
+        // Ensure we clone it.
+        var str = ZigString.initUTF8(msg);
+        return kind.construct(&str, this);
+    }
+
+    /// Strip ANSI SGR escape sequences (`ESC '[' … 'm'`) from `buf` in place.
+    /// These are the only sequences `Output.prettyFmt` emits. Bytes outside
+    /// such sequences (including other ESC uses) are preserved verbatim.
+    fn stripAnsiSgrInPlace(buf: []u8) []u8 {
+        var out: usize = 0;
+        var i: usize = 0;
+        while (i < buf.len) {
+            if (buf[i] == 0x1b and i + 1 < buf.len and buf[i + 1] == '[') {
+                var j = i + 2;
+                while (j < buf.len and (buf[j] == ';' or (buf[j] >= '0' and buf[j] <= '9'))) : (j += 1) {}
+                if (j < buf.len and buf[j] == 'm') {
+                    i = j + 1;
+                    continue;
+                }
+            }
+            buf[out] = buf[i];
+            out += 1;
+            i += 1;
+        }
+        return buf[0..out];
+    }
+
+    pub fn createErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
+        const Args = @TypeOf(args);
+        if (comptime std.meta.fieldNames(Args).len > 0) {
+            return createErrorInstanceWithFmtImpl(this, .err, &PrintThunk(fmt, Args).print, &args, fmt, false);
+        }
+        if (comptime strings.isAllASCII(fmt)) {
+            return String.static(fmt).toErrorInstance(this);
+        }
+        return ZigString.initUTF8(fmt).toErrorInstance(this);
     }
 
     pub fn createTypeErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
-        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
-            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
-            defer buf.deinit();
-            var writer = buf.writer();
-            writer.print(fmt, args) catch {
-                _ = this.clearExceptionExceptTermination();
-                return ZigString.static(fmt).toTypeErrorInstance(this);
-            };
-            var str = ZigString.fromUTF8(buf.slice());
-            return str.toTypeErrorInstance(this);
-        } else {
-            return ZigString.static(fmt).toTypeErrorInstance(this);
+        const Args = @TypeOf(args);
+        if (comptime std.meta.fieldNames(Args).len > 0) {
+            return createErrorInstanceWithFmtImpl(this, .type_error, &PrintThunk(fmt, Args).print, &args, fmt, false);
         }
+        return ZigString.static(fmt).toTypeErrorInstance(this);
     }
 
     pub fn createDOMExceptionInstance(this: *JSGlobalObject, code: jsc.WebCore.DOMExceptionCode, comptime fmt: [:0]const u8, args: anytype) JSError!JSValue {
@@ -342,37 +408,19 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn createSyntaxErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
-        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
-            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
-            defer buf.deinit();
-            var writer = buf.writer();
-            writer.print(fmt, args) catch {
-                _ = this.clearExceptionExceptTermination();
-                return ZigString.static(fmt).toSyntaxErrorInstance(this);
-            };
-            var str = ZigString.fromUTF8(buf.slice());
-            return str.toSyntaxErrorInstance(this);
-        } else {
-            return ZigString.static(fmt).toSyntaxErrorInstance(this);
+        const Args = @TypeOf(args);
+        if (comptime std.meta.fieldNames(Args).len > 0) {
+            return createErrorInstanceWithFmtImpl(this, .syntax_error, &PrintThunk(fmt, Args).print, &args, fmt, false);
         }
+        return ZigString.static(fmt).toSyntaxErrorInstance(this);
     }
 
     pub fn createRangeErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
-        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
-            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
-            defer buf.deinit();
-            var writer = buf.writer();
-            writer.print(fmt, args) catch {
-                _ = this.clearExceptionExceptTermination();
-                return ZigString.static(fmt).toRangeErrorInstance(this);
-            };
-            var str = ZigString.fromUTF8(buf.slice());
-            return str.toRangeErrorInstance(this);
-        } else {
-            return ZigString.static(fmt).toRangeErrorInstance(this);
+        const Args = @TypeOf(args);
+        if (comptime std.meta.fieldNames(Args).len > 0) {
+            return createErrorInstanceWithFmtImpl(this, .range_error, &PrintThunk(fmt, Args).print, &args, fmt, false);
         }
+        return ZigString.static(fmt).toRangeErrorInstance(this);
     }
 
     pub fn createRangeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
@@ -425,9 +473,32 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn throwPretty(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
-        const instance = switch (Output.enable_ansi_colors_stderr) {
-            inline else => |enabled| this.createErrorInstance(Output.prettyFmt(fmt, enabled), args),
+        const Args = @TypeOf(args);
+        const colored = comptime Output.prettyFmt(fmt, true);
+        const plain = comptime Output.prettyFmt(fmt, false);
+        // Only strip when the format string actually introduces ANSI codes.
+        // This keeps behaviour identical for formats that contain no markup.
+        const has_markup = comptime std.mem.indexOfScalar(u8, colored, 0x1b) != null;
+
+        const instance = inst: {
+            if (comptime std.meta.fieldNames(Args).len > 0) {
+                // Format once with the colored template, then strip ANSI SGR
+                // sequences at runtime when colours are disabled. This halves
+                // the number of `Writer.print` monomorphizations versus the
+                // previous `inline else` over `enable_ansi_colors_stderr`.
+                break :inst createErrorInstanceWithFmtImpl(
+                    this,
+                    .err,
+                    &PrintThunk(colored, Args).print,
+                    &args,
+                    plain,
+                    has_markup and !Output.enable_ansi_colors_stderr,
+                );
+            }
+            const s: [:0]const u8 = if (!has_markup or Output.enable_ansi_colors_stderr) colored else plain;
+            break :inst ZigString.initUTF8(s).toErrorInstance(this);
         };
+
         if (instance == .zero) {
             bun.assert(this.hasException());
             return error.JSError;

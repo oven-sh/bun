@@ -44,27 +44,48 @@ pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
 
 /// Mutable view of a [`Blob`]'s backing `Store` through its
 /// `JsCell<Option<StoreRef>>` field. Centralises the per-site raw
-/// `(*blob.store.get()…as_ptr()).mime_type = …` deref under the same
-/// invariant `StoreRef::data_mut` already documents:
-/// shared-mutable interior, single-threaded JS event-loop, no concurrent
-/// `&Store` outstanding for the borrow's duration.
+/// `(*blob.store.get()…as_ptr()).mime_type = …` deref used by the body-mixin
+/// `consume_` helpers.
+///
+/// This mirrors [`blob::StoreRef::data_mut`]: it projects `&mut` to the same
+/// heap `Store` from a shared `&Blob` via `StoreRef::as_ptr()`. `StoreRef`
+/// itself is `!Sync` so a single `&Blob` can't project the handle to another
+/// thread, but cloned `StoreRef` handles (`Send`) and `Blob: Sync` projecting
+/// `fn store(&self) -> Option<&StoreRef>` both allow other references to the
+/// same `Store` to exist concurrently — discharge the precondition at every
+/// call site.
+///
+/// # Safety
+/// For the lifetime of the returned `&mut Store`, the caller asserts that no
+/// other reference (`&Store`, `&mut Store`, `&Data`, `&mut Data`) to the same
+/// pointee is live — on this thread **or any other**. Same contract as
+/// [`blob::StoreRef::data_mut`].
 #[inline]
 #[allow(clippy::mut_from_ref)]
-fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
+unsafe fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
     blob.store
         .get()
         .as_ref()
-        // SAFETY: `StoreRef` invariant — pointee is a live heap `Store` while
-        // any `StoreRef` exists; single-threaded JS event-loop discipline
-        // guarantees no other `&`/`&mut Store` is live for this borrow.
+        // SAFETY: precondition — no aliasing `&`/`&mut` to the pointee is
+        // live for the returned borrow's duration (see fn doc).
         .map(|s| unsafe { &mut *s.as_ptr() })
 }
 
-fn set_blob_content_type(blob: &Blob, mime_type: MimeType, allocated: bool) {
+/// Stamp `mime_type` onto `blob.content_type` (and the backing `Store`'s
+/// `mime_type`, when present). Wraps the `blob_store_mut` back-door, so it
+/// inherits the same exclusivity precondition.
+///
+/// # Safety
+/// Same contract as [`blob_store_mut`]: for the duration of this call, no
+/// other reference (`&Store`, `&mut Store`, `&Data`, `&mut Data`) to the
+/// `Blob`'s backing `Store` may be live — on this thread or any other.
+unsafe fn set_blob_content_type(blob: &Blob, mime_type: MimeType, allocated: bool) {
     blob.content_type_was_set.set(true);
     match mime_type.value {
         Cow::Borrowed(interned) => {
-            if let Some(store) = blob_store_mut(blob) {
+            // SAFETY: precondition — no aliasing `Store` reference is live
+            // for this borrow (see fn doc).
+            if let Some(store) = unsafe { blob_store_mut(blob) } {
                 store.mime_type = MimeType {
                     value: Cow::Borrowed(interned),
                     category: mime_type.category,
@@ -74,7 +95,9 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType, allocated: bool) {
             blob.content_type_allocated.set(false);
         }
         Cow::Owned(owned) => {
-            if let Some(store) = blob_store_mut(blob) {
+            // SAFETY: precondition — no aliasing `Store` reference is live
+            // for this borrow (see fn doc).
+            if let Some(store) = unsafe { blob_store_mut(blob) } {
                 store.mime_type = MimeType {
                     value: Cow::Owned(owned.clone()),
                     category: mime_type.category,
@@ -1167,7 +1190,13 @@ impl Value {
                                     true,
                                     Some(&mut allocated),
                                 );
-                                set_blob_content_type(blob, mime_type, allocated);
+                                // SAFETY: synchronous JS-thread body-consumer
+                                // continuation; no JS re-entry before the
+                                // borrow ends, and other `StoreRef` clones
+                                // (e.g. the originating JS `Blob`) only touch
+                                // this `Store` on the same thread, so no
+                                // aliasing `&`/`&mut Store` is live.
+                                unsafe { set_blob_content_type(blob, mime_type, allocated) };
                                 // content_slice dropped (replaces defer content_slice.deinit())
                             }
                         }
@@ -1177,7 +1206,12 @@ impl Value {
                             ));
                             blob.content_type_allocated.set(false);
                             blob.content_type_was_set.set(true);
-                            blob_store_mut(blob)
+                            // SAFETY: synchronous JS-thread body-consumer
+                            // continuation; no JS re-entry before the borrow
+                            // ends, and other `StoreRef` clones only touch
+                            // this `Store` on the same thread, so no aliasing
+                            // `&`/`&mut Store` is live.
+                            unsafe { blob_store_mut(blob) }
                                 .expect("infallible: checked above")
                                 .mime_type = bun_http_types::MimeType::TEXT;
                         }
@@ -2124,7 +2158,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                     let mut allocated = false;
                     let mime_type =
                         MimeType::init(content_slice.slice(), true, Some(&mut allocated));
-                    set_blob_content_type(blob, mime_type, allocated);
+                    // SAFETY: synchronous JS-thread `reject`-path body-consumer
+                    // continuation; no JS re-entry before the borrow ends, and
+                    // other `StoreRef` clones only touch this `Store` on the
+                    // same thread, so no aliasing `&`/`&mut Store` is live.
+                    unsafe { set_blob_content_type(blob, mime_type, allocated) };
                     // content_slice dropped (replaces defer content_slice.deinit())
                 }
             }
@@ -2134,7 +2172,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 ));
                 blob.content_type_allocated.set(false);
                 blob.content_type_was_set.set(true);
-                blob_store_mut(blob)
+                // SAFETY: synchronous JS-thread body-consumer continuation;
+                // no JS re-entry before the borrow ends, and other `StoreRef`
+                // clones only touch this `Store` on the same thread, so no
+                // aliasing `&`/`&mut Store` is live.
+                unsafe { blob_store_mut(blob) }
                     .expect("infallible: checked above")
                     .mime_type = bun_http_types::MimeType::TEXT;
             }

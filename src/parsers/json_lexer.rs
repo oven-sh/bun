@@ -1271,9 +1271,8 @@ where
                 // `JSONLikeParser::parse_expr`'s auto-quote fallback rescue an
                 // unquoted value that starts with one — e.g. a `Bun.build`
                 // `define:` whose value is a raw minified CSS string starting
-                // with `*{...}` (`bake-codegen.ts`'s `OVERLAY_CSS`). Erroring
-                // here aborts `Lexer::init` before `parse_env_json` gets a
-                // chance to auto-quote.
+                // with `*{...}`. Erroring here aborts `Lexer::init` before
+                // `parse_env_json` gets a chance to auto-quote.
                 //
                 // They get a dedicated arm (not the catch-all) because these
                 // arms must `step()` past the

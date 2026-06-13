@@ -53,7 +53,13 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          OVERLAY_CSS: css("../runtime/bake/client/overlay.css", !!debug),
+          // Wrap in `JSON.stringify` so the value parses as a JSON string
+          // literal directly. Raw CSS starts with `*{…}` and tripped the
+          // JSON lexer in release-bun revisions older than #30679 (the
+          // `define` auto-quote fallback). Bootstrap `bun bd` with a
+          // pre-#30679 release bun in the build cache still fails without
+          // this; explicit quoting works in both old and new snapshots.
+          OVERLAY_CSS: JSON.stringify(css("../runtime/bake/client/overlay.css", !!debug)),
         },
         minify: {
           syntax: !debug,

@@ -305,6 +305,11 @@ pub fn createWatchEvent(event: FileEvent, index: WatchItemIndex) WatchEvent {
             .delete = event.action == .Removed,
             .rename = event.action == .RenamedOld,
             .write = event.action == .Modified,
+            // Mirror Linux/inotify semantics so downstream guards that check
+            // `write/delete/rename/create/move_to` treat Windows file-added and
+            // rename-new-name notifications as real content changes.
+            .create = event.action == .Added,
+            .move_to = event.action == .RenamedNew,
         },
         .index = index,
     };

@@ -14,6 +14,7 @@
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertInterface.h"
+#include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
@@ -368,30 +369,26 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     return {};
                 }
 
-                JSC::EncodedJSValue result = {};
-                WTF::Vector<BunString> paths;
-                for (size_t i = 0; i < userPathListArray->length(); ++i) {
-                    JSValue path = userPathListArray->getIndex(globalObject, i);
-                    WTF::String pathStr = path.toWTFString(globalObject);
-                    if (scope.exception()) [[unlikely]]
-                        goto cleanup;
-                    paths.append(Bun::toStringRef(pathStr));
-                }
+                Vector<WTF::String> paths = convert<IDLSequence<IDLDOMString>>(*globalObject, userPathListArray);
+                RETURN_IF_EXCEPTION(scope, {});
 
-                result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
-                if (scope.exception()) [[unlikely]]
-                    goto cleanup;
+                WTF::Vector<BunString> bunPaths;
+                bunPaths.reserveInitialCapacity(paths.size());
+                for (auto& path : paths)
+                    bunPaths.append(Bun::toStringRef(path));
+
+                JSC::EncodedJSValue result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, bunPaths.begin(), bunPaths.size());
+
+                for (auto& path : bunPaths) {
+                    path.deref();
+                }
+                RETURN_IF_EXCEPTION(scope, {});
 
                 if (!JSC::JSValue::decode(result).isString()) {
                     JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
-                    result = {};
-                    goto cleanup;
+                    return {};
                 }
 
-            cleanup:
-                for (auto& path : paths) {
-                    path.deref();
-                }
                 RELEASE_AND_RETURN(scope, result);
             } else {
                 Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "option.paths"_s, userPathList);

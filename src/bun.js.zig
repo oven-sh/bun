@@ -495,12 +495,45 @@ pub const Run = struct {
                     vm.eventLoop().tickPossiblyForever();
                 }
             } else {
-                while (vm.isEventLoopAlive()) {
-                    vm.tick();
-                    vm.eventLoop().autoTickActive();
+                // Main loop + beforeExit, with handling for a still-pending entry
+                // module promise (top-level await that `waitForModulePromise`
+                // bailed on because the loop was idle). A `beforeExit` handler
+                // may resolve the stuck await, and the resumed body may
+                // schedule more work and then suspend again — `continue`
+                // re-enters the whole cycle so Node's "beforeExit fires every
+                // time the loop drains" semantics hold for any number of rounds.
+                while (true) {
+                    while (vm.isEventLoopAlive()) {
+                        vm.tick();
+                        vm.eventLoop().autoTickActive();
+                    }
+
+                    vm.onBeforeExit();
+
+                    if (vm.pending_internal_promise) |p| {
+                        if (p.status() == .pending) {
+                            // A bare `resolve()` inside the handler queues a
+                            // JSC microtask that `isEventLoopAlive()` doesn't
+                            // count. Drain it so the module body resumes.
+                            vm.tick();
+                            if (vm.isEventLoopAlive()) continue;
+                        }
+                    }
+                    break;
                 }
 
-                if (this.ctx.runtime_options.eval.eval_and_print) {
+                // When the entry module itself never settled (unsettled
+                // top-level await), `entry_point_result.value` holds the
+                // module pipeline's internal promise rather than the evaluated
+                // expression's value, so `--print` would emit a bogus
+                // `Promise { <pending> }` to stdout. Skip printing; the
+                // warning + exit code 13 below report it.
+                const entry_module_pending = if (vm.pending_internal_promise) |p|
+                    p.status() == .pending
+                else
+                    false;
+
+                if (this.ctx.runtime_options.eval.eval_and_print and !entry_module_pending) {
                     const to_print = brk: {
                         const result: jsc.JSValue = vm.entry_point_result.value.get() orelse .js_undefined;
                         if (result.asAnyPromise()) |promise| {
@@ -528,7 +561,26 @@ pub const Run = struct {
                     to_print.print(vm.global, .Log, .Log);
                 }
 
-                vm.onBeforeExit();
+                // The entry module's top-level await never settled and nothing
+                // is keeping the event loop alive. Match Node.js: warn + exit 13.
+                // Late `.rejected` (the resumed body threw) is reported here
+                // because the module-loader pipeline promise is pre-marked
+                // handled and never reaches `handleRejectedPromises()`; gate
+                // on `pending_internal_promise_reported_at` so an initial-load
+                // rejection already handled above isn't double-reported.
+                if (vm.pending_internal_promise) |p| switch (p.status()) {
+                    .pending => {
+                        vm.reportUnsettledTopLevelAwait();
+                        if (vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 13;
+                    },
+                    .rejected => if (vm.pending_internal_promise_reported_at != vm.hot_reload_counter) {
+                        vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+                        const handled = vm.uncaughtException(vm.global, p.result(vm.global.vm()), true);
+                        p.setHandled();
+                        if (!handled and vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 1;
+                    },
+                    .fulfilled => {},
+                };
             }
 
             if (vm.log.msgs.items.len > 0) {

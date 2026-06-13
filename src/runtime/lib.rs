@@ -37,7 +37,6 @@ pub mod dispatch;
 pub mod hw_exports;
 pub mod ipc_host;
 pub mod jsc_hooks;
-pub mod linear_fifo_testing;
 pub mod napi;
 #[path = "../bun.js.rs"]
 pub mod run_main;

@@ -700,6 +700,15 @@ impl ErrorDeferred {
     }
 
     pub(crate) fn reject_later(self: Box<Self>, global_this: &JSGlobalObject) {
+        // VM teardown (`ares_destroy` firing EDESTRUCTION callbacks from
+        // `release_runtime_state_js_handles`): the event loop never ticks
+        // again, so an enqueued task would strand the deferred — its promise
+        // `Strong` must drop now, while the JSC heap is still alive. The
+        // promise is unobservable after exit handlers, so dropping it
+        // unsettled is fine.
+        if global_this.bun_vm().is_shutting_down() {
+            return;
+        }
         struct Context {
             deferred: Box<ErrorDeferred>,
             // LIFETIMES.tsv row 1403: JSC_BORROW — the global outlives the

@@ -2130,10 +2130,22 @@ impl Drop for GlobalData {
     fn drop(&mut self) {
         // `Resolver::deinit` ends with `heap::take(this)`, which is wrong for a
         // value field — open-code the channel teardown so the c-ares state
-        // frees when this box drops in `deinit_runtime_state`.
+        // frees when this box drops in `release_runtime_state_js_handles`.
         if let Some(channel) = self.resolver.channel.take() {
             // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
             unsafe { c_ares::Channel::destroy(channel) };
+        }
+        // With queries pending, `resolver.event_loop_timer` is linked into the
+        // per-thread timer heap, which outlives this box (`WTFTimer::update`
+        // still walks it until teardown finishes) — unlink before the node's
+        // memory frees. The EDESTRUCTION callbacks fired by the channel
+        // destroy above drop their deferreds without the `request_completed`
+        // bookkeeping that normally disarms the timer. Guarded because
+        // `remove_timer` derefs the thread-local `RuntimeState`, which
+        // `deinit_runtime_state` clears before its (fallback) drop of this
+        // box; the heap dies with us there, so the stale link is moot.
+        if !crate::jsc_hooks::runtime_state().is_null() {
+            self.resolver.remove_timer();
         }
     }
 }

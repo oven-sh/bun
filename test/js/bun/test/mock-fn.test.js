@@ -117,6 +117,88 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledWith();
   });
 
+  test("are constructable with new", () => {
+    // no implementation: `new` should produce a fresh object, like `new` on an ordinary function
+    const fn = jest.fn();
+    // like an ordinary function, a mock has a writable `.prototype` with a `constructor` back-reference
+    expect(typeof fn.prototype).toBe("object");
+    expect(fn.prototype.constructor).toBe(fn);
+    const instance = new fn(1, 2);
+    expect(typeof instance).toBe("object");
+    expect(instance).not.toBe(null);
+    // the instance inherits from the mock's prototype, so `instanceof` works without assigning one
+    expect(Object.getPrototypeOf(instance)).toBe(fn.prototype);
+    expect(instance instanceof fn).toBe(true);
+    expect(fn.mock.calls).toEqual([[1, 2]]);
+    expect(fn.mock.contexts[0]).toBe(instance);
+    // `new` calls are recorded in mock.instances
+    expect(fn.mock.instances[0]).toBe(instance);
+
+    // Reflect.construct used to crash when the mock returned a non-object
+    const reflected = Reflect.construct(fn, []);
+    expect(typeof reflected).toBe("object");
+    expect(fn.mock.instances[1]).toBe(reflected);
+
+    // implementation operating on `this`
+    const withImpl = jest.fn(function (value) {
+      this.value = value;
+    });
+    const constructed = new withImpl(42);
+    expect(constructed.value).toBe(42);
+    expect(withImpl.mock.contexts[0]).toBe(constructed);
+    expect(withImpl.mock.instances[0]).toBe(constructed);
+
+    // implementation returning an object wins over the created `this`
+    const returnsObject = jest.fn(() => ({ a: 1 }));
+    expect(new returnsObject()).toEqual({ a: 1 });
+
+    // primitive return values are ignored by `new`, like ordinary functions
+    const returnsPrimitive = jest.fn().mockReturnValue(42);
+    expect(typeof new returnsPrimitive()).toBe("object");
+
+    // newTarget.prototype is respected
+    const classLike = jest.fn();
+    classLike.prototype = {
+      greet() {
+        return "hello";
+      },
+    };
+    const classInstance = new classLike();
+    expect(classInstance.greet()).toBe("hello");
+    expect(classInstance instanceof classLike).toBe(true);
+
+    // Reflect.construct with an explicit newTarget uses its prototype
+    function NewTarget() {}
+    NewTarget.prototype = { marker: true };
+    const withNewTarget = Reflect.construct(jest.fn(), [], NewTarget);
+    expect(Object.getPrototypeOf(withNewTarget)).toBe(NewTarget.prototype);
+
+    // constructing a bound mock forwards [[Construct]] to the mock and returns an object
+    const bound = jest
+      .fn(function (value) {
+        this.value = value;
+      })
+      .bind(null, 7);
+    const boundInstance = new bound();
+    expect(typeof boundInstance).toBe("object");
+    expect(boundInstance.value).toBe(7);
+  });
+
+  test("mock.instances records `this` on every call, like mock.contexts", () => {
+    // jest-mock/@vitest/spy push `this` onto both instances and contexts on
+    // every call (no new.target check), so the two arrays stay in lock-step.
+    const fn = jest.fn();
+    const ctx = {};
+    fn.call(ctx);
+    fn();
+    expect(fn.mock.contexts).toEqual([ctx, undefined]);
+    expect(fn.mock.instances).toEqual([ctx, undefined]);
+
+    const instance = new fn();
+    expect(fn.mock.contexts).toEqual([ctx, undefined, instance]);
+    expect(fn.mock.instances).toEqual([ctx, undefined, instance]);
+  });
+
   test("mockName returns this", () => {
     const fn = jest.fn();
     expect(fn.mockName()).toBe(fn);
@@ -827,6 +909,30 @@ describe("spyOn", () => {
     expect(obj.original()).toBe(42);
     expect(fn).not.toHaveBeenCalled();
   });
+
+  test("constructing a spy calls the original with the new instance", () => {
+    var obj = {
+      Original: function () {
+        this.ok = true;
+      },
+    };
+    const fn = spyOn(obj, "Original");
+    const instance = Reflect.construct(obj.Original, []);
+    expect(typeof instance).toBe("object");
+    expect(instance.ok).toBe(true);
+    expect(fn).toHaveBeenCalledTimes(1);
+    fn.mockRestore();
+  });
+
+  if (isBun) {
+    test("constructing a spy on a missing property returns an object", () => {
+      const target = {};
+      const fn = spyOn(target, "doesNotExist");
+      expect(typeof Reflect.construct(fn, [])).toBe("object");
+      expect(typeof new fn()).toBe("object");
+      fn.mockRestore();
+    });
+  }
 
   test("override impl after doesnt break restore", () => {
     var obj = {

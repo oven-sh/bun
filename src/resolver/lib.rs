@@ -1273,7 +1273,7 @@ pub mod fs {
                         // scrutinee directly so no second `&mut *cached_ptr` is materialized
                         // while the first is on the borrow stack (Stacked Borrows hygiene).
                         match unsafe { &mut *cached_ptr } {
-                            EntriesOption::Entries(e) if e.generation < generation => {
+                            EntriesOption::Entries(e) if e.stale || e.generation < generation => {
                                 in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                             }
                             cached => return Ok(cached),
@@ -1378,16 +1378,35 @@ pub mod fs {
             })))
         }
 
-        /// Evicts `file_path` from the directory-entry cache; returns whether
-        /// an entry was removed.
+        /// Invalidates `file_path` in the directory-entry cache; returns
+        /// whether an entry was invalidated.
         pub fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
-            // `entries` is the process-global
-            // BSSMap singleton and `remove` mutates it; callers (transpiler /
-            // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
-            // `entries_mutex` to satisfy `EntriesMap::inner`'s aliasing
-            // invariant. No caller already holds it (no re-entry from
+            // `entries` is the process-global BSSMap singleton; callers
+            // (transpiler / hot-reloader / VM) reach this without
+            // `RESOLVER_MUTEX`. `read_directory_with_iterator` and
+            // `dir_info_cached_maybe_log` hold `entries_mutex` while
+            // reading/overwriting slot contents, so taking it here keeps the
+            // tag check, the `.stale` write, and the `remove` fallback from
+            // racing an in-place overwrite (`EntriesMap::inner`'s aliasing
+            // invariant). No caller already holds it (no re-entry from
             // `read_directory`/`dir_info_cached_maybe_log`).
             let _g = self.entries_mutex.lock_guard();
+
+            // `BSSMap::remove()` only drops the hash→index mapping; the backing
+            // slot (and the heap `DirEntry` it points at) are orphaned, and the
+            // next lookup allocates a fresh slot + fresh `DirEntry`. That skips
+            // the `in_place` re-scan, so every bust leaked the `DirEntry`, its
+            // `EntryMap`, and grew `EntryStore`/`FilenameStore` by one entry per
+            // file in the directory.
+            //
+            // Instead, keep the slot and flag the `DirEntry` so the next read
+            // takes the `in_place` path and reuses all of those allocations.
+            if let Some(EntriesOption::Entries(entries)) = self.entries.get(file_path) {
+                entries.stale = true;
+                return true;
+            }
+            // `Err` slots and `NotFound` sentinels hold no `DirEntry`; fall back
+            // to dropping the key so the next read re-checks disk.
             self.entries.remove(file_path)
         }
 
@@ -1626,7 +1645,7 @@ pub mod fs {
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
-                if existing.generation < generation {
+                if existing.stale || existing.generation < generation {
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };
@@ -1650,9 +1669,15 @@ pub mod fs {
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
                     let prev = Some(unsafe { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, ()) {
-                        Ok(new_entry) => {
+                        Ok(mut new_entry) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
+                            // `readdir(store_fd=false, …)` leaves `new_entry.fd = INVALID`;
+                            // carry over any previously-stored descriptor so callers that
+                            // cached it (e.g. `DirInfo::get_file_descriptor`) keep working
+                            // and the old handle isn't silently leaked.
+                            // SAFETY: see above.
+                            new_entry.fd = unsafe { (*e_ptr).fd };
                             // SAFETY: see above — slot is exclusively owned here.
                             unsafe { *e_ptr = new_entry };
                         }

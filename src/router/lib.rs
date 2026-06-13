@@ -796,6 +796,16 @@ impl<'a> RouteLoader<'a> {
     ) {
         let fs = self.fs;
 
+        // Subdirectory recursion is deferred until after the `entries.data`
+        // iteration completes. `bust_entries_cache` now marks the `DirEntry`
+        // stale in place (instead of orphaning the slot), so if the watcher
+        // thread busts this directory mid-scan, the `read_dir_info_ignore_error`
+        // call below — on this same thread — can rewrite `entries.data` in place
+        // via the resolver's `in_place` path while we're still iterating it.
+        // `*Entry` values live in the append-only `EntryStore`, so snapshotting
+        // the pointers is sufficient.
+        let mut subdirs: Vec<*mut Fs::Entry> = Vec::new();
+
         if let Some(entries) = root_dir_info.get_entries_const() {
             let iter = entries.iter();
             'outer: for entry_ptr in iter {
@@ -826,13 +836,7 @@ impl<'a> RouteLoader<'a> {
                                 continue 'outer;
                             }
                         }
-
-                        let abs_parts = [entry.dir(), entry.base()];
-                        if let Some(dir_info) =
-                            resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
-                        {
-                            self.load(resolver, &dir_info, base_dir);
-                        }
+                        subdirs.push(entry_ptr);
                     }
 
                     Fs::EntryKind::File => {
@@ -876,6 +880,17 @@ impl<'a> RouteLoader<'a> {
                         }
                     }
                 }
+            }
+        }
+
+        for entry_ptr in subdirs {
+            // SAFETY: `entry_ptr` points into the process-static `EntryStore`
+            // (append-only), so it remains valid across any `in_place` rewrite
+            // of the parent `DirEntry` triggered by `read_dir_info_ignore_error`.
+            let entry: &Fs::Entry = unsafe { &*entry_ptr };
+            let abs_parts = [entry.dir(), entry.base()];
+            if let Some(dir_info) = resolver.read_dir_info_ignore_error(fs.abs(&abs_parts)) {
+                self.load(resolver, &dir_info, base_dir);
             }
         }
     }

@@ -385,6 +385,14 @@ impl FileSystemRouter {
             Err(_) => return,
         };
 
+        // Snapshot the subdirectory `*Entry` pointers before recursing. With
+        // the `DirEntry.stale` mechanism a concurrent watcher-thread bust of
+        // `path` can cause the `read_dir_info(child)` call below (on this same
+        // thread) to rewrite `entries.data` in place while we're mid-iteration.
+        // `*Entry` values live in the append-only `EntryStore`, so the pointers
+        // (and their `dir`/`base` strings) stay valid across that.
+        let mut subdirs: Vec<*mut Fs::Entry> = Vec::new();
+
         if let Some(dir_ref) = root_dir_info {
             if let Some(entries) = dir_ref.get_entries_const() {
                 'outer: for &entry_ptr in entries.data.values() {
@@ -415,17 +423,25 @@ impl FileSystemRouter {
                                 continue 'outer;
                             }
                         }
-                        let abs_parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                        // `abs()` writes into a thread-local buffer; copy out
-                        // before recursing (recursion overwrites it).
-                        let full_path = vm.fs().abs(&abs_parts).to_vec();
-                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
-                            strings::paths::without_trailing_slash_windows_path(&full_path),
-                        );
-                        self.bust_dir_cache_recursive(global_this, &full_path);
+                        subdirs.push(entry_ptr);
                     }
                 }
             }
+        }
+
+        for entry_ptr in subdirs {
+            // SAFETY: `entry_ptr` points into the process-static `EntryStore`
+            // (append-only), so it remains valid regardless of any `DirEntry`
+            // rewrite above.
+            let entry = unsafe { &*entry_ptr };
+            let abs_parts: [&[u8]; 2] = [entry.dir, entry.base()];
+            // `abs()` writes into a thread-local buffer; copy out before
+            // recursing (recursion overwrites it).
+            let full_path = vm.fs().abs(&abs_parts).to_vec();
+            let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
+                strings::paths::without_trailing_slash_windows_path(&full_path),
+            );
+            self.bust_dir_cache_recursive(global_this, &full_path);
         }
 
         let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);

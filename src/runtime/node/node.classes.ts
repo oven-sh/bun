@@ -136,6 +136,7 @@ export default [
     finalize: true,
     sharedThis: true,
     configurable: false,
+    estimatedSize: true,
     klass: {},
     JSType: "0b11101110",
     proto: {
@@ -207,6 +208,7 @@ export default [
     finalize: true,
     sharedThis: true,
     configurable: false,
+    estimatedSize: true,
     klass: {},
     JSType: "0b11101110",
     proto: {

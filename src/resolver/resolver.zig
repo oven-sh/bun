@@ -851,9 +851,9 @@ pub const Resolver = struct {
 
                     return .{ .not_found = {} };
                 } else if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(source_dir)) {
-                    if (import_path.len > 2 and isDotSlash(import_path[0..2])) {
+                    if (import_path.len > 2 and isDotSlash(import_path[0..2])) graph_lookup: {
                         const buf = bufs(.import_path_for_standalone_module_graph);
-                        const joined = bun.path.joinAbsStringBuf(source_dir, buf, &.{import_path}, .loose);
+                        const joined = bun.path.joinAbsStringBufChecked(source_dir, buf, &.{import_path}, .loose) orelse break :graph_lookup;
 
                         // Support relative paths in the graph
                         if (graph.findAssumeStandalonePath(joined)) |file| {
@@ -911,8 +911,10 @@ pub const Resolver = struct {
         errdefer (r.flushDebugLogs(.fail) catch {});
 
         // A path with a null byte cannot exist on the filesystem. Continuing
-        // anyways would cause assertion failures.
-        if (bun.strings.containsChar(import_path, 0)) {
+        // anyways would cause assertion failures. Likewise, a path longer
+        // than MAX_PATH_BYTES cannot name a real file and would overflow the
+        // threadlocal path buffers used below.
+        if (import_path.len > bun.MAX_PATH_BYTES or bun.strings.containsChar(import_path, 0)) {
             r.flushDebugLogs(.fail) catch {};
             return .{ .not_found = {} };
         }
@@ -3953,6 +3955,7 @@ pub const Resolver = struct {
 
     fn loadExtension(r: *ThisResolver, base: string, path: string, ext: string, entries: *Fs.FileSystem.DirEntry) ?LoadResult {
         const rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
+        if (path.len + ext.len > bufs(.load_as_file).len) return null;
         const buffer = bufs(.load_as_file)[0 .. path.len + ext.len];
         bun.copy(u8, buffer[path.len..], ext);
         const file_name = buffer[path.len - base.len .. buffer.len];

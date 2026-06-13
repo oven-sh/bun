@@ -132,9 +132,10 @@ pub const Transpiler = struct {
             var cache_bust_buf: bun.PathBuffer = undefined;
 
             // Bust directory cache and try again
-            const buster_name = name: {
+            const buster_name: string = name: {
                 if (std.fs.path.isAbsolute(entry_point)) {
                     if (std.fs.path.dirname(entry_point)) |dir| {
+                        if (dir.len > cache_bust_buf.len) break :name "";
                         // Normalized with trailing slash
                         break :name bun.strings.normalizeSlashesOnly(&cache_bust_buf, dir, std.fs.path.sep);
                     }
@@ -145,12 +146,15 @@ pub const Transpiler = struct {
                     bun.pathLiteral(".."),
                 };
 
-                break :name bun.path.joinAbsStringBufZ(
+                // `entry_point` is user-controlled and may be long enough that
+                // the unnormalized join overflows `cache_bust_buf`; the checked
+                // variant uses a heap scratch for normalization when needed.
+                break :name bun.path.joinAbsStringBufChecked(
                     transpiler.fs.top_level_dir,
                     &cache_bust_buf,
                     &parts,
                     .auto,
-                );
+                ) orelse "";
             };
 
             // Only re-query if we previously had something cached.

@@ -181,4 +181,39 @@ describe.concurrent("long import path overflow", () => {
     // Walk-up loop indexed into a fixed [256]DirEntryResolveQueueItem
     await run(String(dir), `\`/\${"a/".repeat(300)}x\``);
   });
+
+  // Specifiers where the *import path itself* is longer than MAX_PATH_BYTES.
+  // These previously overflowed threadlocal PathBuffers in loadAsFile and in
+  // the entry-point cache-bust retry in Transpiler.resolveEntryPoint.
+  const huge = `Buffer.alloc(${len * 2}, "a").toString()`;
+
+  it("dynamic import with specifier longer than PATH_MAX", async () => {
+    using dir = makeDir();
+    await run(String(dir), huge);
+  });
+
+  for (const [label, prefix] of [
+    ["bare", ""],
+    ["relative", "./"],
+    ["absolute", "/"],
+  ] as const) {
+    it(`Bun.build entrypoint longer than PATH_MAX (${label})`, async () => {
+      using dir = makeDir();
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const r = await Bun.build({ entrypoints: [${JSON.stringify(prefix)} + ${huge}], throw: false }); if (r.success) throw new Error("should have failed"); console.log("ok");`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ok");
+      expect(exitCode).toBe(0);
+    });
+  }
 });

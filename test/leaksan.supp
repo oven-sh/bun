@@ -121,3 +121,10 @@ leak:WebCore::jsSQLStatementOpenStatementFunction
 # is called before firing (WaiterListManager::clearTimer on notify/unregister),
 # the DispatchTimer and its Bun-side WTFTimer Box leak. JSC-owned ref-cycle.
 leak:WTF::RunLoop::dispatchAfter
+# bun test at exit: the test/describe/expect function wrappers of the final
+# (still gcProtected) global are alive, but their native ScopeFunctions boxes
+# are pointed to only from JSC heap cells, which LSan cannot scan, so it
+# reports them as leaks. They are freed by GC finalizers whenever a global
+# dies (isolation swap, BUN_DESTRUCT_VM_ON_EXIT teardown). Per-global, bounded.
+# https://github.com/oven-sh/bun/issues/32176
+leak:scope_functions::ScopeFunctions

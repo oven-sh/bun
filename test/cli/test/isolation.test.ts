@@ -1,7 +1,8 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, normalizeBunSnapshot, tempDir } from "harness";
 import fs from "node:fs";
 import net from "node:net";
+import { join } from "node:path";
 
 // Every case spawns at least one full `bun test --isolate` child; the heavy
 // ones (8-file leak fixtures, 500-2000-export module_info modules) exceed the
@@ -867,4 +868,57 @@ test.concurrent("--isolate: require(esm) caches a BunTranspiledModule SourceProv
     expect(stderr, `run ${run}`).toContain("0 fail");
     expect(exitCode, `run ${run}`).toBe(0);
   }
+});
+
+// At exit, the final file's `expect()` wrapper boxes (and the `RefData` /
+// `BunTestCell` they pin) are freed only by GC finalizers, and no collection
+// used to run between the last test and `exit()`. With LeakSanitizer active
+// (the ASAN CI lane runs subprocesses with `detect_leaks=1:abort_on_error=1`),
+// the exit scan reported those boxes and SIGABRT'd (exit 134) an otherwise
+// green run. https://github.com/oven-sh/bun/issues/32176
+describe.concurrent("exit is leak-clean under LeakSanitizer", () => {
+  const FILE_COUNT = 4;
+  const files: Record<string, string> = {};
+  for (let i = 0; i < FILE_COUNT; i++) {
+    files[`f${i}.test.js`] = `
+      import { test, expect } from "bun:test";
+      test("f${i}", () => { expect(1 + 1).toBe(2); });
+    `;
+  }
+
+  // LeakSanitizer only exists in ASAN builds, and `detect_leaks=1` is a
+  // startup error on platforms without LSan (macOS arm64); the CI lane
+  // that leak-checks is linux x64-asan.
+  const leakCheckEnv = {
+    ...bunEnv,
+    // The CI runner sets this for outer test processes; the exit path
+    // must be leak-clean without the full destruct-on-exit teardown too.
+    BUN_DESTRUCT_VM_ON_EXIT: undefined,
+    BUN_TEST_PARALLEL_SCALE_MS: "0",
+    ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1",
+    LSAN_OPTIONS: `malloc_context_size=30:print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "leaksan.supp")}`,
+  };
+
+  test.skipIf(!isASAN || !isLinux).each([
+    ["serial", []],
+    ["--isolate", ["--isolate"]],
+    ["--parallel=2", ["--parallel=2"]],
+  ] as [label: string, args: string[]][])("%s", async (label, args) => {
+    using dir = tempDir(`test-exit-lsan-${label.replace(/[^a-z0-9]/g, "")}`, files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args, "."],
+      env: leakCheckEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A --parallel worker's at-exit abort does not change the coordinator's
+    // exit code (its results were already collected by then), but the
+    // report still prints to inherited stderr, so assert on the report
+    // text too. On failure, not.toContain prints the whole report.
+    expect(stderr).not.toContain("LeakSanitizer");
+    expect(stderr).toContain(`${FILE_COUNT} pass`);
+    expect(exitCode).toBe(0);
+  });
 });

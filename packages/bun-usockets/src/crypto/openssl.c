@@ -454,6 +454,37 @@ static void ssl_ctx_build_fail(SSL_CTX *ctx) {
   SSL_CTX_free(ctx);
 }
 
+/* BoringSSL's default accepted signature-algorithm list for verifying a peer's
+ * certificate (kVerifySignatureAlgorithms in its ssl/extensions.cc) omits
+ * Ed25519, even though its signing list includes it. A client therefore never
+ * advertises Ed25519 in the signature_algorithms extension, so a TLS 1.3
+ * handshake against an Ed25519 server certificate cannot complete and the peer
+ * certificate comes back empty, surfacing as a bogus hostname-verification
+ * failure. OpenSSL (and therefore Node.js) accepts Ed25519 by default, so mirror
+ * that: BoringSSL's default list plus Ed25519. The same list governs verifying
+ * client certificates when this mode-neutral CTX backs a server doing mTLS, so
+ * Ed25519 client certs are accepted there too, matching Node. */
+static const uint16_t us_verify_signature_algorithms[] = {
+    SSL_SIGN_ED25519,
+    SSL_SIGN_ECDSA_SECP256R1_SHA256,
+    SSL_SIGN_RSA_PSS_RSAE_SHA256,
+    SSL_SIGN_RSA_PKCS1_SHA256,
+    SSL_SIGN_ECDSA_SECP384R1_SHA384,
+    SSL_SIGN_RSA_PSS_RSAE_SHA384,
+    SSL_SIGN_RSA_PKCS1_SHA384,
+    SSL_SIGN_RSA_PSS_RSAE_SHA512,
+    SSL_SIGN_RSA_PKCS1_SHA512,
+    SSL_SIGN_RSA_PKCS1_SHA1,
+};
+
+/* Shared so the QUIC client context (quic.c), which builds its own SSL_CTX
+ * instead of going through us_ssl_ctx_build_raw, advertises the same list. */
+void us_ssl_ctx_set_verify_signature_algorithms(SSL_CTX *ssl_context) {
+  SSL_CTX_set_verify_algorithm_prefs(
+      ssl_context, us_verify_signature_algorithms,
+      sizeof(us_verify_signature_algorithms) / sizeof(us_verify_signature_algorithms[0]));
+}
+
 /* Exported for quic.c (lsquic configures ALPN/transport-params on the SSL_CTX
  * directly) and as the body of us_ssl_ctx_from_options. */
 SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
@@ -470,6 +501,8 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   SSL_CTX_set_read_ahead(ssl_context, 1);
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
   SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
+  /* Advertise Ed25519 as an accepted peer signature (see note above). */
+  us_ssl_ctx_set_verify_signature_algorithms(ssl_context);
 
   if (options.ssl_prefer_low_memory_usage) {
     SSL_CTX_set_mode(ssl_context, SSL_MODE_RELEASE_BUFFERS);

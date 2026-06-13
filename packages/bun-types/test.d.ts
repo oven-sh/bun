@@ -28,8 +28,23 @@ declare module "bun:test" {
      * value of `factory`. If the export didn't exist before, it will not be
      * added to existing import statements. This is due to how ESM works.
      *
+     * The `factory` receives a detached shallow snapshot of the module's
+     * current exports as its first argument, so partial stubs can delegate
+     * to the original implementation without recursing through the live
+     * namespace:
+     *
+     * ```ts
+     * mock.module("./api", original => ({
+     *   ...original,
+     *   fetch: (url: string) => `wrapped: ${original.fetch(url)}`,
+     * }));
+     * ```
+     *
      * @param id module ID to mock
-     * @param factory a function returning an object that will be used as the exports of the mocked module
+     * @param factory a function returning an object that will be used as the
+     *   exports of the mocked module. Receives the current exports as a
+     *   detached shallow snapshot in its first argument (an empty object if
+     *   the module has not been loaded yet).
      *
      * @example
      * ```ts
@@ -46,7 +61,7 @@ declare module "bun:test" {
      * console.log(await readFile("hello.txt", "utf8")); // hello world
      * ```
      */
-    module(id: string, factory: () => any): void | Promise<void>;
+    module(id: string, factory: (original: any) => any): void | Promise<void>;
     /**
      * Restore the previous value of mocks.
      */

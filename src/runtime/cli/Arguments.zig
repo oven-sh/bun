@@ -309,6 +309,13 @@ fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]
     try Bunfig.parse(allocator, &source, ctx, cmd);
 }
 
+fn isRegularFile(path: [:0]const u8) bool {
+    return switch (bun.sys.stat(path)) {
+        .result => |st| bun.S.ISREG(@intCast(st.mode)),
+        .err => false,
+    };
+}
+
 fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
     var paths = [_]string{".bunfig.toml"};
 
@@ -382,15 +389,57 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
             ctx.args.absolute_working_dir = try allocator.dupeZ(u8, cwd);
         }
 
-        var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
-        config_path_ = resolve_path.joinAbsStringBuf(
-            ctx.args.absolute_working_dir.?,
-            &config_buf,
-            &parts,
-            .auto,
-        );
-        config_buf[config_path_.len] = 0;
-        config_path = config_buf[0..config_path_.len :0];
+        if (auto_loaded) {
+            // When auto-loading, walk up the directory tree looking for a
+            // bunfig.toml. This lets commands run from a subdirectory of the
+            // project (e.g. a workspace package) pick up the project-root
+            // bunfig.toml, matching how package.json is resolved.
+            var dir: []const u8 = ctx.args.absolute_working_dir.?;
+            var found = false;
+            while (true) {
+                var parts = [_]string{ dir, config_path_ };
+                const joined = resolve_path.joinAbsStringBuf(
+                    dir,
+                    &config_buf,
+                    &parts,
+                    .auto,
+                );
+                config_buf[joined.len] = 0;
+                const candidate = config_buf[0..joined.len :0];
+                if (isRegularFile(candidate)) {
+                    config_path = candidate;
+                    found = true;
+                    break;
+                }
+                const parent = resolve_path.dirname(dir, .auto);
+                // Stop at the filesystem root. On Windows, `dirname("C:\\")`
+                // returns `"C:"` (drive-relative, not absolute), so we also
+                // break when the parent is no longer absolute to avoid looping
+                // forever and tripping the joinAbs assert on non-absolute input.
+                if (parent.len == 0 or
+                    strings.eql(parent, dir) or
+                    !resolve_path.Platform.auto.isAbsolute(parent)) break;
+                dir = parent;
+            }
+            if (!found) {
+                // The walk found nothing. Mark bunfig as "loaded" (as in
+                // attempted) so a secondary loadConfig call (e.g. the
+                // RunCommand fallback in run_command.zig) doesn't redo the
+                // same ancestor walk on every invocation.
+                ctx.debug.loaded_bunfig = true;
+                return;
+            }
+        } else {
+            var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
+            const joined = resolve_path.joinAbsStringBuf(
+                ctx.args.absolute_working_dir.?,
+                &config_buf,
+                &parts,
+                .auto,
+            );
+            config_buf[joined.len] = 0;
+            config_path = config_buf[0..joined.len :0];
+        }
     }
 
     loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd) catch |err| {

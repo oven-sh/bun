@@ -369,6 +369,81 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Push the `get`/`set` property pair that replaces a lowered
+    /// auto-accessor. `get_return` is the expression the getter returns;
+    /// `set_expr` is the setter's body expression, which reads the value
+    /// from `setter_param_ref`.
+    fn push_accessor_get_set_pair(
+        &mut self,
+        props: &mut BumpVec<'a, Property>,
+        accessor_flags: Flags::PropertySet,
+        getter_key: Option<Expr>,
+        setter_key: Option<Expr>,
+        get_return: Expr,
+        setter_param_ref: Ref,
+        set_expr: Expr,
+        loc: bun_ast::Loc,
+    ) {
+        let bump = self.arena;
+
+        let get_body = bump.alloc_slice_copy(&[self.s(
+            S::Return {
+                value: Some(get_return),
+            },
+            loc,
+        )]);
+        let get_fn = G::Fn {
+            body: G::FnBody {
+                stmts: bun_ast::StoreSlice::new_mut(get_body),
+                loc,
+            },
+            ..Default::default()
+        };
+
+        let set_body = bump.alloc_slice_copy(&[self.s(
+            S::SExpr {
+                value: set_expr,
+                ..Default::default()
+            },
+            loc,
+        )]);
+        let setter_binding = self.b(
+            B::Identifier {
+                r#ref: setter_param_ref,
+            },
+            loc,
+        );
+        let setter_fn_args = bump.alloc(G::Arg {
+            binding: setter_binding,
+            ..Default::default()
+        });
+        let set_fn = G::Fn {
+            args: bun_ast::StoreSlice::new_mut(core::slice::from_mut(setter_fn_args)),
+            body: G::FnBody {
+                stmts: bun_ast::StoreSlice::new_mut(set_body),
+                loc,
+            },
+            ..Default::default()
+        };
+
+        let mut flags = accessor_flags;
+        flags.insert(Flags::Property::IsMethod);
+        props.push(Property {
+            key: getter_key,
+            value: Some(self.new_expr(E::Function { func: get_fn }, loc)),
+            kind: PropertyKind::Get,
+            flags,
+            ..Default::default()
+        });
+        props.push(Property {
+            key: setter_key,
+            value: Some(self.new_expr(E::Function { func: set_fn }, loc)),
+            kind: PropertyKind::Set,
+            flags,
+            ..Default::default()
+        });
+    }
+
     /// Get the method kind code (1=method, 2=getter, 3=setter).
     fn method_kind(prop: &Property) -> u8 {
         match prop.kind {
@@ -1090,6 +1165,228 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    // ── Accessor-only lowering (no decorators) ───────────
+
+    /// Lower the auto-accessors of a class that has no decorators at all.
+    ///
+    /// `should_lower_standard_decorators` is also set for classes that merely
+    /// contain `accessor` members. Without decorators nothing has to run after
+    /// class creation, so none of the relocation machinery in `lower_impl`
+    /// applies; relocating would carry native `#name` references out of the
+    /// class body and lose the source order of static initializers and static
+    /// blocks. Instead, each accessor is replaced in place by a private
+    /// backing field plus a getter/setter pair (the same shape esbuild
+    /// emits), and every other class element is left untouched:
+    ///
+    /// ```js
+    /// accessor a = init;
+    /// // becomes
+    /// #a = init;
+    /// get a() { return this.#a; }
+    /// set a(v) { this.#a = v; }
+    /// ```
+    fn lower_auto_accessors_in_place(
+        &mut self,
+        class: &mut G::Class,
+        loc: bun_ast::Loc,
+        is_expr: bool,
+        original_stmt: Option<Stmt>,
+        out: &mut BumpVec<'a, Stmt>,
+    ) {
+        let p = self;
+        let bump = p.arena;
+        class.should_lower_standard_decorators = false;
+
+        if class
+            .properties
+            .slice()
+            .iter()
+            .any(|prop| prop.kind == PropertyKind::AutoAccessor)
+        {
+            // Backing names must not duplicate a private name declared in this
+            // class and must not shadow a private name that code inside this
+            // class body references (which resolves to an enclosing class).
+            // Every such name exists in the symbol table by now — private
+            // names are declared at parse time — so treating all of them as
+            // taken over-approximates both sets. Generated names are inserted
+            // too, keeping repeated lowerings distinct.
+            let mut taken_private_names: HashMap<&'a [u8], ()> = HashMap::default();
+            for sym in p.symbols.iter() {
+                if sym.kind.is_private() {
+                    // SAFETY: original_name is arena-owned, valid for 'a.
+                    let name: &'a [u8] = sym.original_name.slice();
+                    taken_private_names.insert(name, ());
+                }
+            }
+
+            let mut new_properties = BumpVec::<Property>::new_in(bump);
+            let mut computed_key_decls = BumpVec::<G::Decl>::new_in(bump);
+            let mut computed_key_counter: usize = 0;
+            let mut accessor_storage_counter: usize = 0;
+
+            for prop in class.properties.slice().iter() {
+                if prop.kind != PropertyKind::AutoAccessor {
+                    new_properties.push(prop_full_copy(prop));
+                    continue;
+                }
+
+                let key_expr = prop.key.expect("infallible: prop has key");
+                let is_computed = prop.flags.contains(Flags::Property::IsComputed);
+
+                let base_name: &'a [u8] = 'base: {
+                    if !is_computed {
+                        match &key_expr.data {
+                            js_ast::ExprData::EString(s)
+                                if !s.is_utf16
+                                    && s.next.is_none()
+                                    && js_lexer::is_identifier(&s.data)
+                                    && !s.eql_comptime(b"constructor") =>
+                            {
+                                break 'base p.bump_name2(b"#", &s.data);
+                            }
+                            js_ast::ExprData::EPrivateIdentifier(pi) => {
+                                // SAFETY: original_name is arena-owned, valid for 'a.
+                                let orig: &'a [u8] = p.symbols[pi.ref_.inner_index() as usize]
+                                    .original_name
+                                    .slice();
+                                // `accessor #p` keeps its `get #p`/`set #p`
+                                // pair, so the backing field needs a fresh
+                                // name: `#_p`.
+                                break 'base p.bump_name2(b"#_", &orig[1..]);
+                            }
+                            _ => {}
+                        }
+                    }
+                    let name = p.bump_name(b"#_accessor_storage", Some(accessor_storage_counter));
+                    accessor_storage_counter += 1;
+                    name
+                };
+                let mut backing_name = base_name;
+                let mut suffix: usize = 2;
+                while taken_private_names.contains_key(backing_name) {
+                    backing_name = p.bump_name(base_name, Some(suffix));
+                    suffix += 1;
+                }
+                taken_private_names.insert(backing_name, ());
+
+                let backing_kind = if prop.flags.contains(Flags::Property::IsStatic) {
+                    js_ast::symbol::Kind::PrivateStaticField
+                } else {
+                    js_ast::symbol::Kind::PrivateField
+                };
+                let backing_ref = p.new_sym(backing_kind, backing_name);
+
+                // #backing = init;
+                let mut backing_flags = prop.flags;
+                backing_flags.remove(Flags::Property::IsComputed);
+                new_properties.push(Property {
+                    kind: PropertyKind::Normal,
+                    flags: backing_flags,
+                    key: Some(p.new_expr(E::PrivateIdentifier { ref_: backing_ref }, key_expr.loc)),
+                    initializer: prop.initializer,
+                    ..Default::default()
+                });
+
+                // Computed keys must evaluate exactly once: assign the key to
+                // a temporary in the getter's key position and reuse it for
+                // the setter.
+                let (getter_key, setter_key) = if is_computed {
+                    computed_key_counter += 1;
+                    let key_name: &'a [u8] = if computed_key_counter == 1 {
+                        b"_computedKey"
+                    } else {
+                        p.bump_name(b"_computedKey", Some(computed_key_counter))
+                    };
+                    let key_ref = p.new_sym(js_ast::symbol::Kind::Other, key_name);
+                    let binding = p.b(B::Identifier { r#ref: key_ref }, key_expr.loc);
+                    computed_key_decls.push(G::Decl {
+                        binding,
+                        value: None,
+                    });
+                    (
+                        Some(p.assign_to(key_ref, key_expr, key_expr.loc)),
+                        Some(p.use_ref(key_ref, key_expr.loc)),
+                    )
+                } else {
+                    (prop.key, prop.key)
+                };
+
+                // get key() { return this.#backing; }
+                p.record_usage(backing_ref);
+                let this_e = p.new_expr(E::This {}, loc);
+                let priv_e = p.new_expr(E::PrivateIdentifier { ref_: backing_ref }, loc);
+                let get_return = p.new_expr(
+                    E::Index {
+                        target: this_e,
+                        index: priv_e,
+                        optional_chain: None,
+                    },
+                    loc,
+                );
+
+                // set key(v) { this.#backing = v; }
+                let setter_param_ref = p.new_sym(js_ast::symbol::Kind::Other, b"v");
+                p.record_usage(backing_ref);
+                let this_e2 = p.new_expr(E::This {}, loc);
+                let priv_e2 = p.new_expr(E::PrivateIdentifier { ref_: backing_ref }, loc);
+                let set_target = p.new_expr(
+                    E::Index {
+                        target: this_e2,
+                        index: priv_e2,
+                        optional_chain: None,
+                    },
+                    loc,
+                );
+                let v_e = p.use_ref(setter_param_ref, loc);
+                let set_expr = Expr::assign(set_target, v_e);
+
+                p.push_accessor_get_set_pair(
+                    &mut new_properties,
+                    prop.flags,
+                    getter_key,
+                    setter_key,
+                    get_return,
+                    setter_param_ref,
+                    set_expr,
+                    loc,
+                );
+            }
+
+            class.properties = bun_ast::StoreSlice::new_mut(new_properties.into_bump_slice_mut());
+
+            if !computed_key_decls.is_empty() {
+                let decls = DeclList::from_bump_vec(computed_key_decls);
+                let decl_stmt = p.s(
+                    S::Local {
+                        decls,
+                        ..Default::default()
+                    },
+                    loc,
+                );
+                if is_expr {
+                    if let Some(stmt_list) = p.nearest_stmt_list_mut() {
+                        stmt_list.push(decl_stmt);
+                    }
+                } else {
+                    out.push(decl_stmt);
+                }
+            }
+        }
+
+        if is_expr {
+            let class_expr = p.new_expr(class_copy(class), loc);
+            out.push(p.s(
+                S::SExpr {
+                    value: class_expr,
+                    ..Default::default()
+                },
+                loc,
+            ));
+        } else {
+            out.push(original_stmt.expect("infallible: statement mode"));
+        }
+    }
+
     // ── Core lowering ────────────────────────────────────
 
     #[allow(clippy::too_many_lines)]
@@ -1104,6 +1401,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) {
         let p = self;
         let bump = p.arena;
+
+        // Classes whose only lowering-relevant feature is `accessor` members
+        // take the in-place path; the machinery below is for decorators.
+        if class.ts_decorators.len_u32() == 0
+            && class
+                .properties
+                .slice()
+                .iter()
+                .all(|prop| prop.ts_decorators.len_u32() == 0)
+        {
+            p.lower_auto_accessors_in_place(class, loc, is_expr, original_stmt, out);
+            return;
+        }
 
         // Receiver-capture temporaries created by `rewrite_private_accesses_in_expr`
         // land in `temp_refs_to_declare`; everything pushed past this point is
@@ -1552,72 +1862,51 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let wme = p.new_weak_map_expr(loc);
                     prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
 
-                    // Getter: get foo() { return __privateGet(this, _foo); }
+                    // Computed keys must evaluate exactly once: assign the
+                    // key to a temporary in the getter's key position and
+                    // reuse it for the setter.
+                    let (getter_key, setter_key) =
+                        if prop.flags.contains(Flags::Property::IsComputed)
+                            && let Some(key_expr) = prop.key
+                        {
+                            computed_key_counter += 1;
+                            let key_name: &'a [u8] = if computed_key_counter == 1 {
+                                b"_computedKey"
+                            } else {
+                                p.bump_name(b"_computedKey", Some(computed_key_counter))
+                            };
+                            let key_ref = p.new_sym(js_ast::symbol::Kind::Other, key_name);
+                            prefix_stmts.push(p.var_decl(key_ref, None, key_expr.loc));
+                            (
+                                Some(p.assign_to(key_ref, key_expr, key_expr.loc)),
+                                Some(p.use_ref(key_ref, key_expr.loc)),
+                            )
+                        } else {
+                            (prop.key, prop.key)
+                        };
+
+                    // get foo() { return __privateGet(this, _foo); }
                     let this_e = p.new_expr(E::This {}, loc);
                     let wm_e = p.use_ref(wm_ref, loc);
                     let get_ret = p.call_rt(loc, b"__privateGet", &[this_e, wm_e]);
-                    let get_body = bump.alloc_slice_copy(&[p.s(
-                        S::Return {
-                            value: Some(get_ret),
-                        },
-                        loc,
-                    )]);
-                    let get_fn = G::Fn {
-                        body: G::FnBody {
-                            stmts: bun_ast::StoreSlice::new_mut(get_body),
-                            loc,
-                        },
-                        ..Default::default()
-                    };
 
-                    // Setter: set foo(v) { __privateSet(this, _foo, v); }
+                    // set foo(v) { __privateSet(this, _foo, v); }
                     let setter_param_ref = p.new_sym(js_ast::symbol::Kind::Other, b"v");
                     let this_e2 = p.new_expr(E::This {}, loc);
                     let wm_e2 = p.use_ref(wm_ref, loc);
                     let v_e = p.use_ref(setter_param_ref, loc);
                     let set_call = p.call_rt(loc, b"__privateSet", &[this_e2, wm_e2, v_e]);
-                    let set_body = bump.alloc_slice_copy(&[p.s(
-                        S::SExpr {
-                            value: set_call,
-                            ..Default::default()
-                        },
-                        loc,
-                    )]);
-                    let setter_binding = p.b(
-                        B::Identifier {
-                            r#ref: setter_param_ref,
-                        },
+
+                    p.push_accessor_get_set_pair(
+                        &mut new_properties,
+                        prop.flags,
+                        getter_key,
+                        setter_key,
+                        get_ret,
+                        setter_param_ref,
+                        set_call,
                         loc,
                     );
-                    let setter_fn_args = bump.alloc(G::Arg {
-                        binding: setter_binding,
-                        ..Default::default()
-                    });
-                    let set_fn = G::Fn {
-                        args: bun_ast::StoreSlice::new_mut(core::slice::from_mut(setter_fn_args)),
-                        body: G::FnBody {
-                            stmts: bun_ast::StoreSlice::new_mut(set_body),
-                            loc,
-                        },
-                        ..Default::default()
-                    };
-
-                    let mut getter_flags = prop.flags;
-                    getter_flags.insert(Flags::Property::IsMethod);
-                    new_properties.push(Property {
-                        key: prop.key,
-                        value: Some(p.new_expr(E::Function { func: get_fn }, loc)),
-                        kind: PropertyKind::Get,
-                        flags: getter_flags,
-                        ..Default::default()
-                    });
-                    new_properties.push(Property {
-                        key: prop.key,
-                        value: Some(p.new_expr(E::Function { func: set_fn }, loc)),
-                        kind: PropertyKind::Set,
-                        flags: getter_flags,
-                        ..Default::default()
-                    });
 
                     let init_val = prop
                         .initializer

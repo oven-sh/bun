@@ -67,6 +67,7 @@ public:
 };
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
+extern "C" void Bun__VirtualMachine__waitForPromise(void* bunVM, JSC::JSPromise* promise);
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
@@ -660,6 +661,53 @@ JSValue fetchCommonJSModule(
 
     bool wasModuleMock = false;
 
+    // Handles the promise returned by handleVirtualModuleResult. When the
+    // plugin's onLoad callback was an `async` function the promise may still
+    // be Pending here; require() is synchronous, so pump the event loop
+    // until it settles rather than erroring out. If the wait completes with
+    // a fulfilled promise we extract the JSSourceCode it carries (produced
+    // by jsFunctionOnLoadObjectResultResolve in the async case, or placed
+    // directly on the promise by handleVirtualModuleResult in the sync case)
+    // and hand it to the module loader via provideFetch.
+    const auto handleVirtualModulePromise = [&](JSPromise* promise, bool wasMock) -> JSValue {
+        if (promise->status() == JSPromise::Status::Pending) {
+            // We're about to consume any rejection via `throwException` below,
+            // so mark the promise handled up front. Otherwise a rejection
+            // during `waitForPromise` would also be reported as an unhandled
+            // rejection by the event-loop tick that settles it.
+            promise->markAsHandled();
+            Bun__VirtualMachine__waitForPromise(bunVM, promise);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        switch (promise->status()) {
+        case JSPromise::Status::Rejected: {
+            promise->markAsHandled();
+            JSC::throwException(globalObject, scope, promise->result());
+            return {};
+        }
+        case JSPromise::Status::Pending: {
+            // Only reachable if the wait bailed out (e.g. termination).
+            JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
+            return {};
+        }
+        case JSPromise::Status::Fulfilled: {
+            if (!wasMock) {
+                auto* jsSourceCode = uncheckedDowncast<JSSourceCode>(promise->result());
+                JSC::VM::SynchronousModuleQueue queue;
+                queue.prev = vm.m_synchronousModuleQueue;
+                vm.m_synchronousModuleQueue = &queue;
+                globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+                if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+                vm.m_synchronousModuleQueue = queue.prev;
+                if (scope.exception()) return {};
+            }
+            return jsNumber(-1);
+        }
+        }
+        ASSERT_NOT_REACHED();
+        return {};
+    };
+
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest) {
@@ -674,34 +722,7 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, target);
             }
             JSPromise* promise = uncheckedDowncast<JSPromise>(promiseOrCommonJSModule);
-            switch (promise->status()) {
-            case JSPromise::Status::Rejected: {
-                promise->markAsHandled();
-                JSC::throwException(globalObject, scope, promise->result());
-                RELEASE_AND_RETURN(scope, JSValue {});
-            }
-            case JSPromise::Status::Pending: {
-                JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
-                RELEASE_AND_RETURN(scope, JSValue {});
-            }
-            case JSPromise::Status::Fulfilled: {
-                if (!res->success) {
-                    throwException(scope, res->result.err, globalObject);
-                    RELEASE_AND_RETURN(scope, {});
-                }
-                if (!wasModuleMock) {
-                    auto* jsSourceCode = uncheckedDowncast<JSSourceCode>(promise->result());
-                    JSC::VM::SynchronousModuleQueue queue;
-                    queue.prev = vm.m_synchronousModuleQueue;
-                    vm.m_synchronousModuleQueue = &queue;
-                    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
-                    if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
-                    vm.m_synchronousModuleQueue = queue.prev;
-                    RETURN_IF_EXCEPTION(scope, {});
-                }
-                RELEASE_AND_RETURN(scope, jsNumber(-1));
-            }
-            }
+            RELEASE_AND_RETURN(scope, handleVirtualModulePromise(promise, wasModuleMock));
         }
     }
 
@@ -729,34 +750,7 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, target);
             }
             JSPromise* promise = uncheckedDowncast<JSPromise>(promiseOrCommonJSModule);
-            switch (promise->status()) {
-            case JSPromise::Status::Rejected: {
-                promise->markAsHandled();
-                JSC::throwException(globalObject, scope, promise->result());
-                RELEASE_AND_RETURN(scope, JSValue {});
-            }
-            case JSPromise::Status::Pending: {
-                JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
-                RELEASE_AND_RETURN(scope, JSValue {});
-            }
-            case JSPromise::Status::Fulfilled: {
-                if (!res->success) {
-                    throwException(scope, res->result.err, globalObject);
-                    RELEASE_AND_RETURN(scope, {});
-                }
-                if (!wasModuleMock) {
-                    auto* jsSourceCode = uncheckedDowncast<JSSourceCode>(promise->result());
-                    JSC::VM::SynchronousModuleQueue queue;
-                    queue.prev = vm.m_synchronousModuleQueue;
-                    vm.m_synchronousModuleQueue = &queue;
-                    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
-                    if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
-                    vm.m_synchronousModuleQueue = queue.prev;
-                    RETURN_IF_EXCEPTION(scope, {});
-                }
-                RELEASE_AND_RETURN(scope, jsNumber(-1));
-            }
-            }
+            RELEASE_AND_RETURN(scope, handleVirtualModulePromise(promise, wasModuleMock));
         }
     }
 

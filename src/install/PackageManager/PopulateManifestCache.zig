@@ -149,13 +149,128 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
     }
 }
 
+/// After resolution, verify every npm-tagged package in the lockfile
+/// satisfies the configured `minimumReleaseAge` cooldown.
+///
+/// The resolution-time filter (`findBestVersionWithFilter`, etc.) only
+/// runs when Bun is actually picking a new version. If the lockfile
+/// already pins a version — e.g. it was resolved before the cooldown
+/// was configured, or by a developer whose local bunfig was less strict
+/// — that install path skips the filter entirely. Without this gate,
+/// `bun install` (and `bun install --frozen-lockfile`) will happily
+/// install a locked version that was published inside the cooldown
+/// window, defeating the supply-chain protection the setting is meant
+/// to provide.
+///
+/// This loads manifests for every locked npm package, looks up the
+/// exact pinned version's publish timestamp, and aggregates every
+/// violation into `manager.log` as an error. Excludes from
+/// `minimumReleaseAgeExcludes` are honored.
+///
+/// Returns the number of cooldown / fail-closed errors *this function*
+/// added to `manager.log`. Errors that `populateManifestCache` funnels
+/// in (registry 5xx, parse failures) are not counted — the caller uses
+/// this to gate the cooldown-specific remediation note so unrelated
+/// errors don't get misattributed to a lockfile age violation.
+pub fn enforceLockfileAgeFilter(manager: *PackageManager) !u32 {
+    const min_age_ms = manager.options.minimum_release_age_ms orelse return 0;
+
+    // Make sure manifests are loaded from disk / network before we
+    // inspect publish timestamps. `populateManifestCache` already
+    // honors `minimum_release_age_ms` by requesting extended manifests.
+    try populateManifestCache(manager, .all);
+
+    const lockfile = manager.lockfile;
+    const pkgs = lockfile.packages.slice();
+    const pkg_resolutions = pkgs.items(.resolution);
+    const pkg_names = pkgs.items(.name);
+    const pkg_name_hashes = pkgs.items(.name_hash);
+    const string_buf = lockfile.buffers.string_bytes.items;
+    const min_age_seconds = min_age_ms / std.time.ms_per_s;
+
+    var violations: u32 = 0;
+
+    for (pkg_resolutions, pkg_names, pkg_name_hashes) |resolution, name, name_hash| {
+        if (resolution.tag != .npm) continue;
+
+        const name_str = name.slice(string_buf);
+
+        // Fail closed: if we cannot reach the manifest or locate the exact
+        // pinned version, we cannot prove the version satisfies the cooldown.
+        // Silently skipping would re-open the lockfile bypass this gate is
+        // meant to close (e.g. a version that was unpublished from the
+        // registry, or a manifest fetch that couldn't be completed).
+        const manifest = manager.manifests.byNameHash(
+            manager,
+            manager.scopeForPackageName(name_str),
+            name_hash,
+            .load_from_memory_fallback_to_disk,
+            true,
+        ) orelse {
+            if (isExcludedByName(name_str, manager.options.minimum_release_age_excludes)) continue;
+            bun.handleOom(manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                manager.allocator,
+                "Package \"{s}@{f}\" in lockfile could not be checked against minimum release age (manifest unavailable)",
+                .{ name_str, resolution.value.npm.version.fmt(string_buf) },
+            ));
+            violations += 1;
+            continue;
+        };
+
+        if (manifest.shouldExcludeFromAgeFilter(manager.options.minimum_release_age_excludes)) continue;
+
+        const find_result = manifest.findByVersion(resolution.value.npm.version) orelse {
+            bun.handleOom(manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                manager.allocator,
+                "Package \"{s}@{f}\" in lockfile could not be checked against minimum release age (version not in manifest)",
+                .{ name_str, resolution.value.npm.version.fmt(string_buf) },
+            ));
+            violations += 1;
+            continue;
+        };
+        if (!Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, min_age_ms)) continue;
+
+        bun.handleOom(manager.log.addErrorFmt(
+            null,
+            logger.Loc.Empty,
+            manager.allocator,
+            "Package \"{s}@{f}\" in lockfile was published within minimum release age of {d} seconds",
+            .{
+                name_str,
+                resolution.value.npm.version.fmt(string_buf),
+                min_age_seconds,
+            },
+        ));
+        violations += 1;
+    }
+
+    return violations;
+}
+
+/// Mirrors `PackageManifest.shouldExcludeFromAgeFilter` for the code path
+/// where no manifest is available (the manifest lookup above returned null).
+/// Kept in sync with the real check in `src/install/npm.zig`.
+fn isExcludedByName(name: []const u8, exclusions: ?[]const []const u8) bool {
+    const excl = exclusions orelse return false;
+    for (excl) |entry| {
+        if (bun.strings.eql(entry, name)) return true;
+    }
+    return false;
+}
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Output = bun.Output;
+const logger = bun.logger;
 
 const Dependency = bun.install.Dependency;
 const DependencyID = bun.install.DependencyID;
+const Npm = bun.install.Npm;
 const PackageID = bun.install.PackageID;
 const PackageManager = bun.install.PackageManager;
 const Resolution = bun.install.Resolution;

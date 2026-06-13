@@ -275,7 +275,7 @@ minimumReleaseAgeExcludes = ["@types/node", "typescript"]
 
 When the minimum age filter is active:
 
-- Only affects new package resolution - existing packages in `bun.lock` remain unchanged
+- Versions already pinned in `bun.lock` are also validated: if a locked version was published within the cooldown (or its publish timestamp can't be verified against the manifest), `bun install` fails with a per-package error and points at `install.minimumReleaseAgeExcludes`
 - All dependencies (direct and transitive) are filtered to meet the age requirement when being resolved
 - When versions are blocked by the age gate, a stability check detects rapid bugfix patterns
   - If multiple versions were published close together just outside your age gate, it extends the filter to skip those potentially unstable versions and selects an older, more mature version

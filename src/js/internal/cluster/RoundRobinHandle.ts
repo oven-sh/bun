@@ -6,6 +6,7 @@ let net;
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperPrimary", 4);
 
 const ArrayIsArray = Array.isArray;
+const ObjectAssign = Object.assign;
 
 const UV_TCP_IPV6ONLY = 1;
 const assert_fail = () => {
@@ -31,12 +32,18 @@ export default class RoundRobinHandle {
 
     if (fd >= 0) this.server.listen({ fd, backlog });
     else if (port >= 0) {
+      // Bun: IPC socket-handle passing isn't implemented yet, so the primary
+      // can't forward accepted connections to workers. Instead, workers bind
+      // the same port directly with SO_REUSEPORT (see net.ts
+      // listenOnPrimaryHandle). Bind with reusePort here too so workers can
+      // share the port while the primary resolves `port: 0`.
       this.server.listen({
         port,
         host: address,
         // Currently, net module only supports `ipv6Only` option in `flags`.
         ipv6Only: !!(flags & UV_TCP_IPV6ONLY),
         backlog,
+        reusePort: true,
       });
     } else
       this.server.listen({
@@ -46,10 +53,30 @@ export default class RoundRobinHandle {
         writableAll,
       }); // UNIX socket path.
     this.server.once("listening", () => {
-      this.handle = this.server._handle;
-      this.handle.onconnection = (err, handle) => this.distribute(err, handle);
+      const listener = this.server._handle;
       this.server._handle = null;
       this.server = null;
+      if (port >= 0) {
+        // Bun: cache the resolved sockname and stop accepting. Workers bind
+        // with SO_REUSEPORT and take all traffic; keeping the primary
+        // listening would steal ~1/(N+1) connections it cannot forward.
+        const sockname = {};
+        if (typeof listener.getsockname === "function") {
+          listener.getsockname(sockname);
+        }
+        this.handle = {
+          getsockname: out => {
+            ObjectAssign(out, sockname);
+            return 0;
+          },
+          stop: () => {},
+          close: () => {},
+        };
+        listener.stop?.();
+      } else {
+        this.handle = listener;
+        this.handle.onconnection = (err, handle) => this.distribute(err, handle);
+      }
     });
   }
 

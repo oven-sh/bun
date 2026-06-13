@@ -576,6 +576,24 @@ function ffiRunner(fast) {
           await 1;
         });
       }
+
+      it("rejects non-void return types", () => {
+        // threadsafe callbacks are delivered asynchronously and can't return a value to native code
+        expect(
+          () =>
+            new JSCallback(() => 1, {
+              args: ["int"],
+              returns: "int",
+              threadsafe: true,
+            }),
+        ).toThrow("Threadsafe functions must return void");
+      });
+    });
+
+    it("JSCallback surfaces construction errors instead of returning ptr === undefined", () => {
+      // A native validation error was returned as a value and silently dropped by the
+      // constructor's { ctx, ptr } destructure (ptr === undefined); it now throws.
+      expect(() => new JSCallback(() => 1, { args: ["int"], returns: "notarealtype" })).toThrow("Unknown return type");
     });
 
     describe("integer identities work for all possible values", () => {

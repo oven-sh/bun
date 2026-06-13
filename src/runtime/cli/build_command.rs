@@ -975,6 +975,47 @@ impl BuildCommand {
                     }
                 }
 
+                // OHOS: sign the compiled binary so it can execute (seccomp policy).
+                #[cfg(target_env = "ohos")]
+                {
+                    let outfile_path = if root_path.is_empty() || root_path == b"." {
+                        outfile.to_vec()
+                    } else {
+                        let mut full = root_path.to_vec();
+                        if !full.ends_with(b"/") {
+                            full.push(b'/');
+                        }
+                        full.extend_from_slice(outfile);
+                        full
+                    };
+                    let outfile_cstr = std::ffi::CString::new(&outfile_path[..]).unwrap_or_default();
+                    if !outfile_cstr.as_bytes().is_empty() {
+                        // Check if already signed — binary-sign-tool adds a "codesign" section
+                        let already_signed = std::process::Command::new("readelf")
+                            .arg("-S")
+                            .arg(outfile_cstr.as_os_str())
+                            .output()
+                            .map(|o| String::from_utf8_lossy(&o.stdout).contains("codesign"))
+                            .unwrap_or(false);
+                        if !already_signed {
+                            // binary-sign-tool sign first, then chmod
+                            let _ = std::process::Command::new("binary-sign-tool")
+                                .arg("sign")
+                                .arg("-inFile")
+                                .arg(outfile_cstr.as_os_str())
+                                .arg("-outFile")
+                                .arg(outfile_cstr.as_os_str())
+                                .arg("-selfSign")
+                                .arg("1")
+                                .output();
+                        }
+                        let _ = std::process::Command::new("chmod")
+                            .arg("755")
+                            .arg(outfile_cstr.as_os_str())
+                            .output();
+                    }
+                }
+
                 let compiled_elapsed = ((bun_core::time::nano_timestamp() - bundled_end) as i64)
                     / (bun_core::time::NS_PER_MS as i64);
                 let compiled_elapsed_digit_count =

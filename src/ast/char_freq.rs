@@ -114,10 +114,12 @@ fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
 
     debug_assert!(text.len() >= SCAN_BIG_CHUNK_SIZE);
 
-    let unrolled = text.len() - (text.len() % SCAN_BIG_CHUNK_SIZE);
-    let (chunks, remain) = text.split_at(unrolled);
+    // `as_chunks` yields `&[u8; SCAN_BIG_CHUNK_SIZE]` arrays (plus the tail
+    // remainder), so the inner `chunk[i]` accesses are statically in bounds and
+    // the per-element bounds checks `chunks_exact` leaves in are elided.
+    let (chunks, remain) = text.as_chunks::<SCAN_BIG_CHUNK_SIZE>();
 
-    for chunk in chunks.chunks_exact(SCAN_BIG_CHUNK_SIZE) {
+    for chunk in chunks {
         // PERF: candidate for unrolling — profile
         for i in 0..SCAN_BIG_CHUNK_SIZE {
             deltas[chunk[i] as usize] += delta;

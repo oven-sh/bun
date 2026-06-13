@@ -878,8 +878,10 @@ fn scan_aarch64(
 
     // ARM64 padding is NOP (0xD503201F) or zeros — neither matches any of our
     // classify() patterns — so we don't need to special-case tail slop.
-    // chunks_exact(4) naturally drops any trailing 1-3 bytes.
-    for (i, chunk) in bytes.chunks_exact(4).enumerate() {
+    // as_chunks yields `&[u8; 4]` words (dropping any trailing 1-3 bytes via
+    // the remainder we ignore), so the byte accesses below are statically in
+    // bounds.
+    for (i, chunk) in bytes.as_chunks::<4>().0.iter().enumerate() {
         let ip = sec_addr + (i as u64) * 4;
         // Skip literal-pool data. data_ranges is sorted; partition_point finds
         // the first range whose start is > ip, so the candidate is the one
@@ -888,7 +890,7 @@ fn scan_aarch64(
         if dr > 0 && ip < data_ranges[dr - 1].1 {
             continue;
         }
-        let w = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        let w = u32::from_le_bytes(*chunk);
         total_insns += 1;
         let Some(feat) = aarch64::classify(w) else {
             continue;
@@ -1177,5 +1179,72 @@ fn main() -> ExitCode {
             eprintln!("error: {e}");
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Little-endian bytes for an ARM64 instruction word.
+    fn word(w: u32) -> [u8; 4] {
+        w.to_le_bytes()
+    }
+
+    #[test]
+    fn scan_aarch64_flags_post_baseline_word() {
+        // 0xc8a07c41 "cas x" -> Feature::Lse (post-baseline -> violation)
+        // 0x1f420c20 "fmadd" -> None          (baseline, counted but skipped)
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&word(0xc8a07c41));
+        bytes.extend_from_slice(&word(0x1f420c20));
+
+        let r = scan_aarch64(&bytes, 0x1000, &[], &Allowlist::new(), &[]);
+
+        assert_eq!(r.total_insns, 2);
+        assert!(r.allowlisted.is_empty());
+        assert_eq!(r.violations.len(), 1);
+        let report = r.violations.values().next().unwrap();
+        assert_eq!(report.hits.len(), 1);
+        assert_eq!(report.hits[0].feature, "LSE");
+        assert_eq!(report.hits[0].mnemonic, "cas");
+        assert_eq!(report.hits[0].ip, 0x1000);
+    }
+
+    #[test]
+    fn scan_aarch64_maps_each_chunk_to_its_address() {
+        // Three "cas" words; each 4-byte chunk's index must map to sec_addr + i*4.
+        // A single symbol spans the range so all three hits land in one bucket.
+        let mut bytes = Vec::new();
+        for _ in 0..3 {
+            bytes.extend_from_slice(&word(0xc8a07c41));
+        }
+        let syms = [Sym {
+            addr: 0x2000,
+            end: 0x2000 + bytes.len() as u64,
+            name: "func".to_string(),
+        }];
+
+        let r = scan_aarch64(&bytes, 0x2000, &syms, &Allowlist::new(), &[]);
+
+        assert_eq!(r.total_insns, 3);
+        assert_eq!(r.violations.len(), 1);
+        let report = r.violations.values().next().unwrap();
+        let ips: Vec<u64> = report.hits.iter().map(|h| h.ip).collect();
+        assert_eq!(ips, vec![0x2000, 0x2004, 0x2008]);
+    }
+
+    #[test]
+    fn scan_aarch64_drops_trailing_partial_word() {
+        // One full word plus 3 trailing bytes: the remainder is ignored, so
+        // exactly one instruction is scanned.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&word(0xc8a07c41));
+        bytes.extend_from_slice(&[0x00, 0x11, 0x22]);
+
+        let r = scan_aarch64(&bytes, 0x1000, &[], &Allowlist::new(), &[]);
+
+        assert_eq!(r.total_insns, 1);
+        assert_eq!(r.violations.len(), 1);
     }
 }

@@ -3364,6 +3364,12 @@ pub mod serializer {
                     // raw u8 here. Layout: `ResolutionType` is `#[repr(C)]
                     // { tag: Tag, _padding: [u8; 7], value: ... }`, so the
                     // discriminant is the first byte of each element.
+                    //
+                    // Unlike the `Meta`/`Bin` blocks below, this stays on
+                    // `chunks_exact`: `size_of::<ResolutionType<SemverIntType>>()`
+                    // depends on the generic `SemverIntType`, and a const-generic
+                    // argument that uses a type parameter needs the unstable
+                    // `generic_const_exprs`, which this crate does not enable.
                     let stride = mem::size_of::<ResolutionType<SemverIntType>>();
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
@@ -3380,13 +3386,13 @@ pub mod serializer {
                     // `HasInstallScript` = 0..=2). Copying an out-of-range byte
                     // into either field and reading it back as the enum would
                     // be immediate UB, so check the raw stream bytes first.
-                    let stride = mem::size_of::<Meta>();
-                    let origin_at = mem::offset_of!(Meta, origin);
-                    let install_script_at = mem::offset_of!(Meta, has_install_script);
-                    debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
-                    for raw in src.chunks_exact(stride) {
-                        if !matches!(raw[origin_at], 0..=2)
-                            || !matches!(raw[install_script_at], 0..=2)
+                    const STRIDE: usize = mem::size_of::<Meta>();
+                    const ORIGIN_AT: usize = mem::offset_of!(Meta, origin);
+                    const INSTALL_SCRIPT_AT: usize = mem::offset_of!(Meta, has_install_script);
+                    debug_assert!(STRIDE != 0 && src.len().is_multiple_of(STRIDE));
+                    for raw in src.as_chunks::<STRIDE>().0 {
+                        if !matches!(raw[ORIGIN_AT], 0..=2)
+                            || !matches!(raw[INSTALL_SCRIPT_AT], 0..=2)
                         {
                             return Err(bun_core::err!(
                                 "Lockfile validation failed: invalid package meta"
@@ -3397,11 +3403,11 @@ pub mod serializer {
                 if matches!(field, PackageField::Bin) {
                     // `Bin.tag` is a `#[repr(u8)]` enum with discriminants
                     // 0..=4; validate it the same way before the copy.
-                    let stride = mem::size_of::<Bin>();
-                    let tag_at = mem::offset_of!(Bin, tag);
-                    debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
-                    for raw in src.chunks_exact(stride) {
-                        if !matches!(raw[tag_at], 0..=4) {
+                    const STRIDE: usize = mem::size_of::<Bin>();
+                    const TAG_AT: usize = mem::offset_of!(Bin, tag);
+                    debug_assert!(STRIDE != 0 && src.len().is_multiple_of(STRIDE));
+                    for raw in src.as_chunks::<STRIDE>().0 {
+                        if !matches!(raw[TAG_AT], 0..=4) {
                             return Err(bun_core::err!(
                                 "Lockfile validation failed: invalid bin tag"
                             ));

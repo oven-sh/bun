@@ -1054,6 +1054,33 @@ impl<'a> Parser<'a> {
             }
         }
 
+        if let Some(expr) = json.get(b"resolve") {
+            self.expect(&expr, ExprTag::EObject)?;
+
+            if let Some(conds_expr) = expr.get(b"conditions") {
+                self.expect(&conds_expr, ExprTag::EArray)?;
+                let array = conds_expr
+                    .data
+                    .e_array()
+                    .expect("infallible: variant checked");
+                let items = array.items.slice();
+                // Append to any existing conditions (e.g. from a previously
+                // loaded global bunfig) so multiple configs stack rather than
+                // clobber.
+                let mut combined: Vec<Box<[u8]>> =
+                    Vec::with_capacity(self.ctx.args.conditions.len() + items.len());
+                combined.extend(self.ctx.args.conditions.drain(..));
+                for item in items {
+                    self.expect_string(item)?;
+                    let ExprData::EString(s) = &item.data else {
+                        unreachable!("expect_string returned Ok for non-EString")
+                    };
+                    combined.push(estring_to_owned(s, self.bump));
+                }
+                self.ctx.args.conditions = combined;
+            }
+        }
+
         if let Some(expr) = json.get(b"loader") {
             self.expect(&expr, ExprTag::EObject)?;
             let obj = expr.data.e_object().expect("infallible: variant checked");

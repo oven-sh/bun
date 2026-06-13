@@ -58,7 +58,7 @@ async function run({ closeActiveConnections = false, sendAnyRequests = true, web
 
     if (sendAnyRequests) {
       if (closeActiveConnections) {
-        expect(fetch(server.url.origin, { keepalive: false })).rejects.toThrow("closed unexpectedly");
+        await expect(fetch(server.url.origin, { keepalive: false })).rejects.toThrow("closed unexpectedly");
       } else {
         const response = await fetch(server.url.origin, { keepalive: false });
         expect(response.status).toBe(200);
@@ -68,7 +68,7 @@ async function run({ closeActiveConnections = false, sendAnyRequests = true, web
     }
 
     // Server is closed
-    expect(fetch(server.url.origin, { keepalive: false })).rejects.toThrow("Unable to connect");
+    await expect(fetch(server.url.origin, { keepalive: false })).rejects.toThrow("Unable to connect");
   }
 
   await main();

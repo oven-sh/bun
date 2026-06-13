@@ -22,7 +22,7 @@ pub(crate) fn to_be_type_of(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let (this, value, not) = this.matcher_prelude(global, frame.this(), "toBeTypeOf", "")?;
+    let (this, value, not) = crate::ready_matcher!(this.matcher_prelude(global, frame.this(), frame, "toBeTypeOf", "")?);
     let _arguments = frame.arguments_old::<1>();
     let arguments = _arguments.slice();
 

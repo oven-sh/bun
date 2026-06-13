@@ -8,13 +8,9 @@ pub(crate) fn to_have_been_called_once(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
-    let (this, calls, _value) = this.mock_prologue(
-        global,
-        frame.this(),
-        "toHaveBeenCalledOnce",
-        "<green>expected<r>",
-        super::mock::MockKind::Calls,
-    )?;
+    let (this, calls, _value) = crate::ready_mock!(this.mock_prologue(
+        global, frame, "toHaveBeenCalledOnce", "<green>expected<r>", super::mock::MockKind::Calls,
+    )?);
 
     let calls_length = calls.get_length(global)?;
     let mut pass = calls_length == 1;

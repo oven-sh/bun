@@ -787,13 +787,13 @@ it("ReadableStream rejects pending reads when the lock is released", async () =>
 
   let read = reader.read();
   reader.releaseLock();
-  expect(read).rejects.toThrow(
+  await expect(read).rejects.toThrow(
     expect.objectContaining({
       name: "AbortError",
       code: "ERR_STREAM_RELEASE_LOCK",
     }),
   );
-  expect(reader.closed).rejects.toThrow(
+  await expect(reader.closed).rejects.toThrow(
     expect.objectContaining({
       name: "AbortError",
       code: "ERR_STREAM_RELEASE_LOCK",

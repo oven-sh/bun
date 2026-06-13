@@ -314,24 +314,24 @@ it.todo("import override to bun:test", async () => {
   expect(await import("#bun_test")).toBeDefined();
 });
 
-it.if(isWindows)("directory cache key computation", () => {
-  expect(import(`${process.cwd()}\\\\doesnotexist.ts`)).rejects.toThrow();
-  expect(import(`${process.cwd()}\\\\\\doesnotexist.ts`)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\doesnotexist.ts\\\\\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\\\doesnotexist.ts` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\\\\\doesnotexist.ts` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\doesnotexist.ts` as any)).rejects.toThrow();
-  expect(import(`\\\\\\Test\\doesnotexist.ts` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\doesnotexist.ts\\` as any)).rejects.toThrow();
-  expect(import(`\\\\\\Test\\doesnotexist.ts\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\\\\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
-  expect(import(`\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
-  expect(import(`\\\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+it.if(isWindows)("directory cache key computation", async () => {
+  await expect(import(`${process.cwd()}\\\\doesnotexist.ts`)).rejects.toThrow();
+  await expect(import(`${process.cwd()}\\\\\\doesnotexist.ts`)).rejects.toThrow();
+  await expect(import(`\\\\Test\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  await expect(import(`\\\\Test\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+  await expect(import(`\\\\Test\\\\doesnotexist.ts\\\\\\` as any)).rejects.toThrow();
+  await expect(import(`\\\\Test\\\\\\doesnotexist.ts` as any)).rejects.toThrow();
+  await expect(import(`\\\\Test\\\\\\\\doesnotexist.ts` as any)).rejects.toThrow();
+  await expect(import(`\\\\Test\\doesnotexist.ts` as any)).rejects.toThrow();
+  await expect(import(`\\\\\\Test\\doesnotexist.ts` as any)).rejects.toThrow();
+  await expect(import(`\\\\Test\\\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  await expect(import(`\\\\Test\\\\\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  await expect(import(`\\\\Test\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  await expect(import(`\\\\\\Test\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  await expect(import(`\\\\Test\\\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+  await expect(import(`\\\\Test\\\\\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+  await expect(import(`\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+  await expect(import(`\\\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
 });
 
 describe("NODE_PATH test", () => {

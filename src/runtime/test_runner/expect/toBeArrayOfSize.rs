@@ -21,7 +21,7 @@ pub(crate) fn to_be_array_of_size(
         return Err(global.throw_invalid_arguments(format_args!("toBeArrayOfSize() requires 1 argument")));
     }
 
-    let value: JSValue = this.get_value(global, this_value, "toBeArrayOfSize", "")?;
+    let value: JSValue = crate::ready_value!(this.get_value(global, this_value, frame, "toBeArrayOfSize", "")?);
 
     let size = arguments[0];
     size.ensure_still_alive();

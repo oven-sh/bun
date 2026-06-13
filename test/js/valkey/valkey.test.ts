@@ -6300,7 +6300,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const subscriber = await ctx.newSubscriberClient(connectionType);
         await subscriber.subscribe(channel, () => {});
         await subscriber.unsubscribe(channel);
-        expect(ctx.redis.set(testKey(), testValue())).resolves.toEqual("OK");
+        await expect(ctx.redis.set(testKey(), testValue())).resolves.toEqual("OK");
       });
 
       test("subscribing to a channel receives messages", async () => {

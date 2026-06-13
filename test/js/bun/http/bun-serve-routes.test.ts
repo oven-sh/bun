@@ -621,7 +621,7 @@ it("don't crash on server.fetch()", async () => {
     routes: { "/test": () => new Response("test") },
   });
 
-  expect(server.fetch("/test")).rejects.toThrow("fetch() requires the server to have a fetch handler");
+  await expect(server.fetch("/test")).rejects.toThrow("fetch() requires the server to have a fetch handler");
 });
 
 it("route precedence for any routes", async () => {

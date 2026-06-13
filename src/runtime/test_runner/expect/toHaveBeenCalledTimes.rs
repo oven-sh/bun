@@ -9,13 +9,9 @@ pub(crate) fn to_have_been_called_times(
 ) -> JsResult<JSValue> {
     let arguments_ = frame.arguments_old::<1>();
     let arguments: &[JSValue] = arguments_.slice();
-    let (this, calls, _value) = this.mock_prologue(
-        global,
-        frame.this(),
-        "toHaveBeenCalledTimes",
-        "<green>expected<r>",
-        super::mock::MockKind::Calls,
-    )?;
+    let (this, calls, _value) = crate::ready_mock!(this.mock_prologue(
+        global, frame, "toHaveBeenCalledTimes", "<green>expected<r>", super::mock::MockKind::Calls,
+    )?);
 
     if arguments.len() < 1 || !arguments[0].is_uint32_as_any_int() {
         return Err(global.throw_invalid_arguments(format_args!(

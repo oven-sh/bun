@@ -9,7 +9,7 @@ pub(crate) fn to_be_empty_object(
     call_frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let this_value = call_frame.this();
-    let (this, value, not) = this.matcher_prelude(global, this_value, "toBeEmptyObject", "")?;
+    let (this, value, not) = crate::ready_matcher!(this.matcher_prelude(global, this_value, call_frame, "toBeEmptyObject", "")?);
     let mut pass = value.is_object_empty(global)?;
 
     if not {

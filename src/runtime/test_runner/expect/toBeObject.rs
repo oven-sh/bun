@@ -15,7 +15,7 @@ impl Expect {
         // (incl. `?` early-returns) is covered without a raw `*mut Expect`.
         let result = (|| -> JsResult<JSValue> {
         let this_value = frame.this();
-        let value: JSValue = this.get_value(global, this_value, "toBeObject", "")?;
+        let value: JSValue = crate::ready_value!(this.get_value(global, this_value, frame, "toBeObject", "")?);
 
         this.increment_expect_call_counter();
 

@@ -70,12 +70,13 @@ pub(crate) fn to_throw_error_matching_snapshot(
 
     let Some(value): Option<JSValue> = this.fn_to_err_string_or_undefined(
         global,
-        this.get_value(
-            global,
-            this_value,
-            "toThrowErrorMatchingSnapshot",
-            "<green>properties<r><d>, <r>hint",
-        )?,
+        crate::ready_value!(this.get_value(
+        global,
+        this_value,
+        frame,
+        "toThrowErrorMatchingSnapshot",
+        "<green>properties<r><d>, <r>hint",
+    )?),
     )?
     else {
         let signature = get_signature("toThrowErrorMatchingSnapshot", "", false);

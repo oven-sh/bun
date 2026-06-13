@@ -60,7 +60,7 @@ pub(crate) fn to_throw(
 
     let (result_, return_value_from_function) = this.get_value_as_to_throw(
         global,
-        this.get_value(global, this_value, "toThrow", "<green>expected<r>")?,
+        crate::ready_value!(this.get_value(global, this_value, frame, "toThrow", "<green>expected<r>")?),
     )?;
 
     let did_throw = result_.is_some();

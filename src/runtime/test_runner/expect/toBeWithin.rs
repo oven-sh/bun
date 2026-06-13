@@ -9,12 +9,13 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (this, value, not) = self.matcher_prelude(
+        let (this, value, not) = crate::ready_matcher!(self.matcher_prelude(
             global,
             frame.this(),
+            frame,
             "toBeWithin",
             "<green>start<r><d>, <r><green>end<r>",
-        )?;
+        )?);
 
         let _arguments = frame.arguments_old::<2>();
         let arguments = _arguments.slice();

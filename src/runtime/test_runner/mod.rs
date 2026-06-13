@@ -48,6 +48,45 @@ macro_rules! unary_predicate_matcher {
     };
 }
 
+/// Unwrap a [`expect_core::MatcherStart`] or early-return the deferred
+/// promise. Used at the top of every matcher body that goes through
+/// `matcher_prelude` so a `.resolves`/`.rejects` matcher on a still-pending
+/// promise returns the deferred promise to its caller instead of blocking
+/// the event loop (#14950).
+#[macro_export]
+macro_rules! ready_matcher {
+    ($start:expr) => {
+        match $start {
+            $crate::test_runner::expect_core::MatcherStart::Ready(t, v, n) => (t, v, n),
+            $crate::test_runner::expect_core::MatcherStart::Deferred(p) => return Ok(p),
+        }
+    };
+}
+
+/// Unwrap a [`expect_core::MaybeDeferred`] or early-return the deferred
+/// promise. See [`ready_matcher!`].
+#[macro_export]
+macro_rules! ready_value {
+    ($v:expr) => {
+        match $v {
+            $crate::test_runner::expect_core::MaybeDeferred::Value(v) => v,
+            $crate::test_runner::expect_core::MaybeDeferred::Deferred(p) => return Ok(p),
+        }
+    };
+}
+
+/// Unwrap a [`expect_core::mock::MockStart`] or early-return the deferred
+/// promise. See [`ready_matcher!`].
+#[macro_export]
+macro_rules! ready_mock {
+    ($start:expr) => {
+        match $start {
+            $crate::test_runner::expect_core::mock::MockStart::Ready(t, a, v) => (t, a, v),
+            $crate::test_runner::expect_core::mock::MockStart::Deferred(p) => return Ok(p),
+        }
+    };
+}
+
 cfg_jsc! {
     #[path = "bun_test.rs"]       pub mod bun_test;
     #[path = "Collection.rs"]     pub mod collection;
@@ -433,7 +472,7 @@ pub mod expect {
             other_value.ensure_still_alive();
 
             let value: JSValue =
-                this.get_value(global, this_value, name, "<green>expected<r>")?;
+                crate::ready_value!(this.get_value(global, this_value, frame, name, "<green>expected<r>")?);
 
             if (!value.is_number() && !value.is_big_int())
                 || (!other_value.is_number() && !other_value.is_big_int())

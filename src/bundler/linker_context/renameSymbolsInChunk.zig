@@ -145,6 +145,17 @@ pub fn renameSymbolsInChunk(
     var sorted = &sorted_;
     defer sorted.deinit();
 
+    // Two passes are required so that every top-level symbol is registered in
+    // `r.root` before any nested scope is visited. Without this, a local
+    // binding in file/part N could collide-rename into a name that is later
+    // claimed by a top-level symbol in file/part M (M > N), silently shadowing
+    // it in the output. See https://github.com/oven-sh/bun/issues/30269.
+    //
+    // Pass 1 adds all top-level symbols for the chunk (across every file).
+    // Pass 2 recurses into the nested scopes; by then `r.root` is fully
+    // populated so `findUnusedName` sees every potential top-level collision.
+
+    // Pass 1: add every top-level symbol in the chunk to `r.root`.
     for (files_in_order) |source_index| {
         const wrap = all_flags[source_index].wrap;
         const parts: []const Part = all_parts[source_index].slice();
@@ -213,7 +224,10 @@ pub fn renameSymbolsInChunk(
                         }
                     }
                 }
-                r.assignNamesRecursiveWithNumberScope(&r.root, &all_module_scopes[source_index], source_index, sorted);
+                // The module body is inside the CJS wrapper closure, so all
+                // of its symbols are treated as nested by the renamer; pass 2
+                // will walk `all_module_scopes[source_index]`. No per-part
+                // top-level symbols to add here.
                 continue;
             },
 
@@ -240,13 +254,37 @@ pub fn renameSymbolsInChunk(
 
         for (parts) |*part| {
             if (!part.is_live) continue;
-
             r.addTopLevelDeclaredSymbols(part.declared_symbols);
-            for (part.scopes) |scope| {
-                r.assignNamesRecursiveWithNumberScope(&r.root, scope, source_index, sorted);
-            }
-            r.number_scope_pool.hive.used = @TypeOf(r.number_scope_pool.hive.used).initEmpty();
         }
+    }
+
+    // Pass 2: now that `r.root` has every top-level symbol in the chunk,
+    // recurse into each file's nested scopes to rename collisions.
+    for (files_in_order) |source_index| {
+        const wrap = all_flags[source_index].wrap;
+        switch (wrap) {
+            .cjs => {
+                // For CJS-wrapped modules, the entire module scope is nested
+                // (it lives inside the wrapper closure). Walk it directly.
+                r.assignNamesRecursiveWithNumberScope(&r.root, &all_module_scopes[source_index], source_index, sorted);
+            },
+            else => {
+                const parts: []const Part = all_parts[source_index].slice();
+                for (parts) |*part| {
+                    if (!part.is_live) continue;
+                    for (part.scopes) |scope| {
+                        r.assignNamesRecursiveWithNumberScope(&r.root, scope, source_index, sorted);
+                    }
+                }
+            },
+        }
+        // Bulk-reclaim hive slots for NumberScopes that the linear-chain walk
+        // in `assignNamesRecursiveWithNumberScope` acquired but did not put
+        // back individually — the single `defer put(s)` there only returns the
+        // final scope in each chain, so without this reset intermediate slots
+        // stay marked used and the 128-slot hive eventually spills to the
+        // arena fallback.
+        r.number_scope_pool.hive.used = @TypeOf(r.number_scope_pool.hive.used).initEmpty();
     }
 
     return r.toRenamer();

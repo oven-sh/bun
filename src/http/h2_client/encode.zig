@@ -75,6 +75,23 @@ pub fn writeRequest(session: *ClientSession, client: *HTTPClient, stream: *Strea
     try encodeHeader(session, encoded, ":authority", authority, false);
     try encodeHeader(session, encoded, ":path", if (request.path.len > 0) request.path else "/", false);
 
+    const is_grpc = client.flags.grpc;
+    if (is_grpc) {
+        // gRPC PROTOCOL-HTTP2 requires `te: trailers` on every request;
+        // servers reject with INTERNAL otherwise. The content-type is
+        // emitted here so it wins over the generic fetch default but is
+        // still overridable (e.g. `application/grpc+proto`).
+        try encodeHeader(session, encoded, "te", "trailers", false);
+        var have_ct = false;
+        for (request.headers) |h| {
+            if (strings.eqlCaseInsensitiveASCIIICheckLength(h.name, "content-type")) {
+                have_ct = true;
+                break;
+            }
+        }
+        if (!have_ct) try encodeHeader(session, encoded, "content-type", Grpc.content_type, false);
+    }
+
     var lower_buf: [256]u8 = undefined;
     for (request.headers) |h| {
         // §8.2.1: field names MUST be lowercase on the wire. copyLowercaseIfNeeded
@@ -93,23 +110,39 @@ pub fn writeRequest(session: *ClientSession, client: *HTTPClient, stream: *Strea
         var never_index = false;
         if (RequestHeader.map.get(name)) |kind| switch (kind) {
             .drop, .host => continue,
-            .te => if (!strings.eqlCaseInsensitiveASCIIICheckLength(strings.trim(h.value, " \t"), "trailers")) continue,
-            .content_length => if (has_expect_continue) continue,
+            // gRPC injected `te: trailers` above; drop any duplicate.
+            .te => if (is_grpc or !strings.eqlCaseInsensitiveASCIIICheckLength(strings.trim(h.value, " \t"), "trailers")) continue,
+            // gRPC bodies are length-prefixed on the wire; the original
+            // Content-Length from buildRequest reflects the *unframed*
+            // size and would violate §8.1.1 once the 5-byte header is
+            // prepended.
+            .content_length => if (is_grpc or has_expect_continue) continue,
             .sensitive => never_index = true,
             .expect => {},
         };
+        // Skip fetch's `accept: */*` and `accept-encoding: gzip, ...`
+        // defaults — gRPC uses `grpc-accept-encoding` for per-message
+        // compression and many servers reject an unsolicited gzip body.
+        if (is_grpc and (strings.eqlComptime(name, "accept") or strings.eqlComptime(name, "accept-encoding"))) continue;
         try encodeHeader(session, encoded, name, h.value, never_index);
     }
 
     const body = client.state.request_body;
     const has_inline_body = client.state.original_request_body == .bytes and body.len > 0;
     const is_streaming = client.state.original_request_body == .stream;
+    // gRPC always sends a body: even a zero-byte request message carries a
+    // 5-byte Length-Prefixed-Message header.
+    const end_stream_on_headers = !has_inline_body and !is_streaming and !is_grpc;
 
     if (has_expect_continue and (has_inline_body or is_streaming)) stream.awaiting_continue = true;
 
-    writeHeaderBlock(session, stream.id, encoded.items, !has_inline_body and !is_streaming);
+    writeHeaderBlock(session, stream.id, encoded.items, end_stream_on_headers);
     if (encoded.capacity > 64 * 1024) encoded.clearAndFree(bun.default_allocator);
-    if (has_inline_body) {
+    if (is_grpc and !is_streaming) {
+        stream.grpc_framed_body = Grpc.frameMessage(bun.default_allocator, body);
+        stream.pending_body = stream.grpc_framed_body;
+        drainSendBody(session, stream, std.math.maxInt(usize));
+    } else if (has_inline_body) {
         stream.pending_body = body;
         drainSendBody(session, stream, std.math.maxInt(usize));
     } else if (!is_streaming) {
@@ -250,6 +283,8 @@ const local_max_header_list_size = H2.local_max_header_list_size;
 const write_buffer_high_water = H2.write_buffer_high_water;
 
 const bun = @import("bun");
-const HTTPClient = bun.http;
 const picohttp = bun.picohttp;
 const strings = bun.strings;
+
+const HTTPClient = bun.http;
+const Grpc = HTTPClient.Grpc;

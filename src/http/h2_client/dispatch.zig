@@ -420,15 +420,22 @@ pub fn decodeDiscardOrphan(session: *ClientSession) void {
 
 /// HPACK-decode the buffered header block at parse time. Runs for every
 /// END_HEADERS so the dynamic table stays in sync regardless of how many
-/// HEADERS frames arrive in one read. 1xx and trailers are decoded then
-/// dropped; the final response is stored on the stream for delivery.
+/// HEADERS frames arrive in one read. 1xx is decoded then dropped;
+/// trailers are dropped unless the request is gRPC, where they carry
+/// `grpc-status`; the final response is stored on the stream for delivery.
 pub fn decodeHeaderBlock(session: *ClientSession, stream: *Stream) void {
     defer stream.header_block.clearRetainingCapacity();
+
+    const is_trailers = stream.status_code != 0;
+    const want_trailers = is_trailers and if (stream.client) |c| c.flags.grpc else false;
+    // Trailers get their own backing store so appending here can't
+    // realloc under the initial-header slices already in decoded_headers.
+    const dest_bytes = if (is_trailers) &stream.trailers_bytes else &stream.decoded_bytes;
 
     var status: u32 = 0;
     var bounds: std.ArrayListUnmanaged([3]u32) = .{};
     defer bounds.deinit(bun.default_allocator);
-    const start_len = stream.decoded_bytes.items.len;
+    const start_len = dest_bytes.items.len;
     var seen_regular = false;
     var seen_status = false;
     // Stream-level malformations seen mid-decode. The loop MUST consume the
@@ -453,7 +460,7 @@ pub fn decodeHeaderBlock(session: *ClientSession, stream: *Stream) void {
             // §8.3.2: only `:status` is defined for responses, MUST appear
             // before any regular field, and MUST NOT repeat. §8.1: not
             // allowed in trailers.
-            if (stream.status_code != 0 or seen_regular or seen_status or
+            if (is_trailers or seen_regular or seen_status or
                 !strings.eqlComptime(result.name, ":status"))
             {
                 malformed = true;
@@ -466,26 +473,26 @@ pub fn decodeHeaderBlock(session: *ClientSession, stream: *Stream) void {
             continue;
         }
         seen_regular = true;
-        if (stream.status_code != 0 or malformed) continue;
+        if (malformed or (is_trailers and !want_trailers)) continue;
         if (isMalformedResponseField(result.name)) {
             malformed = true;
             continue;
         }
         // Cap decoded size independently of the wire size: HPACK indexed
         // refs can amplify a small block into huge name/value pairs.
-        if (stream.decoded_bytes.items.len + result.name.len + result.value.len > local_max_header_list_size) {
+        if (dest_bytes.items.len + result.name.len + result.value.len > local_max_header_list_size) {
             session.fatal_error = error.HTTP2HeaderListTooLarge;
             return;
         }
-        const name_start: u32 = @intCast(stream.decoded_bytes.items.len);
-        bun.handleOom(stream.decoded_bytes.appendSlice(bun.default_allocator, result.name));
-        const value_start: u32 = @intCast(stream.decoded_bytes.items.len);
-        bun.handleOom(stream.decoded_bytes.appendSlice(bun.default_allocator, result.value));
-        bun.handleOom(bounds.append(bun.default_allocator, .{ name_start, value_start, @intCast(stream.decoded_bytes.items.len) }));
+        const name_start: u32 = @intCast(dest_bytes.items.len);
+        bun.handleOom(dest_bytes.appendSlice(bun.default_allocator, result.name));
+        const value_start: u32 = @intCast(dest_bytes.items.len);
+        bun.handleOom(dest_bytes.appendSlice(bun.default_allocator, result.value));
+        bun.handleOom(bounds.append(bun.default_allocator, .{ name_start, value_start, @intCast(dest_bytes.items.len) }));
     }
 
     if (malformed) {
-        stream.decoded_bytes.items.len = start_len;
+        dest_bytes.items.len = start_len;
         stream.rst(.PROTOCOL_ERROR);
         stream.fatal_error = error.HTTP2ProtocolError;
         return;
@@ -495,8 +502,19 @@ pub fn decodeHeaderBlock(session: *ClientSession, stream: *Stream) void {
     // §8.1 — the trailers HEADERS MUST carry END_STREAM; otherwise the
     // server could interleave DATA → HEADERS → DATA and the second DATA
     // would be appended to the body.
-    if (stream.status_code != 0) {
-        if (!stream.headers_end_stream) stream.fatal_error = error.HTTP2ProtocolError;
+    if (is_trailers) {
+        if (!stream.headers_end_stream) {
+            dest_bytes.items.len = start_len;
+            stream.fatal_error = error.HTTP2ProtocolError;
+            return;
+        }
+        if (want_trailers) {
+            const bytes = dest_bytes.items;
+            bun.handleOom(stream.trailers.ensureUnusedCapacity(bun.default_allocator, bounds.items.len));
+            for (bounds.items) |b| {
+                stream.trailers.appendAssumeCapacity(.{ .name = bytes[b[0]..b[1]], .value = bytes[b[1]..b[2]] });
+            }
+        }
         return;
     }
 

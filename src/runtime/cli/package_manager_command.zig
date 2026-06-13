@@ -35,8 +35,8 @@ pub const PackageManagerCommand = struct {
     pub fn printHash(ctx: Command.Context, file: File) !void {
         @branchHint(.cold);
 
-        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
-        var pm, const cwd = try PackageManager.init(ctx, cli, PackageManager.Subcommand.pm);
+        const cli = (try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm)).unwrapCli();
+        var pm, const cwd = (try PackageManager.init(ctx, cli, PackageManager.Subcommand.pm)).unwrapCli();
         defer ctx.allocator.free(cwd);
 
         const bytes = file.readToEnd(ctx.allocator).unwrap() catch |err| {
@@ -142,8 +142,8 @@ pub const PackageManagerCommand = struct {
         // Check if we're being invoked directly as "bun whoami" instead of "bun pm whoami"
         const is_direct_whoami = if (bun.argv.len > 1) strings.eqlComptime(bun.argv[1], "whoami") else false;
 
-        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
-        var pm, const cwd = PackageManager.init(ctx, cli, PackageManager.Subcommand.pm) catch |err| {
+        const cli = (try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm)).unwrapCli();
+        const init_result = PackageManager.init(ctx, cli, PackageManager.Subcommand.pm) catch |err| {
             if (err == error.MissingPackageJSON) {
                 var cwd_buf: bun.PathBuffer = undefined;
                 if (bun.getcwd(&cwd_buf)) |cwd| {
@@ -156,6 +156,7 @@ pub const PackageManagerCommand = struct {
             }
             return err;
         };
+        var pm, const cwd = init_result.unwrapCli();
         defer ctx.allocator.free(cwd);
 
         var subcommand = if (is_direct_whoami) "whoami" else getSubcommand(&pm.options.positionals);
@@ -250,7 +251,7 @@ pub const PackageManagerCommand = struct {
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: bun.PathBuffer = undefined;
-            var fd = pm.getCacheDirectory();
+            var fd = pm.getCacheDirectory() catch Global.crash();
             const outpath = bun.getFdPath(.fromStdDir(fd), &dir) catch |err| {
                 Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
                 Global.crash();
@@ -431,7 +432,7 @@ pub const PackageManagerCommand = struct {
             handleLoadLockfileErrors(load_lockfile, pm);
             const lockfile = load_lockfile.ok.lockfile;
 
-            lockfile.saveToDisk(&load_lockfile, &pm.options);
+            lockfile.saveToDisk(&load_lockfile, &pm.options) catch Global.crash();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "version")) {
             try PmVersionCommand.exec(ctx, pm, pm.options.positionals, cwd);

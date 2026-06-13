@@ -54,7 +54,7 @@ pub fn processExtractedTarballPackage(
     resolution: *const Resolution,
     data: *const ExtractData,
     log_level: Options.LogLevel,
-) ?Lockfile.Package {
+) error{InstallFailed}!?Lockfile.Package {
     switch (resolution.tag) {
         .git, .github => {
             var package = package: {
@@ -81,13 +81,15 @@ pub fn processExtractedTarballPackage(
                         &resolver,
                         Features.npm,
                     ) catch |err| {
-                        if (log_level != .silent) {
+                        if (!manager.hasErrors()) {
                             const string_buf = manager.lockfile.buffers.string_bytes.items;
-                            Output.err(err, "failed to parse package.json for <b>{f}<r>", .{
-                                resolution.fmtURL(string_buf),
-                            });
+                            manager.addError(.{ .dep_package_json_parse_failed = .{
+                                .resolution_url = bun.handleOom(std.fmt.allocPrint(manager.allocator, "{f}", .{resolution.fmtURL(string_buf)})),
+                                .err = err,
+                                .silent = log_level == .silent,
+                            } });
                         }
-                        Global.crash();
+                        return error.InstallFailed;
                     };
 
                     const has_scripts = pkg.scripts.hasAny() or brk: {
@@ -171,14 +173,15 @@ pub fn processExtractedTarballPackage(
                 &resolver,
                 Features.npm,
             ) catch |err| {
-                if (log_level != .silent) {
+                if (!manager.hasErrors()) {
                     const string_buf = manager.lockfile.buffers.string_bytes.items;
-                    Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{f}<r> to be a JSON file: {s}\n", .{
-                        resolution.fmtURL(string_buf),
-                        @errorName(err),
-                    });
+                    manager.addError(.{ .dep_package_json_not_json = .{
+                        .resolution_url = bun.handleOom(std.fmt.allocPrint(manager.allocator, "{f}", .{resolution.fmtURL(string_buf)})),
+                        .err = err,
+                        .silent = log_level == .silent,
+                    } });
                 }
-                Global.crash();
+                return error.InstallFailed;
             };
 
             const has_scripts = package.scripts.hasAny() or brk: {
@@ -218,14 +221,13 @@ pub fn processExtractedTarballPackage(
                 manager.log,
                 manager.allocator,
             ) catch |err| {
-                if (log_level != .silent) {
-                    const string_buf = manager.lockfile.buffers.string_bytes.items;
-                    Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{f}<r> to be a JSON file: {s}\n", .{
-                        resolution.fmtURL(string_buf),
-                        @errorName(err),
-                    });
-                }
-                Global.crash();
+                const string_buf = manager.lockfile.buffers.string_bytes.items;
+                manager.addError(.{ .dep_package_json_not_json = .{
+                    .resolution_url = bun.handleOom(std.fmt.allocPrint(manager.allocator, "{f}", .{resolution.fmtURL(string_buf)})),
+                    .err = err,
+                    .silent = log_level == .silent,
+                } });
+                return error.InstallFailed;
             };
             var builder = manager.lockfile.stringBuilder();
             Lockfile.Package.Scripts.parseCount(manager.allocator, &builder, json_root);
@@ -328,10 +330,8 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const JSAst = bun.ast;
 const JSON = bun.json;
-const Output = bun.Output;
 const Path = bun.path;
 const Syscall = bun.sys;
 const logger = bun.logger;

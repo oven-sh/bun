@@ -350,8 +350,8 @@ const PackageCollector = struct {
     pub fn init(manager: *PackageManager) PackageCollector {
         return .{
             .manager = manager,
-            .dedupe = std.AutoArrayHashMap(PackageID, void).init(bun.default_allocator),
-            .queue = bun.LinearFifo(QueueItem, .Dynamic).init(bun.default_allocator),
+            .dedupe = std.AutoArrayHashMap(PackageID, void).init(manager.allocator),
+            .queue = bun.LinearFifo(QueueItem, .Dynamic).init(manager.allocator),
             .package_paths = std.AutoArrayHashMap(PackageID, PackagePath).init(manager.allocator),
         };
     }

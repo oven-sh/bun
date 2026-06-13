@@ -434,7 +434,7 @@ pub const Version = struct {
             return @intFromEnum(this) < 3;
         }
 
-        pub fn infer(dependency: string) Tag {
+        pub fn infer(backing_allocator: std.mem.Allocator, dependency: string) Tag {
             // empty string means `latest`
             if (dependency.len == 0) return .dist_tag;
 
@@ -444,7 +444,7 @@ pub const Version = struct {
             }
 
             // Allocator necessary for slow paths.
-            var stackFallback = std.heap.stackFallback(1024, bun.default_allocator);
+            var stackFallback = std.heap.stackFallback(1024, backing_allocator);
             const allocator = stackFallback.get();
 
             switch (dependency[0]) {
@@ -650,7 +650,7 @@ pub const Version = struct {
                         const remain = dependency["npm:".len + @intFromBool(dependency["npm:".len] == '@') ..];
                         for (remain, 0..) |c, i| {
                             if (c == '@') {
-                                return infer(remain[i + 1 ..]);
+                                return infer(backing_allocator, remain[i + 1 ..]);
                             }
                         }
 
@@ -808,7 +808,7 @@ pub inline fn parse(
     manager: ?*PackageManager,
 ) ?Version {
     const dep = std.mem.trimLeft(u8, dependency, " \t\n\r");
-    return parseWithTag(allocator, alias, alias_hash, dep, Version.Tag.infer(dep), sliced, log, manager);
+    return parseWithTag(allocator, alias, alias_hash, dep, Version.Tag.infer(allocator, dep), sliced, log, manager);
 }
 
 pub fn parseWithOptionalTag(
@@ -827,7 +827,7 @@ pub fn parseWithOptionalTag(
         alias,
         alias_hash,
         dep,
-        tag orelse Version.Tag.infer(dep),
+        tag orelse Version.Tag.infer(allocator, dep),
         sliced,
         log,
         package_manager,

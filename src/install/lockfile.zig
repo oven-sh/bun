@@ -560,10 +560,10 @@ pub fn clean(
     log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
     // This is wasteful, but we rarely log anything so it's fine.
-    var log = logger.Log.init(bun.default_allocator);
+    var log = logger.Log.init(old.allocator);
     defer {
         for (log.msgs.items) |*item| {
-            item.deinit(bun.default_allocator);
+            item.deinit(old.allocator);
         }
         log.deinit();
     }
@@ -1231,23 +1231,22 @@ pub fn verifyData(this: *const Lockfile) !void {
     }
 }
 
-pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *const PackageManager.Options) void {
+pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *const PackageManager.Options) error{InstallFailed}!void {
     const save_format = load_result.saveFormat(options);
     if (comptime Environment.allow_assert) {
         this.verifyData() catch |err| {
-            Output.prettyErrorln("<r><red>error:<r> failed to verify lockfile: {s}", .{@errorName(err)});
-            Global.crash();
+            Output.panic("failed to verify lockfile: {s}", .{@errorName(err)});
         };
         assert(FileSystem.instance_loaded);
     }
 
     const bytes = bytes: {
         if (save_format == .text) {
-            var writer_allocating = std.Io.Writer.Allocating.init(bun.default_allocator);
+            var writer_allocating = std.Io.Writer.Allocating.init(this.allocator);
             defer writer_allocating.deinit();
             const writer = &writer_allocating.writer;
 
-            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, load_result, options, writer) catch |err| switch (err) {
+            TextLockfile.Stringifier.saveFromBinary(this.allocator, this, load_result, options, writer) catch |err| switch (err) {
                 error.WriteFailed => bun.outOfMemory(),
             };
 
@@ -1258,19 +1257,19 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
             break :bytes bun.handleOom(writer_allocating.toOwnedSlice());
         }
 
-        var bytes = std.array_list.Managed(u8).init(bun.default_allocator);
+        var bytes = std.array_list.Managed(u8).init(this.allocator);
 
         var total_size: usize = 0;
         var end_pos: usize = 0;
         Lockfile.Serializer.save(this, options, &bytes, &total_size, &end_pos) catch |err| {
             Output.err(err, "failed to serialize lockfile", .{});
-            Global.crash();
+            return error.InstallFailed;
         };
         if (bytes.items.len >= end_pos)
             bytes.items[end_pos..][0..@sizeOf(usize)].* = @bitCast(total_size);
         break :bytes bytes.items;
     };
-    defer bun.default_allocator.free(bytes);
+    defer this.allocator.free(bytes);
 
     var tmpname_buf: [512]u8 = undefined;
     var base64_bytes: [8]u8 = undefined;
@@ -1283,7 +1282,7 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
     const file = switch (File.openat(.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
             Output.err(err, "failed to create temporary file to save lockfile", .{});
-            Global.crash();
+            return error.InstallFailed;
         },
         .result => |f| f,
     };
@@ -1293,7 +1292,7 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
             file.close();
             _ = bun.sys.unlink(tmpname);
             Output.err(e, "failed to write lockfile", .{});
-            Global.crash();
+            return error.InstallFailed;
         },
         .result => {},
     }
@@ -1309,7 +1308,7 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
                 file.close();
                 _ = bun.sys.unlink(tmpname);
                 Output.err(err, "failed to change lockfile permissions", .{});
-                Global.crash();
+                return error.InstallFailed;
             },
             .result => {},
         }
@@ -1322,7 +1321,7 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
         _ = bun.sys.unlink(tmpname);
 
         Output.err(err, "Failed to replace old lockfile with new lockfile on disk", .{});
-        Global.crash();
+        return error.InstallFailed;
     };
 }
 
@@ -2188,7 +2187,6 @@ const JSON = bun.json;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const assert = bun.assert;
-const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const strings = bun.strings;
 const z_allocator = bun.z_allocator;

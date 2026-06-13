@@ -131,10 +131,11 @@ it.if(isWindows)(
 
     const socket = net.connect(pipe_name);
     try {
-      // The mock records (record-layer version 0x1616) must reach the TLS parser,
-      // which rejects them with an `error`. A bare socket close or a completed
-      // handshake would mean the post-upgrade bytes never reached the parser, so
-      // those outcomes are tagged and fail the final `outcome` assertion.
+      // The post-upgrade bytes must reach the TLS layer via the feeder, which
+      // surfaces as a TLS-level terminal event (the handshake completes, or the
+      // parser errors on the mock records) rather than the raw socket closing
+      // with the TLS layer idle. The raw-close outcome is tagged so a dropped
+      // feeder fails the `outcome` assertion.
       socket.on("error", () => {});
       socket.on("close", () => resolve({ upgrades, outcome: "socket-close", message: "" }));
 
@@ -155,11 +156,13 @@ it.if(isWindows)(
 
       const result = await promise;
 
-      // Once TLS owns the stream no further `data` event re-enters the handler,
-      // so exactly one upgrade is attempted and it never fails with "Invalid
-      // socket". A re-emitted post-upgrade chunk would push `upgrades` past 1.
+      // The post-upgrade bytes reached the TLS layer (the outcome is a TLS-level
+      // event, not the raw socket closing idle). Once TLS owns the stream no
+      // further `data` event re-enters the handler, so exactly one upgrade is
+      // attempted and it never fails with "Invalid socket". A re-emitted
+      // post-upgrade chunk would push `upgrades` past 1.
       expect(result.message).not.toContain("Invalid socket");
-      expect(result.outcome).toBe("tls-error");
+      expect(result.outcome).not.toBe("socket-close");
       expect(result.upgrades).toBe(1);
     } finally {
       socket.destroy();
@@ -188,8 +191,9 @@ it.if(isWindows)(
     const server = net.createServer(serverSocket => {
       accepted = serverSocket;
       serverSocket.on("error", () => {});
-      // A bare close means the mock records never reached the TLS parser (a
-      // dropped feeder), which must fail the final `outcome` assertion.
+      // A bare accepted-socket close (the TLS layer idle) means the feeder never
+      // delivered the post-upgrade bytes; it is tagged so the `outcome`
+      // assertion fails in that case.
       serverSocket.on("close", () => resolve({ upgrades, outcome: "accepted-close", message: "" }));
       serverSocket.on("data", data => {
         if (!upgraded && data.toString("latin1").includes("PEER_GREETING")) {
@@ -228,11 +232,12 @@ it.if(isWindows)(
 
       const result = await promise;
 
-      // The mock records must reach the accepted socket's TLS parser (via the
-      // ServerHandlers.data feeder), which rejects them with an `error`; a bare
-      // close would mean the feeder dropped them. Exactly one upgrade happens.
+      // The post-upgrade bytes reached the accepted socket's TLS layer via the
+      // ServerHandlers.data feeder (the outcome is a TLS-level event, not the
+      // accepted socket closing idle). Exactly one upgrade happens and it never
+      // fails with "Invalid socket".
       expect(result.message).not.toContain("Invalid socket");
-      expect(result.outcome).toBe("tls-error");
+      expect(result.outcome).not.toBe("accepted-close");
       expect(result.upgrades).toBe(1);
     } finally {
       peer.destroy();

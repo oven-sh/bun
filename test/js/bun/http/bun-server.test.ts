@@ -1,6 +1,15 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isWindows,
+  normalizeBunSnapshot,
+  rejectUnauthorizedScope,
+  tempDirWithFiles,
+  tls,
+} from "harness";
 import path from "path";
 
 describe.concurrent("Server", () => {
@@ -611,6 +620,339 @@ test("should be able to await server.stop(true) with keep alive", async () => {
 
   // Ensure the server is completely stopped
   expect(async () => await fetch(server.url)).toThrow();
+});
+
+test("late keep-alive request to a route after stop()+GC answers 503", async () => {
+  // Per-route handlers live in ServerRouteList, which is reachable from JS only
+  // through the Server wrapper. After a graceful stop() the user may drop the
+  // wrapper, and a subsequent GC may finalize it before an idle keep-alive
+  // connection sends one more request. Run in a subprocess so the previous
+  // js_value_assert_alive() panic on that path surfaces as a non-zero exit
+  // instead of taking down the test runner.
+  //
+  // To reach the 503 guard the wrapper must already be downgraded when the
+  // late request dispatches. We sequence that by holding the FIRST request
+  // in-flight (pending_requests > 0) across stop(), pipelining the LATE
+  // request behind it, then releasing: first completes → pending_requests
+  // drops to 0 → deinit_if_we_can() downgrades js_value → uws reads the
+  // pipelined request → on_user_route_request hits the is_strong gate → 503.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { fullGC } = require("bun:jsc");
+
+        let received = "";
+        let sockClosed = false;
+        let waiter = Promise.withResolvers();
+        const nextResponse = () => {
+          // Wait until a complete HTTP/1.1 response (headers + 2-byte body or
+          // an empty body for 503) has arrived, then consume it.
+          return (async () => {
+            while (true) {
+              const headerEnd = received.indexOf("\\r\\n\\r\\n");
+              if (headerEnd !== -1) {
+                const head = received.slice(0, headerEnd);
+                const m = /content-length: (\\d+)/i.exec(head);
+                const bodyLen = m ? Number(m[1]) : 0;
+                const total = headerEnd + 4 + bodyLen;
+                if (received.length >= total) {
+                  const status = head.split("\\r\\n")[0];
+                  received = received.slice(total);
+                  return status;
+                }
+              }
+              if (sockClosed) return "";
+              await waiter.promise;
+              waiter = Promise.withResolvers();
+            }
+          })();
+        };
+
+        const release = Promise.withResolvers();
+        const inflight = Promise.withResolvers();
+        let hits = 0;
+
+        await (async () => {
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            routes: {
+              "/r": async () => {
+                if (++hits === 1) {
+                  inflight.resolve();
+                  await release.promise; // keep pending_requests > 0 across stop()
+                }
+                return new Response("ok");
+              },
+            },
+          });
+
+          globalThis.sock = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              data(socket, data) {
+                received += data.toString("latin1");
+                waiter.resolve();
+              },
+              close() { sockClosed = true; waiter.resolve(); },
+              error() { sockClosed = true; waiter.resolve(); },
+            },
+          });
+
+          // First request: handler parks on \`release\`, keeping
+          // pending_requests > 0 so stop() defers the js_value downgrade.
+          sock.write("GET /r HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+          await inflight.promise;
+
+          // Pipeline the late request behind the held one. uws won't read it
+          // until the first response is sent, by which time js_value is Weak.
+          sock.write("GET /r HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+
+          // Graceful stop: listener closes; downgrade deferred (request in flight).
+          server.stop();
+        })();
+        // The only \`server\` binding is now out of scope.
+
+        // Let the first request complete: pending_requests → 0,
+        // deinit_if_we_can() downgrades js_value to Weak. uws then reads the
+        // pipelined request and on_user_route_request sees
+        // js_value_for_dispatch() == None → 503. Previously: panic.
+        release.resolve();
+        const first = await nextResponse();
+        if (!first.includes("200")) throw new Error("first request failed: " + first);
+        const second = await nextResponse();
+
+        // Wrapper is now Weak and unreferenced; GC must collect it cleanly.
+        for (let i = 0; i < 10; i++) {
+          Bun.gc(true);
+          fullGC();
+          await Bun.sleep(0);
+        }
+        console.log(second);
+
+        sock.end();
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // Must actually reach the 503 guard — empty would mean the socket was closed
+  // before dispatch and the guard was never exercised.
+  expect(stdout.trim()).toMatch(/^HTTP\/1\.1 503\b/);
+  expect(exitCode).toBe(0);
+});
+
+test("late keep-alive request to a node:http server after close()+GC answers 503", async () => {
+  // Same shape as the route test above, but through node:http so the request
+  // dispatches via on_node_http_request_with_upgrade_ctx — the trampoline that
+  // was missing the 503 guard until the respond_stopped_503 helper sweep.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const http = require("node:http");
+        const { fullGC } = require("bun:jsc");
+
+        let received = "";
+        let sockClosed = false;
+        let waiter = Promise.withResolvers();
+        const nextResponse = async () => {
+          while (true) {
+            const headerEnd = received.indexOf("\\r\\n\\r\\n");
+            if (headerEnd !== -1) {
+              const head = received.slice(0, headerEnd);
+              const m = /content-length: (\\d+)/i.exec(head);
+              const bodyLen = m ? Number(m[1]) : 0;
+              const total = headerEnd + 4 + bodyLen;
+              if (received.length >= total) {
+                const status = head.split("\\r\\n")[0];
+                received = received.slice(total);
+                return status;
+              }
+            }
+            if (sockClosed) return "";
+            await waiter.promise;
+            waiter = Promise.withResolvers();
+          }
+        };
+
+        const release = Promise.withResolvers();
+        const inflight = Promise.withResolvers();
+        let hits = 0;
+
+        await (async () => {
+          const srv = http.createServer(async (req, res) => {
+            if (++hits === 1) {
+              inflight.resolve();
+              await release.promise; // hold socket non-idle through close()
+            }
+            res.writeHead(200, { "content-length": 2 });
+            res.end("ok");
+          });
+          await new Promise(r => srv.listen(0, "127.0.0.1", r));
+
+          globalThis.sock = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: srv.address().port,
+            socket: {
+              data(_s, d) { received += d.toString("latin1"); waiter.resolve(); },
+              close() { sockClosed = true; waiter.resolve(); },
+              error() { sockClosed = true; waiter.resolve(); },
+            },
+          });
+
+          sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+          await inflight.promise;
+          // Pipeline the late request while the first is still in-flight.
+          sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+
+          // close() → closeIdleConnections() (skips this socket) → stop().
+          // Also drops node:http's own reference to the Bun server.
+          srv.close();
+        })();
+
+        // First request completes → pending_requests → 0 → js_value downgrades.
+        // The pipelined request then hits on_node_http_request with the
+        // wrapper gone → 503.
+        release.resolve();
+        const first = await nextResponse();
+        if (!first.includes("200")) throw new Error("first request failed: " + first);
+        const second = await nextResponse();
+
+        for (let i = 0; i < 10; i++) {
+          Bun.gc(true);
+          fullGC();
+          await Bun.sleep(0);
+        }
+        console.log(second);
+
+        sock.end();
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toMatch(/^HTTP\/1\.1 503\b/);
+  expect(exitCode).toBe(0);
+});
+
+test("server wrapper survives GC while a websocket is connected after stop()", async () => {
+  // The previous test exercises the one-tick HTTP keep-alive race; this one
+  // covers the steadier websocket case. After a graceful stop() with a live
+  // websocket, the user may drop their `server` binding. The native struct
+  // stays alive (active_websockets > 0), but stop() previously downgraded
+  // js_value immediately, so GC could finalize the JS wrapper — and with it
+  // m_routeList — while the connection was still in use. With the downgrade
+  // deferred into deinit_if_we_can's idle predicate, the wrapper must outlive
+  // the websocket and become collectable only after the last close.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { fullGC, heapStats } = require("bun:jsc");
+
+        const serverCount = () => {
+          const c = heapStats().objectTypeCounts;
+          return (c.DebugHTTPServer ?? 0) + (c.HTTPServer ?? 0);
+        };
+
+        async function drain(target) {
+          for (let i = 0; i < 30 && serverCount() > target; i++) {
+            Bun.gc(true);
+            fullGC();
+            await new Promise(r => setImmediate(r));
+            await Bun.sleep(10);
+          }
+        }
+
+        // objectTypeCounts includes the (lazily created) prototype object(s)
+        // once the first server is constructed — and on libuv platforms both
+        // Debug and non-Debug prototypes may end up materialized. Create+stop
+        // a trivial server first so the baseline captures whatever prototype
+        // floor this build settles at; assertions are then relative to it.
+        await (async () => {
+          const s = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+          s.stop(true);
+        })();
+        await drain(0);
+        const baseline = serverCount();
+
+        const ws = await (async () => {
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            routes: { "/r": () => new Response("ok") },
+            fetch(req, server) {
+              if (server.upgrade(req)) return;
+              return new Response("nope", { status: 404 });
+            },
+            websocket: { open() {}, message() {}, close() {} },
+          });
+
+          const opened = Promise.withResolvers();
+          const ws = new WebSocket("ws://127.0.0.1:" + server.port);
+          ws.onopen = () => opened.resolve();
+          ws.onerror = e => opened.reject(e);
+          await opened.promise;
+
+          // Graceful stop: listener closes, the live websocket stays open.
+          server.stop();
+          return ws;
+        })();
+        // The only \`server\` binding is now out of scope; only the live
+        // websocket keeps the native side around.
+
+        for (let i = 0; i < 30; i++) {
+          Bun.gc(true);
+          fullGC();
+          await new Promise(r => setImmediate(r));
+          await Bun.sleep(10);
+        }
+        const afterStopGC = serverCount();
+
+        const closed = Promise.withResolvers();
+        ws.onclose = () => closed.resolve();
+        ws.close();
+        await closed.promise;
+
+        await drain(baseline);
+        const afterCloseGC = serverCount();
+
+        console.log(JSON.stringify({ baseline, afterStopGC, afterCloseGC }));
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { baseline, afterStopGC, afterCloseGC } = JSON.parse(stdout.trim());
+  // js_value stays Strong while a websocket is connected → GC must not
+  // collect the wrapper. baseline already includes the prototype(s), so the
+  // live instance shows as baseline+1.
+  expect(afterStopGC).toBeGreaterThan(baseline);
+  // Last websocket closing triggers deinit_if_we_can → downgrade → wrapper
+  // becomes collectable again (no leak).
+  expect(afterCloseGC).toBe(baseline);
+  expect(exitCode).toBe(0);
 });
 
 test("should be able to async upgrade using custom protocol", async () => {
@@ -1467,4 +1809,570 @@ test("HEAD request for a Response with an S3 file body reports the object size a
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("s3-head-ok");
   expect(exitCode).toBe(0);
+});
+
+// Handler callbacks (fetch/error/websocket.*) are stored on the JS wrapper and
+// traced by the GC rather than independently rooted. These tests lock in that
+// reload/stop transitions never leave a window where a handler is collected
+// while a dispatch path can still reach it.
+describe("handler liveness across reload/stop", () => {
+  test("server.reload({ fetch }) swaps the handler for the next request", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response("first");
+      },
+    });
+
+    expect(await (await fetch(server.url)).text()).toBe("first");
+
+    server.reload({
+      fetch() {
+        return new Response("second");
+      },
+    });
+    // Drop any last reference the test frame holds to the old handler, then
+    // collect. The new handler must be the one the wrapper traces now.
+    Bun.gc(true);
+
+    expect(await (await fetch(server.url)).text()).toBe("second");
+
+    // A second reload back-to-back must also take effect (catches a stale
+    // cached read of the previous slot value).
+    server.reload({
+      fetch() {
+        return new Response("third");
+      },
+    });
+    Bun.gc(true);
+    expect(await (await fetch(server.url)).text()).toBe("third");
+  });
+
+  test("in-flight request completes with its handler after stop() + GC", async () => {
+    const received = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let handlerRan = 0;
+
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch() {
+        handlerRan++;
+        received.resolve();
+        await release.promise;
+        return new Response("in-flight-ok", { headers: { Connection: "close" } });
+      },
+    });
+
+    const responsePromise = fetch(server.url);
+    await received.promise;
+
+    // stop() drops the listener while the request is mid-handler. The wrapper
+    // must remain live (pending_requests > 0) so the handler the request was
+    // dispatched into is still reachable.
+    const stopped = server.stop();
+    Bun.gc(true);
+
+    release.resolve();
+    const body = await (await responsePromise).text();
+    await stopped;
+
+    expect(body).toBe("in-flight-ok");
+    expect(handlerRan).toBe(1);
+  });
+
+  test("websocket close handler fires when stop() closes an open connection", async () => {
+    const opened = Promise.withResolvers<void>();
+    const serverClose = Promise.withResolvers<{ code: number; reason: string }>();
+    const clientClose = Promise.withResolvers<void>();
+
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response(null, { status: 404 });
+      },
+      websocket: {
+        open() {
+          opened.resolve();
+        },
+        message() {},
+        close(_ws, code, reason) {
+          serverClose.resolve({ code, reason });
+        },
+      },
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    ws.onclose = () => clientClose.resolve();
+    await opened.promise;
+
+    // Connection is open; force-stop the server. The wrapper must stay live
+    // long enough for the close callback (read off the wrapper) to fire.
+    Bun.gc(true);
+    const stopped = server.stop(true);
+    Bun.gc(true);
+
+    const { code } = await serverClose.promise;
+    await clientClose.promise;
+    await stopped;
+
+    // The invariant is that the close handler ran at all (it's read off the
+    // wrapper after stop()); the exact close code is uws's choice.
+    expect(typeof code).toBe("number");
+    expect(code).toBeGreaterThanOrEqual(1000);
+  });
+
+  test("server.fetch() still dispatches to the handler after stop()", async () => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        return new Response("via server.fetch: " + new URL(req.url).pathname);
+      },
+    });
+
+    const url = `http://${server.hostname}:${server.port}/after-stop`;
+
+    server.stop();
+    Bun.gc(true);
+
+    // No listener, but the JS wrapper is still on our stack — server.fetch()
+    // reads the handler off the wrapper, so it must still resolve.
+    const response = await server.fetch(url);
+    expect(await response.text()).toBe("via server.fetch: /after-stop");
+    expect(response.status).toBe(200);
+  });
+});
+
+// The native↔JS cycle: a handler that closes over `server` used to be
+// uncollectable because ServerConfig held it as a Strong root. With handlers
+// stored as WriteBarrier slots on the wrapper, the cycle is all-JS-heap and
+// GC collects it once nothing else references the wrapper.
+describe("handler GC tracing (heapStats wrapper-count)", () => {
+  test("server with handler closing over itself is collected after stop()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const { heapStats, fullGC } = require("bun:jsc");
+        const live = () => {
+          const c = heapStats().objectTypeCounts;
+          return (c.DebugHTTPServer ?? 0) + (c.HTTPServer ?? 0);
+        };
+        async function drain(target) {
+          for (let i = 0; i < 30 && live() > target; i++) {
+            Bun.gc(true);
+            fullGC();
+            await new Promise(r => setImmediate(r));
+            await new Promise(r => setTimeout(r, 50));
+          }
+        }
+
+        // Materialize prototype(s) first so baseline = whatever floor this
+        // build settles at (libuv platforms may surface 2, not 1).
+        await (async () => {
+          const s = Bun.serve({ port: 0, development: true, fetch: () => new Response("ok") });
+          s.stop(true);
+        })();
+        await drain(0);
+        const baseline = live();
+
+        await (async () => {
+          const server = Bun.serve({
+            port: 0,
+            development: true,
+            // Closes over server — the cycle.
+            fetch: () => new Response("port " + server.port),
+            error: e => { server.stop(); return new Response(String(e)); },
+          });
+          const r = await fetch(server.url, { keepalive: false });
+          if (!(await r.text()).startsWith("port ")) throw new Error("dispatch broke");
+          server.stop(true);
+        })();
+        // No live reference to server or its handlers from here.
+        await drain(baseline);
+        console.log(JSON.stringify({ baseline, after: live() }));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { baseline, after } = JSON.parse(stdout.trim());
+    // baseline already includes the prototype(s); a collected instance returns
+    // to it exactly. On main this fails: the cycle keeps the instance alive
+    // (after = baseline+1).
+    expect(after).toBe(baseline);
+    expect(exitCode).toBe(0);
+  });
+
+  // Control: a handler that does NOT close over server is collected on main
+  // today. This pins that the redesign doesn't regress the non-cycle case.
+  test("server with handler NOT closing over itself is collected (control)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const { heapStats, fullGC } = require("bun:jsc");
+        const live = () => {
+          const c = heapStats().objectTypeCounts;
+          return (c.DebugHTTPServer ?? 0) + (c.HTTPServer ?? 0);
+        };
+        async function drain(target) {
+          for (let i = 0; i < 30 && live() > target; i++) {
+            Bun.gc(true); fullGC();
+            await new Promise(r => setImmediate(r));
+            await new Promise(r => setTimeout(r, 50));
+          }
+        }
+        await (async () => {
+          const s = Bun.serve({ port: 0, development: true, fetch: () => new Response("ok") });
+          s.stop(true);
+        })();
+        await drain(0);
+        const baseline = live();
+
+        await (async () => {
+          const server = Bun.serve({
+            port: 0, development: true,
+            fetch: () => new Response("ok"),
+          });
+          await fetch(server.url, { keepalive: false });
+          server.stop(true);
+        })();
+        await drain(baseline);
+        console.log(JSON.stringify({ baseline, after: live() }));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { baseline, after } = JSON.parse(stdout.trim());
+    expect(after).toBe(baseline);
+    expect(exitCode).toBe(0);
+  });
+
+  // JSServerWebSocket holds a traced reference to the JSServer wrapper, so the
+  // server (and its ws handlers) stay alive while any websocket is connected,
+  // and become collectable once the last one closes.
+  test("server stays alive while a websocket is connected, then collects after close", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const { heapStats, fullGC } = require("bun:jsc");
+        const liveServer = () => {
+          const c = heapStats().objectTypeCounts;
+          return (c.DebugHTTPServer ?? 0) + (c.HTTPServer ?? 0);
+        };
+
+        async function gcUntilCountAtMost(max) {
+          for (let i = 0; i < 30; i++) {
+            Bun.gc(true);
+            fullGC();
+            if (liveServer() <= max) return liveServer();
+            await new Promise(r => setImmediate(r));
+            await Bun.sleep(10);
+          }
+          return liveServer();
+        }
+
+        // Materialize prototype(s) first; baseline = the floor count.
+        await (async () => {
+          const s = Bun.serve({ port: 0, development: true, fetch: () => new Response("ok") });
+          s.stop(true);
+        })();
+        await gcUntilCountAtMost(0);
+        const baseline = liveServer();
+
+        const opened = Promise.withResolvers();
+        const clientOpen = Promise.withResolvers();
+        const echoed = Promise.withResolvers();
+        const closed = Promise.withResolvers();
+
+        // Scope server so the only post-stop root is the connected websocket.
+        // Hold a WeakRef so we can stop(true) after the ws closes without
+        // adding a GC root ourselves. Assign client directly to the outer var
+        // rather than returning it — returning keeps the async frame's scope
+        // (which contains server) alive via the resolved-value chain in JSC.
+        let client, serverWeak;
+        await (async () => {
+          const server = Bun.serve({
+            port: 0,
+            development: true,
+            fetch(req, s) { if (s.upgrade(req)) return; return new Response("ok"); },
+            websocket: {
+              open() { opened.resolve(); },
+              // Closes over server — the cycle through wsHandlers.
+              message(ws, m) { ws.send(server.port + ":" + m); },
+            },
+          });
+          serverWeak = new WeakRef(server);
+          client = new WebSocket(server.url.href.replace("http", "ws"));
+          client.onopen = () => clientOpen.resolve();
+          client.onmessage = e => echoed.resolve(e.data);
+          client.onclose = () => closed.resolve();
+          await opened.promise;      // server-side ws created (roots wrapper)
+          await clientOpen.promise;  // client ready to send (avoid InvalidStateError)
+          server.stop(); // graceful — listener gone, ws stays
+        })();
+
+        // server out of scope. Wrapper is rooted only via:
+        //   ServerWebSocket(this_value strong) → JSServerWebSocket → m_server → JSServer
+        // GC must NOT collect while the ws is open.
+        Bun.gc(true); fullGC();
+        const whileConnected = liveServer();
+
+        // Dispatch through the cycle-captured handler (proves it's alive).
+        client.send("hi");
+        const echo = await echoed.promise;
+
+        client.close();
+        await closed.promise;
+        client = null;
+        // Graceful stop with an open ws does not auto-finalize when the ws
+        // closes; force-finish via the WeakRef so the native side drops its
+        // event-loop ref. The WeakRef adds no root — if tracing failed above,
+        // deref() would already be undefined.
+        serverWeak.deref()?.stop(true);
+        const afterClose = await gcUntilCountAtMost(baseline);
+
+        console.log(JSON.stringify({ baseline, whileConnected, echo, afterClose }));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { baseline, whileConnected, echo, afterClose } = JSON.parse(stdout.trim());
+    // baseline already includes the prototype(s); the instance on top of it
+    // proves the ws traced root kept it alive across GC.
+    expect(whileConnected).toBeGreaterThan(baseline);
+    expect(echo).toMatch(/^\d+:hi$/); // handler dispatched (server.port captured)
+    expect(afterClose).toBe(baseline); // instance collected, back to prototype floor
+    expect(exitCode).toBe(0);
+  });
+
+  // Reload swaps handlers via WriteBarrier .set() — old handlers become
+  // unreachable once nothing else holds them.
+  test("reload() releases the old handlers for collection", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const { heapStats, fullGC } = require("bun:jsc");
+        // objectTypeCounts only tracks JSC cell types, not user-defined JS
+        // classes, so use AsyncFunction as the observable: the OLD handler is
+        // async (counted), the NEW handler is a plain function (not counted).
+        const liveAsync = () => heapStats().objectTypeCounts.AsyncFunction ?? 0;
+
+        const baseline = liveAsync();
+        const server = Bun.serve({
+          port: 0,
+          fetch: async () => new Response("old"),
+        });
+        const beforeReload = liveAsync();
+        server.reload({ fetch: () => new Response("new") });
+        for (let i = 0; i < 30 && liveAsync() > baseline; i++) {
+          Bun.gc(true);
+          fullGC();
+          await new Promise(r => setImmediate(r));
+          await new Promise(r => setTimeout(r, 50));
+        }
+        console.log(JSON.stringify({ baseline, beforeReload, afterReload: liveAsync() }));
+        server.stop(true);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { baseline, beforeReload, afterReload } = JSON.parse(stdout.trim());
+    expect(beforeReload).toBeGreaterThan(baseline); // sanity: the async handler was counted
+    expect(afterReload).toBeLessThan(beforeReload); // old handler released after reload
+    expect(exitCode).toBe(0);
+  });
+
+  // reload({websocket}) that omits a previously-set per-event handler must
+  // CLEAR that wrapper slot, not leave the old handler pinned.
+  test("reload() that drops a websocket handler clears its slot", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const { heapStats, fullGC } = require("bun:jsc");
+        const liveAsync = () => heapStats().objectTypeCounts.AsyncFunction ?? 0;
+
+        let oldPingFired = 0;
+
+        const baseline = liveAsync();
+        const server = Bun.serve({
+          port: 0,
+          fetch: (req, s) => s.upgrade(req) ? undefined : new Response("ok"),
+          websocket: {
+            message(ws, m) { ws.send(m); },
+            // async so it shows up in objectTypeCounts.AsyncFunction.
+            ping: async () => { oldPingFired++; },
+          },
+        });
+        const withPing = liveAsync();
+
+        // Reload with a websocket config that omits ping. The wsOnPing slot
+        // must be cleared (not left holding the old async closure).
+        server.reload({
+          fetch: (req, s) => s.upgrade(req) ? undefined : new Response("ok"),
+          websocket: { message(ws, m) { ws.send(m); } },
+        });
+        for (let i = 0; i < 30 && liveAsync() > baseline; i++) {
+          Bun.gc(true);
+          fullGC();
+          await new Promise(r => setImmediate(r));
+          await Bun.sleep(10);
+        }
+        const afterReload = liveAsync();
+
+        // Behavioral check: a client ping must not reach the dropped handler.
+        const opened = Promise.withResolvers();
+        const echoed = Promise.withResolvers();
+        const ws = new WebSocket(server.url.href.replace("http", "ws"));
+        ws.onopen = () => opened.resolve();
+        ws.onerror = e => { opened.reject(e); echoed.reject(e); };
+        ws.onmessage = e => echoed.resolve(e.data);
+        await opened.promise;
+        ws.ping("p");
+        ws.send("hi"); // round-trip after the ping so any ping dispatch has happened
+        await echoed.promise;
+        ws.close();
+        server.stop(true);
+
+        console.log(JSON.stringify({ baseline, withPing, afterReload, oldPingFired }));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { baseline, withPing, afterReload, oldPingFired } = JSON.parse(stdout.trim());
+    expect(withPing).toBeGreaterThan(baseline); // sanity: async ping was counted
+    expect(afterReload).toBeLessThan(withPing); // dropped slot cleared → old ping collected
+    expect(oldPingFired).toBe(0); // and never dispatched after reload
+    expect(exitCode).toBe(0);
+  });
+
+  // Stress test under aggressive GC — catches missing write barriers.
+  test("serve+ws+reload survives BUN_JSC_collectContinuously=1", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const server = Bun.serve({
+          port: 0,
+          fetch: (req, s) => s.upgrade(req) ? undefined : new Response("ok"),
+          websocket: { open() {}, message(ws, m) { ws.send(m); } },
+        });
+        for (let i = 0; i < 10; i++) {
+          const ws = new WebSocket(server.url.href.replace("http", "ws"));
+          // Reject (don't hang) if the connection drops mid-await — under
+          // collectContinuously a missing write barrier surfaces as an abrupt
+          // close/error, and a bare onopen-only resolver would just time out.
+          const fail = Promise.withResolvers();
+          ws.onerror = e => fail.reject(e.error ?? new Error("ws error on iter " + i));
+          ws.onclose = e => fail.reject(new Error("ws closed (" + e.code + ") on iter " + i));
+          await Promise.race([new Promise(r => { ws.onopen = r; }), fail.promise]);
+          ws.send("hi");
+          await Promise.race([new Promise(r => { ws.onmessage = r; }), fail.promise]);
+          const closed = new Promise(r => { ws.onclose = r; }); // before close(): event may fire synchronously
+          ws.close();
+          await closed;
+          server.reload({
+            fetch: (req, s) => s.upgrade(req) ? undefined : new Response("ok " + i),
+            websocket: { open() {}, message(ws, m) { ws.send(m + i); } },
+          });
+        }
+        server.stop(true);
+        console.log("survived");
+      `,
+      ],
+      env: { ...bunEnv, BUN_JSC_collectContinuously: "1", BUN_JSC_useConcurrentGC: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(normalizeBunSnapshot(stdout)).toBe("survived");
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  // with_async_context_if_needed wraps each handler in a fresh AsyncContextFrame
+  // that is NOT a property of the user's options arg. Stored as a raw JSValue in
+  // heap-boxed ServerConfig, it must stay rooted across init→listen→ptr_to_js→
+  // slot-set (which includes vm.perform_gc()).
+  test("handlers wrapped via AsyncLocalStorage survive Bun.serve init under collectContinuously", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const als = new AsyncLocalStorage();
+        // Serve inside als.run so with_async_context_if_needed wraps every handler.
+        const server = await als.run({ ctx: 1 }, async () => {
+          return Bun.serve({
+            port: 0, development: true,
+            fetch: () => new Response(String(als.getStore()?.ctx)),
+            error: () => new Response("err"),
+            websocket: {
+              open() {}, message(ws, m) { ws.send(m); }, close() {},
+            },
+          });
+        });
+        const r = await fetch(server.url, { keepalive: false });
+        const body = await r.text();
+        server.stop(true);
+        // The handler's ALS context wrapper survived init→ptr_to_js (would crash
+        // under collectContinuously if the AsyncContextFrame were collected).
+        console.log(JSON.stringify({ body, ok: body === "1" }));
+      `,
+      ],
+      env: { ...bunEnv, BUN_JSC_collectContinuously: "1", BUN_JSC_useConcurrentGC: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { body, ok } = JSON.parse(stdout.trim());
+    expect({ body, ok }).toEqual({ body: "1", ok: true });
+    expect(exitCode).toBe(0);
+  }, 30_000);
 });

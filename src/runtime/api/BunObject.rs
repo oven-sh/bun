@@ -1648,6 +1648,37 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
                 // `server_body` until per-type codegen externs land.
                 <$ServerType>::js_gc_route_list_set(obj, global_object, route_list_object);
             }
+            // Mirror the handler callbacks into the wrapper's WriteBarrier
+            // slots — the wrapper is the sole GC root for these; `ServerConfig`
+            // / `Handler` only hold raw `JSValue` shadows for hot-path dispatch.
+            // The async-context wrap is applied here (not in `from_js`) so the
+            // freshly-allocated wrapper fn is rooted by the slot immediately;
+            // the unwrapped fn is held live by the user's options object on the
+            // `serve()` stack across `init`/`listen` until this point.
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_request,
+                Some(obj),
+                global_object,
+                <$ServerType>::js_gc_on_request_set,
+            );
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_error,
+                Some(obj),
+                global_object,
+                <$ServerType>::js_gc_on_error_set,
+            );
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_node_http_request,
+                Some(obj),
+                global_object,
+                <$ServerType>::js_gc_on_node_http_request_set,
+            );
+            // Skip the 7-slot write when there's no websocket config: the
+            // slots default ZERO so `write_ws_handler_slots`'s clear path
+            // would be 7 wasted FFI calls.
+            if server_ref.config.websocket.is_some() {
+                server_ref.write_ws_handler_slots(obj, global_object);
+            }
             server_ref.js_value.set_strong(obj, global_object);
 
             if global_object.bun_vm().test_isolation_enabled {

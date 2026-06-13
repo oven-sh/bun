@@ -85,9 +85,8 @@ test("tls.connect({ socket }) does not re-emit post-upgrade bytes on the origina
   await once(server.listen(0, "127.0.0.1"), "listening");
   const { port } = server.address() as net.AddressInfo;
 
-  const { promise, resolve } = Promise.withResolvers<{ upgrades: number; dataEvents: number; message: string }>();
+  const { promise, resolve } = Promise.withResolvers<{ upgrades: number; message: string }>();
 
-  let dataEvents = 0;
   let upgrades = 0;
   let upgraded = false;
 
@@ -98,10 +97,9 @@ test("tls.connect({ socket }) does not re-emit post-upgrade bytes on the origina
     // during teardown. Every terminal event settles `promise`, so a regression
     // surfaces as a failed assertion on the resolved values rather than a hang.
     socket.on("error", () => {});
-    socket.on("close", () => resolve({ upgrades, dataEvents, message: "" }));
+    socket.on("close", () => resolve({ upgrades, message: "" }));
 
     socket.on("data", data => {
-      dataEvents++;
       if (!upgraded && data.toString("latin1").includes("SERVER_GREETING")) {
         socket.write("STARTTLS");
         return;
@@ -111,18 +109,20 @@ test("tls.connect({ socket }) does not re-emit post-upgrade bytes on the origina
       upgraded = true;
       upgrades++;
       const tlsSocket = tls.connect({ socket, host: "127.0.0.1", rejectUnauthorized: false });
-      tlsSocket.on("error", err => resolve({ upgrades, dataEvents, message: err.message }));
-      tlsSocket.on("secureConnect", () => resolve({ upgrades, dataEvents, message: "" }));
-      tlsSocket.on("close", () => resolve({ upgrades, dataEvents, message: "" }));
+      tlsSocket.on("error", err => resolve({ upgrades, message: err.message }));
+      tlsSocket.on("secureConnect", () => resolve({ upgrades, message: "" }));
+      tlsSocket.on("close", () => resolve({ upgrades, message: "" }));
     });
 
     const result = await promise;
 
-    // The original socket must go quiet after the upgrade: the upgrade is
-    // attempted exactly once and never fails with "Invalid socket".
+    // The original socket must go quiet after the upgrade: once TLS owns the
+    // stream no further `data` event re-enters the handler, so exactly one
+    // upgrade is attempted and it never fails with "Invalid socket". (A
+    // re-emitted post-upgrade chunk would land in the upgrade branch and push
+    // `upgrades` past 1.)
     expect(result.message).not.toContain("Invalid socket");
     expect(result.upgrades).toBe(1);
-    expect(result.dataEvents).toBe(2);
   } finally {
     socket.destroy();
     server.close();

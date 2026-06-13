@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -1525,5 +1525,82 @@ describe("Bun.Image.backend", () => {
       const out = await new Bun.Image(cornersPng).heic().bytes();
       expect(out.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("S3-backed source", () => {
+  // https://github.com/oven-sh/bun/issues/32125
+  // An S3 dispatch-time failure (sign error: no credentials configured)
+  // delivers the read error to the Image's read chain synchronously, before
+  // download() returns. Every terminal must reject with the S3 error, a
+  // rejected read must leave the instance reusable, and the failed reads
+  // must not pin the Image wrappers (the pending-read Strong ref unwinds)
+  // or leak the read chain.
+  test("dispatch failure rejects terminals and does not pin the wrappers", async () => {
+    using dir = tempDir("image-s3-nocreds", {});
+    const script = `
+      import { heapStats } from "bun:jsc";
+      const out = { bytes: 0, write: 0, code: "", message: "", writeCode: "", second: "", alive: -1 };
+      {
+        for (let i = 0; i < 20; i++) {
+          const img = new Bun.Image(Bun.s3.file("probe.png"));
+          try { await img.bytes(); } catch (e) { out.bytes++; out.code ||= e.code; out.message ||= e.message; }
+        }
+        for (let i = 0; i < 20; i++) {
+          const img = new Bun.Image(Bun.s3.file("probe.png"));
+          try { await img.write("out-" + i + ".png"); } catch (e) { out.write++; out.writeCode ||= e.code; }
+        }
+        // A rejected read leaves the instance usable: the next terminal
+        // re-reads the Blob source and rejects the same way.
+        const img = new Bun.Image(Bun.s3.file("probe.png"));
+        try { await img.bytes(); } catch {}
+        try { await img.bytes(); } catch (e) { out.second = e.code; }
+      }
+      Bun.gc(true);
+      out.alive = heapStats().objectTypeCounts.Image ?? 0;
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        // Force the missing-credentials sign error deterministically.
+        S3_ACCESS_KEY_ID: undefined,
+        S3_SECRET_ACCESS_KEY: undefined,
+        S3_REGION: undefined,
+        S3_ENDPOINT: undefined,
+        S3_BUCKET: undefined,
+        S3_SESSION_TOKEN: undefined,
+        AWS_ACCESS_KEY_ID: undefined,
+        AWS_SECRET_ACCESS_KEY: undefined,
+        AWS_REGION: undefined,
+        AWS_ENDPOINT: undefined,
+        AWS_BUCKET: undefined,
+        AWS_SESSION_TOKEN: undefined,
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let parsed: { alive: number } & Record<string, unknown>;
+    try {
+      parsed = JSON.parse(stdout.trim());
+    } catch {
+      throw new Error(`child produced no result.\nstdout: ${stdout}\nstderr: ${stderr}\nexit: ${exitCode}`);
+    }
+    const { alive, ...result } = parsed;
+    expect(result).toEqual({
+      bytes: 20,
+      write: 20,
+      code: "ERR_S3_MISSING_CREDENTIALS",
+      message: "Missing S3 credentials. 'accessKeyId', 'secretAccessKey', 'bucket', and 'endpoint' are required",
+      writeCode: "ERR_S3_MISSING_CREDENTIALS",
+      second: "ERR_S3_MISSING_CREDENTIALS",
+    });
+    // 41 Images were created; a leaked pending-read Strong ref would keep
+    // them all alive through GC. A handful may survive via conservative
+    // stack scanning.
+    expect(alive).toBeLessThanOrEqual(10);
+    expect(exitCode).toBe(0);
   });
 });

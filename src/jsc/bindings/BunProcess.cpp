@@ -276,30 +276,46 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     return release;
 }
 
-// Emit a process lifecycle event through the JS-visible `process.emit` property
-// so that a user replacement of `process.emit` is invoked, matching Node (which
-// emits `beforeExit` and `exit` via `process.emit`). Listener exceptions are
-// reported inside EventEmitter::fireEventListeners; only a user-replaced `emit`
-// that itself throws leaves a pending exception for the caller to handle.
-static void emitProcessExitEvent(JSC::JSGlobalObject* globalObject, Process* process, ASCIILiteral eventName, int exitCode)
+// Emit a process lifecycle event. When user code has replaced `process.emit`
+// with an own property (a monkey-patch, as signal-exit and similar libraries
+// do), invoke that override so it observes the event, matching Node, which
+// dispatches `beforeExit`/`exit` via `process.emit`. Otherwise emit directly on
+// the internal EventEmitter: `emit` then resolves to the prototype method that
+// reaches the same listeners, and the native return value is the exact "a
+// listener fired" signal the caller uses to decide whether to drain the nextTick
+// queue.
+//
+// Returns whether a listener fired (native path) or the override's result.
+// Listener exceptions on the native path are reported inside
+// EventEmitter::fireEventListeners; a non-callable or throwing override leaves a
+// pending exception for the caller to report.
+static bool emitProcessExitEvent(JSC::JSGlobalObject* globalObject, Process* process, ASCIILiteral eventName, int exitCode)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue emitValue = process->get(globalObject, Identifier::fromString(vm, "emit"_s));
-    RETURN_IF_EXCEPTION(scope, );
+    JSValue emitOverride = process->getDirect(vm, Identifier::fromString(vm, "emit"_s));
+    if (!emitOverride) {
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsNumber(exitCode));
+        ASSERT(!arguments.hasOverflowed());
+        RELEASE_AND_RETURN(scope, process->wrapped().emit(Identifier::fromString(vm, eventName), arguments));
+    }
 
-    auto callData = JSC::getCallData(emitValue);
-    if (callData.type == CallData::Type::None)
-        return;
+    auto callData = JSC::getCallData(emitOverride);
+    if (callData.type == CallData::Type::None) {
+        scope.throwException(globalObject, createNotAFunctionError(globalObject, emitOverride));
+        return false;
+    }
 
     MarkedArgumentBuffer arguments;
     arguments.append(jsString(vm, String(eventName)));
     arguments.append(jsNumber(exitCode));
     ASSERT(!arguments.hasOverflowed());
 
-    JSC::call(globalObject, emitValue, callData, process, arguments);
-    RETURN_IF_EXCEPTION(scope, );
+    JSValue result = JSC::call(globalObject, emitOverride, callData, process, arguments);
+    RETURN_IF_EXCEPTION(scope, false);
+    return result.toBoolean(globalObject);
 }
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
@@ -853,22 +869,21 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     auto* process = globalObject->processObject();
     Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
 
-    // Capture whether there are listeners before emitting: a `once` listener
-    // removes itself while firing, so the queue must be drained afterwards based
-    // on the pre-emit state (matching the previous return value of emit()).
-    bool hadListeners = process->wrapped().hasEventListeners(Identifier::fromString(vm, "beforeExit"_s));
-
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    emitProcessExitEvent(globalObject, process, "beforeExit"_s, exitCode);
+    bool fired = emitProcessExitEvent(globalObject, process, "beforeExit"_s, exitCode);
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
         return;
     }
 
-    if (hadListeners) {
-        if (globalObject->m_nextTickQueue) {
-            auto nextTickQueue = globalObject->m_nextTickQueue.get();
+    if (auto* nextTickQueue = globalObject->m_nextTickQueue.get()) {
+        // Drain when a listener/override fired (matching prior behavior, which
+        // also flushes microtasks) or when the emit scheduled nextTick callbacks:
+        // the queue is empty on entry to beforeExit, so a non-empty queue can only
+        // hold work the emit just scheduled, which the event loop liveness check
+        // does not observe.
+        if (fired || !nextTickQueue->isEmpty()) {
             nextTickQueue->drain(vm, globalObject);
         }
     }

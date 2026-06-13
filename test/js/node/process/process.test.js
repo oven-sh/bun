@@ -534,7 +534,11 @@ describe.concurrent(() => {
         .split("\n")
         .map(line => line.trim())
         .filter(Boolean);
-      expect({ lines, exitCode }).toEqual({ lines: ["patched:beforeExit:0", "patched:exit:0"], exitCode: 0 });
+      expect({ lines, stderr, exitCode }).toEqual({
+        lines: ["patched:beforeExit:0", "patched:exit:0"],
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     it("composes a monkey-patched process.emit with process.on('exit') listeners", async () => {
@@ -561,7 +565,7 @@ describe.concurrent(() => {
         .map(line => line.trim())
         .filter(Boolean);
       // The patched emit runs before delegating to the original, which fires the registered listener.
-      expect({ lines, exitCode }).toEqual({ lines: ["patched:exit", "listener:exit"], exitCode: 0 });
+      expect({ lines, stderr, exitCode }).toEqual({ lines: ["patched:exit", "listener:exit"], stderr: "", exitCode: 0 });
     });
 
     it("forwards the exit code to a monkey-patched process.emit", async () => {
@@ -587,7 +591,7 @@ describe.concurrent(() => {
         .split("\n")
         .map(line => line.trim())
         .filter(Boolean);
-      expect({ lines, exitCode }).toEqual({ lines: ["patched:exit:3"], exitCode: 3 });
+      expect({ lines, stderr, exitCode }).toEqual({ lines: ["patched:exit:3"], stderr: "", exitCode: 3 });
     });
 
     it("invokes a monkey-patched process.emit for an explicit process.exit(code)", async () => {
@@ -613,7 +617,38 @@ describe.concurrent(() => {
         .split("\n")
         .map(line => line.trim())
         .filter(Boolean);
-      expect({ lines, exitCode }).toEqual({ lines: ["patched:exit:2"], exitCode: 2 });
+      expect({ lines, stderr, exitCode }).toEqual({ lines: ["patched:exit:2"], stderr: "", exitCode: 2 });
+    });
+
+    it("drains nextTick scheduled by a monkey-patched process.emit during beforeExit", async () => {
+      // A replacement process.emit can schedule process.nextTick work while
+      // handling beforeExit even with no registered beforeExit listener; that
+      // callback must still run before the process exits.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const originalEmit = process.emit;
+          process.emit = function (event, ...args) {
+            if (event === "beforeExit") {
+              process.nextTick(() => console.log("nexttick:ran"));
+              return false;
+            }
+            return originalEmit.call(this, event, ...args);
+          };
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
+      expect({ lines, stderr, exitCode }).toEqual({ lines: ["nexttick:ran"], stderr: "", exitCode: 0 });
     });
   });
 

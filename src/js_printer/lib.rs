@@ -1464,6 +1464,11 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
     use js_ast::ExprData;
     match &expr.data {
         ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_) => true,
+        // `EUndefined` prints as the identifier `undefined` when not minifying,
+        // and `delete undefined` is a SyntaxError in strict mode. It can become
+        // a delete operand via substitution (e.g. top-level `this` in an ES
+        // module), in which case it must be wrapped: `delete (0, undefined)`.
+        ExprData::EUndefined(_) => true,
         ExprData::ENumber(e) => e.value.is_infinite() || e.value.is_nan(),
         _ => false,
     }

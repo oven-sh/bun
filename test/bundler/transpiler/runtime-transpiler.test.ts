@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("use strict causes CommonJS", () => {
   const { stdout, exitCode } = Bun.spawnSync({
@@ -208,4 +208,53 @@ test("math.pow", () => {
   expect(10 ** (-1 / 20) + "").toEqual("0.8912509381337456");
   expect(foo2(20.4) + "").toEqual("0.22140372138502384");
   expect(20.4 ** -0.5 + "").toEqual("0.22140372138502384");
+});
+
+// https://github.com/oven-sh/bun/issues/32167
+describe("top-level this in ES modules", () => {
+  test("is undefined, including when captured by a top-level arrow", async () => {
+    const logThis = `console.log(typeof this, this === undefined);\n`;
+    using dir = tempDir("esm-top-level-this", {
+      "import-only.js": `import { EventEmitter } from "node:events";
+const emitter = new EventEmitter();
+emitter.on("event", () => {
+  console.log(typeof this, this === undefined);
+});
+emitter.emit("event");
+`,
+      "export-only.mjs": `export {};\n` + logThis,
+      // .mjs and "type": "module" force ESM even with no import/export syntax
+      "bare.mjs": logThis,
+      "type-module/package.json": `{ "type": "module" }`,
+      "type-module/bare.js": logThis,
+    });
+
+    for (const file of ["import-only.js", "export-only.mjs", "bare.mjs", "type-module/bare.js"]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), file],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ file, stdout, stderr }).toEqual({ file, stdout: "undefined true\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test("is module.exports in a CommonJS module", async () => {
+    using dir = tempDir("cjs-top-level-this", {
+      "cjs.js": `console.log(this === module.exports, JSON.stringify(this));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "cjs.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "true {}\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });

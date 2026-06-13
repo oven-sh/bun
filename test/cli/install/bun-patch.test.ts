@@ -1,5 +1,6 @@
 import { $, ShellOutput } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { existsSync, readdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -813,5 +814,118 @@ module.exports = function isOdd() {
       expect(stderr.toString()).toBe("");
       expect(stdout.toString()).toBe("true\n");
     }
+  });
+
+  // Regression for https://github.com/oven-sh/bun/issues/30554 (dup of #12200).
+  //
+  // On Windows, when the project is on one drive (e.g. Z:\) and the install
+  // cache is on another (C:\), `bun patch --commit` failed with:
+  //   error: failed renaming patch file to patches dir
+  //   EPERM: Operation not permitted (copyfile())
+  // because the patch file was staged in the cache-drive tempdir and the
+  // subsequent rename across drives fell back to CopyFileW while a writable
+  // handle was still open on the source.
+  //
+  // The fix stages the patch file inside `patches/` itself so the rename is
+  // always same-filesystem. The direct cross-drive repro needs two Windows
+  // drive letters, which Bun's CI doesn't provide, but the stderr/exitCode
+  // asserts below would catch the EPERM message on any Windows lane that
+  // hits the old code path, and the readdir check catches the re-commit
+  // tempfile-leak that an earlier revision of this fix introduced on POSIX
+  // (rename-within-same-dir was swapping via RENAME_EXCHANGE instead of
+  // replacing, leaking the previous patch bytes into patches/ as a stray
+  // `.<hex>-<hex>.tmp`).
+  test("patch --commit works with cache on a different directory than project", async () => {
+    const cacheDir = tempDirWithFiles("bun-patch-xdev-cache", {});
+    const tmpDir = tempDirWithFiles("bun-patch-xdev-tmp", {});
+    try {
+      const filedir = tempDirWithFiles("bun-patch-xdev-project", {
+        "package.json": JSON.stringify({
+          "name": "bun-patch-xdev-test",
+          "module": "index.ts",
+          "type": "module",
+          "dependencies": { "is-even": "1.0.0" },
+        }),
+        "index.ts": `import isEven from 'is-even'; console.log(isEven(420));`,
+      });
+
+      const env = {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: String(cacheDir),
+        BUN_TMPDIR: String(tmpDir),
+      };
+
+      await $`${bunExe()} install --linker hoisted`.env(env).cwd(filedir);
+      await $`${bunExe()} patch is-even@1.0.0 --linker hoisted`.env(env).cwd(filedir);
+
+      await Bun.write(
+        join(filedir, "node_modules/is-even/index.js"),
+        "module.exports = function () { return 'patched'; };\n",
+      );
+
+      const commit = await $`${bunExe()} patch --commit node_modules/is-even --linker hoisted`
+        .env(env)
+        .cwd(filedir)
+        .throws(false);
+      expect(commit.stderr.toString()).not.toContain("error");
+      // The specific failure reported on Windows when the stage dir is on
+      // a different filesystem than patches/.
+      expect(commit.stderr.toString()).not.toContain("failed renaming patch file to patches dir");
+      expect(commit.stderr.toString()).not.toContain("EPERM");
+      expect(commit.exitCode).toBe(0);
+
+      const patchesDir = join(filedir, "patches");
+      const patchPath = join(patchesDir, "is-even@1.0.0.patch");
+      expect(existsSync(patchPath)).toBe(true);
+      const patchContents = await Bun.file(patchPath).text();
+      expect(patchContents).toContain("diff --git");
+      expect(patchContents).toContain("patched");
+
+      // The staging file lives inside patches/ during the commit and is
+      // renamed to <patch>.patch. Nothing `.tmp`-suffixed should survive.
+      const leftovers = readdirSync(patchesDir).filter(name => name.endsWith(".tmp"));
+      expect(leftovers).toEqual([]);
+
+      const { stdout } = await $`${bunExe()} run index.ts`.env(env).cwd(filedir);
+      expect(stdout.toString().trim()).toBe("patched");
+    } finally {
+      rmSync(String(cacheDir), { recursive: true, force: true });
+      rmSync(String(tmpDir), { recursive: true, force: true });
+    }
+  });
+
+  // Re-committing an already-patched package must not leak the previous
+  // patch's bytes as a stray `.<hex>-<hex>.tmp` in patches/. Earlier the
+  // staging file was renamed with renameatConcurrently, which on Linux/
+  // macOS falls through to RENAME_EXCHANGE when the target already exists
+  // — that swaps rather than replaces, and the caller never unlinked the
+  // swapped-out tempfile. Plain renameat replaces atomically.
+  test("patch --commit re-committed does not leak staging tmp file into patches/", async () => {
+    const filedir = tempDirWithFiles("bun-patch-recommit", {
+      "package.json": JSON.stringify({
+        "name": "bun-patch-recommit-test",
+        "module": "index.ts",
+        "type": "module",
+        "dependencies": { "is-even": "1.0.0" },
+      }),
+      "index.ts": `import isEven from 'is-even'; console.log(isEven(420));`,
+    });
+
+    await $`${bunExe()} install --linker hoisted`.env(bunEnv).cwd(filedir);
+    await $`${bunExe()} patch is-even@1.0.0 --linker hoisted`.env(bunEnv).cwd(filedir);
+    await Bun.write(join(filedir, "node_modules/is-even/index.js"), "module.exports = function () { return 'v1'; };\n");
+    await $`${bunExe()} patch --commit node_modules/is-even --linker hoisted`.env(bunEnv).cwd(filedir);
+
+    // Re-patch with different content so the commit target already exists.
+    await $`${bunExe()} patch is-even@1.0.0 --linker hoisted`.env(bunEnv).cwd(filedir);
+    await Bun.write(
+      join(filedir, "node_modules/is-even/index.js"),
+      "module.exports = function () { return 'v2-longer-so-the-patch-bytes-differ'; };\n",
+    );
+    await $`${bunExe()} patch --commit node_modules/is-even --linker hoisted`.env(bunEnv).cwd(filedir);
+
+    const patchesDir = join(filedir, "patches");
+    const entries = readdirSync(patchesDir).sort();
+    expect(entries).toEqual(["is-even@1.0.0.patch"]);
   });
 });

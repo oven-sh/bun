@@ -136,6 +136,29 @@ pub fn queue_task_concurrently(global: &JSGlobalObject, task: *mut crate::cpp_ta
     }
 }
 
+/// Drain-and-drop this VM's `concurrent_tasks` queue during worker shutdown.
+/// Called from `WebWorker__teardownJSCVM` immediately after the
+/// ScriptExecutionContext is removed from the global map (so no new posts
+/// can arrive) and before `gcUnprotect`/`collectNow` (so the freed lambdas'
+/// captured `Ref<>`s — e.g. `Ref<MessagePortPipe>`, `Ref<Worker>` — are
+/// released while the JSC VM is still alive). Without this, any
+/// `postTaskTo(workerCtxId, …)` that lands between the worker's last
+/// `tick_concurrent()` and context-map removal leaks a `ConcurrentTask` box
+/// plus its `EventLoopTask*` payload; `EventLoop::deinit()` walks only
+/// `self.tasks`, and the raw `dealloc` of the VM box skips field `Drop`s.
+/// The main-thread exit path already does this in `global_exit()`; workers
+/// have no equivalent hook, hence this shim.
+// HOST_EXPORT(Bun__dropConcurrentCppTasksForWorker, c)
+pub fn drop_concurrent_cpp_tasks_for_worker(global: &JSGlobalObject) {
+    crate::mark_binding!();
+    // SAFETY: called on the worker's own thread from inside `shutdown()`
+    // with the VM unpublished (sole owner) and JSC still live; `bun_vm()`
+    // is the thread-local handle, `event_loop()` never null for a Bun VM.
+    unsafe {
+        (*global.bun_vm().event_loop()).drop_concurrent_cpp_tasks();
+    }
+}
+
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
 pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise) {
     crate::mark_binding!();

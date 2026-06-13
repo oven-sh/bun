@@ -939,7 +939,7 @@ pub const Expect = struct {
             var iter = try jsc.JSPropertyIterator(.{
                 .skip_empty_name = false,
                 .include_value = true,
-                .own_properties_only = false,
+                .own_properties_only = true,
             }).init(globalThis, matchers_to_register);
             defer iter.deinit();
 

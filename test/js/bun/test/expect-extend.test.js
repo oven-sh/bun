@@ -357,26 +357,41 @@ it("should support asymmetric matchers", () => {
 
 it("works on prototypes", () => {
   const Bar = {
-    _toBeBar() {
+    _toBeInherited() {
       return { pass: true };
     },
   };
   const Foo = Object.create(Bar);
+  Foo._toBeOwned = function () {
+    return { pass: true };
+  };
 
+  // Only own properties are registered (matches Jest's Object.keys behavior)
   expect.extend(Foo);
-  expect(123)._toBeBar();
+  expect(123)._toBeOwned();
 });
 
-it("works on classes", () => {
-  class Bar {
-    _toBeBar() {
+it("works on plain objects", () => {
+  const matchers = {
+    _toBeBar2() {
       return { pass: true };
-    }
-  }
-  class Foo extends Bar {}
+    },
+  };
 
-  expect.extend(new Foo());
-  expect(123)._toBeBar();
+  expect.extend(matchers);
+  expect(123)._toBeBar2();
+});
+
+it("does not crash when prototype has non-function properties", () => {
+  const proto = { [Symbol.toStringTag]: "CustomMatcher", inheritedProp: "not a function" };
+  const matchers = Object.create(proto);
+  matchers._toBeOwnProp = function (actual, expected) {
+    return { pass: actual === expected, message: () => `expected ${actual} to be ${expected}` };
+  };
+
+  // Should not throw due to inherited non-function properties on the prototype
+  expect.extend(matchers);
+  expect(42)._toBeOwnProp(42);
 });
 
 test("expect.extend with numeric index keys does not crash", () => {

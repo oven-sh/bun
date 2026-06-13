@@ -1,3 +1,6 @@
+// Array.fromAsync type tests — bun-types provides this declaration aligned
+// with TypeScript's lib.esnext.array.d.ts so it works with any lib config.
+
 import { expectType } from "./utilities";
 
 async function* listReleases() {
@@ -13,7 +16,9 @@ async function* listReleases() {
   }
 }
 
-await Array.fromAsync(listReleases());
+// AsyncIterable input
+const releases = await Array.fromAsync(listReleases());
+expectType<{ data: string }[]>(releases);
 
 // Tests from issue #8484
 // https://github.com/oven-sh/bun/issues/8484
@@ -23,10 +28,20 @@ async function* naturals() {
   }
 }
 
+// AsyncIterable input with mapFn
 const test1 = await Array.fromAsync(naturals(), n => Promise.resolve(`${n}`));
 expectType<string[]>(test1);
 
+// Iterable<PromiseLike<T>> input — promises are unwrapped
 const test2 = await Array.fromAsync([Promise.resolve(1), Promise.resolve(2)]);
 expectType<number[]>(test2);
+
+// Plain iterable input
+const test3 = await Array.fromAsync([1, 2, 3]);
+expectType<number[]>(test3);
+
+// ArrayLike input with mapFn
+const test4 = await Array.fromAsync({ length: 3, 0: "a", 1: "b", 2: "c" }, s => s.toUpperCase());
+expectType<string[]>(test4);
 
 export {};

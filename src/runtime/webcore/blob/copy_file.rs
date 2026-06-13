@@ -8,6 +8,7 @@ use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_io as aio;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_paths::PathBuffer;
+use bun_ptr::BackRef;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(not(windows))]
@@ -41,7 +42,7 @@ fn to_jsc_system_error(e: &SystemError) -> jsc::SystemError {
 // CopyFile (POSIX, blocking off-thread)
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct CopyFile<'a> {
+pub struct CopyFile {
     pub destination_file_store: store::File,
     pub source_file_store: store::File,
     // `StoreRef` is the thread-safe refcounted handle;
@@ -60,10 +61,8 @@ pub struct CopyFile<'a> {
     pub read_len: SizeType,
     pub read_off: SizeType,
 
-    // per LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
-    // TODO(refactor): lifetime — this struct is Box-allocated and crosses threads;
-    // `'a` here is unsound in practice. Likely should be *const JSGlobalObject.
-    pub global_this: &'a JSGlobalObject,
+    /// BACKREF — the VM (and its global object) outlives every task scheduled on it.
+    pub global_this: BackRef<JSGlobalObject>,
 
     pub mkdirp_if_not_exists: bool,
     pub destination_mode: Option<Mode>,
@@ -73,7 +72,7 @@ pub type ResultType = Result<SizeType, bun_core::Error>;
 
 pub type Callback = fn(ctx: *mut c_void, len: ResultType);
 
-impl MkdirpTarget for CopyFile<'_> {
+impl MkdirpTarget for CopyFile {
     fn mkdirp_if_not_exists(&self) -> bool {
         self.mkdirp_if_not_exists
     }
@@ -85,7 +84,7 @@ impl MkdirpTarget for CopyFile<'_> {
     }
 }
 
-impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_> {
+impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::CopyFilePromiseTask;
     fn run(&mut self) {
         self.run_async();
@@ -95,8 +94,8 @@ impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_>
     }
 }
 
-impl<'a> CopyFile<'a> {
-    pub fn create(
+impl CopyFile {
+    pub fn create<'a>(
         store: StoreRef,
         source_store: StoreRef,
         off: SizeType,
@@ -112,7 +111,7 @@ impl<'a> CopyFile<'a> {
             source_store: Some(source_store),
             offset: off,
             max_length: max_len,
-            global_this,
+            global_this: BackRef::new(global_this),
             mkdirp_if_not_exists,
             destination_mode,
             // defaults:
@@ -143,11 +142,11 @@ impl<'a> CopyFile<'a> {
         }
 
         let instance = to_jsc_system_error(&system_error)
-            .to_error_instance_with_async_stack(self.global_this, promise);
+            .to_error_instance_with_async_stack(global_this.get(), promise);
         if let Some(store) = self.store.take() {
             drop(store); // deref()
         }
-        promise.reject(global_this, Ok(instance))
+        promise.reject(global_this.get(), Ok(instance))
     }
 
     pub fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
@@ -158,7 +157,7 @@ impl<'a> CopyFile<'a> {
         }
 
         promise.resolve(
-            self.global_this,
+            self.global_this.get(),
             JSValue::js_number_from_uint64(self.read_len as u64),
         )
     }
@@ -983,7 +982,7 @@ impl TryWith {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-pub struct CopyFileWindows<'a> {
+pub struct CopyFileWindows {
     pub destination_file_store: StoreRef,
     pub source_file_store: StoreRef,
 
@@ -991,10 +990,8 @@ pub struct CopyFileWindows<'a> {
     pub promise: jsc::JSPromiseStrong,
     pub mkdirp_if_not_exists: bool,
     pub destination_mode: Option<Mode>,
-    // per LIFETIMES.tsv: JSC_BORROW → &jsc::EventLoop
-    // TODO(refactor): lifetime — heap-allocated and re-entered from libuv callbacks;
-    // likely should be *const jsc::EventLoop.
-    pub event_loop: &'a jsc::event_loop::EventLoop,
+    /// BACKREF — the VM (and its `EventLoop`) outlives every libuv request scheduled on it.
+    pub event_loop: BackRef<jsc::event_loop::EventLoop>,
 
     pub size: SizeType,
 
@@ -1042,7 +1039,7 @@ impl Default for ReadWriteLoop {
 // borrow checker can see `self.read_write_loop` / `self.io_request` / `self.event_loop`
 // as disjoint field accesses through a single `&mut self`.
 #[cfg(windows)]
-impl<'a> CopyFileWindows<'a> {
+impl CopyFileWindows {
     fn read_write_loop_start(&mut self) -> bun_sys::Result<()> {
         self.read_write_loop.read_buf.reserve_exact(64 * 1024);
 
@@ -1267,7 +1264,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
 }
 
 #[cfg(windows)]
-impl<'a> CopyFileWindows<'a> {
+impl CopyFileWindows {
     pub fn on_read_write_loop_complete(&mut self) {
         self.event_loop.unref_concurrently();
 
@@ -1280,14 +1277,14 @@ impl<'a> CopyFileWindows<'a> {
         self.on_complete(written);
     }
 
-    pub fn new(init: CopyFileWindows<'a>) -> Box<CopyFileWindows<'a>> {
+    pub fn new(init: CopyFileWindows) -> Box<CopyFileWindows> {
         Box::new(init)
     }
 
     pub fn init(
         destination_file_store: StoreRef,
         source_file_store: StoreRef,
-        event_loop: &'a jsc::event_loop::EventLoop,
+        event_loop: &jsc::event_loop::EventLoop,
         mkdirp_if_not_exists: bool,
         size_: SizeType,
         destination_mode: Option<Mode>,
@@ -1300,7 +1297,7 @@ impl<'a> CopyFileWindows<'a> {
             promise: jsc::JSPromiseStrong::init(global),
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
-            event_loop,
+            event_loop: BackRef::new(event_loop),
             mkdirp_if_not_exists,
             destination_mode,
             size: size_,
@@ -1566,9 +1563,7 @@ impl<'a> CopyFileWindows<'a> {
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop.
-        let _guard = unsafe {
-            jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
-        };
+        let _guard = unsafe { jsc::event_loop::EventLoop::enter_scope(self.event_loop.as_ptr()) };
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
         // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
@@ -1652,9 +1647,7 @@ impl<'a> CopyFileWindows<'a> {
         let promise = JSPromise::opaque_mut(self.promise.swap());
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop.
-        let _guard = unsafe {
-            jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
-        };
+        let _guard = unsafe { jsc::event_loop::EventLoop::enter_scope(self.event_loop.as_ptr()) };
 
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
@@ -1716,13 +1709,15 @@ impl<'a> CopyFileWindows<'a> {
         };
 
         self.event_loop.ref_concurrently();
-        node_fs::async_::AsyncMkdirp::new(node_fs::async_::AsyncMkdirp {
+        // `AsyncMkdirp::schedule` heap-allocates the task and hands ownership
+        // to the work pool, which frees it after the completion callback
+        // returns (same as `WriteFileWindows::mkdirp`).
+        node_fs::async_::AsyncMkdirp::schedule(node_fs::async_::AsyncMkdirp {
             completion: on_mkdirp_complete_concurrent,
             completion_ctx: core::ptr::from_mut(self).cast::<()>(),
             path,
             ..Default::default()
-        })
-        .schedule();
+        });
     }
 
     fn on_mkdirp_complete(&mut self) {
@@ -1824,17 +1819,17 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
     };
     // `bun_event_loop::JsResult` carries the low-tier `ErasedJsError`; shim the
     // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> JsResult<()>`.
-    fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
+    fn call_erased(this: *mut CopyFileWindows) -> bun_event_loop::JsResult<()> {
         // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to
         // `ManagedTask::new` below; `on_mkdirp_complete` may free it via `throw`, so we
         // do not touch `this` afterward.
         unsafe { (*this).on_mkdirp_complete() };
         Ok(())
     }
-    this.event_loop
-        .enqueue_task_concurrent(jsc::ConcurrentTask::create(
-            jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
-        ));
+    let event_loop = this.event_loop;
+    event_loop.enqueue_task_concurrent(jsc::ConcurrentTask::create(
+        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
+    ));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1871,5 +1866,5 @@ fn unsupported_non_regular_file_error() -> SystemError {
 // so these are constructor fns instead of `const` values.
 
 pub type CopyFilePromiseTask<'a> =
-    jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, CopyFile<'a>>;
+    jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, CopyFile>;
 pub type CopyFilePromiseTaskEventLoopTask = jsc::EventLoopTask;

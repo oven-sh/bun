@@ -4,9 +4,12 @@
 #include <wtf/StackCheck.h>
 #include <wtf/StackTrace.h>
 #include <wtf/dtoa.h>
+#include <wtf/DateMath.h>
 #include <wtf/NumberOfCores.h>
 #include <atomic>
 #include <cassert>
+
+static_assert(WTF::maxECMAScriptTime == 8.64e15, "jsc.wtf.maxECMAScriptTime in WTF.zig must match");
 
 #include "wtf/SIMDUTF.h"
 #if OS(WINDOWS)

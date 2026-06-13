@@ -18,15 +18,11 @@ use js_parser::defines::Define;
 // `ParseOptions.runtime_transpiler_cache: Option<&mut RTC>` are the same
 // nominal type. This crate adds the env-var-gated `disabled`/`set_disabled` via
 // the `RuntimeTranspilerCacheExt` trait below — those need `bun_core::env_var`
-// which sits a tier above js_parser. `Entry` / `Metadata` stay concrete here;
-// the canonical
-// struct stores them type-erased as `*mut ()`.
+// which sits a tier above js_parser. The concrete on-disk `Entry` / `Metadata`
+// live in `bun_jsc::runtime_transpiler_cache`; the canonical struct stores the
+// entry type-erased as `*mut ()`.
 // ══════════════════════════════════════════════════════════════════════════
 use bun_ast::RuntimeTranspilerCache;
-
-/// Bump when the cache wire format or parser output changes. Mirrors
-/// `EXPECTED_VERSION` in src/jsc/RuntimeTranspilerCache.rs.
-pub const RUNTIME_TRANSPILER_CACHE_VERSION: u32 = 20;
 
 /// Written by CLI argument parsing and `VirtualMachine` init, and flipped
 /// lazily on cache-dir resolution failure. Module-level so those writers can
@@ -56,91 +52,6 @@ impl RuntimeTranspilerCacheExt for RuntimeTranspilerCache {
     #[inline]
     fn set_disabled(v: bool) {
         DISABLED.store(v, Ordering::Relaxed);
-    }
-}
-
-/// This is the on-disk wire enum for `Metadata.output_encoding` —
-/// NOT `js_parser::ExportsKind` (an unrelated `#[repr(u8)]` enum that happens
-/// to start at 0). The bundler-side cache loader maps `Latin1`/`Utf16` blobs
-/// into a `bun.String` and only feeds
-/// `Utf8` through `cloneUTF8`; callers must dispatch on these discriminants.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CacheEncoding {
-    #[default]
-    None = 0,
-    Utf8 = 1,
-    Utf16 = 2,
-    Latin1 = 3,
-}
-
-/// On-disk wire enum — NOT `options::ModuleType`: it has `Esm`/`Cjs`
-/// **swapped** relative to the in-memory parser/options enum (`Unknown=0,
-/// Cjs=1, Esm=2`). Comparing `metadata.module_type` against
-/// `options::ModuleType::Cjs as u8` would test for `.esm`.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MetadataModuleType {
-    #[default]
-    None = 0,
-    Esm = 1,
-    Cjs = 2,
-}
-
-/// Mirrors `RuntimeTranspilerCache.Entry` — on-disk blob handle.
-#[derive(Default)]
-pub struct RuntimeTranspilerCacheEntry {
-    pub metadata: RuntimeTranspilerCacheMetadata,
-    pub output_code: Box<[u8]>,
-    pub sourcemap: Box<[u8]>,
-    pub esm_record: Box<[u8]>,
-    pub cache_file_path: Box<[u8]>,
-}
-
-/// Mirrors `RuntimeTranspilerCache.Metadata` — fixed-width LE header.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct RuntimeTranspilerCacheMetadata {
-    pub cache_version: u32,
-    pub output_encoding: u8, // Encoding
-    pub module_type: MetadataModuleType,
-    pub features_hash: u64,
-    pub input_byte_length: u64,
-    pub input_hash: u64,
-    pub output_byte_offset: u64,
-    pub output_byte_length: u64,
-    pub output_hash: u64,
-    pub sourcemap_byte_offset: u64,
-    pub sourcemap_byte_length: u64,
-    pub sourcemap_hash: u64,
-    pub esm_record_byte_offset: u64,
-    pub esm_record_byte_length: u64,
-    pub esm_record_hash: u64,
-}
-
-impl Default for RuntimeTranspilerCacheMetadata {
-    /// The wire format defaults `cache_version` to the expected version —
-    /// derived `Default` would zero it,
-    /// causing every freshly-written entry to be rejected as `error.StaleCache`
-    /// on first read.
-    fn default() -> Self {
-        Self {
-            cache_version: RUNTIME_TRANSPILER_CACHE_VERSION,
-            output_encoding: 0, // Encoding::none
-            module_type: MetadataModuleType::None,
-            features_hash: 0,
-            input_byte_length: 0,
-            input_hash: 0,
-            output_byte_offset: 0,
-            output_byte_length: 0,
-            output_hash: 0,
-            sourcemap_byte_offset: 0,
-            sourcemap_byte_length: 0,
-            sourcemap_hash: 0,
-            esm_record_byte_offset: 0,
-            esm_record_byte_length: 0,
-            esm_record_hash: 0,
-        }
     }
 }
 

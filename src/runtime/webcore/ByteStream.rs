@@ -158,6 +158,21 @@ impl ByteStream {
         });
     }
 
+    /// Report `n` bytes delivered to the JS consumer (reader fulfilled, pipe
+    /// target, or buffer-action sink) so the producer can release
+    /// backpressure. Bytes parked in `self.buffer` awaiting a future
+    /// `on_pull` are *not* reported until that pull happens.
+    #[inline]
+    fn did_drain(&self, n: usize) {
+        if n == 0 {
+            return;
+        }
+        let source = self.parent_const();
+        if let Some(handler) = source.drain_handler.get() {
+            handler(source.drain_ctx.get(), n);
+        }
+    }
+
     pub(crate) fn on_data(&self, stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
         bun_jsc::mark_binding!();
         if self.done.get() {
@@ -183,11 +198,16 @@ impl ByteStream {
             (p.ctx, p.on_pipe)
         };
         if let Some(ctx) = pipe_ctx {
+            self.did_drain(stream.slice().len());
             (pipe_fn.unwrap())(ctx, stream);
             return Ok(());
         }
 
         if self.buffer_action.get().is_some() {
+            // Buffer-action consumers (`readableStreamToText` etc.) explicitly
+            // want the whole body; treat every append as consumed so the
+            // producer isn't throttled waiting for a pull that never comes.
+            self.did_drain(stream.slice().len());
             if let streams::Result::Err(err) = &stream {
                 // Explicit post-reject cleanup; runs after `action.reject`
                 // (`?` would skip it).
@@ -329,6 +349,8 @@ impl ByteStream {
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData pending.run()");
 
+            self.did_drain(to_copy_len);
+
             // R-2: `Pending::run` resolves a JS promise (re-enters JS); the
             // `with_mut` borrow is `UnsafeCell`-backed so `noalias` is
             // suppressed on `&self`, which is the load-bearing fix vs the old
@@ -434,6 +456,7 @@ impl ByteStream {
                     b.shrink_to_fit();
                 });
                 self.done.set(true);
+                self.did_drain(to_write);
 
                 return streams::Result::IntoArrayAndDone(IntoArray {
                     value: view,
@@ -441,6 +464,7 @@ impl ByteStream {
                 });
             }
 
+            self.did_drain(to_write);
             return streams::Result::IntoArray(IntoArray {
                 value: view,
                 len: to_write as blob::SizeType, // @truncate
@@ -544,6 +568,13 @@ impl ByteStream {
 
     pub(crate) fn drain(&self) -> Vec<u8> {
         if !self.buffer.get().is_empty() {
+            // Bytes placed here before the JS stream was constructed (e.g.
+            // the `Owned` drain_result from `onStartStreaming`) are handed
+            // out via `handle.drain()` without going through `on_pull`;
+            // report them so they don't become a permanent floor in the
+            // transport's outstanding-bytes accounting (h2 `unacked_bytes`,
+            // h1/h3 `outstanding_body_bytes`).
+            self.did_drain(self.buffer.get().len());
             return Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
         }
         Vec::<u8>::default()
@@ -596,6 +627,16 @@ impl ByteStream {
             let mut blob = blob_;
             return Ok(blob.to_promise(global_this, action)?);
         }
+
+        // Bytes parked in `self.buffer` (the `Owned` drain_result from
+        // `onStartStreaming`, plus any `on_data` calls that fell through to
+        // `append()` before this ran) will be folded into the eventual blob
+        // by the buffer_action resolution path without going through
+        // `on_pull` or `drain()`. Credit them now — same rationale as the
+        // `on_data` buffer_action arm ("wants the whole body; treat every
+        // append as consumed") and the `drain()` call site, but on the
+        // `tryUseReadableStreamBufferedFastPath` route that skips both.
+        self.did_drain(self.buffer.get().len());
 
         self.buffer_action
             .set(Some(BufferAction::new(action, global_this)));

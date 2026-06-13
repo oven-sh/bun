@@ -548,6 +548,40 @@ impl ClientSession {
         }
     }
 
+    /// HTTP-thread wake-up from `schedule_response_body_consumed`: the JS
+    /// reader drained `bytes` from the ByteStream. Bump the stream's
+    /// consumption counter and release any per-stream window credit that has
+    /// become available.
+    pub fn consume_response_body_by_http_id(&mut self, async_http_id: u32, bytes: u32) {
+        let _guard = self.ref_scope();
+        let mut found = false;
+        for &stream in self.streams.values() {
+            let s = stream_mut(stream);
+            let Some(client) = s.client_mut() else {
+                continue;
+            };
+            if client.async_http_id != async_http_id {
+                continue;
+            }
+            // `bytes` is decompressed; clamp the running total to wire bytes
+            // still outstanding so a compression surplus isn't banked to
+            // credit later DATA the reader hasn't touched.
+            s.consumed_bytes =
+                core::cmp::min(s.consumed_bytes.saturating_add(bytes), s.unacked_bytes);
+            found = true;
+            break;
+        }
+        if !found {
+            return;
+        }
+        self.replenish_window();
+        if self.write_buffer.is_not_empty() {
+            if let Err(err) = self.flush() {
+                self.fail_all(err);
+            }
+        }
+    }
+
     /// HTTP-thread wake-up from `scheduleRequestWrite`: new body bytes (or
     /// end-of-body) are available in the ThreadSafeStreamBuffer.
     pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) {
@@ -595,21 +629,44 @@ impl ClientSession {
 
     fn replenish_window(&mut self) {
         let threshold = LOCAL_INITIAL_WINDOW_SIZE / 2;
+        // Connection-level credit stays receipt-based so one stream whose JS
+        // reader is stalled doesn't starve siblings of the shared window.
         if self.conn_unacked_bytes >= threshold {
             self.write_window_update(0, self.conn_unacked_bytes);
             self.conn_unacked_bytes = 0;
         }
-        // Collect (id, unacked) pairs before mutating self.
+        // Collect (id, credit) pairs before mutating self.
         let mut updates: Vec<(u32, u32)> = Vec::new();
         for &s in self.streams.values() {
             let s = stream_mut(s);
-            if s.unacked_bytes >= threshold && !s.remote_closed() {
-                updates.push((s.id, s.unacked_bytes));
-                s.unacked_bytes = 0;
+            if s.remote_closed() {
+                continue;
+            }
+            // `body_consumption_tracked` is set only while a JS consumer is
+            // reporting drained bytes via `schedule_response_body_consumed`
+            // (fetch `res.body` with a `drain_handler` wired). It is *not*
+            // set for buffering consumers (`await res.text()`), S3 streaming
+            // downloads, or once the body is abandoned via
+            // `ignore_remaining_response_body` — those stay receipt-based so
+            // the transfer completes. When tracked, credit only what JS has
+            // actually drained, clamped to wire bytes received so a
+            // decompressed body can't inflate the window past what was sent.
+            let tracked = s
+                .client_mut()
+                .is_some_and(|c| c.signals.get(signals::Field::BodyConsumptionTracked));
+            let avail = if tracked {
+                core::cmp::min(s.consumed_bytes, s.unacked_bytes)
+            } else {
+                s.unacked_bytes
+            };
+            if avail >= threshold {
+                updates.push((s.id, avail));
+                s.unacked_bytes -= avail;
+                s.consumed_bytes = s.consumed_bytes.saturating_sub(avail);
             }
         }
-        for (id, unacked) in updates {
-            self.write_window_update(id, unacked);
+        for (id, avail) in updates {
+            self.write_window_update(id, avail);
         }
         // PERF: could iterate and write in one pass; profile if extra Vec matters.
     }

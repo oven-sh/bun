@@ -260,7 +260,42 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
     stream.body_buffer.extend_from_slice(slice);
+    if len > 0 {
+        let _ = H3::body_bytes_received
+            .fetch_add(u64::from(len), core::sync::atomic::Ordering::Relaxed);
+    }
     stream.session_mut().deliver(stream, fin != 0);
+    // `deliver` may have detached (fin/error); re-resolve from the quic
+    // stream's ext slot before touching the Stream again.
+    let Some(still) = stream_of(s) else { return };
+    if fin != 0 || still.read_paused {
+        return;
+    }
+    let Some(client) = still.client else { return };
+    let client = super::client_session::client_mut(client);
+    // Only count bytes that arrived while a JS reader is wired to
+    // report consumption. Pre-armed bytes would otherwise become a
+    // permanent floor under `outstanding_body_bytes` (their `didDrain`
+    // credit saturates against nothing counted), and if that floor is
+    // above `RECEIVE_BODY_LOW_WATER` the first want_read(false) pause
+    // never resumes. Matches h1's `maybe_pause_receive` early-return.
+    if !client
+        .signals
+        .get(crate::signals::Field::BodyConsumptionTracked)
+    {
+        return;
+    }
+    still.outstanding_body_bytes = still.outstanding_body_bytes.saturating_add(len as usize);
+    if still.outstanding_body_bytes < crate::RECEIVE_BODY_HIGH_WATER {
+        return;
+    }
+    still.read_paused = true;
+    s.want_read(false);
+    bun_core::scoped_log!(
+        h3_client,
+        "stream read paused at {} bytes outstanding",
+        still.outstanding_body_bytes
+    );
 }
 
 extern "C" fn on_stream_writable(s: *mut quic::Stream) {

@@ -36,6 +36,17 @@ pub struct InternalState<'a> {
     pub compressed_body: MutableString,
     pub content_length: Option<usize>,
     pub total_body_received: usize,
+    /// Body bytes delivered to the JS thread (counted as `body_out_str`
+    /// delta, i.e. post-dechunk/post-decompress) that the ByteStream
+    /// hasn't yet reported drained via `schedule_response_body_consumed`.
+    /// Feeds `maybe_pause_receive`/`consume_response_body` so an h1
+    /// socket read stalls once the JS reader falls behind
+    /// `RECEIVE_BODY_HIGH_WATER`. Only meaningful while
+    /// `Signals::BodyConsumptionTracked` is armed. Decrement is
+    /// saturating (the reader.cancel sentinel is `u32::MAX`, and
+    /// `ByteStream::drain()` can credit pre-arming bytes that were never
+    /// counted here).
+    pub outstanding_body_bytes: usize,
     // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the
     // outlives-holder invariant (the backing `original_request_body` is a
     // sibling field, so it lives exactly as long as this struct).
@@ -74,6 +85,14 @@ pub struct InternalStateFlags {
     /// check passed (and implicitly by `InternalState::reset()` on every
     /// redirect hop / failure, so each hop re-parks independently).
     pub is_waiting_for_cert_check: bool,
+    /// `maybe_pause_receive` called `socket.pause_stream()` and cleared
+    /// the idle timer. Every true→false transition goes through
+    /// `H1_SOCKET_RESUMES.fetch_add` (including the done/redirect and
+    /// keep-alive-release resumes) so the test-visible
+    /// `h1BackpressureCounts()` stays balanced; the pooled socket's
+    /// uSockets `is_paused` bit survives `reset()`, so a paused socket
+    /// handed back to the pool would hang its next borrower.
+    pub receive_paused: bool,
 }
 
 impl InternalStateFlags {
@@ -88,6 +107,7 @@ impl InternalStateFlags {
             resend_request_body_on_redirect: false,
             clear_hostname_on_redirect: false,
             is_waiting_for_cert_check: false,
+            receive_paused: false,
         }
     }
 }
@@ -116,6 +136,7 @@ impl Default for InternalState<'_> {
             compressed_body: MutableString::init_empty(),
             content_length: None,
             total_body_received: 0,
+            outstanding_body_bytes: 0,
             request_body: bun_ptr::RawSlice::EMPTY,
             original_request_body: HTTPRequestBody::Bytes(b""),
             request_sent_len: 0,

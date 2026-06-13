@@ -62,6 +62,7 @@ pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_
 
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;
 pub use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_testing_ap_is_quic_live_counts;
+pub use bun_http_jsc::headers_jsc::http_h1_backpressure_counts as http_http_testing_ap_is_h1_backpressure_counts;
 
 /// Lives here (not in `src/bun.rs`)
 /// because the flag it reads — `cli::Arguments::Bun__Node__UseSystemCA` — is

@@ -143,6 +143,43 @@ impl ClientSession {
         }
     }
 
+    /// HTTP-thread wake-up from `schedule_response_body_consumed`: the JS
+    /// reader drained `bytes` from the ByteStream. Decrement the outstanding
+    /// count and, if the stream's `on_read` was paused for backpressure,
+    /// re-enable it so lsquic resumes draining the QUIC receive buffer and
+    /// issuing `MAX_STREAM_DATA` credit.
+    pub fn consume_response_body_by_http_id(&mut self, async_http_id: u32, bytes: u32) -> bool {
+        for &stream_ptr in self.pending.iter() {
+            let stream = stream_mut(stream_ptr);
+            let Some(client) = stream.client else {
+                continue;
+            };
+            let client = client_mut(client);
+            if client.async_http_id != async_http_id {
+                continue;
+            }
+            stream.outstanding_body_bytes =
+                stream.outstanding_body_bytes.saturating_sub(bytes as usize);
+            if !stream.read_paused {
+                return true;
+            }
+            let should_resume = stream.outstanding_body_bytes <= crate::RECEIVE_BODY_LOW_WATER
+                || !client.signals.get(Signal::BodyConsumptionTracked);
+            if !should_resume {
+                return true;
+            }
+            stream.read_paused = false;
+            if let Some(qs) = stream.qstream_mut() {
+                qs.want_read(true);
+            }
+            // lsquic's `process_conns` runs from the loop's post-tick hook,
+            // so the re-enabled `on_read` fires on the very next iteration
+            // (this handler runs from `drain_events`, before that tick).
+            return true;
+        }
+        false
+    }
+
     pub(super) fn detach(&mut self, stream: *mut Stream) {
         let st = stream_mut(stream);
         if let Some(cl) = st.client {

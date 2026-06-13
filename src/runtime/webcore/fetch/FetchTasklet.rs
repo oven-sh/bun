@@ -474,7 +474,7 @@ impl FetchTasklet {
             Response::unref(response);
         }
 
-        self.clear_stream_cancel_handler();
+        self.clear_stream_handlers();
         self.readable_stream_ref.deinit();
 
         self.scheduled_response_buffer = MutableString::default();
@@ -711,7 +711,7 @@ impl FetchTasklet {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
                     bytes.on_data(Self::temporary_chunk(chunk, false))?;
                 } else {
-                    self.clear_stream_cancel_handler();
+                    self.clear_stream_handlers();
                     let prev = core::mem::take(&mut self.readable_stream_ref);
                     buffer_reset.set(false);
 
@@ -1526,6 +1526,15 @@ impl FetchTasklet {
 
         if let Some(http_) = this.http.as_mut() {
             http_.enable_response_body_streaming();
+            // Both Body::to_readable_stream and Body::tee wire `drain_handler`
+            // on the ByteStream they construct after this returns, so
+            // `schedule_response_body_consumed` will fire for every reader
+            // pull. Arm the signal so the transport gates receive
+            // flow-control on those reports instead of on receipt (h2
+            // per-stream WINDOW_UPDATE, h1 socket pause, h3 want_read).
+            this.signal_store
+                .body_consumption_tracked
+                .store(true, Ordering::Release);
 
             // If the server sent the headers and the response body in two separate socket writes
             // and if the server doesn't close the connection by itself
@@ -1562,17 +1571,24 @@ impl FetchTasklet {
         }
     }
 
-    /// Clear the cancel_handler on the ByteStream.Source to prevent use-after-free.
-    /// Must be called before releasing readable_stream_ref, while the Strong ref
-    /// still keeps the ReadableStream (and thus the ByteStream.Source) alive.
-    fn clear_stream_cancel_handler(&mut self) {
+    /// Clear every ByteStream.Source callback whose ctx pointer is this
+    /// FetchTasklet (cancel_handler/cancel_ctx and drain_handler/drain_ctx)
+    /// to prevent use-after-free. Must be called before releasing
+    /// readable_stream_ref, while the Strong ref still keeps the
+    /// ReadableStream (and thus the ByteStream.Source) alive — the stream
+    /// can outlive the tasklet in JS, and a late `did_drain` or
+    /// `on_stream_cancelled` firing against a freed FetchTasklet is the
+    /// UAF this guards.
+    fn clear_stream_handlers(&mut self) {
         if let Some(readable) = self.readable_stream_ref.get(&self.global_this) {
             if let Some(bytes) = readable.ptr.bytes() {
-                // R-2: project to the parent `NewSource` via `&self`; the two
+                // R-2: project to the parent `NewSource` via `&self`; the
                 // fields are `Cell`-wrapped for exactly this caller.
                 let source = bytes.parent_const();
                 source.cancel_handler.set(None);
                 source.cancel_ctx.set(None);
+                source.drain_handler.set(None);
+                source.drain_ctx.set(None);
             }
         }
     }
@@ -1583,6 +1599,22 @@ impl FetchTasklet {
             return;
         }
         this.ignore_remaining_response_body();
+    }
+
+    /// ByteStream delivered `bytes` to the JS reader. Forward to the
+    /// HTTP thread so the transport can release response-body receive
+    /// backpressure: HTTP/2 emits per-stream WINDOW_UPDATE, HTTP/1.1
+    /// resumes a paused socket read, HTTP/3 re-enables
+    /// `lsquic_stream_wantread`.
+    fn on_stream_consumed_callback(ctx: Option<*mut c_void>, bytes: usize) {
+        let this = Self::from_ctx(ctx.expect("ctx"));
+        if this.signal_store.aborted.load(Ordering::Relaxed) {
+            return;
+        }
+        let Some(http_) = this.http.as_ref() else {
+            return;
+        };
+        http::http_thread().schedule_response_body_consumed(http_.async_http_id, bytes);
     }
 
     fn to_body_value(&mut self) -> BodyValue {
@@ -1597,6 +1629,7 @@ impl FetchTasklet {
                 Some(FetchTasklet::on_start_streaming_http_response_body_callback);
             pending.on_readable_stream_available = Some(FetchTasklet::on_readable_stream_available);
             pending.on_stream_cancelled = Some(FetchTasklet::on_stream_cancelled_callback);
+            pending.on_stream_consumed = Some(FetchTasklet::on_stream_consumed_callback);
             return BodyValue::Locked(pending);
         }
 
@@ -1669,11 +1702,30 @@ impl FetchTasklet {
         if let Some(http_) = self.http.as_mut() {
             http_.enable_response_body_streaming();
         }
+        // `drain_handler` is about to be cleared and incoming chunks will
+        // be dropped without ever reaching the ByteStream, so no more
+        // `schedule_response_body_consumed` reports. Disarm the tracking
+        // signal so the transport falls back to receipt-based flow
+        // control (h2 per-stream WINDOW_UPDATE, h1 socket resume, h3
+        // `want_read(true)`) and the abandoned body can drain instead of
+        // stalling. The u32::MAX sentinel consume both wakes the HTTP
+        // thread (the only other consume trigger is inbound body data,
+        // and a window-stalled / socket-paused server sends none) and
+        // saturates the transport's outstanding counter so the first
+        // re-run releases whatever is already buffered regardless of
+        // which order the atomic store and the queue drain land in.
+        self.signal_store
+            .body_consumption_tracked
+            .store(false, Ordering::Release);
+        if let Some(http_) = self.http.as_ref() {
+            http::http_thread()
+                .schedule_response_body_consumed(http_.async_http_id, u32::MAX as usize);
+        }
         // we should not keep the process alive if we are ignoring the body
         let _ = self.javascript_vm;
         self.poll_ref.unref(bun_io::js_vm_ctx());
         // clean any remaining references
-        self.clear_stream_cancel_handler();
+        self.clear_stream_handlers();
         self.readable_stream_ref.deinit();
         self.response.clear();
 

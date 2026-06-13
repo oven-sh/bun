@@ -280,6 +280,11 @@ pub struct PendingValue {
     pub on_readable_stream_available:
         Option<fn(ctx: *mut c_void, global_this: &JSGlobalObject, readable: ReadableStream)>,
     pub on_stream_cancelled: Option<fn(ctx: Option<*mut c_void>)>,
+    /// Wired to the ByteStream's `drain_handler` when the Locked body is
+    /// turned into a ReadableStream (`to_readable_stream` / `tee`): called
+    /// with the byte count each time the stream hands data to the JS
+    /// reader, so fetch can release receive-side backpressure.
+    pub on_stream_consumed: Option<fn(ctx: Option<*mut c_void>, bytes: usize)>,
     pub size_hint: blob::SizeType,
 
     pub deinit: bool,
@@ -309,6 +314,7 @@ impl Default for PendingValue {
             on_start_streaming: None,
             on_readable_stream_available: None,
             on_stream_cancelled: None,
+            on_stream_consumed: None,
             size_hint: 0,
             deinit: false,
             action: Action::None,
@@ -880,6 +886,12 @@ impl Value {
                     if let Some(task) = locked.task {
                         reader.cancel_handler.set(Some(on_cancelled));
                         reader.cancel_ctx.set(Some(task));
+                    }
+                }
+                if let Some(on_consumed) = locked.on_stream_consumed {
+                    if let Some(task) = locked.task {
+                        reader.drain_handler.set(Some(on_consumed));
+                        reader.drain_ctx.set(Some(task));
                     }
                 }
 
@@ -1558,6 +1570,22 @@ impl Value {
         let Value::Locked(locked) = self else {
             unreachable!()
         };
+
+        // Same teardown/backpressure contracts as `to_readable_stream`: the
+        // producer (FetchTasklet) must hear about cancellation of either
+        // branch and about bytes drained by the shared underlying source.
+        if let Some(on_cancelled) = locked.on_stream_cancelled {
+            if let Some(task) = locked.task {
+                reader.cancel_handler.set(Some(on_cancelled));
+                reader.cancel_ctx.set(Some(task));
+            }
+        }
+        if let Some(on_consumed) = locked.on_stream_consumed {
+            if let Some(task) = locked.task {
+                reader.drain_handler.set(Some(on_consumed));
+                reader.drain_ctx.set(Some(task));
+            }
+        }
 
         let context_ptr: *mut ByteStream = &raw mut reader.context;
         locked.readable = webcore::readable_stream::Strong::init(

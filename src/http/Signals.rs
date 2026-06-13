@@ -7,6 +7,17 @@ pub struct Signals {
     // PORTING.md); the `Store` outlives every `Signals` derived from it.
     pub header_progress: Option<NonNull<AtomicBool>>,
     pub response_body_streaming: Option<NonNull<AtomicBool>>,
+    /// Distinct from `response_body_streaming`: set only while a JS
+    /// consumer is wired to report drained bytes via
+    /// `schedule_response_body_consumed`. `response_body_streaming` is
+    /// also set by paths that never report consumption (S3 streaming
+    /// download, abandoned bodies via `ignore_remaining_response_body`);
+    /// gating flow-control on that would deadlock those streams. All
+    /// three transports key receive-side backpressure on this signal —
+    /// not `response_body_streaming` — to decide whether flow control
+    /// is consumption-gated or receipt-based (h1 `maybe_pause_receive`,
+    /// h2 `replenish_window`, h3 `on_stream_data`).
+    pub body_consumption_tracked: Option<NonNull<AtomicBool>>,
     pub aborted: Option<NonNull<AtomicBool>>,
     pub cert_errors: Option<NonNull<AtomicBool>>,
     pub upgraded: Option<NonNull<AtomicBool>>,
@@ -16,6 +27,7 @@ impl Signals {
     pub fn is_empty(&self) -> bool {
         self.aborted.is_none()
             && self.response_body_streaming.is_none()
+            && self.body_consumption_tracked.is_none()
             && self.header_progress.is_none()
             && self.cert_errors.is_none()
             && self.upgraded.is_none()
@@ -38,6 +50,7 @@ impl Signals {
         let ptr: NonNull<AtomicBool> = match field {
             Field::HeaderProgress => self.header_progress,
             Field::ResponseBodyStreaming => self.response_body_streaming,
+            Field::BodyConsumptionTracked => self.body_consumption_tracked,
             Field::Aborted => self.aborted,
             Field::CertErrors => self.cert_errors,
             Field::Upgraded => self.upgraded,
@@ -61,6 +74,7 @@ impl Signals {
 pub struct Store {
     pub header_progress: AtomicBool,
     pub response_body_streaming: AtomicBool,
+    pub body_consumption_tracked: AtomicBool,
     pub aborted: AtomicBool,
     pub cert_errors: AtomicBool,
     pub upgraded: AtomicBool,
@@ -71,6 +85,7 @@ impl Default for Store {
         Self {
             header_progress: AtomicBool::new(false),
             response_body_streaming: AtomicBool::new(false),
+            body_consumption_tracked: AtomicBool::new(false),
             aborted: AtomicBool::new(false),
             cert_errors: AtomicBool::new(false),
             upgraded: AtomicBool::new(false),
@@ -83,6 +98,7 @@ impl Store {
         Signals {
             header_progress: Some(NonNull::from(&self.header_progress)),
             response_body_streaming: Some(NonNull::from(&self.response_body_streaming)),
+            body_consumption_tracked: Some(NonNull::from(&self.body_consumption_tracked)),
             aborted: Some(NonNull::from(&self.aborted)),
             cert_errors: Some(NonNull::from(&self.cert_errors)),
             upgraded: Some(NonNull::from(&self.upgraded)),
@@ -95,6 +111,7 @@ impl Store {
 pub enum Field {
     HeaderProgress,
     ResponseBodyStreaming,
+    BodyConsumptionTracked,
     Aborted,
     CertErrors,
     Upgraded,

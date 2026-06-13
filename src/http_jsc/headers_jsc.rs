@@ -172,7 +172,7 @@ impl H3TestingAPIs {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         use bun_http::h3_client;
-        let obj = JSValue::create_empty_object(global, 2);
+        let obj = JSValue::create_empty_object(global, 3);
         // h3 atomics are `AtomicU32`; widen to u64 for `js_number_from_uint64`.
         obj.put(
             global,
@@ -188,13 +188,51 @@ impl H3TestingAPIs {
                 h3_client::live_streams.load(Ordering::Relaxed),
             )),
         );
+        obj.put(
+            global,
+            b"bodyBytesReceived",
+            JSValue::js_number_from_uint64(h3_client::body_bytes_received.load(Ordering::Relaxed)),
+        );
+        Ok(obj)
+    }
+}
+
+pub struct HTTPTestingAPIs;
+
+impl HTTPTestingAPIs {
+    /// `h1_socket_pauses`/`h1_socket_resumes` surfaced for
+    /// `fetch-backpressure.test.ts` so the h1 stalled-reader test can
+    /// observe `maybe_pause_receive` / `consume_response_body` from
+    /// inside the fetch client subprocess without depending on kernel
+    /// loopback-buffer autotuning.
+    pub fn h1_backpressure_counts(
+        global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let obj = JSValue::create_empty_object(global, 2);
+        obj.put(
+            global,
+            b"pauses",
+            JSValue::js_number_from_uint64(u64::from(
+                bun_http::H1_SOCKET_PAUSES.load(Ordering::Relaxed),
+            )),
+        );
+        obj.put(
+            global,
+            b"resumes",
+            JSValue::js_number_from_uint64(u64::from(
+                bun_http::H1_SOCKET_RESUMES.load(Ordering::Relaxed),
+            )),
+        );
         Ok(obj)
     }
 }
 
 /// Free-fn aliases of [`H2TestingAPIs::live_counts`] /
-/// [`H3TestingAPIs::quic_live_counts`] so `bun_runtime::dispatch::js2native`
-/// can `pub use` them (associated fns aren't importable items).
+/// [`H3TestingAPIs::quic_live_counts`] /
+/// [`HTTPTestingAPIs::h1_backpressure_counts`] so
+/// `bun_runtime::dispatch::js2native` can `pub use` them (associated fns
+/// aren't importable items).
 #[inline]
 pub fn h2_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     H2TestingAPIs::live_counts(global, frame)
@@ -202,4 +240,11 @@ pub fn h2_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 #[inline]
 pub fn h3_quic_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     H3TestingAPIs::quic_live_counts(global, frame)
+}
+#[inline]
+pub fn http_h1_backpressure_counts(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    HTTPTestingAPIs::h1_backpressure_counts(global, frame)
 }

@@ -83,7 +83,14 @@ describe("backpressure", () => {
     const totalBytes = await countResponseBytes(PORT);
 
     expect(totalBytes).toBe(totalSize);
-  }, 30_000);
+    // `response.body.getReader()` couples the fetch client's socket
+    // read to JS consumption: the HTTP thread pauses the socket once
+    // delivered-but-not-yet-credited bytes reach 4 MiB, and the
+    // cross-thread credit lands on the next HTTP-thread loop tick. For
+    // 2 GiB that's ~150 pause/resume cycles (~10–20% overhead in
+    // release). On the slow darwin-14-x64 CI runner 30s had no
+    // headroom.
+  }, 60_000);
 
   it("should handle backpressure with more than INT_MAX bytes", async () => {
     // enough to fill the socket buffer
@@ -105,5 +112,5 @@ describe("backpressure", () => {
     const totalBytes = await countResponseBytes(PORT);
 
     expect(totalBytes).toBe(totalSize + smallPayloadSize);
-  }, 30_000);
+  }, 60_000);
 });

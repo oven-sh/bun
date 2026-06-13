@@ -54,6 +54,15 @@ pub static live_sessions: AtomicU32 = AtomicU32::new(0);
 pub static live_streams: AtomicU32 = AtomicU32::new(0);
 pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;
+/// Response-body bytes delivered to the JS side across all h3 streams
+/// since process start. Surfaced through `fetchH3Internals.liveCounts()`
+/// as `bodyBytesReceived` so `fetch-backpressure.test.ts` can observe a
+/// plateau from a subprocess when `lsquic_stream_wantread(0)` takes
+/// effect — the test can't see per-stream state, and this counter
+/// stalls exactly when the h3 read does.
+#[allow(non_upper_case_globals)]
+pub static body_bytes_received: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
 
 // H3TestingAPIs lives in bun_http_jsc and is accessed via the
 // extension-trait pattern there.

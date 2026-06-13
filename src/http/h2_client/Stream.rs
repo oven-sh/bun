@@ -52,8 +52,17 @@ pub struct Stream {
     /// or final status arrives.
     pub awaiting_continue: bool,
     pub fatal_error: Option<Error>,
-    /// DATA bytes consumed since the last WINDOW_UPDATE for this stream.
+    /// DATA bytes received since the last per-stream WINDOW_UPDATE. For
+    /// consumers without `body_consumption_tracked` set this alone drives
+    /// the credit; for tracked consumers it is the ceiling on what
+    /// `consumed_bytes` may release.
     pub unacked_bytes: u32,
+    /// Bytes the JS `ReadableStream` reader has actually drained, reported
+    /// via `schedule_response_body_consumed`. Only consulted when
+    /// `body_consumption_tracked` is true; `replenish_window` credits
+    /// `min(consumed_bytes, unacked_bytes)` so a stalled reader withholds
+    /// the per-stream window and a compressed body can't over-credit.
+    pub consumed_bytes: u32,
     /// Σ DATA payload bytes (post-padding) for §8.1.1 Content-Length check —
     /// `total_body_received` is clamped at content_length so it can't catch
     /// overshoot.
@@ -142,6 +151,7 @@ impl Stream {
             awaiting_continue: false,
             fatal_error: None,
             unacked_bytes: 0,
+            consumed_bytes: 0,
             data_bytes_received: 0,
             send_window,
             pending_body: bun_ptr::RawSlice::EMPTY,

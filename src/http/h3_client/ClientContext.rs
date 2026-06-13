@@ -224,4 +224,21 @@ impl ClientContext {
             session_mut(s).stream_body_by_http_id(async_http_id, ended);
         }
     }
+
+    /// HTTP-thread dispatch for `schedule_response_body_consumed` when the
+    /// `async_http_id` isn't in the TCP-socket abort tracker — QUIC streams
+    /// never are. May resume an lsquic `want_read(false)` pause.
+    pub fn consume_response_body_by_http_id(async_http_id: u32, bytes: u32) {
+        let Some(this) = Self::get() else {
+            return;
+        };
+        // See `abort_by_http_id` — `BackRef` over the process-lifetime singleton.
+        let ctx = bun_ptr::BackRef::from(this);
+        for &s in ctx.sessions.iter() {
+            // Registry only holds live sessions — `session_mut` upgrade.
+            if session_mut(s).consume_response_body_by_http_id(async_http_id, bytes) {
+                return;
+            }
+        }
+    }
 }

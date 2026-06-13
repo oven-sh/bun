@@ -36,6 +36,12 @@ pub struct Stream {
     pub request_body_done: bool,
     pub is_streaming_body: bool,
     pub headers_delivered: bool,
+    /// Wire bytes delivered to JS via `deliver()` that haven't been reported
+    /// drained via `schedule_response_body_consumed`. Once over
+    /// `RECEIVE_BODY_HIGH_WATER` we stop `lsquic_stream_wantread` so lsquic
+    /// withholds `MAX_STREAM_DATA` and the server backpressures.
+    pub outstanding_body_bytes: usize,
+    pub read_paused: bool,
 }
 
 impl Stream {
@@ -54,6 +60,8 @@ impl Stream {
             request_body_done: false,
             is_streaming_body: false,
             headers_delivered: false,
+            outstanding_body_bytes: 0,
+            read_paused: false,
         }))
     }
 

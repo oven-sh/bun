@@ -123,11 +123,13 @@ pub struct HttpThread {
     pub queued_shutdowns: Vec<ShutdownMessage>,
     pub queued_writes: Vec<WriteMessage>,
     pub queued_response_body_drains: Vec<DrainMessage>,
+    pub queued_response_body_consumed: Vec<ConsumeMessage>,
     pub queued_cert_check_resumes: Vec<CertCheckResumeMessage>,
 
     pub queued_shutdowns_lock: Mutex,
     pub queued_writes_lock: Mutex,
     pub queued_response_body_drains_lock: Mutex,
+    pub queued_response_body_consumed_lock: Mutex,
     pub queued_cert_check_resumes_lock: Mutex,
 
     pub queued_threadlocal_proxy_derefs: Vec<*mut ProxyTunnel>,
@@ -178,10 +180,12 @@ impl HttpThread {
             queued_shutdowns: Vec::new(),
             queued_writes: Vec::new(),
             queued_response_body_drains: Vec::new(),
+            queued_response_body_consumed: Vec::new(),
             queued_cert_check_resumes: Vec::new(),
             queued_shutdowns_lock: Mutex::new(),
             queued_writes_lock: Mutex::new(),
             queued_response_body_drains_lock: Mutex::new(),
+            queued_response_body_consumed_lock: Mutex::new(),
             queued_cert_check_resumes_lock: Mutex::new(),
             queued_threadlocal_proxy_derefs: Vec::new(),
             has_awoken: AtomicBool::new(false),
@@ -269,6 +273,11 @@ pub enum WriteMessageType {
 
 pub struct DrainMessage {
     pub async_http_id: u32,
+}
+
+pub struct ConsumeMessage {
+    pub async_http_id: u32,
+    pub bytes: u32,
 }
 
 pub struct ShutdownMessage {
@@ -860,9 +869,62 @@ impl HttpThread {
         }
     }
 
+    fn drain_queued_http_response_body_consumed(&mut self) {
+        loop {
+            let queued = {
+                let _guard = self.queued_response_body_consumed_lock.lock_guard();
+                core::mem::take(&mut self.queued_response_body_consumed)
+            };
+
+            for msg in &queued {
+                if let Some(socket_ptr) = abort_tracker().get(&msg.async_http_id) {
+                    match *socket_ptr {
+                        uws::AnySocket::SocketTls(socket) => {
+                            let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
+                            if let Some(client) = tagged.client_mut() {
+                                // HTTP/1.1: may resume a paused socket read.
+                                client.consume_response_body::<true>(socket, msg.bytes);
+                            }
+                            if let Some(session) = tagged.session_mut() {
+                                // HTTP/2: releases per-stream WINDOW_UPDATE.
+                                session
+                                    .consume_response_body_by_http_id(msg.async_http_id, msg.bytes);
+                            }
+                        }
+                        uws::AnySocket::SocketTcp(socket) => {
+                            let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
+                            if let Some(client) = tagged.client_mut() {
+                                client.consume_response_body::<false>(socket, msg.bytes);
+                            }
+                            if let Some(session) = tagged.session_mut() {
+                                session
+                                    .consume_response_body_by_http_id(msg.async_http_id, msg.bytes);
+                            }
+                        }
+                    }
+                } else {
+                    // HTTP/3: QUIC streams aren't in the TCP-socket tracker;
+                    // dispatch via the session registry. May resume a
+                    // lsquic `want_read(false)` pause.
+                    h3::ClientContext::consume_response_body_by_http_id(
+                        msg.async_http_id,
+                        msg.bytes,
+                    );
+                }
+            }
+            let len = queued.len();
+            drop(queued);
+            if len == 0 {
+                break;
+            }
+            bun_core::scoped_log!(HTTPThread, "drained {} queued consumes", len);
+        }
+    }
+
     pub fn drain_events(&mut self) {
         // Process any pending writes **before** aborting.
         self.drain_queued_http_response_body_drains();
+        self.drain_queued_http_response_body_consumed();
         self.drain_queued_writes();
         self.drain_queued_shutdowns();
         // After shutdowns: an abort or cert-rejection scheduled in the same JS
@@ -971,6 +1033,41 @@ impl HttpThread {
                 .push(DrainMessage { async_http_id });
         }
         self.wakeup();
+    }
+
+    /// JS-thread → HTTP-thread notice that the `ReadableStream` reader for
+    /// `async_http_id` has drained `bytes` from its buffer. Consecutive
+    /// messages for the same id are coalesced under the lock so a tight
+    /// `read()` loop posts one entry per wake instead of one per pull.
+    pub fn schedule_response_body_consumed(&mut self, async_http_id: u32, bytes: usize) {
+        let n: u32 = u32::try_from(bytes).unwrap_or(u32::MAX);
+        if n == 0 {
+            return;
+        }
+        let appended = {
+            let _guard = self.queued_response_body_consumed_lock.lock_guard();
+            match self.queued_response_body_consumed.last_mut() {
+                Some(last) if last.async_http_id == async_http_id => {
+                    last.bytes = last.bytes.saturating_add(n);
+                    false
+                }
+                _ => {
+                    self.queued_response_body_consumed.push(ConsumeMessage {
+                        async_http_id,
+                        bytes: n,
+                    });
+                    true
+                }
+            }
+        };
+        // Only wake on the append path: if we coalesced into an existing
+        // entry, the HTTP thread was already woken for that entry's
+        // original append and will see the updated `bytes` when it swaps
+        // the queue under the same lock. A tight `read()` loop over a
+        // multi-GiB body otherwise issues one eventfd write per pull.
+        if appended {
+            self.wakeup();
+        }
     }
 
     pub fn schedule_shutdown(&mut self, http: &AsyncHttp) {

@@ -655,10 +655,18 @@ pub struct NewSource<C: SourceContext> {
     /// `on_js_close` and leaves this `None` — see [`Self::on_close`].
     pub close_ctx: Option<NonNull<c_void>>,
     pub close_jsvalue: bun_jsc::strong::Optional,
-    /// R-2: cleared via `&self` from `FetchTasklet::clear_stream_cancel_handler`
+    /// R-2: cleared via `&self` from `FetchTasklet::clear_stream_handlers`
     /// (through `ByteStream::parent_const`), so interior-mutable.
     pub cancel_handler: Cell<Option<fn(Option<*mut c_void>)>>,
     pub cancel_ctx: Cell<Option<*mut c_void>>,
+    /// Invoked whenever `Context` hands bytes to the JS reader (as
+    /// opposed to parking them in an internal buffer). Used by fetch
+    /// to release response-body receive backpressure (h2 per-stream
+    /// WINDOW_UPDATE, h1 socket resume, h3 `want_read`). Cleared from
+    /// `FetchTasklet::clear_stream_handlers` alongside the cancel pair,
+    /// so interior-mutable for the same reason.
+    pub drain_handler: Cell<Option<fn(Option<*mut c_void>, usize)>>,
+    pub drain_ctx: Cell<Option<*mut c_void>>,
     // JSC_BORROW: process-lifetime VM global. Heap m_ctx field reassigned in
     // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
     // projection without propagating a lifetime parameter into FFI codegen.
@@ -683,6 +691,8 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             close_jsvalue: bun_jsc::strong::Optional::empty(),
             cancel_handler: Cell::new(None),
             cancel_ctx: Cell::new(None),
+            drain_handler: Cell::new(None),
+            drain_ctx: Cell::new(None),
             global_this: None,
             this_jsvalue: JSValue::ZERO,
             is_closed: Cell::new(false),

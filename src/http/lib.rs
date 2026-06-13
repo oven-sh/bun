@@ -281,6 +281,26 @@ pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
 /// [`SocketTimeout::set_timeout`]), so they round up to the next whole minute.
 pub static IDLE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(300);
 
+/// h1 `maybe_pause_receive` thresholds: once `body_out_str` bytes
+/// delivered to the JS thread but not yet reported consumed by
+/// `ByteStream::did_drain` reach `HIGH_WATER`, the socket read is
+/// paused (TCP rwnd collapses); it resumes below `LOW_WATER` or when
+/// `body_consumption_tracked` is disarmed. h3 uses the same marks to
+/// gate `lsquic_stream_wantread`. 4 MiB / 1 MiB were chosen to keep
+/// the pause/resume overhead on a 2 GiB fast-drain transfer under
+/// ~20% (see `node-http-backpressure.test.ts`) while still bounding a
+/// stalled stream to single-digit MiB.
+pub const RECEIVE_BODY_HIGH_WATER: usize = 4 << 20;
+pub const RECEIVE_BODY_LOW_WATER: usize = 1 << 20;
+
+/// Process-wide pause/resume counts for h1 sockets — incremented at
+/// every `receive_paused` transition. Surfaced through
+/// `fetchInternals.h1BackpressureCounts()` so the backpressure test can
+/// assert pause/resume deterministically from a client subprocess
+/// without depending on kernel loopback autotuning.
+pub static H1_SOCKET_PAUSES: AtomicU32 = AtomicU32::new(0);
+pub static H1_SOCKET_RESUMES: AtomicU32 = AtomicU32::new(0);
+
 /// Safe accessor for [`IDLE_TIMEOUT_SECONDS`].
 #[inline]
 pub fn idle_timeout_seconds() -> c_uint {
@@ -3411,8 +3431,18 @@ impl<'a> HTTPClient<'a> {
                 self.handle_on_data_headers::<IS_SSL>(incoming_data, ctx, socket);
             }
             ResponseStage::Body => {
-                self.set_timeout(&socket);
+                // Don't re-arm the idle timer while the reader has
+                // intentionally stalled: maybe_pause_receive cleared it on
+                // the false→true transition, but uSockets' repeat-recv
+                // fast path can land more on_data calls in the same
+                // epoll tick after pause_stream(), and re-arming here
+                // would time out a reader that stalls past
+                // `idle_timeout_seconds`.
+                if !self.state.flags.receive_paused {
+                    self.set_timeout(&socket);
+                }
 
+                let before = self.body_out_str().map_or(0, |b| b.list.len());
                 let report_progress = match self.handle_response_body(incoming_data, false) {
                     Ok(b) => b,
                     Err(err) => {
@@ -3421,14 +3451,39 @@ impl<'a> HTTPClient<'a> {
                     }
                 };
 
+                // Must run before progress_update: a final chunk makes
+                // on_async_http_callback destroy the ThreadlocalAsyncHTTP
+                // that owns *this* HTTPClient inline on this thread, so
+                // `self` is poisoned by the time progress_update returns.
+                //
+                // Count the `body_out_str` delta — i.e. exactly what
+                // progress_update hands to FetchTasklet and onward to
+                // `ByteStream.onData` → `didDrain`. `incoming_data.len()`
+                // would include Transfer-Encoding: chunked framing;
+                // `total_body_received` is pre-decompression wire bytes.
+                // Either mismatch accumulates as a permanent floor under
+                // `outstanding_body_bytes` (framing for uncompressed
+                // chunked SSE; stored-block overhead for gzip on
+                // incompressible content) and eventually deadlocks a
+                // long-lived stream on the first pause past the low-water
+                // mark. For `body_consumption_tracked` consumers
+                // `report_progress` is true for every non-empty chunk and
+                // the callback resets `body_out_str`, so `before` is 0
+                // and the delta is this chunk's post-decompress length.
+                let after = self.body_out_str().map_or(0, |b| b.list.len());
+                self.maybe_pause_receive::<IS_SSL>(socket, after.saturating_sub(before));
+
                 if report_progress {
                     self.progress_update::<IS_SSL>(ctx, socket);
                     return;
                 }
             }
             ResponseStage::BodyChunk => {
-                self.set_timeout(&socket);
+                if !self.state.flags.receive_paused {
+                    self.set_timeout(&socket);
+                }
 
+                let before = self.body_out_str().map_or(0, |b| b.list.len());
                 let report_progress =
                     match self.handle_response_body_chunked_encoding(incoming_data) {
                         Ok(b) => b,
@@ -3437,6 +3492,9 @@ impl<'a> HTTPClient<'a> {
                             return;
                         }
                     };
+
+                let after = self.body_out_str().map_or(0, |b| b.list.len());
+                self.maybe_pause_receive::<IS_SSL>(socket, after.saturating_sub(before));
 
                 if report_progress {
                     self.progress_update::<IS_SSL>(ctx, socket);
@@ -3591,6 +3649,122 @@ impl<'a> HTTPClient<'a> {
         socket.set_timeout(idle_timeout_seconds());
     }
 
+    /// Ran from `on_data`'s `.body`/`.body_chunk` arms right after
+    /// `handle_response_body*`. Counts newly-decoded body bytes towards
+    /// `outstanding_body_bytes` — the same currency `didDrain` credits —
+    /// and, if the JS reader is reporting consumption and the outstanding
+    /// total has crossed the high-water mark, pauses the socket read so
+    /// TCP rwnd backpressures the server. The proxy-tunnel path is
+    /// excluded: its inner TLS session needs the socket readable to
+    /// complete handshake/close_notify regardless of the application
+    /// body, and pausing the carrier socket would wedge that.
+    fn maybe_pause_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>, n: usize) {
+        if !self.signals.get(signals::Field::BodyConsumptionTracked) {
+            return;
+        }
+        if self.state.stage == Stage::Done || self.state.stage == Stage::Fail {
+            return;
+        }
+        self.state.outstanding_body_bytes = self.state.outstanding_body_bytes.saturating_add(n);
+        // handle_response_body just ran: if the body is complete (or a
+        // redirect is pending) the socket is about to be released to the
+        // keep-alive pool — or closed — inside progress_update. Leaving it
+        // paused would hand the next pooled request a socket with
+        // LIBUS_SOCKET_READABLE cleared and no consume_response_body to
+        // re-enable it.
+        //
+        // We can reach here with `receive_paused` already true because
+        // uSockets' repeat-recv fast path (loop.c) keeps calling recv() in
+        // the same epoll tick while the buffer comes back full, without
+        // re-consulting poll flags; a us_socket_pause() issued from a
+        // previous on_data in that loop doesn't stop the next recv(). The
+        // final chunk can therefore arrive while receive_paused is set.
+        if self.state.is_done() || self.state.flags.is_redirect_pending {
+            if self.state.flags.receive_paused {
+                self.state.flags.receive_paused = false;
+                let _ = H1_SOCKET_RESUMES.fetch_add(1, Ordering::Relaxed);
+                if !socket.is_closed_or_has_error() {
+                    let _ = socket.resume_stream();
+                }
+            }
+            return;
+        }
+        if self.state.flags.receive_paused {
+            return;
+        }
+        if self.state.outstanding_body_bytes < RECEIVE_BODY_HIGH_WATER {
+            return;
+        }
+        if self.proxy_tunnel.is_some() {
+            return;
+        }
+        if socket.is_closed_or_has_error() {
+            return;
+        }
+        self.state.flags.receive_paused = true;
+        // While paused, the idle timer would otherwise fire with no socket
+        // activity to re-arm it. The response isn't "stalled" — the reader
+        // chose not to pull — so drop the timeout until we resume.
+        // `socket.set_timeout(0)` clears both the short-tick and
+        // long-minute timers (whichever `idle_timeout_seconds` selected).
+        socket.set_timeout(0);
+        let _ = socket.pause_stream();
+        let _ = H1_SOCKET_PAUSES.fetch_add(1, Ordering::Relaxed);
+        bun_core::scoped_log!(
+            fetch,
+            "maybePauseReceive: paused at {} bytes outstanding",
+            self.state.outstanding_body_bytes
+        );
+    }
+
+    /// HTTP-thread wake-up from `schedule_response_body_consumed`: the JS
+    /// reader drained `bytes` from the ByteStream. For HTTP/1.1 this may
+    /// resume a socket read that `maybe_pause_receive` paused. HTTP/2 and
+    /// HTTP/3 never reach this function — the HTTPThread consume drain
+    /// routes them to their dedicated session-level handlers
+    /// (`consume_response_body_by_http_id`) instead.
+    pub fn consume_response_body<const IS_SSL: bool>(
+        &mut self,
+        socket: HttpSocket<IS_SSL>,
+        bytes: u32,
+    ) {
+        // Both sides count the `body_out_str` delta so increment and
+        // decrement are the same currency; the saturating subtract is
+        // still needed for the `u32::MAX` sentinel from
+        // `ignore_remaining_response_body` and for `ByteStream.drain()`
+        // reporting bytes that arrived before `body_consumption_tracked`
+        // was armed (those were never counted here because the first
+        // line of maybe_pause_receive early-returns on the unset signal).
+        self.state.outstanding_body_bytes = self
+            .state
+            .outstanding_body_bytes
+            .saturating_sub(bytes as usize);
+        if !self.state.flags.receive_paused {
+            return;
+        }
+        // Disarming `body_consumption_tracked` (e.g. reader.cancel()) posts
+        // a saturating sentinel; treat that as "resume now" regardless of
+        // the low-water mark so the abandoned body can drain for keep-alive
+        // reuse.
+        let should_resume = self.state.outstanding_body_bytes <= RECEIVE_BODY_LOW_WATER
+            || !self.signals.get(signals::Field::BodyConsumptionTracked);
+        if !should_resume {
+            return;
+        }
+        self.state.flags.receive_paused = false;
+        let _ = H1_SOCKET_RESUMES.fetch_add(1, Ordering::Relaxed);
+        if socket.is_closed_or_has_error() {
+            return;
+        }
+        let _ = socket.resume_stream();
+        self.set_timeout(&socket);
+        bun_core::scoped_log!(
+            fetch,
+            "consumeResponseBody: resumed, {} bytes outstanding",
+            self.state.outstanding_body_bytes
+        );
+    }
+
     pub fn drain_response_body<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         // Find out if we should not send any update.
         match self.state.stage {
@@ -3714,6 +3888,25 @@ impl<'a> HTTPClient<'a> {
                 HTTPRequestBody::Bytes(_) => self.state.request_body.is_empty(),
                 _ => true,
             };
+
+            // Defensive: maybe_pause_receive's is_done() branch resumes for
+            // the normal .body/.body_chunk on_data path, but a
+            // close-delimited body or an early server reply can reach
+            // here without another on_data. The uSockets `is_paused` flag
+            // survives state.reset(), so a paused socket released to the
+            // pool would hang the next request that adopts it. Lives
+            // above the keepalive check so `H1_SOCKET_RESUMES` tracks
+            // `H1_SOCKET_PAUSES` on the close branch too (where
+            // state.reset() would otherwise clear `receive_paused`
+            // without a counter bump); resume_stream on a closed socket
+            // is a no-op in uSockets.
+            if self.state.flags.receive_paused {
+                self.state.flags.receive_paused = false;
+                let _ = H1_SOCKET_RESUMES.fetch_add(1, Ordering::Relaxed);
+                if !socket.is_closed_or_has_error() {
+                    let _ = socket.resume_stream();
+                }
+            }
 
             if self.is_keep_alive_possible()
                 && !socket.is_closed_or_has_error()

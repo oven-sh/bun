@@ -3089,7 +3089,8 @@ pub mod formatter {
                 self.formatter.print_class::<C>(&mut *self.writer, value)?;
                 let _ = self.writer.write_all(b" ");
             } else if value.is_callable() {
-                self.formatter.print_function::<C>(&mut *self.writer, value)?;
+                self.formatter
+                    .print_function::<C>(&mut *self.writer, value)?;
                 let _ = self.writer.write_all(b" ");
             } else if value.is_cell() {
                 let mut writer = WrappedWriter {

@@ -20,6 +20,10 @@ concurrent_task: jsc.EventLoopTask,
 async_deinit: AsyncDeinitReader,
 is_reading: if (bun.Environment.isWindows) bool else u0 = if (bun.Environment.isWindows) false else 0,
 started: bool = false,
+/// Re-entrancy guard for `drainReaders()`. `start()` can be reached from
+/// inside a drain (via the Yield trampoline) and must not recurse; the outer
+/// drain loop will pick up any reader appended in the meantime.
+draining: bool = false,
 
 pub const ChildPtr = IOReaderChildPtr;
 pub const ReaderImpl = bun.io.BufferedReader;
@@ -91,6 +95,17 @@ pub fn start(this: *IOReader) Yield {
     }
 
     if (this.is_reading) return .suspended;
+    // A reader's done-handler can start a new command that calls `addReader`+`start()`
+    // on this same IOReader after the pipe has reached EOF. On Windows the underlying
+    // BufferedReader has already nulled its `source` by then, so `startWithCurrentPipe`
+    // would unwrap a null optional. There is nothing left to read; drain the
+    // newly-registered reader(s) now so they don't hang. `drainReaders()` is
+    // re-entrancy-guarded so calling it from inside an existing drain (via the
+    // Yield trampoline) is a no-op — the outer loop handles the new entry.
+    if (this.reader.isDone()) {
+        this.drainReaders();
+        return .suspended;
+    }
     this.is_reading = true;
     if (this.reader.startWithCurrentPipe().asErr()) |e| {
         this.onReaderError(e);
@@ -175,21 +190,39 @@ pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
     log("IOReader(0x{x}.onReaderError({f}) ", .{ @intFromPtr(this), err });
     this.setReading(false);
     this.err = err.toShellSystemError();
-    for (this.readers.slice()) |r| {
-        r.onReaderDone(if (this.err) |*e| brk: {
-            e.ref();
-            break :brk e.*;
-        } else null).run();
-    }
+    this.drainReaders();
 }
 
 pub fn onReaderDone(this: *IOReader) void {
     log("IOReader(0x{x}) done", .{@intFromPtr(this)});
     this.setReading(false);
-    for (this.readers.slice()) |r| {
-        r.onReaderDone(if (this.err) |*err| brk: {
-            err.ref();
-            break :brk err.*;
+    this.drainReaders();
+}
+
+/// Notify every registered reader that this IOReader is finished, including
+/// readers appended while draining.
+///
+/// `.run()` drives the Yield trampoline which can (a) call `addReader()` on
+/// this same IOReader — `SmolList.append()` may promote inlined→heap or
+/// realloc, so a captured `slice()` would dangle — and (b) free the reader
+/// we just notified and allocate the next one at the same address, which
+/// would collide with `addReader`'s pointer-equality dedup if the stale
+/// entry were still in the list. Pop each reader out before dispatching so
+/// neither hazard applies.
+///
+/// Re-entrant calls (reached via `start()` from inside the trampoline) are
+/// no-ops; the outermost loop owns the drain and will pick up anything
+/// appended in the meantime. This keeps the Yield `.run()` nesting bounded.
+fn drainReaders(this: *IOReader) void {
+    if (this.draining) return;
+    this.draining = true;
+    defer this.draining = false;
+    while (this.readers.len() > 0) {
+        const r = this.readers.get(0).*;
+        this.readers.swapRemove(0);
+        r.onReaderDone(if (this.err) |*e| brk: {
+            e.ref();
+            break :brk e.*;
         } else null).run();
     }
 }

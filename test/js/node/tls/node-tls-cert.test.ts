@@ -251,6 +251,116 @@ it("Fail to complete client's chain.", async () => {
   }
 });
 
+it("rejects an unverifiable client certificate by default when requestCert is true", async () => {
+  // No explicit rejectUnauthorized: the documented default is true, so a client
+  // certificate that fails CA verification must never reach the connection handler.
+  const handled: string[] = [];
+  const secureConnections: TLSSocket[] = [];
+  let clientError: any = null;
+
+  const server = tls.createServer(
+    {
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: clientTls.ca,
+      requestCert: true,
+    },
+    socket => {
+      handled.push(socket.authorizationError as any);
+      socket.pipe(socket);
+    },
+  );
+  server.on("secureConnection", socket => secureConnections.push(socket));
+  server.on("tlsClientError", err => {
+    clientError = err;
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  try {
+    // Client 1: incomplete chain the server cannot verify. The server must drop it.
+    const badClient = tls.connect({
+      host: "127.0.0.1",
+      port,
+      key: clientTls.key,
+      cert: clientTls.single,
+      ca: serverTls.ca,
+      checkServerIdentity,
+      rejectUnauthorized: false,
+    });
+    badClient.on("error", () => {});
+    // The server must tear the socket down; it must never hand it to the application.
+    const outcome = await Promise.race([
+      once(badClient, "close").then(() => "closed"),
+      once(server, "secureConnection").then(() => "secureConnection"),
+    ]);
+    expect(outcome).toBe("closed");
+
+    expect(clientError?.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    expect(secureConnections).toHaveLength(0);
+    expect(handled).toHaveLength(0);
+
+    // Client 2: full verifiable chain. The server must still be alive and serve it,
+    // proving the rejection above was a clean per-socket teardown.
+    const goodClient = tls.connect({
+      host: "127.0.0.1",
+      port,
+      key: clientTls.key,
+      cert: clientTls.cert,
+      ca: serverTls.ca,
+      checkServerIdentity,
+    });
+    await once(goodClient, "secureConnect");
+    const echoed = once(goodClient, "data");
+    goodClient.write("ping");
+    expect((await echoed)[0].toString()).toBe("ping");
+    goodClient.end();
+    await once(goodClient, "close");
+
+    expect(handled).toHaveLength(1);
+    expect(secureConnections).toHaveLength(1);
+  } finally {
+    server.close();
+  }
+});
+
+it("explicit rejectUnauthorized: false still admits an unverified client certificate", async () => {
+  const { promise: handledSocket, resolve: onHandledSocket } = Promise.withResolvers<TLSSocket>();
+
+  const server = tls.createServer(
+    {
+      key: serverTls.key,
+      cert: serverTls.cert,
+      ca: clientTls.ca,
+      requestCert: true,
+      rejectUnauthorized: false,
+    },
+    socket => onHandledSocket(socket),
+  );
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  const client = tls.connect({
+    host: "127.0.0.1",
+    port,
+    key: clientTls.key,
+    cert: clientTls.single,
+    ca: serverTls.ca,
+    checkServerIdentity,
+    rejectUnauthorized: false,
+  });
+  client.on("error", () => {});
+
+  try {
+    const [serverSocket] = await Promise.all([handledSocket, once(client, "secureConnect")]);
+    expect(serverSocket.authorized).toBe(false);
+    expect(serverSocket.authorizationError).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+  } finally {
+    client.end();
+    server.close();
+  }
+});
+
 it("Fail to find CA for server.", async () => {
   try {
     await connect({

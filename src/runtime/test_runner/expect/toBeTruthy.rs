@@ -1,1 +1,12 @@
-crate::unary_predicate_matcher!(to_be_truthy, "toBeTruthy", |v| v.to_boolean());
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+
+#[allow(unused_imports)]
+use super::{Expect, JSValueTestExt};
+
+impl Expect {
+    #[bun_jsc::host_fn(method)]
+    pub fn to_be_truthy(&self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        self.run_boolean_matcher_predicate(g, f, "toBeTruthy", |v| v.to_boolean())
+    }
+}
+// ported from: src/test_runner/expect/toBeTruthy.zig

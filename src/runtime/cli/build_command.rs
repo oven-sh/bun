@@ -988,12 +988,12 @@ impl BuildCommand {
                         full.extend_from_slice(outfile);
                         full
                     };
-                    let outfile_cstr = std::ffi::CString::new(&outfile_path[..]).unwrap_or_default();
-                    if !outfile_cstr.as_bytes().is_empty() {
+                    let outfile_str = std::str::from_utf8(&outfile_path[..]).unwrap_or("");
+                    if !outfile_str.is_empty() {
                         // Check if already signed — binary-sign-tool adds a "codesign" section
                         let already_signed = std::process::Command::new("readelf")
                             .arg("-S")
-                            .arg(outfile_cstr.as_str().unwrap())
+                            .arg(outfile_str)
                             .output()
                             .map(|o| String::from_utf8_lossy(&o.stdout).contains("codesign"))
                             .unwrap_or(false);
@@ -1002,16 +1002,16 @@ impl BuildCommand {
                             let _ = std::process::Command::new("binary-sign-tool")
                                 .arg("sign")
                                 .arg("-inFile")
-                                .arg(outfile_cstr.as_str().unwrap())
+                                .arg(outfile_str)
                                 .arg("-outFile")
-                                .arg(outfile_cstr.as_str().unwrap())
+                                .arg(outfile_str)
                                 .arg("-selfSign")
                                 .arg("1")
                                 .output();
                         }
                         let _ = std::process::Command::new("chmod")
                             .arg("755")
-                            .arg(outfile_cstr.as_str().unwrap())
+                            .arg(outfile_str)
                             .output();
                     }
                 }

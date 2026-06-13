@@ -1727,7 +1727,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         secure_ptr: *mut c_void,
     ) -> *mut c_void {
         let tcp = input_socket.cast::<us_socket_t>();
-        // outlives this call.
         let vm = global_this.bun_vm().as_mut();
         let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
@@ -1773,7 +1772,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let ws_ref = unsafe { &mut *ws };
 
         if let Some(params) = deflate_params {
-            match WebSocketDeflate::init(*params, vm.rare_data()) {
+            match WebSocketDeflate::init(*params) {
                 Ok(deflate) => ws_ref.deflate = Some(deflate),
                 Err(_) => ws_ref.deflate = None,
             }
@@ -1887,8 +1886,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         // that handle_close() releases). It is released in clear_data() when
         // proxy_tunnel is detached. The ws.ref() below adds the C++ ref
         // paired with m_connectedWebSocket.
-        // outlives this call.
-        let vm = global_this.bun_vm().as_mut();
         let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(), // No direct socket - using tunnel
@@ -1913,9 +1910,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             payload_length_frame_bytes: [0u8; 8],
             payload_length_frame_len: 0,
             initial_data_handler: None,
-            // reshaped for borrowck — `vm.event_loop()` returns a
-            // `&'static`-tied borrow that would lock `vm` for the rest of the
-            // fn; re-derive from `global_this` so `vm` stays usable below.
             // SAFETY: bun_vm() never returns null; event_loop ptr is live for VM lifetime.
             event_loop: global_this.bun_vm().event_loop_mut(),
             deflate: None,
@@ -1929,7 +1923,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let ws_ref = unsafe { &mut *ws };
 
         if let Some(params) = deflate_params {
-            match WebSocketDeflate::init(*params, vm.rare_data()) {
+            match WebSocketDeflate::init(*params) {
                 Ok(deflate) => ws_ref.deflate = Some(deflate),
                 Err(_) => ws_ref.deflate = None,
             }

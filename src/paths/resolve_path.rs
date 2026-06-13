@@ -1602,7 +1602,7 @@ pub(crate) fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
 
 /// Scratch buffer for `_join_abs_string_buf`'s unnormalized concatenation.
 /// Draws from the
-/// thread-local `path_buffer_pool` for the common case and only heap-allocates
+/// process-global `path_buffer_pool` for the common case and only heap-allocates
 /// when the concatenation would overflow a single `PathBuffer`. The pooled
 /// buffer is not re-zeroed — callers write every byte they later read.
 enum JoinScratch {

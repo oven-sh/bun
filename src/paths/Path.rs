@@ -5,10 +5,10 @@
 // `const fn from_u8` so monomorphization is preserved.
 
 use core::marker::PhantomData;
-use core::mem::ManuallyDrop;
 
 use crate::{
     MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, WPathBuffer,
+    path_buffer_pool::{PoolGuard, PoolStorage},
     resolve_path as path,
 };
 use bun_core::{Fd, WStr, ZStr, strings};
@@ -196,7 +196,7 @@ pub trait PathUnit: crate::PathChar {
     /// `opts.notPathUnit()`
     type Other: PathUnit;
     /// The fixed-size buffer type (`PathBuffer` / `WPathBuffer`).
-    type Buffer: 'static;
+    type Buffer: PoolStorage;
     /// `opts.maxPathLength()` for this unit.
     const MAX_PATH: usize;
     /// `[:0]const u8` → `ZStr`, `[:0]const u16` → `WStr` (length-carrying NUL-terminated slice).
@@ -208,13 +208,10 @@ pub trait PathUnit: crate::PathChar {
     /// `ptr[..=len]` must be valid for reads for `'a`, and `ptr[len]` must be `0`.
     unsafe fn zslice_from_raw<'a>(ptr: *const Self, len: usize) -> &'a Self::ZSlice;
 
-    /// `bun.path_buffer_pool.get()` / `bun.w_path_buffer_pool.get()`
-    // LIFETIMES.tsv classifies `Buf.pooled` as OWNED → Box<PathBuffer>; the
-    // underlying pool hands out heap buffers and reclaims them in `deinit`.
-    // Modeled as Box with put-back in `Path`'s Drop impl below (the pool's
-    // RAII guard type is not generic over unit).
-    fn pool_get() -> Box<Self::Buffer>;
-    fn pool_put(buf: Box<Self::Buffer>);
+    /// `bun.path_buffer_pool.get()` / `bun.w_path_buffer_pool.get()`. Returns
+    /// the RAII pool guard directly; `Buf` stores it and it returns the buffer
+    /// to the pool on `Drop`.
+    fn pool_get() -> PoolGuard<Self::Buffer>;
 
     fn buffer_as_mut_slice(buf: &mut Self::Buffer) -> &mut [Self];
     fn buffer_as_slice(buf: &Self::Buffer) -> &[Self];
@@ -278,11 +275,8 @@ impl PathUnit for u8 {
         // `ptr[..=len]` is valid for reads for `'a` and `ptr[len] == 0`.
         unsafe { ZStr::from_raw(ptr, len) }
     }
-    fn pool_get() -> Box<PathBuffer> {
-        crate::path_buffer_pool::get().into_box()
-    }
-    fn pool_put(buf: Box<PathBuffer>) {
-        crate::path_buffer_pool::put(buf)
+    fn pool_get() -> PoolGuard<PathBuffer> {
+        crate::path_buffer_pool::get()
     }
     #[inline]
     fn buffer_as_mut_slice(buf: &mut PathBuffer) -> &mut [u8] {
@@ -327,11 +321,8 @@ impl PathUnit for u16 {
         // `ptr[..=len]` is valid for reads for `'a` and `ptr[len] == 0`.
         unsafe { WStr::from_raw(ptr, len) }
     }
-    fn pool_get() -> Box<WPathBuffer> {
-        crate::w_path_buffer_pool::get().into_box()
-    }
-    fn pool_put(buf: Box<WPathBuffer>) {
-        crate::w_path_buffer_pool::put(buf)
+    fn pool_get() -> PoolGuard<WPathBuffer> {
+        crate::w_path_buffer_pool::get()
     }
     #[inline]
     fn buffer_as_mut_slice(buf: &mut WPathBuffer) -> &mut [u16] {
@@ -364,10 +355,9 @@ impl PathUnit for u16 {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct Buf<U: PathUnit, const SEP_OPT: u8> {
-    // LIFETIMES.tsv: OWNED → Box<PathBuffer> (pool.get() in init(); pool.put() in deinit()).
-    // Wrapped in ManuallyDrop so `Path::drop` can move the Box back into the pool
-    // without leaving a dangling Box behind for the field destructor.
-    pooled: ManuallyDrop<Box<U::Buffer>>,
+    // OWNED → the pool's RAII guard (pool.get() in init()); returns the buffer
+    // to the pool when the `Path` (and thus this `Buf`) is dropped.
+    pooled: PoolGuard<U::Buffer>,
     len: usize,
 }
 
@@ -621,7 +611,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         // match BufType::Pool
         Self {
             _buf: Buf {
-                pooled: ManuallyDrop::new(U::pool_get()),
+                pooled: U::pool_get(),
                 len: 0,
             },
             _unit: PhantomData,
@@ -871,17 +861,14 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         // Explicit field move (not `transmute`): `Path`/`Buf` are `repr(Rust)`, so
         // Rust gives no layout-compat guarantee between distinct const-generic
         // instantiations. Rebuilding field-by-field is layout-agnostic and
-        // optimizes to the same no-op move.
-        let mut this = ManuallyDrop::new(self);
-        let len = this._buf.len;
-        // SAFETY: `pooled` was initialized in `init()` and is taken exactly once
-        // here; `this` is wrapped in `ManuallyDrop` so `Path::drop` will not run
-        // and observe the now-uninitialized field.
-        let pooled = unsafe { ManuallyDrop::take(&mut this._buf.pooled) };
+        // optimizes to the same no-op move. `Path` has no `Drop`, so the pool
+        // guard moves straight through (it returns the buffer to the pool when
+        // the resulting `Path` is dropped).
+        let Path { _buf, .. } = self;
         Path {
             _buf: Buf {
-                pooled: ManuallyDrop::new(pooled),
-                len,
+                pooled: _buf.pooled,
+                len: _buf.len,
             },
             _unit: PhantomData,
         }
@@ -1285,17 +1272,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     .append_other(<U::Other>::id_from_u16(words), add_separator);
             }
         }
-    }
-}
-
-impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8> Drop
-    for Path<U, KIND, SEP_OPT, CHECK>
-{
-    fn drop(&mut self) {
-        // match BufType::Pool
-        // SAFETY: `pooled` is initialized in `init()` and never taken before this; Drop runs once.
-        let pooled = unsafe { ManuallyDrop::take(&mut self._buf.pooled) };
-        U::pool_put(pooled);
     }
 }
 

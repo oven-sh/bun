@@ -1674,9 +1674,20 @@ impl FileSink {
         // to_result-ref) found no over-deref this could be masking.
         let promise_result = JSSink::assign_to_stream(global_this, stream.value, self, signal_ptr);
 
-        if let Some(err) = promise_result.to_error() {
+        if promise_result.to_error().is_some() {
             self.readable_stream.set(readable_stream::Strong::default());
-            return err;
+            // Close the writer now so the destination fd / FilePoll are released
+            // immediately (what handle_reject_stream does for async failures);
+            // without this a spawned child reading from the pipe would block on
+            // the open write-end until GC finalizes the JS controller.
+            self.writer.with_mut(|w| w.end());
+            // Return the original result (a JSC::Exception when the stream's pull()
+            // threw synchronously) rather than the unwrapped thrown value, so callers
+            // can detect failure with a single `.to_error()` even when the thrown
+            // value is not an Error (e.g. `throw "boom"` / `throw null` — the
+            // unwrapped forms of those are indistinguishable from the undefined that
+            // the direct-stream success path returns).
+            return promise_result;
         }
 
         if !promise_result.is_empty_or_undefined_or_null() {

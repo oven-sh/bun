@@ -4999,10 +4999,12 @@ unsafe fn resolve_hook(
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let old_log: core::ptr::NonNull<bun_ast::Log> =
         unsafe { &*vm }.log.expect("vm.log set in init");
+    let old_transpiler_log: *mut bun_ast::Log = unsafe { &*vm }.transpiler.log;
     let log_nn: core::ptr::NonNull<bun_ast::Log> = core::ptr::NonNull::from(&mut log);
     // SAFETY: `vm` is the live per-thread VM.
     unsafe {
         (*vm).log = Some(log_nn);
+        (*vm).transpiler.log = log_nn.as_ptr();
         (*vm).transpiler.resolver.log = log_nn;
         (*vm).transpiler.linker.log = log_nn.as_ptr();
         if let Some(pm) = (*vm).transpiler.resolver.package_manager {
@@ -5017,6 +5019,7 @@ unsafe fn resolve_hook(
         // restore it even if it was `None` at swap time.
         unsafe {
             (*vm).log = Some(old_log);
+            (*vm).transpiler.log = old_transpiler_log;
             (*vm).transpiler.resolver.log = old_log;
             (*vm).transpiler.linker.log = old_log.as_ptr();
             if let Some(pm) = (*vm).transpiler.resolver.package_manager {

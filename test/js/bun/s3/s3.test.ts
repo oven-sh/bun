@@ -1801,3 +1801,70 @@ describe("s3 multipart upload id validation", () => {
     expect(exitCode).toBe(0);
   }, 60_000);
 });
+
+describe.concurrent("shared/resizable writer input (stable bytes)", () => {
+  // S3File.writer().write() routes through ResumableSink, which snapshots
+  // shared/resizable backing stores before the sink reads them, so the uploaded
+  // body is exactly the view range (not the 0xff guard bytes). The production
+  // guard is `(buffer.shared || buffer.resizable)`; cover both branches against
+  // a local fake S3 endpoint.
+  const offset = 13;
+  const bytes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+
+  function sabView() {
+    const sab = new SharedArrayBuffer(offset + bytes.length + 4);
+    const all = new Uint8Array(sab);
+    all.fill(0xff);
+    all.set(bytes, offset);
+    return new Uint8Array(sab, offset, bytes.length);
+  }
+
+  // Resizable (but non-shared) ArrayBuffer hits the same snapshot branch as a SAB.
+  function resizableView() {
+    const ab = new ArrayBuffer(offset + bytes.length + 4, { maxByteLength: offset + bytes.length + 16 });
+    const all = new Uint8Array(ab);
+    all.fill(0xff);
+    all.set(bytes, offset);
+    return new Uint8Array(ab, offset, bytes.length);
+  }
+
+  async function uploadView(view: Uint8Array) {
+    const received: { method: string; body: Uint8Array }[] = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        received.push({ method: req.method, body: new Uint8Array(await req.arrayBuffer()) });
+        return new Response("", { status: 200, headers: { etag: '"sink"', "content-length": "0" } });
+      },
+    });
+    try {
+      const client = new S3Client({
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "us-east-1",
+        bucket: "bucket",
+        endpoint: server.url.href,
+      });
+      const writer = client.file("sink-sab-object").writer();
+      const wrote = await writer.write(view);
+      await writer.end();
+      return { wrote, put: received.find(r => r.method === "PUT") };
+    } finally {
+      server.stop(true);
+    }
+  }
+
+  it("S3 writer uploads a nonzero-offset Uint8Array(SAB) view", async () => {
+    const { wrote, put } = await uploadView(sabView());
+    expect(wrote).toBe(bytes.length);
+    expect(put).toBeDefined();
+    expect(Array.from(put!.body)).toEqual(bytes);
+  });
+
+  it("S3 writer uploads a nonzero-offset Uint8Array(resizable ArrayBuffer) view", async () => {
+    const { wrote, put } = await uploadView(resizableView());
+    expect(wrote).toBe(bytes.length);
+    expect(put).toBeDefined();
+    expect(Array.from(put!.body)).toEqual(bytes);
+  });
+});

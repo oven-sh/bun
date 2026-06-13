@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { fileDescriptorLeakChecker, isPosix, isWindows, tmpdirSync } from "harness";
+import { fileDescriptorLeakChecker, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -307,4 +307,33 @@ it.skipIf(!isPosix)("writing after end() fails during flush does not crash", asy
   expect(() => writer.flush()).not.toThrow();
   await Promise.resolve(writer.end()).catch(() => {});
   await 1;
+});
+
+// Shared and resizable backing stores both hit the snapshot branch; the
+// production guard is `(buffer.shared || buffer.resizable)`. Only the view's
+// range (not the 0xff guard bytes) is written to the file.
+it.each([
+  ["SharedArrayBuffer", (offset: number, len: number) => new Uint8Array(new SharedArrayBuffer(offset + len + 4))],
+  [
+    "resizable ArrayBuffer",
+    (offset: number, len: number) =>
+      new Uint8Array(new ArrayBuffer(offset + len + 4, { maxByteLength: offset + len + 16 })),
+  ],
+] as const)("FileSink writes a nonzero-offset %s view (stable bytes)", async (_label, makeBacking) => {
+  const offset = 11;
+  const bytes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const all = makeBacking(offset, bytes.length);
+  all.fill(0xff);
+  all.set(bytes, offset);
+  const view = new Uint8Array(all.buffer, offset, bytes.length);
+
+  using dir = tempDir("filesink-sab", {});
+  const path = join(String(dir), "filesink-sab-view.bin");
+  const writer = Bun.file(path).writer();
+  const wrote = await writer.write(view);
+  await writer.end();
+
+  const out = new Uint8Array(await Bun.file(path).arrayBuffer());
+  expect(wrote).toBe(bytes.length);
+  expect(Array.from(out)).toEqual(bytes);
 });

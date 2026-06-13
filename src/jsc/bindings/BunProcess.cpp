@@ -276,27 +276,77 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     return release;
 }
 
+// Emit a process lifecycle event. When user code has replaced `process.emit`
+// with a callable own property (a monkey-patch, as signal-exit and similar
+// libraries do), invoke that override so it observes the event, matching Node,
+// which dispatches `beforeExit`/`exit` via `process.emit`. Otherwise emit
+// directly on the internal EventEmitter, which reaches the same listeners and
+// preserves the exact "a listener fired" signal the caller uses to gate the
+// nextTick/microtask drain (routing the common no-override case through the JS
+// emit instead would always report "fired" and drain on every shutdown, which
+// perturbs pending-rejection timing). A `process.emit` replaced with a
+// non-callable value also falls through to the internal emitter so lifecycle
+// events still fire instead of throwing at shutdown.
+//
+// Returns whether the caller should drain afterward: the native "a listener
+// fired" signal on the internal path, or true once an override ran (it may have
+// scheduled continuation work). Listener exceptions are reported inside
+// EventEmitter::fireEventListeners; a throwing override leaves a pending
+// exception for the caller to report.
+static bool emitProcessExitEvent(JSC::JSGlobalObject* globalObject, Process* process, ASCIILiteral eventName, int exitCode)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue emitOverride = process->getDirect(vm, Identifier::fromString(vm, "emit"_s));
+    if (emitOverride) {
+        // getDirect returns the raw slot, so an `emit` defined as an accessor
+        // (Object.defineProperty) yields a GetterSetter; invoke the getter with a
+        // full [[Get]] to reach the actual function, matching Node.
+        if (emitOverride.isGetterSetter() || emitOverride.isCustomGetterSetter()) [[unlikely]] {
+            emitOverride = process->get(globalObject, Identifier::fromString(vm, "emit"_s));
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+
+        auto callData = JSC::getCallData(emitOverride);
+        if (callData.type != CallData::Type::None) {
+            MarkedArgumentBuffer arguments;
+            arguments.append(jsString(vm, String(eventName)));
+            arguments.append(jsNumber(exitCode));
+            ASSERT(!arguments.hasOverflowed());
+
+            JSC::call(globalObject, emitOverride, callData, process, arguments);
+            RETURN_IF_EXCEPTION(scope, false);
+            return true;
+        }
+        // A non-callable override falls through to the internal emitter.
+    }
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(jsNumber(exitCode));
+    ASSERT(!arguments.hasOverflowed());
+    RELEASE_AND_RETURN(scope, process->wrapped().emit(Identifier::fromString(vm, eventName), arguments));
+}
+
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
     static bool processIsExiting = false;
     if (processIsExiting)
         return;
     processIsExiting = true;
-    auto& emitter = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
 
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
-    auto event = Identifier::fromString(vm, "exit"_s);
-    if (!emitter.hasEventListeners(event)) {
-        return;
-    }
     process->putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(true), 0);
 
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(exitCode));
-    emitter.emit(event, arguments);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    emitProcessExitEvent(globalObject, process, "exit"_s, exitCode);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+    }
 }
 
 JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -827,14 +877,25 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
     auto& vm = JSC::getVM(globalObject);
     auto* process = globalObject->processObject();
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(exitCode));
     Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
-    auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
+
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    bool fired = emitProcessExitEvent(globalObject, process, "beforeExit"_s, exitCode);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+        return;
+    }
+
     if (fired) {
-        if (globalObject->m_nextTickQueue) {
-            auto nextTickQueue = globalObject->m_nextTickQueue.get();
+        if (auto* nextTickQueue = globalObject->m_nextTickQueue.get()) {
+            // drain() enters JS (nextTick callbacks, microtasks) and can leave a
+            // pending exception, so report and clear it the same way as the emit.
             nextTickQueue->drain(vm, globalObject);
+            if (auto* exception = scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+            }
         }
     }
 }

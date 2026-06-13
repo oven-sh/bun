@@ -137,6 +137,8 @@ pub const TestOptions = struct {
     coverage: CodeCoverageOptions = .{},
     path_ignore_patterns: []const []const u8 = &.{},
     path_ignore_patterns_from_cli: bool = false,
+    coverage_reporter_from_cli: bool = false,
+    coverage_dir_from_cli: bool = false,
     test_filter_pattern: ?[]const u8 = null,
     /// `?*bun.jsc.RegularExpression` — typed as opaque to keep this file free
     /// of `jsc/` references. Read via `testFilterRegex()`.

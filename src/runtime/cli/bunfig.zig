@@ -269,7 +269,9 @@ pub const Bunfig = struct {
 
                     if (test_.get("coverage")) |expr| {
                         try this.expect(expr, .e_boolean);
-                        this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
+                        if (!this.ctx.test_options.coverage.enabled) {
+                            this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
+                        }
                     }
 
                     if (test_.get("onlyFailures")) |expr| {
@@ -293,6 +295,7 @@ pub const Bunfig = struct {
                     }
 
                     if (test_.get("coverageReporter")) |expr| brk: {
+                        if (this.ctx.test_options.coverage_reporter_from_cli) break :brk;
                         this.ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
                         if (expr.data == .e_string) {
                             const item_str = expr.asString(bun.default_allocator) orelse "";
@@ -323,8 +326,10 @@ pub const Bunfig = struct {
                     }
 
                     if (test_.get("coverageDir")) |expr| {
-                        try this.expectString(expr);
-                        this.ctx.test_options.coverage.reports_directory = try expr.data.e_string.string(allocator);
+                        if (!this.ctx.test_options.coverage_dir_from_cli) {
+                            try this.expectString(expr);
+                            this.ctx.test_options.coverage.reports_directory = try expr.data.e_string.string(allocator);
+                        }
                     }
 
                     if (test_.get("coverageThreshold")) |expr| outer: {

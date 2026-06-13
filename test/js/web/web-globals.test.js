@@ -1,6 +1,8 @@
 import { spawn } from "bun";
 import { expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, withoutAggressiveGC } from "harness";
+// Aliased so it doesn't shadow the global Web `Worker` asserted in the "exists" test.
+import { Worker as NodeWorker } from "node:worker_threads";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -308,18 +310,80 @@ test("confirm (no) windows newline", async () => {
   expect(await proc.stderr.text()).toBe("No\n");
 });
 
-test("globalThis.self = 123 works", () => {
-  expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
-    configurable: true,
-    enumerable: true,
-    get: expect.any(Function),
-    set: expect.any(Function),
+test("self is not defined on the main thread (matches Node.js)", () => {
+  // `self` is a WindowOrWorkerGlobalScope member. Node.js never defines it, and
+  // the main thread is neither a Window nor a Worker. Isomorphic libraries sniff
+  // `typeof self === "object"` to detect a browser/worker environment; defining
+  // it on the main thread makes them take the browser code path instead of the
+  // Node fallback. See https://github.com/oven-sh/bun/issues/31713
+  expect("self" in globalThis).toBe(false);
+  expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toBeUndefined();
+  expect(typeof self).toBe("undefined");
+});
+
+test("self is defined inside a Worker (Web Worker spec)", async () => {
+  // Per the Web spec, `self` is defined in WorkerGlobalScope. Bun keeps it in
+  // workers (Node does not define it there, but browsers do).
+  const worker = new NodeWorker(
+    `
+      const { parentPort } = require("node:worker_threads");
+      parentPort.postMessage({
+        hasSelf: "self" in globalThis,
+        typeofSelf: typeof self,
+        selfIsGlobalThis: typeof self === "object" ? self === globalThis : null,
+      });
+    `,
+    { eval: true },
+  );
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    worker.on("message", resolve);
+    worker.on("error", reject);
+    const result = await promise;
+    expect(result).toEqual({
+      hasSelf: true,
+      typeofSelf: "object",
+      selfIsGlobalThis: true,
+    });
+  } finally {
+    await worker.terminate();
+  }
+});
+
+test("node:worker_threads imports in a main-thread ShadowRealm", async () => {
+  // The `self` gate must use the same notion of "main thread" as
+  // `Bun.isMainThread`. A ShadowRealm runs on the main OS thread but has its own
+  // execution-context id (> 1), so `Bun.isMainThread` is false there. worker_threads
+  // builds `fakeParentPort()` when `!Bun.isMainThread`, reading the global `self`;
+  // if the gate disagreed, `self` would be undefined and the import would throw.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const realm = new ShadowRealm();
+       const isMainThread = await realm.importValue("node:worker_threads", "isMainThread");
+       console.log("ok:" + isMainThread);`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
   });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("ok:false");
+  expect(exitCode).toBe(0);
+});
+
+test("globalThis.self = 123 works", () => {
+  const hadSelf = Object.hasOwn(globalThis, "self");
   const original = Object.getOwnPropertyDescriptor(globalThis, "self");
   try {
     globalThis.self = 123;
     expect(globalThis.self).toBe(123);
   } finally {
-    Object.defineProperty(globalThis, "self", original);
+    if (hadSelf) {
+      Object.defineProperty(globalThis, "self", original);
+    } else {
+      delete globalThis.self;
+    }
   }
 });

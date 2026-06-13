@@ -516,6 +516,16 @@ impl JSMySQLConnection {
         // MySQL doesn't support unnamed prepared statements
         let _ = use_unnamed_prepared_statements;
         let allow_public_key_retrieval = callframe.argument(15).to_boolean();
+        // `foundRows: true` (default) asks the server to return matched-rows
+        // counts instead of changed-rows counts in OK_Packet.affected_rows —
+        // matches the `mysql2` / `mariadb` driver defaults. Enabled at
+        // handshake time by OR-ing `CLIENT_FOUND_ROWS` into the client
+        // capability set. `callframe.argument(16)` returns UNDEFINED when
+        // the JS layer omits the arg; `to_boolean` coerces UNDEFINED to
+        // `false` so we fall back to Bun's pre-fix changed-rows default in
+        // that case. Current `src/js/internal/sql/mysql.ts` always passes
+        // an explicit JS boolean so the default still fires there.
+        let found_rows = callframe.argument(16).to_boolean();
 
         // Ownership transferred into `ptr.connection`; disarm the errdefer so the
         // connect-fail `ptr.deref()` is the sole cleanup path from here on.
@@ -537,6 +547,7 @@ impl JSMySQLConnection {
                 secure,
                 args.ssl_mode,
                 allow_public_key_retrieval,
+                found_rows,
             )),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),

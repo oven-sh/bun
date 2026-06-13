@@ -104,6 +104,7 @@ interface CppSQLStatement {
   values: (...args: TODO[]) => TODO;
   raw: (...args: TODO[]) => TODO;
   finalize: (...args: TODO[]) => TODO;
+  interrupt: () => void;
   toString: (...args: TODO[]) => TODO;
   columns: string[];
   columnsCount: number;
@@ -121,6 +122,7 @@ interface CppSQL {
   deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number): TODO;
   fcntl(handle: TODO, ...args: TODO[]): TODO;
   close(handle: TODO, throwOnError: boolean): void;
+  interrupt(handle: TODO): void;
   setCustomSQLite(path: string): void;
 }
 
@@ -329,6 +331,10 @@ class Statement {
     return this.#raw.finalize(...args);
   }
 
+  interrupt() {
+    return this.#raw.interrupt();
+  }
+
   *[Symbol.iterator]() {
     yield* this.#iterateNoArgs();
   }
@@ -519,6 +525,11 @@ class Database implements SqliteTypes.Database {
     this.#hasClosed = true;
     return SQL.close(this.#handle, throwOnError);
   }
+
+  interrupt() {
+    return SQL.interrupt(this.#handle);
+  }
+
   clearQueryCache() {
     for (let item of this.#cachedQueriesValues) {
       item?.finalize?.();

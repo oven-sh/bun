@@ -321,6 +321,15 @@ declare module "bun:sqlite" {
     loadExtension(extension: string, entryPoint?: string): void;
 
     /**
+     * Interrupt any active operation on this database connection.
+     *
+     * Internally, this calls `sqlite3_interrupt`. If a query is currently
+     * running, its next `sqlite3_step` returns `SQLITE_INTERRUPT` and Bun
+     * throws a {@link SQLiteError}.
+     */
+    interrupt(): void;
+
+    /**
      * Change the dynamic library path to SQLite
      *
      * @note macOS-only
@@ -877,6 +886,15 @@ declare module "bun:sqlite" {
      * Internally, this calls `sqlite3_finalize`.
      */
     finalize(): void;
+
+    /**
+     * Interrupt any active operation on the database connection that owns this
+     * statement.
+     *
+     * This has the same effect as calling {@link Database.interrupt} on the
+     * statement's database.
+     */
+    interrupt(): void;
 
     /**
      * Calls {@link finalize} if it wasn't already called.

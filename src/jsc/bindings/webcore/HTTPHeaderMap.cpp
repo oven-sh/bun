@@ -86,6 +86,8 @@ HTTPHeaderMap HTTPHeaderMap::isolatedCopy() const&
     map.m_commonHeaders = crossThreadCopy(m_commonHeaders);
     map.m_uncommonHeaders = crossThreadCopy(m_uncommonHeaders);
     map.m_setCookieHeaders = crossThreadCopy(m_setCookieHeaders);
+    map.m_extraCommonHeaders = crossThreadCopy(m_extraCommonHeaders);
+    map.m_extraUncommonHeaders = crossThreadCopy(m_extraUncommonHeaders);
     return map;
 }
 
@@ -95,6 +97,8 @@ HTTPHeaderMap HTTPHeaderMap::isolatedCopy() &&
     map.m_commonHeaders = crossThreadCopy(WTF::move(m_commonHeaders));
     map.m_uncommonHeaders = crossThreadCopy(WTF::move(m_uncommonHeaders));
     map.m_setCookieHeaders = crossThreadCopy(WTF::move(m_setCookieHeaders));
+    map.m_extraCommonHeaders = crossThreadCopy(WTF::move(m_extraCommonHeaders));
+    map.m_extraUncommonHeaders = crossThreadCopy(WTF::move(m_extraUncommonHeaders));
     return map;
 }
 
@@ -112,6 +116,8 @@ size_t HTTPHeaderMap::memoryCost() const
     size_t cost = m_commonHeaders.size() * sizeof(CommonHeader);
     cost += m_uncommonHeaders.size() * sizeof(UncommonHeader);
     cost += m_setCookieHeaders.size() * sizeof(String);
+    cost += m_extraCommonHeaders.size() * sizeof(CommonHeader);
+    cost += m_extraUncommonHeaders.size() * sizeof(UncommonHeader);
     for (auto& header : m_commonHeaders)
         cost += header.value.sizeInBytes();
 
@@ -123,6 +129,14 @@ size_t HTTPHeaderMap::memoryCost() const
     for (auto& header : m_setCookieHeaders)
         cost += header.sizeInBytes();
 
+    for (auto& header : m_extraCommonHeaders)
+        cost += header.value.sizeInBytes();
+
+    for (auto& header : m_extraUncommonHeaders) {
+        cost += header.key.sizeInBytes();
+        cost += header.value.sizeInBytes();
+    }
+
     return cost;
 }
 
@@ -131,6 +145,13 @@ String HTTPHeaderMap::getUncommonHeader(const StringView name) const
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
     });
+    // The primary slot already holds the `", "`-joined value for multi-value
+    // headers (see `appendToHeaderMap` in `FetchHeaders.cpp`); the side-channel
+    // `m_extraUncommonHeaders` only carries individual values for the
+    // wire-write path, so no additional join is needed here. Keeping this a
+    // direct map-owned reference is load-bearing for `fastGet` across the FFI
+    // (`WebCore__FetchHeaders__fastGet_` hands back a ZigString that borrows
+    // the returned `String`'s `StringImpl`).
     return index != notFound ? m_uncommonHeaders[index].value : String();
 }
 
@@ -168,6 +189,12 @@ void HTTPHeaderMap::set(const String& name, const String& value)
 
 void HTTPHeaderMap::setUncommonHeader(const String& name, const String& value)
 {
+    // `set` overwrites; any extra duplicates for this name must also be dropped
+    // so a subsequent `get` doesn't surface stale appended values.
+    m_extraUncommonHeaders.removeAllMatching([&](auto& header) {
+        return equalIgnoringASCIICase(header.key, name);
+    });
+
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
     });
@@ -179,6 +206,10 @@ void HTTPHeaderMap::setUncommonHeader(const String& name, const String& value)
 
 void HTTPHeaderMap::setUncommonHeaderCloneName(const StringView name, const String& value)
 {
+    m_extraUncommonHeaders.removeAllMatching([&](auto& header) {
+        return equalIgnoringASCIICase(header.key, name);
+    });
+
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
     });
@@ -259,9 +290,16 @@ bool HTTPHeaderMap::removeUncommonHeader(const StringView name)
     ASSERT(!findHTTPHeaderName(name, headerName));
 #endif
 
-    return m_uncommonHeaders.removeFirstMatching([&](auto& header) {
+    bool removedExtras = false;
+    if (!m_extraUncommonHeaders.isEmpty()) {
+        removedExtras = m_extraUncommonHeaders.removeAllMatching([&](auto& header) {
+            return equalIgnoringASCIICase(header.key, name);
+        }) > 0;
+    }
+    bool removedPrimary = m_uncommonHeaders.removeFirstMatching([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
     });
+    return removedPrimary || removedExtras;
 }
 
 String HTTPHeaderMap::get(HTTPHeaderName name) const
@@ -289,6 +327,8 @@ String HTTPHeaderMap::get(HTTPHeaderName name) const
     auto index = m_commonHeaders.findIf([&](auto& header) {
         return header.key == name;
     });
+    // The primary already holds the `", "`-joined value for multi-value
+    // headers — see `getUncommonHeader` for the full reasoning.
     return index != notFound ? m_commonHeaders[index].value : String();
 }
 
@@ -322,6 +362,14 @@ void HTTPHeaderMap::set(HTTPHeaderName name, const String& value)
         m_setCookieHeaders.clear();
         m_setCookieHeaders.append(value);
         return;
+    }
+
+    // `set` overwrites; any extra duplicates for this name must also be dropped
+    // so a subsequent `get` doesn't surface stale appended values.
+    if (!m_extraCommonHeaders.isEmpty()) {
+        m_extraCommonHeaders.removeAllMatching([&](auto& header) {
+            return header.key == name;
+        });
     }
 
     auto index = m_commonHeaders.findIf([&](auto& header) {
@@ -364,9 +412,16 @@ bool HTTPHeaderMap::remove(HTTPHeaderName name)
         return any;
     }
 
-    return m_commonHeaders.removeFirstMatching([&](auto& header) {
+    bool removedExtras = false;
+    if (!m_extraCommonHeaders.isEmpty()) {
+        removedExtras = m_extraCommonHeaders.removeAllMatching([&](auto& header) {
+            return header.key == name;
+        }) > 0;
+    }
+    bool removedPrimary = m_commonHeaders.removeFirstMatching([&](auto& header) {
         return header.key == name;
     });
+    return removedPrimary || removedExtras;
 }
 
 void HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
@@ -383,6 +438,31 @@ void HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
         m_commonHeaders[index].value = makeString(m_commonHeaders[index].value, name == HTTPHeaderName::Cookie ? "; "_s : ", "_s, value);
     else
         m_commonHeaders.append(CommonHeader { name, value });
+}
+
+void HTTPHeaderMap::appendExtra(HTTPHeaderName name, const String& value)
+{
+    // `Set-Cookie` already has its own multi-value vector; route there to keep
+    // every other consumer (wire write, `getSetCookie()`, iterator) working as
+    // before.
+    if (name == HTTPHeaderName::SetCookie) {
+        m_setCookieHeaders.append(value);
+        return;
+    }
+    m_extraCommonHeaders.append(CommonHeader { name, value });
+}
+
+void HTTPHeaderMap::appendExtra(const String& name, const String& value)
+{
+    // Route known names through the enum overload so `Set-Cookie` and other
+    // built-in headers land in the right bucket even if a caller reaches this
+    // overload with a string form.
+    HTTPHeaderName headerName;
+    if (findHTTPHeaderName(name, headerName)) {
+        appendExtra(headerName, value);
+        return;
+    }
+    m_extraUncommonHeaders.append(UncommonHeader { name, value });
 }
 
 } // namespace WebCore

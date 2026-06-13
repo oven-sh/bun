@@ -76,6 +76,12 @@ public:
 
     typedef Vector<CommonHeader, 2, CrashOnOverflow, 6> CommonHeadersVector;
     typedef Vector<UncommonHeader, 0, CrashOnOverflow, 0> UncommonHeadersVector;
+    // Extras vectors skip the inline-capacity-of-2 reservation that
+    // `CommonHeadersVector` uses for the primary hot path — multi-value
+    // duplicates are rare, so every `HTTPHeaderMap` (embedded in every
+    // `Headers`/`Request`/`Response`) shouldn't eat ~32 bytes of inline
+    // storage for entries that almost never exist.
+    typedef Vector<CommonHeader, 0, CrashOnOverflow, 0> ExtraCommonHeadersVector;
 
     class HTTPHeaderMapConstIterator {
     public:
@@ -174,19 +180,29 @@ public:
     WEBCORE_EXPORT HTTPHeaderMap isolatedCopy() const &;
     WEBCORE_EXPORT HTTPHeaderMap isolatedCopy() &&;
 
-    bool isEmpty() const { return m_commonHeaders.isEmpty() && m_uncommonHeaders.isEmpty() && m_setCookieHeaders.isEmpty(); }
+    bool isEmpty() const { return m_commonHeaders.isEmpty() && m_uncommonHeaders.isEmpty() && m_setCookieHeaders.isEmpty() && m_extraCommonHeaders.isEmpty() && m_extraUncommonHeaders.isEmpty(); }
+    // Counts only the primary slots (one per unique name, plus each `Set-Cookie`).
+    // The primary already holds the `", "`-joined value for multi-value headers,
+    // so callers using `size()` for `fastGet`-style unique-name iteration
+    // (JS `Headers.count`, FFI row allocators) don't see the side channel.
     int size() const { return m_commonHeaders.size() + m_uncommonHeaders.size() + m_setCookieHeaders.size(); }
 
     void clear()
     {
         m_commonHeaders.clear();
         m_uncommonHeaders.clear();
+        m_setCookieHeaders.clear();
+        m_extraCommonHeaders.clear();
+        m_extraUncommonHeaders.clear();
     }
 
     void shrinkToFit()
     {
         m_commonHeaders.shrinkToFit();
         m_uncommonHeaders.shrinkToFit();
+        m_setCookieHeaders.shrinkToFit();
+        m_extraCommonHeaders.shrinkToFit();
+        m_extraUncommonHeaders.shrinkToFit();
     }
 
     WEBCORE_EXPORT String get(const StringView name) const;
@@ -236,12 +252,37 @@ public:
     UncommonHeadersVector &uncommonHeaders() { return m_uncommonHeaders; }
     Vector<String, 0> &getSetCookieHeaders() { return m_setCookieHeaders; }
 
+    // Extra duplicate values for non-`Set-Cookie` header names. The first value for a
+    // given name lives in `m_commonHeaders` / `m_uncommonHeaders`; any subsequent
+    // values appended with the same name land here so they survive to the wire as
+    // separate header lines (RFC 7230 §3.2.2) without collapsing the WHATWG
+    // `Headers.get()` contract (which still returns the `", "`-joined string).
+    //
+    // Mirrors the primary split: known enum names go into `m_extraCommonHeaders`,
+    // unknown strings into `m_extraUncommonHeaders`. Consumers pick the
+    // canonicalization they want from `HTTPHeaderName` (`httpHeaderNameString`,
+    // `httpHeaderNameStringImpl`, or `httpHeaderNameDefaultCaseStringImpl`) for
+    // the common extras, mirroring how they canonicalize the primary slot.
+    const ExtraCommonHeadersVector &extraCommonHeaders() const { return m_extraCommonHeaders; }
+    ExtraCommonHeadersVector &extraCommonHeaders() { return m_extraCommonHeaders; }
+    const UncommonHeadersVector &extraUncommonHeaders() const { return m_extraUncommonHeaders; }
+    UncommonHeadersVector &extraUncommonHeaders() { return m_extraUncommonHeaders; }
+    WEBCORE_EXPORT void appendExtra(HTTPHeaderName, const String &value);
+    WEBCORE_EXPORT void appendExtra(const String &name, const String &value);
+
     const_iterator begin() const { return const_iterator(*this, m_commonHeaders.begin(), m_uncommonHeaders.begin(), m_setCookieHeaders.begin()); }
     const_iterator end() const { return const_iterator(*this, m_commonHeaders.end(), m_uncommonHeaders.end(), m_setCookieHeaders.end()); }
 
     friend bool operator==(const HTTPHeaderMap &a, const HTTPHeaderMap &b)
     {
-        if (a.m_commonHeaders.size() != b.m_commonHeaders.size() || a.m_uncommonHeaders.size() != b.m_uncommonHeaders.size() || a.m_setCookieHeaders.size() != b.m_setCookieHeaders.size())
+        // Compare on the primary (which holds the `", "`-joined value for
+        // multi-value headers) and on `m_setCookieHeaders` only. Whether the
+        // same joined value was produced by a single `set` or by repeated
+        // `append` (populating the side channel) isn't visible through
+        // `get()` and shouldn't change equality.
+        if (a.m_commonHeaders.size() != b.m_commonHeaders.size()
+            || a.m_uncommonHeaders.size() != b.m_uncommonHeaders.size()
+            || a.m_setCookieHeaders.size() != b.m_setCookieHeaders.size())
             return false;
 
         for (auto &commonHeader : a.m_commonHeaders) {
@@ -278,6 +319,8 @@ private:
     CommonHeadersVector m_commonHeaders;
     UncommonHeadersVector m_uncommonHeaders;
     Vector<String, 0> m_setCookieHeaders;
+    ExtraCommonHeadersVector m_extraCommonHeaders;
+    UncommonHeadersVector m_extraUncommonHeaders;
 };
 
 template<class Encoder>
@@ -325,6 +368,9 @@ void HTTPHeaderMap::encode(Encoder &encoder) const
 {
     encoder << m_commonHeaders;
     encoder << m_uncommonHeaders;
+    encoder << m_setCookieHeaders;
+    encoder << m_extraCommonHeaders;
+    encoder << m_extraUncommonHeaders;
 }
 
 template<class Decoder>
@@ -334,6 +380,15 @@ bool HTTPHeaderMap::decode(Decoder &decoder, HTTPHeaderMap &headerMap)
         return false;
 
     if (!decoder.decode(headerMap.m_uncommonHeaders))
+        return false;
+
+    if (!decoder.decode(headerMap.m_setCookieHeaders))
+        return false;
+
+    if (!decoder.decode(headerMap.m_extraCommonHeaders))
+        return false;
+
+    if (!decoder.decode(headerMap.m_extraUncommonHeaders))
         return false;
 
     return true;

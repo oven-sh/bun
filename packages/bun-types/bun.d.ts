@@ -8252,17 +8252,52 @@ declare module "bun" {
       autoOrient?: boolean;
     }
 
+    /**
+     * RGBA letterbox fill for `fit: "contain"`. RGB channels are `0..255`
+     * and default to `0`; `alpha` is `0..1` (Sharp convention) and defaults
+     * to `1`, so `{ r: 255, g: 255, b: 255 }` is an opaque white fill.
+     */
+    interface Background {
+      r?: number;
+      g?: number;
+      b?: number;
+      alpha?: number;
+    }
+
     interface ResizeOptions {
       /** Resampling kernel. @default "lanczos3" */
       filter?: Filter;
       /**
-       * `"fill"` stretches to exactly width×height. `"inside"` preserves
-       * aspect ratio so the result fits *within* width×height.
+       * How to reconcile the requested box with the source's aspect ratio.
+       * All modes preserve aspect ratio except `"fill"`.
+       *
+       * - `"fill"` — stretch to exactly width×height.
+       * - `"inside"` — scale so the result fits *within* width×height.
+       * - `"outside"` — scale so the result *contains* width×height.
+       * - `"cover"` — scale like `"outside"` then center-crop to width×height.
+       * - `"contain"` — scale like `"inside"` then letterbox with
+       *   {@link ResizeOptions.background | `background`} to width×height.
+       *
        * @default "fill"
        */
-      fit?: "fill" | "inside";
-      /** Never upscale — if the source is already smaller, leave it. */
+      fit?: "fill" | "inside" | "outside" | "cover" | "contain";
+      /**
+       * Never upscale — if the source is already smaller, leave it. Only the
+       * image itself is exempt from enlarging: `fit: "contain"` still pads
+       * the canvas to the requested box, and `fit: "cover"` skips the
+       * upscale but still center-crops any axis where the source exceeds
+       * the box.
+       */
       withoutEnlargement?: boolean;
+      /**
+       * Letterbox colour for `fit:"contain"`. RGB channels default to `0`
+       * and `alpha` (`0..1`, Sharp convention) defaults to `1` when a
+       * background object is passed. Omitting the option entirely gives a
+       * transparent black letterbox — renders as black in JPEG (alpha
+       * dropped) and as a transparent letterbox in PNG/WebP. Ignored for
+       * other fit modes.
+       */
+      background?: Background;
     }
 
     interface ModulateOptions {

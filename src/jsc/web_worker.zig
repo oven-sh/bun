@@ -852,6 +852,49 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     worker.shutdown();
 }
 
+/// Retry `graph.find(candidate)` after injecting the `root/` suffix
+/// between the standalone base path and the rest of the path. This
+/// lets us resolve specifiers that arrive missing the `root/` prefix
+/// used internally by the embedded module graph — for example the
+/// `/$bunfs/workers/worker.js` path produced by
+/// `new URL(rel, import.meta.url)` in standalone binaries, which the
+/// graph actually stores as `/$bunfs/root/workers/worker.js`.
+///
+/// Accepts both POSIX `/$bunfs/...` and Windows `B:\\~BUN\\...` /
+/// `B:/~BUN/...` prefix forms, matching
+/// `StandaloneModuleGraph.isBunStandaloneFilePathCanonicalized`.
+fn findWithRootPrefix(graph: *const bun.StandaloneModuleGraph, candidate: []const u8) ?[]const u8 {
+    const bp = bun.StandaloneModuleGraph.base_path;
+    const bpp = bun.StandaloneModuleGraph.base_public_path;
+    const bpwds = bun.StandaloneModuleGraph.base_public_path_with_default_suffix;
+
+    // Already prefixed with `root/` — nothing to inject. Uses
+    // `base_public_path_with_default_suffix`, which is the
+    // forward-slash form on Windows and matches what
+    // `findAssumeStandalonePath` normalizes to.
+    if (bun.strings.hasPrefixComptime(candidate, bpwds)) return null;
+
+    // On POSIX, `base_path == base_public_path == "/$bunfs/"`. On
+    // Windows they differ: `base_path` is `"B:\\~BUN\\"` (used by
+    // native Windows paths) and `base_public_path` is `"B:/~BUN/"`
+    // (used by file URLs and the graph's internal keys). Match both.
+    const prefix_len = if (bun.strings.hasPrefixComptime(candidate, bp))
+        bp.len
+    else if (Environment.isWindows and bun.strings.hasPrefixComptime(candidate, bpp))
+        bpp.len
+    else
+        return null;
+
+    const tail = candidate[prefix_len..];
+    var scratch: bun.PathBuffer = undefined;
+    if (bpwds.len + tail.len > scratch.len) return null;
+    @memcpy(scratch[0..bpwds.len], bpwds);
+    @memcpy(scratch[bpwds.len..][0..tail.len], tail);
+    const rebuilt = scratch[0 .. bpwds.len + tail.len];
+    if (graph.find(rebuilt)) |file| return file.name;
+    return null;
+}
+
 /// Resolve a worker entry-point specifier to a path the module loader can
 /// consume. The returned slice is BORROWED — it aliases `str`, the standalone
 /// module graph, or the resolver's arena; the caller must NOT free it.
@@ -879,44 +922,79 @@ fn resolveEntryPointSpecifier(
         //   new Worker("./foo.cts") -> new Worker("./foo.js")
         //   new Worker("./foo.tsx") -> new Worker("./foo.js")
         //
-        if (bun.strings.hasPrefixComptime(str, "./") or bun.strings.hasPrefixComptime(str, "../")) try_from_extension: {
-            var pathbuf: bun.PathBuffer = undefined;
-            var base = str;
+        // This also handles absolute standalone paths (`/$bunfs/...`
+        // on POSIX, `B:/~BUN/...` on Windows) that are produced by
+        // `new Worker(new URL(spec, import.meta.url))` and
+        // `import.meta.resolve(...)`. Those can arrive either
+        // already containing the `root/` prefix the embedded graph
+        // uses, or missing it — resolve to a matching graph entry
+        // regardless.
+        try_from_extension: {
+            const is_relative = bun.strings.hasPrefixComptime(str, "./") or bun.strings.hasPrefixComptime(str, "../");
+            const is_standalone_abs = bun.StandaloneModuleGraph.isBunStandaloneFilePath(str);
+            if (!is_relative and !is_standalone_abs) {
+                break :try_from_extension;
+            }
 
-            base = bun.path.joinAbsStringBuf(bun.StandaloneModuleGraph.base_public_path_with_default_suffix, &pathbuf, &.{str}, .loose);
-            const extname = std.fs.path.extension(base);
+            var pathbuf: bun.PathBuffer = undefined;
+            var base_len: usize = 0;
+            if (is_relative) {
+                // Relative specifiers: join under `/$bunfs/root/` (the
+                // default suffix used for embedded files) so the ASCII
+                // layout in `pathbuf` matches what `graph.find` expects.
+                const joined = bun.path.joinAbsStringBuf(bun.StandaloneModuleGraph.base_public_path_with_default_suffix, &pathbuf, &.{str}, .loose);
+                base_len = joined.len;
+            } else {
+                // Absolute `/$bunfs/...` (or `B:/~BUN/...` on Windows)
+                // already in normalized form. Copy into `pathbuf` so we
+                // can mutate the extension below without touching the
+                // caller's slice.
+                if (str.len >= pathbuf.len) break :try_from_extension;
+                @memcpy(pathbuf[0..str.len], str);
+                base_len = str.len;
+            }
+
+            const extname = std.fs.path.extension(pathbuf[0..base_len]);
 
             // ./foo -> ./foo.js
             if (extname.len == 0) {
-                pathbuf[base.len..][0..3].* = ".js".*;
-                if (graph.find(pathbuf[0 .. base.len + 3])) |js_file| {
-                    return js_file.name;
-                }
-
+                if (base_len + 3 > pathbuf.len) break :try_from_extension;
+                pathbuf[base_len..][0..3].* = ".js".*;
+                const candidate = pathbuf[0 .. base_len + 3];
+                if (graph.find(candidate)) |js_file| return js_file.name;
+                if (findWithRootPrefix(graph, candidate)) |name| return name;
                 break :try_from_extension;
             }
 
             // ./foo.ts -> ./foo.js
             if (bun.strings.eqlComptime(extname, ".ts")) {
-                pathbuf[base.len - 3 .. base.len][0..3].* = ".js".*;
-                if (graph.find(pathbuf[0..base.len])) |js_file| {
-                    return js_file.name;
-                }
-
+                pathbuf[base_len - 3 .. base_len][0..3].* = ".js".*;
+                const candidate = pathbuf[0..base_len];
+                if (graph.find(candidate)) |js_file| return js_file.name;
+                if (findWithRootPrefix(graph, candidate)) |name| return name;
                 break :try_from_extension;
             }
 
             if (extname.len == 4) {
                 inline for (.{ ".tsx", ".jsx", ".mjs", ".mts", ".cts", ".cjs" }) |ext| {
                     if (bun.strings.eqlComptime(extname, ext)) {
-                        pathbuf[base.len - ext.len ..][0..".js".len].* = ".js".*;
-                        const as_js = pathbuf[0 .. base.len - ext.len + ".js".len];
-                        if (graph.find(as_js)) |js_file| {
-                            return js_file.name;
-                        }
+                        pathbuf[base_len - ext.len ..][0..".js".len].* = ".js".*;
+                        const as_js = pathbuf[0 .. base_len - ext.len + ".js".len];
+                        if (graph.find(as_js)) |js_file| return js_file.name;
+                        if (findWithRootPrefix(graph, as_js)) |name| return name;
                         break :try_from_extension;
                     }
                 }
+            }
+
+            // `.js` / `.cjs` / `.mjs` / anything else — for absolute
+            // standalone paths, try the original path with `root/`
+            // injected. This covers
+            // `new Worker(new URL("./foo.js", import.meta.url))` in
+            // standalone binaries, where `import.meta.resolve`
+            // currently returns a path missing the `root/` prefix.
+            if (is_standalone_abs) {
+                if (findWithRootPrefix(graph, pathbuf[0..base_len])) |name| return name;
             }
         }
     }

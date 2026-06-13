@@ -3,7 +3,7 @@
 //!
 //! The format is as follows:
 //!
-//! [WSTR:bin_path][u16'"'][u16:0](shebang?)[flags:u16]
+//! [WSTR:bin_path][u16'"'][u16:0](shebang?)[flags:u32]
 //!
 //! if shebang:
 //! [WSTR:program][u16:0][WSTR:args][u32:bin_path_byte_len][u32:arg_byte_len]
@@ -15,16 +15,23 @@ fn eqlComptime(a: []const u8, comptime b: []const u8) bool {
     return std.mem.eql(u8, a, b);
 }
 
-/// Relative to node_modules. Do not include slash
+/// Relative to node_modules. Do not include slash.
+/// When `is_absolute_target` is true, this is instead a full absolute
+/// Windows path (drive-letter or UNC) to the target executable — used for
+/// cross-volume installs where a `..`-relative path between the shim's
+/// directory and the target is impossible.
 bin_path: []const u16,
 /// Information found within the target file's shebang
 shebang: ?Shebang,
+/// When true, `bin_path` is an absolute path. The launcher will skip the
+/// `..`-relative reconstruction trick and use `bin_path` as-is.
+is_absolute_target: bool = false,
 
 /// Random numbers are chosen for validation purposes
 /// These arbitrary numbers will probably not show up in the other fields.
 /// This will reveal off-by-one mistakes.
-pub const VersionFlag = enum(u13) {
-    pub const current = .v5;
+pub const VersionFlag = enum(u28) {
+    pub const current = .v6;
 
     v1 = 5474,
     /// Fix bug where paths were not joined correctly
@@ -37,34 +44,46 @@ pub const VersionFlag = enum(u13) {
     v4 = 5477,
     /// Fixed bugs where passing arguments did not always work.
     v5 = 5478,
+    /// Added `is_absolute_target` flag. When set, `bin_path` is stored as an
+    /// absolute Windows path (with drive letter or UNC prefix) instead of the
+    /// usual `..`-stripped relative path. Needed when `BUN_INSTALL_BIN` and
+    /// the package store live on different drives, where a relative target is
+    /// impossible.
+    v6 = 5479,
     _,
 };
 
-pub const Flags = packed struct(u16) {
+pub const Flags = packed struct(u32) {
     // this is set if the shebang content is "node" or "bun"
     is_node_or_bun: bool,
     // this is for validation that the shim is not corrupt and to detect offset memory reads
     is_node: bool,
     // indicates if a shebang is present
     has_shebang: bool,
+    // indicates `bin_path` is an absolute Windows path. When set, the launcher
+    // must not use the `..`-relative reconstruction trick and instead treat the
+    // stored `bin_path` as the full absolute target path.
+    is_absolute_target: bool,
 
     version_tag: VersionFlag = VersionFlag.current,
 
     pub fn isValid(flags: Flags) bool {
-        const mask: u16 = @bitCast(Flags{
+        const mask: u32 = @bitCast(Flags{
             .is_node_or_bun = false,
             .is_node = false,
             .has_shebang = false,
-            .version_tag = @enumFromInt(std.math.maxInt(u13)),
+            .is_absolute_target = false,
+            .version_tag = @enumFromInt(std.math.maxInt(u28)),
         });
 
-        const compare_to: u16 = @bitCast(Flags{
+        const compare_to: u32 = @bitCast(Flags{
             .is_node_or_bun = false,
             .is_node = false,
             .has_shebang = false,
+            .is_absolute_target = false,
         });
 
-        return (@as(u16, @bitCast(flags)) & comptime mask) == comptime compare_to;
+        return (@as(u32, @bitCast(flags)) & comptime mask) == comptime compare_to;
     }
 };
 
@@ -237,6 +256,7 @@ pub fn encodeInto(options: @This(), buf: []u8) !void {
         .has_shebang = options.shebang != null,
         .is_node_or_bun = is_node_or_bun,
         .is_node = false,
+        .is_absolute_target = options.is_absolute_target,
     };
 
     if (options.shebang) |s| {

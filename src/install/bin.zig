@@ -861,43 +861,54 @@ pub const Bin = extern struct {
 
         /// Resolve the absolute target for a bin entry inside `package_dir`.
         ///
-        /// When redirected into a platform-specific optional dependency (native
-        /// binlink optimization), the platform package may lay the binary out
-        /// differently than the root package's `bin` field expects. esbuild
-        /// mirrors the path exactly (`bin/esbuild` in both) but other packages
-        /// ship the binary at the package root under the bin name (e.g.
-        /// `@anthropic-ai/claude-code` has `bin/claude.exe` in the root package
-        /// but `claude` at the root of `@anthropic-ai/claude-code-linux-x64`,
-        /// which has no `bin` field of its own).
+        /// Two orthogonal fallbacks are applied when the primary path does not
+        /// exist on disk:
         ///
-        /// Both candidates come from the root package's `bin` entry - its
-        /// value (`target`) and its key (`bin_name`):
-        ///   1. `<package_dir>/<target>` - the path from the root `bin` field
-        ///   2. `<package_dir>/<bin_name>` - the bin name at package root
+        /// 1. Native binlink redirect: when redirected into a platform-specific
+        ///    optional dependency (e.g. `@anthropic-ai/claude-code` ->
+        ///    `@anthropic-ai/claude-code-linux-x64`), the platform package may
+        ///    lay the binary out differently than the root package's `bin`
+        ///    field expects. Try `<package_dir>/<bin_name>`.
         ///
-        /// Falls through to (1) when nothing exists so the existing
-        /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
+        /// 2. Hoisted `node_modules/...` target: when a package has bin entries
+        ///    pointing into its own `node_modules/` (e.g.
+        ///    `"bin": {"foo": "node_modules/@x/y/bin.js"}`), the dependency
+        ///    may be hoisted to the parent `node_modules` directory, so the
+        ///    nested path doesn't exist. Resolve relative to the parent
+        ///    `node_modules` where hoisted packages live.
+        ///
+        /// Falls through to the primary `<package_dir>/<target>` path when
+        /// nothing exists so the existing `skipped_due_to_missing_bin`
+        /// retry-without-redirect path still fires.
         fn resolveBinTarget(this: *const Linker, package_dir: []const u8, target: []const u8, bin_name: []const u8) [:0]const u8 {
-            const primary = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+            if (this.isNativeBinlinkRedirect()) {
+                const primary = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                if (bun.sys.exists(primary)) return primary;
 
-            if (!this.isNativeBinlinkRedirect()) {
-                return primary;
-            }
-
-            if (bun.sys.exists(primary)) {
-                return primary;
-            }
-
-            if (bin_name.len > 0) {
-                const at_root = path.joinAbsStringZ(package_dir, &.{bin_name}, .auto);
-                if (bun.sys.exists(at_root)) {
-                    return at_root;
+                if (bin_name.len > 0) {
+                    const at_root = path.joinAbsStringZ(package_dir, &.{bin_name}, .auto);
+                    if (bun.sys.exists(at_root)) return at_root;
                 }
             }
 
-            // Nothing found; return the primary so `linkBinOrCreateShim` sets
-            // `skipped_due_to_missing_bin` and the caller retries without the
-            // redirect.
+            // Hoisting fallback: bin target like "node_modules/@x/y/bin.js"
+            // resolves against the parent `node_modules` directory where
+            // hoisted packages live. Accept both separators and a leading `./`.
+            const hoisted_rel = strings.withoutPrefixIfPossibleComptime(target, "node_modules/") orelse
+                strings.withoutPrefixIfPossibleComptime(target, "./node_modules/") orelse
+                strings.withoutPrefixIfPossibleComptime(target, "node_modules\\") orelse
+                strings.withoutPrefixIfPossibleComptime(target, ".\\node_modules\\");
+
+            if (hoisted_rel) |rel| if (rel.len > 0) {
+                const primary = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                if (bun.sys.exists(primary)) return primary;
+                const nm_path = strings.withoutTrailingSlash(this.target_node_modules_path.slice());
+                const hoisted = path.joinAbsStringZ(nm_path, &.{rel}, .auto);
+                if (bun.sys.exists(hoisted)) return hoisted;
+            };
+
+            // Nothing matched; recompute so the caller gets a stable path
+            // after prior exists()/join calls clobbered the threadlocal buffer.
             return path.joinAbsStringZ(package_dir, &.{target}, .auto);
         }
 
@@ -1014,7 +1025,7 @@ pub const Bin = extern struct {
                     if (target.len == 0) return;
 
                     // for normalizing `target`
-                    const abs_target_dir = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    const abs_target_dir = this.resolveBinTarget(package_dir, target, "");
 
                     var target_dir = bun.openDirAbsolute(abs_target_dir) catch |err| {
                         if (err == error.ENOENT) {
@@ -1108,9 +1119,14 @@ pub const Bin = extern struct {
                     const target = this.bin.value.dir.slice(this.string_buf);
                     if (target.len == 0) return;
 
-                    const abs_target_dir = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    const abs_target_dir = this.resolveBinTarget(package_dir, target, "");
 
                     var target_dir = bun.openDirAbsolute(abs_target_dir) catch |err| {
+                        if (err == error.ENOENT) {
+                            // mirror link() .dir: a missing bin directory is
+                            // benign during uninstall too (nothing to remove).
+                            return;
+                        }
                         this.err = err;
                         return;
                     };

@@ -424,6 +424,7 @@ declare module "bun:ffi" {
     ["cstring"]: FFIType.cstring;
     ["function"]: FFIType.pointer; // for now
     ["usize"]: FFIType.uint64_t; // for now
+    ["size_t"]: FFIType.uint64_t; // for now
     ["callback"]: FFIType.pointer; // for now
     ["napi_env"]: FFIType.napi_env;
     ["napi_value"]: FFIType.napi_value;
@@ -609,13 +610,11 @@ declare module "bun:ffi" {
    *     },
    *   },
    * });
-   * // "Hello, World!"
-   * console.log(hello());
+   * console.log(`${hello()}`); // "Hello, World!"
    * ```
    *
    * `./hello.c`:
    * ```c
-   * #include <stdio.h>
    * const char* hello() {
    *   return "Hello, World!";
    * }
@@ -709,7 +708,7 @@ declare module "bun:ffi" {
    * ```js
    * import {CFunction} from 'bun:ffi';
    *
-   * const getVersion = new CFunction({
+   * const getVersion = CFunction({
    *   returns: "cstring",
    *   args: [],
    *   ptr: myNativeLibraryGetVersion,

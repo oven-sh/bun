@@ -8,7 +8,8 @@
 #![feature(thread_local)]
 //! TODO: OWNERSHIP — almost every byte-slice field in this module has
 //! mixed/ambiguous ownership. Strings are sometimes literals, sometimes heap
-//! copies, sometimes slices into `Source.contents` or a `StringBuilder` arena.
+//! copies, sometimes slices into `Source.contents` or a packed buffer
+//! anchored in `Log::owned_strings`.
 //! They are kept as `&'static [u8]` to avoid lifetime params; a real ownership
 //! story (likely `bun_core::String` or a `'source` lifetime threaded through
 //! `Location`/`Data`/`Msg`) is still needed.
@@ -19,21 +20,7 @@ use std::borrow::Cow;
 // `bun_alloc::AllocError` removed — the `add_*` / `clone` family is now
 // infallible (`Vec::push` / `io::Write` on `Vec<u8>` cannot fail in Rust).
 use bun_core::Output;
-
-// TODO: swap to `bun_core::StringBuilder` once `clone_with_builder` is
-// reshaped to use `append_raw` (canonical's `append` borrows `&mut self`, which
-// breaks the `'static` slice pass-through this stub fakes).
-#[derive(Default)]
-pub struct StringBuilder;
-impl StringBuilder {
-    pub fn count(&mut self, s: &[u8]) {
-        let _ = s;
-    }
-    pub fn append(&mut self, s: &'static [u8]) -> &'static [u8] {
-        s
-    }
-    pub fn allocate(&mut self) {}
-}
+use bun_core::StringBuilder;
 
 // Discriminants are wire-stable for serialization.
 #[repr(u8)]
@@ -698,7 +685,8 @@ pub struct Location {
     // borrowed arm covers the common case where the slice points into
     // arena-owned source text.
     pub file: Cow<'static, [u8]>,
-    pub namespace: Str,
+    /// `Cow` for the same reason as `file`; see [`Location::make_owned`].
+    pub namespace: Cow<'static, [u8]>,
     /// Text on the line, avoiding the need to refetch the source code
     pub line_text: Option<Cow<'static, [u8]>>,
     /// Number of bytes this location should highlight.
@@ -717,6 +705,27 @@ pub struct Location {
     pub column: i32,
 }
 
+/// Deep-dupe a `namespace`, interning the common static values so
+/// `Location::clone` stays allocation-free on the hot path.
+fn dupe_namespace(ns: &[u8]) -> Cow<'static, [u8]> {
+    match ns {
+        b"file" => Cow::Borrowed(b"file"),
+        b"" => Cow::Borrowed(b""),
+        other => Cow::Owned(other.to_vec()),
+    }
+}
+
+/// Force into the `Owned` arm (interning the common static namespaces).
+fn own_cow(c: &mut Cow<'static, [u8]>) {
+    if let Cow::Borrowed(b) = *c {
+        *c = match b {
+            b"" => Cow::Borrowed(b""),
+            b"file" => Cow::Borrowed(b"file"),
+            other => Cow::Owned(other.to_vec()),
+        };
+    }
+}
+
 // NOT `#[derive(Clone)]`. `file` / `line_text` are
 // `Cow<'static, [u8]>` whose `Borrowed` arm may carry a lifetime-erased view
 // into `Source.contents` (see `init_or_null`, `css_parser.rs`, `error.rs`,
@@ -728,7 +737,7 @@ impl Clone for Location {
     fn clone(&self) -> Self {
         Location {
             file: Cow::Owned(self.file.to_vec()),
-            namespace: self.namespace,
+            namespace: dupe_namespace(&self.namespace),
             line: self.line,
             column: self.column,
             length: self.length,
@@ -742,7 +751,7 @@ impl Default for Location {
     fn default() -> Self {
         Location {
             file: Cow::Borrowed(b""),
-            namespace: b"file",
+            namespace: Cow::Borrowed(b"file"),
             line_text: None,
             length: 0,
             offset: 0,
@@ -764,10 +773,10 @@ impl Location {
     }
 
     pub fn count(&self, builder: &mut StringBuilder) {
-        builder.count(self.file.as_ref().into_str());
-        builder.count(self.namespace);
+        builder.count(&self.file);
+        builder.count(&self.namespace);
         if let Some(text) = &self.line_text {
-            builder.count(text.as_ref().into_str());
+            builder.count(text);
         }
     }
 
@@ -778,21 +787,38 @@ impl Location {
         <Self as Clone>::clone(self)
     }
 
-    pub fn clone_with_builder(&self, _string_builder: &mut StringBuilder) -> Location {
-        // The local
-        // `StringBuilder` stub above is a no-op that returns its input, so a
-        // `Cow::Borrowed(append(s))` would alias `self`'s storage and dangle
-        // after `self.msgs.clear()` in `append_to_with_recycled`. Deep-copy
-        // here instead — same end-state as the real builder, just without the
-        // single-buffer packing.
+    /// Copy this location's strings into `builder`'s buffer; the returned
+    /// `Location` borrows that buffer. Caller contract: every field was
+    /// [`Self::count`]ed into the same builder before `allocate()`, and the
+    /// buffer must outlive the returned `Location`.
+    pub fn clone_with_builder(&self, builder: &mut StringBuilder) -> Location {
+        // SAFETY: per the caller contract, the builder's buffer outlives the
+        // returned `Location` and the bytes were reserved by `Self::count`.
+        let (file, namespace, line_text) = unsafe {
+            (
+                builder.append_raw(&self.file),
+                builder.append_raw(&self.namespace),
+                self.line_text.as_deref().map(|t| builder.append_raw(t)),
+            )
+        };
         Location {
-            file: Cow::Owned(self.file.to_vec()),
-            namespace: self.namespace,
+            file: Cow::Borrowed(file),
+            namespace: Cow::Borrowed(namespace),
             line: self.line,
             column: self.column,
             length: self.length,
-            line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
+            line_text: line_text.map(Cow::Borrowed),
             offset: self.offset,
+        }
+    }
+
+    /// Force every string field into owned storage so this `Location` can
+    /// outlive whatever backed its borrowed views. See [`Msg::make_owned`].
+    pub fn make_owned(&mut self) {
+        own_cow(&mut self.file);
+        own_cow(&mut self.namespace);
+        if let Some(line_text) = &mut self.line_text {
+            own_cow(line_text);
         }
     }
 
@@ -819,7 +845,7 @@ impl Location {
     ) -> Location {
         Location {
             file: Cow::Borrowed(file),
-            namespace,
+            namespace: Cow::Borrowed(namespace),
             line,
             column,
             length: length as usize,
@@ -852,7 +878,7 @@ impl Location {
             if r.is_empty() {
                 return Some(Location {
                     file: Cow::Borrowed(source.path.text),
-                    namespace: source.path.namespace,
+                    namespace: Cow::Borrowed(source.path.namespace),
                     line: -1,
                     column: -1,
                     length: 0,
@@ -872,7 +898,7 @@ impl Location {
 
             return Some(Location {
                 file: Cow::Borrowed(source.path.text),
-                namespace: source.path.namespace,
+                namespace: Cow::Borrowed(source.path.namespace),
                 line: usize2loc(data.line_count).start,
                 column: usize2loc(data.column_count).start,
                 length: if r.len > -1 {
@@ -962,19 +988,11 @@ impl Data {
         }
     }
 
+    /// See [`Location::clone_with_builder`] for the caller contract.
     pub fn clone_with_builder(&self, builder: &mut StringBuilder) -> Data {
         Data {
-            text: if !self.text.is_empty() {
-                // The local `StringBuilder`
-                // is a no-op stub (returns its input), so a bare `Cow::clone`
-                // would leave a `Borrowed` arm aliasing `self`'s storage and
-                // dangle after `self.msgs.clear()` in
-                // `append_to_with_recycled`. Deep-copy — same end-state as the
-                // real builder, just without the single-buffer packing.
-                Cow::Owned(self.text.to_vec())
-            } else {
-                Cow::Borrowed(b"")
-            },
+            // SAFETY: same contract as `Location::clone_with_builder`.
+            text: Cow::Borrowed(unsafe { builder.append_raw(&self.text) }),
             location: self
                 .location
                 .as_ref()
@@ -986,6 +1004,14 @@ impl Data {
         builder.count(&self.text);
         if let Some(loc) = &self.location {
             loc.count(builder);
+        }
+    }
+
+    /// See [`Msg::make_owned`].
+    pub fn make_owned(&mut self) {
+        own_cow(&mut self.text);
+        if let Some(loc) = &mut self.location {
+            loc.make_owned();
         }
     }
 
@@ -1228,22 +1254,30 @@ impl Msg {
         }
     }
 
-    pub fn clone_with_builder(&self, notes: &mut [Data], builder: &mut StringBuilder) -> Msg {
+    /// See [`Location::clone_with_builder`] for the caller contract.
+    /// `Metadata::Resolve`'s `specifier` stays valid: it is offsets into
+    /// `data.text`, which is copied byte-for-byte.
+    pub fn clone_with_builder(&self, builder: &mut StringBuilder) -> Msg {
         Msg {
             kind: self.kind,
             data: self.data.clone_with_builder(builder),
             metadata: self.metadata,
-            notes: if !self.notes.is_empty() {
-                'brk: {
-                    for (i, note) in self.notes.iter().enumerate() {
-                        notes[i] = note.clone_with_builder(builder);
-                    }
-                    break 'brk notes[0..self.notes.len()].to_vec().into_boxed_slice();
-                }
-            } else {
-                Box::default()
-            },
+            notes: self
+                .notes
+                .iter()
+                .map(|note| note.clone_with_builder(builder))
+                .collect(),
             redact_sensitive_information: self.redact_sensitive_information,
+        }
+    }
+
+    /// Deep-copy every borrowed string into owned storage. Call when a `Msg`
+    /// escapes its `Log` into a JS-visible object — borrowed views into the
+    /// Log's `owned_strings` buffer would dangle once the Log drops.
+    pub fn make_owned(&mut self) {
+        self.data.make_owned();
+        for note in self.notes.iter_mut() {
+            note.make_owned();
         }
     }
 
@@ -1513,8 +1547,11 @@ pub struct Log {
     /// that came from transient buffers (e.g. native-plugin C strings): a
     /// side-vector of `Box<[u8]>` owned by the `Log`; [`Log::dupe`] returns a
     /// lifetime-erased borrow into the just-pushed box. The borrow is valid
-    /// for the life of `self` because `Box<[u8]>` is heap-stable across `Vec`
-    /// growth. See PORTING.md §Allocators (arena pattern).
+    /// until the next [`Log::reset`]/[`Log::clear_and_free`] (which clear
+    /// this vector) or until the `Log` drops; `Box<[u8]>` is heap-stable
+    /// across `Vec` growth, and every `dupe` result lives in `self.msgs`,
+    /// which those methods clear first. See PORTING.md §Allocators (arena
+    /// pattern).
     pub owned_strings: Vec<Box<[u8]>>,
 
     /// Incremental line/column scanner for the messages this log creates, so
@@ -1547,18 +1584,24 @@ impl Default for Log {
 impl Log {
     /// Copy `s` into
     /// storage owned by this `Log` and return a `&'static [u8]` view. The
-    /// returned slice is valid for as long as `self` lives (the box is never
-    /// moved out of `owned_strings`); `'static` is a lifetime erasure matching
-    /// the `Str` alias used by `Location`/`Msg`. NOT a leak — the bytes free
-    /// when the `Log` drops.
+    /// returned slice is valid until the next [`Log::reset`] or
+    /// [`Log::clear_and_free`] (which clear `owned_strings`), or until the
+    /// `Log` drops; `'static` is a lifetime erasure matching the `Str` alias
+    /// used by `Location`/`Msg`. Sound because every `dupe` result is only
+    /// ever stored in `self.msgs`, which those methods clear in the same
+    /// call before releasing the backing boxes. NOT a leak — the bytes free
+    /// on clear or drop.
     pub fn dupe(&mut self, s: &[u8]) -> &'static [u8] {
         if s.is_empty() {
             return b"";
         }
         let boxed: Box<[u8]> = Box::from(s);
-        // SAFETY: ARENA — `boxed` is about to be pushed into `self.owned_strings`
-        // and never removed; its heap allocation is stable across the `Vec`'s
-        // growth, so the returned slice is valid for the life of `self`.
+        // SAFETY: ARENA — `boxed` is about to be pushed into `self.owned_strings`,
+        // whose boxes stay alive until `reset()`/`clear_and_free()` clear it or
+        // the `Log` drops; its heap allocation is stable across the `Vec`'s
+        // growth. The returned slice is only stored in `self.msgs`, which those
+        // methods clear before releasing the boxes, so it never outlives its
+        // backing storage.
         let view: &'static [u8] = unsafe { bun_collections::detach_lifetime(&boxed[..]) };
         self.owned_strings.push(boxed);
         view
@@ -1656,6 +1699,9 @@ impl Log {
 
     pub fn reset(&mut self) {
         self.msgs.clear();
+        // The packed buffers only back `self.msgs`; release them too, or a
+        // long-lived Log accumulates one buffer per appended log forever.
+        self.owned_strings.clear();
         self.warnings = 0;
         self.errors = 0;
         // Drop the per-source scan cache with the messages it was built for;
@@ -1781,32 +1827,39 @@ impl Log {
     }
 
     pub fn clone_to_with_recycled(&mut self, other: &mut Log, recycled: bool) {
-        let dest_start = other.msgs.len();
-        other.msgs.extend(self.msgs.iter().map(Msg::clone));
-        other.warnings += self.warnings;
-        other.errors += self.errors;
-
-        if recycled {
-            let mut string_builder = StringBuilder;
-            let mut notes_count: usize = 0;
+        if recycled && !self.msgs.is_empty() {
+            // `self`'s messages may borrow recycled source storage: pack every
+            // string into one buffer anchored in `other.owned_strings` so the
+            // cloned messages' borrowed views stay valid until `other` is
+            // `reset()`/`clear_and_free()`'d (which clear `msgs` before
+            // releasing `owned_strings`) or dropped.
+            let mut string_builder = StringBuilder::default();
             for msg in &self.msgs {
                 msg.count(&mut string_builder);
-                notes_count += msg.notes.len();
             }
-
-            string_builder.allocate();
-            let mut notes_buf = vec![Data::default(); notes_count];
-            let mut note_i: usize = 0;
-
-            // Index instead of zipping `self.msgs` with the tail of
-            // `other.msgs` to satisfy borrowck.
-            for (k, msg) in self.msgs.iter().enumerate() {
-                let j = dest_start + k;
-                other.msgs[j] =
-                    msg.clone_with_builder(&mut notes_buf[note_i..], &mut string_builder);
-                note_i += msg.notes.len();
+            if string_builder.cap > 0 {
+                string_builder
+                    .allocate()
+                    .expect("infallible: Box::new_uninit_slice aborts on OOM");
+                // Clone into a local Vec first so that on unwind `other` never
+                // observes messages whose backing buffer is missing.
+                let mut cloned_msgs = Vec::with_capacity(self.msgs.len());
+                for msg in &self.msgs {
+                    cloned_msgs.push(msg.clone_with_builder(&mut string_builder));
+                }
+                other.owned_strings.push(string_builder.move_to_slice());
+                other.msgs.extend(cloned_msgs);
+            } else {
+                // Every string is empty (nothing can dangle), and `allocate(0)`
+                // would trip `StringBuilder::writable()`'s debug_assert, so
+                // deep-clone instead.
+                other.msgs.extend(self.msgs.iter().map(Msg::clone));
             }
+        } else {
+            other.msgs.extend(self.msgs.iter().map(Msg::clone));
         }
+        other.warnings += self.warnings;
+        other.errors += self.errors;
     }
 
     pub fn append_to_with_recycled(&mut self, other: &mut Log, recycled: bool) {
@@ -1827,6 +1880,9 @@ impl Log {
     pub fn clear_and_free(&mut self) {
         self.msgs.clear();
         self.msgs.shrink_to_fit();
+        // See `reset` — the packed buffers go with the messages.
+        self.owned_strings.clear();
+        self.owned_strings.shrink_to_fit();
         // self.warnings = 0;
         // self.errors = 0;
         // See `reset` — the scan cache goes with the messages.

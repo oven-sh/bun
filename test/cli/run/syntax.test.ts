@@ -338,3 +338,28 @@ describe.concurrent("exit code 0", () => {
     });
   }
 });
+
+// Diagnostics are copied out of the per-parse log into a packed buffer owned
+// by the destination log before the recycled source buffer is reused. Assert
+// the complete diagnostic (message, note, file path, echoed source line)
+// survives that transfer.
+test("parse error with a note survives recycled source buffers", async () => {
+  const fixturePath = tempDirWithFiles("recycled-log-note", {
+    "bad.js": `const xyzDuplicateName = 1;\nconst xyzDuplicateName = 2;\n`,
+  });
+  await using proc = Bun.spawn([bunExe(), "./bad.js"], {
+    env: bunEnv,
+    cwd: fixturePath,
+    stdout: "ignore",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain('"xyzDuplicateName" has already been declared');
+  expect(stderr).toContain('"xyzDuplicateName" was originally declared here');
+  expect(stderr).toContain("bad.js");
+  // Echoed source lines come from `Location.line_text`.
+  expect(stderr).toContain("const xyzDuplicateName = 2;");
+  expect(stderr).toContain("const xyzDuplicateName = 1;");
+  expect(exitCode).not.toBe(0);
+});

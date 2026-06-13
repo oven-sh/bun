@@ -2541,6 +2541,34 @@ describe("bundler", () => {
       `);
     },
   });
+  // An empty import specifier used to panic while building the resolve-error
+  // message instead of reporting a normal "Could not resolve" diagnostic.
+  itBundled("edgecase/ImportEmptyStringDoesNotPanic", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import "";
+        console.log("unreachable");
+      `,
+    },
+    bundleErrors: {
+      "/entry.ts": ['Could not resolve: ""'],
+    },
+  });
+  // A TOML parse error always takes the recycled-log path, where diagnostics
+  // are packed into a buffer owned by the destination log before the parse
+  // task's source buffers are reused. Assert the message survives that copy.
+  itBundled("edgecase/TomlErrorMessageSurvivesLogTransfer", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import config from "./config.toml";
+        console.log(config);
+      `,
+      "/config.toml": `duplicated_key_name = 1\nduplicated_key_name = 2\n`,
+    },
+    bundleErrors: {
+      "/config.toml": ["Cannot redefine key 'duplicated_key_name'"],
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

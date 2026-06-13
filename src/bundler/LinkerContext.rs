@@ -206,6 +206,12 @@ pub struct LinkerContext<'a> {
     pub framework: Option<bun_ptr::BackRef<bake::Framework>>,
 
     pub mangled_props: MangledProps,
+
+    /// Import item symbols reached through an `import defer` namespace, mapped
+    /// to the target module's `__esm` wrapper symbol. Built single-threaded in
+    /// `scan_imports_and_exports`, read-only during chunk generation (passed to
+    /// the printer so each reference prints as `(init_foo(), <symbol>)`).
+    pub deferred_import_inits: js_printer::DeferredImportInits,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -239,6 +245,7 @@ impl<'a> Default for LinkerContext<'a> {
             dev_server: None,
             framework: None,
             mangled_props: Default::default(),
+            deferred_import_inits: Default::default(),
         }
     }
 }
@@ -2137,6 +2144,16 @@ impl<'a> LinkerContext<'a> {
                     return Ok(true);
                 }
 
+                // `import defer`: evaluation is triggered at the first property
+                // access on the namespace (the printer emits `(init_foo(), x)`),
+                // so don't call the wrapper eagerly here.
+                if record
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::PHASE_DEFER)
+                {
+                    return Ok(true);
+                }
+
                 // Replace the statement with a call to "init()"
                 let init_call = Expr::init(
                     E::Call {
@@ -2207,6 +2224,14 @@ impl<'a> LinkerContext<'a> {
             // SAFETY: `self.mangled_props` is not mutated during printing; detached borrow
             // outlives only this call (see above).
             unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
+        let deferred_import_inits: Option<&js_printer::DeferredImportInits> =
+            if self.deferred_import_inits.count() > 0 {
+                // SAFETY: built single-threaded during linking and not mutated during
+                // printing; detached borrow outlives only this call (see above).
+                Some(unsafe { bun_ptr::detach_lifetime_ref(&self.deferred_import_inits) })
+            } else {
+                None
+            };
 
         let print_options = js_printer::Options {
             bundling: true,
@@ -2256,6 +2281,7 @@ impl<'a> LinkerContext<'a> {
                 None
             },
             mangled_props: Some(mangled_props),
+            deferred_import_inits,
             ..Default::default()
         };
 

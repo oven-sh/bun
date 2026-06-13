@@ -139,11 +139,11 @@ describe("bundler", () => {
   });
 
   // `import defer * as ns from "..."` must not break bytecode generation.
-  // The bundler inlines the deferred module into the entry chunk (documented
-  // out-of-scope limitation — same as esbuild), so the defer semantics are
-  // lost in the compiled output; this test verifies that the syntax is
-  // accepted by the bundler parser, the resulting source bytecode-compiles
-  // cleanly in JSC, and the compiled binary loads from the bytecode cache.
+  // The bundler lowers the deferred module to a lazy `__esm` wrapper that is
+  // evaluated on the first property access, so the deferred module's side
+  // effects run after the importer's own statements. This test verifies that
+  // the lowered output keeps those semantics, bytecode-compiles cleanly in
+  // JSC, and the compiled binary loads from the bytecode cache.
   for (const format of ["cjs", "esm"] as const) {
     itBundled(`compile/ImportDeferBytecode+${format}`, {
       compile: true,
@@ -161,7 +161,7 @@ describe("bundler", () => {
         `,
       },
       run: {
-        stdout: "dep evaluated\nbefore\nvalue: 42",
+        stdout: "before\ndep evaluated\nvalue: 42",
         env: {
           BUN_JSC_verboseDiskCache: "1",
         },

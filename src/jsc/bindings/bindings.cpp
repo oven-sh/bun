@@ -5630,6 +5630,74 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     properties.releaseData();
 }
 
+// Enumerate a value's own *enumerable* string and symbol properties in spec
+// order, without walking the prototype chain. Unlike forEachProperty this
+// excludes DontEnum properties, so a function's intrinsic `name`/`length`/
+// `prototype` are skipped while user-assigned properties are visited. Used to
+// print `[Function: x] { ... }` / `[class X] { ... }` the way Node's
+// util.inspect does.
+extern "C" void JSC__JSValue__forEachPropertyEnumerableOwn(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    JSC::JSObject* object = value.getObject();
+    if (!object)
+        return;
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    {
+        JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return;
+        }
+    }
+
+    auto clientData = WebCore::clientData(vm);
+
+    for (const auto& property : properties.data()->propertyNameVector()) {
+        if (property.isNull()) [[unlikely]]
+            continue;
+
+        // ignore constructor and the internal native-pointer slot
+        if (property == vm.propertyNames->constructor || clientData->builtinNames().bunNativePtrPrivateName() == property)
+            continue;
+
+        JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+        if (!object->getPropertySlot(globalObject, property, slot)) {
+            (void)scope.tryClearException();
+            continue;
+        }
+        (void)scope.tryClearException();
+
+        JSC::JSValue propertyValue = jsUndefined();
+        if (slot.isAccessor()) {
+            // If we can't use getPureResult, let's at least say it was a [Getter]
+            if (!slot.isCacheableGetter()) {
+                propertyValue = slot.getterSetter();
+            } else {
+                propertyValue = slot.getPureResult();
+            }
+        } else {
+            propertyValue = slot.getValue(globalObject, property);
+        }
+
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            propertyValue = jsUndefined();
+        }
+
+        const WTF::StringImpl* name = property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string().impl();
+        ZigString key = toZigString(name);
+
+        JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
+        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), property.isPrivateName());
+    }
+    properties.releaseData();
+}
+
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isConstructor(JSC::EncodedJSValue JSValue0)
 {
     JSValue value = JSValue::decode(JSValue0);

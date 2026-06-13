@@ -22,5 +22,8 @@ test("Printing errors does not leak", () => {
   console.log(`RSS increased by ${diff} MB`);
   // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
   // retention inflate RSS even when nothing is leaking.
-  expect(diff, `RSS grew by ${diff} MB after ${perBatch * repeat} iterations`).toBeLessThan(isASAN ? 400 : 10);
+  // Bun.inspect(Error) reaches ModuleLoader::reset_arena via the ZigException
+  // stack-remap path, so the 8 MiB retain-with-limit arena policy raises the
+  // measured delta.
+  expect(diff, `RSS grew by ${diff} MB after ${perBatch * repeat} iterations`).toBeLessThan(isASAN ? 400 : 20);
 }, 10_000);

@@ -1188,6 +1188,20 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
             for_each_fs_async_op!(__fs_destroy);
             true
         }
+        // Deferred napi finalizers enqueued by a GC that the loop never got
+        // to drain. Running the addon callback this late is not safe (it may
+        // call back into JS), so drop the box without dispatching — same
+        // policy as `NapiFinalizerTask::schedule`'s shutdown branch. The drop
+        // releases the `Ref<NapiEnv>` while the env is still alive (we run
+        // before `destructOnExit`); the addon's external data is reclaimed by
+        // the OS at process exit.
+        task_tag::NapiFinalizerTask => {
+            // SAFETY: `task.ptr` is the `Box<NapiFinalizerTask>` from
+            // `NapiFinalizerTask::schedule` (`heap::into_raw`); the loop will
+            // never dispatch it, so we hold the sole reference.
+            drop(unsafe { bun_core::heap::take(task.ptr.cast::<NapiFinalizerTask>()) });
+            true
+        }
         // Re-queued by the caller; the box stays reachable from the
         // static-rooted VM. Dispatching the type-erased `AnyTask` callback
         // is not generally safe at shutdown (e.g. `AsyncModule::on_done`,

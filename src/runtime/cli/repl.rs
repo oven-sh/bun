@@ -251,7 +251,10 @@ impl History {
             sys::Result::Err(_) => return Ok(()),
         };
 
-        for line in content.split(|b: &u8| *b == b'\n') {
+        for mut line in content.split(|b: &u8| *b == b'\n') {
+            if line.last() == Some(&b'\r') {
+                line = &line[..line.len() - 1];
+            }
             if !line.is_empty() {
                 self.entries.push(Box::<[u8]>::from(line));
             }

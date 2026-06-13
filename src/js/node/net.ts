@@ -87,6 +87,27 @@ function endNT(socket, callback, err) {
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
 }
+// The native layer reported the connection closed. The socket is built with
+// `autoDestroy: true`, but autoDestroy only runs `_destroy` (which emits
+// `'close'`) once *both* halves of the Duplex finish. That never happens when
+// the fd is gone but a half is stuck: a paused/unpiped readable never consumes
+// the queued EOF, and a writable holding backpressure can never flush it to the
+// dead peer. The socket then lingers as a zombie (`destroyed` false) — `'close'`
+// never fires, `server._connections` never decrements so `server.close()`
+// hangs, and a peer that keeps the fd hot spins the loop.
+//
+// Force the teardown with `destroy()`, deferred to a `nextTick` so a
+// cleanly-ending socket still emits its pending `'end'` first (and has usually
+// auto-destroyed by then, making this a no-op). Deliberately pass no error: the
+// native `error` handler already surfaces real read errors, and the passive
+// peer close that lands here is benign (a post-response RST, a keep-alive idle
+// close). Forcing an `'error'` from it would turn every such close fatal and
+// break HTTP/fetch/WebSocket/h2 callers that tolerate it.
+function destroyAfterClose(self) {
+  if (!self.destroyed) {
+    process.nextTick(destroyNT, self);
+  }
+}
 function detachSocket(self) {
   if (!self) self = this;
   self._handle = null;
@@ -151,6 +172,7 @@ const SocketHandlers: SocketHandler = {
     detachSocket(self);
     SocketEmitEndNT(self, err);
     self.data = null;
+    destroyAfterClose(self);
   },
   data(socket, buffer) {
     const { data: self } = socket;
@@ -323,6 +345,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         SocketEmitEndNT(data, err);
         data.data = null;
         socket[owner_symbol] = null;
+        destroyAfterClose(data);
       }
     }
   },
@@ -544,11 +567,11 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (err) $debug(err);
     if (self[kclosed]) return;
     self[kclosed] = true;
-    // TODO: should we be doing something with err?
     self[kended] = true;
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
     self.read(0);
+    destroyAfterClose(self);
   },
   handshake(socket, success, verifyError) {
     $debug("Bun.Socket handshake");

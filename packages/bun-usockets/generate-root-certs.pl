@@ -273,7 +273,8 @@ while (<TXT>) {
     }
     # now scan the trust part to determine how we should trust this cert
     while (<TXT>) {
-      last if (/^#/);
+      last if (/^\s*$/);
+      next if (/^#/);
       if (/^CKA_TRUST_([A-Z_]+)\s+CK_TRUST\s+CKT_NSS_([A-Z_]+)\s*$/) {
         if ( !is_in_list($1,@valid_mozilla_trust_purposes) ) {
           report "Warning: Unrecognized trust purpose for cert: $caname. Trust purpose: $1. Trust Level: $2";

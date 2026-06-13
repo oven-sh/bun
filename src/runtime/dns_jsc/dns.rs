@@ -264,7 +264,11 @@ pub(super) mod lib_info {
                         c.put(slot);
                     });
                 }
-                // Drop the KeepAlive + resolver ref that `GetAddrInfoRequest.init` took.
+                // Release the caching ref from init(); the completion callback
+                // that would normally release it never runs.
+                if let Some(resolver) = (*request).resolver_for_caching.take() {
+                    resolver.deref();
+                }
                 DNSLookup::destroy(&raw mut (*request).head);
                 drop(bun_core::heap::take(request));
             }
@@ -475,9 +479,12 @@ pub(super) mod lib_uv_backend {
                 // or UV_ENOMEM). Route the error through the same path the async
                 // completion would have taken so the pending-cache slot is released
                 // and the promise is rejected with a DNSException.
-                if let Some(resolver) = (*request).resolver_for_caching {
+                if let Some(resolver) = (*request).resolver_for_caching.take() {
+                    let resolver_ptr = resolver.as_ptr();
+                    // Guard keeps the Resolver alive past the drain, which frees `*request`.
+                    let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                     if (*request).cache.pending_cache() {
-                        (*resolver).drain_pending_host_native(
+                        (*resolver_ptr).drain_pending_host_native(
                             (*request).cache.pos_in_pending(),
                             (*request).head.global_this(),
                             rc.int(),
@@ -592,8 +599,8 @@ pub trait CAresRecordType: Sized {
 }
 
 pub struct ResolveInfoRequest<T: CAresRecordType> {
-    // TODO: should be Option<&'a Resolver> (struct gets <'a>); raw ptr until reconciled with intrusive RC
-    pub resolver_for_caching: Option<*mut Resolver>,
+    /// SHARED — request's own ref, taken in `init()`, released on the completion path (not on Drop).
+    pub resolver_for_caching: Option<bun_ptr::IntrusiveRc<Resolver>>,
     pub hash: u64,
     pub cache: CacheConfig,
     pub head: CAresLookup<T>,
@@ -644,7 +651,8 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
-            resolver_for_caching: resolver,
+            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+            resolver_for_caching: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
             hash,
             cache: CacheConfig::default(),
             head: CAresLookup {
@@ -666,7 +674,6 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         if let LookupCacheHit::New(new) = cache {
             // SAFETY: `new` is &mut into resolver's HiveArray buffer
             unsafe {
-                (*request).resolver_for_caching = resolver;
                 let pos = (*resolver.unwrap())
                     .pending_cache_for::<T>(cache_field)
                     .index_of(new)
@@ -686,17 +693,21 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
     ) {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
-            if let Some(resolver) = (*this).resolver_for_caching {
-                scopeguard::defer! { (*resolver).request_completed() };
+            if let Some(resolver) = (*this).resolver_for_caching.take() {
+                let resolver_ptr = resolver.as_ptr();
+                // Guard keeps the Resolver alive past the drain, which frees `*this`.
+                let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                 if (*this).cache.pending_cache() {
-                    (*resolver).drain_pending_cares::<T>(
+                    (*resolver_ptr).drain_pending_cares::<T>(
                         (*this).cache.pos_in_pending(),
                         err_,
                         timeout,
                         result,
                     );
+                    (*resolver_ptr).request_completed();
                     return;
                 }
+                (*resolver_ptr).request_completed();
             }
 
             // Consume the request and move `head` out by value; `ptr::read`
@@ -732,8 +743,8 @@ impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct GetHostByAddrInfoRequest {
-    // TODO: should be Option<&'a Resolver>; raw ptr for now
-    pub resolver_for_caching: Option<*mut Resolver>,
+    /// SHARED — request's own ref, taken in `init()`, released on the completion path (not on Drop).
+    pub resolver_for_caching: Option<bun_ptr::IntrusiveRc<Resolver>>,
     pub hash: u64,
     pub cache: CacheConfig,
     pub head: CAresReverse,
@@ -785,7 +796,8 @@ impl GetHostByAddrInfoRequest {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
-            resolver_for_caching: resolver,
+            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+            resolver_for_caching: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
             hash,
             cache: CacheConfig::default(),
             head: CAresReverse {
@@ -805,7 +817,6 @@ impl GetHostByAddrInfoRequest {
         if let LookupCacheHit::New(new) = cache {
             // SAFETY: `new` is &mut into resolver's HiveArray buffer; resolver/request are live.
             unsafe {
-                (*request).resolver_for_caching = resolver;
                 let pos = (*resolver.unwrap())
                     .pending_addr_cache_cares
                     .get()
@@ -826,9 +837,12 @@ impl GetHostByAddrInfoRequest {
     ) {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
-            if let Some(resolver) = (*this).resolver_for_caching {
+            if let Some(resolver) = (*this).resolver_for_caching.take() {
+                let resolver_ptr = resolver.as_ptr();
+                // Guard keeps the Resolver alive past the drain, which frees `*this`.
+                let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                 if (*this).cache.pending_cache() {
-                    (*resolver).drain_pending_addr_cares(
+                    (*resolver_ptr).drain_pending_addr_cares(
                         (*this).cache.pos_in_pending(),
                         err_,
                         timeout,
@@ -983,8 +997,9 @@ impl Drop for CAresNameInfo {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct GetNameInfoRequest {
-    // TODO: should be Option<&'a Resolver>; raw ptr for now
-    pub resolver_for_caching: Option<*mut Resolver>,
+    /// SHARED — request's own ref, taken in `init()`, released on the completion path (not on
+    /// Drop). The head (`CAresNameInfo`) holds no resolver ref, so this is the only one.
+    pub resolver_for_caching: Option<bun_ptr::IntrusiveRc<Resolver>>,
     pub hash: u64,
     pub cache: CacheConfig,
     pub head: CAresNameInfo,
@@ -1036,7 +1051,8 @@ impl GetNameInfoRequest {
         poll_ref.ref_(js_event_loop_ctx());
         let name_len = name.len();
         let request = bun_core::heap::into_raw(Box::new(Self {
-            resolver_for_caching: resolver,
+            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+            resolver_for_caching: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
             hash,
             cache: CacheConfig::default(),
             head: CAresNameInfo {
@@ -1054,7 +1070,6 @@ impl GetNameInfoRequest {
         if let LookupCacheHit::New(new) = cache {
             // SAFETY: `new` points into the resolver's HiveArray buffer; resolver/request are live.
             unsafe {
-                (*request).resolver_for_caching = resolver;
                 let pos = (*resolver.unwrap())
                     .pending_nameinfo_cache_cares
                     .get()
@@ -1075,19 +1090,23 @@ impl GetNameInfoRequest {
         result: Option<c_ares::struct_nameinfo>,
     ) {
         // SAFETY: `this` is the heap-allocated request c-ares calls back with;
-        // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
+        // `resolver` (if set) is this request's own intrusive ref taken at init time.
         unsafe {
-            if let Some(resolver) = (*this).resolver_for_caching {
-                scopeguard::defer! { (*resolver).request_completed() };
+            if let Some(resolver) = (*this).resolver_for_caching.take() {
+                let resolver_ptr = resolver.as_ptr();
+                // Guard keeps the Resolver alive past the drain, which frees `*this`.
+                let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                 if (*this).cache.pending_cache() {
-                    (*resolver).drain_pending_name_info_cares(
+                    (*resolver_ptr).drain_pending_name_info_cares(
                         (*this).cache.pos_in_pending(),
                         err_,
                         timeout,
                         result,
                     );
+                    (*resolver_ptr).request_completed();
                     return;
                 }
+                (*resolver_ptr).request_completed();
             }
 
             // Consume the request and move `head` out by value; `ptr::read`
@@ -1125,8 +1144,8 @@ impl c_ares::NameinfoHandler for GetNameInfoRequest {
 
 pub struct GetAddrInfoRequest {
     pub backend: get_addr_info_request::Backend,
-    // TODO: should be Option<&'a Resolver>; raw ptr for now
-    pub resolver_for_caching: Option<*mut Resolver>,
+    /// SHARED — request's own ref, taken in `init()`, released on the completion path (not on Drop).
+    pub resolver_for_caching: Option<bun_ptr::IntrusiveRc<Resolver>>,
     pub hash: u64,
     pub cache: CacheConfig,
     pub head: DNSLookup,
@@ -1376,7 +1395,8 @@ impl GetAddrInfoRequest {
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             backend,
-            resolver_for_caching: resolver,
+            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+            resolver_for_caching: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
             hash: query.hash(),
             cache: CacheConfig::default(),
             head: DNSLookup {
@@ -1407,7 +1427,6 @@ impl GetAddrInfoRequest {
         if let CacheHit::New(new) = cache {
             // SAFETY: `new` is &mut into resolver's HiveArray buffer; resolver/request are live.
             unsafe {
-                (*request).resolver_for_caching = resolver;
                 let pos = (*resolver.unwrap())
                     .pending_host_cache(cache_field)
                     .index_of(new)
@@ -1447,9 +1466,12 @@ impl GetAddrInfoRequest {
                 }
             }
 
-            if let Some(resolver) = (*this).resolver_for_caching {
+            if let Some(resolver) = (*this).resolver_for_caching.take() {
+                let resolver_ptr = resolver.as_ptr();
+                // Guard keeps the Resolver alive past the drain, which frees `*this`.
+                let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                 if (*this).cache.pending_cache() {
-                    (*resolver).drain_pending_host_native(
+                    (*resolver_ptr).drain_pending_host_native(
                         (*this).cache.pos_in_pending(),
                         (*this).head.global_this(),
                         status,
@@ -1503,9 +1525,12 @@ impl GetAddrInfoRequest {
                     // `ResultAny` impls `Drop` (frees the list) — the by-value drop
                     // at the end of whichever callee receives `any`.
                     let any = GetAddrInfoResultAny::List(result);
-                    if let Some(resolver) = (*this).resolver_for_caching {
+                    if let Some(resolver) = (*this).resolver_for_caching.take() {
+                        let resolver_ptr = resolver.as_ptr();
+                        // Guard keeps the Resolver alive past the drain, which frees `*this`.
+                        let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                         if (*this).cache.pending_cache() {
-                            (*resolver).drain_pending_host_native(
+                            (*resolver_ptr).drain_pending_host_native(
                                 (*this).cache.pos_in_pending(),
                                 (*this).head.global_this(),
                                 0,
@@ -1550,11 +1575,14 @@ impl GetAddrInfoRequest {
     ) {
         bun_output::scoped_log!(GetAddrInfoRequest, "onCaresComplete");
         // SAFETY: `this` is the heap-allocated request c-ares calls back with;
-        // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
+        // `resolver` (if set) is this request's own intrusive ref taken at init time.
         unsafe {
-            if let Some(resolver) = (*this).resolver_for_caching {
+            if let Some(resolver) = (*this).resolver_for_caching.take() {
+                let resolver_ptr = resolver.as_ptr();
+                // Guard keeps the Resolver alive past the drain, which frees `*this`.
+                let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                 if (*this).cache.pending_cache() {
-                    (*resolver).drain_pending_host_cares(
+                    (*resolver_ptr).drain_pending_host_cares(
                         (*this).cache.pos_in_pending(),
                         err_,
                         timeout,
@@ -1605,9 +1633,12 @@ impl GetAddrInfoRequest {
                 GetAddrInfoResultAny::List(list)
             };
 
-            if let Some(resolver) = (*this).resolver_for_caching {
+            if let Some(resolver) = (*this).resolver_for_caching.take() {
+                let resolver_ptr = resolver.as_ptr();
+                // Guard keeps the Resolver alive past the drain, which frees `*this`.
+                let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                 if (*this).cache.pending_cache() {
-                    (*resolver).drain_pending_host_native(
+                    (*resolver_ptr).drain_pending_host_native(
                         (*this).cache.pos_in_pending(),
                         (*this).head.global_this(),
                         retcode,

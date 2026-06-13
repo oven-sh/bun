@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
@@ -570,5 +570,56 @@ describe("hostnames containing NUL bytes", () => {
   it("plain localhost still resolves", async () => {
     const { address } = await dns_promises.lookup("localhost");
     expect(["127.0.0.1", "::1"]).toContain(address);
+  });
+});
+
+describe("resolver liveness across pending-cache completion", () => {
+  // Each request takes its own resolver ref in init() and releases it once on
+  // completion; a double or premature release crashes the subprocess.
+  test("coalesced + cached DNS requests balance their resolver refs", async () => {
+    const script = `
+      const dns = require("node:dns");
+
+      async function burst(make) {
+        // Identical concurrent queries coalesce onto one pending-cache slot.
+        await Promise.allSettled([make(), make(), make()]);
+        Bun.gc(true);
+      }
+
+      async function gcResolverMidFlight() {
+        // Non-routable TEST-NET server: queries hit the c-ares drain path via timeout.
+        let resolver = new dns.promises.Resolver({ timeout: 100, tries: 1 });
+        resolver.setServers(["192.0.2.1"]);
+        const pending = [];
+        for (let i = 0; i < 3; i++) {
+          pending.push(resolver.resolveTxt("txt.bun-test.invalid").catch(() => {}));
+          pending.push(resolver.resolve4("a.bun-test.invalid").catch(() => {}));
+          pending.push(resolver.reverse("192.0.2.55").catch(() => {}));
+        }
+        // Drop the only JS reference mid-flight so completion runs with only
+        // the requests' native refs keeping the resolver alive.
+        resolver = null;
+        Bun.gc(true);
+        await Promise.all(pending);
+        Bun.gc(true);
+      }
+
+      await gcResolverMidFlight();
+      // lookupService -> GetNameInfoRequest release path.
+      await burst(() => dns.promises.lookupService("127.0.0.1", 80).catch(() => {}));
+      // lookup -> GetAddrInfoRequest native-backend release path.
+      await burst(() => dns.promises.lookup("localhost").catch(() => {}));
+      Bun.gc(true);
+      console.log("done");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("done");
+    expect(exitCode).toBe(0);
   });
 });

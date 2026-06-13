@@ -5247,9 +5247,19 @@ pub mod bv2_impl {
                 // Find CSS entry points. Originally, this was computed up front, but
                 // failed files do not remember their loader, and plugins can
                 // asynchronously decide a file is CSS.
+                //
+                // A file whose import-record resolution failed also has a `Some`
+                // css row: `run_resolution_for_parse_task` parks the parsed
+                // stylesheet there so teardown can drop it. Such files have no
+                // parts (the invariant the loop above filters by), and must not
+                // become CSS chunks — the loop above already removed them from
+                // `css_entry_points`.
                 let css = asts.items_css();
+                let parts = asts.items_parts();
                 for entry_point in &self.graph.entry_points {
-                    if css[entry_point.get() as usize].is_some() {
+                    if css[entry_point.get() as usize].is_some()
+                        && parts[entry_point.get() as usize].len() != 0
+                    {
                         start.css_entry_points.put(
                             Index::init(entry_point.get()),
                             CssEntryPointMeta {

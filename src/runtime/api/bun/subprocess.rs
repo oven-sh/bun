@@ -635,7 +635,10 @@ impl Subprocess<'_> {
         this.stderr.with_mut(|s| s.unref());
 
         match this.try_kill(this.kill_signal) {
-            bun_sys::Result::Ok(()) => {}
+            // Delivered or not doesn't matter for asyncDispose — the caller
+            // just wants the child dead; falling through to `getExited`
+            // below handles both the "already gone" and "just killed" cases.
+            bun_sys::Result::Ok(_) => {}
             bun_sys::Result::Err(err) => {
                 // Signal 9 should always be fine, but just in case that somehow fails.
                 return Err(global.throw_value(err.to_js(global)));
@@ -701,23 +704,27 @@ impl Subprocess<'_> {
         }
 
         match this.try_kill(sig) {
-            bun_sys::Result::Ok(()) => {}
+            // `true` when the signal was sent, `false` when the process had
+            // already exited (nothing to signal). Node's `ChildProcess.kill()`
+            // needs to see `false` to return `false` to user code.
+            bun_sys::Result::Ok(delivered) => Ok(JSValue::js_boolean(delivered)),
             bun_sys::Result::Err(err) => {
                 // EINVAL or ENOSYS means the signal is not supported in the current platform (most likely unsupported on windows)
-                return Err(global_this.throw_value(err.to_js(global_this)));
+                Err(global_this.throw_value(err.to_js(global_this)))
             }
         }
-
-        Ok(JSValue::UNDEFINED)
     }
 
     pub fn has_killed(&self) -> bool {
         self.process().has_killed()
     }
 
-    pub fn try_kill(&self, sig: SignalCode) -> bun_sys::Result<()> {
+    /// Returns `Ok(true)` if `sig` was delivered to the child, or
+    /// `Ok(false)` if the child had already exited (either because we
+    /// already saw the exit on our side or the OS reported `ESRCH`).
+    pub fn try_kill(&self, sig: SignalCode) -> bun_sys::Result<bool> {
         if self.has_exited() {
-            return bun_sys::Result::Ok(());
+            return bun_sys::Result::Ok(false);
         }
         self.process_mut().kill(sig.0)
     }

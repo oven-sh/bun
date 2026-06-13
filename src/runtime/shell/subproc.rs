@@ -392,7 +392,11 @@ impl ShellSubprocess {
             return Ok(());
         }
 
-        self.proc().kill(u8::try_from(sig).expect("int cast"))
+        // Shell subprocess kill is best-effort — drop the "delivered?" bool
+        // from process.kill's Maybe<bool>, keep errors.
+        self.proc()
+            .kill(u8::try_from(sig).expect("int cast"))
+            .map(|_delivered| ())
     }
 
     fn close_process(&mut self) {

@@ -498,7 +498,9 @@ pub const ShellSubprocess = struct {
             return .success;
         }
 
-        return this.process.kill(@intCast(sig));
+        // Shell kill is best-effort — drop the "delivered?" bool, keep errors.
+        if (this.process.kill(@intCast(sig)).asErr()) |err| return .{ .err = err };
+        return .success;
     }
 
     // fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.enum_literal)) bool {

@@ -469,6 +469,24 @@ describe.concurrent("Server", () => {
   });
 });
 
+// Outside describe.concurrent: Bun.gc(true) is process-global.
+test("server.fetch keeps the Request wrapper alive across GC while reading its url", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      for (let k = 0; k < 200; k++) new Array(64);
+      Bun.gc(true);
+      return new Response("ok");
+    },
+  });
+  const url = `http://${server.hostname}:${server.port}/`;
+  for (let i = 0; i < 20; i++) {
+    const response = await server.fetch(url);
+    Bun.gc(true);
+    expect(response.url).toBe(url);
+  }
+});
+
 // By not timing out, this test passes.
 test("Bun.serve().unref() works", async () => {
   expect([path.join(import.meta.dir, "unref-fixture.ts")]).toRun();

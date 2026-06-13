@@ -1340,13 +1340,15 @@ extern "C"
       auto *data = uwsRes->getHttpResponseData();
       if (close_connection)
       {
-        if (!(data->state & uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE))
+        /* Once write() has been called, the header section is already terminated and body
+         * bytes are on the wire; injecting a header here would corrupt the response body. */
+        if (!(data->state & uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE) && !(data->state & uWS::HttpResponseData<true>::HTTP_WRITE_CALLED))
         {
           uwsRes->writeHeader("Connection", "close");
         }
         data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE;
       }
-      if (!(data->state & uWS::HttpResponseData<true>::HTTP_END_CALLED))
+      if (!(data->state & (uWS::HttpResponseData<true>::HTTP_END_CALLED | uWS::HttpResponseData<true>::HTTP_WRITE_CALLED)))
       {
         uwsRes->AsyncSocket<true>::write("\r\n", 2);
       }
@@ -1360,13 +1362,15 @@ extern "C"
       auto *data = uwsRes->getHttpResponseData();
       if (close_connection)
       {
-        if (!(data->state & uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE))
+        /* Once write() has been called, the header section is already terminated and body
+         * bytes are on the wire; injecting a header here would corrupt the response body. */
+        if (!(data->state & uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE) && !(data->state & uWS::HttpResponseData<false>::HTTP_WRITE_CALLED))
         {
           uwsRes->writeHeader("Connection", "close");
         }
         data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE;
       }
-      if (!(data->state & uWS::HttpResponseData<false>::HTTP_END_CALLED))
+      if (!(data->state & (uWS::HttpResponseData<false>::HTTP_END_CALLED | uWS::HttpResponseData<false>::HTTP_WRITE_CALLED)))
       {
         // Some HTTP clients require the complete "<header>\r\n\r\n" to be sent.
         // If not, they may throw a ConnectionError.

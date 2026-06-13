@@ -9,16 +9,38 @@ fd: bun.FD.Optional = .none,
 
 const changelist_count = 128;
 
+/// Arbitrary non-zero ident used for the EVFILT_USER wakeup event.
+const wake_event_ident = 0x2307;
+
 pub fn init(this: *KEventWatcher, _: []const u8) !void {
     const fd = try std.posix.kqueue();
     if (fd == 0) return error.KQueueError;
     this.fd = .init(.fromNative(fd));
+
+    // Register a user-triggered event so `wake()` can unblock `kevent()`
+    // during shutdown without closing the kqueue fd from another thread.
+    var ev = std.mem.zeroes(KEvent);
+    ev.ident = wake_event_ident;
+    ev.filter = std.c.EVFILT.USER;
+    ev.flags = std.c.EV.ADD | std.c.EV.CLEAR;
+    _ = std.posix.system.kevent(fd, @as(*const [1]KEvent, &ev), 1, @as([*]KEvent, undefined), 0, null);
 }
 
 pub fn stop(this: *KEventWatcher) void {
     if (this.fd.take()) |fd| {
         fd.close();
     }
+}
+
+/// Wake the watcher thread from a blocking `kevent()` so it can observe
+/// `Watcher.running == false` and exit.
+pub fn wake(this: *KEventWatcher) void {
+    const fd = this.fd.unwrap() orelse return;
+    var ev = std.mem.zeroes(KEvent);
+    ev.ident = wake_event_ident;
+    ev.filter = std.c.EVFILT.USER;
+    ev.fflags = std.c.NOTE.TRIGGER;
+    _ = std.posix.system.kevent(fd.native(), @as(*const [1]KEvent, &ev), 1, @as([*]KEvent, undefined), 0, null);
 }
 
 pub fn watchEventFromKEvent(kevent: KEvent) Watcher.Event {
@@ -68,27 +90,28 @@ pub fn watchLoopCycle(this: *Watcher) bun.sys.Maybe(void) {
         count += extra;
     }
 
-    var changes = changelist[0..@intCast(@max(0, count))];
+    const changes = changelist[0..@intCast(@max(0, count))];
     var watchevents = this.watch_events[0..changes.len];
     var out_len: usize = 0;
-    if (changes.len > 0) {
-        watchevents[0] = watchEventFromKEvent(changes[0]);
-        out_len = 1;
-        var prev_event = changes[0];
-        for (changes[1..]) |event| {
-            if (prev_event.udata == event.udata) {
-                const new = watchEventFromKEvent(event);
-                watchevents[out_len - 1].merge(new);
+    var prev_event: ?KEvent = null;
+    for (changes) |event| {
+        // Skip the EVFILT_USER wakeup event posted by `wake()`; only
+        // VNODE events map to watch items.
+        if (event.filter != std.c.EVFILT.VNODE) continue;
+
+        if (prev_event) |prev| {
+            if (prev.udata == event.udata) {
+                watchevents[out_len - 1].merge(watchEventFromKEvent(event));
+                prev_event = event;
                 continue;
             }
-
-            watchevents[out_len] = watchEventFromKEvent(event);
-            prev_event = event;
-            out_len += 1;
         }
 
-        watchevents = watchevents[0..out_len];
+        watchevents[out_len] = watchEventFromKEvent(event);
+        prev_event = event;
+        out_len += 1;
     }
+    watchevents = watchevents[0..out_len];
 
     this.mutex.lock();
     defer this.mutex.unlock();

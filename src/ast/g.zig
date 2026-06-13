@@ -51,7 +51,13 @@ pub const Class = struct {
                 return false;
             }
 
-            if (property.kind == .normal) {
+            // `.auto_accessor` static initializers evaluate at class-definition
+            // time just like `.normal` static fields (auto-accessors are lowered
+            // later by `lowerStandardDecorators` into a WeakMap + getter/setter
+            // pair), so include them in the side-effect check to avoid hoisting
+            // `static accessor x = sideEffect()` past preceding statements.
+            // (`canBeMoved` runs pre-visit, before lowering.)
+            if (property.kind == .normal or property.kind == .auto_accessor) {
                 if (flags.contains(.is_static)) {
                     for ([2]?Expr{ property.value, property.initializer }) |val_| {
                         if (val_) |val| {

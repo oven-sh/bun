@@ -40,6 +40,12 @@ pub struct MachoFile {
     pub section: macho::section_64,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct SectionLocation {
+    pub file_offset: u64,
+    pub size: u64,
+}
+
 /// Expands to one `shift_one` call per named field.
 macro_rules! shift_fields {
     ($shifter:expr, $value:expr, $($field:ident),+ $(,)?) => {{
@@ -70,7 +76,63 @@ impl MachoFile {
         }))
     }
 
+    /// Locate a `(segname, sectname)` pair and return its file offset and
+    /// on-disk size. Unlike `write_section`, this does not assume the
+    /// `__BUN,__bun` layout and does not mutate anything — it's the hook for
+    /// external patchers (e.g. the NAPI link slot table lives in
+    /// `__DATA,__bun_napi_lnk` and is overwritten in place).
+    pub fn find_section(&self, segname: &[u8], sectname: &[u8]) -> Option<SectionLocation> {
+        let base_addr = self.data.as_ptr() as usize;
+        let mut iter = self.iterator();
+        while let Some(entry) = iter.next() {
+            if entry.hdr.cmd != macho::LC::SEGMENT_64 {
+                continue;
+            }
+            let command = entry
+                .cast::<macho::segment_command_64>()
+                .expect("unreachable");
+            if command.seg_name() != segname || command.nsects == 0 {
+                continue;
+            }
+            let section_offset = entry.data.as_ptr() as usize - base_addr;
+            let sections_base = section_offset + size_of::<macho::segment_command_64>();
+            let sect_sz = size_of::<macho::section_64>();
+            let nsects = command.nsects as usize;
+            let table_end = nsects
+                .checked_mul(sect_sz)
+                .and_then(|s| s.checked_add(size_of::<macho::segment_command_64>()))?;
+            if table_end > entry.data.len() {
+                return None;
+            }
+            for i in 0..nsects {
+                let sect_off = sections_base + i * sect_sz;
+                let sect: macho::section_64 = read_struct(&self.data[sect_off..][..sect_sz]);
+                if sect.sect_name() == sectname {
+                    return Some(SectionLocation {
+                        file_offset: sect.offset as u64,
+                        size: sect.size,
+                    });
+                }
+            }
+        }
+        None
+    }
+
     pub fn write_section(&mut self, data: &[u8]) -> Result<(), MachoError> {
+        self.write_section_with_header(data, data.len() as u64)
+    }
+
+    /// Same as `write_section` but the `u64` size header written at the
+    /// section's first 8 bytes is `header_value` instead of `data.len()`. The
+    /// NAPI link-slot appender uses this to keep the header pointing at the
+    /// module-graph payload length (so `StandaloneModuleGraph.fromExecutable`
+    /// still finds its trailer) while tucking addon images past it in the
+    /// same section.
+    pub fn write_section_with_header(
+        &mut self,
+        data: &[u8],
+        header_value: u64,
+    ) -> Result<(), MachoError> {
         let blob_alignment: u64 = 16 * 1024;
         const PAGE_SIZE: u64 = 1 << 12;
         const HASH_SIZE: usize = 32; // SHA256 = 32 bytes
@@ -241,8 +303,7 @@ impl MachoFile {
         }
 
         // Now we copy the u64 size header (8 bytes for alignment)
-        self.data[original_fileoff as usize..][..8]
-            .copy_from_slice(&(data.len() as u64).to_le_bytes());
+        self.data[original_fileoff as usize..][..8].copy_from_slice(&header_value.to_le_bytes());
 
         // Now we copy the data itself
         self.data[original_fileoff as usize + 8..][..data.len()].copy_from_slice(data);

@@ -565,7 +565,11 @@ describe.concurrent(() => {
         .map(line => line.trim())
         .filter(Boolean);
       // The patched emit runs before delegating to the original, which fires the registered listener.
-      expect({ lines, stderr, exitCode }).toEqual({ lines: ["patched:exit", "listener:exit"], stderr: "", exitCode: 0 });
+      expect({ lines, stderr, exitCode }).toEqual({
+        lines: ["patched:exit", "listener:exit"],
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     it("forwards the exit code to a monkey-patched process.emit", async () => {

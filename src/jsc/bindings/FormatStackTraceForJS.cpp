@@ -645,6 +645,12 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         return {};
     }
 
+    // Appending an error's stack trace to itself would make Vector::appendVector
+    // read from its own (possibly reallocated and freed) buffer.
+    if (source == destination) {
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
     if (!destination->stackTrace()) {
         destination->captureStackTrace(vm, globalObject, 1);
     }

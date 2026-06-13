@@ -530,7 +530,10 @@ describe.concurrent(() => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const lines = stdout.split("\n").map(line => line.trim()).filter(Boolean);
+      const lines = stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
       expect({ lines, exitCode }).toEqual({ lines: ["patched:beforeExit:0", "patched:exit:0"], exitCode: 0 });
     });
 
@@ -553,7 +556,10 @@ describe.concurrent(() => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const lines = stdout.split("\n").map(line => line.trim()).filter(Boolean);
+      const lines = stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
       // The patched emit runs before delegating to the original, which fires the registered listener.
       expect({ lines, exitCode }).toEqual({ lines: ["patched:exit", "listener:exit"], exitCode: 0 });
     });
@@ -577,7 +583,10 @@ describe.concurrent(() => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const lines = stdout.split("\n").map(line => line.trim()).filter(Boolean);
+      const lines = stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
       expect({ lines, exitCode }).toEqual({ lines: ["patched:exit:3"], exitCode: 3 });
     });
 
@@ -600,7 +609,10 @@ describe.concurrent(() => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const lines = stdout.split("\n").map(line => line.trim()).filter(Boolean);
+      const lines = stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
       expect({ lines, exitCode }).toEqual({ lines: ["patched:exit:2"], exitCode: 2 });
     });
   });

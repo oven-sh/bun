@@ -4123,8 +4123,16 @@ bool JSC__JSValue__isIterable(JSC::EncodedJSValue JSValue, JSC::JSGlobalObject* 
 
 void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, void* ctx, void (*ArgFn3)(JSC::VM* arg0, JSC::JSGlobalObject* arg1, void* arg2, JSC::EncodedJSValue JSValue3))
 {
+    JSC::JSValue iterable = JSC::JSValue::decode(JSValue0);
+    // An empty value decodes as a null cell; forEachInIterable would read its
+    // type byte. Callers fetching values via getDirect-style lookups can
+    // produce empty when the property is absent.
+    ASSERT(!iterable.isEmpty());
+    if (iterable.isEmpty()) [[unlikely]]
+        return;
+
     JSC::forEachInIterable(
-        arg1, JSC::JSValue::decode(JSValue0),
+        arg1, iterable,
         [ArgFn3, ctx](JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSValue value) -> void {
             ArgFn3(&vm, global, ctx, JSC::JSValue::encode(value));
         });

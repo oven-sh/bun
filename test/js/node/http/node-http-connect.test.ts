@@ -440,7 +440,434 @@ describe("HTTP server socket access via normal requests", () => {
   });
 });
 
+describe("HTTP client CONNECT", () => {
+  test("http.request CONNECT tunnels through a proxy and emits 'connect'", async () => {
+    // A minimal CONNECT proxy that echoes tunneled bytes back.
+    const proxyServer = http.createServer();
+    let target = "";
+    let proxySocket: net.Socket | undefined;
+    proxyServer.on("connect", (req, clientSocket) => {
+      proxySocket = clientSocket;
+      target = req.url ?? "";
+      clientSocket.on("error", () => {});
+      clientSocket.write("HTTP/1.1 200 Connection established\r\nProxy-Agent: bun-test\r\n\r\n");
+      clientSocket.on("data", d => clientSocket.write(d));
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<{
+        statusCode: number;
+        headers: Record<string, string>;
+        echoed: string;
+        socketIsTunnel: boolean;
+        reqResIsRes: boolean;
+        upgrade: unknown;
+        closeListeners: number;
+      }>();
+
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
+      req.on("connect", (res, socket, head) => {
+        // Node wires res.socket to the tunnel socket, req.res to the response,
+        // and marks res.upgrade === true.
+        const socketIsTunnel = res.socket === socket;
+        const reqResIsRes = req.res === res;
+        const upgrade = (res as any).upgrade;
+        // Node hands the tunnel socket to 'connect' with no internal listeners;
+        // capture the 'close' listener count before we attach our own.
+        const closeListeners = socket.listenerCount("close");
+        socket.on("error", () => {});
+        socket.on("data", d => {
+          resolve({
+            statusCode: res.statusCode,
+            headers: res.headers,
+            echoed: d.toString(),
+            socketIsTunnel,
+            reqResIsRes,
+            upgrade,
+            closeListeners,
+          });
+          socket.destroy();
+        });
+        socket.write("ping");
+      });
+      req.on("error", reject);
+      req.end();
+
+      const result = await promise;
+      // The tunnel target must be sent verbatim (no leading slash).
+      expect(target).toBe("example.com:443");
+      expect(result.statusCode).toBe(200);
+      expect(result.headers["proxy-agent"]).toBe("bun-test");
+      expect(result.echoed).toBe("ping");
+      expect(result.socketIsTunnel).toBe(true);
+      expect(result.reqResIsRes).toBe(true);
+      expect(result.upgrade).toBe(true);
+      // The socket is handed over with no internal listeners, like Node.
+      expect(result.closeListeners).toBe(0);
+    } finally {
+      proxySocket?.destroy();
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
+  test("http.request CONNECT emits 'connect' even on a non-200 status", async () => {
+    const proxyServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.on("data", () => socket.write("HTTP/1.1 403 Forbidden\r\nX-Reason: denied\r\n\r\n"));
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<{
+        statusCode: number;
+        statusMessage: string;
+        headers: Record<string, string>;
+      }>();
+
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
+      req.on("connect", (res, socket) => {
+        resolve({ statusCode: res.statusCode, statusMessage: res.statusMessage, headers: res.headers });
+        socket.destroy();
+      });
+      req.on("error", reject);
+      req.end();
+
+      const result = await promise;
+      expect(result.statusCode).toBe(403);
+      expect(result.statusMessage).toBe("Forbidden");
+      expect(result.headers["x-reason"]).toBe("denied");
+    } finally {
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
+  test("http.request CONNECT trims optional whitespace around proxy header values", async () => {
+    const proxyServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      // Leading tab, two leading spaces, and a trailing space — llhttp trims all.
+      socket.on("data", () =>
+        socket.write("HTTP/1.1 200 OK\r\nX-Tab:\tt-val\r\nX-Two:  two-val\r\nX-Trail: trail-val \r\n\r\n"),
+      );
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<Record<string, string>>();
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "h:1" });
+      req.on("connect", (res, socket) => {
+        resolve(res.headers);
+        socket.destroy();
+      });
+      req.on("error", reject);
+      req.end();
+
+      const headers = await promise;
+      expect(headers["x-tab"]).toBe("t-val");
+      expect(headers["x-two"]).toBe("two-val");
+      expect(headers["x-trail"]).toBe("trail-val");
+    } finally {
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
+  test("http.request CONNECT folds duplicate proxy response headers like Node", async () => {
+    const proxyServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.on("data", () =>
+        socket.write(
+          "HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 10\r\nContent-Length: 20\r\nX-Multi: p\r\nX-Multi: q\r\nConstructor: own\r\n\r\n",
+        ),
+      );
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<Record<string, string | string[]>>();
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "h:1" });
+      req.on("connect", (res, socket) => {
+        resolve(res.headers);
+        socket.destroy();
+      });
+      req.on("error", reject);
+      req.end();
+
+      const headers = await promise;
+      // set-cookie is always an array; singleton headers keep the first value;
+      // other duplicates are comma-joined.
+      expect(headers["set-cookie"]).toEqual(["a=1", "b=2"]);
+      expect(headers["content-length"]).toBe("10");
+      expect(headers["x-multi"]).toBe("p, q");
+      // A header whose name collides with Object.prototype must fold against an
+      // absent own property, not the inherited one.
+      expect(headers["constructor"]).toBe("own");
+    } finally {
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
+  test("http.request CONNECT delivers bytes received after the headers as 'head'", async () => {
+    const proxyServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\n\r\nEARLY-DATA"));
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "h:1" });
+      req.on("connect", (res, socket, head) => {
+        expect(head).toBeInstanceOf(Buffer);
+        resolve(head.toString());
+        socket.destroy();
+      });
+      req.on("error", reject);
+      req.end();
+
+      expect(await promise).toBe("EARLY-DATA");
+    } finally {
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
+  test("http.request CONNECT buffers post-tunnel data until a listener is attached", async () => {
+    // Node resets the tunnel socket to the neutral (non-flowing) state before
+    // emitting 'connect', so bytes arriving after the headers are buffered and a
+    // 'data' listener attached later (e.g. after an await) still receives them.
+    const proxySockets: net.Socket[] = [];
+    const proxyServer = net.createServer(socket => {
+      proxySockets.push(socket);
+      socket.on("error", () => {});
+      socket.on("data", () => {
+        socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+        // Send the tunneled bytes in a separate write, a short moment after the
+        // headers, so they land in a TCP read distinct from the header block
+        // (not coalesced into it, which would deliver them as 'head' instead).
+        setTimeout(() => socket.write("LATE-DATA"), 20);
+      });
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<{ flowing: unknown; data: string }>();
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "h:1" });
+      req.on("connect", async (res, socket) => {
+        const flowing = (socket as any).readableFlowing;
+        socket.on("error", () => {});
+        // Let the event loop turn so the post-header bytes physically arrive at
+        // the socket before the listener is attached; they must be buffered (not
+        // dropped) until now. There is no passive "data buffered" signal to wait
+        // on here — while flowing === null the bytes sit at the socket handle
+        // (readableLength stays 0) on both Node and Bun until a consumer resumes
+        // the stream, so a short yield is the condition that exercises this.
+        await Bun.sleep(50);
+        let data = "";
+        socket.on("data", d => {
+          data += d.toString();
+          if (data.includes("LATE-DATA")) {
+            resolve({ flowing, data });
+            socket.destroy();
+          }
+        });
+      });
+      req.on("error", reject);
+      req.end();
+
+      const result = await promise;
+      // Matches Node: socket handed over in the neutral state, data buffered.
+      expect(result.flowing).toBe(null);
+      expect(result.data).toBe("LATE-DATA");
+    } finally {
+      for (const s of proxySockets) s.destroy();
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
+  test("http.request CONNECT emits 'error' then 'close' when the proxy is unreachable", async () => {
+    // Bind then immediately close to obtain a port nothing listens on.
+    const tmp = net.createServer();
+    await once(tmp.listen(0, "127.0.0.1"), "listening");
+    const { port } = tmp.address() as AddressInfo;
+    await new Promise<void>(r => tmp.close(() => r()));
+
+    const { promise, resolve, reject } = Promise.withResolvers<{
+      code: string;
+      syscall: string;
+      address: string;
+      port: number;
+      events: string[];
+    }>();
+    const events: string[] = [];
+    const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
+    req.on("connect", () => reject(new Error("unexpected connect")));
+    let err: NodeJS.ErrnoException | undefined;
+    req.on("error", e => {
+      events.push("error");
+      err = e as NodeJS.ErrnoException;
+    });
+    // Node emits 'close' on the request after a failed connection.
+    req.on("close", () => {
+      events.push("close");
+      resolve({
+        code: err?.code ?? "",
+        syscall: err?.syscall ?? "",
+        address: err?.address ?? "",
+        port: err?.port ?? 0,
+        events,
+      });
+    });
+    req.end();
+
+    const result = await promise;
+    expect(result.code).toBe("ECONNREFUSED");
+    expect(result.events).toEqual(["error", "close"]);
+    // The net error is propagated verbatim (Node-shaped), so the diagnostic
+    // fields survive rather than being flattened to a bare Error.
+    expect(result.syscall).toBe("connect");
+    expect(result.address).toBe("127.0.0.1");
+    expect(result.port).toBe(port);
+  });
+
+  test("http.request CONNECT rejects a malformed proxy status line with 'error'", async () => {
+    const proxyServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      // Not a valid HTTP status line, but terminated like a header block.
+      socket.on("data", () => socket.write("garbage not http\r\nX: y\r\n\r\n"));
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
+      req.on("connect", () => reject(new Error("unexpected connect on malformed response")));
+      req.on("error", err => resolve((err as NodeJS.ErrnoException).code ?? err.message));
+      req.end();
+
+      // Node surfaces an llhttp parse error (HPE_*). We only require that it's an
+      // error rather than a bogus tunnel, so assert the code class loosely.
+      const code = await promise;
+      expect(code).toContain("HPE_");
+    } finally {
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
+  test("http.request CONNECT rejects a header block larger than maxHeaderSize", async () => {
+    // Oversized headers delivered complete (with the terminator) in one write
+    // must still be rejected, matching Node's llhttp byte counting.
+    const proxyServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.on("data", () =>
+        socket.write("HTTP/1.1 200 OK\r\nX: " + Buffer.alloc(20000, "a").toString() + "\r\n\r\n"),
+      );
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "h:1", maxHeaderSize: 16384 });
+      req.on("connect", () => reject(new Error("unexpected connect on oversized headers")));
+      req.on("error", err => resolve((err as NodeJS.ErrnoException).code ?? err.message));
+      req.end();
+
+      expect(await promise).toBe("HPE_HEADER_OVERFLOW");
+    } finally {
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
+  test("http.request CONNECT destroyed before the proxy responds emits 'close' without crashing", async () => {
+    // A proxy that accepts the TCP connection but never sends a response.
+    const proxySockets: net.Socket[] = [];
+    const proxyServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      proxySockets.push(socket);
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      const { promise, resolve } = Promise.withResolvers<string[]>();
+      const events: string[] = [];
+      const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "h:1" });
+      req.on("connect", () => events.push("connect"));
+      // A spurious 'error' after 'close' (or an unhandled AbortError) would be a bug.
+      req.on("error", e => events.push("error:" + ((e as NodeJS.ErrnoException).code ?? e.message)));
+      req.on("close", () => {
+        events.push("close");
+        resolve(events);
+      });
+      req.end();
+      // Destroy before the proxy has written anything.
+      await once(req, "socket");
+      req.destroy();
+
+      const result = await promise;
+      // The request must close; it must not emit a spurious post-close error.
+      expect(result).toContain("close");
+      expect(result[result.length - 1]).toBe("close");
+    } finally {
+      for (const s of proxySockets) s.destroy();
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+
+  test("http.request CONNECT resolves the proxy host with a custom lookup", async () => {
+    const proxyServer = http.createServer();
+    let proxySocket: net.Socket | undefined;
+    proxyServer.on("connect", (req, clientSocket) => {
+      proxySocket = clientSocket;
+      clientSocket.on("error", () => {});
+      clientSocket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const { port } = proxyServer.address() as AddressInfo;
+
+    try {
+      let lookupCalledWith = "";
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      const req = http.request({
+        method: "CONNECT",
+        // A name that only the custom lookup can resolve.
+        host: "proxy.invalid.test",
+        port,
+        path: "example.com:443",
+        lookup: (hostname: string, _opts: any, cb: any) => {
+          lookupCalledWith = hostname;
+          // net.connect() defaults autoSelectFamily on, so the all-addresses
+          // array form is what both Node and Bun expect here.
+          cb(null, [{ address: "127.0.0.1", family: 4 }]);
+        },
+      });
+      req.on("connect", (res, socket) => {
+        socket.destroy();
+        resolve(res.statusCode);
+      });
+      req.on("error", reject);
+      req.end();
+
+      const statusCode = await promise;
+      expect(lookupCalledWith).toBe("proxy.invalid.test");
+      expect(statusCode).toBe(200);
+    } finally {
+      proxySocket?.destroy();
+      await new Promise<void>(r => proxyServer.close(() => r()));
+    }
+  });
+});
+
 describe("Should be compatible with node.js", () => {
+  // These spawn a full `node --test` / `bun test` run of the sibling file, which
+  // can take several seconds. Give them a generous timeout so they don't race the
+  // default 5s deadline on a loaded CI machine.
   test("tests should run on node.js", async () => {
     const process = Bun.spawn({
       cmd: [nodeExe(), "--test", join(import.meta.dir, "node-http-connect.node.mts")],
@@ -450,7 +877,7 @@ describe("Should be compatible with node.js", () => {
       env: bunEnv,
     });
     expect(await process.exited).toBe(0);
-  });
+  }, 30_000);
   test("tests should run on bun", async () => {
     const process = Bun.spawn({
       cmd: [bunExe(), "test", join(import.meta.dir, "node-http-connect.node.mts")],
@@ -460,5 +887,5 @@ describe("Should be compatible with node.js", () => {
       env: bunEnv,
     });
     expect(await process.exited).toBe(0);
-  });
+  }, 30_000);
 });

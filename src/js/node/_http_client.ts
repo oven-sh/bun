@@ -58,10 +58,40 @@ const { globalAgent } = require("node:_http_agent");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 
+const { getLazy } = require("internal/shared");
+const net = getLazy(() => require("node:net"));
+const tls = getLazy(() => require("node:tls"));
+const { getMaxHTTPHeaderSize, statusCodeSymbol, statusMessageSymbol, noBodySymbol } = require("internal/http");
+
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const INVALID_HOST_CHAR_REGEX = /[/\\?#@\t\n\r]/;
+const CONNECT_STATUS_LINE_REGEX = /^HTTP\/(\d)\.(\d) (\d{3})(?: (.*))?$/;
+const kEmptyBuffer = Buffer.alloc(0);
+// Headers Node's IncomingMessage._addHeaderLine treats as singletons: the first
+// occurrence wins and later duplicates are discarded (set-cookie is handled
+// separately as an array). Used when folding parsed CONNECT response headers.
+const kConnectSingletonHeaders = new Set([
+  "age",
+  "authorization",
+  "content-length",
+  "content-type",
+  "etag",
+  "expires",
+  "from",
+  "host",
+  "if-modified-since",
+  "if-unmodified-since",
+  "last-modified",
+  "location",
+  "max-forwards",
+  "proxy-authorization",
+  "referer",
+  "retry-after",
+  "server",
+  "user-agent",
+]);
 
 const { URL } = globalThis;
 
@@ -281,6 +311,16 @@ function ClientRequest(input, options, cb) {
   const startFetch = (customBody?) => {
     if (fetching) {
       return false;
+    }
+
+    // CONNECT tunnels (HTTP proxies) have no representation in fetch(): the
+    // request target is a `host:port` authority, not a URL, and the response
+    // is a raw socket rather than a message body. Dispatch it over a raw TCP
+    // socket instead and emit the 'connect' event, matching Node.
+    if (this[kMethod] === "CONNECT") {
+      fetching = true;
+      startConnect();
+      return true;
     }
 
     fetching = true;
@@ -601,6 +641,286 @@ function ClientRequest(input, options, cb) {
       process.nextTick((self, err) => self.emit("error", err), this, err);
       return false;
     }
+  };
+
+  // Dispatch a CONNECT request over a raw TCP (or TLS) socket and emit the
+  // 'connect' event once the proxy's response status line + headers arrive.
+  // This mirrors Node's http.ClientRequest CONNECT handling so HTTP proxy
+  // clients (e.g. @grpc/grpc-js proxy support) work.
+  const startConnect = () => {
+    if (!this[kAbortController]) {
+      this[kAbortController] = new AbortController();
+      this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    this[kUpgradeOrConnect] = true;
+
+    let keepalive = true;
+    const agentKeepalive = this[kAgent]?.keepAlive;
+    if (agentKeepalive !== undefined) {
+      keepalive = agentKeepalive;
+    }
+
+    const connectOptions: any = {
+      signal: this[kAbortController].signal,
+    };
+    const socketPath = this[kSocketPath];
+    if (socketPath) {
+      connectOptions.path = socketPath;
+    } else {
+      connectOptions.host = this[kHost];
+      connectOptions.port = this[kPort];
+      // Forward the socket-level options Node honors when connecting to the
+      // proxy authority, so a custom DNS resolver (split-horizon DNS, service
+      // discovery) and address selection work the same as the normal path.
+      // net.connect() implements the resolution itself, so no manual loop.
+      if (options.lookup !== undefined) connectOptions.lookup = options.lookup;
+      if (options.family !== undefined) connectOptions.family = options.family;
+      if (options.hints !== undefined) connectOptions.hints = options.hints;
+      if (options.localAddress !== undefined) connectOptions.localAddress = options.localAddress;
+      if (options.localPort !== undefined) connectOptions.localPort = options.localPort;
+    }
+
+    const isTLS = this[kProtocol] === "https:";
+    if (isTLS && this[kTls]) {
+      ObjectAssign(connectOptions, this[kTls]);
+      connectOptions.servername = this[kTls].servername;
+    }
+
+    let socket;
+    try {
+      socket = isTLS ? tls().connect(connectOptions) : net().connect(connectOptions);
+    } catch (err) {
+      fetching = false;
+      process.nextTick((self, err) => self.emit("error", err), this, err);
+      // Keep this terminal path consistent with onError below: emit 'close'
+      // after 'error' so a req.on('close') cleanup listener still runs.
+      maybeEmitClose();
+      return;
+    }
+
+    this.socket = socket;
+
+    // Default Host/Connection headers, matching Node. A CONNECT request with no
+    // Host header is rejected by many proxies (and by Bun's own server parser),
+    // so add one pointing at the proxy authority unless the caller set it.
+    if (!this.hasHeader("host") && !socketPath) {
+      let hostHeader = this[kHost];
+      if (isIPv6(hostHeader)) {
+        hostHeader = `[${hostHeader}]`;
+      }
+      if (!this[kUseDefaultPort]) {
+        hostHeader += ":" + this[kPort];
+      }
+      this.setHeader("Host", hostHeader);
+    }
+    if (!this.hasHeader("connection")) {
+      this.setHeader("Connection", keepalive ? "keep-alive" : "close");
+    }
+
+    // Write the CONNECT request line + headers. The request target is the
+    // `host:port` authority from options.path, not a URL path, so it must be
+    // written verbatim (no leading slash). Use the raw (original-case) header
+    // names so the wire bytes match what the caller set, like Node.
+    const headerLines = [`CONNECT ${this[kPath]} HTTP/1.1`];
+    const rawNames = this.getRawHeaderNames();
+    for (let i = 0; i < rawNames.length; i++) {
+      const name = rawNames[i];
+      const value = this.getHeader(name);
+      if (value === undefined) continue;
+      if ($isJSArray(value)) {
+        for (let j = 0; j < value.length; j++) {
+          headerLines.push(`${name}: ${value[j]}`);
+        }
+      } else {
+        headerLines.push(`${name}: ${value}`);
+      }
+    }
+    const requestHead = headerLines.join("\r\n") + "\r\n\r\n";
+
+    let connected = false;
+    let buffer: Buffer | null = null;
+    const maxHeaderSize = this[kMaxHeaderSize] || getMaxHTTPHeaderSize();
+
+    const swallowTeardownError = () => {};
+
+    const onError = err => {
+      if (connected) return;
+      socket.removeListener("data", onData);
+      socket.removeListener("error", onError);
+      socket.removeListener("close", onClose);
+      // Keep swallowTeardownError attached here: on a pre-tunnel failure/abort
+      // the AbortController can still emit an AbortError on the socket after
+      // this runs, and it must not surface as an unhandled 'error'.
+      this[kClearTimeout]?.();
+      // Abort/destroy is handled by onAbort → socketCloseListener, which emits
+      // 'close' and also synthesizes a socket 'close' that lands here; don't
+      // surface a spurious 'error' for a user-initiated teardown (Node doesn't).
+      if (isAbortError(err) || this.destroyed || this[abortedSymbol]) return;
+      // net/tls already produce a Node-shaped error (code/syscall/address/port),
+      // so propagate it verbatim like Node rather than flattening it.
+      fetching = false;
+      try {
+        this.emit("error", err);
+      } catch {}
+      // The request is done: emit 'close' like Node does after a failed request.
+      maybeEmitClose();
+    };
+
+    const onClose = () => {
+      if (connected) return;
+      onError(new ConnResetException("socket hang up"));
+    };
+
+    const onData = chunk => {
+      buffer = buffer ? Buffer.concat([buffer, chunk]) : chunk;
+
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) {
+        if (buffer.length > maxHeaderSize) {
+          socket.destroy();
+          onError($HPE_HEADER_OVERFLOW("Header overflow"));
+        }
+        return;
+      }
+      // Reject an oversized header block even when it arrives complete (with its
+      // terminator) in a single read, so maxHeaderSize is honored the way Node's
+      // llhttp counts header bytes regardless of where \r\n\r\n lands.
+      if (headerEnd > maxHeaderSize) {
+        socket.destroy();
+        onError($HPE_HEADER_OVERFLOW("Header overflow"));
+        return;
+      }
+
+      const headerText = buffer.toString("latin1", 0, headerEnd);
+
+      const lines = headerText.split("\r\n");
+      const statusLine = lines.shift() || "";
+      // "HTTP/1.1 200 Connection established"
+      const statusMatch = RegExpPrototypeExec.$call(CONNECT_STATUS_LINE_REGEX, statusLine);
+      if (!statusMatch) {
+        // A proxy that answers with an unparseable status line isn't a tunnel;
+        // fail the request instead of emitting 'connect' with no statusCode.
+        // onError runs before `connected` flips, so it still fires.
+        socket.destroy();
+        onError($HPE_INVALID_HEADER_TOKEN("Parse Error: Invalid header token encountered"));
+        return;
+      }
+
+      connected = true;
+      socket.removeListener("data", onData);
+      socket.removeListener("error", onError);
+      socket.removeListener("close", onClose);
+      // Hand the tunnel socket to the user with no internal listeners, like Node.
+      socket.removeListener("error", swallowTeardownError);
+      // Our internal 'data' listener put the socket into flowing mode; reset it
+      // to the neutral (neither flowing nor paused) state like Node does before
+      // emitting 'connect', so bytes after the headers stay buffered until the
+      // user attaches a 'data' listener / pipes / resumes (no data loss).
+      socket.readableFlowing = null;
+      this[kClearTimeout]?.();
+      fetching = false;
+
+      const head = headerEnd + 4 < buffer.length ? buffer.subarray(headerEnd + 4) : kEmptyBuffer;
+      buffer = null;
+
+      const res = new IncomingMessage(null, kEmptyObject);
+      res.httpVersion = `${statusMatch[1]}.${statusMatch[2]}`;
+      res[statusCodeSymbol] = Number(statusMatch[3]);
+      // Deliver the reason phrase verbatim, "" when omitted, matching llhttp/Node.
+      res[statusMessageSymbol] = statusMatch[4] ?? "";
+
+      const rawHeaders: string[] = [];
+      // Null prototype so a proxy header literally named "constructor"/"__proto__"
+      // folds against an absent own property instead of an inherited one.
+      const parsedHeaders: Record<string, string | string[]> = { __proto__: null } as any;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const colon = line.indexOf(":");
+        if (colon === -1) continue;
+        const key = line.slice(0, colon);
+        // Strip OWS = *(SP / HTAB) on both sides of the value, matching llhttp
+        // (RFC 7230 §3.2.4), so padded proxy headers parse like they do in Node.
+        let start = colon + 1;
+        let end = line.length;
+        while (start < end && (line.charCodeAt(start) === 32 || line.charCodeAt(start) === 9)) start++;
+        while (end > start && (line.charCodeAt(end - 1) === 32 || line.charCodeAt(end - 1) === 9)) end--;
+        const val = line.slice(start, end);
+        $putByValDirect(rawHeaders, rawHeaders.length, key);
+        $putByValDirect(rawHeaders, rawHeaders.length, val);
+        // Fold into headers with Node's _addHeaderLine rules: set-cookie is
+        // always an array, singleton headers keep the first value, everything
+        // else is comma-joined.
+        const lowerKey = key.toLowerCase();
+        const existing = parsedHeaders[lowerKey];
+        if (lowerKey === "set-cookie") {
+          if (existing === undefined) parsedHeaders[lowerKey] = [val];
+          else (existing as string[]).push(val);
+        } else if (existing === undefined) {
+          parsedHeaders[lowerKey] = val;
+        } else if (!kConnectSingletonHeaders.has(lowerKey)) {
+          parsedHeaders[lowerKey] = `${existing}, ${val}`;
+        }
+      }
+      res.headers = parsedHeaders;
+      res.rawHeaders = rawHeaders;
+      // The CONNECT response has no body; mark it complete so reads emit EOF
+      // instead of touching the (absent) fetch Response backing store.
+      res[noBodySymbol] = true;
+      res.complete = true;
+      res.push(null);
+
+      // Point res.socket at the real tunnel socket and back-reference the
+      // response from the request, matching Node (res.socket === socket,
+      // req.res === res, res.upgrade === true). Node leaves res.req undefined
+      // for CONNECT, so we do too.
+      res.upgrade = true;
+      res.socket = socket;
+      this.res = res;
+
+      // The request is finished from the writable side's perspective.
+      if (!this.finished) {
+        this.finished = true;
+      }
+      process.nextTick(emitFinishAndDeferredCloseNT);
+
+      if (this.listenerCount("connect") > 0) {
+        this.emit("connect", res, socket, head);
+      } else {
+        // Node destroys the socket when nobody is listening for 'connect'.
+        socket.destroy();
+      }
+
+      // Attach this after the emit so the user's 'connect' handler sees the
+      // tunnel socket with no internal listeners, like Node. Socket 'close' is
+      // async, so a listener added here still fires even if the handler called
+      // socket.destroy() synchronously. Once the tunnel socket goes away, the
+      // request is done too: emit 'close' the way Node does on CONNECT close.
+      socket.once("close", () => {
+        maybeEmitClose();
+      });
+    };
+
+    // Swallow a late error that fires during pre-tunnel teardown (e.g. the
+    // AbortController's AbortError when the request is aborted/destroyed before
+    // the tunnel is established) so it doesn't surface as an unhandled 'error'.
+    // Removed once the tunnel is handed to the user so the socket is delivered
+    // with no internal listeners, like Node.
+    socket.on("error", swallowTeardownError);
+    socket.on("data", onData);
+    socket.on("error", onError);
+    socket.on("close", onClose);
+
+    const writeHead = () => {
+      socket.write(requestHead);
+    };
+    if (socket.connecting) {
+      socket.once(isTLS ? "secureConnect" : "connect", writeHead);
+    } else {
+      writeHead();
+    }
+
+    return true;
   };
 
   let onEnd = () => {};

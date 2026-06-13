@@ -1,0 +1,29 @@
+name: zizmor
+
+permissions:
+  contents: read
+  security-events: write
+
+on:
+  pull_request:
+    paths:
+      - ".github/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/**"
+
+jobs:
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@b1d7e1fb5de872772f31590499237e7cce841e8e # v0.5.3
+        with:
+          version: 1.24.1
+          inputs: .github/
+          advanced-security: true
+        # advisory-only for now; uploads SARIF to code scanning but doesn't fail the job
+        continue-on-error: true

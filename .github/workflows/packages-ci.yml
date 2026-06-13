@@ -1,5 +1,8 @@
 name: Packages CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches:

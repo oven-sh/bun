@@ -8,21 +8,27 @@ Private registries can be configured using either [`.npmrc`](/pm/npmrc) or [`bun
 
 To configure a registry for a particular npm scope:
 
+<Note>
+  Scope names are specified **without the `@` prefix**. For example, to configure a registry for packages like `@myorg/package`, use `myorg` as the scope name. While you can also use `"@myorg"` (with quotes and `@`), the recommended syntax is without the `@`.
+</Note>
+
+
 ```toml bunfig.toml icon="settings"
 [install.scopes]
-# as a string
-"@myorg1" = "https://usertitle:password@registry.myorg.com/"
+# Scope names are specified WITHOUT the @ prefix
+# For packages like @myorg1/package, use "myorg1" as the scope name
+myorg1 = "https://username:password@registry.myorg.com/"
 
 # as an object with username/password
 # you can reference environment variables
-"@myorg2" = {
+myorg2 = {
   username = "myusername",
   password = "$npm_pass",
   url = "https://registry.myorg.com/"
 }
 
 # as an object with token
-"@myorg3" = { token = "$npm_token", url = "https://registry.myorg.com/" }
+myorg3 = { token = "$npm_token", url = "https://registry.myorg.com/" }
 
 ```
 
@@ -32,7 +38,7 @@ Your `bunfig.toml` can reference environment variables. Bun automatically loads 
 
 ```toml bunfig.toml icon="settings"
 [install.scopes]
-"@myorg3" = { token = "$npm_token", url = "https://registry.myorg.com/" }
+myorg3 = { token = "$npm_token", url = "https://registry.myorg.com/" }
 ```
 
 ---

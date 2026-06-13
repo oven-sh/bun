@@ -137,6 +137,10 @@ pub const TestOptions = struct {
     coverage: CodeCoverageOptions = .{},
     path_ignore_patterns: []const []const u8 = &.{},
     path_ignore_patterns_from_cli: bool = false,
+    /// True if `pathIgnorePatterns` was explicitly set by the user via the
+    /// CLI flag or `bunfig.toml`. When false, the scanner falls back to its
+    /// built-in defaults (e.g. `**/dist/**`, `**/build/**`).
+    path_ignore_patterns_configured: bool = false,
     test_filter_pattern: ?[]const u8 = null,
     /// `?*bun.jsc.RegularExpression` — typed as opaque to keep this file free
     /// of `jsc/` references. Read via `testFilterRegex()`.

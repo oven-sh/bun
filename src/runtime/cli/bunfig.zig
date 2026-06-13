@@ -486,8 +486,12 @@ pub const Bunfig = struct {
                                 const patterns = try allocator.alloc(string, 1);
                                 patterns[0] = pattern;
                                 this.ctx.test_options.path_ignore_patterns = patterns;
+                                this.ctx.test_options.path_ignore_patterns_configured = true;
                             },
                             .e_array => |arr| {
+                                // An explicit empty array opts out of the default
+                                // ignore patterns without supplying any of its own.
+                                this.ctx.test_options.path_ignore_patterns_configured = true;
                                 if (arr.items.len == 0) break :brk;
 
                                 const patterns = try allocator.alloc(string, arr.items.len);

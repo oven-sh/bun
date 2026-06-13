@@ -1,7 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { mkdirSync, realpathSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import * as os from "node:os";
+import { join } from "path";
 
 it("arch", () => {
   expect(["x64", "x86", "arm64"].some(arch => os.arch() === arch)).toBe(true);
@@ -140,6 +141,96 @@ it("cpus", () => {
     expect(typeof cpu.times.sys === "number").toBe(true);
     expect(typeof cpu.times.user === "number").toBe(true);
   }
+});
+
+// https://github.com/oven-sh/bun/issues/29689
+//
+// On Linux, cpusImplLinux used the `processor:` field from /proc/cpuinfo
+// directly as an array index, and iterated 0..num_cpus for sysfs. Dual-
+// socket EPYCs expose /proc/stat and /proc/cpuinfo with sparse IDs —
+// e.g. cpu0..cpu63, cpu128..cpu191 — so `processor: 128` tripped the
+// `cpu_index >= num_cpus` guard and os.cpus() threw ERR_SYSTEM_ERROR.
+//
+// Fix: parse the real CPU ID from each `cpuN` line, keep a
+// cpu_id->array_index map, and use that map in the /proc/cpuinfo and
+// sysfs passes. Exercise via BUN_DEBUG_CPUS_PROCFS_ROOT which redirects
+// procfs/sysfs reads to a staged tempdir.
+it.skipIf(!isLinux)("cpus() handles non-contiguous CPU IDs (#29689)", async () => {
+  // Simulated 8-CPU EPYC-style layout: IDs 0..3 then 8..11. The crash
+  // reproduces with any ID >= total CPU count; 8 with count 8 is enough.
+  //
+  // Per-id-distinct values in every stage (`times.user` in /proc/stat,
+  // model suffix in /proc/cpuinfo, kHz in scaling_cur_freq) let the test
+  // prove each JS slot is populated from the right CPU ID — if any of
+  // the three passes mis-mapped `cpu_id → array_index` and silently wrote
+  // to the wrong slot, the per-slot toEqual below would catch it.
+  const cpuIds = [0, 1, 2, 3, 8, 9, 10, 11];
+
+  // /proc/stat user ticks encode the id: `id + 1` × 10 (after the ×10
+  // scale applied by cpusImplLinux this lands at 10, 20, …, 120).
+  const statBody =
+    "cpu  100 0 100 1000 0 0 0 0 0 0\n" +
+    cpuIds.map(id => `cpu${id} ${id + 1} 0 10 100 0 0 0 0 0 0`).join("\n") +
+    "\nintr 0\nctxt 0\n";
+
+  // /proc/cpuinfo model encodes the id.
+  const cpuinfoBody =
+    cpuIds
+      .map(id => `processor\t: ${id}\n` + `model name\t: AMD EPYC 7713 (core ${id})\n` + `cpu MHz\t\t: 2000.000\n`)
+      .join("\n") + "\n";
+
+  using dir = tempDir("cpus-noncontiguous", {
+    "proc/stat": statBody,
+    "proc/cpuinfo": cpuinfoBody,
+  });
+
+  // scaling_cur_freq encodes the id as (id + 1) × 1000 kHz, which the
+  // /1000 conversion in cpusImplLinux turns into (id + 1) MHz.
+  for (const id of cpuIds) {
+    const freqDir = join(String(dir), "sys/devices/system/cpu", `cpu${id}`, "cpufreq");
+    mkdirSync(freqDir, { recursive: true });
+    writeFileSync(join(freqDir, "scaling_cur_freq"), `${(id + 1) * 1000}\n`);
+  }
+
+  // os.cpus() returns a lazy-populated array sized to the *real* host's
+  // CPU count (hostCpuCount) whose per-slot getters trigger a single
+  // populate() from the binding. Read a field to force populate, then
+  // slice to the populated length so the outer shape reflects the fake
+  // procfs — not the CI host's real CPU count.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      "const cpus = require('os').cpus(); void cpus[0]?.model; console.log(JSON.stringify(cpus.slice(0, cpus.length)));",
+    ],
+    env: { ...bunEnv, BUN_DEBUG_CPUS_PROCFS_ROOT: String(dir) },
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Pass 1 packs array slots in /proc/stat order, so slot i corresponds
+  // to cpuIds[i]. Assert the full per-slot shape so a mis-mapping in any
+  // of the three passes would fail a specific entry, not just length.
+  const cpus = JSON.parse(stdout);
+  expect(cpus).toEqual(
+    cpuIds.map(id => ({
+      model: `AMD EPYC 7713 (core ${id})`,
+      speed: id + 1,
+      times: {
+        user: (id + 1) * 10, // raw ticks × scale 10
+        nice: 0,
+        sys: 100,
+        idle: 1000,
+        irq: 0,
+      },
+    })),
+  );
+
+  // Released bun (USE_SYSTEM_BUN=1) without the fix dies here with
+  // `Failed to get CPU information` (ERR_SYSTEM_ERROR) on stderr and a
+  // non-zero exit. Ignore ASAN-build noise on stderr.
+  expect(exitCode, `stderr: ${stderr}`).toBe(0);
 });
 
 it("networkInterfaces", () => {

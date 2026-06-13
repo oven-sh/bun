@@ -112,7 +112,7 @@ export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource != null) {
-    return $readableStreamToArrayDirect(stream, underlyingSource);
+    return Promise.$resolve($readableStreamToArrayDirect(stream, underlyingSource));
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
   return $readableStreamIntoArray(stream);
@@ -124,7 +124,7 @@ export function readableStreamToText(stream: ReadableStream): Promise<string> {
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource != null) {
-    return $readableStreamToTextDirect(stream, underlyingSource);
+    return Promise.$resolve($readableStreamToTextDirect(stream, underlyingSource));
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
 
@@ -143,7 +143,7 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource != null) {
-    return $readableStreamToArrayBufferDirect(stream, underlyingSource, false);
+    return Promise.$resolve($readableStreamToArrayBufferDirect(stream, underlyingSource, false));
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
 
@@ -224,7 +224,7 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
 
   if (underlyingSource != null) {
-    return $readableStreamToArrayBufferDirect(stream, underlyingSource, true);
+    return Promise.$resolve($readableStreamToArrayBufferDirect(stream, underlyingSource, true));
   }
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
 

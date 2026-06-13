@@ -3,7 +3,6 @@ use core::ffi::{c_uint, c_void};
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, VM};
-use bun_collections::IntegerBitSet;
 #[cfg(debug_assertions)]
 use bun_core::ZStr;
 
@@ -286,8 +285,8 @@ impl<'a> Iterator<'a> {
 ///
 /// Prefer `Iterator` for a simpler iterator.
 pub struct ArgumentsSlice<'a> {
-    /// Backing storage for the remaining-args view. Both [`Self::init`] and
-    /// [`Self::init_async`] borrow — `all: &'a [JSValue]` already ties this
+    /// Backing storage for the remaining-args view. [`Self::init`] borrows —
+    /// the `Cow::Borrowed` already ties this
     /// struct's lifetime to the source slice, so a heap-owned dupe
     /// buys nothing here (it could not outlive `'a`). Kept as
     /// `Cow` so a future caller that does own its args can pass `Owned`
@@ -300,9 +299,7 @@ pub struct ArgumentsSlice<'a> {
     /// whose `new()` calls `mi_heap_new()` eagerly, so we keep it `None` until a
     /// caller actually needs scratch storage (currently none do).
     pub arena: Option<bun_alloc::Arena>,
-    pub all: &'a [JSValue],
     pub threw: bool,
-    pub protected: IntegerBitSet<32>,
     pub will_be_async: bool,
 }
 
@@ -319,33 +316,6 @@ impl<'a> ArgumentsSlice<'a> {
         self.arena.get_or_insert_with(bun_alloc::Arena::new)
     }
 
-    pub fn unprotect(&mut self) {
-        let mut iter = self.protected.iterator::<true, true>();
-        while let Some(i) = iter.next() {
-            self.all[i].unprotect();
-        }
-        self.protected = IntegerBitSet::<32>::init_empty();
-    }
-
-    pub fn protect_eat(&mut self) {
-        if self.remaining().is_empty() {
-            return;
-        }
-        // `remaining_buf.len() == all.len()` for both init variants, so
-        // `all.len() - remaining().len()` reduces to `remaining_start`.
-        let index = self.all.len() - self.remaining().len();
-        self.protected.set(index);
-        self.all[index].protect();
-        self.eat();
-    }
-
-    pub fn protect_eat_next(&mut self) -> Option<JSValue> {
-        if self.remaining().is_empty() {
-            return None;
-        }
-        self.next_eat()
-    }
-
     pub fn from(vm: &'a VirtualMachine, slice: &'a [JSValueRef]) -> ArgumentsSlice<'a> {
         // SAFETY: JSValueRef and JSValue have identical layout (both are encoded i64).
         let as_values =
@@ -358,26 +328,8 @@ impl<'a> ArgumentsSlice<'a> {
             remaining_buf: Cow::Borrowed(slice),
             remaining_start: 0,
             vm,
-            all: slice,
             arena: None,
             threw: false,
-            protected: IntegerBitSet::<32>::init_empty(),
-            will_be_async: false,
-        }
-    }
-
-    pub fn init_async(vm: &'a VirtualMachine, slice: &'a [JSValue]) -> ArgumentsSlice<'a> {
-        // `all: &'a [JSValue]` already pins the struct lifetime to `slice`, so a
-        // heap-owned dupe of `remaining` cannot outlive `slice` anyway — borrow instead of copying.
-        // `all` stays borrowed so `protect_eat` index math holds.
-        ArgumentsSlice {
-            remaining_buf: Cow::Borrowed(slice),
-            remaining_start: 0,
-            vm,
-            all: slice,
-            arena: None,
-            threw: false,
-            protected: IntegerBitSet::<32>::init_empty(),
             will_be_async: false,
         }
     }
@@ -403,13 +355,6 @@ impl<'a> ArgumentsSlice<'a> {
         let v = self.remaining().first().copied()?;
         self.eat();
         Some(v)
-    }
-}
-
-impl<'a> Drop for ArgumentsSlice<'a> {
-    fn drop(&mut self) {
-        self.unprotect();
-        // arena dropped automatically
     }
 }
 

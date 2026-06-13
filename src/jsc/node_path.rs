@@ -225,8 +225,8 @@ impl PathLike {
 
 impl Unprotect for PathLike {
     /// JS-side half of cleanup — undo
-    /// the `protect()` taken by [`Self::to_thread_safe`] /
-    /// `ArgumentsSlice::protect_eat`. Owned payloads are released by `Drop`.
+    /// the `protect()` taken by [`Self::to_thread_safe`]. Owned payloads are
+    /// released by `Drop`.
     #[inline]
     fn unprotect(&mut self) {
         if let Self::Buffer(b) = self {

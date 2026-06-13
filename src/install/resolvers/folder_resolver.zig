@@ -151,7 +151,7 @@ pub const FolderResolution = union(Tag) {
         manager: *PackageManager,
         abs: stringZ,
         version: Dependency.Version,
-        comptime features: Features,
+        features: Features,
         comptime ResolverType: type,
         resolver: *ResolverType,
     ) !Lockfile.Package {

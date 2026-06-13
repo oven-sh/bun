@@ -1317,6 +1317,16 @@ impl<'a> Parser<'a> {
             install.default_registry = Some(self.parse_registry(&registry)?);
         }
 
+        if let Some(registry) = install_obj.get(b"forceRegistry") {
+            // First writer wins. The global bunfig is parsed before the
+            // project bunfig, so a device-level `forceRegistry` (e.g. set
+            // by IT via `~/.bunfig.toml`) cannot be changed or cleared by a
+            // project-level bunfig.
+            if install.force_registry.is_none() {
+                install.force_registry = Some(self.parse_registry(&registry)?);
+            }
+        }
+
         if let Some(scopes) = install_obj.get(b"scopes") {
             let mut registry_map = install.scoped.take().unwrap_or_default();
             self.expect(&scopes, ExprTag::EObject)?;

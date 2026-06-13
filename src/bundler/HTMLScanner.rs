@@ -80,6 +80,7 @@ impl<'a> HTMLScanner<'a> {
             module_id: 0,
             original_path: b"",
             flags: ImportRecordFlags::default(),
+            phase: Default::default(),
         };
 
         self.import_records.push(record);

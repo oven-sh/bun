@@ -152,6 +152,7 @@ pub fn post_process_js_chunk(
                 module_id: 0,
                 original_path: b"",
                 flags: ImportRecordFlags::default(),
+                phase: Default::default(),
             });
         }
 

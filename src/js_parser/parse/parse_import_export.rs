@@ -12,16 +12,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Note: The caller has already parsed the "import" keyword
     pub fn parse_import_expr(&mut self, loc: bun_ast::Loc, level: Level) -> Result<Expr, Error> {
         let p = self;
-        // Parse an "import.meta" expression
+        let mut phase = bun_ast::ImportPhase::Evaluation;
+        // Parse an "import.meta" or "import.source" expression
         if p.lexer.token == T::TDot {
-            p.esm_import_keyword = js_lexer::range_of_identifier(p.source, loc);
             p.lexer.next()?;
             if p.lexer.is_contextual_keyword(b"meta") {
+                // Only `import.meta` implies the Module goal. `import.source(...)`
+                // belongs to the ImportCall production and, like plain
+                // `import(...)`, is also valid with the Script goal, so it must
+                // not mark the file as ESM.
+                p.esm_import_keyword = js_lexer::range_of_identifier(p.source, loc);
                 p.lexer.next()?;
                 p.has_import_meta = true;
                 return Ok(p.new_expr(E::ImportMeta {}, loc));
+            } else if p.lexer.is_contextual_keyword(b"source") {
+                // "import.source(specifier)"
+                // https://tc39.es/proposal-source-phase-imports/
+                // `is_contextual_keyword` compares the raw token, so
+                // `import.sourc\u0065` is rejected below like any other name.
+                p.lexer.next()?;
+                // See the matching check for static `import source` in
+                // parse_stmt: the bundler has no representation for a module
+                // source.
+                if p.options.bundle {
+                    let r = js_lexer::range_of_identifier(p.source, loc);
+                    p.log().add_range_error(
+                        Some(p.source),
+                        r,
+                        b"\"import.source\" is not supported when bundling",
+                    );
+                    return Err(bun_core::err!("SyntaxError"));
+                }
+                phase = bun_ast::ImportPhase::Source;
             } else {
-                p.lexer.expected_string(b"\"meta\"")?;
+                p.lexer.expected_string(b"\"meta\" or \"source\"")?;
             }
         }
 
@@ -54,6 +78,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
 
             if p.lexer.token != T::TCloseParen {
+                if phase == bun_ast::ImportPhase::Source {
+                    // The lowering for `import.source()` injects its own
+                    // import attributes (`with { type: "webassembly" }`),
+                    // which cannot be merged with an arbitrary options
+                    // expression at compile time.
+                    let r = js_lexer::range_of_identifier(p.source, loc);
+                    p.log().add_range_error(
+                        Some(p.source),
+                        r,
+                        b"\"import.source\" does not support a second argument",
+                    );
+                    return Err(bun_core::err!("SyntaxError"));
+                }
                 // "import('./foo.json', { assert: { type: 'json' } })"
                 import_options = p.parse_expr(Level::Comma)?;
 
@@ -83,11 +120,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(slice) = slice_opt {
                 let import_record_index =
                     p.add_import_record(bun_ast::ImportKind::Dynamic, value.loc, slice);
+                p.import_records.items_mut()[import_record_index as usize].phase = phase;
                 return Ok(p.new_expr(
                     E::Import {
                         expr: value,
                         import_record_index,
                         options: import_options,
+                        phase,
                     },
                     loc,
                 ));
@@ -102,6 +141,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // .leading_interior_comments = comments,
                 import_record_index: u32::MAX,
                 options: import_options,
+                phase,
             },
             loc,
         ))

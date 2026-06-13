@@ -5678,8 +5678,12 @@ extern "C" void JSC__JSValue__forEachPropertyEnumerableOwn(JSC::EncodedJSValue J
         if (clientData->builtinNames().bunNativePtrPrivateName() == property)
             continue;
 
+        // Own-only lookup: the keys came from getOwnPropertyNames, and a getter
+        // invoked while reading an earlier property could delete the own key and
+        // expose an inherited one. getPropertySlot would then read that
+        // prototype value; getOwnPropertySlot keeps this to own properties.
         JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-        if (!object->getPropertySlot(globalObject, property, slot)) {
+        if (!object->getOwnPropertySlot(object, globalObject, property, slot)) {
             (void)scope.tryClearException();
             continue;
         }

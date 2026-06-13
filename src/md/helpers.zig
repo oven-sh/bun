@@ -21,6 +21,53 @@ pub inline fn isNewlineOrNul(c: u8) bool {
     return c == '\n' or c == '\r' or c == 0;
 }
 
+/// Find the index of the first byte in `slice` matching any of `needles`, or
+/// `slice.len` if none.
+///
+/// This intentionally does NOT defer to `bun.strings.indexOfAny` (highway):
+/// the markdown parser feeds it very short slices (a single line, a table
+/// cell, the gap between two `*`) where the highway call + dynamic dispatch +
+/// per-needle broadcast setup measurably dominates. Benchmarked on the
+/// parse+render path, going through highway unconditionally is -11% throughput
+/// and even a >=128-byte threshold leaves ~-4% on the table because the
+/// newline scan passes the whole remaining buffer but the hit is almost always
+/// in the first few dozen bytes.
+pub inline fn indexOfAnyInline(slice: []const u8, comptime needles: []const u8) usize {
+    var i: usize = 0;
+    if (comptime bun.Environment.enableSIMD) {
+        const V = bun.strings.AsciiVector;
+        const N = bun.strings.ascii_vector_size;
+        while (i + N <= slice.len) : (i += N) {
+            const vec: V = slice[i..][0..N].*;
+            var bits: bun.strings.AsciiVectorInt = 0;
+            inline for (needles) |n| {
+                bits |= @bitCast(@as(bun.strings.AsciiVectorU1, @bitCast(vec == @as(V, @splat(n)))));
+            }
+            if (bits != 0) return i + @ctz(bits);
+        }
+    }
+    // Scalar tail. With many needles a comptime LUT is cheaper than N
+    // comparisons per byte; with few needles direct compares win on i-cache.
+    if (comptime needles.len > 4) {
+        const lut = comptime blk: {
+            var t: [256]bool = @splat(false);
+            for (needles) |n| t[n] = true;
+            break :blk t;
+        };
+        while (i < slice.len) : (i += 1) {
+            if (lut[slice[i]]) return i;
+        }
+    } else {
+        while (i < slice.len) : (i += 1) {
+            const c = slice[i];
+            inline for (needles) |n| {
+                if (c == n) return i;
+            }
+        }
+    }
+    return slice.len;
+}
+
 /// Check if byte is ASCII alphanumeric.
 pub inline fn isAlphaNum(c: u8) bool {
     return std.ascii.isAlphanumeric(c);

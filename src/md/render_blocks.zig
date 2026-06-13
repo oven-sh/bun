@@ -74,12 +74,12 @@ pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_
     while (start < row_text.len and cell_index < col_count) {
         // Find cell end, skipping escaped chars and code spans
         var end = start;
-        while (end < row_text.len and row_text[end] != '|') {
-            if (row_text[end] == '\\' and end + 1 < row_text.len) {
-                end += 2;
-            } else {
-                end += 1;
-            }
+        while (end < row_text.len) {
+            end += helpers.indexOfAnyInline(row_text[end..], "|\\");
+            if (end >= row_text.len) break;
+            if (row_text[end] == '|') break;
+            // backslash: skip escaped char
+            end = @min(end + 2, row_text.len);
         }
 
         // Skip trailing pipe cell

@@ -1041,6 +1041,28 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         this.finalize();
     }
 
+    /// `${abi_name}__controllerDetached` body — called from
+    /// `JSReadable*Controller::detach()` (controller `.end()`/`.close()` host
+    /// fns) and from the controller's destructor, i.e. whenever the
+    /// controller stops being attached to this sink.
+    ///
+    /// `signal.ptr` stores the controller's encoded JSValue bits (written by
+    /// `__assignToStream`) without rooting the cell, so the controller can be
+    /// collected while the native sink still has a flush in flight (e.g. a
+    /// response stream parked on tryEnd() backpressure). Once the controller
+    /// detaches or dies the signal must never fire again: `onClose`/`onReady`
+    /// would decode a dead cell. Clear it, but only when it still holds this
+    /// controller's bits — `connect()`-style signals store a live native
+    /// pointer instead, and a sink re-assigned to a new stream holds the
+    /// newer controller's bits.
+    pub fn js_controller_detached(this: &mut T, controller: crate::webcore::jsc::JSValue) {
+        if let Some(signal) = this.signal() {
+            if signal.ptr.map(|p| p.as_ptr() as usize) == Some(controller.encoded()) {
+                signal.clear();
+            }
+        }
+    }
+
     /// `${abi_name}__close` body — called from
     /// `${controller}__close` and `${name}__doClose` in JSSink.cpp with a raw
     /// `m_sinkPtr` (not a host-fn callframe), so exceptions become `.zero`.

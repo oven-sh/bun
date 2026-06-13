@@ -8,7 +8,7 @@ use bun_core::StackCheck;
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
-use bun_io::max_buf::MaxBuf;
+use bun_io::max_buf::{MaxBuf, OwningSubprocess};
 use bun_jsc::ipc as IPC;
 use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
@@ -1248,12 +1248,22 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         NonNull::new(subprocess_ptr.cast()).expect("Box::into_raw returned null");
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
+    // `owner` carries this subprocess (stable address) plus its overflow-kill fn;
+    // it's read back off the `MaxBuf` by `on_max_buffer_overflow`. The subprocess
+    // clears both slots (via `remove_from_subprocess`) on finalize / spawn error /
+    // overflow, so the back-pointer never outlives it.
     {
+        let owner = OwningSubprocess::Owned {
+            ptr: subprocess_nn.cast::<()>(),
+            on_max_buffer: SubprocessT::on_max_buffer_overflow,
+        };
         let mut mb = None;
-        MaxBuf::create_for_subprocess(&mut mb, max_buffer);
+        // SAFETY: `owner`'s ptr/fn pairing is valid for the subprocess's lifetime.
+        unsafe { MaxBuf::create_for_subprocess(owner, &mut mb, max_buffer) };
         subprocess.stderr_maxbuf.set(mb);
         let mut mb = None;
-        MaxBuf::create_for_subprocess(&mut mb, max_buffer);
+        // SAFETY: same as the stderr slot above.
+        unsafe { MaxBuf::create_for_subprocess(owner, &mut mb, max_buffer) };
         subprocess.stdout_maxbuf.set(mb);
     }
 

@@ -391,16 +391,41 @@ struct NSEvent : Ref {
     static CGRect (*s_CGDisplayBounds)(uint32_t displayID);
     static void (*s_CFRelease)(void *);
 
+    // Holds the button-mask bitmap the DOM's event.buttons field should
+    // report. WebCore's PlatformEventFactoryMac.mm computes event.buttons
+    // by calling +[NSEvent pressedMouseButtons], which reads
+    // system-wide HID state. For synthetic events that state is always 0
+    // (no real button physically pressed), so mousedown/drag/contextmenu
+    // all get event.buttons=0 — wrong for spec-compliant JS drag
+    // handlers.
+    //
+    // WebAutomationSessionMac.mm:80 solves this by method-swizzling
+    // +[NSEvent pressedMouseButtons] to return its tracked state for the
+    // scope of each event dispatch. We take the same approach but make
+    // the swap permanent at host init — we never want the system HID
+    // answer here (the host is a headless subprocess; no real mouse
+    // would ever be over its window). Set by WebViewHost before each
+    // mouseDown/mouseUp/mouseMove dispatch.
+    //
+    // Bits use DOM MouseEvent.buttons order: bit 0=left, bit 1=right,
+    // bit 2=middle — the same layout [NSEvent pressedMouseButtons]
+    // returns natively.
+    static uint32_t s_trackedButtonsMask;
+
     // NSEventType — the ones we use.
     enum : unsigned long {
         LeftMouseDown = 1,
         LeftMouseUp = 2,
         RightMouseDown = 3,
         RightMouseUp = 4,
+        MouseMoved = 5,
+        LeftMouseDragged = 6,
+        RightMouseDragged = 7,
         KeyDown = 10,
         KeyUp = 11,
         OtherMouseDown = 25,
         OtherMouseUp = 26,
+        OtherMouseDragged = 27,
     };
     // NSEventModifierFlags — bits 16–20.
     enum : unsigned long {
@@ -632,6 +657,26 @@ struct WKWebView : Ref {
     static SEL s_rightMouseUp;
     static SEL s_otherMouseDown;
     static SEL s_otherMouseUp;
+    // Dragged events route through the public responder selectors
+    // (mouseDragged: / rightMouseDragged: / otherMouseDragged:) —
+    // WKWebView → WebViewImpl → mouseEventQueue → XPC, and the
+    // _doAfterProcessingAllPendingMouseEvents: barrier fires normally
+    // because a button was pressed (the prior mouseDown: already
+    // queued onto WebContent).
+    //
+    // Pure hover (no button held) is handled parent-side in
+    // WebViewHost::mouseMoveIPC by ack-without-dispatch. WKWebView has
+    // a _simulateMouseMove: SPI (macOS 13+) but it hangs on the
+    // barrier on macOS 14/15 aarch64 (event enqueues into
+    // mouseEventQueue but WebContent never drains it — probably the
+    // headless window's layer tree is ineligible for hover hit-test on
+    // that OS/arch combo). The SEL stays wired in case we later add a
+    // CGEvent-based hover (screen-level, like WebAutomationSessionMac's
+    // wheel path).
+    static SEL s_simulateMouseMove;
+    static SEL s_mouseDragged;
+    static SEL s_rightMouseDragged;
+    static SEL s_otherMouseDragged;
     static SEL s_keyDown;
     static SEL s_keyUp;
     void mouseDown(NSEvent e) { msg<void>(s_mouseDown, e.m_id); }
@@ -640,6 +685,10 @@ struct WKWebView : Ref {
     void rightMouseUp(NSEvent e) { msg<void>(s_rightMouseUp, e.m_id); }
     void otherMouseDown(NSEvent e) { msg<void>(s_otherMouseDown, e.m_id); }
     void otherMouseUp(NSEvent e) { msg<void>(s_otherMouseUp, e.m_id); }
+    void simulateMouseMove(NSEvent e) { msg<void>(s_simulateMouseMove, e.m_id); }
+    void mouseDragged(NSEvent e) { msg<void>(s_mouseDragged, e.m_id); }
+    void rightMouseDragged(NSEvent e) { msg<void>(s_rightMouseDragged, e.m_id); }
+    void otherMouseDragged(NSEvent e) { msg<void>(s_otherMouseDragged, e.m_id); }
     void keyDown(NSEvent e) { msg<void>(s_keyDown, e.m_id); }
     void keyUp(NSEvent e) { msg<void>(s_keyUp, e.m_id); }
 

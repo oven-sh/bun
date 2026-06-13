@@ -3,6 +3,7 @@
 #include "ErrorCode.h"
 
 #include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/ParserError.h"
 #include "JavaScriptCore/JIT.h"
 #include "JavaScriptCore/JSWeakMap.h"
 #include "JavaScriptCore/JSWeakMapInlines.h"
@@ -129,6 +130,17 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
     RETURN_IF_EXCEPTION(scope, {});
+
+    {
+        JSC::ParserError error;
+        if (!JSC::checkSyntax(vm, source, error)) {
+            ASSERT(error.isValid());
+            auto exception = error.toErrorObject(globalObject, source);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSC::throwException(globalObject, scope, exception);
+            return {};
+        }
+    }
 
     const bool produceCachedData = options.produceCachedData;
     auto filename = options.filename;

@@ -4,7 +4,7 @@ sidebarTitle: "Discord.js with Bun"
 mode: center
 ---
 
-Discord.js runs on Bun with no extra setup. This guide builds a bot that answers a `/ping` slash command, then shows how to keep it running once you deploy. If this is your first bot, copy each block as you reach it and you'll have something working by the end.
+Discord.js runs on Bun with no extra setup. This guide builds a bot that answers a `/ping` slash command: you register the command once, then start the bot and use it in your server. If this is your first bot, copy each block as you reach it.
 
 ---
 
@@ -28,18 +28,27 @@ bun add discord.js
 
 Your bot needs its own account, which you create in Discord's developer portal. Open the [developer portal](https://discord.com/developers/applications), sign in, and create an **Application**. Inside it, open the **Bot** tab to create the bot user. Discord's [setup walkthrough](https://discordjs.guide/legacy/preparations/app-setup#creating-your-bot) has screenshots if you get lost.
 
-On that **Bot** tab, find the token and copy it. It's the password your code uses to log in as the bot, so treat it like one and keep it to yourself.
+Copy two values from the portal:
+
+- The **token** on the **Bot** tab. It's the password your code uses to log in, so treat it like one and keep it to yourself.
+- The **Application ID** on the **General Information** tab. Discord uses it to tie your commands to this app.
 
 ---
 
-A bot can't do anything in a server until you invite it. In the portal, open the **OAuth2** section and generate an invite URL with the `bot` and `applications.commands` scopes. Open that URL and add the bot to a server you manage. A personal server you make just for testing is the easiest place to start.
+A bot can't do anything in a server until you invite it. In the portal's **OAuth2** section, generate an invite URL with the `bot` and `applications.commands` scopes, open it, and add the bot to a server you manage. Slash commands need the `applications.commands` scope, so don't skip it. A personal server you make for testing is the easiest place to start.
 
 ---
 
-Save the token in a file named `.env.local`. Bun reads this file on startup and loads it into `process.env`, so the token stays out of your code.
+You also need your server's ID to register the command there. In Discord, turn on **Settings > Advanced > Developer Mode**, then right-click your server's icon and choose **Copy Server ID**.
+
+---
+
+Save all three values in `.env.local`. Bun reads this file on startup and loads it into `process.env`, so nothing secret lives in your code.
 
 ```ini .env.local icon="settings"
 DISCORD_TOKEN=your-bot-token
+DISCORD_CLIENT_ID=your-application-id
+DISCORD_GUILD_ID=your-server-id
 ```
 
 ---
@@ -53,27 +62,47 @@ node_modules
 
 ---
 
-Here's the whole bot. Save it as `bot.ts`.
+Discord has to know about a command before anyone can use it. Register `/ping` with a short script named `deploy-commands.ts`.
+
+```ts deploy-commands.ts icon="/icons/typescript.svg"
+import { REST, Routes, SlashCommandBuilder } from "discord.js";
+
+// the commands you want to register
+const commands = [new SlashCommandBuilder().setName("ping").setDescription("Replies with Pong!").toJSON()];
+
+const rest = new REST().setToken(process.env.DISCORD_TOKEN!);
+
+// register them in your server, where they appear instantly
+await rest.put(Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID!, process.env.DISCORD_GUILD_ID!), {
+  body: commands,
+});
+
+console.log("Registered /ping");
+```
+
+Run it once.
+
+```sh terminal icon="terminal"
+bun run deploy-commands.ts
+```
+
+You only run this again when you add a command or change its name or description, not every time the bot starts. Registering to your server instead of globally is what makes the command show up right away.
+
+---
+
+Now the bot itself. Save it as `bot.ts`.
 
 ```ts bot.ts icon="/icons/typescript.svg"
-import { Client, Events, GatewayIntentBits, SlashCommandBuilder } from "discord.js";
+import { Client, Events, GatewayIntentBits } from "discord.js";
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// the command people see when they type "/" in your server
-const ping = new SlashCommandBuilder().setName("ping").setDescription("Replies with Pong!");
-
 // runs once, right after the bot connects
-client.once(Events.ClientReady, async readyClient => {
+client.once(Events.ClientReady, readyClient => {
   console.log(`Logged in as ${readyClient.user.tag}`);
-
-  // add the command to every server the bot is in so it shows up right away
-  for (const guild of readyClient.guilds.cache.values()) {
-    await guild.commands.set([ping]);
-  }
 });
 
-// runs every time someone uses one of your slash commands
+// runs every time someone uses a slash command
 client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -85,7 +114,7 @@ client.on(Events.InteractionCreate, async interaction => {
 client.login(process.env.DISCORD_TOKEN);
 ```
 
-When the bot connects, the ready handler registers `/ping` in every server it has joined, so the command appears right away. After that, `interactionCreate` runs whenever someone uses a command; it checks that the command was `/ping` and replies with `Pong!`. The last line signs in with the token Bun loaded from `.env.local`.
+The ready handler logs a line once the bot connects. After that, `interactionCreate` runs whenever someone uses a slash command; it confirms the command was `/ping` and replies with `Pong!`.
 
 ---
 
@@ -95,7 +124,7 @@ Start the bot with `bun run`.
 bun run bot.ts
 ```
 
-The first connection takes a few seconds. Once the login line prints, switch to Discord, type `/ping` in your server, and send it.
+The first connection takes a few seconds. Once the login line prints, switch to Discord and type `/ping` in your server.
 
 ```txt
 Logged in as my-bot#1234
@@ -105,13 +134,13 @@ The bot replies with `Pong!`. You've got a working Discord bot.
 
 ---
 
-Adding more commands follows the same shape: build another `SlashCommandBuilder`, pass it to the `set` call next to `ping`, and add an `if` branch in `interactionCreate` for its name. The [Discord.js docs](https://discord.js.org/docs) cover command options, permissions, buttons, embeds, and the rest of the API.
+To add another command, define it in `deploy-commands.ts`, run that script again, and add an `if` branch for its name in `bot.ts`. The [Discord.js docs](https://discord.js.org/docs) cover command options, permissions, buttons, embeds, and the rest of the API.
 
 ---
 
 When you deploy, there's no build or bundling step. Bun runs `bot.ts` and every file it imports directly, so you ship your source as-is and start it with the same `bun run bot.ts` you use while developing.
 
-One thing to know for production: this bot registers `/ping` in each server on startup, which is fine while you're testing in one. For a bot that joins many servers, register commands globally instead. Global commands work everywhere but can take up to an hour to update, so per-server registration is the friendlier choice while you build.
+`deploy-commands.ts` registers `/ping` in your test server, which is the right scope while you're building. To publish the bot to every server it joins, register globally instead: change the route from `Routes.applicationGuildCommands(...)` to `Routes.applicationCommands(...)`, passing just the application ID.
 
 To keep the bot online and bring it back after a crash or reboot, run it under a process manager.
 

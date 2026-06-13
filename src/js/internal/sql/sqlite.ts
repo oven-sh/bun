@@ -408,8 +408,8 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     return false;
   }
 
-  throwIfUpdateEmpty(query: string, _hasValues: boolean): void {
-    if (query.endsWith("SET ")) {
+  throwIfUpdateEmpty(_query: string, hasValues: boolean): void {
+    if (!hasValues) {
       throw new SyntaxError("Update needs to have at least one column");
     }
   }

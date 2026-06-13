@@ -171,6 +171,8 @@ Once installed, the binary can upgrade itself:
 bun upgrade
 ```
 
+When upgrading between recent stable releases, `bun upgrade` downloads a small binary patch (a _delta update_) instead of the full release archive, then verifies the patched binary against the release's published checksums. If a patch isn't available, it falls back to downloading the full release. Pass `--no-delta` to always download the full release.
+
 <Tip>
 **Homebrew users** <br />
 To avoid conflicts with Homebrew, use `brew upgrade bun` instead.
@@ -179,6 +181,20 @@ To avoid conflicts with Homebrew, use `brew upgrade bun` instead.
 To avoid conflicts with Scoop, use `scoop update bun` instead.
 
 </Tip>
+
+---
+
+## Installing a Build from a Pull Request
+
+To try out a change before it's merged and released, install the CI build of any pull request in [oven-sh/bun](https://github.com/oven-sh/bun/pulls). The pull request can be given as a plain number, a `#`-prefixed number, or the pull request's URL:
+
+```bash terminal icon="terminal"
+bun upgrade pr 12345
+bun upgrade pr "#12345"
+bun upgrade pr https://github.com/oven-sh/bun/pull/12345
+```
+
+This replaces your current `bun` binary with the pull request's build for your platform. To switch back, run `bun upgrade` (or `bun upgrade --canary`).
 
 ---
 

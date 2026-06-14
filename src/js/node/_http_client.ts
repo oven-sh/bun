@@ -77,6 +77,119 @@ function emitErrorEventNT(self, err) {
   }
 }
 
+const kEmptyBuffer = Buffer.alloc(0);
+let UpgradedSocket;
+const UPGRADE_HIGH_WATER_MARK = 64 * 1024;
+
+async function* upgradeBodyGenerator(channel) {
+  try {
+    while (true) {
+      while (channel.chunks.length > 0) {
+        const wasOverHighWaterMark = channel.queuedBytes >= channel.highWaterMark;
+        const chunk = channel.chunks.shift();
+        channel.queuedBytes -= chunk.length;
+        // Resolve any writers waiting for backpressure to clear.
+        while (channel.waiters.length > 0 && channel.queuedBytes < channel.highWaterMark) {
+          const cb = channel.waiters.shift();
+          try {
+            cb();
+          } catch {}
+        }
+        // Signal the ClientRequest to emit 'drain' once the queue has drained
+        // back below the high-water-mark, so a req.write() caller that paused
+        // on a false return gets a resume signal (matches OutgoingMessage).
+        if (wasOverHighWaterMark && channel.queuedBytes < channel.highWaterMark) {
+          channel.ondrain?.();
+        }
+        yield chunk;
+      }
+      if (channel.ended) {
+        return;
+      }
+      await new Promise(resolve => {
+        channel.resolve = resolve;
+      });
+    }
+  } finally {
+    // Always flush write callbacks — including when the generator is
+    // terminated via .return() (fetch abort/destroy at a yield point).
+    // If end() was called with an error, propagate it to each callback
+    // so callers that rely on the write-callback contract see the failure.
+    const endError = channel.endError;
+    while (channel.waiters.length > 0) {
+      const cb = channel.waiters.shift();
+      try {
+        cb(endError);
+      } catch {}
+    }
+  }
+}
+
+function createUpgradeChannel(initialChunks) {
+  // Own a private copy of the chunks so happy-eyeballs retries (which create
+  // a fresh channel per attempt) don't share state with a prior attempt.
+  const chunks = initialChunks ? initialChunks.slice() : [];
+  let queuedBytes = 0;
+  for (let i = 0; i < chunks.length; i++) queuedBytes += chunks[i].length;
+  return {
+    chunks,
+    queuedBytes,
+    highWaterMark: UPGRADE_HIGH_WATER_MARK,
+    waiters: [] as Array<(err?: Error | null) => void>,
+    ended: false,
+    endError: undefined as Error | undefined,
+    resolve: undefined as undefined | (() => void),
+    // Invoked when queuedBytes drains below highWaterMark so the owning
+    // ClientRequest can emit 'drain' for a paused req.write() caller.
+    ondrain: undefined as undefined | (() => void),
+    // Pre-upgrade body chunk from req.write(). Accounts bytes so that
+    // post-upgrade backpressure checks stay correct.
+    pushChunk(chunk): boolean {
+      if (this.ended) return false;
+      this.chunks.push(chunk);
+      this.queuedBytes += chunk.length;
+      this.notify();
+      return true;
+    },
+    // Post-upgrade writes from socket.write(): apply backpressure.
+    pushBuffered(buffer, callback) {
+      if (this.ended) {
+        callback(this.endError ?? $ERR_STREAM_WRITE_AFTER_END());
+        return;
+      }
+      this.chunks.push(buffer);
+      this.queuedBytes += buffer.length;
+      this.notify();
+      if (this.queuedBytes >= this.highWaterMark) {
+        this.waiters.push(callback);
+      } else {
+        callback();
+      }
+    },
+    notify() {
+      const resolve = this.resolve;
+      if (resolve) {
+        this.resolve = undefined;
+        resolve();
+      }
+    },
+    end(err?: Error) {
+      if (this.ended) return;
+      this.ended = true;
+      if (err) this.endError = err;
+      this.notify();
+      // Flush any waiters so socket.write callbacks don't hang. If we were
+      // ended with an error, forward it to each pending write callback.
+      while (this.waiters.length > 0) {
+        const cb = this.waiters.shift();
+        try {
+          cb(err);
+        } catch {}
+      }
+    },
+  };
+}
+
 function ClientRequest(input, options, cb) {
   if (!(this instanceof ClientRequest)) {
     return new (ClientRequest as any)(input, options, cb);
@@ -100,6 +213,12 @@ function ClientRequest(input, options, cb) {
 
   let writeCount = 0;
   let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
+  // Current upgrade channel; replaced by startFetch() on happy-eyeballs retries.
+  let activeUpgradeChannel: any = undefined;
+  // Set when a pre-101 write_() returns false (fake-backpressure threshold
+  // crossed). Node only emits 'drain' after write() returned false, so the
+  // 101 handler uses this to decide whether a 'drain' is actually owed.
+  let preUpgradeBackpressure = false;
 
   // Node sends headers + first chunk immediately on the first write(). We
   // defer by a tick so that `write(chunk); end();` in the same tick still
@@ -113,14 +232,30 @@ function ClientRequest(input, options, cb) {
     }
   }
 
-  const pushChunk = chunk => {
-    this[kBodyChunks].push(chunk);
+  // Returns false when the chunk was rejected because the active upgrade
+  // channel has already been ended (e.g., socket.end() on the upgraded socket).
+  const pushChunk = (chunk): boolean => {
+    // After the upgrade is established we won't retry (happy-eyeballs is
+    // done), so skip kBodyChunks — otherwise post-upgrade req.write()
+    // chunks accumulate and saturate the fake-backpressure counter in
+    // write_() after ~1 MiB, permanently returning false.
+    if (!this[kUpgradeOrConnect]) {
+      this[kBodyChunks].push(chunk);
+    }
+    const hadChannel = activeUpgradeChannel !== undefined;
     if (writeCount > 1) {
       startFetch();
     } else if (writeCount === 1) {
       process.nextTick(startFetchAfterFirstWriteNT, this);
     }
+    let accepted = true;
+    // If startFetch just created the channel, it already captured this chunk
+    // via initialChunks.slice(). Only replay if the channel existed before.
+    if (hadChannel) {
+      accepted = activeUpgradeChannel.pushChunk(chunk);
+    }
     resolveNextChunk?.(false);
+    return accepted;
   };
 
   const write_ = (chunk, encoding, callback) => {
@@ -137,12 +272,29 @@ function ClientRequest(input, options, cb) {
     bodySize = chunk.length;
     writeCount++;
 
+    // After a 101 upgrade, kBodyChunks is kept empty and writes go straight to
+    // the upgrade channel, so the fake-backpressure sum below would never
+    // trip. Use the channel's real queue depth instead so a req.write() caller
+    // that loops until backpressure is signaled still gets a false return
+    // (and a later 'drain' via channel.ondrain). Checked before the
+    // !kBodyChunks branch so the FIRST post-upgrade write (e.g. after
+    // flushHeaders(), where kBodyChunks is still null) also honors backpressure.
+    if (this[kUpgradeOrConnect] && activeUpgradeChannel) {
+      if (!this[kBodyChunks]) this[kBodyChunks] = [];
+      const accepted = pushChunk(chunk);
+      if (!accepted) {
+        if (callback) callback($ERR_STREAM_WRITE_AFTER_END());
+        return false;
+      }
+      if (callback) callback();
+      return activeUpgradeChannel.queuedBytes < activeUpgradeChannel.highWaterMark;
+    }
+
     if (!this[kBodyChunks]) {
       this[kBodyChunks] = [];
-      pushChunk(chunk);
-
-      if (callback) callback();
-      return true;
+      const accepted = pushChunk(chunk);
+      if (callback) callback(accepted ? undefined : $ERR_STREAM_WRITE_AFTER_END());
+      return accepted;
     }
 
     // Signal fake backpressure if the body size is > 1024 * 1024
@@ -155,10 +307,20 @@ function ClientRequest(input, options, cb) {
         break;
       }
     }
-    pushChunk(chunk);
+    const accepted = pushChunk(chunk);
+    if (!accepted) {
+      if (callback) callback($ERR_STREAM_WRITE_AFTER_END());
+      return false;
+    }
 
     if (callback) callback();
-    return bodySize < MAX_FAKE_BACKPRESSURE_SIZE;
+    // Record that we signaled fake backpressure so the 101 handler only emits
+    // 'drain' if a prior write() actually returned false (Node semantics).
+    if (bodySize >= MAX_FAKE_BACKPRESSURE_SIZE) {
+      preUpgradeBackpressure = true;
+      return false;
+    }
+    return true;
   };
 
   const oldEnd = this.end;
@@ -245,6 +407,10 @@ function ClientRequest(input, options, cb) {
     this.destroyed = true;
 
     const res = this.res;
+    // For an upgraded socket (real Duplex), the 'close' event is driven by
+    // the stream's own destroy lifecycle. Calling socket.emit('close')
+    // directly here would fire 'close' twice on the Duplex.
+    const isUpgradedSocket = this[kUpgradeOrConnect] === true;
     if (res) {
       // Socket closed before we emitted 'end' below.
       if (!res.complete) {
@@ -254,16 +420,16 @@ function ClientRequest(input, options, cb) {
         this._closed = true;
         callCloseCallback(this);
         this.emit("close");
-        this.socket?.emit?.("close");
+        if (!isUpgradedSocket) this.socket?.emit?.("close");
       }
-      if (!res.aborted && res.readable) {
+      if (!res.aborted && res.readable && !res.complete) {
         res.push(null);
       }
     } else if (!this._closed) {
       this._closed = true;
       callCloseCallback(this);
       this.emit("close");
-      this.socket?.emit?.("close");
+      if (!isUpgradedSocket) this.socket?.emit?.("close");
     }
   };
 
@@ -345,17 +511,54 @@ function ClientRequest(input, options, cb) {
         keepalive,
       };
       let keepOpen = false;
+      const upgradeHeader = this.getHeader("upgrade");
+      const upgradeHeaderLower = typeof upgradeHeader === "string" ? upgradeHeader.toLowerCase() : "";
+      // HTTP upgrade tokens are case-insensitive (RFC 7230 §6.7). Exclude h2/h2c
+      // since HTTP/2 cleartext upgrade follows a different code path in fetch.
+      const isUpgrade = upgradeHeaderLower.length > 0 && upgradeHeaderLower !== "h2" && upgradeHeaderLower !== "h2c";
       // no body and not finished
-      const isDuplex = customBody === undefined && !this.finished;
+      const isDuplex = isUpgrade || (customBody === undefined && !this.finished);
 
-      if (isDuplex) {
+      let upgradeChannel;
+      if (isUpgrade) {
+        fetchOptions.duplex = "half";
+        // End any prior channel (happy-eyeballs retry) so its generator
+        // can finish instead of blocking forever on channel.resolve().
+        if (activeUpgradeChannel) {
+          activeUpgradeChannel.end();
+        }
+        upgradeChannel = createUpgradeChannel(this[kBodyChunks]);
+        activeUpgradeChannel = upgradeChannel;
+        // Emit 'drain' on the ClientRequest when post-upgrade req.write()
+        // backpressure clears, so a paused writer can resume. Only after the
+        // 101 does req.write() use the channel's 64 KiB high-water-mark
+        // (pre-101 it uses the 1 MiB fake-backpressure threshold), so gate on
+        // kUpgradeOrConnect to avoid a spurious 'drain' for a <1 MiB pre-101
+        // body. Defer via nextTick so a throwing 'drain' listener surfaces as
+        // an uncaught exception instead of propagating out of the body
+        // generator and erroring the fetch write stream (severing the socket).
+        upgradeChannel.ondrain = () => {
+          if (!this[kUpgradeOrConnect]) return;
+          process.nextTick(() => this.emit("drain"));
+        };
+        // pushChunk forwards to the active channel directly; keep
+        // resolveNextChunk as a no-op for the upgrade path (req.end doesn't
+        // close the channel — the upgraded socket reuses it).
+        resolveNextChunk = _end => {};
+        // Keep `fetching` set after the 101 resolves so post-upgrade
+        // req.write() calls don't re-enter startFetch() and issue a
+        // duplicate upgrade handshake.
+        keepOpen = true;
+      } else if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
       }
 
       // Allow body for all methods when explicitly provided via req.write()/req.end()
       // This is needed for Node.js compatibility - Node allows GET requests with bodies
-      if (customBody !== undefined) {
+      if (isUpgrade) {
+        fetchOptions.body = upgradeBodyGenerator(upgradeChannel);
+      } else if (customBody !== undefined) {
         fetchOptions.body = customBody;
       } else if (
         isDuplex &&
@@ -416,8 +619,123 @@ function ClientRequest(input, options, cb) {
       //@ts-ignore
       this[kFetchRequest] = nodeHttpClient(url, fetchOptions).then(response => {
         if (this.aborted) {
+          if (isUpgrade) upgradeChannel.end();
           maybeEmitClose();
           return;
+        }
+
+        if (isUpgrade) {
+          if (response.status === 101) {
+            this[kClearTimeout]();
+            this[kUpgradeOrConnect] = true;
+            // Drain kBodyChunks — happy-eyeballs retries are impossible now
+            // and leaving the pre-upgrade chunks there would trip the
+            // fake-backpressure counter on subsequent req.write() calls.
+            if (this[kBodyChunks]) this[kBodyChunks].length = 0;
+            // Only owe a 'drain' if a pre-101 write() actually returned false
+            // (crossed the fake-backpressure threshold) — Node emits 'drain'
+            // solely after write() returned false, not for every buffered byte.
+            const shouldDrain = preUpgradeBackpressure;
+            const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
+            setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
+            const res = (this.res = new IncomingMessage(response, {
+              [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
+              [reqSymbol]: this,
+            }));
+            setIsNextIncomingMessageHTTPS(prevIsHTTPS);
+            res.req = this;
+
+            UpgradedSocket ??= require("internal/http/UpgradedSocket").UpgradedSocket;
+            // For Unix-socket upgrades, response.url is the HTTP URL (e.g.
+            // http://localhost/…) which isn't a real remote address — pass
+            // undefined so the socket doesn't fabricate remoteAddress/Port.
+            const socketURL = this[kSocketPath] ? undefined : response.url;
+            // Derive encrypted from response.url separately (not socketURL) so
+            // an https:// upgrade over a Unix socket still reports encrypted.
+            const encrypted = typeof response.url === "string" && response.url.startsWith("https:");
+            // rejectUnauthorized defaults to true; if the user set it to false,
+            // TLS verification may have been skipped, so authorized must be false.
+            const rejectUnauthorized = this[kTls]?.rejectUnauthorized !== false;
+            // Hand the socket the AbortController so socket.destroy() tears
+            // down the underlying fetch/TCP connection, not just the reader.
+            // Detach it from the request first: once the upgrade succeeds the
+            // socket owns teardown, and leaving the controller on the request
+            // would make a clean socket.destroy() flip the deprecated
+            // req.aborted getter to true (Node keeps it false). req.destroy()
+            // still tears down because it calls this.socket.destroy().
+            const upgradeAbortController = this[kAbortController];
+            if (upgradeAbortController) {
+              upgradeAbortController.signal.removeEventListener("abort", onAbort);
+              this[kAbortController] = null;
+            }
+            const socket = new UpgradedSocket(
+              response.body,
+              upgradeChannel,
+              socketURL,
+              rejectUnauthorized,
+              upgradeAbortController,
+              encrypted,
+            );
+
+            // Replace the pre-upgrade placeholder socket on both request and
+            // response so teardown paths (req.destroy, etc.) operate on the
+            // real upgraded connection.
+            this.socket = socket;
+            this.connection = socket;
+            res.socket = socket;
+
+            // The upgrade response body is consumed by the UpgradedSocket's
+            // reader; mark the IncomingMessage as complete so its own _read()
+            // path doesn't try to re-acquire the locked stream.
+            res.complete = true;
+            res.push(null);
+
+            if (this.listenerCount("upgrade") === 0) {
+              // Match Node: destroy the socket if no 'upgrade' listener attached.
+              // socket.destroy() now aborts the underlying fetch, which tears
+              // down the TCP connection.
+              socket.destroy();
+              maybeEmitClose();
+            } else {
+              // Emit outside the fetch promise chain so listener exceptions
+              // aren't converted into promise rejections that would trigger
+              // spurious happy-eyeballs retries. The 'drain' emit (if any) is
+              // deferred the same way for the same reason.
+              process.nextTick(() => {
+                // If the request was destroyed while waiting for this tick,
+                // 'close' already fired on the ClientRequest — don't then
+                // deliver 'upgrade' afterwards (violates Node event order).
+                if (this.destroyed) {
+                  socket.destroy();
+                  maybeEmitClose();
+                  return;
+                }
+                try {
+                  // Unblock callers that paused after write_() returned false
+                  // from the fake-backpressure threshold. Isolate this emit so
+                  // a throwing 'drain' listener can't short-circuit the
+                  // 'upgrade' delivery below (which hands the socket to the
+                  // consumer). Re-surface the throw as an uncaught exception so
+                  // the user's bug isn't silently swallowed.
+                  if (shouldDrain) {
+                    try {
+                      this.emit("drain");
+                    } catch (err) {
+                      process.nextTick(() => {
+                        throw err;
+                      });
+                    }
+                  }
+                  this.emit("upgrade", res, socket, kEmptyBuffer);
+                } finally {
+                  // ClientRequest emits 'close' after a successful upgrade.
+                  maybeEmitClose();
+                }
+              });
+            }
+            return;
+          }
+          upgradeChannel.end();
         }
 
         handleResponse = () => {
@@ -477,7 +795,9 @@ function ClientRequest(input, options, cb) {
 
         // Emit the response as soon as headers arrive, even when the request
         // body is still being streamed (duplex mode). Node.js emits 'response'
-        // independently of whether req.end() has been called.
+        // independently of whether req.end() has been called. For the upgrade
+        // path the 101 branch returns earlier; a non-101 response falls through
+        // here and is delivered unconditionally.
         handleResponse();
 
         onEnd();
@@ -488,6 +808,7 @@ function ClientRequest(input, options, cb) {
         // This is for the happy eyeballs implementation.
         this[kFetchRequest]
           .catch(err => {
+            if (isUpgrade) upgradeChannel.end();
             if (err.code === "ConnectionRefused") {
               err = new Error("ECONNREFUSED");
               err.code = "ECONNREFUSED";
@@ -752,11 +1073,15 @@ function ClientRequest(input, options, cb) {
 
   const signal = options.signal;
   if (signal) {
-    //We still want to control abort function and timeout so signal call our AbortController
+    // Tear down the request when the user's signal aborts. Destroy (not just
+    // kAbortController.abort()) so this still works after a 101 upgrade, where
+    // the controller is detached from the request — this.destroy() reaches the
+    // UpgradedSocket via this.socket.destroy(). Matches Node's addAbortSignal,
+    // which destroys the request with an AbortError carrying signal.reason.
     signal.addEventListener(
       "abort",
       () => {
-        this[kAbortController]?.abort();
+        this.destroy($makeAbortError(undefined, { cause: signal?.reason }));
       },
       { once: true },
     );

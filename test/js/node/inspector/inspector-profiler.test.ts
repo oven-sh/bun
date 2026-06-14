@@ -225,6 +225,19 @@ describe("node:inspector", () => {
       expect(() => session.post("Profiler.setSamplingInterval", { interval: -1 })).toThrow();
     });
 
+    test("Profiler.setSamplingInterval rejects values above INT_MAX", () => {
+      // Node.js rejects > 2147483647 with ERR_INSPECTOR_COMMAND. Previously Bun
+      // silently accepted these and hit an out-of-range double-to-int conversion.
+      session.post("Profiler.enable");
+      expect(session.post("Profiler.setSamplingInterval", { interval: 2147483647 })).toEqual({});
+      expect(() => session.post("Profiler.setSamplingInterval", { interval: 2147483648 })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+      expect(() => session.post("Profiler.setSamplingInterval", { interval: 3000000000 })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+    });
+
     test("double Profiler.start is a no-op", () => {
       session.post("Profiler.enable");
       session.post("Profiler.start");

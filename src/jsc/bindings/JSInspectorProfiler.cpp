@@ -36,7 +36,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_setCPUSamplingInterval, (JSGlobalObject * gl
     }
 
     int interval;
-    Bun::V::validateInteger(scope, globalObject, callFrame->uncheckedArgument(0), "interval"_s, jsNumber(1), jsUndefined(), &interval);
+    Bun::V::validateInteger(scope, globalObject, callFrame->uncheckedArgument(0), "interval"_s, jsNumber(1), jsNumber(std::numeric_limits<int>::max()), &interval);
     RETURN_IF_EXCEPTION(scope, {});
 
     Bun::setSamplingInterval(interval);

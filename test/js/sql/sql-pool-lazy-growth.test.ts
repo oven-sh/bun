@@ -142,6 +142,47 @@ describe("postgres pool fast-fails on non-retryable auth errors (#30632)", () =>
     expect(server.opened).toBe(3);
   });
 
+  test("re-entrant function `password()` does not grow the pool past `max`", async () => {
+    // Lazy growth (#30632) + re-entrant password (#32198): a function-valued
+    // `password()` runs synchronously while a new slot is being created,
+    // before that slot is appended to `connections`. If such a password
+    // re-enters the pool while an earlier slot is still mid-handshake, the
+    // grow path must not keep opening slots off a stale `connections.length`
+    // and recurse past `max`. Re-entry is capped here so the pre-fix recursion
+    // shows up as an inflated password-call count instead of a stack overflow.
+    using sink = makeSink();
+    let passwordCalls = 0;
+    const sql = new SQL({
+      adapter: "postgres",
+      host: "127.0.0.1",
+      port: sink.port,
+      username: "x",
+      database: "x",
+      max: 2,
+      connectionTimeout: 0, // disable the connect timer so slots stay pending
+      password: () => {
+        passwordCalls++;
+        if (passwordCalls < 100) {
+          try {
+            sql.connect().catch(() => {});
+          } catch {}
+        }
+        return "pw";
+      },
+    });
+    try {
+      // Two back-to-back connects: the first opens slot 0 (still handshaking),
+      // the second sees it pending and grows exactly one more slot.
+      // `password()` runs once per real slot — `max` (2) times — not once per
+      // recursion level.
+      sql.connect().catch(() => {});
+      sql.connect().catch(() => {});
+      expect(passwordCalls).toBe(2);
+    } finally {
+      await sql.close({ timeout: "0" });
+    }
+  });
+
   test("synchronous `password()` throw does not hang subsequent queries", async () => {
     // `createPooledConnectionHandle` in shared.ts defers a thrown
     // `password()` to `onClose` via `process.nextTick`. This guards the

@@ -925,6 +925,14 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   public totalQueries: number = 0;
   public onAllQueriesFinished: (() => void) | null = null;
 
+  /// Count of in-flight `#tryGrowPool()` calls whose slot has not been pushed
+  /// onto `connections` yet. `createPooledConnection()` runs a function-valued
+  /// `password()` synchronously before the push, and that user code can
+  /// re-enter the pool (e.g. issue a query); counting the slot being created
+  /// keeps a re-entrant grow from recursing past `maxPoolSize` off a stale
+  /// `connections.length`.
+  #growing: number = 0;
+
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
     this.connections = [];
@@ -1036,10 +1044,17 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   /// Returns the new connection, or null if we're already at `maxPoolSize`.
   #tryGrowPool(): PooledConnection | null {
     if (this.closed) return null;
-    if (this.connections.length >= this.maxPoolSize) return null;
-    const connection = this.createPooledConnection();
-    this.connections.push(connection);
-    return connection;
+    // Count slots that are mid-creation (see `#growing`) so a `password()`
+    // re-entering here while another slot is being created can't grow past max.
+    if (this.connections.length + this.#growing >= this.maxPoolSize) return null;
+    this.#growing++;
+    try {
+      const connection = this.createPooledConnection();
+      this.connections.push(connection);
+      return connection;
+    } finally {
+      this.#growing--;
+    }
   }
 
   /// Count connections that are still completing their handshake. A pending

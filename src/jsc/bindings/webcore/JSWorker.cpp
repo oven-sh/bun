@@ -674,7 +674,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
 
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     if (!worker.isOnline()) {
-        promise->reject(vm, globalObject,
+        promise->reject(vm,
             Bun::createError(globalObject,
                 Bun::ErrorCode::ERR_WORKER_NOT_RUNNING,
                 "Worker instance not running"_s));
@@ -718,7 +718,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         // Worker raced to Closing/Closed between isOnline() and the post.
         // Still on the parent thread — safe to destroy the handle here.
         delete promiseHandle;
-        promise->reject(vm, globalObject,
+        promise->reject(vm,
             Bun::createError(globalObject,
                 Bun::ErrorCode::ERR_WORKER_NOT_RUNNING,
                 "Worker instance not running"_s));

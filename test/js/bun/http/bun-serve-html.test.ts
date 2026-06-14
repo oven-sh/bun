@@ -1,6 +1,6 @@
 import type { Server, Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 function replaceHash(html: string) {
@@ -908,3 +908,51 @@ for (let development of [true, false, { hmr: false }]) {
     }
   });
 }
+
+test("html cli entry point routes use forward slashes for subdirectories", async () => {
+  using dir = tempDir("html-subdir-routes", {
+    "index.html": `<!DOCTYPE html><html><head><title>Home</title></head><body>Home</body></html>`,
+    demos: {
+      "bubbles.html": `<!DOCTYPE html><html><head><title>Bubbles</title></head><body>Bubbles</body></html>`,
+    },
+  });
+
+  const indexPath = join(String(dir), "index.html");
+  const bubblesPath = join(String(dir), "demos", "bubbles.html");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), indexPath, bubblesPath, "--port=0"],
+    env: { ...bunEnv, NODE_ENV: "production" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  let baseUrl: string | undefined;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    output += decoder.decode(value, { stream: true });
+    const match = output.match(/https?:\/\/[^\s\x1b]+/);
+    if (match) {
+      baseUrl = match[0];
+      reader.releaseLock();
+      break;
+    }
+  }
+
+  expect(baseUrl).toBeDefined();
+
+  const response = await fetch(new URL("/demos/bubbles", baseUrl));
+  expect(response.status).toBe(200);
+  const html = await response.text();
+  expect(html).toContain("<title>Bubbles</title>");
+
+  const indexResponse = await fetch(new URL("/", baseUrl));
+  expect(indexResponse.status).toBe(200);
+  const indexHtml = await indexResponse.text();
+  expect(indexHtml).toContain("<title>Home</title>");
+});

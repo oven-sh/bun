@@ -3654,6 +3654,19 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     RefPtr<JSC::ScriptFetcher>)
 {
+    // A vm.SourceTextModule populates import.meta through its own initializeImportMeta
+    // callback and expects no default members, matching Node. When evaluated without an
+    // explicit context it runs in this global, so detect it via the module record's
+    // SourceOrigin fetcher and return an empty null-prototype object, the same value the
+    // with-context path yields (NodeVMGlobalObject has no createImportMetaProperties hook).
+    if (record) {
+        if (auto* provider = record->sourceCode().provider()) {
+            auto* fetcher = provider->sourceOrigin().fetcher();
+            if (fetcher && fetcher->fetcherType() == JSC::ScriptFetcher::Type::NodeVM)
+                return JSC::constructEmptyObject(globalObject->vm(), globalObject->nullPrototypeObjectStructure());
+        }
+    }
+
     return Zig::ImportMetaObject::create(globalObject, key);
 }
 

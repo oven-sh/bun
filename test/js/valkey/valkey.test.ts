@@ -1,6 +1,6 @@
 import { randomUUIDv7, RedisClient, spawn } from "bun";
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun } from "harness";
 import { join } from "node:path";
 import {
   ctx as _ctx,
@@ -6901,3 +6901,33 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
     });
   });
 }
+
+test("non-callable onclose/onconnect does not crash on connection failure", async () => {
+  const src = `
+    const { RedisClient } = Bun;
+    const bad = [{}, null, 123, "str", true, []];
+    const pending = [];
+    for (const v of bad) {
+      const client = new RedisClient("redis://127.0.0.1:1", { connectionTimeout: 50, maxRetries: 0 });
+      client.onclose = v;
+      client.onconnect = v;
+      pending.push(client.connect().then(() => 0, () => 1));
+    }
+    Promise.all(pending).then(results => {
+      console.log("rejected " + results.reduce((a, b) => a + b, 0) + "/" + bad.length);
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+    stdout: "rejected 6/6\n",
+    stderr: "",
+    signalCode: null,
+    exitCode: 0,
+  });
+});

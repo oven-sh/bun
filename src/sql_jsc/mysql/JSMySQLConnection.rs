@@ -662,7 +662,7 @@ impl JSMySQLConnection {
             return None;
         }
         if let Some(value) = self.js_value.get().try_get() {
-            return js::onconnect_take_cached(value, global_object);
+            return js::onconnect_take_cached(value, global_object).filter(|v| v.is_callable());
         }
         None
     }
@@ -672,7 +672,7 @@ impl JSMySQLConnection {
             return None;
         }
         if let Some(value) = self.js_value.get().try_get() {
-            return js::onclose_take_cached(value, global_object);
+            return js::onclose_take_cached(value, global_object).filter(|v| v.is_callable());
         }
         None
     }

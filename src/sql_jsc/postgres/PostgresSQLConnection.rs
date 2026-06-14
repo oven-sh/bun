@@ -3027,7 +3027,7 @@ impl PostgresSQLConnection {
         debug!("consumeOnConnectCallback exists");
 
         js::onconnect_set_cached(js_value, global_object, JSValue::ZERO);
-        Some(on_connect)
+        Some(on_connect).filter(|v| v.is_callable())
     }
 
     pub fn consume_on_close_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
@@ -3036,6 +3036,6 @@ impl PostgresSQLConnection {
         let on_close = js::onclose_get_cached(js_value)?;
         debug!("consumeOnCloseCallback exists");
         js::onclose_set_cached(js_value, global_object, JSValue::ZERO);
-        Some(on_close)
+        Some(on_close).filter(|v| v.is_callable())
     }
 }

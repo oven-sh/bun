@@ -653,17 +653,32 @@ static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
     return zigGlobalObject->JSSourceMapConstructor();
 }
 
+// PropertyCallbacks reified by reifyAllStaticProperties run back-to-back with
+// no exception check between them, so they must not call helpers that open a
+// ThrowScope (constructArray / constructEmptyArray). Use JSArray::tryCreate*
+// instead. See test/integration/bun-types/bun-types.test.ts (tsgo case) which
+// ESM-imports node:module under the JSC exception-scope validator.
 static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
 {
+    auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
+
     MarkedArgumentBuffer args;
     args.ensureCapacity(countof(builtinModuleNames));
-
     for (unsigned i = 0; i < countof(builtinModuleNames); ++i) {
         args.append(JSC::jsOwnedString(vm, String(builtinModuleNames[i])));
     }
 
-    auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
+    JSC::ObjectInitializationScope initializationScope(vm);
+    auto* array = JSC::JSArray::tryCreateUninitializedRestricted(
+        initializationScope,
+        globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+        countof(builtinModuleNames));
+    if (!array) [[unlikely]]
+        return {};
+    for (unsigned i = 0; i < countof(builtinModuleNames); ++i) {
+        array->initializeIndex(initializationScope, i, args.at(i));
+    }
+    return array;
 }
 
 static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
@@ -691,9 +706,9 @@ static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
 
 static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
 {
-    return JSC::constructEmptyArray(
-        moduleObject->globalObject(),
-        static_cast<ArrayAllocationProfile*>(nullptr), 0);
+    auto* globalObject = moduleObject->globalObject();
+    return JSC::JSArray::tryCreate(
+        vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), 0);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

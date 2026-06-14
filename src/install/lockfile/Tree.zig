@@ -716,13 +716,68 @@ fn hoistDependency(
         }
 
         // now we either keep the dependency at this place in the tree,
-        // or hoist if peer version allows it
+        // or hoist if version allows it
+
+        // Peers prefer what an ancestor already provides over their own resolution.
+        // The check is symmetric: if either the dependency being hoisted or the
+        // already-placed one is a peer and the range is compatible, collapse.
+        if ((dependency.behavior.isPeer() or dep.behavior.isPeer()) and dependency.version.tag == .npm) {
+            const pkg_resolutions = builder.lockfile.packages.items(.resolution);
+            const existing_res = pkg_resolutions[res_id];
+            if (pkg_resolutions[package_id].tag == .npm and existing_res.tag == .npm and
+                dependency.version.value.npm.version.satisfies(existing_res.value.npm.version, builder.buf(), builder.buf()))
+            {
+                return .hoisted; // 1
+            }
+        }
 
         if (dependency.behavior.isPeer()) {
-            if (dependency.version.tag == .npm) {
-                const resolution: Resolution = builder.lockfile.packages.items(.resolution)[res_id];
-                const version = dependency.version.value.npm.version;
-                if (resolution.tag == .npm and version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
+            // A peer that reaches a same-name ancestor whose version does not
+            // satisfy still collapses into it (yarn v1 / pnpm semantics) — the
+            // peer sees what the tree provides, with a warning. But only when
+            // no satisfying version exists anywhere in the lockfile: if one
+            // does (e.g. `ajv@8` brought in by `schema-utils` while root has
+            // `ajv@6`), the peer already resolved to it and should nest with
+            // it rather than be forced onto the wrong major.
+            const pkg_resolutions = builder.lockfile.packages.items(.resolution);
+            const existing_tag = pkg_resolutions[res_id].tag;
+            const target_tag = pkg_resolutions[package_id].tag;
+            if (existing_tag == target_tag and (existing_tag == .npm or existing_tag == .git or existing_tag == .github)) {
+                // Only force-collapse when no *non-peer* dependency anywhere
+                // resolved to a version satisfying this peer's range. If one
+                // did (e.g. `schema-utils` regular-deps on `ajv@^8` while
+                // root has `ajv@6`), the peer should nest with that version
+                // rather than be forced onto the wrong major. If none did
+                // (the peer's own auto-installed version is the only
+                // satisfying one), collapse + warn — yarn/pnpm semantics.
+                const has_satisfying_non_peer = has: {
+                    if (dependency.version.tag != .npm) break :has false;
+                    const range = dependency.version.value.npm.version;
+                    for (builder.dependencies, builder.resolutions) |other_dep, other_res_id| {
+                        if (other_dep.name_hash != dependency.name_hash) continue;
+                        if (other_dep.behavior.isPeer()) continue;
+                        if (other_res_id >= pkg_resolutions.len) continue;
+                        const other_res = pkg_resolutions[other_res_id];
+                        if (other_res.tag != .npm) continue;
+                        if (range.satisfies(other_res.value.npm.version, builder.buf(), builder.buf())) {
+                            break :has true;
+                        }
+                    }
+                    break :has false;
+                };
+                if (!has_satisfying_non_peer) {
+                    if (comptime method == .resolvable) {
+                        builder.log.addWarningFmt(
+                            null,
+                            logger.Loc.Empty,
+                            builder.allocator,
+                            "incorrect peer dependency \"{f}@{f}\"",
+                            .{
+                                builder.packageName(res_id),
+                                builder.packageVersion(res_id),
+                            },
+                        ) catch {};
+                    }
                     return .hoisted; // 1
                 }
             }
@@ -730,7 +785,6 @@ fn hoistDependency(
             // Root dependencies are manually chosen by the user. Allow them
             // to hoist other peers even if they don't satisfy the version
             if (builder.lockfile.isWorkspaceRootDependency(dep_id)) {
-                // TODO: warning about peer dependency version mismatch
                 return .hoisted; // 1
             }
         }

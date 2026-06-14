@@ -225,7 +225,7 @@ describe("node:inspector", () => {
       expect(() => session.post("Profiler.setSamplingInterval", { interval: -1 })).toThrow();
     });
 
-    test("Profiler.setSamplingInterval rejects values above INT_MAX", () => {
+    test("Profiler.setSamplingInterval rejects values above INT_MAX", async () => {
       // Node.js rejects > 2147483647 via V8's CDP parameter validation
       // (ERR_INSPECTOR_COMMAND, "Invalid parameters"). Bun routes through
       // validateInteger so the error surfaces as ERR_OUT_OF_RANGE. Previously
@@ -239,6 +239,17 @@ describe("node:inspector", () => {
       expect(() => session.post("Profiler.setSamplingInterval", { interval: 3000000000 })).toThrow(
         expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
       );
+
+      // With a callback the error must be delivered to the callback, not thrown.
+      const { promise, resolve } = Promise.withResolvers<any>();
+      session.post("Profiler.setSamplingInterval", { interval: 3000000000 }, (err, res) => resolve({ err, res }));
+      const { err, res } = await promise;
+      expect(err).toMatchObject({ code: "ERR_OUT_OF_RANGE" });
+      expect(res).toBeUndefined();
+
+      // s_samplingInterval is process-global; restore the default so later
+      // tests that start the profiler still collect samples.
+      session.post("Profiler.setSamplingInterval", { interval: 1000 });
     });
 
     test("double Profiler.start is a no-op", () => {

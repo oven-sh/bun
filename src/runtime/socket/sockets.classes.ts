@@ -367,6 +367,9 @@ export default [
       closed: {
         getter: "getClosed",
       },
+      fd: {
+        getter: "getFd",
+      },
       setBroadcast: {
         fn: "setBroadcast",
         length: 1,

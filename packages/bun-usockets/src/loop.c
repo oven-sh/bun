@@ -731,7 +731,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
-                    int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT);
+                    int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT, u->shared_fd ? 1 : LIBUS_UDP_RECV_COUNT);
                     if (npackets > 0) {
                         u->on_data(u, &recvbuf, npackets);
                     } else {

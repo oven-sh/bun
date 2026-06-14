@@ -322,6 +322,10 @@ struct us_udp_socket_t {
     uint16_t port;
     uint16_t closed : 1;
     uint16_t connected : 1;
+    /* Adopted from an fd shared with other processes (node:cluster). Receive
+     * one datagram per syscall so a close() from the data callback cannot
+     * discard already-batched packets that another process should get. */
+    uint16_t shared_fd : 1;
     struct us_udp_socket_t *next;
 };
 

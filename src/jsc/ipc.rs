@@ -666,6 +666,11 @@ pub type Socket = bun_uws::SocketHandler<false>;
 pub struct Handle {
     pub fd: Fd,
     pub js: Protected,
+    /// Close the sender's copy of the socket once the handle message
+    /// completes (ack received, or retransmissions exhausted). node detaches
+    /// and closes the local handle after NODE_HANDLE_ACK unless the caller
+    /// passed `keepOpen`.
+    pub close_on_complete: bool,
 }
 
 impl Handle {
@@ -673,6 +678,15 @@ impl Handle {
         Self {
             fd,
             js: js.protected(),
+            close_on_complete: false,
+        }
+    }
+
+    pub fn init_owned(fd: Fd, js: JSValue) -> Self {
+        Self {
+            fd,
+            js: js.protected(),
+            close_on_complete: true,
         }
     }
 }
@@ -757,6 +771,30 @@ impl SendHandle {
 
     /// Call the callback and deinit
     pub fn complete(mut self, global: &JSGlobalObject) {
+        if let Some(handle) = &self.handle {
+            if handle.close_on_complete {
+                // The receiver owns the connection now; drop OUR descriptor
+                // only. `close()` (fast_shutdown) is a plain closesocket -
+                // with the receiver's duplicate alive that is a pure refcount
+                // drop. NOT terminate(): that arms SO_LINGER{1,0} on the
+                // *shared* socket object and aborts the transferred
+                // connection with RST on Windows.
+                let js = handle.js.value();
+                if js.is_object() {
+                    match js.get(global, "close") {
+                        Ok(Some(f)) if f.is_callable() => {
+                            if f.call(global, js, &[]).is_err() {
+                                global.clear_exception();
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(_) => {
+                            global.clear_exception();
+                        }
+                    }
+                }
+            }
+        }
         let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
         // self drops here → data/callbacks/handle Drop.
     }
@@ -1085,6 +1123,17 @@ impl SendQueue {
             return Ok(());
         }
         this.close_event_sent = true;
+        // Complete sends whose ack can no longer arrive. This runs their
+        // callbacks and — for handle messages — closes the local copy of the
+        // sent socket, which would otherwise keep the event loop alive
+        // forever (node closes undeliverable handles on channel close too).
+        let global = this.get_global_this();
+        if let Some(item) = this.waiting_for_ack.take() {
+            item.complete(&global);
+        }
+        for item in std::mem::take(&mut this.queue) {
+            item.complete(&global);
+        }
         // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
         unsafe { (*this.owner).handle_ipc_close() };
         Ok(())
@@ -1190,6 +1239,13 @@ impl SendQueue {
         }
         // consume the message and continue sending
         let item = self.waiting_for_ack.take().unwrap();
+        // The retransmission budget is per handle message (node keeps it on
+        // the message object as `retransmissions`); handle messages are
+        // serialized through `waiting_for_ack`, so resetting on completion
+        // gives exactly per-message semantics. Without this, transient NACKs
+        // accumulate over the channel's lifetime and a later handle message
+        // would give up on its first NACK.
+        self.retry_count = 0;
         item.complete(global); // call the callback & deinit
         log!("IPC call continueSend() from onAckNack success");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
@@ -1427,9 +1483,10 @@ impl SendQueue {
         #[cfg(windows)]
         {
             let socket = *self.get_socket().unwrap();
-            if let Some(_) = fd {
-                // TODO: send fd on windows
-            }
+            // `fd` is intentionally unused on Windows: handles travel in-band
+            // as serialized WSAPROTOCOL_INFOW on the message payload (see
+            // WIN_SOCKET_INFO_KEY), not as out-of-band pipe data.
+            let _ = fd;
             let pipe: *mut uv::Pipe = socket;
 
             // Copy the outbound bytes into an owned buffer while only holding a
@@ -1741,6 +1798,76 @@ impl Drop for SendQueue {
 
 const MAX_HANDLE_RETRANSMISSIONS: u32 = 3;
 
+/// Key under which a Windows in-band socket transfer rides on a handle
+/// message: hex-encoded `WSAPROTOCOL_INFOW` produced by `bsd_socket_export`
+/// (`WSADuplicateSocketW`) in the sending process. POSIX sends the fd as
+/// SCM_RIGHTS ancillary data instead and never sets this key.
+pub const WIN_SOCKET_INFO_KEY: &[u8] = b"$winSocketInfo";
+
+/// Windows: reconstruct the socket serialized under [`WIN_SOCKET_INFO_KEY`]
+/// on `msg_data`, returning the imported descriptor as an [`Fd`]. Deletes the
+/// key from the object on success so JS never sees the blob. Returns `None`
+/// when the key is missing or the import failed (the caller NACKs, and the
+/// sender retransmits or gives up).
+#[cfg(windows)]
+fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> Option<Fd> {
+    let info_value = match msg_data.get(global, WIN_SOCKET_INFO_KEY) {
+        Ok(Some(v)) if v.is_string() => v,
+        Ok(_) => return None,
+        Err(_) => {
+            global.clear_exception();
+            return None;
+        }
+    };
+    let hex = jsc::JSString::opaque_ref(info_value.as_string()).to_slice(global);
+    let expected = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
+    let mut info = vec![0u8; expected];
+    let decoded = strings::decode_hex_to_bytes_truncate(&mut info, hex.slice());
+    if decoded != expected {
+        log!(
+            "importWindowsSocketPayload: bad blob length {} (want {})",
+            decoded,
+            expected
+        );
+        return None;
+    }
+    let mut err: c_int = 0;
+    // SAFETY: `info` is a live buffer of export_size() bytes holding the
+    // sender's WSAPROTOCOL_INFOW; the FFI reads it and creates a new SOCKET.
+    let sock = unsafe {
+        bun_uws::socket_transfer::bsd_socket_import(info.as_mut_ptr().cast::<c_void>(), &mut err)
+    };
+    if sock == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
+        // LIBUS_SOCKET_ERROR == (SOCKET)-1 on Windows.
+        log!("importWindowsSocketPayload: WSASocketW failed: {}", err);
+        return None;
+    }
+    msg_data.delete_property(global, WIN_SOCKET_INFO_KEY);
+    Some(Fd::from_system(sock as *mut c_void))
+}
+
+/// JS-visible fd number for a received socket: the raw SOCKET value on
+/// Windows (the established convention - see
+/// `to_js_without_making_lib_uv_owned`), the plain fd on POSIX.
+fn received_fd_to_js(fd: Fd) -> JSValue {
+    #[cfg(windows)]
+    {
+        // Prefer an int32-encoded number: the consuming paths (bindgen b.i32
+        // fields, to_int32 reads) all speak int32, and Windows guarantees
+        // kernel handles use only the lower 32 bits.
+        let v = fd.native() as u64;
+        if v <= i32::MAX as u64 {
+            JSValue::js_number_from_int32(v as i32)
+        } else {
+            JSValue::js_number_from_uint64(v)
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        JSValue::js_number_from_int32(fd.uv())
+    }
+}
+
 enum IPCCommand {
     Handle(JSValue),
     Ack,
@@ -1810,7 +1937,14 @@ fn handle_ipc_message(
     if let Some(icmd) = internal_command {
         match icmd {
             IPCCommand::Handle(msg_data) => {
-                // Handle NODE_HANDLE message
+                // Handle NODE_HANDLE message. POSIX: the fd arrived as
+                // SCM_RIGHTS ancillary data; Windows: it rides in-band as
+                // serialized protocol info on the message itself.
+                #[cfg(windows)]
+                let imported = import_windows_socket_payload(global_this, msg_data);
+                #[cfg(windows)]
+                let ack = imported.is_some();
+                #[cfg(not(windows))]
                 let ack = send_queue.incoming_fd.is_some();
 
                 let packet = if ack {
@@ -1837,6 +1971,9 @@ fn handle_ipc_message(
                 }
 
                 // Get file descriptor and clear it
+                #[cfg(windows)]
+                let fd: Fd = imported.unwrap();
+                #[cfg(not(windows))]
                 let fd: Fd = send_queue.incoming_fd.take().unwrap();
 
                 let target: JSValue = match send_queue.owner_ref().kind() {
@@ -1847,9 +1984,7 @@ fn handle_ipc_message(
                 // RAII: `enter()` now, `exit()` on drop — covers both the
                 // early-error return and the fall-through.
                 let _scope = global_this.bun_vm().enter_event_loop_scope();
-                // FD.toJS — `uv()` is the user-visible numeric fd on both
-                // platforms (posix == native, windows == uv_file).
-                let fd_js = JSValue::js_number_from_int32(fd.uv());
+                let fd_js = received_fd_to_js(fd);
                 let res = ipc_parse(global_this, target, msg_data, fd_js);
                 if let Err(e) = res {
                     // ack written already, that's okay.
@@ -1874,6 +2009,63 @@ fn handle_ipc_message(
             }
         }
     } else {
+        // Internal (cluster) messages can carry an SCM_RIGHTS fd (round-robin
+        // connection handoff, shared listen handles). The sender marks the
+        // message with `$hasHandle`; surface the received fd as `$fd` on the
+        // message object so cluster JS internals can adopt it without changing
+        // the dispatch chain's [message, handle] argument shape.
+        if let DecodedIPCMessage::Internal(msg_data) = &message {
+            let msg_data = *msg_data;
+            if msg_data.is_object() {
+                match msg_data.get(global_this, "$hasHandle") {
+                    Ok(Some(marker)) if marker.to_boolean() => {
+                        // The sender parks a handle-carrying message in
+                        // `waiting_for_ack` until the receiver confirms the fd
+                        // arrived (same protocol as NODE_HANDLE). Reply at the
+                        // native layer so the sender's queue unblocks; NACK
+                        // triggers retransmission when the fd was not paired.
+                        // POSIX: the fd arrived as SCM_RIGHTS ancillary data.
+                        // Windows: it rides in-band as serialized protocol
+                        // info on the message itself.
+                        #[cfg(windows)]
+                        let imported = import_windows_socket_payload(global_this, msg_data);
+                        #[cfg(windows)]
+                        let ack = imported.is_some();
+                        #[cfg(not(windows))]
+                        let ack = send_queue.incoming_fd.is_some();
+                        let packet = if ack {
+                            get_ack_packet(send_queue.mode)
+                        } else {
+                            get_nack_packet(send_queue.mode)
+                        };
+                        let mut reply = SendHandle {
+                            data: StreamBuffer::default(),
+                            handle: None,
+                            callbacks: CallbackList::AckNack,
+                        };
+                        handle_oom(reply.data.write(packet));
+                        send_queue.insert_message(reply);
+                        log!("IPC call continueSend() from internal $hasHandle ack");
+                        send_queue
+                            .continue_send(global_this, ContinueSendReason::NewMessageAppended);
+                        if !ack {
+                            // Don't dispatch: the sender retransmits the
+                            // message together with the fd.
+                            return;
+                        }
+                        #[cfg(windows)]
+                        let fd = imported.unwrap();
+                        #[cfg(not(windows))]
+                        let fd = send_queue.incoming_fd.take().unwrap();
+                        msg_data.put(global_this, b"$fd", received_fd_to_js(fd));
+                    }
+                    Ok(_) => {}
+                    Err(_) => {
+                        global_this.clear_exception();
+                    }
+                }
+            }
+        }
         // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
         unsafe { (*send_queue.owner).handle_ipc_message(message, JSValue::UNDEFINED) };
     }

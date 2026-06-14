@@ -166,7 +166,7 @@ struct udp_sendbuf {
 };
 
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags);
-int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags);
+int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags, int max_packets);
 void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen);
 int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloads, size_t* lengths, void** addresses, int num);
 int bsd_udp_packet_buffer_payload_length(struct udp_recvbuf *msgvec, int index);
@@ -233,6 +233,24 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options);
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t pathlen, int options);
+
+/* Cross-process socket transfer (Windows: WSADuplicateSocketW /
+ * WSASocketW(FROM_PROTOCOL_INFO); POSIX uses SCM_RIGHTS instead and these
+ * return errors). The exported blob is opaque to callers; its size is
+ * bsd_socket_export_size() bytes. */
+int bsd_socket_export_size(void);
+/* Serialize `fd` for adoption by process `target_pid`. `info_out` must hold
+ * bsd_socket_export_size() bytes. Returns 0 on success, a WSA error code
+ * otherwise. The socket must stay open until the target imported it. */
+int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void *info_out);
+/* Reconstruct a socket exported by bsd_socket_export in another process.
+ * Returns the new descriptor or LIBUS_SOCKET_ERROR (error code in *err). */
+LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err);
+
+/* TCP socket bound (not listening) to host:port - the primary side of a
+ * node:cluster shared listen handle. On success the bound port is written to
+ * *out_port. Returns LIBUS_SOCKET_ERROR on failure with the error in *error. */
+LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error);
 
 #ifndef MSG_DONTWAIT
 #define MSG_DONTWAIT 0

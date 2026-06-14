@@ -104,6 +104,26 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
   uv_poll_start(p->uv_p, events, poll_cb);
 }
 
+int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  if (!p->uv_p) return -1;
+  p->poll_type = us_internal_poll_type(p) |
+                 ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
+                 ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
+
+  int rc = uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
+  if (rc != 0) {
+    /* uv_p was malloc'd (not zeroed) and never initialized by libuv; a later
+     * us_poll_free would read indeterminate handle flags. Release it now so
+     * the free path takes its !uv_p early-exit. */
+    free(p->uv_p);
+    p->uv_p = NULL;
+    return rc;
+  }
+  /* See us_poll_start for why the handle is unref'd. */
+  uv_unref((uv_handle_t *)p->uv_p);
+  return uv_poll_start(p->uv_p, events, poll_cb);
+}
+
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
   if(!p->uv_p) return;
   if (us_poll_events(p) != events) {

@@ -175,7 +175,9 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     let callback = arguments[3];
 
     let Some(ipc_data) = subprocess.ipc() else {
-        return Ok(JSValue::FALSE);
+        // null = the message can never be delivered (vs. false = queued
+        // under backpressure); RoundRobinHandle.handoff() reclaims on null.
+        return Ok(JSValue::NULL);
     };
 
     if message.is_undefined() {
@@ -183,6 +185,57 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     }
     if !message.is_object() {
         return Err(global.throw_invalid_argument_type_value("message", "object", message));
+    }
+    // Cluster handle handoff (round-robin `newconn`, shared listen handles):
+    // the JS side passes an object exposing a numeric `.fd`. The fd rides the
+    // wire as SCM_RIGHTS ancillary data attached to this message's bytes; the
+    // `$hasHandle` marker lets the receiving side pair the stashed fd with
+    // this message (surfaced there as `$fd`). The JS handle object is kept
+    // alive by `Handle` until the bytes (and fd) are flushed.
+    let mut native_handle: Option<bun_jsc::ipc::Handle> = None;
+    if !handle.is_null() && !handle.is_undefined() {
+        let Some(fd_value) = handle.get(global, "fd")? else {
+            return Err(global.throw(format_args!("cluster handle is missing 'fd'")));
+        };
+        if !fd_value.is_number() {
+            return Err(global.throw_invalid_argument_type_value("handle.fd", "number", fd_value));
+        }
+        // POSIX: a plain fd; Windows: the raw SOCKET value (see
+        // `to_js_without_making_lib_uv_owned`).
+        #[cfg(not(windows))]
+        let native_fd = {
+            let raw_fd = fd_value.to_int32();
+            if raw_fd < 0 {
+                return Err(global.throw(format_args!("cluster handle has invalid fd")));
+            }
+            bun_sys::Fd::from_uv(raw_fd)
+        };
+        #[cfg(windows)]
+        let native_fd = {
+            let raw = fd_value.to_number(global)?;
+            if !(raw.is_finite() && raw >= 0.0) {
+                return Err(global.throw(format_args!("cluster handle has invalid fd")));
+            }
+            bun_sys::Fd::from_system(raw as u64 as usize as *mut core::ffi::c_void)
+        };
+        message.put(global, b"$hasHandle", JSValue::TRUE);
+        // Windows: the fd cannot ride the pipe as ancillary data; serialize
+        // the socket for the worker process and attach it to the message. A
+        // failed export (dead worker, or transient WSA errors like ENOBUFS on
+        // a live one) means the handle can never arrive - report send failure
+        // instead of emitting a newconn the worker could not act on. This
+        // runs before the reply callback is registered and before `seq` is
+        // bumped, so nothing is orphaned by the early return.
+        #[cfg(windows)]
+        if !crate::ipc_host::attach_windows_socket_payload(
+            global,
+            message,
+            native_fd,
+            subprocess.pid() as u32,
+        ) {
+            return Ok(JSValue::NULL);
+        }
+        native_handle = Some(bun_jsc::ipc::Handle::init(native_fd, handle));
     }
     if callback.is_function() {
         let _ = ipc_data.internal_msg_queue.callbacks.put(
@@ -210,13 +263,19 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         );
     }
 
-    let _ = handle;
-    let success =
-        ipc_data.serialize_and_send(global, message, IsInternal::Internal, JSValue::NULL, None);
-    Ok(if success == SerializeAndSendResult::Success {
-        JSValue::TRUE
-    } else {
-        JSValue::FALSE
+    let success = ipc_data.serialize_and_send(
+        global,
+        message,
+        IsInternal::Internal,
+        JSValue::NULL,
+        native_handle,
+    );
+    // true = sent; false = queued under backpressure (the reply callback
+    // still fires); null = hard failure, the callback will never fire.
+    Ok(match success {
+        SerializeAndSendResult::Success => JSValue::TRUE,
+        SerializeAndSendResult::Backoff => JSValue::FALSE,
+        SerializeAndSendResult::Failure => JSValue::NULL,
     })
 }
 
@@ -348,4 +407,505 @@ pub(crate) fn channel_ignore_one_disconnect_event_listener(
 pub fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> bool {
     let vm = global.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
+}
+
+/// `clusterRawBind(addressType, address, port, flags)` — bind-only socket
+/// creation for cluster's SharedHandle (node's `net._createServerHandle` /
+/// `dgram._createSocketHandle` without the wrap object). The primary binds and
+/// ships the fd to workers over SCM_RIGHTS; each worker does its own
+/// `listen(2)` (TCP/pipe) or `recv` (UDP) on a dup of the fd.
+///
+/// addressType: 4 | 6 | -1 (pipe) | "udp4" | "udp6".
+/// flags: bit 0 = ipv6only, bit 2 (0x4) = UV_UDP_REUSEADDR.
+/// Returns `{ fd, port }` on success or a negative errno number on failure
+/// (matching the uv-style codes `util.getSystemErrorName` understands).
+#[bun_jsc::host_fn]
+pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    #[cfg(windows)]
+    {
+        let arguments = frame.arguments_old::<4>().ptr;
+        let address_type = arguments[0];
+        let address = arguments[1];
+        let port = arguments[2].to_int32();
+        let flags = arguments[3].to_int32();
+
+        // UDP sockets and pipes cannot be shared across processes on Windows
+        // (node's dgram clustering is ENOTSUP there too; pipes would need
+        // DuplicateHandle plumbing). TCP shared handles work: the socket is
+        // bound here and each worker imports a WSADuplicateSocketW copy and
+        // does its own listen().
+        if address_type.is_string() || address_type.to_int32() == -1 {
+            return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::NOTSUP));
+        }
+        let atype = address_type.to_int32();
+
+        // node's createServerHandle prefers the IPv6 wildcard when no address
+        // was given (falling back to 0.0.0.0 on machines without IPv6) - on
+        // Windows that is also what makes an in-use port collide correctly,
+        // since a v4-wildcard bind does not conflict with an existing
+        // dual-stack listener there.
+        let host_owned: Vec<u8> = if address.is_string() {
+            let s = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
+            let mut v = s.slice().to_vec();
+            v.push(0);
+            v
+        } else {
+            b"::\0".to_vec()
+        };
+        let fallback_host: Option<&[u8]> = if address.is_string() {
+            None
+        } else {
+            Some(b"0.0.0.0\0")
+        };
+        let _ = atype;
+
+        // flags bit 0 = ipv6only (matches the POSIX branch / UV_TCP_IPV6ONLY).
+        let options: core::ffi::c_int = if flags & 1 != 0 {
+            bun_uws::LIBUS_SOCKET_IPV6_ONLY
+        } else {
+            0
+        };
+
+        let mut out_port: core::ffi::c_int = 0;
+        let mut err: core::ffi::c_int = 0;
+        // SAFETY: `host_owned` is NUL-terminated; out params are live locals.
+        let mut fd = unsafe {
+            bun_uws::socket_transfer::bsd_create_bound_socket(
+                host_owned.as_ptr().cast(),
+                if port >= 0 { port } else { 0 },
+                options,
+                &mut out_port,
+                &mut err,
+            )
+        };
+        // WSAEADDRINUSE must NOT trigger the v4 fallback: on Windows a
+        // 0.0.0.0 bind does not conflict with an existing dual-stack
+        // listener, so retrying would mask the very EADDRINUSE the caller
+        // needs to see. The fallback exists for machines without IPv6.
+        const WSAEADDRINUSE: core::ffi::c_int = 10048;
+        if fd == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX && err != WSAEADDRINUSE {
+            if let Some(v4) = fallback_host {
+                // No IPv6 support: retry the IPv4 wildcard (node does the same).
+                let mut err2: core::ffi::c_int = 0;
+                // SAFETY: as above.
+                let retry = unsafe {
+                    bun_uws::socket_transfer::bsd_create_bound_socket(
+                        v4.as_ptr().cast(),
+                        if port >= 0 { port } else { 0 },
+                        options,
+                        &mut out_port,
+                        &mut err2,
+                    )
+                };
+                if retry != bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
+                    err = 0;
+                    fd = retry;
+                }
+            }
+        }
+        if fd == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
+            // Contract: negative uv-style errno. `err` is a WSA error code;
+            // uv_translate_sys_error returns the matching negative UV_E*.
+            // SAFETY: pure translation function.
+            let uv_err = unsafe { bun_libuv_sys::uv_translate_sys_error(err) };
+            // -4094 is UV_UNKNOWN (no `UV_E` const is generated for it).
+            return Ok(JSValue::js_number_from_int32(if uv_err != 0 {
+                uv_err
+            } else {
+                -4094
+            }));
+        }
+
+        let obj = JSValue::create_empty_object(global, 2);
+        // int32-encode when possible (Windows handles fit 32 bits); the
+        // consuming fd fields are int32-typed.
+        obj.put(
+            global,
+            b"fd",
+            if (fd as u64) <= i32::MAX as u64 {
+                JSValue::js_number_from_int32(fd as i32)
+            } else {
+                JSValue::js_number_from_uint64(fd as u64)
+            },
+        );
+        obj.put(global, b"port", JSValue::js_number_from_int32(out_port));
+        return Ok(obj);
+    }
+    #[cfg(not(windows))]
+    {
+        use core::ffi::c_int;
+
+        let arguments = frame.arguments_old::<4>().ptr;
+        let address_type = arguments[0];
+        let address = arguments[1];
+        let port = arguments[2].to_int32();
+        let flags = arguments[3].to_int32();
+
+        let mut is_udp = false;
+        let atype: i32;
+        if address_type.is_string() {
+            let s = bun_jsc::JSString::opaque_ref(address_type.as_string()).to_slice(global);
+            is_udp = true;
+            atype = if s.slice() == b"udp6" { 6 } else { 4 };
+        } else {
+            atype = address_type.to_int32();
+        }
+
+        fn last_neg_errno() -> JSValue {
+            JSValue::js_number_from_int32(-bun_core::ffi::errno())
+        }
+
+        unsafe fn close_fd(fd: c_int) {
+            // SAFETY: caller passes an fd it owns.
+            unsafe {
+                libc::close(fd);
+            }
+        }
+
+        fn set_cloexec_nonblock(fd: c_int) {
+            // SAFETY: plain fcntl flag updates on a live caller-owned fd.
+            unsafe {
+                let fl = libc::fcntl(fd, libc::F_GETFD);
+                libc::fcntl(fd, libc::F_SETFD, fl | libc::FD_CLOEXEC);
+                let fl = libc::fcntl(fd, libc::F_GETFL);
+                libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK);
+            }
+        }
+
+        // Pipe (UNIX domain) server: bind to the path.
+        if atype == -1 {
+            if !address.is_string() {
+                return Err(global.throw_invalid_argument_type_value("address", "string", address));
+            }
+            let path_slice = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
+            let path_bytes = path_slice.slice();
+            // SAFETY: sockaddr_un is plain C data; all-zero is a valid value.
+            let mut sun: libc::sockaddr_un = unsafe { bun_core::ffi::zeroed_unchecked() };
+            sun.sun_family = libc::AF_UNIX as libc::sa_family_t;
+            if path_bytes.len() >= sun.sun_path.len() {
+                return Ok(JSValue::js_number_from_int32(-(libc::ENAMETOOLONG)));
+            }
+            for (i, b) in path_bytes.iter().enumerate() {
+                sun.sun_path[i] = *b as _;
+            }
+            // SAFETY: socket/bind FFI with a NUL-safe sockaddr built above;
+            // the fd is closed on every error path.
+            unsafe {
+                let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+                if fd < 0 {
+                    return Ok(last_neg_errno());
+                }
+                set_cloexec_nonblock(fd);
+                let len = core::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+                if libc::bind(fd, (&raw const sun).cast(), len) != 0 {
+                    let e = last_neg_errno();
+                    close_fd(fd);
+                    return Ok(e);
+                }
+                let obj = JSValue::create_empty_object(global, 2);
+                obj.put(global, b"fd", JSValue::js_number_from_int32(fd));
+                obj.put(global, b"port", JSValue::js_number_from_int32(-1));
+                return Ok(obj);
+            }
+        }
+
+        let family: c_int = if atype == 6 {
+            libc::AF_INET6
+        } else {
+            libc::AF_INET
+        };
+        let socktype: c_int = if is_udp {
+            libc::SOCK_DGRAM
+        } else {
+            libc::SOCK_STREAM
+        };
+
+        // Build the wildcard sockaddr for `family`. The all-zero in6_addr is
+        // in6addr_any by definition.
+        fn wildcard_sockaddr(
+            family: c_int,
+            port: i32,
+        ) -> (libc::sockaddr_storage, libc::socklen_t) {
+            // SAFETY: sockaddr_storage is plain C data; all-zero is a valid
+            // value, and the casted family views only write within bounds.
+            unsafe {
+                let mut ss: libc::sockaddr_storage = bun_core::ffi::zeroed_unchecked();
+                let ss_len: libc::socklen_t;
+                if family == libc::AF_INET6 {
+                    let sin6: &mut libc::sockaddr_in6 =
+                        &mut *(&raw mut ss).cast::<libc::sockaddr_in6>();
+                    sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+                    sin6.sin6_port = (port as u16).to_be();
+                    ss_len = core::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t;
+                } else {
+                    let sin: &mut libc::sockaddr_in =
+                        &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
+                    sin.sin_family = libc::AF_INET as libc::sa_family_t;
+                    sin.sin_port = (port as u16).to_be();
+                    sin.sin_addr.s_addr = libc::INADDR_ANY.to_be();
+                    ss_len = core::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
+                }
+                (ss, ss_len)
+            }
+        }
+
+        // socket() + the option set libuv applies + bind(). Returns the bound
+        // fd or the negative errno of the step that failed.
+        fn create_and_bind(
+            family: c_int,
+            socktype: c_int,
+            is_udp: bool,
+            flags: i32,
+            ss: &libc::sockaddr_storage,
+            ss_len: libc::socklen_t,
+        ) -> Result<c_int, i32> {
+            // SAFETY: socket/setsockopt/bind FFI on a freshly created fd with
+            // a properly sized sockaddr; the fd is closed on the error path
+            // and otherwise ownership transfers to the caller.
+            unsafe {
+                let fd = libc::socket(family, socktype, 0);
+                if fd < 0 {
+                    return Err(-bun_core::ffi::errno());
+                }
+                set_cloexec_nonblock(fd);
+
+                let one: c_int = 1;
+                let one_ptr = (&raw const one).cast::<core::ffi::c_void>();
+                let one_len = core::mem::size_of::<c_int>() as libc::socklen_t;
+                if !is_udp {
+                    // libuv sets SO_REUSEADDR on every TCP server socket.
+                    libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEADDR, one_ptr, one_len);
+                } else if flags & 0x4 != 0 {
+                    // UV_UDP_REUSEADDR: SO_REUSEPORT on BSD/macOS, SO_REUSEADDR on Linux.
+                    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+                    {
+                        libc::setsockopt(
+                            fd,
+                            libc::SOL_SOCKET,
+                            libc::SO_REUSEPORT,
+                            one_ptr,
+                            one_len,
+                        );
+                        libc::setsockopt(
+                            fd,
+                            libc::SOL_SOCKET,
+                            libc::SO_REUSEADDR,
+                            one_ptr,
+                            one_len,
+                        );
+                    }
+                    #[cfg(not(any(
+                        target_os = "macos",
+                        target_os = "ios",
+                        target_os = "freebsd"
+                    )))]
+                    {
+                        libc::setsockopt(
+                            fd,
+                            libc::SOL_SOCKET,
+                            libc::SO_REUSEADDR,
+                            one_ptr,
+                            one_len,
+                        );
+                    }
+                }
+                if family == libc::AF_INET6 {
+                    // Always set the option explicitly (0 or 1): some kernels
+                    // default to v6only=1 (FreeBSD, sysctl'd Linux), and node's
+                    // uv__tcp_bind always writes it for AF_INET6.
+                    let v6only: libc::c_int = if flags & 0x1 != 0 { 1 } else { 0 };
+                    libc::setsockopt(
+                        fd,
+                        libc::IPPROTO_IPV6,
+                        libc::IPV6_V6ONLY,
+                        (&raw const v6only).cast(),
+                        one_len,
+                    );
+                }
+
+                if libc::bind(fd, core::ptr::from_ref(ss).cast(), ss_len) != 0 {
+                    let e = -bun_core::ffi::errno();
+                    close_fd(fd);
+                    return Err(e);
+                }
+                Ok(fd)
+            }
+        }
+
+        // Resolve the address. Cluster normally passes an IP literal or null;
+        // a hostname (e.g. "localhost") falls back to getaddrinfo.
+        // SAFETY: sockaddr_storage is plain C data; all-zero is a valid value.
+        let mut ss: libc::sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let ss_len: libc::socklen_t;
+        let fd: c_int;
+        let bound_family: c_int;
+        if address.is_string() {
+            let addr_slice = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
+            let addr_bytes = addr_slice.slice();
+            let mut addr_z: [u8; 256] = [0; 256];
+            if addr_bytes.len() >= addr_z.len() {
+                return Ok(JSValue::js_number_from_int32(-(libc::EINVAL)));
+            }
+            addr_z[..addr_bytes.len()].copy_from_slice(addr_bytes);
+
+            // SAFETY: `ss` is a zeroed sockaddr_storage large enough for
+            // either family; ares_inet_pton writes exactly one in_addr /
+            // in6_addr into the casted view.
+            let parsed = unsafe {
+                if family == libc::AF_INET6 {
+                    let sin6: &mut libc::sockaddr_in6 =
+                        &mut *(&raw mut ss).cast::<libc::sockaddr_in6>();
+                    sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+                    sin6.sin6_port = (port as u16).to_be();
+                    // The libc crate does not bind inet_pton; use the vendored
+                    // c-ares implementation (same convention as bun_core).
+                    bun_core::immutable::ares_inet_pton(
+                        libc::AF_INET6,
+                        addr_z.as_ptr().cast(),
+                        (&raw mut sin6.sin6_addr).cast(),
+                    ) == 1
+                } else {
+                    let sin: &mut libc::sockaddr_in =
+                        &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
+                    sin.sin_family = libc::AF_INET as libc::sa_family_t;
+                    sin.sin_port = (port as u16).to_be();
+                    bun_core::immutable::ares_inet_pton(
+                        libc::AF_INET,
+                        addr_z.as_ptr().cast(),
+                        (&raw mut sin.sin_addr).cast(),
+                    ) == 1
+                }
+            };
+            if !parsed {
+                // Hostname: numeric-service getaddrinfo with the family hint.
+                // SAFETY: addrinfo is plain C data; all-zero is a valid hints value.
+                let mut hints: libc::addrinfo = unsafe { bun_core::ffi::zeroed_unchecked() };
+                hints.ai_family = family;
+                hints.ai_socktype = socktype;
+                let mut res: *mut libc::addrinfo = core::ptr::null_mut();
+                // SAFETY: `addr_z` is NUL-terminated; out-params are live locals.
+                let rc = unsafe {
+                    libc::getaddrinfo(
+                        addr_z.as_ptr().cast(),
+                        core::ptr::null(),
+                        &raw const hints,
+                        &raw mut res,
+                    )
+                };
+                if rc != 0 || res.is_null() {
+                    return Ok(JSValue::js_number_from_int32(-(libc::EINVAL)));
+                }
+                // SAFETY: rc == 0 and res was null-checked; ai_addr/ai_addrlen
+                // describe a valid sockaddr that fits in sockaddr_storage.
+                unsafe {
+                    let ai = &*res;
+                    core::ptr::copy_nonoverlapping(
+                        ai.ai_addr.cast::<u8>(),
+                        (&raw mut ss).cast::<u8>(),
+                        ai.ai_addrlen as usize,
+                    );
+                    libc::freeaddrinfo(res);
+                    if family == libc::AF_INET6 {
+                        (*(&raw mut ss).cast::<libc::sockaddr_in6>()).sin6_port =
+                            (port as u16).to_be();
+                    } else {
+                        (*(&raw mut ss).cast::<libc::sockaddr_in>()).sin_port =
+                            (port as u16).to_be();
+                    }
+                }
+            }
+            ss_len = if family == libc::AF_INET6 {
+                core::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t
+            } else {
+                core::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t
+            };
+            match create_and_bind(family, socktype, is_udp, flags, &ss, ss_len) {
+                Ok(bound) => {
+                    fd = bound;
+                    bound_family = family;
+                }
+                Err(e) => return Ok(JSValue::js_number_from_int32(e)),
+            }
+        } else {
+            // No address: node's createServerHandle binds the IPv6 wildcard
+            // (dual-stack) regardless of addressType, falling back to the
+            // IPv4 wildcard on machines without IPv6 — same as the Windows
+            // branch above. Unlike Windows, EADDRINUSE needs no carve-out
+            // from the fallback: a POSIX v4-wildcard bind conflicts with a
+            // live dual-stack listener, so the retry re-surfaces the same
+            // error instead of masking it.
+            let (ss6, len6) = wildcard_sockaddr(libc::AF_INET6, port);
+            match create_and_bind(libc::AF_INET6, socktype, is_udp, flags, &ss6, len6) {
+                Ok(bound) => {
+                    fd = bound;
+                    bound_family = libc::AF_INET6;
+                }
+                Err(_) => {
+                    let (ss4, len4) = wildcard_sockaddr(libc::AF_INET, port);
+                    match create_and_bind(libc::AF_INET, socktype, is_udp, flags, &ss4, len4) {
+                        Ok(bound) => {
+                            fd = bound;
+                            bound_family = libc::AF_INET;
+                        }
+                        Err(e) => return Ok(JSValue::js_number_from_int32(e)),
+                    }
+                }
+            }
+        }
+
+        // SAFETY: getsockname FFI on the bound fd with a properly sized
+        // buffer; ownership of the fd transfers to the returned object.
+        unsafe {
+            // Report the kernel-assigned port for port-0 binds.
+            let mut bound_port = port;
+            let mut out: libc::sockaddr_storage = bun_core::ffi::zeroed_unchecked();
+            let mut out_len = core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+            if libc::getsockname(fd, (&raw mut out).cast(), &raw mut out_len) == 0 {
+                bound_port = if bound_family == libc::AF_INET6 {
+                    u16::from_be((*(&raw const out).cast::<libc::sockaddr_in6>()).sin6_port) as i32
+                } else {
+                    u16::from_be((*(&raw const out).cast::<libc::sockaddr_in>()).sin_port) as i32
+                };
+            }
+
+            let obj = JSValue::create_empty_object(global, 2);
+            obj.put(global, b"fd", JSValue::js_number_from_int32(fd));
+            obj.put(global, b"port", JSValue::js_number_from_int32(bound_port));
+            Ok(obj)
+        }
+    }
+}
+
+/// `clusterCloseHandle(fd)` — close a numeric fd held by cluster JS (shared
+/// listen handles that were never adopted by a native socket). On Windows the
+/// number is a raw SOCKET, which must go through closesocket();
+/// `fs.closeSync` would route it through the CRT fd table and close an
+/// unrelated descriptor.
+#[bun_jsc::host_fn]
+pub(crate) fn cluster_close_handle(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let _ = global;
+    let value = frame.arguments_old::<1>().ptr[0];
+    if value.is_number() {
+        #[cfg(windows)]
+        {
+            let raw = value.to_number(global)?;
+            if raw.is_finite() && raw >= 0.0 {
+                bun_uws::socket_transfer::bsd_close_socket(
+                    raw as u64 as bun_uws::LIBUS_SOCKET_DESCRIPTOR,
+                );
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let fd = value.to_int32();
+            if fd >= 0 {
+                // SAFETY: closing a caller-owned descriptor.
+                unsafe { libc::close(fd) };
+            }
+        }
+    }
+    Ok(JSValue::UNDEFINED)
 }

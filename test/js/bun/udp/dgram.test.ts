@@ -206,3 +206,16 @@ describe("unref()", () => {
     expect([path.join(import.meta.dir, "dgram-unref-hang-fixture.ts")]).toRun();
   });
 });
+
+describe("close()", () => {
+  test("send/bind/close on a closed socket throw ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const socket = createSocket("udp4");
+    await new Promise<void>(resolve => socket.bind(0, resolve));
+    await new Promise<void>(resolve => socket.close(resolve));
+
+    const notRunning = expect.objectContaining({ code: "ERR_SOCKET_DGRAM_NOT_RUNNING" });
+    expect(() => socket.send(Buffer.from("hello"), 12345, "127.0.0.1")).toThrow(notRunning);
+    expect(() => socket.bind(0)).toThrow(notRunning);
+    expect(() => socket.close()).toThrow(notRunning);
+  });
+});

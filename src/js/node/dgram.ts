@@ -44,7 +44,9 @@ const kStateSymbol = Symbol("state symbol");
 const kOwnerSymbol = Symbol("owner symbol");
 const async_id_symbol = Symbol("async_id_symbol");
 
-const { throwNotImplemented } = require("internal/shared");
+const { throwNotImplemented, ErrnoException, kClusterOwner } = require("internal/shared");
+
+let cluster;
 const {
   validateString,
   validateNumber,
@@ -221,6 +223,8 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
 
   const state = this[kStateSymbol];
 
+  healthCheck(this);
+
   if (state.bindState !== BIND_STATE_UNBOUND) {
     this.emit("error", $ERR_SOCKET_ALREADY_BOUND());
     return;
@@ -255,29 +259,48 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
 
   // Open an existing fd instead of creating a new one.
   if (port !== null && typeof port === "object" && isInt32(port.fd) && port.fd > 0) {
-    throwNotImplemented("Socket.prototype.bind({ fd })");
-    /*
     const fd = port.fd;
-    const exclusive = !!port.exclusive;
-    const state = this[kStateSymbol];
+    const fdExclusive = !!port.exclusive;
 
-    const type = guessHandleType(fd);
-    if (type !== 'UDP')
-      throw new ERR_INVALID_FD_TYPE(type);
-    const err = state.handle.open(fd);
+    if (cluster === undefined) cluster = require("node:cluster");
+    if (cluster.isWorker && !fdExclusive) {
+      // The fd number is only meaningful in the primary (node semantics): the
+      // primary opens it and ships the real handle back over the channel.
+      cluster._getServer(
+        this,
+        { address: null, port: null, addressType: this.type, fd, flags: null },
+        (err, handle) => {
+          if (!this[kStateSymbol].handle) {
+            handle?.close?.();
+            return;
+          }
+          if (err) {
+            state.bindState = BIND_STATE_UNBOUND;
+            this.emit("error", new ErrnoException(err, "open"));
+            return;
+          }
+          state.clusterHandle = handle;
+          handle.adopted = true;
+          // Worker._disconnect() escalates through the owner so the adopted
+          // Bun socket actually closes (the wrapper alone only drops the
+          // primary-side refcount).
+          handle[kClusterOwner] = this;
+          bunBindSocket(this, state, { fd: handle.sharedFd });
+        },
+      );
+      return this;
+    }
 
-    if (err)
-      throw new ErrnoException(err, 'open');
-
-    startListening(this);
+    bunBindSocket(this, state, { fd });
     return this;
-    */
   }
 
   let address;
+  let exclusive = false;
 
   if (port !== null && typeof port === "object") {
     address = port.address || "";
+    exclusive = !!port.exclusive;
     port = port.port;
   } else {
     address = typeof address_ === "function" ? "" : address_;
@@ -299,6 +322,41 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       return;
     }
 
+    // node: reusePort implies exclusive — the kernel balances; cluster's
+    // shared handle is skipped.
+    if (state.reusePort) {
+      exclusive = true;
+    }
+
+    if (cluster === undefined) cluster = require("node:cluster");
+    if (cluster.isWorker && !exclusive) {
+      // UDP is never round-robin: the primary binds once (UV-style flags)
+      // and ships the fd to every worker that asks.
+      let clusterFlags = 0;
+      if (state.ipv6Only) clusterFlags |= 1;
+      if (state.reuseAddr) clusterFlags |= 4;
+      cluster._getServer(
+        this,
+        { address: ip, port: port || 0, addressType: this.type, fd: -1, flags: clusterFlags },
+        (err2, handle) => {
+          if (!state.handle) {
+            handle?.close?.();
+            return;
+          }
+          if (err2) {
+            state.bindState = BIND_STATE_UNBOUND;
+            this.emit("error", new ErrnoException(err2, "bind"));
+            return;
+          }
+          state.clusterHandle = handle;
+          handle.adopted = true;
+          handle[kClusterOwner] = this;
+          bunBindSocket(this, state, { fd: handle.sharedFd });
+        },
+      );
+      return;
+    }
+
     let flags = uSockets.LISTEN_DISALLOW_REUSE_PORT_FAILURE;
 
     if (state.reuseAddr) {
@@ -313,52 +371,81 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       flags |= uSockets.LISTEN_REUSE_PORT;
     }
 
-    // TODO flags
-    const family = this.type === "udp4" ? "IPv4" : "IPv6";
-    try {
-      Bun.udpSocket({
-        hostname: ip,
-        port: port || 0,
-        flags,
-        socket: {
-          data: (_socket, data, port, address) => {
-            this.emit("message", data, {
-              port: port,
-              address: address,
-              size: data.length,
-              // TODO check if this is correct
-              family,
-            });
-          },
-          error: error => {
-            this.emit("error", error);
-          },
-        },
-      }).$then(
-        socket => {
-          if (state.unrefOnBind) {
-            socket.unref();
-            state.unrefOnBind = false;
-          }
-          state.handle.socket = socket;
-          state.receiving = true;
-          state.bindState = BIND_STATE_BOUND;
-
-          this.emit("listening");
-        },
-        err => {
-          state.bindState = BIND_STATE_UNBOUND;
-          this.emit("error", err);
-        },
-      );
-    } catch (err) {
-      state.bindState = BIND_STATE_UNBOUND;
-      this.emit("error", err);
-    }
+    bunBindSocket(this, state, {
+      hostname: ip,
+      port: port || 0,
+      flags,
+    });
   });
 
   return this;
 };
+
+// Create (or adopt, when `options.fd` is set) the native Bun UDP socket and
+// finish the bind: wire message/error handlers, flip state to BOUND, emit
+// 'listening'.
+function bunBindSocket(self, state, options) {
+  const family = self.type === "udp4" ? "IPv4" : "IPv6";
+  try {
+    Bun.udpSocket({
+      ...options,
+      socket: {
+        data: (_socket, data, port, address) => {
+          // close() is synchronous in node: nothing is emitted after the
+          // handle is gone.
+          if (!state.handle) return;
+          self.emit("message", data, {
+            port: port,
+            address: address,
+            size: data.length,
+            // TODO check if this is correct
+            family,
+          });
+        },
+        error: error => {
+          self.emit("error", error);
+        },
+      },
+    }).$then(
+      socket => {
+        if (!state.handle) {
+          // Socket was closed while the native bind was pending.
+          socket.close();
+          return;
+        }
+        if (state.unrefOnBind) {
+          socket.unref();
+          state.unrefOnBind = false;
+        }
+        state.handle.socket = socket;
+        state.receiving = true;
+        state.bindState = BIND_STATE_BOUND;
+
+        self.emit("listening");
+      },
+      err => {
+        state.bindState = BIND_STATE_UNBOUND;
+        releaseClusterHandle(state);
+        self.emit("error", err);
+      },
+    );
+  } catch (err) {
+    state.bindState = BIND_STATE_UNBOUND;
+    releaseClusterHandle(state);
+    self.emit("error", err);
+  }
+}
+
+// The bind failed, so the adopted fd never made it into a native socket:
+// reclaim ownership (close() skips the fd once `adopted` is set) and close it.
+function releaseClusterHandle(state) {
+  const handle = state.clusterHandle;
+  if (handle) {
+    state.clusterHandle = null;
+    handle.adopted = false;
+    handle.close();
+  }
+}
 
 Socket.prototype.connect = function (port, address, callback) {
   port = validatePort(port, "Port", false);
@@ -578,6 +665,8 @@ Socket.prototype.send = function (buffer, offset, length, port, address, callbac
     validateString(address, "address");
   }
 
+  healthCheck(this);
+
   if (state.bindState === BIND_STATE_UNBOUND) this.bind({ port: 0, exclusive: true }, null);
 
   if (list.length === 0) list.push(Buffer.alloc(0));
@@ -702,9 +791,18 @@ Socket.prototype.close = function (callback) {
     return this;
   }
 
+  healthCheck(this);
   state.receiving = false;
   state.handle.socket?.close();
   state.handle = null;
+  // Take post-close use back through the UNBOUND path; send()/bind() throw
+  // ERR_SOCKET_DGRAM_NOT_RUNNING via healthCheck() before re-binding.
+  state.bindState = BIND_STATE_UNBOUND;
+  // Tell the primary to drop us from the shared-handle refcount.
+  if (state.clusterHandle) {
+    state.clusterHandle.close();
+    state.clusterHandle = null;
+  }
   defaultTriggerAsyncIdScope(this[async_id_symbol], process.nextTick, socketCloseNT, this);
 
   return this;

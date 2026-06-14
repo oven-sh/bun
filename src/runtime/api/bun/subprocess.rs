@@ -786,7 +786,7 @@ impl Subprocess<'_> {
         };
         // `ipc()` centralises the single unsafe `JsCell` deref; `do_send` may
         // re-enter JS, but only the SendQueue is borrowed, not `*self`.
-        crate::ipc_host::do_send(this.ipc(), global, call_frame, context)
+        crate::ipc_host::do_send(this.ipc(), global, call_frame, context, this.pid() as u32)
     }
 
     pub fn disconnect_ipc(&self, next_tick: bool) {

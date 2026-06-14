@@ -142,12 +142,33 @@
 /**
  * @param {unknown} message
  * @param {Handle} handle
- * @param {{ keepOpen?: boolean } | undefined} options
+ * @param {{ keepOpen?: boolean } | undefined} _options
  * @returns {[unknown, Serialized] | null}
  */
-export function serialize(_message, _handle, _options) {
-  // sending file descriptors is not supported yet
-  return null; // send the message without the file descriptor
+export function serialize(message, handle, _options) {
+  const net = require("node:net");
+  if (handle instanceof net.Server) {
+    // The Listener stays alive (protected) until the fd is flushed.
+    const native = handle._handle;
+    if (!native) return null;
+    return [native, { cmd: "NODE_HANDLE", message, type: "net.Server" }];
+  }
+  if (handle instanceof net.Socket) {
+    // The native socket is paused on the Rust side once the handle is
+    // confirmed transferable (do_send) - pausing here would be premature:
+    // IPCSerialize never forwards `options`, and a reverted send would
+    // leave the socket paused forever.
+    const native = handle._handle;
+    if (!native) return null;
+    return [native, { cmd: "NODE_HANDLE", message, type: "net.Socket" }];
+  }
+  if (handle instanceof require("node:dgram").Socket) {
+    // node can send dgram sockets; Bun cannot yet. Deliver the message
+    // without the handle (the pre-handle-passing behavior) instead of
+    // ERR_INVALID_HANDLE_TYPE, which node reserves for unknown types.
+    return null;
+  }
+  throw $ERR_INVALID_HANDLE_TYPE();
 
   /*
   const net = require("node:net");
@@ -218,13 +239,19 @@ export function parseHandle(target, serialized, fd) {
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();
-      server.listen({ fd }, () => {
+      // exclusive: a cluster worker must adopt the received fd directly via
+      // kRealListen; the default path would ship the bare fd *number* to the
+      // primary through cluster._getServer and leak the actual handle.
+      server.listen({ fd, exclusive: true }, () => {
         emit(target, serialized.message, server);
       });
       return;
     }
     case "net.Socket": {
-      throw new Error("TODO case net.Socket");
+      const socket = new net.Socket({ readable: true, writable: true });
+      socket.connect({ fd, fdIsRawSocket: true });
+      emit(target, serialized.message, socket);
+      return;
     }
     case "dgram.Socket": {
       throw new Error("TODO case dgram.Socket");

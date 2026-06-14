@@ -398,9 +398,9 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 }
 
 struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc) {
-#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
-    return 0;
-#else
+    /* Works on every backend: the libuv eventing registers raw SOCKETs via
+     * uv_poll_init_socket (see eventing/libuv.c), which is how all Windows
+     * sockets are polled already. */
     struct us_poll_t *p1 = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
     int rc = us_poll_start_rc(p1, group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
@@ -438,7 +438,6 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     }
 
     return s;
-#endif
 }
 
 void *us_socket_get_native_handle(struct us_socket_t *s) {
@@ -517,12 +516,24 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
 
     int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
 
+    if (sent < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) {
+            /* Transient: wait for writable and retry. */
+            s->flags.last_write_failed = 1;
+            us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            return 0;
+        }
+        /* Hard error (EPIPE, ECONNRESET, EBADF, ...): returning 0 here would
+         * make the caller spin on writable events forever. */
+        return -1;
+    }
+
     if (sent != length) {
         s->flags.last_write_failed = 1;
         us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
 
-    return sent < 0 ? 0 : sent;
+    return sent;
 }
 #endif
 

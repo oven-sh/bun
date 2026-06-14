@@ -1,8 +1,9 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
+const SharedHandle = require("internal/cluster/SharedHandle");
 const path = require("node:path");
-const { throwNotImplemented, kHandle } = require("internal/shared");
+const { kHandle } = require("internal/shared");
 
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperPrimary", 4);
 const onInternalMessage = $newZigFunction("node_cluster_binding.zig", "onInternalMessagePrimary", 3);
@@ -231,8 +232,21 @@ function queryServer(worker, message) {
   // Stop processing if worker already disconnecting
   if (worker.exitedAfterDisconnect) return;
 
-  const key = `${message.address}:${message.port}:${message.addressType}:` + `${message.fd}:${message.index}`;
+  // node: the per-listen `index` only disambiguates port-0 listens; fixed
+  // ports/pipes/fds share one handle across every worker that asks.
+  const key =
+    `${message.address}:${message.port}:${message.addressType}:${message.fd}` +
+    (message.port === 0 ? `:${message.index}` : "");
   let handle = handles.get(key);
+
+  if (handle !== undefined && message.sharedOnly === true && handle instanceof RoundRobinHandle) {
+    // A TLS worker cannot adopt round-robin connection fds (the native
+    // listener owns the TLS accept lifecycle), but another worker already
+    // claimed this key as round-robin. Fail this listen loudly instead of
+    // handing plaintext connections to the TLS server.
+    send(worker, { errno: -1, errcode: "EINVAL", key, ack: message.seq, data: handle.data }, null);
+    return;
+  }
 
   if (handle === undefined) {
     let address = message.address;
@@ -247,8 +261,13 @@ function queryServer(worker, message) {
     // UDP is exempt from round-robin connection balancing for what should
     // be obvious reasons: it's connectionless. There is nothing to send to
     // the workers except raw datagrams and that's pointless.
-    if (schedulingPolicy !== SCHED_RR || message.addressType === "udp4" || message.addressType === "udp6") {
-      throwNotImplemented("node:cluster SCHED_NONE");
+    if (
+      schedulingPolicy !== SCHED_RR ||
+      message.sharedOnly === true ||
+      message.addressType === "udp4" ||
+      message.addressType === "udp6"
+    ) {
+      handle = new SharedHandle(key, address, message);
     } else {
       handle = new RoundRobinHandle(key, address, message);
     }
@@ -260,11 +279,13 @@ function queryServer(worker, message) {
 
   // Set custom server data
   handle.add(worker, (errno, reply, handle) => {
-    const { data } = handles.get(key);
+    // A bind error can fan out to several queued workers; the first callback
+    // deletes the key, so guard the second lookup.
+    const data = handles.get(key)?.data;
 
     if (errno) handles.delete(key); // Gives other workers a chance to retry.
 
-    send(
+    const sent = send(
       worker,
       {
         errno,
@@ -275,6 +296,14 @@ function queryServer(worker, message) {
       },
       handle,
     );
+    if (sent === null && handle !== null && handle !== undefined) {
+      // The shared handle could not be exported to this worker (Windows,
+      // e.g. WSAENOBUFS on a live peer) so the reply was never emitted.
+      // Deliver a bind error instead of leaving the worker's listen()
+      // hanging forever. The handle itself stays registered: other workers
+      // may be using it, and this worker's removal cleans up its slot.
+      send(worker, { errno: -1, errcode: "ENOBUFS", key, ack: message.seq, data }, null);
+    }
   });
 }
 

@@ -172,6 +172,33 @@ bun_core::opaque_extern!(
     pub UpgradedDuplex, pub WindowsNamedPipe,
 );
 
+/// Cross-process socket transfer. On Windows this wraps WSADuplicateSocketW /
+/// WSASocketW(FROM_PROTOCOL_INFO): the exporter serializes the SOCKET for a
+/// target pid into an opaque blob that travels in-band over the IPC pipe; the
+/// importer reconstructs an independent descriptor from it. On POSIX these
+/// return ENOTSUP - fds travel as SCM_RIGHTS ancillary data there instead.
+pub mod socket_transfer {
+    use super::LIBUS_SOCKET_DESCRIPTOR;
+    use core::ffi::{c_char, c_int, c_uint, c_void};
+    unsafe extern "C" {
+        pub safe fn bsd_socket_export_size() -> c_int;
+        pub fn bsd_socket_export(
+            fd: LIBUS_SOCKET_DESCRIPTOR,
+            target_pid: c_uint,
+            info_out: *mut c_void,
+        ) -> c_int;
+        pub fn bsd_socket_import(info: *mut c_void, err: *mut c_int) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub safe fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR);
+        pub fn bsd_create_bound_socket(
+            host: *const c_char,
+            port: c_int,
+            options: c_int,
+            out_port: *mut c_int,
+            error: *mut c_int,
+        ) -> LIBUS_SOCKET_DESCRIPTOR;
+    }
+}
+
 // ── UpgradedDuplex (cycle-break shim) ────────────────────────────────────────
 // The full `UpgradedDuplex` lives in `bun_runtime::socket` (T6); `socket.rs`
 // here dispatches to it from the low-tier `InternalSocket` enum. To avoid an

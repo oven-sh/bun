@@ -255,12 +255,14 @@ impl Listener {
 
                 // we need to add support for the backlog parameter on listen here we use the
                 // default value of nodejs
+                let mut pipe_errno: c_int = 0;
                 match WindowsNamedPipeListeningContext::listen(
                     global,
                     &pipe_buf[..pipe_len],
                     511,
                     ssl_cfg_taken.as_ref(),
                     this,
+                    &mut pipe_errno,
                 ) {
                     Ok(named_pipe) => {
                         this_ref.listener.set(ListenerType::NamedPipe(
@@ -279,10 +281,34 @@ impl Listener {
                         // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
                         // protos, and (the moved) handlers exactly once.
                         drop(unsafe { bun_core::heap::take(this) });
-                        return Err(global.throw_invalid_arguments(format_args!(
+                        // A failed uv pipe bind/listen must carry the real
+                        // error code (EADDRINUSE, EACCES, ...) like the
+                        // TCP/unix path below - not ERR_INVALID_ARG_TYPE.
+                        let err = global.create_error_instance(format_args!(
                             "Failed to listen at {}",
                             bstr::BStr::new(&pipe_buf[..pipe_len])
-                        )));
+                        ));
+                        if pipe_errno != 0 {
+                            err.put(
+                                global,
+                                b"syscall",
+                                jsc::bun_string_jsc::create_utf8_for_js(global, b"listen")?,
+                            );
+                            err.put(global, b"errno", JSValue::js_number(pipe_errno as f64));
+                            err.put(
+                                global,
+                                b"address",
+                                ZigString::init_utf8(&pipe_buf[..pipe_len]).to_js(global),
+                            );
+                            if let Some(name) = bun_sys::UV_E::name(pipe_errno) {
+                                err.put(
+                                    global,
+                                    b"code",
+                                    ZigString::init(name.as_bytes()).to_js(global),
+                                );
+                            }
+                        }
+                        return Err(global.throw_value(err));
                     }
                 }
 
@@ -433,19 +459,21 @@ impl Listener {
                 )
             }),
             UnixOrHost::Fd(fd) => {
-                let err = jsc::SystemError {
-                    errno: bun_sys::SystemErrno::EINVAL as c_int,
-                    code: bun_core::String::static_("EINVAL"),
-                    message: bun_core::String::static_(
-                        "Bun does not support listening on a file descriptor.",
-                    ),
-                    syscall: bun_core::String::static_("listen"),
-                    fd: fd.uv(),
-                    path: bun_core::String::empty(),
-                    hostname: bun_core::String::empty(),
-                    dest: bun_core::String::empty(),
-                };
-                return Err(global.throw_value(err.to_error_instance(global)));
+                // Adopt an already-bound fd (node listen({fd}), cluster shared
+                // handles): listen(2) happens in usockets, on every platform
+                // (Windows polls raw SOCKETs through the libuv backend).
+                let fd_native = fd.native() as uws_sys::LIBUS_SOCKET_DESCRIPTOR;
+                this_ref.group.with_mut(|g| {
+                    g.listen_fd(
+                        kind,
+                        secure_ctx_ptr,
+                        fd_native,
+                        511,
+                        socket_flags,
+                        size_of::<*mut c_void>() as c_int,
+                        &mut errno,
+                    )
+                })
             }
         };
         if listen_socket.is_null() {
@@ -950,6 +978,21 @@ impl Listener {
         let connection: UnixOrHost = 'blk: {
             if let Some(fd_) = opts.get_truthy(global, "fd")? {
                 if fd_.is_number() {
+                    // Windows has two fd namespaces meeting here: CRT/libuv
+                    // fds (child_process stdio pipes - the historical
+                    // behavior) and raw SOCKET values (cluster/IPC handle
+                    // transfer). The internal transfer paths mark theirs with
+                    // `fdIsRawSocket`; everything else keeps CRT semantics.
+                    #[cfg(windows)]
+                    let fd = if opts
+                        .get_truthy(global, "fdIsRawSocket")?
+                        .is_some_and(|v| v.to_boolean())
+                    {
+                        Fd::from_system(fd_.to_int32() as u32 as usize as *mut c_void)
+                    } else {
+                        Fd::from_uv(fd_.to_int32())
+                    };
+                    #[cfg(not(windows))]
                     let fd = Fd::from_uv(fd_.to_int32());
                     break 'blk UnixOrHost::Fd(fd);
                 }
@@ -1017,6 +1060,13 @@ impl Listener {
                     }
                     None => false,
                 },
+                UnixOrHost::Fd(fd) if fd.kind() == bun_core::FdKind::System => {
+                    // A system-tagged fd is a raw SOCKET (the JS fd convention
+                    // for sockets, e.g. one received over cluster/IPC handle
+                    // transfer) - never a libuv pipe fd, and `.uv()` panics
+                    // on it.
+                    false
+                }
                 UnixOrHost::Fd(fd) => {
                     let uvfd = fd.uv();
                     let fd_type = uv::uv_guess_handle(uvfd);
@@ -1678,6 +1728,7 @@ impl WindowsNamedPipeListeningContext {
         backlog: i32,
         ssl_config: Option<&SSLConfig>,
         listener: *mut Listener,
+        uv_errno_out: &mut c_int,
     ) -> Result<*mut WindowsNamedPipeListeningContext, bun_core::Error> {
         // Heap-allocate at the final address so libuv can
         // store a pointer back into `uv_pipe`.
@@ -1744,6 +1795,9 @@ impl WindowsNamedPipeListeningContext {
             )
         };
         if listen_rc.is_err() {
+            // Surface the (negative) uv error code so the caller can build a
+            // properly-coded JS error.
+            *uv_errno_out = listen_rc.0;
             return Err(bun_core::err!("FailedToBindPipe"));
         }
         //TODO: add readableAll and writableAll support if someone needs it

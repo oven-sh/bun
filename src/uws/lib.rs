@@ -29,7 +29,7 @@ pub use bun_uws_sys::{
 /// hook, so no `catch_unwind` wrapper is emitted.
 pub use bun_jsc_macros::uws_callback;
 pub use bun_uws_sys::response::State;
-pub use bun_uws_sys::{h3 as H3, quic, udp, vtable};
+pub use bun_uws_sys::{h3 as H3, quic, socket_transfer, udp, vtable};
 pub type Socket = us_socket_t;
 
 /// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;

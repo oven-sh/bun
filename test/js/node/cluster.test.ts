@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunRun, isIPv6, isWindows, joinP, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -159,4 +159,147 @@ process.send("regular message");
   });
   const { stdout } = bunRun(joinP(dir, "parent.ts"), bunEnv);
   expect(stdout).toContain("P received regular message");
+});
+
+test("TLS worker listening on a key already owned by a round-robin handle fails with EINVAL", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const tls = require("node:tls");
+
+if (cluster.isPrimary) {
+  // The plain worker claims the handle key first, so the primary maps it to
+  // a RoundRobinHandle before the TLS worker (sharedOnly) asks for it.
+  const netWorker = cluster.fork({ ROLE: "net" });
+  cluster.once("listening", () => {
+    const tlsWorker = cluster.fork({ ROLE: "tls" });
+    tlsWorker.on("message", msg => {
+      console.log("tls listen error code:", msg.code);
+      netWorker.kill();
+      tlsWorker.kill();
+      process.exit(0);
+    });
+  });
+} else if (process.env.ROLE === "net") {
+  net.createServer(() => {}).listen(0);
+} else {
+  // Same key as the net worker: first listen(0) in each worker uses index 0.
+  const server = tls.createServer({});
+  server.on("error", err => process.send({ code: err.code }));
+  server.listen(0);
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("tls listen error code: EINVAL");
+});
+
+test("cluster pipe listen error carries no port suffix", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const path = require("node:path");
+
+if (cluster.isPrimary) {
+  // The name must be computed once and shared via the fork env: a
+  // pid-derived name re-evaluated in the worker would point at a
+  // different (free) pipe and the listen below would succeed.
+  const PIPE =
+    process.platform === "win32"
+      ? String.raw\`\\\\.\\pipe\\bun-cluster-pipe-err-\${process.pid}\`
+      : path.join(__dirname, "test.sock");
+  // Hold the pipe in the primary so the worker's listen fails EADDRINUSE.
+  const blocker = net.createServer(() => {});
+  blocker.listen(PIPE, () => {
+    const worker = cluster.fork({ BUN_CLUSTER_PIPE: PIPE });
+    worker.on("message", msg => {
+      console.log("code:", msg.code);
+      console.log("message:", msg.message);
+      console.log("port:", msg.port);
+      worker.kill();
+      blocker.close();
+      process.exit(0);
+    });
+  });
+} else {
+  const server = net.createServer(() => {});
+  server.on("error", err => process.send({ code: err.code, message: err.message, port: err.port }));
+  server.listen(process.env.BUN_CLUSTER_PIPE);
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("code: EADDRINUSE");
+  expect(stdout).not.toContain(":-1");
+  expect(stdout).toContain("port: -1");
+});
+
+test.skipIf(isWindows)("SCHED_NONE pipe listen unlinks the socket file when the last worker leaves", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const fs = require("node:fs");
+const path = require("node:path");
+
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+const SOCK = path.join(__dirname, "test.sock");
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork({ BUN_CLUSTER_SOCK: SOCK });
+  cluster.on("listening", () => {
+    console.log("exists while listening:", fs.existsSync(SOCK));
+    worker.disconnect();
+  });
+  cluster.on("exit", () => {
+    // removeHandlesForWorker (and SharedHandle.remove) runs before the
+    // primary emits 'exit', so the unlink must have happened by now.
+    console.log("exists after exit:", fs.existsSync(SOCK));
+    process.exit(0);
+  });
+} else {
+  net.createServer(() => {}).listen(process.env.BUN_CLUSTER_SOCK);
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("exists while listening: true");
+  expect(stdout).toContain("exists after exit: false");
+});
+
+test.skipIf(!isIPv6())("SCHED_NONE listen with no host binds the IPv6 wildcard (dual-stack)", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  cluster.on("listening", (w, address) => {
+    // node's createServerHandle binds "::" when no address is given, so an
+    // IPv6 client must be able to reach the shared-handle server.
+    const c = net.connect({ host: "::1", port: address.port });
+    c.on("connect", () => {
+      console.log("ipv6 connect ok");
+      c.end();
+      worker.kill();
+      process.exit(0);
+    });
+    c.on("error", err => {
+      console.log("ipv6 connect error:", err.code);
+      worker.kill();
+      process.exit(1);
+    });
+  });
+} else {
+  net.createServer(s => s.end()).listen(0);
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("ipv6 connect ok");
 });

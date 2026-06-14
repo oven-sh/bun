@@ -1,9 +1,13 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
+const { kClusterOwner: owner_symbol } = require("internal/shared");
 
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
 const onInternalMessage = $newZigFunction("node_cluster_binding.zig", "onInternalMessageChild", 2);
+// Closes a numeric cluster fd. On Windows these are raw SOCKETs that must go
+// through closesocket(), not the CRT fd table that fs.closeSync uses.
+const closeRawHandle = $newZigFunction("node_cluster_binding.zig", "clusterCloseHandle", 1);
 
 const FunctionPrototype = Function.prototype;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -15,7 +19,23 @@ const indexes = new Map();
 const noop = FunctionPrototype;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
-const owner_symbol = Symbol("owner_symbol");
+
+// Minimal stand-in for node's TCPWrap client handle: the primary hands off an
+// accepted connection as a raw fd over the IPC channel (surfaced as
+// `message.$fd`). net.ts adopts `.fd`; `.close()` covers the rejected path.
+function makeConnectionHandle(fd) {
+  let closed = false;
+  return {
+    fd,
+    close(cb?) {
+      if (!closed) {
+        closed = true;
+        closeRawHandle(fd);
+      }
+      if (typeof cb === "function") process.nextTick(cb);
+    },
+  };
+}
 
 export default cluster;
 
@@ -52,8 +72,20 @@ cluster._setupWorker = function () {
   send({ act: "online" });
 
   function onmessage(message, handle) {
-    if (message.act === "newconn") onconnection(message, handle);
-    else if (message.act === "disconnect") worker._disconnect(true);
+    if (message.act === "newconn" && handle == null && typeof message["$fd"] === "number" && message["$fd"] >= 0) {
+      handle = makeConnectionHandle(message["$fd"]);
+    }
+    // node's child_process emits cluster-internal messages on the process
+    // object before the cluster machinery consumes them (node's own cluster
+    // child is wired through this event); tests and tooling tap it - e.g.
+    // test-cluster-worker-handle-close closes its server from a prepended
+    // listener so the connection below is dropped.
+    process.emit("internalMessage", message, handle);
+    if (message.act === "newconn") {
+      onconnection(message, handle);
+    } else if (message.act === "disconnect") {
+      worker._disconnect(true);
+    }
   }
 };
 
@@ -90,6 +122,12 @@ cluster._getServer = function (obj, options, cb) {
   send(message, (reply, handle) => {
     if (typeof obj._setServerData === "function") obj._setServerData(reply.data);
 
+    if (handle == null && typeof reply["$fd"] === "number" && reply["$fd"] >= 0) {
+      // Shared listen socket: the primary bound it and sent the fd over the
+      // IPC channel (SCM_RIGHTS); the worker does the real listen on it.
+      handle = makeSharedHandle(reply["$fd"]);
+    }
+
     if (handle) {
       // Shared listen socket
       shared(reply, { handle, indexesKey, index }, cb);
@@ -124,6 +162,27 @@ function removeIndexesKey(indexesKey, index) {
   }
 }
 
+// Wraps a bound (not yet listening) fd received from the primary's
+// SharedHandle. net.ts spots `.sharedFd` and performs the real listen; once a
+// native socket adopts the fd (`adopted = true`), it owns the close.
+function makeSharedHandle(fd) {
+  let closed = false;
+  const handle = {
+    sharedFd: fd,
+    adopted: false,
+    close(cb?) {
+      if (!closed) {
+        closed = true;
+        if (!handle.adopted) {
+          closeRawHandle(fd);
+        }
+      }
+      if (typeof cb === "function") process.nextTick(cb);
+    },
+  };
+  return handle;
+}
+
 // Shared listen socket.
 function shared(message, { handle, indexesKey, index }, cb) {
   const key = message.key;
@@ -139,12 +198,12 @@ function shared(message, { handle, indexesKey, index }, cb) {
   };
   $assert(handles.has(key) === false);
   handles.set(key, handle);
-  cb(message.errno, handle);
+  cb(message.errno, handle, message);
 }
 
 // Round-robin. Master distributes handles across workers.
 function rr(message, { indexesKey, index }, cb) {
-  if (message.errno) return cb(message.errno, null);
+  if (message.errno) return cb(message.errno, null, message);
 
   let key = message.key;
 
@@ -204,7 +263,7 @@ function rr(message, { indexesKey, index }, cb) {
 
   $assert(handles.has(key) === false);
   handles.set(key, handle);
-  cb(0, handle);
+  cb(0, handle, message);
 }
 
 // Round-robin connection.
@@ -215,7 +274,7 @@ function onconnection(message, handle) {
 
   if (accepted && server[owner_symbol]) {
     const self = server[owner_symbol];
-    if (self.maxConnections != null && self._connections >= self.maxConnections) {
+    if (self.maxConnections != null && self._connections >= self.maxConnections && !self.dropMaxConnection) {
       accepted = false;
     }
   }
@@ -253,9 +312,13 @@ Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?)
       // it's primary initiated there's no need to send the
       // exitedAfterDisconnect message
       if (primaryInitiated) {
-        process.disconnect();
+        // The channel can already be gone (e.g. the primary exited right
+        // after requesting the disconnect); disconnecting twice throws.
+        if (process.connected) process.disconnect();
       } else {
-        send({ act: "exitedAfterDisconnect" }, () => process.disconnect());
+        send({ act: "exitedAfterDisconnect" }, () => {
+          if (process.connected) process.disconnect();
+        });
       }
     }
   }

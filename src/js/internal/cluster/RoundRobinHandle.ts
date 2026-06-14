@@ -8,9 +8,6 @@ const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperPrimar
 const ArrayIsArray = Array.isArray;
 
 const UV_TCP_IPV6ONLY = 1;
-const assert_fail = () => {
-  throw new Error("ERR_INTERNAL_ASSERTION");
-};
 
 export default class RoundRobinHandle {
   key;
@@ -19,6 +16,11 @@ export default class RoundRobinHandle {
   handles;
   handle;
   server;
+  listening;
+  // worker.id -> handle sent in a `newconn` whose ack hasn't arrived yet.
+  // If that worker dies first, the ack never comes and the handle would leak
+  // (keeping the accepted socket - and the primary's event loop - alive).
+  inFlight;
 
   constructor(key, address, { port, fd, flags, backlog, readableAll, writableAll }) {
     net ??= require("node:net");
@@ -27,7 +29,16 @@ export default class RoundRobinHandle {
     this.free = new Map();
     this.handles = init(Object.create(null));
     this.handle = null;
-    this.server = net.createServer(assert_fail);
+    this.listening = false;
+    this.inFlight = new Map();
+    // Accepted sockets start paused (no kernel reads), so the connection's
+    // bytes stay in the kernel buffer until the fd is handed to a worker.
+    // allowHalfOpen keeps the primary's copy inert when the client sends FIN
+    // early: node's primary never reacts to EOF on a pending handle, and the
+    // worker that adopts the fd still observes the EOF itself.
+    this.server = net.createServer({ pauseOnConnect: true, allowHalfOpen: true }, socket => {
+      this.distribute(0, makeAcceptedHandle(socket));
+    });
 
     if (fd >= 0) this.server.listen({ fd, backlog });
     else if (port >= 0) {
@@ -46,10 +57,8 @@ export default class RoundRobinHandle {
         writableAll,
       }); // UNIX socket path.
     this.server.once("listening", () => {
+      this.listening = true;
       this.handle = this.server._handle;
-      this.handle.onconnection = (err, handle) => this.distribute(err, handle);
-      this.server._handle = null;
-      this.server = null;
     });
   }
 
@@ -58,7 +67,8 @@ export default class RoundRobinHandle {
     this.all.set(worker.id, worker);
 
     const done = () => {
-      if (this.handle.getsockname) {
+      // address() returns the pipe path (a string) for UNIX sockets.
+      if (this.handle.getsockname && typeof this.server.address() === "object") {
         const out = {};
         this.handle.getsockname(out);
         // TODO(bnoordhuis) Check err.
@@ -70,12 +80,19 @@ export default class RoundRobinHandle {
       this.handoff(worker); // In case there are connections pending.
     };
 
-    if (this.server === null) return done();
+    if (this.listening) return done();
 
     // Still busy binding.
     this.server.once("listening", done);
     this.server.once("error", err => {
-      send(err.errno, null);
+      // Bun's listen errors carry positive platform errnos; the cluster
+      // protocol (checkBindError, getSystemErrorName) expects negative
+      // uv-style values. That negation is only correct on POSIX (Windows
+      // platform errnos are not uv codes, and pipe errors may carry no
+      // number at all), so also forward the code string - it is the ground
+      // truth the worker rebuilds the error from.
+      const errno = typeof err.errno === "number" && err.errno !== 0 ? -Math.abs(err.errno) : -1;
+      send(errno, typeof err.code === "string" ? { errcode: err.code } : null, null);
     });
   }
 
@@ -86,6 +103,13 @@ export default class RoundRobinHandle {
 
     this.free.delete(worker.id);
 
+    // Reclaim a connection whose newconn ack will never arrive.
+    const pending = this.inFlight.get(worker.id);
+    if (pending !== undefined) {
+      this.inFlight.delete(worker.id);
+      this.distribute(0, pending);
+    }
+
     if (this.all.size !== 0) return false;
 
     while (!isEmpty(this.handles)) {
@@ -94,7 +118,8 @@ export default class RoundRobinHandle {
       remove(handle);
     }
 
-    this.handle?.stop(false);
+    this.server?.close();
+    this.server = null;
     this.handle = null;
     return true;
   }
@@ -131,11 +156,46 @@ export default class RoundRobinHandle {
 
     const message = { act: "newconn", key: this.key };
 
-    sendHelper(worker.process[kHandle], message, handle, reply => {
+    this.inFlight.set(worker.id, handle);
+    const sent = sendHelper(worker.process[kHandle], message, handle, reply => {
+      // remove() may have reclaimed the handle when the worker died before
+      // acking - or the worker was re-added and a newer handoff is in
+      // flight; a stale reply must not touch either handle.
+      if (this.inFlight.get(worker.id) !== handle) return;
+      this.inFlight.delete(worker.id);
       if (reply.accepted) handle.close();
       else this.distribute(0, handle); // Worker is shutting down. Send to another.
 
       this.handoff(worker);
     });
+    if (sent === null) {
+      // Hard send failure (closed channel, or the Windows socket export
+      // failed on a live worker): the reply callback will never fire, so
+      // reclaim the connection for another worker. `false` means queued
+      // under backpressure and must NOT be reclaimed - the reply is coming.
+      this.inFlight.delete(worker.id);
+      this.distribute(0, handle);
+      // Return the worker to rotation AFTER redistributing, so the
+      // distribute() above cannot synchronously pick the same failing
+      // worker and spin; a dead worker self-heals via remove(), and a
+      // transiently failing one (ENOBUFS) gets retried on a later event.
+      if (this.all.has(worker.id)) {
+        this.free.set(worker.id, worker);
+      }
+    }
   }
+}
+
+// The fd handed to the worker is the accepted socket's. The paused node
+// Socket keeps it alive (and unread) until the worker accepts (then we close
+// our copy — the worker holds a dup) or every worker rejects (then destroy
+// sends nothing because no bytes were read or written here).
+function makeAcceptedHandle(socket) {
+  return {
+    fd: socket._handle.fd,
+    close(cb?) {
+      socket.destroy();
+      if (typeof cb === "function") process.nextTick(cb);
+    },
+  };
 }

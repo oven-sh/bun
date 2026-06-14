@@ -34,7 +34,7 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Setup Dependencies
         run: |
-          bun install
+          bun ci
       - name: Format Code
         env:
           # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's

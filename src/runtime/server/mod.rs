@@ -1650,7 +1650,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         } else if !self.flags.contains(ServerFlags::TERMINATED) {
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;
-                ws.handler.server = None;
             }
             self.flags.insert(ServerFlags::TERMINATED);
             // `app.close()` synchronously drains every open websocket; their
@@ -1663,6 +1662,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(self.app.unwrap()).close();
             self.deinit_running.set(false);
+            // Only clear after the drain — `on_close` defers reach
+            // `on_websocket_closed` through `handler.server`, so wiping it
+            // earlier would strand the live-socket count and the idle pass
+            // would never see it drained.
+            if let Some(ws) = self.config.websocket.as_mut() {
+                ws.handler.server = None;
+            }
         }
     }
 

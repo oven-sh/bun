@@ -1245,7 +1245,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
 
     #[cfg(windows)]
     const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";
-    #[cfg(all(not(windows), not(target_os = "android")))]
+    #[cfg(all(not(windows), not(any(target_os = "android", target_env = "ohos"))))]
     const CONTENT: &str = concat!(
         "#!/bin/sh\n",
         "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",
@@ -1254,7 +1254,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         "  \"$npm_config_node_gyp\" $@\n",
         "fi\n"
     );
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_env = "ohos"))]
     const CONTENT: &str = concat!(
         "#!/system/bin/sh\n",
         "if [ \"x$npm_config_node_gyp\" = \"x\" ]; then\n",

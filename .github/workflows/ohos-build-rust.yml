@@ -1,0 +1,299 @@
+# Bun OHOS Rust Build CI
+#
+# Incremental Rust-based build for HarmonyOS (OHOS) aarch64.
+# Uses cargo's incremental compilation + sccache for fast rebuilds.
+# WebKit is cached between runs.
+#
+# Required runner environment:
+#   - OHOS SDK at /home/user/setup-ohos-sdk/
+#   - LLVM 22 toolchain (musl-compatible)
+#   - Cross-compiled ICU at bun/build/ohos-icu/
+#   - Cross-compiled libc++ at bun/build/ohos-cross-libs/
+#   - sccache (optional, for Rust compilation caching)
+#
+# Build directory: build/release-ohos/ (isolated from native release builds)
+
+name: OHOS Rust Build
+on:
+  push:
+    branches:
+      - ohos-aarch64
+      - claude/ohos-*
+    paths:
+      - 'scripts/build/**'
+      - 'src/**/*.rs'
+      - 'src/**/*.cpp'
+      - 'src/**/*.h'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'vendor/WebKit/**'
+      - 'patches/**'
+      - '.github/workflows/ohos-build-rust.yml'
+  pull_request:
+    branches:
+      - ohos-aarch64
+    paths:
+      - 'scripts/build/**'
+      - 'src/**/*.rs'
+      - 'src/**/*.cpp'
+      - 'src/**/*.h'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+    inputs:
+      webkit_ref:
+        description: 'WebKit fork branch/tag to build against'
+        required: false
+        default: 'ohos-aarch64'
+        type: string
+
+concurrency:
+  group: ohos-build-rust-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OHOS_SDK_ROOT: /home/user/setup-ohos-sdk
+  OHOS_SYSROOT: /home/user/setup-ohos-sdk/ohos/native/sysroot
+  OHOS_CROSS_LIBS: /home/user/sources/bun/build/ohos-cross-libs
+  OHOS_ICU_DIR: /home/user/sources/bun/build/ohos-icu/target
+  # Rust incremental compilation
+  CARGO_INCREMENTAL: 1
+  CARGO_TARGET_DIR: /home/user/sources/bun/build/release-ohos/rust-target
+  # sccache (optional - removes gracefully if not found)
+  RUSTC_WRAPPER: ""
+  # Build parallelism — 11GB RAM limit on self-hosted runner
+  NINJA_JOBS: 2
+  # WebKit fork
+  WEBKIT_FORK: springmin/WebKit
+  WEBKIT_REF: ohos-aarch64
+
+jobs:
+  build:
+    name: Build Bun for OHOS (aarch64)
+    runs-on: [self-hosted, Linux, ARM64]
+    timeout-minutes: 300
+
+    steps:
+      - name: Checkout Bun source (incremental)
+        run: |
+          LOCAL=/home/user/sources/bun
+          rm -rf bun
+          if [ -d "$LOCAL/.git" ]; then
+            git clone --reference "$LOCAL/.git" \
+              https://github.com/springmin/bun.git bun 2>/dev/null || \
+              git clone --depth 1 --branch ohos-aarch64 \
+                https://github.com/springmin/bun.git bun
+            cd bun
+            git fetch origin ohos-aarch64 --depth=1
+            git checkout -f FETCH_HEAD
+            echo "✅ Cloned from local reference"
+          else
+            git clone --depth 1 --branch ohos-aarch64 \
+              https://github.com/springmin/bun.git bun
+            echo "⚠️  Full clone (no local reference)"
+          fi
+
+      - name: Restore Rust cargo cache
+        run: |
+          mkdir -p bun/.cargo
+          SRC_CACHE=/home/user/sources/bun/.cargo
+          if [ -d "$SRC_CACHE/registry" ]; then
+            cp -a "$SRC_CACHE/registry" bun/.cargo/registry 2>/dev/null || true
+            echo "✅ Copied cargo registry cache"
+          else
+            echo "⚠️  No cargo registry cache found"
+          fi
+
+      - name: Restore Rust incremental build artifacts
+        run: |
+          SRC_TARGET=/home/user/sources/bun/build/release-ohos/rust-target
+          if [ -d "$SRC_TARGET" ]; then
+            mkdir -p bun/build/release-ohos
+            cp -a --link "$SRC_TARGET" bun/build/release-ohos/rust-target 2>/dev/null || \
+              cp -a "$SRC_TARGET" bun/build/release-ohos/rust-target 2>/dev/null || true
+            echo "✅ Copied Rust incremental artifacts"
+          else
+            echo "⚠️  No previous Rust artifacts (full rebuild)"
+          fi
+
+      - name: Checkout WebKit fork (incremental)
+        run: |
+          # Use vendor/WebKit from local source tree as reference (36GB .git,
+          # has ohos-aarch64 branch + springmin remote). The deps/WebKit
+          # under build dir is a cmake build output, not a git checkout.
+          LOCAL_WK=/home/user/sources/bun/vendor/WebKit
+          WK_REPO=${{ env.WEBKIT_FORK }}
+          WK_REF=${{ inputs.webkit_ref || env.WEBKIT_REF }}
+          rm -rf bun/vendor/WebKit
+          if [ -d "$LOCAL_WK/.git" ]; then
+            # Hardlink from local checkout — ~5s instead of 1h+ cloning WebKit via network
+            git clone --reference "$LOCAL_WK/.git" --dissociate \
+              --depth 1 --branch "$WK_REF" \
+              "https://github.com/$WK_REPO.git" bun/vendor/WebKit 2>/dev/null || \
+            cp -a --link "$LOCAL_WK" bun/vendor/WebKit
+            cd bun/vendor/WebKit
+            git remote set-url origin "https://github.com/$WK_REPO.git"
+            git fetch origin "$WK_REF" --depth=1 2>/dev/null || true
+            git checkout -f "$WK_REF" 2>/dev/null || git checkout -f FETCH_HEAD
+            echo "✅ WebKit cloned from local reference"
+          else
+            git clone --depth 1 --branch "$WK_REF" \
+              "https://github.com/$WK_REPO.git" bun/vendor/WebKit
+            echo "⚠️  Full WebKit clone (no local reference)"
+          fi
+
+      - name: WebKit version sync check
+        run: |
+          WK_HASH=$(grep "^export const WEBKIT_VERSION" bun/scripts/build/deps/webkit.ts | grep -oE '[a-f0-9]{40}')
+          echo "scripts/build/deps/webkit.ts pins: $WK_HASH"
+          if git -C bun/vendor/WebKit cat-file -e "${WK_HASH}" 2>/dev/null; then
+            echo "✅ vendor/WebKit already contains ${WK_HASH}"
+          else
+            echo "⚠️  vendor/WebKit missing ${WK_HASH} — trying upstream..."
+            cd bun/vendor/WebKit
+            git remote add upstream https://github.com/oven-sh/WebKit.git 2>/dev/null || true
+            if git fetch upstream main --depth=200 2>/dev/null && git cat-file -e "${WK_HASH}" 2>/dev/null; then
+              echo "⚠️  Commit exists upstream but not in fork — try manual merge via:"
+              echo "    gh api repos/springmin/WebKit/merges -X POST -f base=ohos-aarch64 -f head=${WK_HASH}"
+              echo "⚠️  Build will continue without auto-sync (merge preserves OHOS patches)"
+            else
+              echo "⚠️  Cannot verify commit ${WK_HASH} in upstream. Build will continue."
+            fi
+          fi
+
+      - name: Setup environment
+        run: |
+          echo "OHOS_SDK_ROOT=${{ env.OHOS_SDK_ROOT }}" >> $GITHUB_ENV
+          echo "OHOS_SYSROOT=${{ env.OHOS_SYSROOT }}" >> $GITHUB_ENV
+          echo "OHOS_CROSS_LIBS=${{ env.OHOS_CROSS_LIBS }}" >> $GITHUB_ENV
+          echo "OHOS_ICU_DIR=${{ env.OHOS_ICU_DIR }}" >> $GITHUB_ENV
+          test -d "$OHOS_SDK_ROOT" || { echo "OHOS SDK not found"; exit 1; }
+          mkdir -p bun/build
+          [ -L bun/build/ohos-cross-libs ] && [ "$(readlink bun/build/ohos-cross-libs)" = "$OHOS_CROSS_LIBS" ] || ln -sfn "$OHOS_CROSS_LIBS" bun/build/ohos-cross-libs
+          [ -L bun/build/ohos-icu ] && [ "$(readlink bun/build/ohos-icu)" = "$(dirname $OHOS_ICU_DIR)" ] || ln -sfn "$(dirname $OHOS_ICU_DIR)" bun/build/ohos-icu
+          test -d bun/build/ohos-cross-libs/libcxx/lib || { echo "Cross libs not found"; exit 1; }
+          test -d bun/build/ohos-icu/target/lib || { echo "ICU not found"; exit 1; }
+          echo "✅ Environment ready"
+
+      - name: Restore incremental build artifacts
+        run: |
+          # The build.ninja is regenerated fresh by configure step.
+          # Restore cached WebKit + dependency build outputs for speed.
+          CACHE_DIR=/home/user/actions-runner/_work/_cache/ohos-build
+          if [ -d "$CACHE_DIR" ]; then
+            mkdir -p bun/build/release-ohos/deps
+            for dep_dir in deps/WebKit obj vendor; do
+              src="$CACHE_DIR/$dep_dir"
+              dst="bun/build/release-ohos/$dep_dir"
+              [ -d "$src" ] && cp -a --link "$src" "$dst" 2>/dev/null || true
+            done
+            echo "✅ Restored cached build artifacts"
+          else
+            echo "⚠️  No cached build artifacts (full build)"
+          fi
+
+      - name: Extract WebKit version for cache key
+        id: webkit-version
+        run: |
+          WK_VER=$(grep "^export const WEBKIT_VERSION" bun/scripts/build/deps/webkit.ts | grep -oE '[a-f0-9]{40}')
+          echo "version=${WK_VER}" >> $GITHUB_OUTPUT
+          echo "Cache key: webkit-ohos-rust-${{ inputs.webkit_ref || env.WEBKIT_REF }}-${WK_VER}"
+
+      - name: Cache WebKit build
+        uses: actions/cache@v4
+        id: webkit-cache
+        with:
+          path: bun/build/release-ohos/deps/WebKit
+          key: webkit-ohos-rust-${{ inputs.webkit_ref || env.WEBKIT_REF }}-${{ steps.webkit-version.outputs.version }}
+
+      - name: Configure Bun build
+        working-directory: bun
+        run: |
+          bun run build:release \
+            --os=ohos \
+            --arch=aarch64 \
+            --webkit=local \
+            --build-dir=build/release-ohos \
+            --ohos-sysroot=$OHOS_SYSROOT \
+            --configure-only
+        env:
+          CI: true
+
+      - name: Build WebKit
+        if: steps.webkit-cache.outputs.cache-hit != 'true'
+        working-directory: bun
+        run: |
+          ninja -C build/release-ohos configure-WebKit -j1
+          ninja -C build/release-ohos/deps/WebKit jsc -j$NINJA_JOBS
+
+      - name: Build Bun
+        working-directory: bun
+        run: |
+          ninja -C build/release-ohos bun -j$NINJA_JOBS
+
+      - name: Verify binary
+        working-directory: bun
+        run: |
+          file build/release-ohos/bun
+          ls -lh build/release-ohos/bun
+          file build/release-ohos/bun | grep -q "ELF.*ARM aarch64" || {
+            echo "ERROR: Not an ARM64 ELF binary"
+            file build/release-ohos/bun
+            exit 1
+          }
+          # OHOS now dynamically links system libc.so (and optionally libc++.so).
+          # Verify only expected NEEDED entries exist.
+          NEEDED=$(readelf -d build/release-ohos/bun | grep "NEEDED" | sed 's/.*\[//;s/\]//')
+          echo "NEEDED libraries: $NEEDED"
+          for lib in $NEEDED; do
+            case "$lib" in
+              libc.so|libc++.so) echo "✅ Expected: $lib" ;;
+              *)
+                echo "ERROR: Unexpected dynamic dependency: $lib"
+                readelf -d build/release-ohos/bun | grep "NEEDED"
+                exit 1
+                ;;
+            esac
+          done
+          echo "✅ Binary validation passed"
+
+      - name: Package binary
+        working-directory: bun
+        run: |
+          VERSION=$(build/release-ohos/bun --version 2>/dev/null || python3 -c "import json; print(json.load(open('package.json'))['version'])")
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date +%Y%m%d_%H%M%S)
+          NAME="bun-ohos-aarch64-${VERSION}-${COMMIT}-${DATE}"
+          mkdir -p /tmp/bun-release/${NAME}
+          cp build/release-ohos/bun /tmp/bun-release/${NAME}/bun
+          cat > /tmp/bun-release/${NAME}/README.md << 'EOF'
+          # Bun for HarmonyOS (OHOS)
+          Rust-based build. See springmin/bun on GitHub for details.
+          EOF
+          cd /tmp/bun-release
+          tar czf ${NAME}.tar.gz ${NAME}/
+          echo "artifact_name=${NAME}" >> $GITHUB_ENV
+          echo "artifact_path=/tmp/bun-release/${NAME}.tar.gz" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact_name }}
+          path: ${{ env.artifact_path }}
+          retention-days: 30
+
+      - name: Upload binary (raw)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact_name }}.bun
+          path: bun/build/release-ohos/bun
+          retention-days: 30
+
+      - name: Copy artifacts to shared directory
+        working-directory: bun
+        run: |
+          SHARE=/mnt/linux_share/ci-test
+          mkdir -p $SHARE
+          cp build/release-ohos/bun $SHARE/bun-ohos-rust-${{ env.artifact_name }}.elf
+          echo "✅ 制品已复制到 $SHARE/bun-ohos-rust-${{ env.artifact_name }}.elf"

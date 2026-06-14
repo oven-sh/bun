@@ -4284,6 +4284,7 @@ fn fromJSWithoutDeferGC(
                             .Array, .DerivedArray => {
                                 any_arrays = true;
                                 could_have_non_ascii = true;
+                                stack.appendAssumeCapacity(item);
                                 break;
                             },
 

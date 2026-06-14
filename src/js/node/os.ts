@@ -24,66 +24,8 @@ var tmpdir = function () {
   return tmpdir();
 };
 
-// os.cpus() is super expensive
-// Specifically: getting the CPU speed on Linux is very expensive
-// Some packages like FastGlob only bother to read the length of the array
-// so instead of actually populating the entire object
-// we turn them into getters
-function lazyCpus({ cpus, hostCpuCount }) {
-  return () => {
-    const array = new Array(hostCpuCount);
-    function populate() {
-      const results = cpus();
-      const length = results.length;
-      array.length = length;
-      for (let i = 0; i < length; i++) {
-        array[i] = results[i];
-      }
-    }
-
-    for (let i = 0; i < array.length; i++) {
-      // This is technically still observable via
-      // Object.getOwnPropertyDescriptors(), but it should be okay.
-      const instance = {
-        get model() {
-          if (array[i] === instance) populate();
-          return array[i].model;
-        },
-        set model(value) {
-          if (array[i] === instance) populate();
-          array[i].model = value;
-        },
-
-        get speed() {
-          if (array[i] === instance) populate();
-          return array[i].speed;
-        },
-
-        set speed(value) {
-          if (array[i] === instance) populate();
-          array[i].speed = value;
-        },
-
-        get times() {
-          if (array[i] === instance) populate();
-          return array[i].times;
-        },
-        set times(value) {
-          if (array[i] === instance) populate();
-          array[i].times = value;
-        },
-
-        toJSON() {
-          if (array[i] === instance) populate();
-          return array[i];
-        },
-      };
-
-      array[i] = instance;
-    }
-
-    return array;
-  };
+function lazyCpus({ cpus }) {
+  return cpus;
 }
 
 // all logic based on `process.platform` and `process.arch` is inlined at bundle time

@@ -19,7 +19,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "source-map-js": "^1.2.1",
-    "typescript": "6.0.2"
+    "typescript": "^6.0.3"
   },
   "resolutions": {
     "bun-types": "workspace:packages/bun-types",
@@ -89,5 +89,42 @@
     "machine:windows:2019": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=windows --release=2019",
     "machine:freebsd": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=freebsd --release=14.3",
     "sync-webkit-source": "bun ./scripts/sync-webkit-source.ts"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.4",
+    "@remix-run/serve": "^2.17.4",
+    "@testing-library/jest-dom": "^6.9.1",
+    "astro": "^6.4.2",
+    "comlink": "^4.4.2",
+    "decompress": "4.2.1",
+    "detect-libc": "^2.1.2",
+    "fast-glob": "^3.3.3",
+    "fastify": "^5.8.5",
+    "hono": "^4.12.23",
+    "http2-wrapper": "^2.2.1",
+    "immutable": "^5.1.6",
+    "is-even": "^1.0.0",
+    "jimp": "^1.6.1",
+    "msgpackr-extract": "^3.0.4",
+    "msw": "^2.14.6",
+    "mysql2": "^3.22.4",
+    "p-queue": "^9.3.0",
+    "pg-gateway": "^0.3.0-beta.4",
+    "proxy": "^4.0.0",
+    "reflect-metadata": "^0.2.2",
+    "rollup": "^4.60.4",
+    "sass": "^1.100.0",
+    "sharp": "^0.34.5",
+    "sinon": "^22.0.0",
+    "socket.io-client": "^4.8.3",
+    "solc": "^0.8.35",
+    "st": "^3.0.3",
+    "stripe": "^22.2.0",
+    "supertest": "^7.2.2",
+    "svelte": "^5.55.10",
+    "unzipper": "^0.12.3",
+    "v8-heapsnapshot": "^1.3.1",
+    "verdaccio": "^6.7.2",
+    "xml2js": "^0.6.2"
   }
 }

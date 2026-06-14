@@ -544,6 +544,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 .as_ref()
                 .expect("script present");
             let cwd = (*this).scripts.cwd.as_bytes();
+            // OHOS hmdfs may not support getcwd(), which causes the shell to
+            // abort when running lifecycle scripts. Fall back to HOME which
+            // is always on a readable filesystem.
+            #[cfg(target_env = "ohos")]
+            let cwd = {
+                if cwd.is_empty() || cwd == b"/" {
+                    bun_core::env_var::HOME::get().unwrap_or(cwd)
+                } else {
+                    cwd
+                }
+            };
             (*this).stdout.set_parent(this.cast::<c_void>());
             (*this).stderr.set_parent(this.cast::<c_void>());
 

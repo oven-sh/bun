@@ -487,12 +487,16 @@ pub const package_json_version_with_revision: &str = if env::GIT_SHA.is_empty() 
 // Android: the kernel-level OS enum stays .linux (so syscall switches keep
 // working), but user-facing strings — npm user-agent, process.platform —
 // must be "android" so native-addon postinstalls don't fetch glibc binaries.
-pub const os_name: &str = if cfg!(target_os = "android") {
+pub const os_name: &str = if cfg!(target_env = "ohos") {
+    "ohos"
+} else if cfg!(target_os = "android") {
     "android"
 } else {
     env::OS.name_string()
 };
-pub const os_display: &str = if cfg!(target_os = "android") {
+pub const os_display: &str = if cfg!(target_env = "ohos") {
+    "OHOS"
+} else if cfg!(target_os = "android") {
     "Android"
 } else {
     env::OS.display_string()

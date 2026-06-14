@@ -1500,17 +1500,20 @@ pub fn spawnProcessPosix(
                 }
 
                 const fds: [2]bun.FD = brk: {
-                    const pair = if (!options.no_sigpipe) try bun.sys.socketpairForShell(
-                        std.posix.AF.UNIX,
-                        std.posix.SOCK.STREAM,
-                        0,
-                        .blocking,
-                    ).unwrap() else try bun.sys.socketpair(
-                        std.posix.AF.UNIX,
-                        std.posix.SOCK.STREAM,
-                        0,
-                        .blocking,
-                    ).unwrap();
+                    const pair = if (!options.no_sigpipe)
+                        try bun.sys.socketpairForShell(
+                            std.posix.AF.UNIX,
+                            std.posix.SOCK.STREAM,
+                            0,
+                            .blocking,
+                        ).unwrap()
+                    else
+                        try bun.sys.socketpair(
+                            std.posix.AF.UNIX,
+                            std.posix.SOCK.STREAM,
+                            0,
+                            .blocking,
+                        ).unwrap();
                     break :brk .{ pair[if (i == 0) 1 else 0], pair[if (i == 0) 0 else 1] };
                 };
 
@@ -1542,6 +1545,8 @@ pub fn spawnProcessPosix(
                     try bun.sys.setNonblocking(fds[0]).unwrap();
                 }
 
+                // OHOS: Open action already redirects stdout/stderr to temp file.
+                // Skip the pipe dup2/close — the file fd is tracked for reading.
                 try actions.dup2(fds[1], fileno);
                 if (fds[1] != fileno)
                     try actions.close(fds[1]);
@@ -2544,7 +2549,9 @@ pub const sync = struct {
         if (comptime Environment.isLinux) {
             for (process.memfds[1..], &out, out_fds) |memfd, *bytes, out_fd| {
                 if (memfd) {
-                    bytes.* = bun.sys.File.from(out_fd).readToEnd(bun.default_allocator).bytes;
+                    // Use readToEndSmall to avoid fstat() on pipe fds,
+                    // which is blocked by OHOS security policy.
+                    bytes.* = bun.sys.File.from(out_fd).readToEndSmall(bun.default_allocator).bytes;
                 }
             }
         }

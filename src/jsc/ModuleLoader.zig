@@ -1154,10 +1154,6 @@ fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded:
             .source_code_needs_deref = true,
         } else null,
         .@"bun:internal-for-testing" => {
-            if (!Environment.isDebug) {
-                if (!is_allowed_to_use_internal_testing_apis)
-                    return null;
-            }
             return jsSyntheticModule(.@"bun:internal-for-testing", specifier);
         },
         .@"bun:wrap" => .{

@@ -801,6 +801,19 @@ public:
 
 } // namespace Zig
 
+namespace WTF {
+
+template<>
+class TypeCastTraits<const Zig::GlobalObject, const JSC::JSGlobalObject, false /* isBaseType */> {
+public:
+    static bool isOfType(const JSC::JSGlobalObject& source)
+    {
+        return source.classInfo() == Zig::GlobalObject::info();
+    }
+};
+
+}
+
 namespace Bun {
 
 ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)

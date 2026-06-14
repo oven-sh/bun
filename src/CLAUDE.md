@@ -343,3 +343,89 @@ unsafe { bun_core::heap::destroy(raw) };
 bun_wyhash::hash(bytes)            // u64
 bun_wyhash::hash_with_seed(seed, bytes)
 ```
+
+## OHOS (HarmonyOS) 移植说明
+
+### 构建方式
+
+```bash
+bun run build:release --target=aarch64-linux-ohos \
+  --sysroot=/path/to/ohos-sdk/sysroot
+```
+
+### 构建配置
+
+- **链接方式**: PIE + 动态链接 `libc.so` + 静态 `libc++.a`
+- **交叉编译器**: `aarch64-linux-ohos-clang`
+
+### ✅ 已修复问题
+
+| 问题 | 修复方式 | 提交 |
+|------|----------|------|
+| `spawnSync({stdout:'pipe'})` 输出为空 | 跳过 `wait_linux_signalfd`（prctl/pidfd 使 wait_linux_signalfd 路径阻塞），改用 `poll()+wait4()` | `a532c50ee4` |
+| `fchmodat2` (#452) SIGSYS 噪声 | `#[cfg(target_env = "ohos")]` 跳过，直接走 `fchmodat` fallback | `fd3456e10c` |
+| `sys::dlopen()` / FFI 不可用 | 动态链接 `libc.so` | `8f92231b33` |
+| `CouldntReadCurrentDirectory` | `run_command.rs` 静默处理 EPERM/EACCES | `c4d2db7bf4` |
+| Hardlinker EPERM copy 缺父目录 | copy fallback 前创建父目录 | `fd3456e10c` |
+| PackageInstall symlinkat EPERM | copy_file 回退 | `a976e9bb09` |
+| 测试超时安全网 | SIGALRM + 两级看门狗 SIGTERM→SIGKILL | `a976e9bb09` |
+
+### 已验证的 OHOS 系统限制（2026-06-07 真机验证）
+
+> 验证程序: `ohos-limits-verify.c`，结果详见 `ohos-limits-verification-20260607.md`
+
+| 限制 | 影响 | 验证结果 |
+|:-----|:------|:---------|
+| `link()` 硬链接 EPERM | `bun install` 软链包失败（需 copy fallback）| ✅ EPERM 确认 |
+| `close_range` 被 seccomp 拦截 | `bun_close_range()` 返回 ENOSYS | ✅ SIGSYS(436) |
+| `openat2` 被 seccomp 拦截 | `#[cfg(ohos)]` 提前返回 ENOSYS | ✅ SIGSYS(437) |
+| `fchmodat2` 被 seccomp 拦截 | cfg skip → `fchmodat` fallback | ✅ SIGSYS(452) |
+| `/tmp` 只读 | 临时文件创建失败 | ✅ EROFS（$TMPDIR 回退正常）|
+| 二进制需签名 | 启动前需 `binary-sign-tool sign` | ✅ 已自动化 |
+| `process.dlopen` ABI 不匹配 | 无法加载预编译 .node | ✅ 需 OHOS SDK 重编 |
+
+
+### 已测试但未受限制（False Positive 已删除）
+
+以下条目曾记录为 OHOS 限制，经真机验证确认不受限：
+
+| 条目 | 之前记录 | 实测结果 |
+|:-----|:---------|:---------|
+| 多线程 fork 后 fd | 不可用 | ✅ **全部可用**（pipe/socket/PTY/epoll/eventfd）|
+| prctl SET_PDEATHSIG | 被拦截 | ✅ **可用** |
+| prctl SET_CHILD_SUBREAPER | 被拦截 | ✅ **可用** |
+| fstat on pipe/socket | EACCES | ✅ **正常** |
+| PTY spawn 输出 | 为空 | ✅ **正常输出** "mt-pty-ok" |
+| pidfd_open | 被拦截 | ⚠️ **可用**（返回 fd）|
+| memfd_create | 被拦截 | ⚠️ **可用**（返回 fd）|
+| copy_file_range | 被拦截 | ⚠️ **可用**（rc=16，成功复制 16 字节）|
+| process_vm_readv | 被拦截 | ⚠️ **可用** |
+
+### 已确认被 seccomp 拦截的 syscall
+
+| syscall | 编号 | 验证方式 |
+|:--------|:-----|:---------|
+| `close_range` | 436 | SIGSYS ✅ |
+| `openat2` | 437 | SIGSYS ✅ |
+| `fchmodat2` | 452 | SIGSYS ✅ |
+
+与标准 Linux 不同的 OHOS syscall 编号：`memfd_create`=279（非 319），`process_vm_readv`=270（非 310）。Bun 代码中使用 `SYS_*` 宏自动适配。
+
+### spawn 实现说明
+
+- **spawnSync**: `wait_linux_signalfd` 被 bypass（原因: 路径中使用 `prctl` + `pidfd_open` 在 OHOS 上无法正常工作）。改用 `poll(pipe_fds) + wait4()` 循环。
+- **no_orphans**: prctl 可用但 `wait_linux_signalfd` bypass 后级联清理路径断开。`--no-orphans` 功能降级。
+- **PIDFD**: pidfd_open 实际可用，`BUN_OHOS_DISABLE_PIDFD` 标志可考虑移除。
+
+### 测试结果
+
+全量测试（2026-06-07, 1,753 files, PARALLEL=6, RETRIES=3）:
+
+| 级别 | 通过 | 失败 |
+|:-----|:-----|:-----|
+| 文件级 | 1,426 (81.3%) | 327 |
+| 用例级（去重后） | 50,971 (95.6%) | 2,343 |
+| SIGSEGV | **0** | ✅ |
+
+主要失败原因：EPERM link（security scanner）、超时、网络环境、第三方库缺失。
+

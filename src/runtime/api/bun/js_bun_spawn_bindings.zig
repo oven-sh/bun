@@ -598,6 +598,7 @@ pub fn spawnMaybeSync(
         },
         .extra_fds = extra_fds.items,
         .argv0 = argv0,
+        .sync = comptime is_sync,
         .can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
         // Only pass pty_slave_fd for newly created terminals (for setsid+TIOCSCTTY setup).
         // For existing terminals, the session is already set up - child just uses the fd as stdio.

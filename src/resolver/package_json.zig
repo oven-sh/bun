@@ -622,7 +622,7 @@ pub const PackageJSON = struct {
             false,
             null,
         ) catch |err| {
-            if (err != error.IsDir) {
+            if (err != error.IsDir and err != error.PermissionDenied and err != error.AccessDenied and err != error.EPERM and err != error.EACCES) {
                 r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Cannot read file \"{s}\": {s}", .{ input_path, @errorName(err) }) catch unreachable;
             }
 

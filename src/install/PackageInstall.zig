@@ -891,11 +891,17 @@ pub const PackageInstall = struct {
                             .file => {
                                 std.posix.linkatZ(entry.dir.cast(), entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
                                     if (err != error.PathAlreadyExists) {
-                                        return err;
+                                        // On platforms where hard links are not supported (e.g. OHOS SELinux),
+                                        // fall back to copying the file.
+                                        if (err == error.AccessDenied or err == error.PermissionDenied) {
+                                            try copyFileAsFallback(entry.dir.cast(), entry.basename, destination_dir.fd, entry.path);
+                                        } else {
+                                            return err;
+                                        }
+                                    } else {
+                                        std.posix.unlinkatZ(destination_dir.fd, entry.path, 0) catch {};
+                                        try std.posix.linkatZ(entry.dir.cast(), entry.basename, destination_dir.fd, entry.path, 0);
                                     }
-
-                                    std.posix.unlinkatZ(destination_dir.fd, entry.path, 0) catch {};
-                                    try std.posix.linkatZ(entry.dir.cast(), entry.basename, destination_dir.fd, entry.path, 0);
                                 };
 
                                 real_file_count += 1;
@@ -1342,6 +1348,29 @@ pub const PackageInstall = struct {
         if (isDanglingSymlink(symlinked_path)) return Result.fail(error.DanglingSymlink, .linking_dependency, @errorReturnTrace());
 
         return .success;
+    }
+
+    /// Fallback for platforms where hard links are not supported (e.g. OHOS SELinux).
+    /// Copies a file from source directory to destination instead of linking.
+    fn copyFileAsFallback(src_fd: i32, src_name: [:0]const u8, dest_fd: i32, dest_name: [:0]const u8) !void {
+        const src_dir = std.fs.Dir{ .fd = src_fd };
+        const dest_dir = std.fs.Dir{ .fd = dest_fd };
+        var src = try src_dir.openFileZ(src_name, .{});
+        defer src.close();
+
+        if (bun.strings.lastIndexOfChar(dest_name, '/')) |parent_end| {
+            if (parent_end > 0) {
+                const parent_path = dest_name[0..parent_end];
+                dest_dir.makePath(parent_path) catch {};
+            }
+        }
+
+        const mode = (try src.stat()).mode;
+        var copy_file_state: bun.CopyFileState = .{};
+        var dest = try dest_dir.createFileZ(dest_name, .{ .truncate = true });
+        defer dest.close();
+        try bun.copyFileWithState(bun.FD.fromNative(src.handle), bun.FD.fromNative(dest.handle), &copy_file_state).unwrap();
+        _ = std.posix.fchmod(dest.handle, mode) catch {};
     }
 
     pub fn getInstallMethod(this: *const @This()) Method {

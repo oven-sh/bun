@@ -4398,7 +4398,7 @@ impl<'a> Resolver<'a> {
         let mut _safe_path: Option<&'static [u8]> = None;
 
         // Start at the top.
-        while queue_slice_len > 0 {
+        'queue_walk: while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
             let mut queue_top = unsafe { queue[queue_slice_len - 1].assume_init_ref() }.clone();
             // `unsafe_path` was set to a slice of the threadlocal
@@ -4487,8 +4487,20 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
+
+                            // OHOS: Ancestor directories like "/" or "/storage/" may return
+                            // EACCES due to sandbox restrictions. Skip the unreadable ancestor
+                            // and continue processing child directories in the queue.
+                            if err == bun_core::err!("EACCES")
+                                || err == bun_core::err!("EPERM")
+                            {
+                                continue 'queue_walk;
+                            }
+
                             if !(err == bun_core::err!("ENOENT")
-                                || err == bun_core::err!("FileNotFound"))
+                                || err == bun_core::err!("FileNotFound")
+                                || err == bun_core::err!("PermissionDenied")
+                                || err == bun_core::err!("AccessDenied"))
                             {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
@@ -5737,7 +5749,11 @@ impl<'a> Resolver<'a> {
                 e if e == bun_core::err!("ENOENT")
                     || e == bun_core::err!("FileNotFound")
                     || e == bun_core::err!("ENOTDIR")
-                    || e == bun_core::err!("NotDir") => {}
+                    || e == bun_core::err!("NotDir")
+                    || e == bun_core::err!("PermissionDenied")
+                    || e == bun_core::err!("AccessDenied")
+                    || e == bun_core::err!("EPERM")
+                    || e == bun_core::err!("EACCES") => {}
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,
@@ -6414,7 +6430,7 @@ impl<'a> Resolver<'a> {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
                         let pretty = tsconfigpath;
-                        if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound")
+                        if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") || err == bun_core::err!("PermissionDenied") || err == bun_core::err!("AccessDenied") || err == bun_core::err!("EPERM") || err == bun_core::err!("EACCES")
                         {
                             let _ = self.log_mut().add_error_fmt(
                                 None,

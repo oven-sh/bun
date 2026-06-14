@@ -406,6 +406,8 @@ function parseArgs(argv: string[]): CliArgs {
     "pgoGenerate",
     "pgoUse",
     "androidNdk",
+    "ohosSysroot",
+    "ohosSdkRoot",
     "macosSdk",
     "osxDeploymentTarget",
     "winsysroot",

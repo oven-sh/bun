@@ -1148,11 +1148,28 @@ pub mod package_manifest {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if is_using_o_tmpfile {
                 // Attempt #1.
-                if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_err() {
+                let link_ok = bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath);
+                if link_ok.is_err() {
                     // Attempt #2: the file may already exist. Let's unlink and try again.
                     let _ = bun_sys::unlinkat(cache_dir, outpath);
-                    bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath)?;
-                    // There is no attempt #3. This is a cache, so it's not essential.
+                    let link_ok2 = bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath);
+                    if link_ok2.is_err() {
+                        // Attempt #3: linkat may be blocked (e.g. OHOS SELinux EPERM).
+                        // Fall back to copying the file content.
+                        if let Ok(cache_file) = bun_sys::File::create(cache_dir, outpath, true) {
+                            let mut buf = [0u8; 65536];
+                            loop {
+                                let n = match file.read(&mut buf) {
+                                    Ok(0) => break,
+                                    Ok(n) => n,
+                                    Err(_) => break,
+                                };
+                                if cache_file.write_all(&buf[..n]).is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
                 return Ok(());
             }

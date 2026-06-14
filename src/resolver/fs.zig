@@ -991,7 +991,7 @@ pub const FileSystem = struct {
             if (comptime FeatureFlags.enable_entry_cache) {
                 var get_or_put_result = try fs.entries.getOrPut(dir);
                 switch (err) {
-                    error.ENOENT, error.FileNotFound => {
+                    error.ENOENT, error.FileNotFound, error.PermissionDenied, error.AccessDenied, error.EPERM, error.EACCES => {
                         fs.entries.markNotFound(get_or_put_result);
                         temp_entries_option = EntriesOption{
                             .err = DirEntry.Err{ .original_err = err, .canonical_error = err },

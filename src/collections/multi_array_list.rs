@@ -344,10 +344,9 @@ impl<T> Reflected<T> {
         let mut i = 0;
         while i < n {
             let f = &fields[i];
-            let size = match f.ty.info().size {
-                Some(s) => s,
-                None => panic!("MultiArrayList: field type must be Sized"),
-            };
+            let size = f.ty
+                .size()
+                .expect("MultiArrayList: field type must be Sized");
             let align = align_sort_key(size, struct_align);
             out[i] = FieldMeta {
                 size,

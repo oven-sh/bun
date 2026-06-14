@@ -364,7 +364,7 @@ impl ServerWebSocket {
         // Only mirror the server wrapper while it is strongly rooted —
         // `js_value()` would return a weak (potentially dead-but-unswept)
         // address once the server has gone idle and downgraded.
-        if let Some(server_js) = handler.server.and_then(|s| s.js_value_if_strong()) {
+        if let Some(server_js) = handler.server.and_then(|s| s.js_value_for_dispatch()) {
             js::server_set_cached(this_value, global_object, server_js);
         }
         this
@@ -547,7 +547,8 @@ impl ServerWebSocket {
             return;
         }
 
-        if !handler.on_drain.is_empty() {
+        let on_drain = handler.on_drain;
+        if !on_drain.is_empty() {
             let global_object = handler.global_object();
 
             let args = [self
@@ -559,7 +560,7 @@ impl ServerWebSocket {
                 args: &args,
                 global_object,
                 this_value: JSValue::ZERO,
-                callback: handler.on_drain,
+                callback: on_drain,
                 result: JSValue::ZERO,
             };
             let _loop_guard = vm.enter_event_loop_scope();

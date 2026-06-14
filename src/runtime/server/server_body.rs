@@ -2161,8 +2161,9 @@ where
     /// configuration (handlers, websocket, routes) with `new_config` and
     /// re-registers routes on the uws app(s). Ownership of moved-in fields
     /// transfers to `self.config`; the caller's `new_config` is left in a
-    /// valid-but-emptied state (`ServerConfig`'s `Drop` then frees whatever
-    /// was *not* taken — e.g. a websocket block we declined to adopt).
+    /// valid-but-emptied state and its `Drop` frees whatever was *not* taken.
+    /// Any `Some(ws)` is adopted unconditionally — `Handler::from_js` already
+    /// rejected configs with no non-error callback.
     pub fn on_reload_from_zig(&mut self, new_config: &mut ServerConfig, global: &JSGlobalObject) {
         httplog!("onReload");
 
@@ -2182,7 +2183,7 @@ where
         // async-context re-wrap is unconditional — `with_async_context_if_needed`
         // is a no-op when no ALS frame is active, so re-wrapping on every
         // reload keeps the captured frame in sync with the call-time context.
-        let server_js = self.js_value.try_get().filter(|v| !v.is_empty());
+        let server_js = self.js_value_for_dispatch();
         if !new_config.on_request.is_empty_or_undefined_or_null() {
             super::wrap_handler_slot(
                 &mut new_config.on_request,
@@ -2218,9 +2219,7 @@ where
                 .set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
             ws.global_object = bun_ptr::BackRef::new(global);
             self.config.websocket = Some(ws);
-            if let Some(server_js) = server_js {
-                self.write_ws_handler_slots(server_js, global);
-            }
+            self.write_ws_handler_slots(server_js, global);
         }
 
         // These get re-applied when we set the static routes again.
@@ -2244,10 +2243,8 @@ where
 
         let route_list_value = self.set_routes();
         if new_config.had_routes_object {
-            if let Some(server_js_value) = self.js_value.try_get() {
-                if !server_js_value.is_empty() {
-                    Self::js_gc_route_list_set(server_js_value, global, route_list_value);
-                }
+            if let Some(server_js_value) = self.js_value_for_dispatch() {
+                Self::js_gc_route_list_set(server_js_value, global, route_list_value);
             }
         }
 
@@ -2824,10 +2821,10 @@ where
         let server = unsafe { &mut *server_ptr };
         let index = user_route.id;
 
-        if server.js_value_for_dispatch().is_none() {
+        let Some(server_js) = server.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
-        }
+        };
 
         let should_deinit_context = core::cell::Cell::new(false);
         let Some(mut prepared) = server.prepare_js_request_context_for::<Ctx>(
@@ -2846,8 +2843,7 @@ where
         // SAFETY: `server_ptr` outlives `prepared`; reborrow to break the
         // exclusive lifetime tie between `prepared` and `server`.
         let server = unsafe { &mut *server_ptr };
-        let server_request_list =
-            Self::js_route_list_get_cached(server.js_value_assert_alive()).unwrap();
+        let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         let call_route = if Ctx::IS_H3 {
             Bun__ServerRouteList__callRouteH3
         } else {
@@ -2859,7 +2855,7 @@ where
                 global,
                 index,
                 prepared.request_object,
-                server.js_value_assert_alive(),
+                server_js,
                 server_request_list,
                 &mut prepared.js_request,
                 std::ptr::from_mut(req).cast::<c_void>(),
@@ -2913,10 +2909,10 @@ where
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
     ) {
-        if self.js_value_for_dispatch().is_none() {
+        let Some(js_value) = self.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
-        }
+        };
         let self_ptr: *mut Self = self;
         let should_deinit_context = core::cell::Cell::new(false);
         let Some(prepared) = self.prepare_js_request_context_for::<Ctx>(
@@ -2936,7 +2932,6 @@ where
         debug_assert!(!this.config.on_request.is_empty());
 
         let global = this.global_this();
-        let js_value = this.js_value_assert_alive();
         let on_request_fn = this.config.on_request;
         let response_value =
             match on_request_fn.call(global, js_value, &[prepared.js_request, js_value]) {
@@ -3211,10 +3206,10 @@ where
         let server_ptr = server_ref.as_ptr();
         let index = this.id;
 
-        if server_ref.js_value_for_dispatch().is_none() {
+        let Some(server_js) = server_ref.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
-        }
+        };
 
         let should_deinit_context = core::cell::Cell::new(false);
         // SAFETY: `server_ptr` is the live heap server registered for this route;
@@ -3231,8 +3226,6 @@ where
         };
         // SAFETY: `prepared.ctx` is the freshly-allocated RequestContext slot.
         unsafe { (*prepared.ctx).upgrade_context = Some(upgrade_ctx) };
-        // BACKREF: `server_ref` outlives this request (see decl above).
-        let server_js = server_ref.js_value_assert_alive();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
         let global = bun_opaque::opaque_deref(server_ref.global_this);
@@ -3292,10 +3285,14 @@ where
         // (mod.rs `app.ws("/*", self_ptr, 0, ..)`); live for the request's
         // duration.
         let this = unsafe { &mut *self_ptr };
-        if this.js_value_for_dispatch().is_none() {
+        // Guards both branches below: the `on_request` fallthrough has no
+        // other gate, and the node:http branch's own re-check (mod.rs:
+        // `on_node_http_request_with_upgrade_ctx`) is redundant on this path
+        // but load-bearing for its other caller (`on_node_http_request`).
+        let Some(server_js) = this.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
-        }
+        };
         if !this.config.on_node_http_request.is_empty() {
             // NOTE: receiver is `*mut Self` (mod.rs) — the callee re-enters
             // JS, so a long-lived `&mut self` here would alias on callback.
@@ -3359,16 +3356,11 @@ where
 
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = this.global();
-        let args = [request_object.to_js(&global), this.js_value_assert_alive()];
+        let args = [request_object.to_js(&global), server_js];
         let request_value = args[0];
         request_value.ensure_still_alive();
 
-        let response_value =
-            match this
-                .config
-                .on_request
-                .call(&global, this.js_value_assert_alive(), &args)
-            {
+        let response_value = match this.config.on_request.call(&global, server_js, &args) {
                 Ok(v) => v,
                 Err(err) => global.take_exception(err),
             };

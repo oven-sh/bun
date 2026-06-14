@@ -312,7 +312,7 @@ function _duplexify(pair) {
     eos(r, err => {
       readable = false;
       if (err) {
-        destroyer(r, err);
+        destroyer(w, err);
       }
       onfinished(err);
     });

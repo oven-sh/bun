@@ -353,6 +353,8 @@ function emitErrorNt(msg, err, callback) {
 const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
 const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
 const kOutHeaders = Symbol("kOutHeaders");
+const kProxyConfig = Symbol("kProxyConfig");
+const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
 
 function ipToInt(ip) {
   const octets = ip.split(".");
@@ -532,6 +534,7 @@ export {
   kPendingCallbacks,
   kPort,
   kProtocol,
+  kProxyConfig,
   kRealListen,
   kRequest,
   kRes,
@@ -542,6 +545,7 @@ export {
   kTls,
   kUpgradeOrConnect,
   kUseDefaultPort,
+  kWaitForProxyTunnel,
   noBodySymbol,
   optionsSymbol,
   parseProxyConfigFromEnv,

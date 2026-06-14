@@ -91,9 +91,11 @@ describe("Readable", () => {
     readable.push(DEF);
     readable.unshift(ABC);
 
+    // read() with no size returns one buffered chunk at a time.
     const buf = readable.read();
     expect(buf instanceof Buffer).toBe(true);
-    expect([...buf]).toEqual([...ABC, ...DEF]);
+    expect([...buf]).toEqual([...ABC]);
+    expect([...readable.read()]).toEqual([...DEF]);
   });
 
   it("should work with setEncoding()", () => {

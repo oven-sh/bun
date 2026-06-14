@@ -59,8 +59,11 @@ const MAX_HEADER_PAIRS = 2000;
 // called to process trailing HTTP headers.
 function parserOnHeaders(headers, url) {
   // Once we exceeded headers limit - stop collecting them
-  if (this.maxHeaderPairs <= 0 || this._headers.length < this.maxHeaderPairs) {
+  const capacity = this.maxHeaderPairs - this._headers.length;
+  if (this.maxHeaderPairs <= 0 || capacity >= headers.length) {
     this._headers.push(...headers);
+  } else if (capacity > 0) {
+    this._headers.push(...headers.slice(0, capacity));
   }
   this._url += url;
 }
@@ -185,8 +188,8 @@ function closeParserInstance(parser) {
 function freeParser(parser, req, socket) {
   if (parser) {
     if (parser._consumed) parser.unconsume();
-    cleanParser(parser);
     parser.remove();
+    cleanParser(parser);
     if (parsers.free(parser) === false) {
       // Make sure the parser's stack has unwound before deleting the
       // corresponding C++ object through .close().

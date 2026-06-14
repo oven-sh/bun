@@ -431,6 +431,9 @@ function _write(stream, chunk, encoding, cb?) {
     }
 
     if (typeof chunk === "string") {
+      if (encoding === "buffer") {
+        throw $ERR_UNKNOWN_ENCODING(encoding);
+      }
       if ((state[kState] & kDecodeStrings) !== 0) {
         chunk = Buffer.from(chunk, encoding);
         encoding = "buffer";

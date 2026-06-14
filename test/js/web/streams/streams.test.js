@@ -1276,3 +1276,17 @@ it("auto-allocated byte stream chunks are zero-filled before being exposed to th
   expect(value.subarray(1).every(b => b === 0)).toBe(true);
   reader.cancel();
 });
+
+it("reader.cancel() settles a pending BYOB read with done: true (whatwg ReadableStreamCancel step 5)", async () => {
+  const stream = new ReadableStream({
+    type: "bytes",
+    pull() {},
+    cancel() {},
+  });
+  const reader = stream.getReader({ mode: "byob" });
+  const pendingRead = reader.read(new Uint8Array(16));
+  await reader.cancel("test reason");
+  const result = await pendingRead;
+  expect(result.done).toBe(true);
+  expect(result.value).toBeUndefined();
+});

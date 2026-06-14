@@ -600,7 +600,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         socket[kRequest] = http_req;
-        const is_upgrade = http_req.headers.upgrade;
+        // Like Node.js, only treat this as an upgrade when there is an
+        // 'upgrade' listener; otherwise the request falls through to the
+        // regular 'request' event.
+        const is_upgrade = !!http_req.headers.upgrade && server.listenerCount("upgrade") > 0;
         if (!is_upgrade) {
           if (canUseInternalAssignSocket) {
             // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
@@ -1524,8 +1527,6 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   if (callback) {
     process.nextTick(callback);
   }
-  this.emit("drain");
-
   return true;
 };
 
@@ -1819,8 +1820,6 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
 }
 
 // ServerResponse.prototype._final = ServerResponse_finalDeprecated;
-
-ServerResponse.prototype.writeHeader = ServerResponse.prototype.writeHead;
 
 OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
 OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;

@@ -96,13 +96,13 @@ const arrayToSafePromiseIterable = (promises, mapFn) =>
 const PromiseAll = Promise.all;
 const PromiseResolve = Promise.$resolve.bind(Promise);
 const SafePromiseAll = (promises, mapFn) => PromiseAll(arrayToSafePromiseIterable(promises, mapFn));
-const SafePromiseAllReturnArrayLike = (promises, mapFn) =>
+// Shared scheduler for SafePromiseAllReturnVoid/ReturnArrayLike: `returnVal`
+// is null for the void variant (no result bookkeeping, resolves with nothing).
+const safePromiseAllCollect = (promises, mapFn, returnVal) =>
   new Promise((resolve, reject) => {
     const { length } = promises;
 
-    const returnVal = Array(length);
-    ObjectSetPrototypeOf(returnVal, null);
-    if (length === 0) resolve(returnVal);
+    if (length === 0) resolve(returnVal ?? undefined);
 
     let pendingPromises = length;
     for (let i = 0; i < length; i++) {
@@ -110,13 +110,19 @@ const SafePromiseAllReturnArrayLike = (promises, mapFn) =>
       PromisePrototypeThen.$call(
         PromiseResolve(promise),
         result => {
-          returnVal[i] = result;
-          if (--pendingPromises === 0) resolve(returnVal);
+          if (returnVal !== null) returnVal[i] = result;
+          if (--pendingPromises === 0) resolve(returnVal ?? undefined);
         },
         reject,
       );
     }
   });
+const SafePromiseAllReturnVoid = (promises, mapFn) => safePromiseAllCollect(promises, mapFn, null);
+const SafePromiseAllReturnArrayLike = (promises, mapFn) => {
+  const returnVal = Array(promises.length);
+  ObjectSetPrototypeOf(returnVal, null);
+  return safePromiseAllCollect(promises, mapFn, returnVal);
+};
 
 export default {
   Array,
@@ -136,6 +142,7 @@ export default {
   ),
   SafePromiseAll,
   SafePromiseAllReturnArrayLike,
+  SafePromiseAllReturnVoid,
   SafeSet: makeSafe(
     Set,
     class SafeSet extends Set {

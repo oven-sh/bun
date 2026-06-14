@@ -1030,6 +1030,12 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
             WebCore::HTTPHeaderName headerName;
             if (WebCore::findHTTPHeaderName(name, headerName)) {
                 if (headerName == WebCore::HTTPHeaderName::SetCookie) {
+                    // Node's getHeader returns undefined for an absent header;
+                    // Headers.getSetCookie()'s empty array is only correct once
+                    // at least one Set-Cookie value exists.
+                    if (impl->getSetCookieHeaders().isEmpty()) {
+                        return JSValue::encode(jsUndefined());
+                    }
                     RELEASE_AND_RETURN(scope, fetchHeadersGetSetCookie(globalObject, vm, impl));
                 }
 

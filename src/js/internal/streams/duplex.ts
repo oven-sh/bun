@@ -140,8 +140,8 @@ Duplex.fromWeb = function (pair, options) {
   return lazyWebStreams().newStreamDuplexFromReadableWritablePair(pair, options);
 };
 
-Duplex.toWeb = function (duplex) {
-  return lazyWebStreams().newReadableWritablePairFromDuplex(duplex);
+Duplex.toWeb = function (duplex, options) {
+  return lazyWebStreams().newReadableWritablePairFromDuplex(duplex, options);
 };
 
 let duplexify;

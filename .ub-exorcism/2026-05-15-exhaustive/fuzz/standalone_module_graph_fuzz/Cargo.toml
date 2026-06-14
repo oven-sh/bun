@@ -1,0 +1,25 @@
+[package]
+name = "standalone_module_graph_fuzz"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[[bin]]
+name = "standalone_module_graph_fuzz"
+path = "fuzz_targets/standalone_module_graph_fuzz.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
+overflow-checks = true

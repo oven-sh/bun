@@ -1,0 +1,9 @@
+id: const-to-mut-write
+language: rust
+severity: error
+message: A *const ptr cast to *mut then written to — provenance violation, EXP-073/074/076 family.
+rule:
+  any:
+    - pattern: ($P as *mut $T).write($$$)
+    - pattern: ($P as *mut $T).write_volatile($$$)
+    - pattern: (*($P as *mut $T)) = $$$

@@ -1,0 +1,9 @@
+id: cell-with-raw-ptr
+language: rust
+severity: warning
+message: Cell<*mut T> / Cell<*const T> — usually needs `unsafe impl Sync`; raw ptr provenance via Cell is a common source of single-threaded-assumption breaks.
+rule:
+  any:
+    - pattern: 'Cell<*mut $T>'
+    - pattern: 'Cell<*const $T>'
+  kind: generic_type

@@ -1,0 +1,70 @@
+src/ast/scope.rs:124:        unsafe { self.members.get_or_put_borrowed(name) }
+src/collections/array_hash_map.rs:1898:    pub unsafe fn put_borrowed(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
+src/collections/array_hash_map.rs:2011:    pub unsafe fn get_or_put_borrowed(&mut self, key: &[u8]) -> StringHashMapGetOrPut<'_, V> {
+src/js_parser/p.rs:3697:                    unsafe { scope.members.put_borrowed(key, value)? };
+src/js_parser/p.rs:4921:        let entry = unsafe { scope.members.get_or_put_borrowed(name) };
+
+--- safety comments ---
+        name: &[u8],
+        hash_value: u64,
+    ) -> bun_collections::array_hash_map::StringHashMapGetOrPut<'_, Member> {
+        let _ = hash_value; // PERF(port): see `StringHashMap::get_adapted` note.
+        // SAFETY: `name` is always a slice into either the source-file contents
+        // or the lexer string-table (the only producers of identifier text in
+        // the parser). Both outlive the `AstAlloc` arena that owns this
+        // `Scope`, so storing the slice by reference (Zig's
+        // `StringHashMapUnmanaged` semantics) is sound — the map is freed by
+        // the same arena reset that would invalidate the source/string-table.
+        // This avoids one `mi_heap_malloc` per declared identifier per scope,
+        // which profiling showed as the parser's hottest slow-path allocation.
+        unsafe { self.members.get_or_put_borrowed(name) }
+    }
+
+    pub fn reset(&mut self) {
+        self.children.clear_retaining_capacity();
+
+--- parser copydown ---
+            debug_assert!(parent.kind == js_ast::scope::Kind::FunctionArgs);
+
+            for (key, value) in parent.members.iter() {
+                // Don't copy down the optional function expression name. Re-declaring
+                // the name of a function expression is allowed.
+                let value = *value;
+                let adjacent_kind = self.symbols[value.ref_.inner_index() as usize].kind;
+                if adjacent_kind != js_ast::symbol::Kind::HoistedFunction {
+                    // SAFETY: `key` derefs to a slice into source text / the
+                    // lexer string-table (see `get_or_put_member_with_hash`),
+                    // both of which outlive every arena-backed `Scope`. Avoids
+                    // a per-argument `mi_heap_malloc` on every function body.
+                    unsafe { scope.members.put_borrowed(key, value)? };
+                }
+            }
+        }
+
+        // Remember the length in case we call popAndDiscardScope() later
+        let scope_index = self.scopes_in_order.len();
+        self.scopes_in_order
+            .push(Some(ScopeOrder::new(loc, scope.as_ptr())));
+
+--- parser declare ---
+        // merge decision read `self.current_scope()` while the entry borrow was
+        // live, which under Stacked Borrows invalidated the entry's `&mut`.
+        // That coupling is gone: `can_merge_symbol_kinds` is an associated fn
+        // taking the scope `Kind` by value, so we copy `scope.kind` out before
+        // taking the entry, and every other read inside the match
+        // (`self.symbols`, `self.log()`, `self.source`) touches `P` fields
+        // disjoint from the arena `Scope` the entry borrows. Copying the
+        // `StoreRef` out (instead of going through `current_scope_mut`, which
+        // would tie the borrow to `&mut self`) is what lets borrowck see that
+        // disjointness — `StoreRef` is `Copy` and does not borrow `self`, so
+        // the entry below can coexist with `self.symbols` / `self.log()` reads.
+        // SAFETY (key lifetime): `name: &'a [u8]` points into source text or
+        // the lexer string-table, both of which outlive the arena-owned
+        // `Scope` — see `Scope::get_or_put_member_with_hash`.
+        let mut scope: js_ast::StoreRef<js_ast::Scope> = self.current_scope;
+        let scope_kind = scope.kind;
+        let entry = unsafe { scope.members.get_or_put_borrowed(name) };
+        if entry.found_existing {
+            let existing: js_ast::scope::Member = *entry.value_ptr;
+            let symbol_idx = existing.ref_.inner_index() as usize;
+

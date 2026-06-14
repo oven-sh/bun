@@ -1,0 +1,43 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-100-upgraded-duplex-wrapper-reentry`
+error: Undefined Behavior: write access through <324> at alloc194[0x10] is forbidden
+  --> src/main.rs:23:9
+   |
+23 |         this.closed = true;
+   |         ^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+   = help: the accessed tag <324> is foreign to the protected tag <318> (i.e., it is not a child)
+   = help: this foreign write access would cause the protected tag <318> (currently Reserved (conflicted)) to become Disabled
+   = help: protected tags must never be Disabled
+help: the accessed tag <324> was created here
+  --> src/main.rs:22:29
+   |
+22 |         let this = unsafe { &mut *this };
+   |                             ^^^^^^^^^^
+help: the protected tag <318> was created here, in the initial state Reserved
+  --> src/main.rs:27:14
+   |
+27 |     fn close(&mut self) {
+   |              ^^^^^^^^^
+help: the protected tag <318> later transitioned to Reserved (conflicted) due to a reborrow (acting as a foreign read access) at offsets [0x0..0x18]
+  --> src/main.rs:22:29
+   |
+22 |         let this = unsafe { &mut *this };
+   |                             ^^^^^^^^^^
+   = help: this transition corresponds to a temporary loss of write permissions until function exit
+   = note: stack backtrace:
+           0: UpgradedDuplex::on_close
+               at src/main.rs:23:9: 23:27
+           1: Wrapper::shutdown
+               at src/main.rs:8:9: 8:34
+           2: UpgradedDuplex::close
+               at src/main.rs:33:13: 33:31
+           3: main
+               at src/main.rs:52:9: 52:23
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

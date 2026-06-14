@@ -1,0 +1,9 @@
+[package]
+name = "exp-095-bun-exe-format-crate"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+bun_exe_format = { path = "../../../../src/exe_format" }

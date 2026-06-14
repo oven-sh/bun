@@ -1,0 +1,13 @@
+{
+  "run_id": "2026-05-15-exhaustive",
+  "round": 1,
+  "round_definition": "Initial fan-out: Phase 0 seed + Phase 1 RECON (21 sections) + Phase 2 STATIC SWEEP (25 buckets)",
+  "started_at": "2026-05-15",
+  "ended_at": "2026-05-16",
+  "registry_state_at_round_start": 13,
+  "registry_state_at_round_end": 27,
+  "new_exp_entries_this_round": 14,
+  "new_exp_entries_explanation": "EXP-001..013 seeded from prior unsafe-audit; EXP-014..021 + 026/027 emerged from section subagent reports + Bucket-1 sweeper + Bucket-2 URL provenance finding",
+  "new_findings_this_round_at_F_level": 132,
+  "convergence_tracker_verdict": "NOT_QUIET — too many new finds; expected for round 1"
+}

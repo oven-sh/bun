@@ -1,0 +1,6 @@
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet --configure-only
+info: syncing channel updates for nightly-2026-05-06-x86_64-unknown-linux-gnu
+info: latest update on 2026-05-06 for version 1.97.0-nightly (e95e73209 2026-05-05)
+info: downloading 4 components
+info: checking for self-update (current version: 1.29.0)
+run: ninja -C /home/ubuntu/bun-ub-soak/bun/build/debug

@@ -1,0 +1,32 @@
+   Compiling exp-082-blob-global-this-send-sync v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-082)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-082-blob-global-this-send-sync`
+error: Undefined Behavior: Data race detected between (1) non-atomic write on thread `unnamed-1` and (2) retag write of type `u32` on thread `main` at alloc194
+   --> /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:513:31
+    |
+513 |         mem::replace(unsafe { &mut *self.value.get() }, val)
+    |                               ^^^^^^^^^^^^^^^^^^^^^^ (2) just happened here
+    |
+help: and (1) occurred earlier here
+   --> src/main.rs:37:9
+    |
+ 37 |         global.js_thread_only_state.set(1);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: retags occur on all (re)borrows and as well as when references are copied or moved
+    = help: retags permit optimizations that insert speculative reads or writes
+    = help: therefore from the perspective of data races, a retag has the same implications as a read or write
+    = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+    = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+    = note: this is on thread `main`
+    = note: stack backtrace:
+            0: std::cell::Cell::<u32>::replace
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:513:31: 513:53
+            1: std::cell::Cell::<u32>::set
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:437:9: 437:26
+            2: main
+                at src/main.rs:42:5: 42:39
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

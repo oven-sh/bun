@@ -1,0 +1,50 @@
+   Compiling exp104-windows-named-pipe-wrapper-busy v0.1.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-104)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp104-windows-named-pipe-wrapper-busy receive-bad`
+error: Undefined Behavior: reborrow through <1435> at alloc755[0x30] is forbidden
+  --> src/main.rs:65:29
+   |
+65 |         let this = unsafe { &mut *this };
+   |                             ^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+   = help: the accessed tag <1435> is foreign to the protected tag <1554> (i.e., it is not a child)
+   = help: this reborrow (acting as a foreign read access) would cause the protected tag <1554> (currently Unique) to become Disabled
+   = help: protected tags must never be Disabled
+help: the accessed tag <1435> was created here
+  --> src/main.rs:33:19
+   |
+33 |           let raw = Box::into_raw(Box::new(Self {
+   |  ___________________^
+34 | |             wrapper: None,
+35 | |             wrapper_busy: false,
+36 | |             closed: false,
+37 | |             writer: Vec::new(),
+38 | |         }));
+   | |___________^
+help: the protected tag <1554> was created here, in the initial state Reserved
+  --> src/main.rs:89:20
+   |
+89 |     fn receive_bad(&mut self, data: &[u8]) {
+   |                    ^^^^^^^^^
+help: the protected tag <1554> later transitioned to Unique due to a child write access at offsets [0x30..0x31]
+  --> src/main.rs:95:13
+   |
+95 |             self.wrapper_busy = true;
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: this transition corresponds to the first write to a 2-phase borrowed mutable reference
+   = note: stack backtrace:
+           0: WindowsNamedPipe::ssl_on_close
+               at src/main.rs:65:29: 65:39
+           1: Wrapper::receive_data
+               at src/main.rs:17:13: 17:35
+           2: WindowsNamedPipe::receive_bad
+               at src/main.rs:96:22: 96:45
+           3: main
+               at src/main.rs:147:30: 147:68
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

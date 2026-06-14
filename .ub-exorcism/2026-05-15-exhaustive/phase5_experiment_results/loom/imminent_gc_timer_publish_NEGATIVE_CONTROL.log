@@ -1,0 +1,91 @@
+warning: /data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/loom_models/imminent_gc_timer_publish/Cargo.toml: file `/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/loom_models/imminent_gc_timer_publish/src/main.rs` found to be present in multiple build targets:
+  * `lib` target `loom_imminent_gc_timer_publish`
+  * `bin` target `loom-imminent-gc-timer-publish`
+warning: unexpected `cfg` condition name: `loom`
+  --> src/main.rs:26:8
+   |
+26 | #![cfg(loom)]
+   |        ^^^^
+   |
+   = help: expected names are: `docsrs`, `feature`, and `test` and 32 more
+   = help: consider using a Cargo feature instead
+   = help: or consider adding in `Cargo.toml` the `check-cfg` lint config for the lint:
+            [lints.rust]
+            unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+   = help: or consider adding `println!("cargo::rustc-check-cfg=cfg(loom)");` to the top of the `build.rs`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+   = note: `#[warn(unexpected_cfgs)]` on by default
+
+warning: unused import: `loom::sync::Arc`
+  --> src/main.rs:29:5
+   |
+29 | use loom::sync::Arc;
+   |     ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `loom::thread`
+  --> src/main.rs:31:5
+   |
+31 | use loom::thread;
+   |     ^^^^^^^^^^^^
+
+warning: struct `WTFTimer` is never constructed
+  --> src/main.rs:36:8
+   |
+36 | struct WTFTimer {
+   |        ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `EventLoop` is never constructed
+  --> src/main.rs:47:8
+   |
+47 | struct EventLoop {
+   |        ^^^^^^^^^
+
+warning: associated function `new` is never used
+  --> src/main.rs:52:8
+   |
+51 | impl EventLoop {
+   | -------------- associated function in this implementation
+52 |     fn new() -> Self {
+   |        ^^^
+
+warning: function `producer_update` is never used
+  --> src/main.rs:61:4
+   |
+61 | fn producer_update(el: &EventLoop, timer: *mut WTFTimer) {
+   |    ^^^^^^^^^^^^^^^
+
+warning: function `consumer_run` is never used
+  --> src/main.rs:84:4
+   |
+84 | fn consumer_run(el: &EventLoop) -> Option<u64> {
+   |    ^^^^^^^^^^^^
+
+warning: `loom-imminent-gc-timer-publish` (lib) generated 8 warnings (run `cargo fix --lib -p loom-imminent-gc-timer-publish` to apply 2 suggestions)
+warning: `loom-imminent-gc-timer-publish` (lib test) generated 1 warning (1 duplicate)
+warning: `loom-imminent-gc-timer-publish` (bin "loom-imminent-gc-timer-publish" test) generated 1 warning (1 duplicate)
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.03s
+     Running unittests src/main.rs (/tmp/cargo-target/release/deps/loom_imminent_gc_timer_publish-2d293ca82d1dfe3c)
+
+running 1 test
+test loom_sanity_relaxed_should_race ... FAILED
+
+failures:
+
+---- loom_sanity_relaxed_should_race stdout ----
+
+thread 'loom_sanity_relaxed_should_race' (1055305) panicked at /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/loom-0.7.2/src/rt/location.rs:115:9:
+Causality violation: Concurrent read and write accesses.
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    loom_sanity_relaxed_should_race
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

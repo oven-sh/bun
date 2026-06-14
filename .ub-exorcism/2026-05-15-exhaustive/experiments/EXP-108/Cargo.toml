@@ -1,0 +1,8 @@
+[package]
+name = "exp-108-event-loop-run-callback-reentry"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]

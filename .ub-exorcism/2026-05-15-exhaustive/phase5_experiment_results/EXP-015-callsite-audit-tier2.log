@@ -1,0 +1,5 @@
+src/ast/scope.rs:124:        unsafe { self.members.get_or_put_borrowed(name) }
+src/collections/array_hash_map.rs:1898:    pub unsafe fn put_borrowed(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
+src/collections/array_hash_map.rs:2011:    pub unsafe fn get_or_put_borrowed(&mut self, key: &[u8]) -> StringHashMapGetOrPut<'_, V> {
+src/js_parser/p.rs:3697:                    unsafe { scope.members.put_borrowed(key, value)? };
+src/js_parser/p.rs:4921:        let entry = unsafe { scope.members.get_or_put_borrowed(name) };

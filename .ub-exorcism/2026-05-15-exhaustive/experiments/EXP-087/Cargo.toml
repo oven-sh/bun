@@ -1,0 +1,7 @@
+[package]
+name = "exp-087-threadpool-get-worker"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+

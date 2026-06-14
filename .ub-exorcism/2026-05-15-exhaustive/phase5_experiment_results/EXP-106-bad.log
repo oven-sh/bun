@@ -1,0 +1,43 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp106-pipewriter-reentry bad`
+error: Undefined Behavior: write access through <1496> at alloc700[0x8] is forbidden
+  --> src/main.rs:19:9
+   |
+19 |         writer.is_done = true;
+   |         ^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+   = help: the accessed tag <1496> is foreign to the protected tag <1491> (i.e., it is not a child)
+   = help: this foreign write access would cause the protected tag <1491> (currently Reserved (conflicted)) to become Disabled
+   = help: protected tags must never be Disabled
+help: the accessed tag <1496> was created here
+  --> src/main.rs:18:44
+   |
+18 |         let writer: &mut Writer = unsafe { &mut *(*this).writer };
+   |                                            ^^^^^^^^^^^^^^^^^^^^
+help: the protected tag <1491> was created here, in the initial state Reserved
+  --> src/main.rs:24:30
+   |
+24 |     fn on_write_complete_bad(&mut self) {
+   |                              ^^^^^^^^^
+help: the protected tag <1491> later transitioned to Reserved (conflicted) due to a reborrow (acting as a foreign read access) at offsets [0x0..0x10]
+  --> src/main.rs:18:44
+   |
+18 |         let writer: &mut Writer = unsafe { &mut *(*this).writer };
+   |                                            ^^^^^^^^^^^^^^^^^^^^
+   = help: this transition corresponds to a temporary loss of write permissions until function exit
+   = note: stack backtrace:
+           0: Parent::on_write_reenter
+               at src/main.rs:19:9: 19:30
+           1: Writer::on_write_complete_bad
+               at src/main.rs:32:18: 32:50
+           2: bad
+               at src/main.rs:66:14: 66:52
+           3: main
+               at src/main.rs:76:24: 76:29
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

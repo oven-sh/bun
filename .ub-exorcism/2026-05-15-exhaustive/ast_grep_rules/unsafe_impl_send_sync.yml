@@ -1,0 +1,10 @@
+id: unsafe-impl-send-sync
+language: rust
+severity: warning
+message: Manual unsafe impl Send/Sync — bypasses auto-trait derivation; verify the field invariants justify cross-thread access.
+rule:
+  any:
+    - pattern: unsafe impl Send for $T {}
+    - pattern: unsafe impl Sync for $T {}
+    - pattern: unsafe impl<$$$> Send for $T {}
+    - pattern: unsafe impl<$$$> Sync for $T {}

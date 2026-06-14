@@ -1,0 +1,11 @@
+[package]
+name = "exp-016-astalloc-needs-drop"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+bun_ast = { path = "/data/projects/bun/src/ast" }
+bun_alloc = { path = "/data/projects/bun/src/bun_alloc" }
+

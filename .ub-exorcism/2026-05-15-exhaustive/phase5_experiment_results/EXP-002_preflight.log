@@ -1,0 +1,21 @@
+   Compiling exp_002_linux_errno_transmute v0.0.1 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-002)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/repro`
+error: Undefined Behavior: constructing invalid value of type SystemErrno: at .<enum-tag>, encountered 0x0086, but expected a valid enum tag
+  --> src/main.rs:17:14
+   |
+17 |     unsafe { std::mem::transmute::<u16, SystemErrno>(int as u16) }
+   |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+   = note: stack backtrace:
+           0: get_errno
+               at src/main.rs:17:14: 17:65
+           1: main
+               at src/main.rs:22:13: 22:37
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

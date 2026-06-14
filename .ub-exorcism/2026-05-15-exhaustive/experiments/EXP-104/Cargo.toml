@@ -1,0 +1,8 @@
+[package]
+name = "exp104-windows-named-pipe-wrapper-busy"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]

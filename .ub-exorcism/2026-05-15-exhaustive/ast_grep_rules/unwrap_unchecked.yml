@@ -1,0 +1,7 @@
+id: unwrap-unchecked
+language: rust
+severity: warning
+message: unwrap_unchecked on a value that may be None/Err — instant UB if assumption breaks.
+rule:
+  any:
+    - pattern: $E.unwrap_unchecked()

@@ -1,0 +1,10 @@
+[package]
+name = "exp-109-ffi-compiled-bare-jsvalue"
+version = "0.0.0"
+edition = "2021"
+
+[[bin]]
+name = "exp_109"
+path = "src/main.rs"
+
+[workspace]

@@ -1,0 +1,35 @@
+   Compiling exp_047_racycell_threadcell_unbounded_sync v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-047)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp_047_racycell_threadcell_unbounded_sync`
+error: Undefined Behavior: Data race detected between (1) non-atomic write on thread `main` and (2) non-atomic read on thread `unnamed-1` at alloc195
+   --> /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:555:18
+    |
+555 |         unsafe { *self.value.get() }
+    |                  ^^^^^^^^^^^^^^^^^ (2) just happened here
+    |
+help: and (1) occurred earlier here
+   --> src/main.rs:61:9
+    |
+ 61 |         inner.set(inner.get().wrapping_add(1));
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+    = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+    = note: this is on thread `unnamed-1`
+    = note: stack backtrace:
+            0: std::cell::Cell::<u32>::get
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:555:18: 555:35
+            1: main::{closure#0}
+                at src/main.rs:55:23: 55:34
+note: the last function in that backtrace got called indirectly due to this code
+   --> src/main.rs:49:18
+    |
+ 49 |       let handle = std::thread::spawn(move || {
+    |  __________________^
+...   |
+ 57 | |     });
+    | |______^
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

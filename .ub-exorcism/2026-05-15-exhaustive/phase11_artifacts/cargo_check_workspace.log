@@ -1,0 +1,20 @@
+src/jsc/VM.rs:192:9: error[E0308]: mismatched types: expected `()`, found `u64`
+src/jsc/bun_string_jsc.rs:48:14: error[E0061]: this function takes 6 arguments but 2 arguments were supplied
+src/jsc/bun_string_jsc.rs:48:14: error[E0308]: mismatched types: expected `Result<JSValue, JsError>`, found `u64`
+src/jsc/bun_string_jsc.rs:98:14: error[E0061]: this function takes 6 arguments but 2 arguments were supplied
+src/jsc/bun_string_jsc.rs:98:14: error[E0308]: mismatched types: expected `Result<JSValue, JsError>`, found `u64`
+src/jsc/bun_string_jsc.rs:133:14: error[E0061]: this function takes 6 arguments but 2 arguments were supplied
+src/jsc/bun_string_jsc.rs:133:14: error[E0308]: mismatched types: expected `Result<JSValue, JsError>`, found `u64`
+src/jsc/bun_string_jsc.rs:140:9: error[E0061]: this function takes 6 arguments but 3 arguments were supplied
+src/jsc/bun_string_jsc.rs:140:9: error[E0308]: mismatched types: expected `Result<JSValue, JsError>`, found `u64`
+src/jsc/bun_string_jsc.rs:159:14: error[E0061]: this function takes 6 arguments but 3 arguments were supplied
+src/jsc/bun_string_jsc.rs:159:14: error[E0308]: mismatched types: expected `Result<JSValue, JsError>`, found `u64`
+src/jsc/bun_string_jsc.rs:165:14: error[E0061]: this function takes 6 arguments but 2 arguments were supplied
+src/jsc/bun_string_jsc.rs:165:14: error[E0308]: mismatched types: expected `Result<f64, JsError>`, found `u64`
+src/jsc/JSObject.rs:234:13: error[E0061]: this function takes 6 arguments but 5 arguments were supplied
+src/jsc/JSObject.rs:234:13: error[E0308]: mismatched types: expected `Result<(), JsError>`, found `u64`
+src/jsc/lib.rs:2039:18: error[E0061]: this function takes 6 arguments but 2 arguments were supplied
+src/jsc/lib.rs:2039:18: error[E0308]: mismatched types: expected `JSValue`, found `u64`
+src/jsc/VirtualMachine.rs:1515:17: warning: unnecessary `unsafe` block: unnecessary `unsafe` block
+warning: `bun_jsc` (lib) generated 1 warning
+error: could not compile `bun_jsc` (lib) due to 65 previous errors; 1 warning emitted

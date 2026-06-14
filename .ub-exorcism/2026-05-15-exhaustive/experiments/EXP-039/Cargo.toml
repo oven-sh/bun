@@ -1,0 +1,6 @@
+[package]
+name = "exp_039_any_task_job_panic_safety"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]

@@ -1,0 +1,33 @@
+   Compiling exp-044-bundle-v2-bv2-mut-trampoline-reborrow v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-044)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-044-bundle-v2-bv2-mut-trampoline-reborrow`
+error: Undefined Behavior: read access through <237> at alloc108[0x0] is forbidden
+  --> src/main.rs:55:23
+   |
+55 |         outer.state = outer.state.wrapping_add(1);
+   |                       ^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+   = help: the accessed tag <237> has state Disabled which forbids this child read access
+help: the accessed tag <237> was created here, in the initial state Reserved
+  --> src/main.rs:47:36
+   |
+47 |         let outer: &mut BundleV2 = self.bv2_mut();
+   |                                    ^^^^^^^^^^^^^^
+help: the accessed tag <237> later transitioned to Disabled due to a foreign write access at offsets [0x0..0x8]
+  --> src/main.rs:69:9
+   |
+69 |         inner.state = inner.state.wrapping_add(10);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: this transition corresponds to a loss of read permissions
+   = note: stack backtrace:
+           0: PluginCtx::on_load::<{closure@src/main.rs:65:17: 65:28}>
+               at src/main.rs:55:23: 55:34
+           1: main
+               at src/main.rs:65:5: 71:7
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

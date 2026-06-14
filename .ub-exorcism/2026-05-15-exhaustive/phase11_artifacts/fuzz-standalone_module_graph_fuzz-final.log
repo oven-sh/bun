@@ -1,0 +1,23 @@
+   Compiling standalone_module_graph_fuzz v0.0.1 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/fuzz/standalone_module_graph_fuzz)
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.64s
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.02s
+     Running `/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz -artifact_prefix=./artifacts/standalone_module_graph_fuzz/ -max_total_time=300 -timeout=5 ./corpus/standalone_module_graph_fuzz`
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 93844832
+INFO: Loaded 1 modules   (308 inline 8-bit counters): 308 [0x62ead25b3150, 0x62ead25b3284), 
+INFO: Loaded 1 PC tables (308 PCs): 308 [0x62ead25b3288,0x62ead25b45c8), 
+INFO:        0 files found in ./corpus/standalone_module_graph_fuzz
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
+INFO: A corpus is not provided, starting from an empty corpus
+#2	INITED cov: 16 ft: 17 corp: 1/1b exec/s: 0 rss: 31Mb
+#1729	NEW    cov: 17 ft: 18 corp: 2/22b lim: 21 exec/s: 0 rss: 33Mb L: 21/21 MS: 2 InsertRepeatedBytes-CopyPart-
+#1766	REDUCE cov: 17 ft: 18 corp: 2/21b lim: 21 exec/s: 0 rss: 33Mb L: 20/20 MS: 2 EraseBytes-InsertRepeatedBytes-
+#2097152	pulse  cov: 17 ft: 18 corp: 2/21b lim: 4096 exec/s: 1048576 rss: 203Mb
+#4194304	pulse  cov: 17 ft: 18 corp: 2/21b lim: 4096 exec/s: 838860 rss: 377Mb
+#8388608	pulse  cov: 17 ft: 18 corp: 2/21b lim: 4096 exec/s: 762600 rss: 531Mb
+#16777216	pulse  cov: 17 ft: 18 corp: 2/21b lim: 4096 exec/s: 762600 rss: 531Mb
+#33554432	pulse  cov: 17 ft: 18 corp: 2/21b lim: 4096 exec/s: 729444 rss: 532Mb
+#67108864	pulse  cov: 17 ft: 18 corp: 2/21b lim: 4096 exec/s: 737460 rss: 532Mb
+#134217728	pulse  cov: 17 ft: 18 corp: 2/21b lim: 4096 exec/s: 725501 rss: 532Mb
+#218063056	DONE   cov: 17 ft: 18 corp: 2/21b lim: 4096 exec/s: 724461 rss: 532Mb
+Done 218063056 runs in 301 second(s)

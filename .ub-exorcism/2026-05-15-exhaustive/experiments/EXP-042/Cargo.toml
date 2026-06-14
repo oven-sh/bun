@@ -1,0 +1,6 @@
+[package]
+name = "exp-042-repl-vm-mut-invalid-reference-cast"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]

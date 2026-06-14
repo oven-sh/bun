@@ -1,0 +1,40 @@
+    Checking bun_css_jsc v0.0.0 (/data/projects/bun/src/css_jsc)
+    Checking bun_http_jsc v0.0.0 (/data/projects/bun/src/http_jsc)
+    Checking bun_sys_jsc v0.0.0 (/data/projects/bun/src/sys_jsc)
+    Checking bun_semver_jsc v0.0.0 (/data/projects/bun/src/semver_jsc)
+    Checking bun_sourcemap_jsc v0.0.0 (/data/projects/bun/src/sourcemap_jsc)
+    Checking bun_url_jsc v0.0.0 (/data/projects/bun/src/url_jsc)
+    Checking blake2b_simd v1.0.4
+   Compiling generic-array v0.14.7
+    Checking bun_install_jsc v0.0.0 (/data/projects/bun/src/install_jsc)
+    Checking quote v1.0.45
+    Checking syn v2.0.117
+    Checking rust-argon2 v3.0.0
+src/sql/postgres/SocketMonitor.rs:21:9: warning: unreachable `pub` item
+src/sql/postgres/SocketMonitor.rs:25:9: warning: unreachable `pub` item
+src/sql/postgres/SocketMonitor.rs:27:9: warning: unreachable `pub` item
+src/sql/postgres/SocketMonitor.rs:43:9: warning: unreachable `pub` item
+warning: `bun_sql` (lib) generated 8 warnings (4 duplicates)
+    Checking bun_sql_jsc v0.0.0 (/data/projects/bun/src/sql_jsc)
+    Checking crypto-common v0.1.7
+    Checking block-buffer v0.10.4
+    Checking inout v0.1.4
+    Checking cipher v0.4.4
+    Checking digest v0.10.7
+    Checking blake2 v0.10.6
+    Checking sha3 v0.10.9
+    Checking blowfish v0.9.1
+    Checking bcrypt v0.19.0
+    Checking bun_jsc_macros v0.0.0 (/data/projects/bun/src/jsc_macros)
+    Checking bun_core_macros v0.0.0 (/data/projects/bun/src/bun_core_macros)
+    Checking bun_dispatch v0.0.0 (/data/projects/bun/src/dispatch)
+    Checking bun_clap_macros v0.0.0 (/data/projects/bun/src/clap_macros)
+    Checking bun_css_derive v0.0.0 (/data/projects/bun/src/css_derive)
+src/runtime/server/server_body.rs:3415:54: warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+src/runtime/server/mod.rs:705:56: warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::try_get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+src/runtime/bake/DevServer.rs:2097:55: warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+src/runtime/api/bun/h2_frame_parser.rs:7375:33: warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::try_get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+src/runtime/webcore/Blob.rs:4377:41: warning: unused `bun_css::Maybe` that must be used
+warning: `bun_runtime` (lib) generated 5 warnings
+    Checking bun_bin v0.0.0 (/data/projects/bun/src/bun_bin)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 32.21s

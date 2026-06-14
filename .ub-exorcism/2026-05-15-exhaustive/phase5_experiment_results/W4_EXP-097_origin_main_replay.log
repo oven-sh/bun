@@ -1,0 +1,25 @@
+    Blocking waiting for file lock on package cache
+   Compiling exp-097-errno-from-raw-safe-api v0.1.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-097)
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.14s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/w4-EXP-097/miri/x86_64-unknown-linux-gnu/release/exp-097-errno-from-raw-safe-api`
+warning: Miri does not support optimizations: the opt-level is ignored. The only effect of selecting a Cargo profile that enables optimizations (such as --release) is to apply its remaining settings, such as whether debug assertions and overflow checks are enabled.
+
+error: Undefined Behavior: constructing invalid value of type SparseErrno: at .<enum-tag>, encountered 0x008a, but expected a valid enum tag
+  --> src/main.rs:25:18
+   |
+25 |         unsafe { core::mem::transmute::<u16, SparseErrno>(n) }
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+   = note: stack backtrace:
+           0: SparseErrno::from_raw
+               at src/main.rs:25:18: 25:61
+           1: main
+               at src/main.rs:32:13: 32:39
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error; 1 warning emitted
+
+miri_exit=1

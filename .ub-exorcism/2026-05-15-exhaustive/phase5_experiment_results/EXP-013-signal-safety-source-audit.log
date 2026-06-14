@@ -1,0 +1,107 @@
+=== man 7 signal-safety excerpt ===
+signal-safety(7)	Miscellaneous Information Manual       signal-safety(7)
+
+NAME
+       signal-safety - async-signal-safe functions
+
+DESCRIPTION
+       An  async-signal-safe  function	is  one	 that can be safely called from
+       within a signal handler.	 Many functions are not async-signal-safe.   In
+       particular,  nonreentrant  functions are generally unsafe to call from a
+       signal handler.
+
+       The kinds of issues that render a function unsafe can be quickly	 under‐
+       stood when one considers the implementation of the stdio library, all of
+       whose functions are not async-signal-safe.
+
+       When  performing	 buffered I/O on a file, the stdio functions must main‐
+       tain a statically allocated data buffer along with  associated  counters
+       and indexes (or pointers) that record the amount of data and the current
+       position	 in the buffer.	 Suppose that the main program is in the middle
+       of a call to a stdio function such as printf(3) where the buffer and as‐
+       sociated variables have been partially updated.	If, at that moment, the
+       program is interrupted by a signal handler that	also  calls  printf(3),
+       then  the  second  call	to printf(3) will operate on inconsistent data,
+       with unpredictable results.
+
+       To avoid problems with unsafe functions, there are two possible choices:
+
+       (a)  Ensure that (1) the signal	handler	 calls	only  async-signal-safe
+	    functions,	and (2) the signal handler itself is reentrant with re‐
+	    spect to global variables in the main program.
+
+       (b)  Block signal delivery in the main program  when  calling  functions
+	    that  are  unsafe or operating on global data that is also accessed
+	    by the signal handler.
+
+       Generally, the second choice is difficult in programs of any complexity,
+       so the first choice is taken.
+
+       POSIX.1 specifies a set of functions that an  implementation  must  make
+       async-signal-safe.   (An implementation may provide safe implementations
+       of additional functions, but this is not required by  the  standard  and
+       other implementations may not provide the same guarantees.)
+
+       In  general,  a function is async-signal-safe either because it is reen‐
+       trant or because it is atomic with respect to signals (i.e., its	 execu‐
+       tion can't be interrupted by a signal handler).
+=== POSIX signal entry + non-AS-safe calls ===
+src/crash_handler/lib.rs:53:    draft::crash_handler(draft::CrashReason::OutOfMemory, None, None)
+src/crash_handler/lib.rs:68:pub extern "Rust" fn __bun_crash_handler_dump_stack_trace(
+src/crash_handler/lib.rs:878:    pub fn crash_handler(
+src/crash_handler/lib.rs:897:                if let Some(handlers) = BEFORE_CRASH_HANDLERS.try_lock() {
+src/crash_handler/lib.rs:904:                    let _panic_guard = PANIC_MUTEX.lock();
+src/crash_handler/lib.rs:938:                        Output::flush();
+src/crash_handler/lib.rs:939:                        Output::source::stdio::restore();
+src/crash_handler/lib.rs:953:                        if print_metadata(writer).is_err() {
+src/crash_handler/lib.rs:965:                                Output::pretty_fmt_args(
+src/crash_handler/lib.rs:989:                                Output::pretty_fmt_args(
+src/crash_handler/lib.rs:1184:                        dump_stack_trace(trace, WriteStackTraceLimits::default());
+src/crash_handler/lib.rs:1223:                                if write!(writer, "{}", Output::pretty_fmt_args(
+src/crash_handler/lib.rs:1241:                                    Output::pretty_fmt_args(
+src/crash_handler/lib.rs:1316:                report(trace_str_buf.const_slice());
+src/crash_handler/lib.rs:1334:                    // TODO(port): pretty_fmt! color tags — runtime rewrite via pretty_fmt_args
+src/crash_handler/lib.rs:1339:                    Output::flush();
+src/crash_handler/lib.rs:1342:                    bun_core::reload_process(false, true);
+src/crash_handler/lib.rs:1350:                    Output::flush();
+src/crash_handler/lib.rs:1590:        crash_handler(
+src/crash_handler/lib.rs:1657:    extern "C" fn handle_segfault_posix(sig: c_int, info: *mut libc::siginfo_t, _: *mut c_void) {
+src/crash_handler/lib.rs:1662:        crash_handler(
+src/crash_handler/lib.rs:1736:        act.sa_sigaction = handle_segfault_posix as *const () as usize;
+src/crash_handler/lib.rs:1737:        act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
+src/crash_handler/lib.rs:1796:    /// `crash_handler()` path, then **abort** (matches Zig's `noreturn` panic).
+src/crash_handler/lib.rs:1850:            let _panic_guard = PANIC_MUTEX.lock();
+src/crash_handler/lib.rs:1866:            Output::flush();
+src/crash_handler/lib.rs:1869:            let _ = print_metadata(writer);
+src/crash_handler/lib.rs:1892:                dump_stack_trace(&trace, WriteStackTraceLimits::default());
+src/crash_handler/lib.rs:1936:        report(trace_str_buf.const_slice());
+src/crash_handler/lib.rs:1959:        Output::flush();
+src/crash_handler/lib.rs:2061:        crash_handler(
+src/crash_handler/lib.rs:2079:    pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
+src/crash_handler/lib.rs:2812:    fn report(url: &[u8]) {
+src/crash_handler/lib.rs:2905:            // 1545-1546 `_ = spawn_result;`); `report()` runs immediately before
+src/crash_handler/lib.rs:2923:            let Some(curl) = bun_which::which(&mut buf, path_env, cwd_bytes, b"curl") else {
+src/crash_handler/lib.rs:3060:            Output::flush();
+src/crash_handler/lib.rs:3061:            dump_stack_trace(trace, WriteStackTraceLimits::default());
+src/crash_handler/lib.rs:3121:    pub fn dump_stack_trace(trace: &StackTrace, limits: WriteStackTraceLimits) {
+src/crash_handler/lib.rs:3122:        Output::flush();
+src/crash_handler/lib.rs:3321:        dump_stack_trace(&stack, limits);
+src/crash_handler/lib.rs:3382:            // when registered and remove_pre_crash_handler() unregisters it before drop.
+src/crash_handler/lib.rs:3393:    pub fn remove_pre_crash_handler(ptr: *mut c_void) {
+src/crash_handler/lib.rs:3828:        crash_handler(
+src/bun_core/util.rs:2394:                crate::dump_stack_trace(
+src/bun_core/util.rs:4616:// callers import `bun_which::which` directly. See `src/bun.rs` for the
+src/bun_core/util.rs:4808:pub fn reload_process(clear_terminal: bool, may_return: bool) {
+src/bun_core/Global.rs:169:pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
+src/bun_core/Global.rs:198:            safe fn __bun_crash_handler_dump_stack_trace(
+src/bun_core/Global.rs:203:        __bun_crash_handler_dump_stack_trace(first_address, limits)
+src/bun_core/Global.rs:683:    Output::flush();
+src/bun_core/Global.rs:717:    Output::flush();
+src/bun_core/Global.rs:718:    Output::source::stdio::restore();
+src/bun_core/Global.rs:761:            sa.sa_flags = libc::SA_RESETHAND;
+src/bun_core/Global.rs:843:    Output::flush();
+src/bun_core/Global.rs:846:    Output::source::stdio::restore();
+src/bun_core/output.rs:2065:/// impl so callers can `write!(w, "{}", pretty_fmt_args(fmt, true, (a, b)))`.
+src/bun_core/output.rs:2069:pub fn pretty_fmt_args<A: FmtTuple>(
+src/bun_core/output.rs:2570:    let body = pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
+src/bun_core/output.rs:2612:        pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args),

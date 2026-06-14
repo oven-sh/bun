@@ -1,0 +1,10 @@
+[package]
+name = "codex-stat-layout"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+libc = "0.2.186"
+rustix = { version = "0.38.44", features = ["fs"] }

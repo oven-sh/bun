@@ -1,0 +1,10 @@
+[package]
+name = "exp-111-chunk-renamer-reborrow"
+version = "0.0.0"
+edition = "2021"
+
+[[bin]]
+name = "exp_111"
+path = "src/main.rs"
+
+[workspace]

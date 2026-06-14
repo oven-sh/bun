@@ -1,0 +1,9 @@
+id: box-from-raw-shared
+language: rust
+severity: warning
+message: Box::from_raw on a pointer that may have shared provenance (Rc/Arc::as_ptr). Box assumes unique allocation — double-free / aliasing UB.
+rule:
+  any:
+    - pattern: Box::from_raw(Rc::as_ptr($$$))
+    - pattern: Box::from_raw(Arc::as_ptr($$$))
+    - pattern: Box::from_raw($X.as_ptr())

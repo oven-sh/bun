@@ -1,0 +1,29 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling exp_009_semver_string_eql_oob v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-009)
+    Finished `release` profile [optimized] target(s) in 0.26s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/w4-EXP-009/miri/x86_64-unknown-linux-gnu/release/exp_009_semver_string_eql_oob`
+warning: Miri does not support optimizations: the opt-level is ignored. The only effect of selecting a Cargo profile that enables optimizations (such as --release) is to apply its remaining settings, such as whether debug assertions and overflow checks are enabled.
+
+error: Undefined Behavior: in-bounds pointer arithmetic failed: attempting to offset pointer by 100 bytes, but got alloc9 which is only 1 byte from the end of the allocation
+  --> /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:89:24
+   |
+89 |     let ptr = unsafe { crate::intrinsics::offset(ptr, offset) };
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+   = note: stack backtrace:
+           0: core::slice::index::get_offset_len_noubcheck::<u8>
+               at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/slice/index.rs:89:24: 89:62
+           1: SemverString::eql
+               at src/main.rs:51:28: 51:72
+           2: main
+               at src/main.rs:60:13: 60:33
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error; 1 warning emitted
+
+miri_exit=1

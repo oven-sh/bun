@@ -1,0 +1,52 @@
+   Compiling exp_046_worktask_send_missing_bound v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-046)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp_046_worktask_send_missing_bound`
+error: Undefined Behavior: Data race detected between (1) non-atomic write on thread `main` and (2) non-atomic read on thread `unnamed-1` at alloc197
+   --> /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:555:18
+    |
+555 |         unsafe { *self.value.get() }
+    |                  ^^^^^^^^^^^^^^^^^ (2) just happened here
+    |
+help: and (1) occurred earlier here
+   --> src/main.rs:145:5
+    |
+145 |     drop(handle_on_main);
+    |     ^^^^^^^^^^^^^^^^^^^^
+    = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+    = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+    = note: this is on thread `unnamed-1`
+    = note: stack backtrace:
+            0: std::cell::Cell::<usize>::get
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:555:18: 555:35
+            1: <std::rc::RcInner<u32> as std::rc::RcInnerPtr>::strong
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/rc.rs:3759:9: 3759:32
+            2: <std::rc::RcInner<u32> as std::rc::RcInnerPtr>::dec_strong
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/rc.rs:3787:31: 3787:44
+            3: <std::rc::Rc<u32> as std::ops::Drop>::drop
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/rc.rs:2492:13: 2492:38
+            4: std::ptr::drop_in_place::<std::rc::Rc<u32>> - shim(Some(std::rc::Rc<u32>))
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:809:1: 811:25
+            5: std::ptr::drop_in_place::<Strong<u32>> - shim(Some(Strong<u32>))
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:809:1: 811:25
+            6: std::ptr::drop_in_place::<MyCtx> - shim(Some(MyCtx))
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:809:1: 811:25
+            7: std::ptr::drop_in_place::<WorkTask<MyCtx>> - shim(Some(WorkTask<MyCtx>))
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:809:1: 811:25
+            8: WorkTask::<MyCtx>::run_and_drop
+                at src/main.rs:79:5: 79:6
+            9: main::{closure#0}
+                at src/main.rs:137:9: 137:28
+note: the last function in that backtrace got called indirectly due to this code
+   --> src/main.rs:136:13
+    |
+136 |       let h = thread::spawn(move || {
+    |  _____________^
+137 | |         task.run_and_drop();
+...   |
+141 | |     });
+    | |______^
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

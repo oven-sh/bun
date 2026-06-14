@@ -1,0 +1,83 @@
+{
+  "run_id": "2026-05-15-exhaustive",
+  "source_path": "/data/projects/bun",
+  "workspace": "/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive",
+  "branch": "claude/ub-exorcist-audit",
+  "based_on_main_commit": "4d443e5402",
+  "mode": "Exhaustive",
+  "workflow": "W7-pre-release + W4-already-mature (prior unsafe-exorcist baseline)",
+  "started_at": "2026-05-15",
+  "skill_version": "rust-undefined-behavior-exorcist (151 files / 1.1MB)",
+  "user_confirmations": {
+    "target_project_path": "/data/projects/bun (confirmed)",
+    "workspace_dir": "in-project default; added to .git/info/exclude as local-only",
+    "run_mode": "Exhaustive (phases 1-12 + Phase 11 soak)",
+    "toolchain_install": "approved: semgrep + cargo-deny + cargo-afl + jsm",
+    "rch_offload": "use rch for >5min runs (workers: 1/2 healthy, 8 slots available)",
+    "beads_commit_policy": "author + polish locally; do NOT commit (per standing user policy)"
+  },
+  "prior_audit": {
+    "kind": "rust-unsafe-code-exorcist",
+    "path": "/data/projects/bun/.unsafe-audit (local-only, excluded from git)",
+    "executive_summary": "/data/projects/bun/.unsafe-audit/EXECUTIVE_SUMMARY.md",
+    "guide": "/data/projects/bun/GUIDE_TO_THE_EXORCISM_FINDINGS.md (local-only)",
+    "headline_counts": {
+      "total_unsafe_sites": 11044,
+      "workspace_crates": 108,
+      "ceiling_score_supply_chain_primitives": 6,
+      "tier1_findings": 40,
+      "miri_confirmed_witnesses": 5
+    },
+    "known_ub_witnesses_to_anchor": [
+      "linear_fifo::assume_init_slice<T> niche T (collections)",
+      "linux_errno impl GetErrno for usize transmute (errno)",
+      "PUB-INSTALL-1 Meta::has_install_script enum from disk (install)",
+      "PUB-INSTALL-3 yarn.rs &mut [Dependency] over uninit (install)",
+      "webcore/encoding.rs Vec<u8>->Vec<u16> allocator-layout (runtime/webcore)"
+    ],
+    "additional_anchor_findings": [
+      "PUB-INSTALL-2 Meta::origin same enum-from-disk shape",
+      "PUB-INSTALL-4 Tree.rs get_unchecked over attacker-controlled dep ID",
+      "F-NEW-1 bun_semver::String::slice packed (off,len) get_unchecked OOB",
+      "F-NEW-2 bun_semver::String::eql packed (off,len) get_unchecked OOB",
+      "bundler parallel-callback aliasing (5-site SB/TB cluster; later confirmed by EXP-010)",
+      "picohttp NUL-write through SharedReadOnly provenance",
+      "8 dealloc-through-shared-provenance sites in HTTP/FS/JSC",
+      "crash_handler signal-handler async-signal-safety violations",
+      "dirent-parser macOS/Linux/FreeBSD edge cases",
+      "fmt::Raw safe-Display UTF-8 invariant violation (Section N primitive; Section C argv reachability not present on current main)",
+      "WebSocketClient::cancel re-entry missed in original (sibling was fixed)"
+    ]
+  },
+  "toolchain": {
+    "nightly": "1.97.0-nightly (f53b654a8 2026-04-30)",
+    "miri": "present",
+    "rust-src": "present",
+    "cargo-fuzz": "0.13.1",
+    "cargo-afl": "present (just installed)",
+    "cargo-geiger": "0.13.0",
+    "cargo-audit": "0.22.1",
+    "cargo-deny": "0.19.6 (just installed)",
+    "cargo-expand": "1.0.121",
+    "ast-grep": "0.42.1",
+    "semgrep": "1.163.0 (just installed via pip --user --break-system-packages)",
+    "jsm": "0.3.5 (just installed; not authenticated)",
+    "br": "0.2.3",
+    "bv": "0.16.0",
+    "cass": "0.4.1",
+    "ubs": "5.2.76",
+    "rch": "1.0.26 (degraded: 1/2 workers healthy; 8/16 slots)",
+    "ntm": "present",
+    "dcg": "0.5.0",
+    "sbh": "0.4.22",
+    "dsr": "0.1.0",
+    "slb": "present"
+  },
+  "constraints": {
+    "branch_naming": "must start with claude/ (satisfied)",
+    "build_command": "bun bd (DO NOT timeout); locally bun bd --configure-only fails until clang-21+lld-21 are installed. Some cargo-direct Miri/sanitizer experiments also hit generated build_options.rs through bun_core, so prefer self-contained witnesses or rch/build-prereq setup until configure-only succeeds.",
+    "zig_files": "*.zig siblings are reference-only, NOT compiled; ignore them as UB surface",
+    "vendor_dir": "vendor/{boringssl,libuv,mimalloc,WebKit,...} out of Rust-UB scope but FFI boundaries ARE in scope",
+    "git_policy": "no push without per-action authorization; no PR opens; no .beads/ commits without authorization"
+  }
+}

@@ -1,0 +1,5 @@
+   Compiling exp_054_napi_layout v0.1.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-054)
+warning: exp_054_napi_layout@0.1.0: EXP-054 C header layout matched expected LP64 N-API constants
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.22s
+     Running `.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-054/target/debug/exp_054_napi_layout`
+EXP-054 Rust mirror layout matched Bun's C N-API header layout on LP64

@@ -1,0 +1,475 @@
+Preparing a sysroot for Miri (target: x86_64-unknown-linux-gnu)... done
+    Blocking waiting for file lock on build directory
+warning: unreachable `pub` item
+    --> src/bun_core/output.rs:1647:9
+     |
+1647 |         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
+     |         ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |         |
+     |         help: consider restricting its visibility: `pub(super)`
+     |
+    ::: src/bun_core/string/immutable/unicode.rs:23:1
+     |
+  23 | crate::declare_scope!(strings, hidden);
+     | -------------------------------------- in this macro invocation
+     |
+     = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+    --> src/bun_core/lib.rs:11:26
+     |
+  11 | #![warn(unused_must_use, unreachable_pub)]
+     |                          ^^^^^^^^^^^^^^^
+     = note: this warning originates in the macro `crate::declare_scope` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |     ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:27
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                           ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:50
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                  ^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:74
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                                          ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1508:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |     ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1508:41
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |                                         ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/lib.rs:2159:5
+     |
+2159 |     pub fn is_ip_address(input: &[u8]) -> bool {
+     |     ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |     |
+     |     help: consider restricting its visibility: `pub(crate)`
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: `bun_core` (lib) generated 8 warnings (run `cargo fix --lib -p bun_core` to apply 7 suggestions)
+warning: ambiguous glob re-exports
+  --> src/paths/lib.rs:39:13
+   |
+39 |     pub use super::string_paths::*;
+   |             ^^^^^^^^^^^^^^^^^^^^^^ the name `is_windows_absolute_path_missing_drive_letter` in the value namespace is first re-exported here
+40 |     pub use bun_core::strings::*;
+   |             -------------------- but the name `is_windows_absolute_path_missing_drive_letter` in the value namespace is also re-exported here
+   |
+   = note: `#[warn(ambiguous_glob_reexports)]` on by default
+
+warning: ambiguous glob re-exports
+  --> src/paths/lib.rs:39:13
+   |
+39 |     pub use super::string_paths::*;
+   |             ^^^^^^^^^^^^^^^^^^^^^^ the name `basename` in the value namespace is first re-exported here
+40 |     pub use bun_core::strings::*;
+   |             -------------------- but the name `basename` in the value namespace is also re-exported here
+
+warning: `bun_paths` (lib) generated 2 warnings
+warning: unused import: `strings`
+  --> src/ast/expr.rs:13:22
+   |
+13 | use bun_core::{ZStr, strings};
+   |                      ^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bun_ast` (lib) generated 1 warning (run `cargo fix --lib -p bun_ast` to apply 1 suggestion)
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/js_printer/renamer.rs:689:58
+    |
+689 |         let s: *mut NumberScope = self.number_scope_pool.get();
+    |                                                          ^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/js_printer/renamer.rs:753:80
+    |
+753 |                 let new_child_scope: *mut NumberScope = self.number_scope_pool.get();
+    |                                                                                ^^^
+
+warning: unused import: `RefCounted`
+ --> src/spawn/static_pipe_writer.rs:8:48
+  |
+8 | use bun_ptr::{IntrusiveRc, RawSlice, RefCount, RefCounted};
+  |                                                ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bun_js_printer` (lib) generated 2 warnings
+warning: `bun_spawn` (lib) generated 1 warning (run `cargo fix --lib -p bun_spawn` to apply 1 suggestion)
+warning: unreachable `pub` item
+   --> src/resolver/fs.rs:167:1
+    |
+167 | pub type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
+    | ---^^^^^^^^^^^^^^^^^^^^^^^
+    | |
+    | help: consider restricting its visibility: `pub(crate)`
+    |
+    = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+   --> src/resolver/lib.rs:33:9
+    |
+ 33 | #![warn(unreachable_pub)]
+    |         ^^^^^^^^^^^^^^^
+
+warning: `bun_resolver` (lib) generated 1 warning (run `cargo fix --lib -p bun_resolver` to apply 1 suggestion)
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:21:9
+   |
+21 |           pub static ENABLED: AtomicBool = AtomicBool::new(false);
+   |           ---^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+  --> src/sql/lib.rs:9:9
+   |
+ 9 | #![warn(unreachable_pub)]
+   |         ^^^^^^^^^^^^^^^
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:25:9
+   |
+25 |           pub static CHECK: Once = Once::new();
+   |           ---^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:27:9
+   |
+27 |           pub fn load() {
+   |           ---^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:43:9
+   |
+43 |           pub fn write(data: &[u8]) {
+   |           ---^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:21:9
+   |
+21 |           pub static ENABLED: AtomicBool = AtomicBool::new(false);
+   |           ---^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:25:9
+   |
+25 |           pub static CHECK: Once = Once::new();
+   |           ---^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:27:9
+   |
+27 |           pub fn load() {
+   |           ---^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:43:9
+   |
+43 |           pub fn write(data: &[u8]) {
+   |           ---^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: `bun_sql` (lib) generated 8 warnings
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/install/PackageManager/PackageManagerEnqueue.rs:358:48
+    |
+358 |     let task = this.preallocated_resolve_tasks.get();
+    |                                                ^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/PackageManagerEnqueue.rs:1659:48
+     |
+1659 |     let task = this.preallocated_resolve_tasks.get();
+     |                                                ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/PackageManagerEnqueue.rs:1803:48
+     |
+1803 |     let task = this.preallocated_resolve_tasks.get();
+     |                                                ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/runTasks.rs:1711:37
+     |
+1711 |     this.preallocated_network_tasks.get()
+     |                                     ^^^
+
+warning: `bun_install` (lib) generated 4 warnings
+warning: unnecessary `unsafe` block
+    --> src/jsc/VirtualMachine.rs:1515:17
+     |
+1515 |                 unsafe { (hook.func)(hook.ctx) };
+     |                 ^^^^^^ unnecessary `unsafe` block
+     |
+     = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: type `js_secrets::SecretsCtx` is more private than the item `js_secrets::SecretsJob`
+  --> src/jsc/JSSecrets.rs:64:1
+   |
+64 | pub type SecretsJob = AnyTaskJob<SecretsCtx>;
+   | ^^^^^^^^^^^^^^^^^^^ type alias `js_secrets::SecretsJob` is reachable at visibility `pub`
+   |
+note: but type `js_secrets::SecretsCtx` is only usable at visibility `pub(self)`
+  --> src/jsc/JSSecrets.rs:23:1
+   |
+23 | struct SecretsCtx {
+   | ^^^^^^^^^^^^^^^^^
+   = note: `#[warn(private_interfaces)]` on by default
+
+warning: `bun_jsc` (lib) generated 2 warnings
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/server/server_body.rs:3415:54
+     |
+3415 |         let ctx_slot = unsafe { (*this.request_pool).get() };
+     |                                                      ^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::try_get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/runtime/server/mod.rs:705:56
+    |
+705 |         let ctx_slot = unsafe { (*server.request_pool).try_get() };
+    |                                                        ^^^^^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/bake/DevServer.rs:2097:55
+     |
+2097 |         let deferred_ptr = self.deferred_request_pool.get();
+     |                                                       ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::try_get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/api/bun/h2_frame_parser.rs:7375:33
+     |
+7375 |                 let slot = pool.try_get();
+     |                                 ^^^^^^^
+
+warning: unused `bun_css::Maybe` that must be used
+    --> src/runtime/webcore/Blob.rs:4377:41
+     |
+4377 | ...                   f.close();
+     |                       ^^^^^^^^^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+note: the lint level is defined here
+    --> src/runtime/lib.rs:8:9
+     |
+   8 | #![warn(unused_must_use)]
+     |         ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+     |
+4377 |                                         let _ = f.close();
+     |                                         +++++++
+
+warning: `bun_runtime` (lib) generated 5 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 11s
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-8c77f5b7cf9b5d08)
+
+running 10 tests
+test stack_fallback::tests::alignment ... ok
+test stack_fallback::tests::alloc_within_stack ... ok
+test stack_fallback::tests::dealloc_range_check ... ok
+test stack_fallback::tests::get_twice_panics - should panic ... ok
+test stack_fallback::tests::grow_in_place ... ok
+test stack_fallback::tests::grow_spills_to_fallback ... ok
+test stack_fallback::tests::overflow_to_fallback ... ok
+test stack_fallback::tests::reset_clears_guard ... ok
+test stack_fallback::tests::shrink_rewinds_last ... ok
+test stack_fallback::tests::vec_roundtrip ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.28s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_analytics-6e45602be236d811)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_api-f0328c508bb5d7c6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_ast-94c2468ae63f1cb4)
+warning: unused import: `strings`
+  --> src/ast/expr.rs:13:22
+   |
+13 | use bun_core::{ZStr, strings};
+   |                      ^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+
+running 5 tests
+test known_global::tests::lookup_exhaustive ... ok
+test lexer_tables::tests::keyword_fn_matches_phf_table ... ok
+test lexer_tables::tests::property_modifier_find_matches_phf_map ... ok
+test lexer_tables::tests::strict_mode_reserved_fn_matches_phf_set ... ok
+test runtime::tests::all_sorted_matches_zig_comptime ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.78s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_ast_jsc-cc13e7c4f6b31c4d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running unittests lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/deps/bun_base64-f451b4ab7a0c536a)
+
+running 2 tests
+test zig_base64::tests::test_base64 ... ok
+test zig_base64::tests::test_base64_url_safe_no_pad ... FAILED
+
+failures:
+
+---- zig_base64::tests::test_base64_url_safe_no_pad stdout ----
+
+thread 'zig_base64::tests::test_base64_url_safe_no_pad' (1002) panicked at src/base64/lib.rs:885:22:
+called `Result::unwrap()` on an `Err` value: NoSpaceLeft
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+note: in Miri, you may have to set `MIRIFLAGS=-Zmiri-env-forward=RUST_BACKTRACE` for the environment variable to have an effect
+
+
+failures:
+    zig_base64::tests::test_base64_url_safe_no_pad
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+
+error: test failed, to rerun pass `-p bun_base64 --lib`

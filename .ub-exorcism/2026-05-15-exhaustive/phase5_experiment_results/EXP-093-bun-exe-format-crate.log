@@ -1,0 +1,171 @@
+    Updating crates.io index
+     Locking 82 packages to latest Rust 1.97.0-nightly compatible versions
+   Compiling bun_opaque v0.0.0 (/data/projects/bun/src/opaque)
+   Compiling bun_core v0.0.0 (/data/projects/bun/src/bun_core)
+   Compiling bun_output_tags v0.0.0 (/data/projects/bun/src/bun_output_tags)
+   Compiling bun_windows_sys v0.0.0 (/data/projects/bun/src/windows_sys)
+   Compiling bun_hash v0.0.0 (/data/projects/bun/src/hash)
+   Compiling syn v2.0.117
+   Compiling darling_core v0.21.3
+   Compiling enum-map-derive v0.17.0
+   Compiling phf_macros v0.11.3
+   Compiling strum_macros v0.26.4
+   Compiling thiserror-impl v2.0.18
+   Compiling bun_core_macros v0.0.0 (/data/projects/bun/src/bun_core_macros)
+   Compiling bun_dispatch v0.0.0 (/data/projects/bun/src/dispatch)
+   Compiling enum-map v2.7.3
+   Compiling phf v0.11.3
+   Compiling darling_macro v0.21.3
+   Compiling thiserror v2.0.18
+   Compiling strum v0.26.3
+   Compiling darling v0.21.3
+   Compiling enumset_derive v0.15.0
+   Compiling enumset v1.1.12
+   Compiling bun_mimalloc_sys v0.0.0 (/data/projects/bun/src/mimalloc_sys)
+   Compiling bun_wyhash v0.0.0 (/data/projects/bun/src/wyhash)
+   Compiling bun_simdutf_sys v0.0.0 (/data/projects/bun/src/simdutf_sys)
+   Compiling bun_highway v0.0.0 (/data/projects/bun/src/highway)
+   Compiling bun_libuv_sys v0.0.0 (/data/projects/bun/src/libuv_sys)
+   Compiling bun_alloc v0.0.0 (/data/projects/bun/src/bun_alloc)
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/output.rs:1647:9
+     |
+1647 |         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
+     |         ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |         |
+     |         help: consider restricting its visibility: `pub(super)`
+     |
+    ::: /data/projects/bun/src/bun_core/string/immutable/unicode.rs:23:1
+     |
+  23 | crate::declare_scope!(strings, hidden);
+     | -------------------------------------- in this macro invocation
+     |
+     = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+    --> /data/projects/bun/src/bun_core/lib.rs:11:26
+     |
+  11 | #![warn(unused_must_use, unreachable_pub)]
+     |                          ^^^^^^^^^^^^^^^
+     = note: this warning originates in the macro `crate::declare_scope` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |     ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:27
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                           ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:50
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                  ^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:74
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                                          ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1508:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |     ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1508:41
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |                                         ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/lib.rs:2159:5
+     |
+2159 |     pub fn is_ip_address(input: &[u8]) -> bool {
+     |     ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |     |
+     |     help: consider restricting its visibility: `pub(crate)`
+     |
+     = help: or consider exporting it for use by other crates
+
+   Compiling bun_errno v0.0.0 (/data/projects/bun/src/errno)
+   Compiling bun_paths v0.0.0 (/data/projects/bun/src/paths)
+   Compiling bun_boringssl_sys v0.0.0 (/data/projects/bun/src/boringssl_sys)
+   Compiling bun_cares_sys v0.0.0 (/data/projects/bun/src/cares_sys)
+warning: ambiguous glob re-exports
+  --> /data/projects/bun/src/paths/lib.rs:39:13
+   |
+39 |     pub use super::string_paths::*;
+   |             ^^^^^^^^^^^^^^^^^^^^^^ the name `is_windows_absolute_path_missing_drive_letter` in the value namespace is first re-exported here
+40 |     pub use bun_core::strings::*;
+   |             -------------------- but the name `is_windows_absolute_path_missing_drive_letter` in the value namespace is also re-exported here
+   |
+   = note: `#[warn(ambiguous_glob_reexports)]` on by default
+
+warning: ambiguous glob re-exports
+  --> /data/projects/bun/src/paths/lib.rs:39:13
+   |
+39 |     pub use super::string_paths::*;
+   |             ^^^^^^^^^^^^^^^^^^^^^^ the name `basename` in the value namespace is first re-exported here
+40 |     pub use bun_core::strings::*;
+   |             -------------------- but the name `basename` in the value namespace is also re-exported here
+
+warning: `bun_core` (lib) generated 8 warnings (run `cargo fix --lib -p bun_core` to apply 7 suggestions)
+   Compiling bun_sys v0.0.0 (/data/projects/bun/src/sys)
+warning: `bun_paths` (lib) generated 2 warnings
+   Compiling bun_boringssl v0.0.0 (/data/projects/bun/src/boringssl)
+   Compiling bun_sha_hmac v0.0.0 (/data/projects/bun/src/sha_hmac)
+   Compiling bun_exe_format v0.0.0 (/data/projects/bun/src/exe_format)
+   Compiling exp-093-bun-exe-format-crate v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-093-bun-exe-format-crate)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 16.43s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-093-bun-exe-format-crate`
+error: Undefined Behavior: constructing invalid value of type &bun_exe_format::pe::DOSHeader: encountered an unaligned reference (required 4 byte alignment but found 1)
+   --> /data/projects/bun/src/exe_format/pe.rs:317:35
+    |
+317 |         let dos_header = unsafe { &*dos_header };
+    |                                   ^^^^^^^^^^^^ Undefined Behavior occurred here
+    |
+    = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+    = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+    = note: stack backtrace:
+            0: bun_exe_format::pe::PEFile::init
+                at /data/projects/bun/src/exe_format/pe.rs:317:35: 317:47
+            1: main
+                at src/main.rs:119:13: 119:32
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

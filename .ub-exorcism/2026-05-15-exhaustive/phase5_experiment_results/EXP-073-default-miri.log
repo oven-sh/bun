@@ -1,0 +1,27 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-073-copyfile-event-loop-shared-to-mut`
+error: Undefined Behavior: trying to retag from <245> for SharedReadWrite permission at alloc107[0x0], but that tag only grants SharedReadOnly permission for this location
+  --> src/main.rs:13:18
+   |
+13 |         unsafe { (*loop_).enter() };
+   |                  ^^^^^^^^ this error occurs as part of two-phase retag at alloc107[0x0..0x8]
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Stacked Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/stacked-borrows.md for further information
+help: <245> was created by a SharedReadOnly retag at offsets [0x0..0x8]
+  --> src/main.rs:37:45
+   |
+37 |             unsafe { EventLoop::enter_scope(self.event_loop as *const EventLoop as *mut EventLoop) };
+   |                                             ^^^^^^^^^^^^^^^
+   = note: stack backtrace:
+           0: EventLoop::enter_scope
+               at src/main.rs:13:18: 13:26
+           1: CopyFileWindowsShape::<'_>::resolve_promise
+               at src/main.rs:37:22: 37:99
+           2: main
+               at src/main.rs:46:5: 46:27
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

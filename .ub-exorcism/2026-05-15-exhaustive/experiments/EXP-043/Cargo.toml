@@ -1,0 +1,6 @@
+[package]
+name = "exp-043-scanner-resolve-dir-realfs-field-projection-castmut"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]

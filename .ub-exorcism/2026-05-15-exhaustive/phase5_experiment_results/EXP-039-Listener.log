@@ -1,0 +1,42 @@
+   Compiling exp_039_listener_ptr_read_forget_panic v0.0.1 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-039-listener-panic)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/repro`
+
+thread 'main' (1000) panicked at src/main.rs:49:5:
+simulated OOM inside take_protos()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+note: in Miri, you may have to set `MIRIFLAGS=-Zmiri-env-forward=RUST_BACKTRACE` for the environment variable to have an effect
+Drop Handlers — about to free Box<u32> @ 0x20914 = 42
+Drop SocketConfig (recursive drop of Handlers begins)
+error: Undefined Behavior: constructing invalid value of type std::boxed::Box<u32>: encountered a dangling box (use-after-free)
+  --> src/main.rs:38:17
+   |
+38 |         let v = *self.buf;
+   |                 ^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+   = note: stack backtrace:
+           0: <Handlers as std::ops::Drop>::drop
+               at src/main.rs:38:17: 38:26
+           1: std::ptr::drop_in_place::<Handlers> - shim(Some(Handlers))
+               at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:809:1: 811:25
+           2: std::ptr::drop_in_place::<SocketConfig> - shim(Some(SocketConfig))
+               at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:809:1: 811:25
+           3: main::{closure#0}
+               at src/main.rs:72:5: 72:6
+           4: <std::panic::AssertUnwindSafe<{closure@src/main.rs:58:72: 58:74}> as std::ops::FnOnce<()>>::call_once
+               at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/panic/unwind_safe.rs:275:9: 275:19
+           5: std::panicking::catch_unwind::do_call::<std::panic::AssertUnwindSafe<{closure@src/main.rs:58:72: 58:74}>, ()>
+               at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/panicking.rs:581:40: 581:43
+           6: std::panicking::catch_unwind::<(), std::panic::AssertUnwindSafe<{closure@src/main.rs:58:72: 58:74}>>
+               at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/panicking.rs:544:19: 544:88
+           7: std::panic::catch_unwind::<std::panic::AssertUnwindSafe<{closure@src/main.rs:58:72: 58:74}>, ()>
+               at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/panic.rs:359:14: 359:40
+           8: main
+               at src/main.rs:58:18: 72:8
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

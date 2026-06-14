@@ -1,0 +1,11 @@
+[package]
+name = "exp-002-bun-errno-crate"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+bun_errno = { path = "/data/projects/bun/src/errno" }
+

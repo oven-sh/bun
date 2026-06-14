@@ -1,0 +1,7 @@
+error: unexpected argument '--config' found
+
+  tip: 'check --config' exists
+
+Usage: cargo-deny [OPTIONS] <COMMAND>
+
+For more information, try '--help'.

@@ -1,0 +1,10 @@
+id: transmute-maybeuninit
+language: rust
+severity: warning
+message: transmute<MaybeUninit<T>, T> — uninit-bypass if .write() / .assume_init() not used first.
+rule:
+  any:
+    - pattern: transmute::<MaybeUninit<$T>, $T>($$$)
+    - pattern: std::mem::transmute::<MaybeUninit<$T>, $T>($$$)
+    - pattern: core::mem::transmute::<MaybeUninit<$T>, $T>($$$)
+    - pattern: mem::transmute::<MaybeUninit<$T>, $T>($$$)

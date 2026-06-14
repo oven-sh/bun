@@ -1,0 +1,9 @@
+[package]
+name = "exp_018_guarded_lock_send_witness"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+bun_threading = { path = "/data/projects/bun/src/threading" }

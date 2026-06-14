@@ -1,0 +1,6 @@
+[package]
+name = "exp_009_semver_string_eql_oob"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]

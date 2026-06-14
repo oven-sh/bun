@@ -1,0 +1,574 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling memchr v2.8.0
+   Compiling siphasher v1.0.3
+   Compiling libc v0.2.186
+   Compiling bitflags v2.11.1
+   Compiling konst_macro_rules v0.2.19
+   Compiling strum v0.26.3
+   Compiling enum-map v2.7.3
+   Compiling enumset v1.1.10
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `konst_macro_rules`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `core`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `core`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `konst_macro_rules`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `compiler_builtins`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `compiler_builtins`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `std`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `std`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `core`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `core`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `alloc`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `alloc`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `compiler_builtins`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `compiler_builtins`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `libc`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `libc`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `rustc_std_workspace_core`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `rustc_std_workspace_core`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `unwind`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `unwind`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `miniz_oxide`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `miniz_oxide`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `adler2`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `adler2`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `hashbrown`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `hashbrown`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `rustc_std_workspace_alloc`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `rustc_std_workspace_alloc`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `std_detect`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `std_detect`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `rustc_demangle`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `rustc_demangle`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `cfg_if`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `cfg_if`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `addr2line`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `addr2line`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `gimli`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `gimli`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `object`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `object`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `memchr`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `memchr`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `bitflags`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.11.1/src/lib.rs:11:1
+   |
+11 | /*!
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `panic_unwind`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `panic_unwind`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `siphasher`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `core`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `core`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `std`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `std`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `core`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `core`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `alloc`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `alloc`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `compiler_builtins`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `compiler_builtins`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `libc`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `libc`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `rustc_std_workspace_core`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `rustc_std_workspace_core`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `unwind`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `unwind`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `miniz_oxide`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `miniz_oxide`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `adler2`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `adler2`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `hashbrown`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `hashbrown`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `rustc_std_workspace_alloc`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `rustc_std_workspace_alloc`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `std_detect`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `std_detect`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `rustc_demangle`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `rustc_demangle`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `cfg_if`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `cfg_if`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `siphasher`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `compiler_builtins`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `compiler_builtins`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `enum_map`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enum-map-2.7.3/src/lib.rs:10:1
+   |
+10 | //! An enum mapping type.
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `core`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `core`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `enum_map`
+  --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enum-map-2.7.3/src/lib.rs:10:1
+   |
+10 | //! An enum mapping type.
+   | ^
+   |
+   = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+   = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `compiler_builtins`
+   = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `compiler_builtins`
+   = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `addr2line`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `addr2line`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `gimli`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `gimli`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `object`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `object`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `memchr`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `memchr`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `strum`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `panic_unwind`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `panic_unwind`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: could not compile `strum` (lib) due to 19 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `enumset`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `core`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `core`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `enumset`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `compiler_builtins`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `compiler_builtins`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: could not compile `konst_macro_rules` (lib) due to 2 previous errors
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `core`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `core`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `std`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `std`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `alloc`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `alloc`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `compiler_builtins`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `compiler_builtins`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `libc`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `libc`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `rustc_std_workspace_core`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `rustc_std_workspace_core`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `unwind`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `unwind`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `miniz_oxide`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `miniz_oxide`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `adler2`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `adler2`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `hashbrown`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `hashbrown`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `rustc_std_workspace_alloc`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `rustc_std_workspace_alloc`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `std_detect`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `std_detect`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `rustc_demangle`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `rustc_demangle`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `cfg_if`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `cfg_if`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `addr2line`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `addr2line`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `gimli`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `gimli`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `object`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `object`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `memchr`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `memchr`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `memchr`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `panic_unwind`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `panic_unwind`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: could not compile `enum-map` (lib) due to 2 previous errors
+error: could not compile `bitflags` (lib) due to 19 previous errors
+error: could not compile `siphasher` (lib) due to 2 previous errors
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `libc`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `core`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `core`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: mixing `-Zsanitizer` will cause an ABI mismatch in crate `libc`
+  |
+  = help: the `-Zsanitizer` flag modifies the ABI so Rust crates compiled with different values of this flag cannot be used together safely
+  = note: `-Zsanitizer=thread` in this crate is incompatible with unset `-Zsanitizer` in dependency `compiler_builtins`
+  = help: unset `-Zsanitizer` in this crate or set `-Zsanitizer=thread` in `compiler_builtins`
+  = help: if you are sure this will not cause problems, you may use `-Cunsafe-allow-abi-mismatch=sanitizer` to silence this error
+
+error: could not compile `enumset` (lib) due to 2 previous errors
+error: could not compile `memchr` (lib) due to 19 previous errors
+error: could not compile `libc` (lib) due to 2 previous errors

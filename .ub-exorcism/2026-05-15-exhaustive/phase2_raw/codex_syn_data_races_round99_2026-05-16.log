@@ -1,0 +1,155 @@
+/data/projects/bun/src/ast/nodes.rs:39: [WARN] `unsafe impl Send for StoreRef < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/ast/nodes.rs:40: [WARN] `unsafe impl Sync for StoreRef < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/ast/nodes.rs:167: [WARN] `unsafe impl Send for StoreStr` — verify SAFETY comment names sync story
+/data/projects/bun/src/ast/nodes.rs:168: [WARN] `unsafe impl Sync for StoreStr` — verify SAFETY comment names sync story
+/data/projects/bun/src/ast/nodes.rs:339: [WARN] `unsafe impl Send for StoreSlice < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/ast/nodes.rs:340: [WARN] `unsafe impl Sync for StoreSlice < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/boringssl/lib.rs:125: [WARN] `unsafe impl Send for CtxStore` — verify SAFETY comment names sync story
+/data/projects/bun/src/boringssl/lib.rs:126: [WARN] `unsafe impl Sync for CtxStore` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_alloc/MaxHeapAllocator.rs:21: [WARN] `unsafe impl Send for MaxHeapAllocator` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_alloc/MaxHeapAllocator.rs:22: [WARN] `unsafe impl Sync for MaxHeapAllocator` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_alloc/MimallocArena.rs:112: [WARN] `unsafe impl Send for MimallocArena` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_alloc/MimallocArena.rs:120: [WARN] `unsafe impl Sync for MimallocArena` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_alloc/heap_breakdown.rs:135: [WARN] `unsafe impl Sync for Zone` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_alloc/heap_breakdown.rs:136: [WARN] `unsafe impl Send for Zone` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_alloc/lib.rs:123: [WARN] `unsafe impl Send for StdAllocator` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_alloc/lib.rs:124: [WARN] `unsafe impl Sync for StdAllocator` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_alloc/lib.rs:2182: [WARN] `unsafe impl Send for BSSList < ValueType , COUNT >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_alloc/lib.rs:2183: [WARN] `unsafe impl Sync for BSSList < ValueType , COUNT >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/Global.rs:816: [WARN] `unsafe impl Sync for SyncCStr` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/atomic_cell.rs:65: [ERROR] `unsafe impl Sync for AtomicCell < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/atomic_cell.rs:66: [ERROR] `unsafe impl Send for AtomicCell < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/atomic_cell.rs:503: [ERROR] `unsafe impl Sync for ThreadCell < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/atomic_cell.rs:504: [ERROR] `unsafe impl Send for ThreadCell < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/string/StringJoiner.rs:27: [WARN] `unsafe impl Send for StringJoiner` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/string/StringJoiner.rs:28: [WARN] `unsafe impl Sync for StringJoiner` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/string/StringJoiner.rs:75: [WARN] `unsafe impl Send for Node` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/string/StringJoiner.rs:76: [WARN] `unsafe impl Sync for Node` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/string/mod.rs:1264: [WARN] `unsafe impl Send for String` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/string/mod.rs:1265: [WARN] `unsafe impl Sync for String` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/lib.rs:211: [WARN] `unsafe impl Send for RawSlice < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/lib.rs:212: [WARN] `unsafe impl Sync for RawSlice < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/util.rs:2276: [ERROR] `unsafe impl Sync for RacyCell < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/util.rs:2277: [ERROR] `unsafe impl Send for RacyCell < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/util.rs:2334: [WARN] `unsafe impl Sync for ThreadLock` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/util.rs:2685: [WARN] `unsafe impl Sync for Once < T , F >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bun_core/util.rs:2686: [WARN] `unsafe impl Send for Once < T , F >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/BundleThread.rs:173: [WARN] `unsafe impl Send for SendPtr < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/BundleThread.rs:389: [WARN] `unsafe impl Send for Instance` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/BundleThread.rs:390: [WARN] `unsafe impl Sync for Instance` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/Chunk.rs:133: [WARN] `unsafe impl Send for Chunk` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/Chunk.rs:134: [WARN] `unsafe impl Sync for Chunk` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/Chunk.rs:152: [WARN] `unsafe impl Sync for CompileResultSlots` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/LinkerContext.rs:239: [WARN] `unsafe impl Send for LinkerContext < 'a >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/LinkerContext.rs:240: [WARN] `unsafe impl Sync for LinkerContext < 'a >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/LinkerContext.rs:1379: [WARN] `unsafe impl Send for SourceMapDataTask` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/LinkerContext.rs:1632: [WARN] `unsafe impl Send for GenerateChunkCtx < 'a >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/LinkerContext.rs:1633: [WARN] `unsafe impl Sync for GenerateChunkCtx < 'a >` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/LinkerGraph.rs:96: [WARN] `unsafe impl Send for LinkerGraph` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/LinkerGraph.rs:97: [WARN] `unsafe impl Sync for LinkerGraph` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/ThreadPool.rs:77: [WARN] `unsafe impl Send for ThreadPool` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/ThreadPool.rs:78: [WARN] `unsafe impl Sync for ThreadPool` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/bundle_v2.rs:1543: [WARN] `unsafe impl Send for CompletionHandle` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/bundle_v2.rs:1544: [WARN] `unsafe impl Sync for CompletionHandle` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/lib.rs:341: [WARN] `unsafe impl Send for DevServerHandle` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/lib.rs:342: [WARN] `unsafe impl Sync for DevServerHandle` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/linker.rs:106: [WARN] `unsafe impl Send for ImportPathsListPtr` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/linker.rs:107: [WARN] `unsafe impl Sync for ImportPathsListPtr` — verify SAFETY comment names sync story
+/data/projects/bun/src/bundler/linker_context/prepareCssAstsForChunk.rs:41: [WARN] `unsafe impl Send for PrepareCssAstTask` — verify SAFETY comment names sync story
+/data/projects/bun/src/collections/bit_set.rs:1392: [WARN] `unsafe impl Send for DynamicBitSetList` — verify SAFETY comment names sync story
+/data/projects/bun/src/collections/array_hash_map.rs:1561: [WARN] `unsafe impl Send for StringHashMapKey < A >` — verify SAFETY comment names sync story
+/data/projects/bun/src/collections/array_hash_map.rs:1562: [WARN] `unsafe impl Sync for StringHashMapKey < A >` — verify SAFETY comment names sync story
+/data/projects/bun/src/collections/multi_array_list.rs:556: [WARN] `unsafe impl Send for MultiArrayList < T , A >` — verify SAFETY comment names sync story
+/data/projects/bun/src/collections/multi_array_list.rs:557: [WARN] `unsafe impl Sync for MultiArrayList < T , A >` — verify SAFETY comment names sync story
+/data/projects/bun/src/crash_handler/lib.rs:617: [WARN] `unsafe impl Send for CrashHandlerEntry` — verify SAFETY comment names sync story
+/data/projects/bun/src/css/declaration.rs:53: [WARN] `unsafe impl Send for DeclarationBlock < 'bump >` — verify SAFETY comment names sync story
+/data/projects/bun/src/css/declaration.rs:54: [WARN] `unsafe impl Sync for DeclarationBlock < 'bump >` — verify SAFETY comment names sync story
+/data/projects/bun/src/css/rules/mod.rs:173: [WARN] `unsafe impl Send for CssRule < R >` — verify SAFETY comment names sync story
+/data/projects/bun/src/css/rules/mod.rs:174: [WARN] `unsafe impl Sync for CssRule < R >` — verify SAFETY comment names sync story
+/data/projects/bun/src/http/HTTPThread.rs:314: [WARN] `unsafe impl Send for InitOpts` — verify SAFETY comment names sync story
+/data/projects/bun/src/http/h3_client/PendingConnect.rs:179: [WARN] `unsafe impl Send for Resolved` — verify SAFETY comment names sync story
+/data/projects/bun/src/http/lshpack.rs:204: [WARN] `unsafe impl Send for HpackHandle` — verify SAFETY comment names sync story
+/data/projects/bun/src/http/ssl_config.rs:444: [WARN] `unsafe impl Send for SSLConfig` — verify SAFETY comment names sync story
+/data/projects/bun/src/http/ssl_config.rs:445: [WARN] `unsafe impl Sync for SSLConfig` — verify SAFETY comment names sync story
+/data/projects/bun/src/install/windows-shim/main.rs:214: [ERROR] `unsafe impl Sync for RacyCell < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/io/windows_event_loop.rs:377: [WARN] `unsafe impl Send for Waker` — verify SAFETY comment names sync story
+/data/projects/bun/src/io/windows_event_loop.rs:378: [WARN] `unsafe impl Sync for Waker` — verify SAFETY comment names sync story
+/data/projects/bun/src/js_parser/defines_table.rs:208: [WARN] `unsafe impl Sync for SyncDefineData` — verify SAFETY comment names sync story
+/data/projects/bun/src/js_parser/defines_table.rs:210: [WARN] `unsafe impl Send for SyncDefineData` — verify SAFETY comment names sync story
+/data/projects/bun/src/js_parser/lib.rs:384: [WARN] `unsafe impl Send for DefineData` — verify SAFETY comment names sync story
+/data/projects/bun/src/js_parser/lib.rs:385: [WARN] `unsafe impl Sync for DefineData` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/ConcurrentPromiseTask.rs:55: [WARN] `unsafe impl Send for ConcurrentPromiseTask < '_ , C >` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/Debugger.rs:593: [WARN] `unsafe impl Send for SendVmPtr` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/JSCell.rs:126: [ERROR] `unsafe impl Sync for JsCell < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/JSCell.rs:128: [ERROR] `unsafe impl Send for JsCell < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/TopExceptionScope.rs:30: [WARN] `unsafe impl Send for SourceLocation` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/TopExceptionScope.rs:31: [WARN] `unsafe impl Sync for SourceLocation` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/VirtualMachine.rs:611: [WARN] `unsafe impl Sync for VirtualMachine` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/VirtualMachine.rs:612: [WARN] `unsafe impl Send for VirtualMachine` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/WorkTask.rs:58: [WARN] `unsafe impl Send for WorkTask < C >` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/web_worker.rs:590: [WARN] `unsafe impl Send for SendPtr` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/webcore_types.rs:95: [WARN] `unsafe impl Send for Blob` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/webcore_types.rs:96: [WARN] `unsafe impl Sync for Blob` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/webcore_types.rs:615: [WARN] `unsafe impl Send for Bytes` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/webcore_types.rs:616: [WARN] `unsafe impl Sync for Bytes` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/webcore_types.rs:1200: [WARN] `unsafe impl Send for StoreRef` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/webcore_types.rs:1201: [WARN] `unsafe impl Sync for StoreRef` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/hot_reloader.rs:421: [WARN] `unsafe impl Send for WatchChangedPaths` — verify SAFETY comment names sync story
+/data/projects/bun/src/jsc/hot_reloader.rs:422: [WARN] `unsafe impl Sync for WatchChangedPaths` — verify SAFETY comment names sync story
+/data/projects/bun/src/perf/tracy.rs:673: [WARN] `unsafe impl Sync for ___tracy_source_location_data` — verify SAFETY comment names sync story
+/data/projects/bun/src/ptr/lib.rs:627: [WARN] `unsafe impl Send for BackRef < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/ptr/lib.rs:628: [WARN] `unsafe impl Sync for BackRef < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/ptr/parent_ref.rs:406: [WARN] `unsafe impl Send for ParentRef < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/ptr/parent_ref.rs:407: [WARN] `unsafe impl Sync for ParentRef < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/resolver/lib.rs:897: [WARN] `unsafe impl Sync for EntriesOption` — verify SAFETY comment names sync story
+/data/projects/bun/src/resolver/lib.rs:898: [WARN] `unsafe impl Send for EntriesOption` — verify SAFETY comment names sync story
+/data/projects/bun/src/resolver/fs.rs:1836: [WARN] `unsafe impl Sync for EntriesOption` — verify SAFETY comment names sync story
+/data/projects/bun/src/resolver/fs.rs:1837: [WARN] `unsafe impl Send for EntriesOption` — verify SAFETY comment names sync story
+/data/projects/bun/src/resolver/fs.rs:1841: [WARN] `unsafe impl Sync for Entry` — verify SAFETY comment names sync story
+/data/projects/bun/src/resolver/fs.rs:1842: [WARN] `unsafe impl Send for Entry` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/api/js_bundle_completion_task.rs:106: [WARN] `unsafe impl Send for JSBundleCompletionTask` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/bake/production.rs:74: [WARN] `unsafe impl Sync for DotenvSingleton` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/dns_jsc/dns.rs:107: [WARN] `unsafe impl Send for SendPtr < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/dns_jsc/dns.rs:2386: [WARN] `unsafe impl Send for GlobalCache` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/napi/napi_body.rs:1994: [WARN] `unsafe impl Sync for napi_node_version` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/node/fs_events.rs:208: [WARN] `unsafe impl Send for CoreFoundation` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/node/fs_events.rs:209: [WARN] `unsafe impl Sync for CoreFoundation` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/node/fs_events.rs:252: [WARN] `unsafe impl Send for CoreServices` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/node/fs_events.rs:253: [WARN] `unsafe impl Sync for CoreServices` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/node/node_process.rs:91: [WARN] `unsafe impl Sync for CStrPtr` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/node/path_watcher.rs:108: [WARN] `unsafe impl Sync for PathWatcherManager` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/node/path_watcher.rs:109: [WARN] `unsafe impl Send for PathWatcherManager` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/shell/IOReader.rs:82: [WARN] `unsafe impl Send for IOReader` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/shell/IOReader.rs:83: [WARN] `unsafe impl Sync for IOReader` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/shell/IOWriter.rs:243: [WARN] `unsafe impl Send for IOWriter` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/shell/IOWriter.rs:244: [WARN] `unsafe impl Sync for IOWriter` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/shell/builtin/rm.rs:713: [WARN] `unsafe impl Send for ShellRmTask` — verify SAFETY comment names sync story
+/data/projects/bun/src/runtime/shell/builtin/rm.rs:714: [WARN] `unsafe impl Send for DirTask` — verify SAFETY comment names sync story
+/data/projects/bun/src/semver/SemverQuery.rs:131: [WARN] `unsafe impl Send for List` — verify SAFETY comment names sync story
+/data/projects/bun/src/semver/SemverQuery.rs:132: [WARN] `unsafe impl Sync for List` — verify SAFETY comment names sync story
+/data/projects/bun/src/semver/SemverQuery.rs:261: [WARN] `unsafe impl Send for Group` — verify SAFETY comment names sync story
+/data/projects/bun/src/semver/SemverQuery.rs:262: [WARN] `unsafe impl Sync for Group` — verify SAFETY comment names sync story
+/data/projects/bun/src/spawn/process.rs:1277: [WARN] `unsafe impl Sync for Instance` — verify SAFETY comment names sync story
+/data/projects/bun/src/sql_jsc/jsc.rs:492: [WARN] `unsafe impl Send for SSLConfig` — verify SAFETY comment names sync story
+/data/projects/bun/src/standalone_graph/StandaloneModuleGraph.rs:84: [WARN] `unsafe impl Sync for Instance` — verify SAFETY comment names sync story
+/data/projects/bun/src/standalone_graph/StandaloneModuleGraph.rs:189: [WARN] `unsafe impl Send for StandaloneModuleGraph` — verify SAFETY comment names sync story
+/data/projects/bun/src/standalone_graph/StandaloneModuleGraph.rs:190: [WARN] `unsafe impl Sync for StandaloneModuleGraph` — verify SAFETY comment names sync story
+/data/projects/bun/src/sys/lib.rs:186: [WARN] `unsafe impl Send for Name` — verify SAFETY comment names sync story
+/data/projects/bun/src/sys/lib.rs:191: [WARN] `unsafe impl Sync for Name` — verify SAFETY comment names sync story
+/data/projects/bun/src/sys/lib.rs:5890: [WARN] `unsafe impl Send for DynLib` — verify SAFETY comment names sync story
+/data/projects/bun/src/sys/lib.rs:5891: [WARN] `unsafe impl Sync for DynLib` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/Condition.rs:223: [WARN] `unsafe impl Sync for WindowsImpl` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/Condition.rs:224: [WARN] `unsafe impl Send for WindowsImpl` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/Mutex.rs:209: [WARN] `unsafe impl Sync for WindowsImpl` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/Mutex.rs:211: [WARN] `unsafe impl Send for WindowsImpl` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/Mutex.rs:262: [WARN] `unsafe impl Sync for DarwinImpl` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/Mutex.rs:264: [WARN] `unsafe impl Send for DarwinImpl` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/RwLock.rs:157: [WARN] `unsafe impl Send for RwLock < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/RwLock.rs:158: [WARN] `unsafe impl Sync for RwLock < T >` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/Semaphore.rs:22: [WARN] `unsafe impl Sync for Semaphore` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/Semaphore.rs:23: [WARN] `unsafe impl Send for Semaphore` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/ThreadPool.rs:337: [WARN] `unsafe impl Send for Task` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/ThreadPool.rs:1494: [WARN] `unsafe impl Send for Queue` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/channel.rs:47: [WARN] `unsafe impl Send for Channel < T , B >` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/channel.rs:49: [WARN] `unsafe impl Sync for Channel < T , B >` — verify SAFETY comment names sync story
+/data/projects/bun/src/threading/guarded.rs:38: [WARN] `unsafe impl Sync for GuardedBy < Value , M >` — verify SAFETY comment names sync story

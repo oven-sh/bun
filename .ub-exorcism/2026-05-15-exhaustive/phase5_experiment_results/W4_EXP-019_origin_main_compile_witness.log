@@ -1,0 +1,6 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Checking exp_019_storeslice_unbounded_sync_cell_race v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-019)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s
+cargo_check_exit=0

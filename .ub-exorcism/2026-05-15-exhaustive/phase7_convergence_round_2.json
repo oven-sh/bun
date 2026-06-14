@@ -1,0 +1,13 @@
+{
+  "run_id": "2026-05-15-exhaustive",
+  "round": 2,
+  "round_definition": "Phase 4 SYNTHESIS dedupe + Phase 5 Tier-1 (14 EXP executors)",
+  "started_at": "2026-05-16",
+  "ended_at": "2026-05-16",
+  "registry_state_at_round_start": 27,
+  "registry_state_at_round_end": 56,
+  "new_exp_entries_this_round": 29,
+  "new_exp_entries_explanation": "Phase 4 synthesizer promoted 31 net-new findings to EXP-030..060 (skipping reserved 022..025); 2 of those merged into existing entries during user curation",
+  "new_findings_this_round_at_F_level": 16,
+  "convergence_tracker_verdict": "NOT_QUIET — 16 new F-level finds; 11 new CONFIRMED_UB; well above <3 threshold"
+}

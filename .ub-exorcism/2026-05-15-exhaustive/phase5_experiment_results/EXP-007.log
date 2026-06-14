@@ -1,0 +1,21 @@
+   Compiling exp_007_tree_dep_get_unchecked_oob v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-007)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp_007_tree_dep_get_unchecked_oob`
+error: Undefined Behavior: `assume` called with `false`
+  --> src/main.rs:15:28
+   |
+15 |         let dep = unsafe { deps.get_unchecked(dep_id as usize) };
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+   = note: stack backtrace:
+           0: hoist_loop_shape
+               at src/main.rs:15:28: 15:63
+           1: main
+               at src/main.rs:24:13: 24:62
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

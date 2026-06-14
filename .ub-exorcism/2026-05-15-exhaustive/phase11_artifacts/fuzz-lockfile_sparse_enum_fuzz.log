@@ -1,0 +1,96 @@
+warning: multiple variants are never constructed
+  --> fuzz_targets/lockfile_sparse_enum_fuzz.rs:44:5
+   |
+43 | enum DependencyVersionTag {
+   |      -------------------- variants in this enum
+44 |     Uninitialized = 0, Npm = 1, Dist = 2, Tarball = 3, Folder = 4,
+   |     ^^^^^^^^^^^^^      ^^^      ^^^^      ^^^^^^^      ^^^^^^
+45 |     Symlink = 5, Workspace = 6, Git = 7, GitHub = 8, RootTag = 9,
+   |     ^^^^^^^      ^^^^^^^^^      ^^^      ^^^^^^      ^^^^^^^
+   |
+   = note: `DependencyVersionTag` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: multiple variants are never constructed
+  --> fuzz_targets/lockfile_sparse_enum_fuzz.rs:51:5
+   |
+50 | enum ResolutionTag {
+   |      ------------- variants in this enum
+51 |     Uninitialized = 0, RootTag = 1, Npm = 2, Folder = 3, LocalTarball = 4,
+   |     ^^^^^^^^^^^^^      ^^^^^^^      ^^^      ^^^^^^      ^^^^^^^^^^^^
+52 |     GitHub = 5, Git = 6, Symlink = 7, Workspace = 8, RemoteTarball = 9,
+   |     ^^^^^^      ^^^      ^^^^^^^      ^^^^^^^^^      ^^^^^^^^^^^^^
+53 |     SingleFileModule = 10,
+   |     ^^^^^^^^^^^^^^^^
+   |
+   = note: `ResolutionTag` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: variants `Unknown`, `Sha1`, `Sha256`, `Sha384`, `Sha512`, and `Sha512_256` are never constructed
+  --> fuzz_targets/lockfile_sparse_enum_fuzz.rs:59:5
+   |
+58 | enum IntegrityTag {
+   |      ------------ variants in this enum
+59 |     Unknown = 0, Sha1 = 1, Sha256 = 2, Sha384 = 3, Sha512 = 4, Sha512_256 = 5,
+   |     ^^^^^^^      ^^^^      ^^^^^^      ^^^^^^      ^^^^^^      ^^^^^^^^^^
+   |
+   = note: `IntegrityTag` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: `lockfile_sparse_enum_fuzz` (bin "lockfile_sparse_enum_fuzz") generated 3 warnings
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.02s
+warning: multiple variants are never constructed
+  --> fuzz_targets/lockfile_sparse_enum_fuzz.rs:44:5
+   |
+43 | enum DependencyVersionTag {
+   |      -------------------- variants in this enum
+44 |     Uninitialized = 0, Npm = 1, Dist = 2, Tarball = 3, Folder = 4,
+   |     ^^^^^^^^^^^^^      ^^^      ^^^^      ^^^^^^^      ^^^^^^
+45 |     Symlink = 5, Workspace = 6, Git = 7, GitHub = 8, RootTag = 9,
+   |     ^^^^^^^      ^^^^^^^^^      ^^^      ^^^^^^      ^^^^^^^
+   |
+   = note: `DependencyVersionTag` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: multiple variants are never constructed
+  --> fuzz_targets/lockfile_sparse_enum_fuzz.rs:51:5
+   |
+50 | enum ResolutionTag {
+   |      ------------- variants in this enum
+51 |     Uninitialized = 0, RootTag = 1, Npm = 2, Folder = 3, LocalTarball = 4,
+   |     ^^^^^^^^^^^^^      ^^^^^^^      ^^^      ^^^^^^      ^^^^^^^^^^^^
+52 |     GitHub = 5, Git = 6, Symlink = 7, Workspace = 8, RemoteTarball = 9,
+   |     ^^^^^^      ^^^      ^^^^^^^      ^^^^^^^^^      ^^^^^^^^^^^^^
+53 |     SingleFileModule = 10,
+   |     ^^^^^^^^^^^^^^^^
+   |
+   = note: `ResolutionTag` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: variants `Unknown`, `Sha1`, `Sha256`, `Sha384`, `Sha512`, and `Sha512_256` are never constructed
+  --> fuzz_targets/lockfile_sparse_enum_fuzz.rs:59:5
+   |
+58 | enum IntegrityTag {
+   |      ------------ variants in this enum
+59 |     Unknown = 0, Sha1 = 1, Sha256 = 2, Sha384 = 3, Sha512 = 4, Sha512_256 = 5,
+   |     ^^^^^^^      ^^^^      ^^^^^^      ^^^^^^      ^^^^^^      ^^^^^^^^^^
+   |
+   = note: `IntegrityTag` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: `lockfile_sparse_enum_fuzz` (bin "lockfile_sparse_enum_fuzz") generated 3 warnings
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.02s
+     Running `/tmp/cargo-target/x86_64-unknown-linux-gnu/release/lockfile_sparse_enum_fuzz -artifact_prefix=./artifacts/lockfile_sparse_enum_fuzz/ -max_total_time=300 -timeout=5 ./corpus/lockfile_sparse_enum_fuzz`
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 3079030018
+INFO: Loaded 1 modules   (300 inline 8-bit counters): 300 [0x59e9e726a010, 0x59e9e726a13c), 
+INFO: Loaded 1 PC tables (300 PCs): 300 [0x59e9e726a140,0x59e9e726b400), 
+INFO:        0 files found in ./corpus/lockfile_sparse_enum_fuzz
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
+INFO: A corpus is not provided, starting from an empty corpus
+#2	INITED cov: 14 ft: 15 corp: 1/1b exec/s: 0 rss: 29Mb
+#2097152	pulse  cov: 14 ft: 15 corp: 1/1b lim: 4096 exec/s: 1048576 rss: 178Mb
+#4194304	pulse  cov: 14 ft: 15 corp: 1/1b lim: 4096 exec/s: 838860 rss: 328Mb
+#8388608	pulse  cov: 14 ft: 15 corp: 1/1b lim: 4096 exec/s: 762600 rss: 596Mb
+#16777216	pulse  cov: 14 ft: 15 corp: 1/1b lim: 4096 exec/s: 762600 rss: 598Mb
+#33554432	pulse  cov: 14 ft: 15 corp: 1/1b lim: 4096 exec/s: 762600 rss: 600Mb
+#67108864	pulse  cov: 14 ft: 15 corp: 1/1b lim: 4096 exec/s: 737460 rss: 604Mb
+#134217728	pulse  cov: 14 ft: 15 corp: 1/1b lim: 4096 exec/s: 749819 rss: 607Mb
+#226613282	DONE   cov: 14 ft: 15 corp: 1/1b lim: 4096 exec/s: 752868 rss: 610Mb
+Done 226613282 runs in 301 second(s)

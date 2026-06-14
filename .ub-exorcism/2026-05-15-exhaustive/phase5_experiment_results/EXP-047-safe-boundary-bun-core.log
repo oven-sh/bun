@@ -1,0 +1,230 @@
+=== safe_share_compiles ===
+    Updating crates.io index
+     Locking 57 packages to latest compatible versions
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/output.rs:1647:9
+     |
+1647 |         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
+     |         ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |         |
+     |         help: consider restricting its visibility: `pub(super)`
+     |
+    ::: /data/projects/bun/src/bun_core/string/immutable/unicode.rs:23:1
+     |
+  23 | crate::declare_scope!(strings, hidden);
+     | -------------------------------------- in this macro invocation
+     |
+     = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+    --> /data/projects/bun/src/bun_core/lib.rs:11:26
+     |
+  11 | #![warn(unused_must_use, unreachable_pub)]
+     |                          ^^^^^^^^^^^^^^^
+     = note: this warning originates in the macro `crate::declare_scope` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |     ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:27
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                           ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:50
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                  ^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:74
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                                          ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1508:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |     ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1508:41
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |                                         ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/lib.rs:2159:5
+     |
+2159 |     pub fn is_ip_address(input: &[u8]) -> bool {
+     |     ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |     |
+     |     help: consider restricting its visibility: `pub(crate)`
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: `bun_core` (lib) generated 8 warnings (run `cargo fix --lib -p bun_core` to apply 7 suggestions)
+    Checking exp_047_safe_boundary_bun_core v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-047-safe-boundary-bun-core)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.69s
+=== raw_pointer_send_fails ===
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/output.rs:1647:9
+     |
+1647 |         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
+     |         ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |         |
+     |         help: consider restricting its visibility: `pub(super)`
+     |
+    ::: /data/projects/bun/src/bun_core/string/immutable/unicode.rs:23:1
+     |
+  23 | crate::declare_scope!(strings, hidden);
+     | -------------------------------------- in this macro invocation
+     |
+     = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+    --> /data/projects/bun/src/bun_core/lib.rs:11:26
+     |
+  11 | #![warn(unused_must_use, unreachable_pub)]
+     |                          ^^^^^^^^^^^^^^^
+     = note: this warning originates in the macro `crate::declare_scope` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |     ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:27
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                           ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:50
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                  ^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1507:74
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                                          ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1508:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |     ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/string/immutable/unicode.rs:1508:41
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |                                         ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> /data/projects/bun/src/bun_core/lib.rs:2159:5
+     |
+2159 |     pub fn is_ip_address(input: &[u8]) -> bool {
+     |     ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |     |
+     |     help: consider restricting its visibility: `pub(crate)`
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: `bun_core` (lib) generated 8 warnings (run `cargo fix --lib -p bun_core` to apply 7 suggestions)
+    Checking exp_047_safe_boundary_bun_core v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-047-safe-boundary-bun-core)
+error[E0277]: `*mut Cell<u32>` cannot be sent between threads safely
+   --> src/bin/raw_pointer_send_fails.rs:11:24
+    |
+ 11 |       std::thread::spawn(move || {
+    |       ------------------ ^------
+    |       |                  |
+    |  _____|__________________within this `{closure@src/bin/raw_pointer_send_fails.rs:11:24: 11:31}`
+    | |     |
+    | |     required by a bound introduced by this call
+ 12 | |         let _raw = raw;
+ 13 | |     })
+    | |_____^ `*mut Cell<u32>` cannot be sent between threads safely
+    |
+    = help: within `{closure@src/bin/raw_pointer_send_fails.rs:11:24: 11:31}`, the trait `Send` is not implemented for `*mut Cell<u32>`
+help: the trait `Send` is implemented for `Cell<T>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/cell.rs:317:1
+    |
+317 | unsafe impl<T: ?Sized> Send for Cell<T> where T: Send {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required because it's used within this closure
+   --> src/bin/raw_pointer_send_fails.rs:11:24
+    |
+ 11 |     std::thread::spawn(move || {
+    |                        ^^^^^^^
+note: required by a bound in `spawn`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/thread/functions.rs:128:8
+    |
+125 | pub fn spawn<F, T>(f: F) -> JoinHandle<T>
+    |        ----- required by a bound in this function
+...
+128 |     F: Send + 'static,
+    |        ^^^^ required by this bound in `spawn`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `exp_047_safe_boundary_bun_core` (bin "raw_pointer_send_fails") due to 1 previous error

@@ -1,0 +1,362 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling unicode-ident v1.0.24
+   Compiling siphasher v1.0.3
+   Compiling memchr v2.8.0
+   Compiling libc v0.2.186
+   Compiling fnv v1.0.7
+   Compiling ident_case v1.0.1
+   Compiling rustversion v1.0.22
+   Compiling rand_core v0.6.4
+   Compiling bitflags v2.11.1
+   Compiling phf_shared v0.11.3
+   Compiling rand v0.8.6
+   Compiling unicode-xid v0.2.6
+   Compiling heck v0.5.0
+   Compiling konst_macro_rules v0.2.19
+   Compiling konst v0.2.20
+   Compiling bstr v1.12.1
+   Compiling scopeguard v1.2.0
+   Compiling allocator-api2 v0.2.21
+   Compiling phf_generator v0.11.3
+   Compiling syn v2.0.117
+   Compiling bun_opaque v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/opaque)
+   Compiling itoa v1.0.18
+   Compiling thiserror v2.0.18
+   Compiling bumpalo v3.20.2
+   Compiling const_format_proc_macros v0.2.34
+   Compiling typed-arena v2.0.2
+   Compiling bun_output_tags v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/bun_output_tags)
+   Compiling twox-hash v2.1.2
+   Compiling bun_core v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/bun_core)
+   Compiling bytemuck v1.25.0
+   Compiling smallvec v1.15.1
+   Compiling bun_windows_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/windows_sys)
+   Compiling bun_hash v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/hash)
+   Compiling paste v1.0.15
+   Compiling rustix v0.38.44
+   Compiling hashbrown v0.15.5
+   Compiling linux-raw-sys v0.4.15
+   Compiling phf_shared v0.13.1
+   Compiling fastrand v2.4.1
+   Compiling cfg-if v1.0.4
+   Compiling phf_generator v0.13.1
+   Compiling dtoa v1.0.11
+   Compiling stable_deref_trait v1.2.1
+   Compiling phf_codegen v0.13.1
+   Compiling const_format v0.2.36
+   Compiling dtoa-short v0.3.5
+   Compiling servo_arc v0.4.3
+   Compiling selectors v0.33.0
+   Compiling equivalent v1.0.2
+   Compiling new_debug_unreachable v1.0.6
+   Compiling precomputed-hash v0.1.1
+   Compiling rustc-hash v2.1.2
+   Compiling foldhash v0.2.0
+   Compiling log v0.4.29
+   Compiling encoding_rs v0.8.35
+   Compiling lol_html_c_api v1.3.1 (/home/ubuntu/bun-ub-soak/bun/vendor/lolhtml/c-api)
+   Compiling hashbrown v0.16.1
+   Compiling mime v0.3.17
+   Compiling bun_install v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/install)
+   Compiling bun_jsc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/jsc)
+   Compiling version_check v0.9.5
+   Compiling typenum v1.20.0
+   Compiling crossbeam-utils v0.8.21
+   Compiling serde_core v1.0.228
+   Compiling generic-array v0.14.7
+   Compiling subtle v2.6.1
+   Compiling zerocopy v0.8.48
+   Compiling serde v1.0.228
+   Compiling zmij v1.0.21
+   Compiling autocfg v1.5.0
+   Compiling getrandom v0.4.2
+   Compiling crossbeam-epoch v0.9.18
+   Compiling rayon-core v1.13.0
+   Compiling num-traits v0.2.19
+   Compiling base64 v0.22.1
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling inout v0.1.4
+   Compiling arrayvec v0.7.6
+   Compiling digest v0.10.7
+   Compiling darling_core v0.21.3
+   Compiling cipher v0.4.4
+   Compiling either v1.15.0
+   Compiling byteorder v1.5.0
+   Compiling constant_time_eq v0.4.2
+   Compiling arrayref v0.3.9
+   Compiling serde_json v1.0.149
+   Compiling blake2b_simd v1.0.4
+   Compiling blowfish v0.9.1
+   Compiling crossbeam-deque v0.8.6
+   Compiling aho-corasick v1.1.4
+   Compiling bun_runtime v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/runtime)
+   Compiling clap_lex v1.1.0
+   Compiling zeroize v1.8.2
+   Compiling ciborium-io v0.2.2
+   Compiling regex-syntax v0.8.10
+   Compiling anstyle v1.0.14
+   Compiling plotters-backend v0.3.7
+   Compiling keccak v0.1.6
+   Compiling sha3 v0.10.9
+   Compiling plotters-svg v0.3.7
+   Compiling clap_builder v4.6.0
+   Compiling bcrypt v0.19.0
+   Compiling rust-argon2 v3.0.0
+   Compiling strum_macros v0.26.4
+   Compiling enum-map-derive v0.17.0
+   Compiling phf_macros v0.11.3
+   Compiling thiserror-impl v2.0.18
+   Compiling enum-map v2.7.3
+   Compiling bun_core_macros v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/bun_core_macros)
+   Compiling bun_dispatch v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/dispatch)
+   Compiling darling_macro v0.21.3
+   Compiling phf v0.11.3
+   Compiling bun_jsc_macros v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/jsc_macros)
+   Compiling phf_macros v0.13.1
+   Compiling derive_more-impl v2.1.1
+   Compiling darling v0.21.3
+   Compiling enumset_derive v0.14.0
+   Compiling strum v0.26.3
+   Compiling cssparser-macros v0.6.1
+   Compiling bun_css_derive v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/css_derive)
+   Compiling bun_clap_macros v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/clap_macros)
+   Compiling zerocopy-derive v0.8.48
+   Compiling serde_derive v1.0.228
+   Compiling phf v0.13.1
+   Compiling regex-automata v0.4.14
+   Compiling cssparser v0.36.0
+   Compiling derive_more v2.1.1
+   Compiling itertools v0.10.5
+   Compiling enumset v1.1.10
+   Compiling bun_mimalloc_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/mimalloc_sys)
+   Compiling bun_wyhash v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/wyhash)
+   Compiling bun_simdutf_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/simdutf_sys)
+   Compiling bun_alloc v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/bun_alloc)
+   Compiling bun_highway v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/highway)
+   Compiling bun_libuv_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/libuv_sys)
+   Compiling bun_brotli_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/brotli_sys)
+   Compiling bun_js v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/js)
+   Compiling blake2 v0.10.6
+   Compiling same-file v1.0.6
+   Compiling cast v0.3.0
+   Compiling criterion-plot v0.5.0
+   Compiling walkdir v2.5.0
+   Compiling lol_html v2.7.2 (/home/ubuntu/bun-ub-soak/bun/vendor/lolhtml)
+   Compiling bun_libdeflate_sys v0.0.0 (/home/ubuntu/bun-ub-soak/bun/src/libdeflate_sys)
+   Compiling regex v1.12.3
+   Compiling plotters v0.3.7
+   Compiling clap v4.6.1
+   Compiling rayon v1.12.0
+   Compiling is-terminal v0.4.17
+   Compiling anes v0.1.6
+   Compiling once_cell v1.21.4
+   Compiling oorandom v11.1.5
+   Compiling tinytemplate v1.2.1
+error: linking with `/usr/lib/llvm-21/bin/clang++` failed: exit status: 1
+  |
+  = note:  "/usr/lib/llvm-21/bin/clang++" "-m64" "/home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/rustch4YjYL/symbols.o" "-Wl,-Bstatic" "-Wl,--whole-archive" "-Wl,<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/librustc-nightly_rt.asan.a" "-Wl,--no-whole-archive" "<66 object files omitted>" "-Wl,--as-needed" "/home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/{libbun_wyhash-ca653d3a3a75b55c,libtyped_arena-c5a5c2d48a6a8077,libbumpalo-710dce4f8cec19fd,liblibc-81c2d36a4012c07d}.rlib" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/{libtest-*,libgetopts-*,librustc_std_workspace_std-*}.rlib" "/home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/{liballocator_api2-ca7acdd09739c58f,libbun_mimalloc_sys-2eb9cf1841333d10,libbun_opaque-2eec77eb4070bc17}.rlib" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/{libstd-*,libpanic_unwind-*,libobject-*,libmemchr-*,libaddr2line-*,libgimli-*,libcfg_if-*,librustc_demangle-*,libstd_detect-*,libhashbrown-*,librustc_std_workspace_alloc-*,libminiz_oxide-*,libadler2-*,libunwind-*,liblibc-*,librustc_std_workspace_core-*,liballoc-*,libcore-*,libcompiler_builtins-*}.rlib" "-Wl,-Bdynamic" "-lgcc_s" "-lutil" "-lrt" "-lpthread" "-lm" "-ldl" "-lc" "-L" "/home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/rustch4YjYL/raw-dylibs" "-Wl,--eh-frame-hdr" "-Wl,-z,noexecstack" "-L" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib" "-o" "/home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768" "-Wl,--gc-sections" "-pie" "-Wl,-z,relro,-z,now" "-nodefaultlibs"
+  = note: some arguments are omitted. use `--verbose` to show all linker arguments
+  = note: /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768.87y1orc31kte3kehrkabzps1v.0o4a7ub.rcgu.o: in function `<bun_alloc::WTFStringImplStruct>::deref':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/lib.rs:1116:(.text._RNvMsc_Cslept0mArxhO_9bun_allocNtB5_19WTFStringImplStruct5derefB5_+0x68): undefined reference to `Bun__WTFStringImpl__destroy'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768.9vsz68m2gdzyqql8n4grx9dg9.0o4a7ub.rcgu.o: in function `bun_mimalloc_sys::mimalloc::mi_malloc_auto_align':
+          /home/ubuntu/bun-ub-soak/bun/src/mimalloc_sys/mimalloc.rs:515:(.text._RNvMNtCslept0mArxhO_9bun_alloc5basicNtB2_17MimallocAllocator13aligned_alloc+0x191): undefined reference to `mi_malloc'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/mimalloc_sys/mimalloc.rs:513:(.text._RNvMNtCslept0mArxhO_9bun_alloc5basicNtB2_17MimallocAllocator13aligned_alloc+0x1a8): undefined reference to `mi_malloc_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768.9vsz68m2gdzyqql8n4grx9dg9.0o4a7ub.rcgu.o: in function `<bun_alloc::basic::MimallocAllocator>::aligned_alloc':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:64:(.text._RNvMNtCslept0mArxhO_9bun_alloc5basicNtB2_17MimallocAllocator13aligned_alloc+0x1dc): undefined reference to `mi_malloc_usable_size'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768.9vsz68m2gdzyqql8n4grx9dg9.0o4a7ub.rcgu.o: in function `<bun_alloc::basic::MimallocAllocator>::remap_with_default_allocator':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:106:(.text._RNvMNtCslept0mArxhO_9bun_alloc5basicNtB2_17MimallocAllocator28remap_with_default_allocator+0x53): undefined reference to `mi_realloc_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768.9vsz68m2gdzyqql8n4grx9dg9.0o4a7ub.rcgu.o: in function `<bun_alloc::basic::MimallocAllocator>::resize_with_default_allocator':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:94:(.text._RNvMNtCslept0mArxhO_9bun_alloc5basicNtB2_17MimallocAllocator29resize_with_default_allocator+0x4c): undefined reference to `mi_expand'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768.9vsz68m2gdzyqql8n4grx9dg9.0o4a7ub.rcgu.o: in function `bun_mimalloc_sys::mimalloc::mi_zalloc_auto_align':
+          /home/ubuntu/bun-ub-soak/bun/src/mimalloc_sys/mimalloc.rs:525:(.text._RNvMs_NtCslept0mArxhO_9bun_alloc5basicNtB4_10ZAllocator13aligned_alloc+0x191): undefined reference to `mi_zalloc'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/mimalloc_sys/mimalloc.rs:523:(.text._RNvMs_NtCslept0mArxhO_9bun_alloc5basicNtB4_10ZAllocator13aligned_alloc+0x1a8): undefined reference to `mi_zalloc_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768.9vsz68m2gdzyqql8n4grx9dg9.0o4a7ub.rcgu.o: in function `<bun_alloc::basic::ZAllocator>::aligned_alloc':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:140:(.text._RNvMs_NtCslept0mArxhO_9bun_alloc5basicNtB4_10ZAllocator13aligned_alloc+0x1dc): undefined reference to `mi_malloc_usable_size'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768.9vsz68m2gdzyqql8n4grx9dg9.0o4a7ub.rcgu.o: in function `<bun_alloc::basic::ZAllocator>::aligned_alloc_size':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:155:(.text._RNvMs_NtCslept0mArxhO_9bun_alloc5basicNtB4_10ZAllocator18aligned_alloc_size+0x10): undefined reference to `mi_malloc_size'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768.9vsz68m2gdzyqql8n4grx9dg9.0o4a7ub.rcgu.o: in function `bun_alloc::basic::mi_free_checked':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:28:(.text._RNvNtCslept0mArxhO_9bun_alloc5basic13mimalloc_free+0x5f): undefined reference to `mi_is_in_heap_region'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:32:(.text._RNvNtCslept0mArxhO_9bun_alloc5basic13mimalloc_free+0x9f): undefined reference to `mi_free_size'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:30:(.text._RNvNtCslept0mArxhO_9bun_alloc5basic13mimalloc_free+0xb6): undefined reference to `mi_free_size_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768.a5cmpxhwcejz62z0uzyfti3qn.0o4a7ub.rcgu.o: in function `<bun_alloc::mimalloc_arena::MimallocArena>::resize_in_place':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/MimallocArena.rs:401:(.text._RNvMs1_NtCslept0mArxhO_9bun_alloc14mimalloc_arenaNtB5_13MimallocArena15resize_in_placeB7_+0x3e): undefined reference to `mi_expand'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768.a5cmpxhwcejz62z0uzyfti3qn.0o4a7ub.rcgu.o: in function `<bun_alloc::mimalloc_arena::MimallocArena>::remap':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/MimallocArena.rs:412:(.text._RNvMs1_NtCslept0mArxhO_9bun_alloc14mimalloc_arenaNtB5_13MimallocArena5remapB7_+0x2f9): undefined reference to `mi_heap_realloc_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768.a5cmpxhwcejz62z0uzyfti3qn.0o4a7ub.rcgu.o: in function `bun_alloc::basic::mi_free_checked':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:28:(.text._RNvNtCslept0mArxhO_9bun_alloc14mimalloc_arena11vtable_free+0x5f): undefined reference to `mi_is_in_heap_region'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:32:(.text._RNvNtCslept0mArxhO_9bun_alloc14mimalloc_arena11vtable_free+0x9f): undefined reference to `mi_free_size'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:30:(.text._RNvNtCslept0mArxhO_9bun_alloc14mimalloc_arena11vtable_free+0xb6): undefined reference to `mi_free_size_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768.a5cmpxhwcejz62z0uzyfti3qn.0o4a7ub.rcgu.o: in function `bun_alloc::mimalloc_arena::global_vtable_alloc':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/MimallocArena.rs:787:(.text._RNvNtCslept0mArxhO_9bun_alloc14mimalloc_arena19global_vtable_alloc+0x3b): undefined reference to `mi_malloc'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/MimallocArena.rs:785:(.text._RNvNtCslept0mArxhO_9bun_alloc14mimalloc_arena19global_vtable_alloc+0x60): undefined reference to `mi_malloc_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_alloc-f525de9920041768.a5cmpxhwcejz62z0uzyfti3qn.0o4a7ub.rcgu.o: in function `bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/MimallocArena.rs:696:(.text._RNvNtCslept0mArxhO_9bun_alloc14mimalloc_arena24heap_alloc_maybe_alignedB3_+0x174): undefined reference to `mi_heap_malloc'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/MimallocArena.rs:694:(.text._RNvNtCslept0mArxhO_9bun_alloc14mimalloc_arena24heap_alloc_maybe_alignedB3_+0x198): undefined reference to `mi_heap_malloc_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/MimallocArena.rs:702:(.text._RNvNtCslept0mArxhO_9bun_alloc14mimalloc_arena24heap_alloc_maybe_alignedB3_+0x1c4): undefined reference to `mi_malloc_usable_size'
+          clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+          
+  = note: some `extern` functions couldn't be found; some native libraries may need to be installed or have their path specified
+  = note: use the `-l` flag to specify native libraries to link
+  = note: use the `cargo:rustc-link-lib` directive to specify the native libraries to link with Cargo (see https://doc.rust-lang.org/cargo/reference/build-scripts.html#rustc-link-lib)
+
+error: could not compile `bun_alloc` (lib test) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+warning: unreachable `pub` item
+    --> src/bun_core/output.rs:1647:9
+     |
+1647 |         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
+     |         ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |         |
+     |         help: consider restricting its visibility: `pub(super)`
+     |
+    ::: src/bun_core/string/immutable/unicode.rs:23:1
+     |
+  23 | crate::declare_scope!(strings, hidden);
+     | -------------------------------------- in this macro invocation
+     |
+     = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+    --> src/bun_core/lib.rs:11:26
+     |
+  11 | #![warn(unused_must_use, unreachable_pub)]
+     |                          ^^^^^^^^^^^^^^^
+     = note: this warning originates in the macro `crate::declare_scope` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |     ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:27
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                           ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:50
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                  ^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:74
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                                          ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1508:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |     ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1508:41
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |                                         ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/lib.rs:2159:5
+     |
+2159 |     pub fn is_ip_address(input: &[u8]) -> bool {
+     |     ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |     |
+     |     help: consider restricting its visibility: `pub(crate)`
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: `bun_core` (lib) generated 8 warnings (run `cargo fix --lib -p bun_core` to apply 7 suggestions)
+error: linking with `/usr/lib/llvm-21/bin/clang++` failed: exit status: 1
+  |
+  = note:  "/usr/lib/llvm-21/bin/clang++" "-m64" "/home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/rustc1NXwk2/symbols.o" "-Wl,-Bstatic" "-Wl,--whole-archive" "-Wl,<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/librustc-nightly_rt.asan.a" "-Wl,--no-whole-archive" "<257 object files omitted>" "-Wl,--as-needed" "/home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libthiserror-c26671362168e75d.rlib" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/{libtest-*,libgetopts-*,librustc_std_workspace_std-*}.rlib" "/home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/{libbun_output_tags-11a3f4044a1a6206,libitoa-4fd141c89b149ef6,libstrum-f16d5219f17d0448,libbun_highway-9c84c32274e6d58c,libbstr-8511f940379675c5,libmemchr-2ebd74dca3d4918c,libphf-ef16b955b4fdb5b9,libphf_shared-4c4b971180c71034,libsiphasher-e91ece08a7315d94,libbun_simdutf_sys-b6bceda1a359580a,libbun_hash-18787f17d00cba18,libtwox_hash-7d4c25ff7cc42f20,libbytemuck-a643cce204fd7261,libbun_alloc-6037375792fe87d9,libbun_wyhash-ca653d3a3a75b55c,libtyped_arena-c5a5c2d48a6a8077,libbumpalo-710dce4f8cec19fd,liblibc-81c2d36a4012c07d,liballocator_api2-ca7acdd09739c58f,libbun_mimalloc_sys-2eb9cf1841333d10,libbun_opaque-2eec77eb4070bc17,libconst_format-3cc741fb36d1153c,libkonst-f8fd231787bef956,libkonst_macro_rules-5db542843d07cb83}.rlib" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib/{libstd-*,libpanic_unwind-*,libobject-*,libmemchr-*,libaddr2line-*,libgimli-*,libcfg_if-*,librustc_demangle-*,libstd_detect-*,libhashbrown-*,librustc_std_workspace_alloc-*,libminiz_oxide-*,libadler2-*,libunwind-*,liblibc-*,librustc_std_workspace_core-*,liballoc-*,libcore-*,libcompiler_builtins-*}.rlib" "-Wl,-Bdynamic" "-lgcc_s" "-lutil" "-lrt" "-lpthread" "-lm" "-ldl" "-lc" "-L" "/home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/rustc1NXwk2/raw-dylibs" "-Wl,--eh-frame-hdr" "-Wl,-z,noexecstack" "-L" "<sysroot>/lib/rustlib/x86_64-unknown-linux-gnu/lib" "-o" "/home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_core-31a4f5ac3a5b257d" "-Wl,--gc-sections" "-pie" "-Wl,-z,relro,-z,now" "-nodefaultlibs"
+  = note: some arguments are omitted. use `--verbose` to show all linker arguments
+  = note: /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_core-31a4f5ac3a5b257d.62agb0j5xlxcwv51xtfhdn2d8.0r3s0m8.rcgu.o: in function `<bun_core::OutputSink>::is_terminal':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_core/lib.rs:616:(.text._RNvMse_Csa4q1yztH0jk_8bun_coreNtB5_10OutputSink11is_terminalB5_+0x3d): undefined reference to `__bun_dispatch__OutputSink__Sys__is_terminal'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_core-31a4f5ac3a5b257d.62agb0j5xlxcwv51xtfhdn2d8.0r3s0m8.rcgu.o: in function `<bun_core::OutputSink>::quiet_writer_from_fd':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_core/lib.rs:616:(.text._RNvMse_Csa4q1yztH0jk_8bun_coreNtB5_10OutputSink20quiet_writer_from_fdB5_+0x4c): undefined reference to `__bun_dispatch__OutputSink__Sys__quiet_writer_from_fd'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_core-31a4f5ac3a5b257d.62agb0j5xlxcwv51xtfhdn2d8.0r3s0m8.rcgu.o: in function `<bun_core::OutputSink>::quiet_writer_write_all':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_core/lib.rs:616:(.text._RNvMse_Csa4q1yztH0jk_8bun_coreNtB5_10OutputSink22quiet_writer_write_allB5_+0x5e): undefined reference to `__bun_dispatch__OutputSink__Sys__quiet_writer_write_all'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_core-31a4f5ac3a5b257d.62agb0j5xlxcwv51xtfhdn2d8.0r3s0m8.rcgu.o: in function `<bun_core::OutputSink>::stderr':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_core/lib.rs:616:(.text._RNvMse_Csa4q1yztH0jk_8bun_coreNtB5_10OutputSink6stderrB5_+0x31): undefined reference to `__bun_dispatch__OutputSink__Sys__stderr'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/bun_core-31a4f5ac3a5b257d.7azyhyp7pdx5wty8dfwlh0rw1.0r3s0m8.rcgu.o: in function `bun_core::strings_impl::first_non_ascii':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_core/lib.rs:1617:(.text._RNvNtCsa4q1yztH0jk_8bun_core12strings_impl15first_non_asciiB3_+0x103): undefined reference to `simdutf__validate_ascii_with_errors'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libbun_alloc-6037375792fe87d9.rlib(bun_alloc-6037375792fe87d9.1pdxlhmh4m4b1kmf8mywypcl4.0zuea29.rcgu.o): in function `<bun_alloc::mimalloc_arena::MimallocArena>::resize_in_place':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/MimallocArena.rs:401:(.text._RNvMs1_NtCsfizhgY0mWKj_9bun_alloc14mimalloc_arenaNtB5_13MimallocArena15resize_in_placeB7_+0x3e): undefined reference to `mi_expand'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libbun_alloc-6037375792fe87d9.rlib(bun_alloc-6037375792fe87d9.1pdxlhmh4m4b1kmf8mywypcl4.0zuea29.rcgu.o): in function `<bun_alloc::mimalloc_arena::MimallocArena>::remap':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/MimallocArena.rs:412:(.text._RNvMs1_NtCsfizhgY0mWKj_9bun_alloc14mimalloc_arenaNtB5_13MimallocArena5remapB7_+0x2fc): undefined reference to `mi_heap_realloc_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libbun_alloc-6037375792fe87d9.rlib(bun_alloc-6037375792fe87d9.1pdxlhmh4m4b1kmf8mywypcl4.0zuea29.rcgu.o): in function `bun_alloc::basic::mi_free_checked':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:28:(.text._RNvNtCsfizhgY0mWKj_9bun_alloc14mimalloc_arena11vtable_free+0x5f): undefined reference to `mi_is_in_heap_region'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:32:(.text._RNvNtCsfizhgY0mWKj_9bun_alloc14mimalloc_arena11vtable_free+0x9f): undefined reference to `mi_free_size'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:30:(.text._RNvNtCsfizhgY0mWKj_9bun_alloc14mimalloc_arena11vtable_free+0xb6): undefined reference to `mi_free_size_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libbun_alloc-6037375792fe87d9.rlib(bun_alloc-6037375792fe87d9.1pdxlhmh4m4b1kmf8mywypcl4.0zuea29.rcgu.o): in function `bun_alloc::mimalloc_arena::global_vtable_alloc':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/MimallocArena.rs:787:(.text._RNvNtCsfizhgY0mWKj_9bun_alloc14mimalloc_arena19global_vtable_alloc+0x3b): undefined reference to `mi_malloc'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/MimallocArena.rs:785:(.text._RNvNtCsfizhgY0mWKj_9bun_alloc14mimalloc_arena19global_vtable_alloc+0x60): undefined reference to `mi_malloc_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libbun_alloc-6037375792fe87d9.rlib(bun_alloc-6037375792fe87d9.1pdxlhmh4m4b1kmf8mywypcl4.0zuea29.rcgu.o): in function `bun_alloc::mimalloc_arena::heap_alloc_maybe_aligned':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/MimallocArena.rs:696:(.text._RNvNtCsfizhgY0mWKj_9bun_alloc14mimalloc_arena24heap_alloc_maybe_alignedB3_+0x174): undefined reference to `mi_heap_malloc'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/MimallocArena.rs:694:(.text._RNvNtCsfizhgY0mWKj_9bun_alloc14mimalloc_arena24heap_alloc_maybe_alignedB3_+0x198): undefined reference to `mi_heap_malloc_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/MimallocArena.rs:702:(.text._RNvNtCsfizhgY0mWKj_9bun_alloc14mimalloc_arena24heap_alloc_maybe_alignedB3_+0x1c5): undefined reference to `mi_malloc_usable_size'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libbun_alloc-6037375792fe87d9.rlib(bun_alloc-6037375792fe87d9.2vpay7h8r5yptljo0e1ir78hr.0zuea29.rcgu.o): in function `bun_mimalloc_sys::mimalloc::mi_malloc_auto_align':
+          /home/ubuntu/bun-ub-soak/bun/src/mimalloc_sys/mimalloc.rs:515:(.text._RNvMNtCsfizhgY0mWKj_9bun_alloc5basicNtB2_17MimallocAllocator13aligned_alloc+0x191): undefined reference to `mi_malloc'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/mimalloc_sys/mimalloc.rs:513:(.text._RNvMNtCsfizhgY0mWKj_9bun_alloc5basicNtB2_17MimallocAllocator13aligned_alloc+0x1a8): undefined reference to `mi_malloc_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libbun_alloc-6037375792fe87d9.rlib(bun_alloc-6037375792fe87d9.2vpay7h8r5yptljo0e1ir78hr.0zuea29.rcgu.o): in function `<bun_alloc::basic::MimallocAllocator>::aligned_alloc':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:64:(.text._RNvMNtCsfizhgY0mWKj_9bun_alloc5basicNtB2_17MimallocAllocator13aligned_alloc+0x1dd): undefined reference to `mi_malloc_usable_size'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libbun_alloc-6037375792fe87d9.rlib(bun_alloc-6037375792fe87d9.2vpay7h8r5yptljo0e1ir78hr.0zuea29.rcgu.o): in function `<bun_alloc::basic::MimallocAllocator>::remap_with_default_allocator':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:106:(.text._RNvMNtCsfizhgY0mWKj_9bun_alloc5basicNtB2_17MimallocAllocator28remap_with_default_allocator+0x53): undefined reference to `mi_realloc_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libbun_alloc-6037375792fe87d9.rlib(bun_alloc-6037375792fe87d9.2vpay7h8r5yptljo0e1ir78hr.0zuea29.rcgu.o): in function `<bun_alloc::basic::MimallocAllocator>::resize_with_default_allocator':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:94:(.text._RNvMNtCsfizhgY0mWKj_9bun_alloc5basicNtB2_17MimallocAllocator29resize_with_default_allocator+0x4c): undefined reference to `mi_expand'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libbun_alloc-6037375792fe87d9.rlib(bun_alloc-6037375792fe87d9.2vpay7h8r5yptljo0e1ir78hr.0zuea29.rcgu.o): in function `bun_mimalloc_sys::mimalloc::mi_zalloc_auto_align':
+          /home/ubuntu/bun-ub-soak/bun/src/mimalloc_sys/mimalloc.rs:525:(.text._RNvMs_NtCsfizhgY0mWKj_9bun_alloc5basicNtB4_10ZAllocator13aligned_alloc+0x191): undefined reference to `mi_zalloc'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/mimalloc_sys/mimalloc.rs:523:(.text._RNvMs_NtCsfizhgY0mWKj_9bun_alloc5basicNtB4_10ZAllocator13aligned_alloc+0x1a8): undefined reference to `mi_zalloc_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libbun_alloc-6037375792fe87d9.rlib(bun_alloc-6037375792fe87d9.2vpay7h8r5yptljo0e1ir78hr.0zuea29.rcgu.o): in function `<bun_alloc::basic::ZAllocator>::aligned_alloc':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:140:(.text._RNvMs_NtCsfizhgY0mWKj_9bun_alloc5basicNtB4_10ZAllocator13aligned_alloc+0x1dd): undefined reference to `mi_malloc_usable_size'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libbun_alloc-6037375792fe87d9.rlib(bun_alloc-6037375792fe87d9.2vpay7h8r5yptljo0e1ir78hr.0zuea29.rcgu.o): in function `<bun_alloc::basic::ZAllocator>::aligned_alloc_size':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:155:(.text._RNvMs_NtCsfizhgY0mWKj_9bun_alloc5basicNtB4_10ZAllocator18aligned_alloc_size+0x10): undefined reference to `mi_malloc_size'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libbun_alloc-6037375792fe87d9.rlib(bun_alloc-6037375792fe87d9.2vpay7h8r5yptljo0e1ir78hr.0zuea29.rcgu.o): in function `bun_alloc::basic::mi_free_checked':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:28:(.text._RNvNtCsfizhgY0mWKj_9bun_alloc5basic13mimalloc_free+0x5f): undefined reference to `mi_is_in_heap_region'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:32:(.text._RNvNtCsfizhgY0mWKj_9bun_alloc5basic13mimalloc_free+0x9f): undefined reference to `mi_free_size'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/basic.rs:30:(.text._RNvNtCsfizhgY0mWKj_9bun_alloc5basic13mimalloc_free+0xb6): undefined reference to `mi_free_size_aligned'
+          /usr/bin/ld: /home/ubuntu/bun-ub-soak/bun/target/x86_64-unknown-linux-gnu/debug/deps/libbun_alloc-6037375792fe87d9.rlib(bun_alloc-6037375792fe87d9.58bn7r9kp4687a725xa4wl9nm.0zuea29.rcgu.o): in function `<bun_alloc::WTFStringImplStruct>::deref':
+          /home/ubuntu/bun-ub-soak/bun/src/bun_alloc/lib.rs:1116:(.text._RNvMsc_CsfizhgY0mWKj_9bun_allocNtB5_19WTFStringImplStruct5derefB5_+0x69): undefined reference to `Bun__WTFStringImpl__destroy'
+          clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+          
+  = note: some `extern` functions couldn't be found; some native libraries may need to be installed or have their path specified
+  = note: use the `-l` flag to specify native libraries to link
+  = note: use the `cargo:rustc-link-lib` directive to specify the native libraries to link with Cargo (see https://doc.rust-lang.org/cargo/reference/build-scripts.html#rustc-link-lib)
+
+warning: `bun_core` (lib test) generated 8 warnings (8 duplicates)
+error: could not compile `bun_core` (lib test) due to 1 previous error; 8 warnings emitted

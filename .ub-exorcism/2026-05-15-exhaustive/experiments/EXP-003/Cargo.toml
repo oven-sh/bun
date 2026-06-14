@@ -1,0 +1,9 @@
+[package]
+name = "exp_003_pub_install_1"
+version = "0.0.1"
+edition = "2021"
+[[bin]]
+name = "repro"
+path = "src/main.rs"
+
+[workspace]

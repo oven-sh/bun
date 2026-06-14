@@ -1,0 +1,38 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp105-laundered-self-reborrow callback-bad`
+error: Undefined Behavior: write access through <1347> at alloc689[0x0] is forbidden
+  --> src/main.rs:31:13
+   |
+31 |             (*this).flags = 2;
+   |             ^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+   = help: the accessed tag <1347> has state Disabled which forbids this child write access
+help: the accessed tag <1347> was created here, in the initial state Reserved
+  --> src/main.rs:28:41
+   |
+28 |         let this: *mut Self = black_box(ptr::from_mut(self));
+   |                                         ^^^^^^^^^^^^^^^^^^^
+help: the accessed tag <1347> later transitioned to Disabled due to a foreign write access at offsets [0x0..0x1]
+  --> src/main.rs:37:9
+   |
+37 |         self.flags = 3;
+   |         ^^^^^^^^^^^^^^
+   = help: this transition corresponds to a loss of read and write permissions
+   = note: stack backtrace:
+           0: Wrapper::callback_bad::{closure#0}
+               at src/main.rs:31:13: 31:30
+           1: Wrapper::dispatch::<{closure@src/main.rs:29:23: 29:25}>
+               at src/main.rs:38:9: 38:12
+           2: Wrapper::callback_bad
+               at src/main.rs:29:9: 32:11
+           3: callback_bad
+               at src/main.rs:49:5: 49:21
+           4: main
+               at src/main.rs:61:33: 61:47
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

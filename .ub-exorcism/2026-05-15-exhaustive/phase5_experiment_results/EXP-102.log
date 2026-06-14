@@ -1,0 +1,61 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp_102_proxy_tunnel_write_reentry`
+error: Undefined Behavior: write access through <1386> at alloc229[0x8] is forbidden
+   --> /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:776:9
+    |
+776 |         self.ptr = Unique::from(ptr.cast());
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+    |
+    = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+    = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+    = help: the accessed tag <1386> is foreign to the protected tag <1201> (i.e., it is not a child)
+    = help: this foreign write access would cause the protected tag <1201> (currently Reserved (conflicted)) to become Disabled
+    = help: protected tags must never be Disabled
+help: the accessed tag <1386> was created here
+   --> src/main.rs:60:9
+    |
+ 60 |         Self::write_buffer_of(this).extend_from_slice(data);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: the protected tag <1201> was created here, in the initial state Reserved
+   --> src/main.rs:50:14
+    |
+ 50 |     fn write(&mut self, data: &[u8]) {
+    |              ^^^^^^^^^
+help: the protected tag <1201> later transitioned to Reserved (conflicted) due to a reborrow (acting as a foreign read access) at offsets [0x0..0x18]
+   --> src/main.rs:33:18
+    |
+ 33 |         unsafe { &mut *addr_of_mut!((*this).write_buffer) }
+    |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: this transition corresponds to a temporary loss of write permissions until function exit
+    = note: stack backtrace:
+            0: alloc::raw_vec::RawVecInner::set_ptr_and_cap
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:776:9: 776:44
+            1: alloc::raw_vec::RawVecInner::grow_amortized
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:531:18: 531:48
+            2: alloc::raw_vec::RawVecInner::<A>::reserve::do_reserve_and_handle::<std::alloc::Global>
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:668:40: 668:88
+            3: alloc::raw_vec::RawVecInner::reserve
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:675:17: 675:74
+            4: alloc::raw_vec::RawVec::<u8>::reserve
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:341:18: 341:64
+            5: std::vec::Vec::<u8>::reserve
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1471:9: 1471:47
+            6: std::vec::Vec::<u8>::append_elements
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:2905:9: 2905:28
+            7: <std::vec::Vec<u8> as std::vec::spec_extend::SpecExtend<&u8, std::slice::Iter<'_, u8>>>::spec_extend
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/spec_extend.rs:56:18: 56:45
+            8: std::vec::Vec::<u8>::extend_from_slice
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:3526:9: 3526:39
+            9: ProxyTunnel::on_write
+                at src/main.rs:60:9: 60:60
+            10: Wrapper::write_data
+                at src/main.rs:14:9: 14:37
+            11: ProxyTunnel::write
+                at src/main.rs:52:13: 52:37
+            12: main
+                at src/main.rs:88:9: 88:31
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

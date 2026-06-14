@@ -1,0 +1,25 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp_076_windows_named_pipe_vm_backref`
+error: Undefined Behavior: trying to retag from <363> for SharedReadWrite permission at alloc193[0x0], but that tag only grants SharedReadOnly permission for this location
+  --> src/main.rs:34:18
+   |
+34 |         unsafe { (*vm).enqueue_task() };
+   |                  ^^^^^ this error occurs as part of two-phase retag at alloc193[0x0..0x8]
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Stacked Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/stacked-borrows.md for further information
+help: <363> was created by a SharedReadOnly retag at offsets [0x0..0x8]
+  --> src/main.rs:33:18
+   |
+33 |         let vm = ptr::from_ref::<VirtualMachine>(self.vm).cast_mut();
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: stack backtrace:
+           0: WindowsNamedPipeContext::deinit_in_next_tick_like_source
+               at src/main.rs:34:18: 34:23
+           1: main
+               at src/main.rs:42:14: 42:51
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

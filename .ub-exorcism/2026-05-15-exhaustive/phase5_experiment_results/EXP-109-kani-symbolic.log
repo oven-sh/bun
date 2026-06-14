@@ -1,0 +1,73 @@
+Kani Symbolic Verification Witness — EXP-109 post-fix invariants
+Date: 2026-05-16
+Tool: cargo kani cargo-kani 0.67.0
+================================================================
+
+=== proof_strong_protects_value_across_gc ===
+
+Check 161: MockHeap::is_alive.array_bounds.1
+	 - Status: SUCCESS
+	 - Description: "index out of bounds: the length is less than or equal to the given index"
+	 - Location: src/main.rs:104:18 in function MockHeap::is_alive
+
+
+SUMMARY:
+ ** 0 of 161 failed (2 unreachable)
+
+VERIFICATION:- SUCCESSFUL
+Verification Time: 0.61832243s
+
+Manual Harness Summary:
+Complete - 1 successfully verified harnesses, 0 failures, 1 total.
+
+=== proof_drop_unprotects ===
+
+Check 152: MockHeap::unprotect.array_bounds.2
+	 - Status: SUCCESS
+	 - Description: "index out of bounds: the length is less than or equal to the given index"
+	 - Location: src/main.rs:88:13 in function MockHeap::unprotect
+
+
+SUMMARY:
+ ** 0 of 152 failed (1 unreachable)
+
+VERIFICATION:- SUCCESSFUL
+Verification Time: 0.2869025s
+
+Manual Harness Summary:
+Complete - 1 successfully verified harnesses, 0 failures, 1 total.
+
+=== proof_bare_value_is_not_protected ===
+
+Check 92: MockHeap::is_alive.array_bounds.1
+	 - Status: SUCCESS
+	 - Description: "index out of bounds: the length is less than or equal to the given index"
+	 - Location: src/main.rs:104:18 in function MockHeap::is_alive
+
+
+SUMMARY:
+ ** 0 of 92 failed (1 unreachable)
+
+VERIFICATION:- SUCCESSFUL
+Verification Time: 0.17139329s
+
+Manual Harness Summary:
+Complete - 1 successfully verified harnesses, 0 failures, 1 total.
+
+=== proof_multiple_strongs_refcount_correctly ===
+
+Check 159: MockHeap::unprotect.array_bounds.2
+	 - Status: SUCCESS
+	 - Description: "index out of bounds: the length is less than or equal to the given index"
+	 - Location: src/main.rs:88:13 in function MockHeap::unprotect
+
+
+SUMMARY:
+ ** 0 of 159 failed (1 unreachable)
+
+VERIFICATION:- SUCCESSFUL
+Verification Time: 0.47020158s
+
+Manual Harness Summary:
+Complete - 1 successfully verified harnesses, 0 failures, 1 total.
+

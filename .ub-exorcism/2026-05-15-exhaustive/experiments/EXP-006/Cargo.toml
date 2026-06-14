@@ -1,0 +1,6 @@
+[package]
+name = "exp_006_meta_origin_invalid_tag"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]

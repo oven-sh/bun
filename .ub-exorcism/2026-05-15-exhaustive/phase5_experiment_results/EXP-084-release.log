@@ -1,0 +1,34 @@
+   Compiling exp_084_virtual_machine_send_sync_tls_trap v0.1.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-084)
+    Finished `release` profile [optimized] target(s) in 0.03s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/release/exp_084_virtual_machine_send_sync_tls_trap`
+warning: Miri does not support optimizations: the opt-level is ignored. The only effect of selecting a Cargo profile that enables optimizations (such as --release) is to apply its remaining settings, such as whether debug assertions and overflow checks are enabled.
+
+error: Undefined Behavior: entering unreachable code
+  --> src/main.rs:31:18
+   |
+31 |         unsafe { Self::get_or_null().unwrap_unchecked() }
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+   = note: this is on thread `unnamed-1`
+   = note: stack backtrace:
+           0: VirtualMachine::get_mut_ptr
+               at src/main.rs:31:18: 31:56
+           1: VirtualMachine::as_mut
+               at src/main.rs:40:24: 40:43
+           2: main::{closure#0}::{closure#0}
+               at src/main.rs:58:13: 58:30
+note: the last function in that backtrace got called indirectly due to this code
+  --> src/main.rs:53:9
+   |
+53 | /         scope.spawn(move || {
+...  |
+58 | |             captured.as_mut().value.set(1);
+59 | |         });
+   | |__________^
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error; 1 warning emitted
+

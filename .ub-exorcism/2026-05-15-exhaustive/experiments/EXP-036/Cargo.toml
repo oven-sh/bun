@@ -1,0 +1,6 @@
+[package]
+name = "exp_036_patched_dep_bool_validity"
+version = "0.0.0"
+edition = "2021"
+
+[workspace]

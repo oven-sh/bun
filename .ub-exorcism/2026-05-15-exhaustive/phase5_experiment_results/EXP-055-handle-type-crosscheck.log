@@ -1,0 +1,5 @@
+   Compiling exp_055_libuv_handle_type v0.1.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-055)
+warning: exp_055_libuv_handle_type@0.1.0: EXP-055 libuv C enum constants matched Rust HandleType mirror
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.49s
+     Running `.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-055/target/debug/exp_055_libuv_handle_type`
+EXP-055 Rust HandleType mirror matched Bun's libuv C header constants

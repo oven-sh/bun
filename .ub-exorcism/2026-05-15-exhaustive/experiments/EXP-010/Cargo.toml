@@ -1,0 +1,6 @@
+[package]
+name = "exp_010_parallel_mut_alias_model"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]

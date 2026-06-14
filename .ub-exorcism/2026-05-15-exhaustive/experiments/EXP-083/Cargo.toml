@@ -1,0 +1,8 @@
+[package]
+name = "exp_083_shell_io_sync_unsound"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]

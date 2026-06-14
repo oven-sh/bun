@@ -1,0 +1,27 @@
+   Compiling exp-011-picohttp-shared-provenance-nul-write v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-011)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-011-picohttp-shared-provenance-nul-write`
+error: Undefined Behavior: write access through <232> at alloc108[0x6] is forbidden
+  --> src/main.rs:17:9
+   |
+17 |         path_ptr.cast_mut().add(path_len).write(0);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+   = help: the accessed tag <232> has state Frozen which forbids this child write access
+help: the accessed tag <232> was created here, in the initial state Frozen
+  --> src/main.rs:13:40
+   |
+13 |     let path_ptr: *const u8 = unsafe { buf.as_ptr().add(4) }; // after "GET "
+   |                                        ^^^^^^^^^^^^
+   = note: stack backtrace:
+           0: parse_like_bun_picohttp
+               at src/main.rs:17:9: 17:51
+           1: main
+               at src/main.rs:23:5: 23:38
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

@@ -1,0 +1,15 @@
+id: mem-zeroed-refs
+language: rust
+severity: error
+message: mem::zeroed::<T>() where T contains &, &mut, Box, NonNull, or other niche-bearing types — instant UB.
+rule:
+  any:
+    - pattern: mem::zeroed::<&$T>()
+    - pattern: mem::zeroed::<&mut $T>()
+    - pattern: mem::zeroed::<Box<$T>>()
+    - pattern: mem::zeroed::<NonNull<$T>>()
+    - pattern: std::mem::zeroed::<&$T>()
+    - pattern: std::mem::zeroed::<&mut $T>()
+    - pattern: std::mem::zeroed::<Box<$T>>()
+    - pattern: std::mem::zeroed::<NonNull<$T>>()
+    - pattern: core::mem::zeroed::<Box<$T>>()

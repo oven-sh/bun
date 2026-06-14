@@ -1,0 +1,53 @@
+{
+  "run_id": "2026-05-15-exhaustive",
+  "round": 4,
+  "round_definition": "close NEEDS_REFINEMENT + bug-class OPEN entries",
+  "started_at": "2026-05-16T14:41:00Z",
+  "ended_at": "2026-05-16T14:41:40Z",
+  "schema_note": "Orchestrator-level round-4 record. The auto-tracker had already emitted a phase7_convergence_round_4.json (registry snapshot at 2026-05-16T07:23:03Z) before this orchestrator round was invoked; that file is preserved verbatim at phase7_convergence_round_4.autotracker.prior.json. The two files use different schemas (auto-tracker = pure verdict snapshot; orchestrator = round-definition + transitions + premise reconciliation).",
+  "premise_reconciliation": {
+    "task_premise": "70 EXP entries total; 13 NEEDS_REFINEMENT; 18 OPEN (11 are EXP-061..071 idea-wizard remediation-design, SKIP); ~7 bug-class OPEN entries need executors.",
+    "observed_state_at_round_start": {
+      "total_EXP_entries": 89,
+      "OPEN": 0,
+      "NEEDS_REFINEMENT": 0,
+      "CONFIRMED_UB": 58,
+      "NO_EVIDENCE": 14,
+      "DEFERRED": 16,
+      "RESOLVED": 1,
+      "source": "first-line **Verdict:** scan of UNDEFINED_BEHAVIOR_EXPERIMENT_DESIGNS.md (mtime 2026-05-16T14:38:46Z)"
+    },
+    "explanation": "The task description reflects a stale snapshot. Between the original auto-tracker round-4 emission (2026-05-16T07:23:03Z, with 19 OPEN / 12 NEEDS_REFINEMENT) and now (2026-05-16T14:41:40Z), the auto-tracker advanced from round 4 to round 56 over ~7 hours, and parallel Phase-5 executor sweeps plus Codex/idea-wizard alignment passes closed every OPEN and NEEDS_REFINEMENT bug-class entry. EXP-061..071 were converted to DEFERRED (remediation-design vehicle; not an unresolved UB proof). The strict-provenance cluster (EXP-020/029/048/049/050) was reclassified OPEN/NEEDS_REFINEMENT -> DEFERRED per phase5_strict_provenance_policy_reclassification.md. The remaining bug-class OPEN entries were either promoted to CONFIRMED_UB via Phase-5 Miri witnesses (e.g. EXP-036, F-A14-D, F-NF20-2/3) or refined/resolved with documented falsification (e.g. EXP-015/016/017/028/030..032/037/052..055/090).",
+    "no_executor_work_required_this_round": true
+  },
+  "registry_state_before": {
+    "OPEN": 0,
+    "NEEDS_REFINEMENT": 0,
+    "CONFIRMED_UB": 58,
+    "NO_EVIDENCE": 14,
+    "DEFERRED": 16,
+    "RESOLVED": 1,
+    "total": 89
+  },
+  "registry_state_after": {
+    "OPEN": 0,
+    "NEEDS_REFINEMENT": 0,
+    "CONFIRMED_UB": 58,
+    "NO_EVIDENCE": 14,
+    "DEFERRED": 16,
+    "RESOLVED": 1,
+    "total": 89
+  },
+  "new_findings_this_round": 0,
+  "verdict_transitions": [],
+  "experiments_authored_this_round": [],
+  "miri_loom_sanitizer_runs_this_round": [],
+  "convergence_tracker_verdict": "QUIET (0 new findings this round; 0 OPEN; 0 NEEDS_REFINEMENT; registry is steady-state)",
+  "blockers_for_orchestrator_escalation": [],
+  "notes": [
+    "The auto-tracker emitted round_55 (10:14:09) and round_56 (10:19:00) both with quiet=true and prev_quiet=true. By the auto-tracker's own definition, the convergence floor has been satisfied for many consecutive rounds.",
+    "Registry mtime (10:38:46) is later than round_56 (10:19:00) by ~19 minutes; the delta is a single CONFIRMED_UB promotion (round 56 recorded 57; current registry shows 58). No new OPEN or NEEDS_REFINEMENT entries were introduced; the convergence floor remains intact.",
+    "EXP-061..071 (idea-wizard remediation-design vehicles) were correctly skipped per the task constraints. They are DEFERRED, not OPEN.",
+    "No source edits to Bun proper were performed (per run policy). No standalone Cargo experiments were created this round, because there were no entries that needed them."
+  ]
+}

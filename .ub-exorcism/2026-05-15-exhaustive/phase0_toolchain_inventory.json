@@ -1,0 +1,29 @@
+{
+  "timestamp": "2026-05-16T02:02:05Z",
+  "tools": {
+    "rustup": {"status": "ok", "version": "rustup 1.29.0 (28d1352db 2026-03-05)"},
+    "nightly": {"status": "ok", "version": "rustc 1.97.0-nightly (f53b654a8 2026-04-30)"},
+    "miri": {"status": "ok", "version": ""},
+    "rust_src": {"status": "ok", "version": ""},
+    "cargo-fuzz": {"status": "ok", "version": "cargo-fuzz 0.13.1"},
+    "cargo-afl": {"status": "ok", "version": ""},
+    "cargo-geiger": {"status": "ok", "version": "cargo-geiger 0.13.0"},
+    "cargo-audit": {"status": "ok", "version": "cargo-audit 0.22.1"},
+    "cargo-deny": {"status": "ok", "version": ""},
+    "cargo-expand": {"status": "ok", "version": "cargo-expand 1.0.121"},
+    "ast-grep": {"status": "ok", "version": "ast-grep 0.42.1"},
+    "semgrep": {"status": "missing", "version": ""},
+    "br": {"status": "ok", "version": "br 0.2.3"},
+    "bv": {"status": "ok", "version": "bv v0.16.0"},
+    "cass": {"status": "ok", "version": "cass 0.4.1"},
+    "ubs": {"status": "ok", "version": "UBS Meta-Runner v5.2.76 (git 4d443e5402)"},
+    "rch": {"status": "ok", "version": "rch 1.0.26 (commit 25848a02cc38)"},
+    "jsm": {"status": "ok", "version": ""},
+    "ntm": {"status": "ok", "version": ""},
+    "dcg": {"status": "ok", "version": "0.5.0"},
+    "sbh": {"status": "ok", "version": "sbh 0.4.22"},
+    "dsr": {"status": "ok", "version": "dsr version 0.1.0"},
+    "slb": {"status": "ok", "version": ""}
+  },
+  "installed_this_run": ["cargo-afl", "cargo-deny", "jsm"]
+}

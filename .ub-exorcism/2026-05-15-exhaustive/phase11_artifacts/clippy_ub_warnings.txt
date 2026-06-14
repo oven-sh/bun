@@ -1,0 +1,16 @@
+      3 warning: `bun_output_tags` (lib) generated 1 warning (1 duplicate)
+      2 warning: `bun_dispatch` (lib) generated 1 warning (1 duplicate)
+      1 warning: lint `clippy::transmute_int_to_char` has been renamed to `unnecessary_transmutes`
+      1 warning: build failed, waiting for other jobs to finish...
+      1 warning: `bun_windows_sys` (lib) generated 2 warnings (1 duplicate)
+      1 warning: `bun_runtime` (build script) generated 1 warning (1 duplicate)
+      1 warning: `bun_opaque` (lib) generated 3 warnings
+      1 warning: `bun_jsc` (build script) generated 1 warning (1 duplicate)
+      1 warning: `bun_jsc_macros` (lib) generated 3 warnings (3 duplicates)
+      1 warning: `bun_jsc_macros` (lib) generated 3 warnings (1 duplicate) (run `cargo clippy --fix --lib -p bun_jsc_macros -- -W clippy::undocumented_unsafe_blocks -W clippy::multiple_unsafe_ops_per_block -W clippy::cast_ptr_alignment -W clippy::ptr_as_ptr -W clippy::transmute_undefined_repr -W clippy::transmute_int_to_bool -W clippy::transmute_int_to_char -W clippy::uninit_assumed_init -W clippy::derive_ord_xor_partial_ord` to apply 2 suggestions)
+      1 warning: `bun_install` (build script) generated 1 warning (1 duplicate)
+      1 warning: `bun_hash` (lib) generated 1 warning (1 duplicate)
+      1 warning: `bun_css_derive` (lib) generated 2 warnings (2 duplicates)
+      1 warning: `bun_css_derive` (lib) generated 2 warnings (1 duplicate) (run `cargo clippy --fix --lib -p bun_css_derive -- -W clippy::undocumented_unsafe_blocks -W clippy::multiple_unsafe_ops_per_block -W clippy::cast_ptr_alignment -W clippy::ptr_as_ptr -W clippy::transmute_undefined_repr -W clippy::transmute_int_to_bool -W clippy::transmute_int_to_char -W clippy::uninit_assumed_init -W clippy::derive_ord_xor_partial_ord` to apply 1 suggestion)
+      1 warning: `bun_core` (build script) generated 1 warning (1 duplicate)
+      1 error: could not compile `bun_opaque` (lib) due to 2 previous errors; 3 warnings emitted

@@ -1,0 +1,35 @@
+   Compiling exp-060-napi-tsfn-mut-raw-handle v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-060)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner .ub-exorcism/2026-05-15-exhaustive/experiments/EXP-060/target/miri/x86_64-unknown-linux-gnu/debug/exp-060-napi-tsfn-mut-raw-handle`
+error: Undefined Behavior: Data race detected between (1) atomic store on thread `unnamed-1` and (2) retag write of type `ThreadSafeFunction` on thread `unnamed-2` at alloc207
+  --> src/main.rs:31:25
+   |
+31 |     let tsfn = unsafe { &mut *func.0 };
+   |                         ^^^^^^^^^^^^ (2) just happened here
+   |
+help: and (1) occurred earlier here
+  --> src/main.rs:25:5
+   |
+25 |     }
+   |     ^
+   = help: retags occur on all (re)borrows and as well as when references are copied or moved
+   = help: retags permit optimizations that insert speculative reads or writes
+   = help: therefore from the perspective of data races, a retag has the same implications as a read or write
+   = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+   = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+   = note: this is on thread `unnamed-2`
+   = note: stack backtrace:
+           0: napi_call_threadsafe_function_like
+               at src/main.rs:31:25: 31:37
+           1: main::{closure#0}::{closure#1}
+               at src/main.rs:45:29: 45:66
+note: the last function in that backtrace got called indirectly due to this code
+  --> src/main.rs:45:9
+   |
+45 |         scope.spawn(move || napi_call_threadsafe_function_like(b));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

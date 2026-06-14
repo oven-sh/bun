@@ -1,0 +1,50 @@
+2026-05-16 06:52:56 [WARN] unable to find a config path, falling back to default config
+error[rejected]: failed to satisfy license requirements
+   ┌─ /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/allocator-api2-0.2.21/Cargo.toml:27:12
+   │
+27 │ license = "MIT OR Apache-2.0"
+   │            ━━━────━━━━━━━━━━
+   │            │      │
+   │            │      rejected: license is not explicitly allowed
+   │            rejected: license is not explicitly allowed
+   │
+   ├ MIT - MIT License:
+   ├   - OSI approved
+   ├   - FSF Free/Libre
+   ├ Apache-2.0 - Apache License 2.0:
+   ├   - OSI approved
+   ├   - FSF Free/Libre
+   ├ allocator-api2 v0.2.21
+     ├── bun_alloc v0.0.0
+     │   ├── bun_api v0.0.0
+     │   │   ├── bun_bunfig v0.0.0
+     │   │   │   ├── bun_install v0.0.0
+     │   │   │   │   ├── bun_install_jsc v0.0.0
+     │   │   │   │   │   └── bun_runtime v0.0.0
+     │   │   │   │   │       └── bun_bin v0.0.0
+     │   │   │   │   ├── bun_jsc v0.0.0
+     │   │   │   │   │   ├── bun_ast_jsc v0.0.0
+     │   │   │   │   │   │   ├── bun_install_jsc v0.0.0 (*)
+     │   │   │   │   │   │   └── bun_runtime v0.0.0 (*)
+     │   │   │   │   │   ├── bun_bundler_jsc v0.0.0
+     │   │   │   │   │   │   └── bun_runtime v0.0.0 (*)
+     │   │   │   │   │   ├── bun_css_jsc v0.0.0
+     │   │   │   │   │   │   └── bun_runtime v0.0.0 (*)
+     │   │   │   │   │   ├── bun_http_jsc v0.0.0
+     │   │   │   │   │   │   └── bun_runtime v0.0.0 (*)
+     │   │   │   │   │   ├── bun_install_jsc v0.0.0 (*)
+     │   │   │   │   │   ├── bun_js_parser_jsc v0.0.0
+     │   │   │   │   │   │   ├── bun_install_jsc v0.0.0 (*)
+     │   │   │   │   │   │   └── bun_runtime v0.0.0 (*)
+     │   │   │   │   │   ├── bun_patch_jsc v0.0.0
+     │   │   │   │   │   │   └── bun_runtime v0.0.0 (*)
+     │   │   │   │   │   ├── bun_runtime v0.0.0 (*)
+     │   │   │   │   │   ├── bun_semver_jsc v0.0.0
+     │   │   │   │   │   │   └── bun_runtime v0.0.0 (*)
+     │   │   │   │   │   ├── bun_sourcemap_jsc v0.0.0
+     │   │   │   │   │   │   └── bun_runtime v0.0.0 (*)
+     │   │   │   │   │   ├── bun_sql_jsc v0.0.0
+     │   │   │   │   │   │   └── bun_runtime v0.0.0 (*)
+     │   │   │   │   │   ├── bun_sys_jsc v0.0.0
+     │   │   │   │   │   │   └── bun_runtime v0.0.0 (*)
+     │   │   │   │   │   └── bun_url_jsc v0.0.0

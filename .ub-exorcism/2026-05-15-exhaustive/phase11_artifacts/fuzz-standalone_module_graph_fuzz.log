@@ -1,0 +1,104 @@
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.02s
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.02s
+     Running `/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz -artifact_prefix=./artifacts/standalone_module_graph_fuzz/ -max_total_time=300 -timeout=5 ./corpus/standalone_module_graph_fuzz`
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 3965891153
+INFO: Loaded 1 modules   (314 inline 8-bit counters): 314 [0x5a879915e150, 0x5a879915e28a), 
+INFO: Loaded 1 PC tables (314 PCs): 314 [0x5a879915e290,0x5a879915f630), 
+INFO:        0 files found in ./corpus/standalone_module_graph_fuzz
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
+INFO: A corpus is not provided, starting from an empty corpus
+#2	INITED cov: 19 ft: 20 corp: 1/1b exec/s: 0 rss: 28Mb
+=================================================================
+==1829977==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x731760be0381 at pc 0x5a879904a8bb bp 0x7ffe3c83eb50 sp 0x7ffe3c83e310
+READ of size 20 at 0x731760be0381 thread T0
+    #0 0x5a879904a8ba  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xa88ba) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #1 0x5a879907b73c  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xd973c) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #2 0x5a879907cdd0  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xdadd0) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #3 0x5a879907da74  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xdba74) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #4 0x5a879907e558  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xdc558) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #5 0x5a879907d39d  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xdb39d) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #6 0x5a87990850ac  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xe30ac) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #7 0x5a87990897c5  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xe77c5) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #8 0x5a879908bfa2  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xe9fa2) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #9 0x5a879908d837  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xeb837) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #10 0x5a87990b2111  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0x110111) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #11 0x5a8798fbff86  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0x1df86) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #12 0x76e761a2a574  (/lib/x86_64-linux-gnu/libc.so.6+0x2a574) (BuildId: a5b27db7ef3036c1dacf2e4ddc2e052767129439)
+    #13 0x76e761a2a627  (/lib/x86_64-linux-gnu/libc.so.6+0x2a627) (BuildId: a5b27db7ef3036c1dacf2e4ddc2e052767129439)
+    #14 0x5a8798fc0134  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0x1e134) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+
+0x731760be0381 is located 0 bytes after 17-byte region [0x731760be0370,0x731760be0381)
+allocated by thread T0 here:
+    #0 0x5a879904c854  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xaa854) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #1 0x76e761ec1a03  (/lib/x86_64-linux-gnu/libstdc++.so.6+0xc1a03) (BuildId: 280f658f43aae7a7f92bba6ec4c5d96bc2b53a7a)
+    #2 0x5a8799084fc0  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xe2fc0) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #3 0x5a87990897c5  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xe77c5) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #4 0x5a879908bfa2  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xe9fa2) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #5 0x5a879908d837  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xeb837) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #6 0x5a87990b2111  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0x110111) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #7 0x5a8798fbff86  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0x1df86) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+    #8 0x76e761a2a574  (/lib/x86_64-linux-gnu/libc.so.6+0x2a574) (BuildId: a5b27db7ef3036c1dacf2e4ddc2e052767129439)
+    #9 0x76e761a2a627  (/lib/x86_64-linux-gnu/libc.so.6+0x2a627) (BuildId: a5b27db7ef3036c1dacf2e4ddc2e052767129439)
+    #10 0x5a8798fc0134  (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0x1e134) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e)
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow (/tmp/cargo-target/x86_64-unknown-linux-gnu/release/standalone_module_graph_fuzz+0xa88ba) (BuildId: c7110021e9230a15c9d5286cc5bf2da6c2f6e79e) 
+Shadow bytes around the buggy address:
+  0x731760be0100: 00 00 00 00 fa fa 00 00 00 00 fa fa fd fd fd fd
+  0x731760be0180: fa fa fd fd fd fd fa fa 00 00 00 fa fa fa 00 00
+  0x731760be0200: 00 fa fa fa 00 00 00 fa fa fa 00 00 00 fa fa fa
+  0x731760be0280: 00 00 00 fa fa fa 00 00 00 fa fa fa fd fd fd fa
+  0x731760be0300: fa fa fd fd fd fd fa fa 00 00 00 04 fa fa 00 00
+=>0x731760be0380:[01]fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x731760be0400: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x731760be0480: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x731760be0500: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x731760be0580: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+  0x731760be0600: fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==1829977==ABORTING
+MS: 3 ChangeByte-ChangeBinInt-InsertRepeatedBytes-; base unit: adc83b19e793491b1c6ea0fd8b46cd9f32e592fc
+0x2c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,0x3c,
+,<<<<<<<<<<<<<<<<
+artifact_prefix='./artifacts/standalone_module_graph_fuzz/'; Test unit written to ./artifacts/standalone_module_graph_fuzz/crash-0a4ae866ed31840c72a71a330cc11ac75175e115
+Base64: LDw8PDw8PDw8PDw8PDw8PDw=
+
+────────────────────────────────────────────────────────────────────────────────
+
+Failing input:
+
+	./artifacts/standalone_module_graph_fuzz/crash-0a4ae866ed31840c72a71a330cc11ac75175e115
+
+Output of `std::fmt::Debug`:
+
+	[44, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60]
+
+Reproduce with:
+
+	cargo fuzz run --fuzz-dir . standalone_module_graph_fuzz ./artifacts/standalone_module_graph_fuzz/crash-0a4ae866ed31840c72a71a330cc11ac75175e115
+
+Minimize test case with:
+
+	cargo fuzz tmin --fuzz-dir . standalone_module_graph_fuzz ./artifacts/standalone_module_graph_fuzz/crash-0a4ae866ed31840c72a71a330cc11ac75175e115
+
+────────────────────────────────────────────────────────────────────────────────
+
+Error: Fuzz target exited with exit status: 1

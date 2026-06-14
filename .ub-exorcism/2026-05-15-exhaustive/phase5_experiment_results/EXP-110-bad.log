@@ -1,0 +1,45 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-110-h2-stream-queue-frame-reentry`
+error: Undefined Behavior: reborrow through <991> at alloc566[0x0] is forbidden
+  --> src/main.rs:20:31
+   |
+20 |         let stream = unsafe { &mut *self.stream };
+   |                               ^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Tree Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/tree-borrows.md for further information
+   = help: the accessed tag <991> is foreign to the protected tag <1012> (i.e., it is not a child)
+   = help: this reborrow (acting as a foreign read access) would cause the protected tag <1012> (currently Unique) to become Disabled
+   = help: protected tags must never be Disabled
+help: the accessed tag <991> was created here
+  --> src/main.rs:74:15
+   |
+74 |     let raw = Box::into_raw(Box::new(Stream::default()));
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: the protected tag <1012> was created here, in the initial state Reserved
+  --> src/main.rs:29:24
+   |
+29 |     fn queue_frame_bad(&mut self, client: &Client) {
+   |                        ^^^^^^^^^
+help: the protected tag <1012> later transitioned to Unique due to a child write access at offsets [0x0..0x8]
+  --> src/main.rs:34:13
+   |
+34 | /             (*this).data_frame_queue.push(PendingFrame {
+35 | |                 callback_live: true,
+36 | |             });
+   | |______________^
+   = help: this transition corresponds to the first write to a 2-phase borrowed mutable reference
+   = note: stack backtrace:
+           0: Client::dispatch_write_callback
+               at src/main.rs:20:31: 20:48
+           1: Stream::queue_frame_bad
+               at src/main.rs:44:13: 44:45
+           2: bad_path
+               at src/main.rs:77:9: 77:40
+           3: main
+               at src/main.rs:94:14: 94:24
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

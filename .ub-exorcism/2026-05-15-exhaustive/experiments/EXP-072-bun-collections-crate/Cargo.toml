@@ -1,0 +1,9 @@
+[package]
+name = "exp-072-bun-collections-crate"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+bun_collections = { path = "../../../../src/collections" }

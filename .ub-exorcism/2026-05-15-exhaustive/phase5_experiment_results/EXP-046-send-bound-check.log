@@ -1,0 +1,2538 @@
+   Compiling proc-macro2 v1.0.106
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.45
+   Compiling libc v0.2.186
+   Compiling ident_case v1.0.1
+   Compiling fnv v1.0.7
+   Compiling rustversion v1.0.22
+   Compiling rand_core v0.6.4
+   Compiling unicode-xid v0.2.6
+   Compiling heck v0.5.0
+   Compiling thiserror v2.0.18
+   Compiling paste v1.0.15
+   Compiling rustix v0.38.44
+   Compiling rand v0.8.6
+   Compiling phf_generator v0.11.3
+   Compiling syn v2.0.117
+   Compiling const_format_proc_macros v0.2.34
+    Checking getrandom v0.4.2
+    Checking bcrypt v0.19.0
+    Checking const_format v0.2.36
+   Compiling darling_core v0.21.3
+   Compiling strum_macros v0.26.4
+   Compiling enum-map-derive v0.17.0
+   Compiling phf_macros v0.11.3
+   Compiling thiserror-impl v2.0.18
+   Compiling bun_dispatch v0.0.0 (/data/projects/bun/src/dispatch)
+   Compiling bun_core_macros v0.0.0 (/data/projects/bun/src/bun_core_macros)
+   Compiling phf_macros v0.13.1
+   Compiling cssparser-macros v0.6.1
+   Compiling derive_more-impl v2.1.1
+   Compiling bun_jsc_macros v0.0.0 (/data/projects/bun/src/jsc_macros)
+   Compiling bun_css_derive v0.0.0 (/data/projects/bun/src/css_derive)
+   Compiling bun_clap_macros v0.0.0 (/data/projects/bun/src/clap_macros)
+    Checking enum-map v2.7.3
+    Checking phf v0.11.3
+    Checking phf v0.13.1
+    Checking cssparser v0.36.0
+    Checking derive_more v2.1.1
+    Checking strum v0.26.3
+    Checking selectors v0.33.0
+   Compiling darling_macro v0.21.3
+   Compiling darling v0.21.3
+   Compiling enumset_derive v0.14.0
+    Checking lol_html v2.7.2 (/data/projects/bun/vendor/lolhtml)
+    Checking lol_html_c_api v1.3.1 (/data/projects/bun/vendor/lolhtml/c-api)
+    Checking enumset v1.1.10
+    Checking bun_wyhash v0.0.0 (/data/projects/bun/src/wyhash)
+    Checking bun_mimalloc_sys v0.0.0 (/data/projects/bun/src/mimalloc_sys)
+    Checking bun_highway v0.0.0 (/data/projects/bun/src/highway)
+    Checking bun_simdutf_sys v0.0.0 (/data/projects/bun/src/simdutf_sys)
+    Checking bun_libuv_sys v0.0.0 (/data/projects/bun/src/libuv_sys)
+    Checking bun_brotli_sys v0.0.0 (/data/projects/bun/src/brotli_sys)
+    Checking bun_js v0.0.0 (/data/projects/bun/src/js)
+    Checking bun_alloc v0.0.0 (/data/projects/bun/src/bun_alloc)
+    Checking bun_core v0.0.0 (/data/projects/bun/src/bun_core)
+    Checking bun_libdeflate_sys v0.0.0 (/data/projects/bun/src/libdeflate_sys)
+warning: unreachable `pub` item
+    --> src/bun_core/output.rs:1647:9
+     |
+1647 |         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
+     |         ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |         |
+     |         help: consider restricting its visibility: `pub(super)`
+     |
+    ::: src/bun_core/string/immutable/unicode.rs:23:1
+     |
+  23 | crate::declare_scope!(strings, hidden);
+     | -------------------------------------- in this macro invocation
+     |
+     = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+    --> src/bun_core/lib.rs:11:26
+     |
+  11 | #![warn(unused_must_use, unreachable_pub)]
+     |                          ^^^^^^^^^^^^^^^
+     = note: this warning originates in the macro `crate::declare_scope` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |     ^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:27
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                           ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:50
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                  ^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1507:74
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+     |                                                                          ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1508:5
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |     ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/string/immutable/unicode.rs:1508:41
+     |
+1506 | pub use crate::strings::{
+     | --- help: consider restricting its visibility: `pub(super)`
+1507 |     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
+1508 |     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,
+     |                                         ^^^^^^^^^^^^^^^^
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: unreachable `pub` item
+    --> src/bun_core/lib.rs:2159:5
+     |
+2159 |     pub fn is_ip_address(input: &[u8]) -> bool {
+     |     ---^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |     |
+     |     help: consider restricting its visibility: `pub(crate)`
+     |
+     = help: or consider exporting it for use by other crates
+
+warning: `bun_core` (lib) generated 8 warnings (run `cargo fix --lib -p bun_core` to apply 7 suggestions)
+    Checking bun_paths v0.0.0 (/data/projects/bun/src/paths)
+    Checking bun_errno v0.0.0 (/data/projects/bun/src/errno)
+    Checking bun_ptr v0.0.0 (/data/projects/bun/src/ptr)
+    Checking bun_boringssl_sys v0.0.0 (/data/projects/bun/src/boringssl_sys)
+    Checking bun_safety v0.0.0 (/data/projects/bun/src/safety)
+    Checking bun_zlib_sys v0.0.0 (/data/projects/bun/src/zlib_sys)
+    Checking bun_cares_sys v0.0.0 (/data/projects/bun/src/cares_sys)
+    Checking bun_zstd v0.0.0 (/data/projects/bun/src/zstd)
+    Checking bun_lolhtml_sys v0.0.0 (/data/projects/bun/src/lolhtml_sys)
+    Checking bun_picohttp v0.0.0 (/data/projects/bun/src/picohttp)
+    Checking bun_output v0.0.0 (/data/projects/bun/src/output)
+    Checking bun_clap v0.0.0 (/data/projects/bun/src/clap)
+    Checking bun_valkey v0.0.0 (/data/projects/bun/src/valkey)
+warning: ambiguous glob re-exports
+  --> src/paths/lib.rs:39:13
+   |
+39 |     pub use super::string_paths::*;
+   |             ^^^^^^^^^^^^^^^^^^^^^^ the name `is_windows_absolute_path_missing_drive_letter` in the value namespace is first re-exported here
+40 |     pub use bun_core::strings::*;
+   |             -------------------- but the name `is_windows_absolute_path_missing_drive_letter` in the value namespace is also re-exported here
+   |
+   = note: `#[warn(ambiguous_glob_reexports)]` on by default
+
+warning: ambiguous glob re-exports
+  --> src/paths/lib.rs:39:13
+   |
+39 |     pub use super::string_paths::*;
+   |             ^^^^^^^^^^^^^^^^^^^^^^ the name `basename` in the value namespace is first re-exported here
+40 |     pub use bun_core::strings::*;
+   |             -------------------- but the name `basename` in the value namespace is also re-exported here
+
+    Checking bun_collections v0.0.0 (/data/projects/bun/src/collections)
+    Checking bun_tcc_sys v0.0.0 (/data/projects/bun/src/tcc_sys)
+warning: `bun_paths` (lib) generated 2 warnings
+    Checking bun_sys v0.0.0 (/data/projects/bun/src/sys)
+    Checking bun_url v0.0.0 (/data/projects/bun/src/url)
+    Checking bun_semver v0.0.0 (/data/projects/bun/src/semver)
+    Checking bun_base64 v0.0.0 (/data/projects/bun/src/base64)
+    Checking bun_shell_parser v0.0.0 (/data/projects/bun/src/shell_parser)
+    Checking bun_threading v0.0.0 (/data/projects/bun/src/threading)
+    Checking bun_ast v0.0.0 (/data/projects/bun/src/ast)
+    Checking bun_which v0.0.0 (/data/projects/bun/src/which)
+    Checking bun_libarchive v0.0.0 (/data/projects/bun/src/libarchive)
+    Checking bun_boringssl v0.0.0 (/data/projects/bun/src/boringssl)
+    Checking bun_perf v0.0.0 (/data/projects/bun/src/perf)
+    Checking bun_glob v0.0.0 (/data/projects/bun/src/glob)
+    Checking bun_dns v0.0.0 (/data/projects/bun/src/dns)
+    Checking bun_http_types v0.0.0 (/data/projects/bun/src/http_types)
+    Checking bun_md v0.0.0 (/data/projects/bun/src/md)
+    Checking bun_analytics v0.0.0 (/data/projects/bun/src/analytics)
+    Checking bun_sha_hmac v0.0.0 (/data/projects/bun/src/sha_hmac)
+    Checking bun_watcher v0.0.0 (/data/projects/bun/src/watcher)
+    Checking bun_exe_format v0.0.0 (/data/projects/bun/src/exe_format)
+    Checking bun_sql v0.0.0 (/data/projects/bun/src/sql)
+    Checking bun_csrf v0.0.0 (/data/projects/bun/src/csrf)
+    Checking bun_spawn_sys v0.0.0 (/data/projects/bun/src/spawn_sys)
+    Checking bun_uws_sys v0.0.0 (/data/projects/bun/src/uws_sys)
+    Checking bun_s3_signing v0.0.0 (/data/projects/bun/src/s3_signing)
+warning: unused import: `strings`
+  --> src/ast/expr.rs:13:22
+   |
+13 | use bun_core::{ZStr, strings};
+   |                      ^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:21:9
+   |
+21 |           pub static ENABLED: AtomicBool = AtomicBool::new(false);
+   |           ---^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+  --> src/sql/lib.rs:9:9
+   |
+ 9 | #![warn(unreachable_pub)]
+   |         ^^^^^^^^^^^^^^^
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:25:9
+   |
+25 |           pub static CHECK: Once = Once::new();
+   |           ---^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:27:9
+   |
+27 |           pub fn load() {
+   |           ---^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:43:9
+   |
+43 |           pub fn write(data: &[u8]) {
+   |           ---^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+53 | /     debug_socket_monitor!(
+54 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR,
+55 | |         "writing to {}"
+56 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:21:9
+   |
+21 |           pub static ENABLED: AtomicBool = AtomicBool::new(false);
+   |           ---^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:25:9
+   |
+25 |           pub static CHECK: Once = Once::new();
+   |           ---^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:27:9
+   |
+27 |           pub fn load() {
+   |           ---^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unreachable `pub` item
+  --> src/sql/postgres/SocketMonitor.rs:43:9
+   |
+43 |           pub fn write(data: &[u8]) {
+   |           ---^^^^^^^^^^^^^^^^^^^^^^
+   |           |
+   |           help: consider restricting its visibility: `pub(super)`
+...
+61 | /     debug_socket_monitor!(
+62 | |         bun_core::env_var::BUN_POSTGRES_SOCKET_MONITOR_READER,
+63 | |         "duplicating reads to {}"
+64 | |     );
+   | |_____- in this macro invocation
+   |
+   = help: or consider exporting it for use by other crates
+   = note: this warning originates in the macro `debug_socket_monitor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+    Checking bun_io v0.0.0 (/data/projects/bun/src/io)
+    Checking bun_uws v0.0.0 (/data/projects/bun/src/uws)
+warning: `bun_sql` (lib) generated 8 warnings
+warning: `bun_ast` (lib) generated 1 warning (run `cargo fix --lib -p bun_ast` to apply 1 suggestion)
+    Checking bun_dotenv v0.0.0 (/data/projects/bun/src/dotenv)
+    Checking bun_install_types v0.0.0 (/data/projects/bun/src/install_types)
+    Checking bun_parsers v0.0.0 (/data/projects/bun/src/parsers)
+    Checking bun_zlib v0.0.0 (/data/projects/bun/src/zlib)
+    Checking bun_event_loop v0.0.0 (/data/projects/bun/src/event_loop)
+    Checking bun_css v0.0.0 (/data/projects/bun/src/css)
+    Checking bun_brotli v0.0.0 (/data/projects/bun/src/brotli)
+    Checking bun_options_types v0.0.0 (/data/projects/bun/src/options_types)
+    Checking bun_sourcemap v0.0.0 (/data/projects/bun/src/sourcemap)
+    Checking bun_http v0.0.0 (/data/projects/bun/src/http)
+    Checking bun_crash_handler v0.0.0 (/data/projects/bun/src/crash_handler)
+    Checking bun_resolve_builtins v0.0.0 (/data/projects/bun/src/resolve_builtins)
+    Checking bun_api v0.0.0 (/data/projects/bun/src/api)
+    Checking bun_js_parser v0.0.0 (/data/projects/bun/src/js_parser)
+    Checking bun_js_printer v0.0.0 (/data/projects/bun/src/js_printer)
+    Checking bun_spawn v0.0.0 (/data/projects/bun/src/spawn)
+warning: unused import: `RefCounted`
+ --> src/spawn/static_pipe_writer.rs:8:48
+  |
+8 | use bun_ptr::{IntrusiveRc, RawSlice, RefCount, RefCounted};
+  |                                                ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bun_spawn` (lib) generated 1 warning (run `cargo fix --lib -p bun_spawn` to apply 1 suggestion)
+    Checking bun_patch v0.0.0 (/data/projects/bun/src/patch)
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/js_printer/renamer.rs:689:58
+    |
+689 |         let s: *mut NumberScope = self.number_scope_pool.get();
+    |                                                          ^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/js_printer/renamer.rs:753:80
+    |
+753 |                 let new_child_scope: *mut NumberScope = self.number_scope_pool.get();
+    |                                                                                ^^^
+
+warning: `bun_js_printer` (lib) generated 2 warnings
+    Checking bun_resolver v0.0.0 (/data/projects/bun/src/resolver)
+    Checking bun_ini v0.0.0 (/data/projects/bun/src/ini)
+warning: unreachable `pub` item
+   --> src/resolver/fs.rs:167:1
+    |
+167 | pub type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
+    | ---^^^^^^^^^^^^^^^^^^^^^^^
+    | |
+    | help: consider restricting its visibility: `pub(crate)`
+    |
+    = help: or consider exporting it for use by other crates
+note: the lint level is defined here
+   --> src/resolver/lib.rs:33:9
+    |
+ 33 | #![warn(unreachable_pub)]
+    |         ^^^^^^^^^^^^^^^
+
+warning: `bun_resolver` (lib) generated 1 warning (run `cargo fix --lib -p bun_resolver` to apply 1 suggestion)
+    Checking bun_router v0.0.0 (/data/projects/bun/src/router)
+    Checking bun_bundler v0.0.0 (/data/projects/bun/src/bundler)
+    Checking bun_standalone_graph v0.0.0 (/data/projects/bun/src/standalone_graph)
+    Checking bun_transpiler v0.0.0 (/data/projects/bun/src/transpiler)
+    Checking bun_bunfig v0.0.0 (/data/projects/bun/src/bunfig)
+    Checking bun_install v0.0.0 (/data/projects/bun/src/install)
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/install/PackageManager/PackageManagerEnqueue.rs:358:48
+    |
+358 |     let task = this.preallocated_resolve_tasks.get();
+    |                                                ^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/PackageManagerEnqueue.rs:1659:48
+     |
+1659 |     let task = this.preallocated_resolve_tasks.get();
+     |                                                ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/PackageManagerEnqueue.rs:1803:48
+     |
+1803 |     let task = this.preallocated_resolve_tasks.get();
+     |                                                ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/install/PackageManager/runTasks.rs:1711:37
+     |
+1711 |     this.preallocated_network_tasks.get()
+     |                                     ^^^
+
+warning: `bun_install` (lib) generated 4 warnings
+    Checking bun_jsc v0.0.0 (/data/projects/bun/src/jsc)
+warning: unnecessary `unsafe` block
+    --> src/jsc/VirtualMachine.rs:1515:17
+     |
+1515 |                 unsafe { (hook.func)(hook.ctx) };
+     |                 ^^^^^^ unnecessary `unsafe` block
+     |
+     = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: type `SecretsCtx` is more private than the item `SecretsJob`
+  --> src/jsc/JSSecrets.rs:64:1
+   |
+64 | pub type SecretsJob = AnyTaskJob<SecretsCtx>;
+   | ^^^^^^^^^^^^^^^^^^^ type alias `SecretsJob` is reachable at visibility `pub`
+   |
+note: but type `SecretsCtx` is only usable at visibility `pub(self)`
+  --> src/jsc/JSSecrets.rs:23:1
+   |
+23 | struct SecretsCtx {
+   | ^^^^^^^^^^^^^^^^^
+   = note: `#[warn(private_interfaces)]` on by default
+
+warning: `bun_jsc` (lib) generated 2 warnings
+    Checking bun_js_parser_jsc v0.0.0 (/data/projects/bun/src/js_parser_jsc)
+    Checking bun_ast_jsc v0.0.0 (/data/projects/bun/src/ast_jsc)
+    Checking bun_css_jsc v0.0.0 (/data/projects/bun/src/css_jsc)
+    Checking bun_sourcemap_jsc v0.0.0 (/data/projects/bun/src/sourcemap_jsc)
+    Checking bun_semver_jsc v0.0.0 (/data/projects/bun/src/semver_jsc)
+    Checking bun_bundler_jsc v0.0.0 (/data/projects/bun/src/bundler_jsc)
+    Checking bun_sql_jsc v0.0.0 (/data/projects/bun/src/sql_jsc)
+    Checking bun_sys_jsc v0.0.0 (/data/projects/bun/src/sys_jsc)
+    Checking bun_http_jsc v0.0.0 (/data/projects/bun/src/http_jsc)
+    Checking bun_patch_jsc v0.0.0 (/data/projects/bun/src/patch_jsc)
+    Checking bun_install_jsc v0.0.0 (/data/projects/bun/src/install_jsc)
+    Checking bun_runtime v0.0.0 (/data/projects/bun/src/runtime)
+error[E0277]: `UnsafeCell<[u8; 0]>` cannot be shared between threads safely
+  --> src/runtime/webcore/blob/copy_file.rs:88:69
+   |
+88 | impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_> {
+   |                                                                     ^^^^^^^^^^^^ `UnsafeCell<[u8; 0]>` cannot be shared between threads safely
+   |
+   = help: within `bun_jsc::JSGlobalObject`, the trait `Sync` is not implemented for `UnsafeCell<[u8; 0]>`
+note: required because it appears within the type `bun_jsc::JSGlobalObject`
+  --> src/jsc/JSGlobalObject.rs:28:38
+   |
+28 | bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
+   |                                      ^^^^^^^^^^^^^^
+   = note: required for `&bun_jsc::JSGlobalObject` to implement `Send`
+note: required because it appears within the type `webcore::blob::copy_file::CopyFile<'_>`
+  --> src/runtime/webcore/blob/copy_file.rs:46:12
+   |
+46 | pub struct CopyFile<'a> {
+   |            ^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+  --> src/jsc/ConcurrentPromiseTask.rs:14:49
+   |
+14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+   |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*const u8` cannot be sent between threads safely
+    --> src/runtime/webcore/blob/copy_file.rs:88:69
+     |
+  88 | impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_> {
+     |                                                                     ^^^^^^^^^^^^ `*const u8` cannot be sent between threads safely
+     |
+     = help: within `webcore::blob::copy_file::CopyFile<'_>`, the trait `Send` is not implemented for `*const u8`
+note: required because it appears within the type `bun_str::ZigStringSlice`
+    --> src/bun_core/string/mod.rs:2019:10
+     |
+2019 | pub enum ZigStringSlice {
+     |          ^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathLike`
+    --> src/jsc/node_path.rs:89:10
+     |
+  89 | pub enum PathLike {
+     |          ^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathOrFileDescriptor`
+    --> src/jsc/node_path.rs:228:10
+     |
+ 228 | pub enum PathOrFileDescriptor {
+     |          ^^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::webcore_types::store::File`
+    --> src/jsc/webcore_types.rs:782:16
+     |
+ 782 |     pub struct File {
+     |                ^^^^
+note: required because it appears within the type `webcore::blob::copy_file::CopyFile<'_>`
+    --> src/runtime/webcore/blob/copy_file.rs:46:12
+     |
+  46 | pub struct CopyFile<'a> {
+     |            ^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*const WTFStringImplStruct` cannot be sent between threads safely
+    --> src/runtime/webcore/blob/copy_file.rs:88:69
+     |
+  88 | impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_> {
+     |                                                                     ^^^^^^^^^^^^ `*const WTFStringImplStruct` cannot be sent between threads safely
+     |
+     = help: within `webcore::blob::copy_file::CopyFile<'_>`, the trait `Send` is not implemented for `*const WTFStringImplStruct`
+note: required because it appears within the type `bun_str::ZigStringSlice`
+    --> src/bun_core/string/mod.rs:2019:10
+     |
+2019 | pub enum ZigStringSlice {
+     |          ^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathLike`
+    --> src/jsc/node_path.rs:89:10
+     |
+  89 | pub enum PathLike {
+     |          ^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathOrFileDescriptor`
+    --> src/jsc/node_path.rs:228:10
+     |
+ 228 | pub enum PathOrFileDescriptor {
+     |          ^^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::webcore_types::store::File`
+    --> src/jsc/webcore_types.rs:782:16
+     |
+ 782 |     pub struct File {
+     |                ^^^^
+note: required because it appears within the type `webcore::blob::copy_file::CopyFile<'_>`
+    --> src/runtime/webcore/blob/copy_file.rs:46:12
+     |
+  46 | pub struct CopyFile<'a> {
+     |            ^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut u8` cannot be shared between threads safely
+   --> src/runtime/webcore/blob/copy_file.rs:88:69
+    |
+ 88 | impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_> {
+    |                                                                     ^^^^^^^^^^^^ `*mut u8` cannot be shared between threads safely
+    |
+    = help: within `bun_jsc::JSGlobalObject`, the trait `Sync` is not implemented for `*mut u8`
+    = note: required because it appears within the type `(*mut u8, PhantomPinned)`
+note: required because it appears within the type `PhantomData<(*mut u8, PhantomPinned)>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/marker.rs:811:12
+    |
+811 | pub struct PhantomData<T: PointeeSized>;
+    |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::JSGlobalObject`
+   --> src/jsc/JSGlobalObject.rs:28:38
+    |
+ 28 | bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
+    |                                      ^^^^^^^^^^^^^^
+    = note: required for `&bun_jsc::JSGlobalObject` to implement `Send`
+note: required because it appears within the type `webcore::blob::copy_file::CopyFile<'_>`
+   --> src/runtime/webcore/blob/copy_file.rs:46:12
+    |
+ 46 | pub struct CopyFile<'a> {
+    |            ^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut u8` cannot be sent between threads safely
+   --> src/runtime/webcore/blob/copy_file.rs:88:69
+    |
+ 88 | impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_> {
+    |                                                                     ^^^^^^^^^^^^ `*mut u8` cannot be sent between threads safely
+    |
+    = help: within `webcore::blob::copy_file::CopyFile<'_>`, the trait `Send` is not implemented for `*mut u8`
+note: required because it appears within the type `bun_jsc::ArrayBuffer`
+   --> src/jsc/array_buffer.rs:21:12
+    |
+ 21 | pub struct ArrayBuffer {
+    |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::MarkedArrayBuffer`
+   --> src/jsc/array_buffer.rs:879:12
+    |
+879 | pub struct MarkedArrayBuffer {
+    |            ^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathLike`
+   --> src/jsc/node_path.rs:89:10
+    |
+ 89 | pub enum PathLike {
+    |          ^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathOrFileDescriptor`
+   --> src/jsc/node_path.rs:228:10
+    |
+228 | pub enum PathOrFileDescriptor {
+    |          ^^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::webcore_types::store::File`
+   --> src/jsc/webcore_types.rs:782:16
+    |
+782 |     pub struct File {
+    |                ^^^^
+note: required because it appears within the type `webcore::blob::copy_file::CopyFile<'_>`
+   --> src/runtime/webcore/blob/copy_file.rs:46:12
+    |
+ 46 | pub struct CopyFile<'a> {
+    |            ^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*const ()` cannot be sent between threads safely
+   --> src/runtime/webcore/blob/copy_file.rs:88:69
+    |
+ 88 | impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_> {
+    |                                                                     ^^^^^^^^^^^^ `*const ()` cannot be sent between threads safely
+    |
+    = help: within `webcore::blob::copy_file::CopyFile<'_>`, the trait `Send` is not implemented for `*const ()`
+note: required because it appears within the type `PhantomData<*const ()>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/marker.rs:811:12
+    |
+811 | pub struct PhantomData<T: PointeeSized>;
+    |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::JSValue`
+   --> src/jsc/JSValue.rs:32:12
+    |
+ 32 | pub struct JSValue(pub usize, PhantomData<*const ()>);
+    |            ^^^^^^^
+note: required because it appears within the type `bun_jsc::ArrayBuffer`
+   --> src/jsc/array_buffer.rs:21:12
+    |
+ 21 | pub struct ArrayBuffer {
+    |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::MarkedArrayBuffer`
+   --> src/jsc/array_buffer.rs:879:12
+    |
+879 | pub struct MarkedArrayBuffer {
+    |            ^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathLike`
+   --> src/jsc/node_path.rs:89:10
+    |
+ 89 | pub enum PathLike {
+    |          ^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathOrFileDescriptor`
+   --> src/jsc/node_path.rs:228:10
+    |
+228 | pub enum PathOrFileDescriptor {
+    |          ^^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::webcore_types::store::File`
+   --> src/jsc/webcore_types.rs:782:16
+    |
+782 |     pub struct File {
+    |                ^^^^
+note: required because it appears within the type `webcore::blob::copy_file::CopyFile<'_>`
+   --> src/runtime/webcore/blob/copy_file.rs:46:12
+    |
+ 46 | pub struct CopyFile<'a> {
+    |            ^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut libc::c_void` cannot be sent between threads safely
+   --> src/runtime/webcore/blob/read_file.rs:156:46
+    |
+156 | impl bun_jsc::work_task::WorkTaskContext for ReadFile {
+    |                                              ^^^^^^^^ `*mut libc::c_void` cannot be sent between threads safely
+    |
+    = help: within `read_file::ReadFile`, the trait `Send` is not implemented for `*mut libc::c_void`
+note: required because it appears within the type `read_file::ReadFile`
+   --> src/runtime/webcore/blob/read_file.rs:172:12
+    |
+172 | pub struct ReadFile {
+    |            ^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+   --> src/jsc/WorkTask.rs:23:36
+    |
+ 23 | pub trait WorkTaskContext: Sized + Send {
+    |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `*mut WorkTask<read_file::ReadFile>` cannot be sent between threads safely
+   --> src/runtime/webcore/blob/read_file.rs:156:46
+    |
+156 | impl bun_jsc::work_task::WorkTaskContext for ReadFile {
+    |                                              ^^^^^^^^ `*mut WorkTask<read_file::ReadFile>` cannot be sent between threads safely
+    |
+    = help: within `read_file::ReadFile`, the trait `Send` is not implemented for `*mut WorkTask<read_file::ReadFile>`
+help: the trait `Send` is implemented for `WorkTask<C>`
+   --> src/jsc/WorkTask.rs:58:1
+    |
+ 58 | unsafe impl<C: WorkTaskContext> Send for WorkTask<C> {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `std::option::Option<*mut WorkTask<read_file::ReadFile>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+    |
+597 | pub enum Option<T> {
+    |          ^^^^^^
+note: required because it appears within the type `read_file::ReadFile`
+   --> src/runtime/webcore/blob/read_file.rs:172:12
+    |
+172 | pub struct ReadFile {
+    |            ^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+   --> src/jsc/WorkTask.rs:23:36
+    |
+ 23 | pub trait WorkTaskContext: Sized + Send {
+    |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `*const u8` cannot be sent between threads safely
+    --> src/runtime/webcore/blob/read_file.rs:156:46
+     |
+ 156 | impl bun_jsc::work_task::WorkTaskContext for ReadFile {
+     |                                              ^^^^^^^^ `*const u8` cannot be sent between threads safely
+     |
+     = help: within `read_file::ReadFile`, the trait `Send` is not implemented for `*const u8`
+note: required because it appears within the type `bun_str::ZigStringSlice`
+    --> src/bun_core/string/mod.rs:2019:10
+     |
+2019 | pub enum ZigStringSlice {
+     |          ^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathLike`
+    --> src/jsc/node_path.rs:89:10
+     |
+  89 | pub enum PathLike {
+     |          ^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathOrFileDescriptor`
+    --> src/jsc/node_path.rs:228:10
+     |
+ 228 | pub enum PathOrFileDescriptor {
+     |          ^^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::webcore_types::store::File`
+    --> src/jsc/webcore_types.rs:782:16
+     |
+ 782 |     pub struct File {
+     |                ^^^^
+note: required because it appears within the type `read_file::ReadFile`
+    --> src/runtime/webcore/blob/read_file.rs:172:12
+     |
+ 172 | pub struct ReadFile {
+     |            ^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+    --> src/jsc/WorkTask.rs:23:36
+     |
+  23 | pub trait WorkTaskContext: Sized + Send {
+     |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `*const WTFStringImplStruct` cannot be sent between threads safely
+    --> src/runtime/webcore/blob/read_file.rs:156:46
+     |
+ 156 | impl bun_jsc::work_task::WorkTaskContext for ReadFile {
+     |                                              ^^^^^^^^ `*const WTFStringImplStruct` cannot be sent between threads safely
+     |
+     = help: within `read_file::ReadFile`, the trait `Send` is not implemented for `*const WTFStringImplStruct`
+note: required because it appears within the type `bun_str::ZigStringSlice`
+    --> src/bun_core/string/mod.rs:2019:10
+     |
+2019 | pub enum ZigStringSlice {
+     |          ^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathLike`
+    --> src/jsc/node_path.rs:89:10
+     |
+  89 | pub enum PathLike {
+     |          ^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathOrFileDescriptor`
+    --> src/jsc/node_path.rs:228:10
+     |
+ 228 | pub enum PathOrFileDescriptor {
+     |          ^^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::webcore_types::store::File`
+    --> src/jsc/webcore_types.rs:782:16
+     |
+ 782 |     pub struct File {
+     |                ^^^^
+note: required because it appears within the type `read_file::ReadFile`
+    --> src/runtime/webcore/blob/read_file.rs:172:12
+     |
+ 172 | pub struct ReadFile {
+     |            ^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+    --> src/jsc/WorkTask.rs:23:36
+     |
+  23 | pub trait WorkTaskContext: Sized + Send {
+     |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `*mut u8` cannot be sent between threads safely
+   --> src/runtime/webcore/blob/read_file.rs:156:46
+    |
+156 | impl bun_jsc::work_task::WorkTaskContext for ReadFile {
+    |                                              ^^^^^^^^ `*mut u8` cannot be sent between threads safely
+    |
+    = help: within `read_file::ReadFile`, the trait `Send` is not implemented for `*mut u8`
+note: required because it appears within the type `bun_jsc::ArrayBuffer`
+   --> src/jsc/array_buffer.rs:21:12
+    |
+ 21 | pub struct ArrayBuffer {
+    |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::MarkedArrayBuffer`
+   --> src/jsc/array_buffer.rs:879:12
+    |
+879 | pub struct MarkedArrayBuffer {
+    |            ^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathLike`
+   --> src/jsc/node_path.rs:89:10
+    |
+ 89 | pub enum PathLike {
+    |          ^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathOrFileDescriptor`
+   --> src/jsc/node_path.rs:228:10
+    |
+228 | pub enum PathOrFileDescriptor {
+    |          ^^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::webcore_types::store::File`
+   --> src/jsc/webcore_types.rs:782:16
+    |
+782 |     pub struct File {
+    |                ^^^^
+note: required because it appears within the type `read_file::ReadFile`
+   --> src/runtime/webcore/blob/read_file.rs:172:12
+    |
+172 | pub struct ReadFile {
+    |            ^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+   --> src/jsc/WorkTask.rs:23:36
+    |
+ 23 | pub trait WorkTaskContext: Sized + Send {
+    |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `*const ()` cannot be sent between threads safely
+   --> src/runtime/webcore/blob/read_file.rs:156:46
+    |
+156 | impl bun_jsc::work_task::WorkTaskContext for ReadFile {
+    |                                              ^^^^^^^^ `*const ()` cannot be sent between threads safely
+    |
+    = help: within `read_file::ReadFile`, the trait `Send` is not implemented for `*const ()`
+note: required because it appears within the type `PhantomData<*const ()>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/marker.rs:811:12
+    |
+811 | pub struct PhantomData<T: PointeeSized>;
+    |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::JSValue`
+   --> src/jsc/JSValue.rs:32:12
+    |
+ 32 | pub struct JSValue(pub usize, PhantomData<*const ()>);
+    |            ^^^^^^^
+note: required because it appears within the type `bun_jsc::ArrayBuffer`
+   --> src/jsc/array_buffer.rs:21:12
+    |
+ 21 | pub struct ArrayBuffer {
+    |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::MarkedArrayBuffer`
+   --> src/jsc/array_buffer.rs:879:12
+    |
+879 | pub struct MarkedArrayBuffer {
+    |            ^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathLike`
+   --> src/jsc/node_path.rs:89:10
+    |
+ 89 | pub enum PathLike {
+    |          ^^^^^^^^
+note: required because it appears within the type `bun_jsc::node_path::PathOrFileDescriptor`
+   --> src/jsc/node_path.rs:228:10
+    |
+228 | pub enum PathOrFileDescriptor {
+    |          ^^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::webcore_types::store::File`
+   --> src/jsc/webcore_types.rs:782:16
+    |
+782 |     pub struct File {
+    |                ^^^^
+note: required because it appears within the type `read_file::ReadFile`
+   --> src/runtime/webcore/blob/read_file.rs:172:12
+    |
+172 | pub struct ReadFile {
+    |            ^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+   --> src/jsc/WorkTask.rs:23:36
+    |
+ 23 | pub trait WorkTaskContext: Sized + Send {
+    |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `*mut libc::c_void` cannot be sent between threads safely
+  --> src/runtime/webcore/blob/write_file.rs:35:46
+   |
+35 | impl bun_jsc::work_task::WorkTaskContext for WriteFile {
+   |                                              ^^^^^^^^^ `*mut libc::c_void` cannot be sent between threads safely
+   |
+   = help: within `write_file::WriteFile`, the trait `Send` is not implemented for `*mut libc::c_void`
+note: required because it appears within the type `write_file::WriteFile`
+  --> src/runtime/webcore/blob/write_file.rs:46:12
+   |
+46 | pub struct WriteFile {
+   |            ^^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+  --> src/jsc/WorkTask.rs:23:36
+   |
+23 | pub trait WorkTaskContext: Sized + Send {
+   |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `*mut WorkTask<write_file::WriteFile>` cannot be sent between threads safely
+   --> src/runtime/webcore/blob/write_file.rs:35:46
+    |
+ 35 | impl bun_jsc::work_task::WorkTaskContext for WriteFile {
+    |                                              ^^^^^^^^^ `*mut WorkTask<write_file::WriteFile>` cannot be sent between threads safely
+    |
+    = help: within `write_file::WriteFile`, the trait `Send` is not implemented for `*mut WorkTask<write_file::WriteFile>`
+help: the trait `Send` is implemented for `WorkTask<C>`
+   --> src/jsc/WorkTask.rs:58:1
+    |
+ 58 | unsafe impl<C: WorkTaskContext> Send for WorkTask<C> {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `std::option::Option<*mut WorkTask<write_file::WriteFile>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+    |
+597 | pub enum Option<T> {
+    |          ^^^^^^
+note: required because it appears within the type `write_file::WriteFile`
+   --> src/runtime/webcore/blob/write_file.rs:46:12
+    |
+ 46 | pub struct WriteFile {
+    |            ^^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+   --> src/jsc/WorkTask.rs:23:36
+    |
+ 23 | pub trait WorkTaskContext: Sized + Send {
+    |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `UnsafeCell<[u8; 0]>` cannot be shared between threads safely
+   --> src/runtime/api/glob.rs:238:43
+    |
+238 | impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
+    |                                           ^^^^^^^^^^^^ `UnsafeCell<[u8; 0]>` cannot be shared between threads safely
+    |
+    = help: within `bun_jsc::JSGlobalObject`, the trait `Sync` is not implemented for `UnsafeCell<[u8; 0]>`
+note: required because it appears within the type `bun_jsc::JSGlobalObject`
+   --> src/jsc/JSGlobalObject.rs:28:38
+    |
+ 28 | bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
+    |                                      ^^^^^^^^^^^^^^
+    = note: required for `&'a bun_jsc::JSGlobalObject` to implement `Send`
+note: required because it appears within the type `WalkTask<'a>`
+   --> src/runtime/api/glob.rs:190:12
+    |
+190 | pub struct WalkTask<'a> {
+    |            ^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut u8` cannot be shared between threads safely
+   --> src/runtime/api/glob.rs:238:43
+    |
+238 | impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
+    |                                           ^^^^^^^^^^^^ `*mut u8` cannot be shared between threads safely
+    |
+    = help: within `bun_jsc::JSGlobalObject`, the trait `Sync` is not implemented for `*mut u8`
+    = note: required because it appears within the type `(*mut u8, PhantomPinned)`
+note: required because it appears within the type `PhantomData<(*mut u8, PhantomPinned)>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/marker.rs:811:12
+    |
+811 | pub struct PhantomData<T: PointeeSized>;
+    |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::JSGlobalObject`
+   --> src/jsc/JSGlobalObject.rs:28:38
+    |
+ 28 | bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
+    |                                      ^^^^^^^^^^^^^^
+    = note: required for `&'a bun_jsc::JSGlobalObject` to implement `Send`
+note: required because it appears within the type `WalkTask<'a>`
+   --> src/runtime/api/glob.rs:190:12
+    |
+190 | pub struct WalkTask<'a> {
+    |            ^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut usize` cannot be sent between threads safely
+    --> src/runtime/api/glob.rs:238:43
+     |
+ 238 | impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
+     |                                           ^^^^^^^^^^^^ `*mut usize` cannot be sent between threads safely
+     |
+     = help: within `bun_glob::GlobWalker<SyscallAccessor, false>`, the trait `Send` is not implemented for `*mut usize`
+note: required because it appears within the type `DynamicBitSetUnmanaged`
+    --> src/collections/bit_set.rs:780:12
+     |
+ 780 | pub struct DynamicBitSetUnmanaged {
+     |            ^^^^^^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `AutoBitSet`
+    --> src/collections/bit_set.rs:1439:10
+     |
+1439 | pub enum AutoBitSet {
+     |          ^^^^^^^^^^
+note: required because it appears within the type `WorkItem<SyscallAccessor>`
+    --> src/glob/GlobWalker.rs:1311:12
+     |
+1311 | pub struct WorkItem<A: Accessor> {
+     |            ^^^^^^^^
+note: required because it appears within the type `PhantomData<WorkItem<SyscallAccessor>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/marker.rs:811:12
+     |
+ 811 | pub struct PhantomData<T: PointeeSized>;
+     |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_collections::smallvec::alloc::raw_vec::RawVec<WorkItem<SyscallAccessor>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:73:19
+     |
+  73 | pub(crate) struct RawVec<T, A: Allocator = Global> {
+     |                   ^^^^^^
+note: required because it appears within the type `Vec<WorkItem<SyscallAccessor>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:438:12
+     |
+ 438 | pub struct Vec<T, #[unstable(feature = "allocator_api", issue = "32838")] A: Allocator = Global> {
+     |            ^^^
+note: required because it appears within the type `bun_glob::GlobWalker<SyscallAccessor, false>`
+    --> src/glob/GlobWalker.rs:316:12
+     |
+ 316 | pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
+     |            ^^^^^^^^^^
+     = note: required for `std::ptr::Unique<bun_glob::GlobWalker<SyscallAccessor, false>>` to implement `Send`
+note: required because it appears within the type `std::boxed::Box<bun_glob::GlobWalker<SyscallAccessor, false>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:234:12
+     |
+ 234 | pub struct Box<
+     |            ^^^
+note: required because it appears within the type `WalkTask<'a>`
+    --> src/runtime/api/glob.rs:190:12
+     |
+ 190 | pub struct WalkTask<'a> {
+     |            ^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `std::ptr::NonNull<JSTranspiler>` cannot be sent between threads safely
+   --> src/runtime/api/JSTranspiler.rs:704:73
+    |
+704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    |                                                                         ^^^^^^^^^^^^^^^^^ `std::ptr::NonNull<JSTranspiler>` cannot be sent between threads safely
+    |
+    = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `std::ptr::NonNull<JSTranspiler>`
+note: required because it appears within the type `RefPtr<JSTranspiler>`
+   --> src/ptr/ref_count.rs:790:12
+    |
+790 | pub struct RefPtr<T: AnyRefCounted> {
+    |            ^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+   --> src/runtime/api/JSTranspiler.rs:676:12
+    |
+676 | pub struct TransformTask<'a> {
+    |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `UnsafeCell<[u8; 0]>` cannot be shared between threads safely
+   --> src/runtime/api/JSTranspiler.rs:704:73
+    |
+704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    |                                                                         ^^^^^^^^^^^^^^^^^ `UnsafeCell<[u8; 0]>` cannot be shared between threads safely
+    |
+    = help: within `bun_jsc::JSGlobalObject`, the trait `Sync` is not implemented for `UnsafeCell<[u8; 0]>`
+note: required because it appears within the type `bun_jsc::JSGlobalObject`
+   --> src/jsc/JSGlobalObject.rs:28:38
+    |
+ 28 | bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
+    |                                      ^^^^^^^^^^^^^^
+    = note: required for `&'a bun_jsc::JSGlobalObject` to implement `Send`
+note: required because it appears within the type `TransformTask<'a>`
+   --> src/runtime/api/JSTranspiler.rs:676:12
+    |
+676 | pub struct TransformTask<'a> {
+    |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*const u8` cannot be sent between threads safely
+    --> src/runtime/api/JSTranspiler.rs:704:73
+     |
+ 704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+     |                                                                         ^^^^^^^^^^^^^^^^^ `*const u8` cannot be sent between threads safely
+     |
+     = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*const u8`
+note: required because it appears within the type `bun_str::ZigStringSlice`
+    --> src/bun_core/string/mod.rs:2019:10
+     |
+2019 | pub enum ZigStringSlice {
+     |          ^^^^^^^^^^^^^^
+note: required because it appears within the type `node::types::StringOrBuffer`
+    --> src/runtime/node/types.rs:244:10
+     |
+ 244 | pub enum StringOrBuffer {
+     |          ^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::ThreadSafe<node::types::StringOrBuffer>`
+    --> src/jsc/node_path.rs:45:12
+     |
+  45 | pub struct ThreadSafe<T: Unprotect>(T);
+     |            ^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+    --> src/runtime/api/JSTranspiler.rs:676:12
+     |
+ 676 | pub struct TransformTask<'a> {
+     |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*const WTFStringImplStruct` cannot be sent between threads safely
+    --> src/runtime/api/JSTranspiler.rs:704:73
+     |
+ 704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+     |                                                                         ^^^^^^^^^^^^^^^^^ `*const WTFStringImplStruct` cannot be sent between threads safely
+     |
+     = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*const WTFStringImplStruct`
+note: required because it appears within the type `bun_str::ZigStringSlice`
+    --> src/bun_core/string/mod.rs:2019:10
+     |
+2019 | pub enum ZigStringSlice {
+     |          ^^^^^^^^^^^^^^
+note: required because it appears within the type `node::types::StringOrBuffer`
+    --> src/runtime/node/types.rs:244:10
+     |
+ 244 | pub enum StringOrBuffer {
+     |          ^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::ThreadSafe<node::types::StringOrBuffer>`
+    --> src/jsc/node_path.rs:45:12
+     |
+  45 | pub struct ThreadSafe<T: Unprotect>(T);
+     |            ^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+    --> src/runtime/api/JSTranspiler.rs:676:12
+     |
+ 676 | pub struct TransformTask<'a> {
+     |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut bun_ast::Log` cannot be sent between threads safely
+   --> src/runtime/api/JSTranspiler.rs:704:73
+    |
+704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    |                                                                         ^^^^^^^^^^^^^^^^^ `*mut bun_ast::Log` cannot be sent between threads safely
+    |
+    = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*mut bun_ast::Log`
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+   --> src/bundler/transpiler.rs:124:12
+    |
+124 | pub struct Transpiler<'a> {
+    |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+    |
+ 74 | pub struct MaybeDangling<P: ?Sized>(P);
+    |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+    |
+161 | pub struct ManuallyDrop<T: ?Sized> {
+    |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+   --> src/runtime/api/JSTranspiler.rs:676:12
+    |
+676 | pub struct TransformTask<'a> {
+    |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut bun_bundler::bun_fs::FileSystem` cannot be sent between threads safely
+   --> src/runtime/api/JSTranspiler.rs:704:73
+    |
+704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    |                                                                         ^^^^^^^^^^^^^^^^^ `*mut bun_bundler::bun_fs::FileSystem` cannot be sent between threads safely
+    |
+    = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*mut bun_bundler::bun_fs::FileSystem`
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+   --> src/bundler/transpiler.rs:124:12
+    |
+124 | pub struct Transpiler<'a> {
+    |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+    |
+ 74 | pub struct MaybeDangling<P: ?Sized>(P);
+    |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+    |
+161 | pub struct ManuallyDrop<T: ?Sized> {
+    |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+   --> src/runtime/api/JSTranspiler.rs:676:12
+    |
+676 | pub struct TransformTask<'a> {
+    |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut bun_dotenv::Loader<'static>` cannot be sent between threads safely
+   --> src/runtime/api/JSTranspiler.rs:704:73
+    |
+704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    |                                                                         ^^^^^^^^^^^^^^^^^ `*mut bun_dotenv::Loader<'static>` cannot be sent between threads safely
+    |
+    = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*mut bun_dotenv::Loader<'static>`
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+   --> src/bundler/transpiler.rs:124:12
+    |
+124 | pub struct Transpiler<'a> {
+    |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+    |
+ 74 | pub struct MaybeDangling<P: ?Sized>(P);
+    |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+    |
+161 | pub struct ManuallyDrop<T: ?Sized> {
+    |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+   --> src/runtime/api/JSTranspiler.rs:676:12
+    |
+676 | pub struct TransformTask<'a> {
+    |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut u8` cannot be sent between threads safely
+   --> src/runtime/api/JSTranspiler.rs:704:73
+    |
+704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    |                                                                         ^^^^^^^^^^^^^^^^^ `*mut u8` cannot be sent between threads safely
+    |
+    = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*mut u8`
+note: required because it appears within the type `bun_jsc::ArrayBuffer`
+   --> src/jsc/array_buffer.rs:21:12
+    |
+ 21 | pub struct ArrayBuffer {
+    |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::MarkedArrayBuffer`
+   --> src/jsc/array_buffer.rs:879:12
+    |
+879 | pub struct MarkedArrayBuffer {
+    |            ^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `node::types::StringOrBuffer`
+   --> src/runtime/node/types.rs:244:10
+    |
+244 | pub enum StringOrBuffer {
+    |          ^^^^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::ThreadSafe<node::types::StringOrBuffer>`
+   --> src/jsc/node_path.rs:45:12
+    |
+ 45 | pub struct ThreadSafe<T: Unprotect>(T);
+    |            ^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+   --> src/runtime/api/JSTranspiler.rs:676:12
+    |
+676 | pub struct TransformTask<'a> {
+    |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*const ()` cannot be sent between threads safely
+    --> src/runtime/api/JSTranspiler.rs:704:73
+     |
+ 704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+     |                                                                         ^^^^^^^^^^^^^^^^^ `*const ()` cannot be sent between threads safely
+     |
+     = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*const ()`
+note: required because it appears within the type `bun_bundler::BundleOptions<'static>`
+    --> src/bundler/options.rs:1297:12
+     |
+1297 | pub struct BundleOptions<'a> {
+     |            ^^^^^^^^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+    --> src/bundler/transpiler.rs:124:12
+     |
+ 124 | pub struct Transpiler<'a> {
+     |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+     |
+  74 | pub struct MaybeDangling<P: ?Sized>(P);
+     |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+     |
+ 161 | pub struct ManuallyDrop<T: ?Sized> {
+     |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+    --> src/runtime/api/JSTranspiler.rs:676:12
+     |
+ 676 | pub struct TransformTask<'a> {
+     |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut BSSMapInner<bun_resolver::DirInfo, 2048, true>` cannot be sent between threads safely
+    --> src/runtime/api/JSTranspiler.rs:704:73
+     |
+ 704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+     |                                                                         ^^^^^^^^^^^^^^^^^ `*mut BSSMapInner<bun_resolver::DirInfo, 2048, true>` cannot be sent between threads safely
+     |
+     = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*mut BSSMapInner<bun_resolver::DirInfo, 2048, true>`
+note: required because it appears within the type `bun_resolver::Resolver<'static>`
+    --> src/resolver/lib.rs:4078:16
+     |
+4078 |     pub struct Resolver<'a> {
+     |                ^^^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+    --> src/bundler/transpiler.rs:124:12
+     |
+ 124 | pub struct Transpiler<'a> {
+     |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+     |
+  74 | pub struct MaybeDangling<P: ?Sized>(P);
+     |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+     |
+ 161 | pub struct ManuallyDrop<T: ?Sized> {
+     |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+    --> src/runtime/api/JSTranspiler.rs:676:12
+     |
+ 676 | pub struct TransformTask<'a> {
+     |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut bun_bundler::BundleOptions<'static>` cannot be sent between threads safely
+   --> src/runtime/api/JSTranspiler.rs:704:73
+    |
+704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    |                                                                         ^^^^^^^^^^^^^^^^^ `*mut bun_bundler::BundleOptions<'static>` cannot be sent between threads safely
+    |
+    = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*mut bun_bundler::BundleOptions<'static>`
+note: required because it appears within the type `bun_bundler::Linker`
+   --> src/bundler/linker.rs:48:12
+    |
+ 48 | pub struct Linker {
+    |            ^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+   --> src/bundler/transpiler.rs:124:12
+    |
+124 | pub struct Transpiler<'a> {
+    |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+    |
+ 74 | pub struct MaybeDangling<P: ?Sized>(P);
+    |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+    |
+161 | pub struct ManuallyDrop<T: ?Sized> {
+    |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+   --> src/runtime/api/JSTranspiler.rs:676:12
+    |
+676 | pub struct TransformTask<'a> {
+    |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut VecDeque<bun_resolver::Result>` cannot be sent between threads safely
+   --> src/runtime/api/JSTranspiler.rs:704:73
+    |
+704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    |                                                                         ^^^^^^^^^^^^^^^^^ `*mut VecDeque<bun_resolver::Result>` cannot be sent between threads safely
+    |
+    = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*mut VecDeque<bun_resolver::Result>`
+note: required because it appears within the type `bun_bundler::Linker`
+   --> src/bundler/linker.rs:48:12
+    |
+ 48 | pub struct Linker {
+    |            ^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+   --> src/bundler/transpiler.rs:124:12
+    |
+124 | pub struct Transpiler<'a> {
+    |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+    |
+ 74 | pub struct MaybeDangling<P: ?Sized>(P);
+    |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+    |
+161 | pub struct ManuallyDrop<T: ?Sized> {
+    |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+   --> src/runtime/api/JSTranspiler.rs:676:12
+    |
+676 | pub struct TransformTask<'a> {
+    |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut bun_resolver::Resolver<'static>` cannot be sent between threads safely
+   --> src/runtime/api/JSTranspiler.rs:704:73
+    |
+704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    |                                                                         ^^^^^^^^^^^^^^^^^ `*mut bun_resolver::Resolver<'static>` cannot be sent between threads safely
+    |
+    = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*mut bun_resolver::Resolver<'static>`
+note: required because it appears within the type `bun_bundler::Linker`
+   --> src/bundler/linker.rs:48:12
+    |
+ 48 | pub struct Linker {
+    |            ^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+   --> src/bundler/transpiler.rs:124:12
+    |
+124 | pub struct Transpiler<'a> {
+    |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+    |
+ 74 | pub struct MaybeDangling<P: ?Sized>(P);
+    |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+    |
+161 | pub struct ManuallyDrop<T: ?Sized> {
+    |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+   --> src/runtime/api/JSTranspiler.rs:676:12
+    |
+676 | pub struct TransformTask<'a> {
+    |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut bun_collections::HashMap<u64, ()>` cannot be sent between threads safely
+   --> src/runtime/api/JSTranspiler.rs:704:73
+    |
+704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    |                                                                         ^^^^^^^^^^^^^^^^^ `*mut bun_collections::HashMap<u64, ()>` cannot be sent between threads safely
+    |
+    = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*mut bun_collections::HashMap<u64, ()>`
+note: required because it appears within the type `bun_bundler::Linker`
+   --> src/bundler/linker.rs:48:12
+    |
+ 48 | pub struct Linker {
+    |            ^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+   --> src/bundler/transpiler.rs:124:12
+    |
+124 | pub struct Transpiler<'a> {
+    |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+    |
+ 74 | pub struct MaybeDangling<P: ?Sized>(P);
+    |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+    |
+161 | pub struct ManuallyDrop<T: ?Sized> {
+    |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+   --> src/runtime/api/JSTranspiler.rs:676:12
+    |
+676 | pub struct TransformTask<'a> {
+    |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut u8` cannot be shared between threads safely
+   --> src/runtime/api/JSTranspiler.rs:704:73
+    |
+704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    |                                                                         ^^^^^^^^^^^^^^^^^ `*mut u8` cannot be shared between threads safely
+    |
+    = help: within `bun_jsc::JSGlobalObject`, the trait `Sync` is not implemented for `*mut u8`
+    = note: required because it appears within the type `(*mut u8, PhantomPinned)`
+note: required because it appears within the type `PhantomData<(*mut u8, PhantomPinned)>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/marker.rs:811:12
+    |
+811 | pub struct PhantomData<T: PointeeSized>;
+    |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::JSGlobalObject`
+   --> src/jsc/JSGlobalObject.rs:28:38
+    |
+ 28 | bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
+    |                                      ^^^^^^^^^^^^^^
+    = note: required for `&'a bun_jsc::JSGlobalObject` to implement `Send`
+note: required because it appears within the type `TransformTask<'a>`
+   --> src/runtime/api/JSTranspiler.rs:676:12
+    |
+676 | pub struct TransformTask<'a> {
+    |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `std::ptr::NonNull<BunInstall>` cannot be sent between threads safely
+    --> src/runtime/api/JSTranspiler.rs:704:73
+     |
+ 704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+     |                                                                         ^^^^^^^^^^^^^^^^^ `std::ptr::NonNull<BunInstall>` cannot be sent between threads safely
+     |
+     = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `std::ptr::NonNull<BunInstall>`
+note: required because it appears within the type `std::option::Option<std::ptr::NonNull<BunInstall>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+     |
+ 597 | pub enum Option<T> {
+     |          ^^^^^^
+note: required because it appears within the type `bun_bundler::BundleOptions<'static>`
+    --> src/bundler/options.rs:1297:12
+     |
+1297 | pub struct BundleOptions<'a> {
+     |            ^^^^^^^^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+    --> src/bundler/transpiler.rs:124:12
+     |
+ 124 | pub struct Transpiler<'a> {
+     |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+     |
+  74 | pub struct MaybeDangling<P: ?Sized>(P);
+     |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+     |
+ 161 | pub struct ManuallyDrop<T: ?Sized> {
+     |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+    --> src/runtime/api/JSTranspiler.rs:676:12
+     |
+ 676 | pub struct TransformTask<'a> {
+     |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `std::ptr::NonNull<(dyn AutoInstaller + 'static)>` cannot be sent between threads safely
+    --> src/runtime/api/JSTranspiler.rs:704:73
+     |
+ 704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+     |                                                                         ^^^^^^^^^^^^^^^^^ `std::ptr::NonNull<(dyn AutoInstaller + 'static)>` cannot be sent between threads safely
+     |
+     = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `std::ptr::NonNull<(dyn AutoInstaller + 'static)>`
+note: required because it appears within the type `std::option::Option<std::ptr::NonNull<(dyn AutoInstaller + 'static)>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+     |
+ 597 | pub enum Option<T> {
+     |          ^^^^^^
+note: required because it appears within the type `bun_resolver::Resolver<'static>`
+    --> src/resolver/lib.rs:4078:16
+     |
+4078 |     pub struct Resolver<'a> {
+     |                ^^^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+    --> src/bundler/transpiler.rs:124:12
+     |
+ 124 | pub struct Transpiler<'a> {
+     |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+     |
+  74 | pub struct MaybeDangling<P: ?Sized>(P);
+     |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+     |
+ 161 | pub struct ManuallyDrop<T: ?Sized> {
+     |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+    --> src/runtime/api/JSTranspiler.rs:676:12
+     |
+ 676 | pub struct TransformTask<'a> {
+     |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `std::ptr::NonNull<bun_dotenv::Loader<'static>>` cannot be sent between threads safely
+    --> src/runtime/api/JSTranspiler.rs:704:73
+     |
+ 704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+     |                                                                         ^^^^^^^^^^^^^^^^^ `std::ptr::NonNull<bun_dotenv::Loader<'static>>` cannot be sent between threads safely
+     |
+     = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `std::ptr::NonNull<bun_dotenv::Loader<'static>>`
+note: required because it appears within the type `std::option::Option<std::ptr::NonNull<bun_dotenv::Loader<'static>>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+     |
+ 597 | pub enum Option<T> {
+     |          ^^^^^^
+note: required because it appears within the type `bun_resolver::Resolver<'static>`
+    --> src/resolver/lib.rs:4078:16
+     |
+4078 |     pub struct Resolver<'a> {
+     |                ^^^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+    --> src/bundler/transpiler.rs:124:12
+     |
+ 124 | pub struct Transpiler<'a> {
+     |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+     |
+  74 | pub struct MaybeDangling<P: ?Sized>(P);
+     |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+     |
+ 161 | pub struct ManuallyDrop<T: ?Sized> {
+     |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+    --> src/runtime/api/JSTranspiler.rs:676:12
+     |
+ 676 | pub struct TransformTask<'a> {
+     |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut (dyn PluginResolver + 'static)` cannot be sent between threads safely
+   --> src/runtime/api/JSTranspiler.rs:704:73
+    |
+704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    |                                                                         ^^^^^^^^^^^^^^^^^ `*mut (dyn PluginResolver + 'static)` cannot be sent between threads safely
+    |
+    = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*mut (dyn PluginResolver + 'static)`
+note: required because it appears within the type `std::option::Option<*mut (dyn PluginResolver + 'static)>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+    |
+597 | pub enum Option<T> {
+    |          ^^^^^^
+note: required because it appears within the type `bun_bundler::Linker`
+   --> src/bundler/linker.rs:48:12
+    |
+ 48 | pub struct Linker {
+    |            ^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+   --> src/bundler/transpiler.rs:124:12
+    |
+124 | pub struct Transpiler<'a> {
+    |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+    |
+ 74 | pub struct MaybeDangling<P: ?Sized>(P);
+    |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+    |
+161 | pub struct ManuallyDrop<T: ?Sized> {
+    |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+   --> src/runtime/api/JSTranspiler.rs:676:12
+    |
+676 | pub struct TransformTask<'a> {
+    |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut libc::c_void` cannot be sent between threads safely
+   --> src/runtime/api/JSTranspiler.rs:704:73
+    |
+704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    |                                                                         ^^^^^^^^^^^^^^^^^ `*mut libc::c_void` cannot be sent between threads safely
+    |
+    = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*mut libc::c_void`
+note: required because it appears within the type `bun_js_parser::Macro::MacroContext`
+   --> src/js_parser/lib.rs:87:16
+    |
+ 87 |     pub struct MacroContext {
+    |                ^^^^^^^^^^^^
+note: required because it appears within the type `std::option::Option<bun_js_parser::Macro::MacroContext>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+    |
+597 | pub enum Option<T> {
+    |          ^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+   --> src/bundler/transpiler.rs:124:12
+    |
+124 | pub struct Transpiler<'a> {
+    |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+    |
+ 74 | pub struct MaybeDangling<P: ?Sized>(P);
+    |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+    |
+161 | pub struct ManuallyDrop<T: ?Sized> {
+    |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+   --> src/runtime/api/JSTranspiler.rs:676:12
+    |
+676 | pub struct TransformTask<'a> {
+    |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut ()` cannot be sent between threads safely
+    --> src/runtime/api/JSTranspiler.rs:704:73
+     |
+ 704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+     |                                                                         ^^^^^^^^^^^^^^^^^ `*mut ()` cannot be sent between threads safely
+     |
+     = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*mut ()`
+note: required because it appears within the type `AnyResolveWatcher`
+    --> src/watcher/Watcher.rs:71:12
+     |
+  71 | pub struct AnyResolveWatcher {
+     |            ^^^^^^^^^^^^^^^^^
+note: required because it appears within the type `std::option::Option<AnyResolveWatcher>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+     |
+ 597 | pub enum Option<T> {
+     |          ^^^^^^
+note: required because it appears within the type `bun_resolver::Resolver<'static>`
+    --> src/resolver/lib.rs:4078:16
+     |
+4078 |     pub struct Resolver<'a> {
+     |                ^^^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+    --> src/bundler/transpiler.rs:124:12
+     |
+ 124 | pub struct Transpiler<'a> {
+     |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+     |
+  74 | pub struct MaybeDangling<P: ?Sized>(P);
+     |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+     |
+ 161 | pub struct ManuallyDrop<T: ?Sized> {
+     |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+    --> src/runtime/api/JSTranspiler.rs:676:12
+     |
+ 676 | pub struct TransformTask<'a> {
+     |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `std::ptr::NonNull<libc::c_void>` cannot be sent between threads safely
+    --> src/runtime/api/JSTranspiler.rs:704:73
+     |
+ 704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+     |                                                                         ^^^^^^^^^^^^^^^^^ `std::ptr::NonNull<libc::c_void>` cannot be sent between threads safely
+     |
+     = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `std::ptr::NonNull<libc::c_void>`
+note: required because it appears within the type `std::option::Option<std::ptr::NonNull<libc::c_void>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+     |
+ 597 | pub enum Option<T> {
+     |          ^^^^^^
+note: required because it appears within the type `WakeHandler`
+    --> src/install_types/resolver_hooks.rs:1386:12
+     |
+1386 | pub struct WakeHandler {
+     |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_resolver::Resolver<'static>`
+    --> src/resolver/lib.rs:4078:16
+     |
+4078 |     pub struct Resolver<'a> {
+     |                ^^^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+    --> src/bundler/transpiler.rs:124:12
+     |
+ 124 | pub struct Transpiler<'a> {
+     |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+     |
+  74 | pub struct MaybeDangling<P: ?Sized>(P);
+     |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+     |
+ 161 | pub struct ManuallyDrop<T: ?Sized> {
+     |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+    --> src/runtime/api/JSTranspiler.rs:676:12
+     |
+ 676 | pub struct TransformTask<'a> {
+     |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `std::ptr::NonNull<bun_router::Route>` cannot be sent between threads safely
+   --> src/runtime/api/JSTranspiler.rs:704:73
+    |
+704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    |                                                                         ^^^^^^^^^^^^^^^^^ `std::ptr::NonNull<bun_router::Route>` cannot be sent between threads safely
+    |
+    = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `std::ptr::NonNull<bun_router::Route>`
+note: required because it appears within the type `std::option::Option<std::ptr::NonNull<bun_router::Route>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+    |
+597 | pub enum Option<T> {
+    |          ^^^^^^
+note: required because it appears within the type `Routes`
+   --> src/router/lib.rs:430:12
+    |
+430 | pub struct Routes {
+    |            ^^^^^^
+note: required because it appears within the type `bun_router::Router<'static>`
+   --> src/router/lib.rs:231:12
+    |
+231 | pub struct Router<'a> {
+    |            ^^^^^^
+note: required because it appears within the type `std::option::Option<bun_router::Router<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+    |
+597 | pub enum Option<T> {
+    |          ^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+   --> src/bundler/transpiler.rs:124:12
+    |
+124 | pub struct Transpiler<'a> {
+    |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+    |
+ 74 | pub struct MaybeDangling<P: ?Sized>(P);
+    |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+   --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+    |
+161 | pub struct ManuallyDrop<T: ?Sized> {
+    |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+   --> src/runtime/api/JSTranspiler.rs:676:12
+    |
+676 | pub struct TransformTask<'a> {
+    |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+   --> src/jsc/ConcurrentPromiseTask.rs:14:49
+    |
+ 14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+    |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*const bun_resolver::PackageJSON` cannot be sent between threads safely
+    --> src/runtime/api/JSTranspiler.rs:704:73
+     |
+ 704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+     |                                                                         ^^^^^^^^^^^^^^^^^ `*const bun_resolver::PackageJSON` cannot be sent between threads safely
+     |
+     = help: within `TransformTask<'a>`, the trait `Send` is not implemented for `*const bun_resolver::PackageJSON`
+note: required because it appears within the type `std::option::Option<*const bun_resolver::PackageJSON>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+     |
+ 597 | pub enum Option<T> {
+     |          ^^^^^^
+note: required because it appears within the type `bun_resolver::Result`
+    --> src/resolver/lib.rs:3536:16
+     |
+3536 |     pub struct Result {
+     |                ^^^^^^
+note: required because it appears within the type `PhantomData<bun_resolver::Result>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/marker.rs:811:12
+     |
+ 811 | pub struct PhantomData<T: PointeeSized>;
+     |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_collections::smallvec::alloc::raw_vec::RawVec<bun_resolver::Result>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:73:19
+     |
+  73 | pub(crate) struct RawVec<T, A: Allocator = Global> {
+     |                   ^^^^^^
+note: required because it appears within the type `VecDeque<bun_resolver::Result>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/collections/vec_deque/mod.rs:104:12
+     |
+ 104 | pub struct VecDeque<
+     |            ^^^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+    --> src/bundler/transpiler.rs:124:12
+     |
+ 124 | pub struct Transpiler<'a> {
+     |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+     |
+  74 | pub struct MaybeDangling<P: ?Sized>(P);
+     |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+     |
+ 161 | pub struct ManuallyDrop<T: ?Sized> {
+     |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+    --> src/runtime/api/JSTranspiler.rs:676:12
+     |
+ 676 | pub struct TransformTask<'a> {
+     |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*const bun_router::Route` cannot be sent between threads safely
+    --> src/runtime/api/JSTranspiler.rs:704:73
+     |
+ 704 | impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+     |                                                                         ^^^^^^^^^^^^^^^^^ `*const bun_router::Route` cannot be sent between threads safely
+     |
+     = help: within `(StringHashMapKey, *const bun_router::Route)`, the trait `Send` is not implemented for `*const bun_router::Route`
+     = note: required because it appears within the type `(StringHashMapKey, *const bun_router::Route)`
+     = note: required for `hashbrown::raw::RawTable<(StringHashMapKey, *const bun_router::Route), DefaultAlloc>` to implement `Send`
+note: required because it appears within the type `HashMap<StringHashMapKey, *const Route, BuildHasherDefault<...>, ...>`
+    --> /home/ubuntu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hashbrown-0.15.5/src/map.rs:185:12
+     |
+ 185 | pub struct HashMap<K, V, S = DefaultHashBuilder, A: Allocator = Global> {
+     |            ^^^^^^^
+note: required because it appears within the type `StringHashMap<*const bun_router::Route>`
+    --> src/collections/array_hash_map.rs:1504:12
+     |
+1504 | pub struct StringHashMap<V, A: Allocator + HashbrownAllocator + Clone + Default = DefaultAlloc> {
+     |            ^^^^^^^^^^^^^
+note: required because it appears within the type `Routes`
+    --> src/router/lib.rs:430:12
+     |
+ 430 | pub struct Routes {
+     |            ^^^^^^
+note: required because it appears within the type `bun_router::Router<'static>`
+    --> src/router/lib.rs:231:12
+     |
+ 231 | pub struct Router<'a> {
+     |            ^^^^^^
+note: required because it appears within the type `std::option::Option<bun_router::Router<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+     |
+ 597 | pub enum Option<T> {
+     |          ^^^^^^
+note: required because it appears within the type `bun_bundler::Transpiler<'static>`
+    --> src/bundler/transpiler.rs:124:12
+     |
+ 124 | pub struct Transpiler<'a> {
+     |            ^^^^^^^^^^
+note: required because it appears within the type `MaybeDangling<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/maybe_dangling.rs:74:12
+     |
+  74 | pub struct MaybeDangling<P: ?Sized>(P);
+     |            ^^^^^^^^^^^^^
+note: required because it appears within the type `ManuallyDrop<bun_bundler::Transpiler<'static>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/manually_drop.rs:161:12
+     |
+ 161 | pub struct ManuallyDrop<T: ?Sized> {
+     |            ^^^^^^^^^^^^
+note: required because it appears within the type `TransformTask<'a>`
+    --> src/runtime/api/JSTranspiler.rs:676:12
+     |
+ 676 | pub struct TransformTask<'a> {
+     |            ^^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+     = note: the full name for the type has been written to '/tmp/cargo-target/debug/deps/bun_runtime-651ad2a7d9e4d32d.long-type-2968332304547600886.txt'
+     = note: consider using `--verbose` to print the full type name to the console
+
+error[E0277]: `*mut dns_body::DNSLookup` cannot be sent between threads safely
+    --> src/runtime/dns_jsc/dns.rs:1409:42
+     |
+1409 | impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
+     |                                          ^^^^^^^^^^^^^^^^^^ `*mut dns_body::DNSLookup` cannot be sent between threads safely
+     |
+     = help: within `dns_body::GetAddrInfoRequest`, the trait `Send` is not implemented for `*mut dns_body::DNSLookup`
+note: required because it appears within the type `dns_body::GetAddrInfoRequest`
+    --> src/runtime/dns_jsc/dns.rs:1187:12
+     |
+1187 | pub struct GetAddrInfoRequest {
+     |            ^^^^^^^^^^^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+    --> src/jsc/WorkTask.rs:23:36
+     |
+  23 | pub trait WorkTaskContext: Sized + Send {
+     |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `*mut dns_body::Resolver` cannot be sent between threads safely
+    --> src/runtime/dns_jsc/dns.rs:1409:42
+     |
+1409 | impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
+     |                                          ^^^^^^^^^^^^^^^^^^ `*mut dns_body::Resolver` cannot be sent between threads safely
+     |
+     = help: within `dns_body::GetAddrInfoRequest`, the trait `Send` is not implemented for `*mut dns_body::Resolver`
+note: required because it appears within the type `std::option::Option<*mut dns_body::Resolver>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+     |
+ 597 | pub enum Option<T> {
+     |          ^^^^^^
+note: required because it appears within the type `dns_body::GetAddrInfoRequest`
+    --> src/runtime/dns_jsc/dns.rs:1187:12
+     |
+1187 | pub struct GetAddrInfoRequest {
+     |            ^^^^^^^^^^^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+    --> src/jsc/WorkTask.rs:23:36
+     |
+  23 | pub trait WorkTaskContext: Sized + Send {
+     |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `std::ptr::NonNull<dns_body::DNSLookup>` cannot be sent between threads safely
+    --> src/runtime/dns_jsc/dns.rs:1409:42
+     |
+1409 | impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
+     |                                          ^^^^^^^^^^^^^^^^^^ `std::ptr::NonNull<dns_body::DNSLookup>` cannot be sent between threads safely
+     |
+     = help: within `dns_body::GetAddrInfoRequest`, the trait `Send` is not implemented for `std::ptr::NonNull<dns_body::DNSLookup>`
+note: required because it appears within the type `std::option::Option<std::ptr::NonNull<dns_body::DNSLookup>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+     |
+ 597 | pub enum Option<T> {
+     |          ^^^^^^
+note: required because it appears within the type `dns_body::DNSLookup`
+    --> src/runtime/dns_jsc/dns.rs:1972:12
+     |
+1972 | pub struct DNSLookup {
+     |            ^^^^^^^^^
+note: required because it appears within the type `dns_body::GetAddrInfoRequest`
+    --> src/runtime/dns_jsc/dns.rs:1187:12
+     |
+1187 | pub struct GetAddrInfoRequest {
+     |            ^^^^^^^^^^^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+    --> src/jsc/WorkTask.rs:23:36
+     |
+  23 | pub trait WorkTaskContext: Sized + Send {
+     |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `std::ptr::NonNull<bun_io::FilePoll>` cannot be sent between threads safely
+    --> src/runtime/dns_jsc/dns.rs:1409:42
+     |
+1409 | impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
+     |                                          ^^^^^^^^^^^^^^^^^^ `std::ptr::NonNull<bun_io::FilePoll>` cannot be sent between threads safely
+     |
+     = help: within `dns_body::GetAddrInfoRequest`, the trait `Send` is not implemented for `std::ptr::NonNull<bun_io::FilePoll>`
+note: required because it appears within the type `std::option::Option<std::ptr::NonNull<bun_io::FilePoll>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+     |
+ 597 | pub enum Option<T> {
+     |          ^^^^^^
+note: required because it appears within the type `BackendLibInfo`
+    --> src/runtime/dns_jsc/dns.rs:1239:16
+     |
+1239 |     pub struct BackendLibInfo {
+     |                ^^^^^^^^^^^^^^
+note: required because it appears within the type `dns_body::get_addr_info_request::Backend`
+    --> src/runtime/dns_jsc/dns.rs:1380:14
+     |
+1380 |     pub enum Backend {
+     |              ^^^^^^^
+note: required because it appears within the type `dns_body::GetAddrInfoRequest`
+    --> src/runtime/dns_jsc/dns.rs:1187:12
+     |
+1187 | pub struct GetAddrInfoRequest {
+     |            ^^^^^^^^^^^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+    --> src/jsc/WorkTask.rs:23:36
+     |
+  23 | pub trait WorkTaskContext: Sized + Send {
+     |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `std::ptr::NonNull<dns_body::Resolver>` cannot be sent between threads safely
+    --> src/runtime/dns_jsc/dns.rs:1409:42
+     |
+1409 | impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
+     |                                          ^^^^^^^^^^^^^^^^^^ `std::ptr::NonNull<dns_body::Resolver>` cannot be sent between threads safely
+     |
+     = help: within `dns_body::GetAddrInfoRequest`, the trait `Send` is not implemented for `std::ptr::NonNull<dns_body::Resolver>`
+note: required because it appears within the type `RefPtr<dns_body::Resolver>`
+    --> src/ptr/ref_count.rs:790:12
+     |
+ 790 | pub struct RefPtr<T: AnyRefCounted> {
+     |            ^^^^^^
+note: required because it appears within the type `std::option::Option<RefPtr<dns_body::Resolver>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+     |
+ 597 | pub enum Option<T> {
+     |          ^^^^^^
+note: required because it appears within the type `dns_body::DNSLookup`
+    --> src/runtime/dns_jsc/dns.rs:1972:12
+     |
+1972 | pub struct DNSLookup {
+     |            ^^^^^^^^^
+note: required because it appears within the type `dns_body::GetAddrInfoRequest`
+    --> src/runtime/dns_jsc/dns.rs:1187:12
+     |
+1187 | pub struct GetAddrInfoRequest {
+     |            ^^^^^^^^^^^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+    --> src/jsc/WorkTask.rs:23:36
+     |
+  23 | pub trait WorkTaskContext: Sized + Send {
+     |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `UnsafeCell<[u8; 0]>` cannot be shared between threads safely
+    --> src/runtime/dns_jsc/dns.rs:1409:42
+     |
+1409 | impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
+     |                                          ^^^^^^^^^^^^^^^^^^ `UnsafeCell<[u8; 0]>` cannot be shared between threads safely
+     |
+     = help: within `bun_jsc::JSGlobalObject`, the trait `Sync` is not implemented for `UnsafeCell<[u8; 0]>`
+note: required because it appears within the type `bun_jsc::JSGlobalObject`
+    --> src/jsc/JSGlobalObject.rs:28:38
+     |
+  28 | bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
+     |                                      ^^^^^^^^^^^^^^
+     = note: required for `BackRef<bun_jsc::JSGlobalObject>` to implement `Send`
+note: required because it appears within the type `dns_body::DNSLookup`
+    --> src/runtime/dns_jsc/dns.rs:1972:12
+     |
+1972 | pub struct DNSLookup {
+     |            ^^^^^^^^^
+note: required because it appears within the type `dns_body::GetAddrInfoRequest`
+    --> src/runtime/dns_jsc/dns.rs:1187:12
+     |
+1187 | pub struct GetAddrInfoRequest {
+     |            ^^^^^^^^^^^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+    --> src/jsc/WorkTask.rs:23:36
+     |
+  23 | pub trait WorkTaskContext: Sized + Send {
+     |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `std::ptr::NonNull<bun_jsc::strong::Impl>` cannot be sent between threads safely
+    --> src/runtime/dns_jsc/dns.rs:1409:42
+     |
+1409 | impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
+     |                                          ^^^^^^^^^^^^^^^^^^ `std::ptr::NonNull<bun_jsc::strong::Impl>` cannot be sent between threads safely
+     |
+     = help: within `dns_body::GetAddrInfoRequest`, the trait `Send` is not implemented for `std::ptr::NonNull<bun_jsc::strong::Impl>`
+note: required because it appears within the type `std::option::Option<std::ptr::NonNull<bun_jsc::strong::Impl>>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+     |
+ 597 | pub enum Option<T> {
+     |          ^^^^^^
+note: required because it appears within the type `bun_jsc::StrongOptional`
+    --> src/jsc/Strong.rs:72:12
+     |
+  72 | pub struct Optional {
+     |            ^^^^^^^^
+note: required because it appears within the type `bun_jsc::JSPromiseStrong`
+    --> src/jsc/JSPromise.rs:181:12
+     |
+ 181 | pub struct Strong {
+     |            ^^^^^^
+note: required because it appears within the type `dns_body::DNSLookup`
+    --> src/runtime/dns_jsc/dns.rs:1972:12
+     |
+1972 | pub struct DNSLookup {
+     |            ^^^^^^^^^
+note: required because it appears within the type `dns_body::GetAddrInfoRequest`
+    --> src/runtime/dns_jsc/dns.rs:1187:12
+     |
+1187 | pub struct GetAddrInfoRequest {
+     |            ^^^^^^^^^^^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+    --> src/jsc/WorkTask.rs:23:36
+     |
+  23 | pub trait WorkTaskContext: Sized + Send {
+     |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `*mut u8` cannot be shared between threads safely
+    --> src/runtime/dns_jsc/dns.rs:1409:42
+     |
+1409 | impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
+     |                                          ^^^^^^^^^^^^^^^^^^ `*mut u8` cannot be shared between threads safely
+     |
+     = help: within `bun_jsc::JSGlobalObject`, the trait `Sync` is not implemented for `*mut u8`
+     = note: required because it appears within the type `(*mut u8, PhantomPinned)`
+note: required because it appears within the type `PhantomData<(*mut u8, PhantomPinned)>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/marker.rs:811:12
+     |
+ 811 | pub struct PhantomData<T: PointeeSized>;
+     |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::JSGlobalObject`
+    --> src/jsc/JSGlobalObject.rs:28:38
+     |
+  28 | bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
+     |                                      ^^^^^^^^^^^^^^
+     = note: required for `BackRef<bun_jsc::JSGlobalObject>` to implement `Send`
+note: required because it appears within the type `dns_body::DNSLookup`
+    --> src/runtime/dns_jsc/dns.rs:1972:12
+     |
+1972 | pub struct DNSLookup {
+     |            ^^^^^^^^^
+note: required because it appears within the type `dns_body::GetAddrInfoRequest`
+    --> src/runtime/dns_jsc/dns.rs:1187:12
+     |
+1187 | pub struct GetAddrInfoRequest {
+     |            ^^^^^^^^^^^^^^^^^^
+note: required by a bound in `WorkTaskContext`
+    --> src/jsc/WorkTask.rs:23:36
+     |
+  23 | pub trait WorkTaskContext: Sized + Send {
+     |                                    ^^^^ required by this bound in `WorkTaskContext`
+
+error[E0277]: `*const image_body::Image` cannot be sent between threads safely
+    --> src/runtime/image/Image.rs:1382:43
+     |
+1382 | impl<'a> ConcurrentPromiseTaskContext for PipelineTask<'a> {
+     |                                           ^^^^^^^^^^^^^^^^ `*const image_body::Image` cannot be sent between threads safely
+     |
+     = help: within `PipelineTask<'a>`, the trait `Send` is not implemented for `*const image_body::Image`
+note: required because it appears within the type `PipelineTask<'a>`
+    --> src/runtime/image/Image.rs:1394:12
+     |
+1394 | pub struct PipelineTask<'a> {
+     |            ^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `UnsafeCell<[u8; 0]>` cannot be shared between threads safely
+    --> src/runtime/image/Image.rs:1382:43
+     |
+1382 | impl<'a> ConcurrentPromiseTaskContext for PipelineTask<'a> {
+     |                                           ^^^^^^^^^^^^^^^^ `UnsafeCell<[u8; 0]>` cannot be shared between threads safely
+     |
+     = help: within `bun_jsc::JSGlobalObject`, the trait `Sync` is not implemented for `UnsafeCell<[u8; 0]>`
+note: required because it appears within the type `bun_jsc::JSGlobalObject`
+    --> src/jsc/JSGlobalObject.rs:28:38
+     |
+  28 | bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
+     |                                      ^^^^^^^^^^^^^^
+     = note: required for `&'a bun_jsc::JSGlobalObject` to implement `Send`
+note: required because it appears within the type `PipelineTask<'a>`
+    --> src/runtime/image/Image.rs:1394:12
+     |
+1394 | pub struct PipelineTask<'a> {
+     |            ^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*const bun_str::ZStr` cannot be sent between threads safely
+    --> src/runtime/image/Image.rs:1382:43
+     |
+1382 | impl<'a> ConcurrentPromiseTaskContext for PipelineTask<'a> {
+     |                                           ^^^^^^^^^^^^^^^^ `*const bun_str::ZStr` cannot be sent between threads safely
+     |
+     = help: within `PipelineTask<'a>`, the trait `Send` is not implemented for `*const bun_str::ZStr`
+note: required because it appears within the type `std::option::Option<*const bun_str::ZStr>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/option.rs:597:10
+     |
+ 597 | pub enum Option<T> {
+     |          ^^^^^^
+note: required because it appears within the type `Input`
+    --> src/runtime/image/Image.rs:1408:12
+     |
+1408 | pub struct Input {
+     |            ^^^^^
+note: required because it appears within the type `PipelineTask<'a>`
+    --> src/runtime/image/Image.rs:1394:12
+     |
+1394 | pub struct PipelineTask<'a> {
+     |            ^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `std::ptr::NonNull<bun_jsc::strong::Impl>` cannot be sent between threads safely
+    --> src/runtime/image/Image.rs:1382:43
+     |
+1382 | impl<'a> ConcurrentPromiseTaskContext for PipelineTask<'a> {
+     |                                           ^^^^^^^^^^^^^^^^ `std::ptr::NonNull<bun_jsc::strong::Impl>` cannot be sent between threads safely
+     |
+     = help: within `PipelineTask<'a>`, the trait `Send` is not implemented for `std::ptr::NonNull<bun_jsc::strong::Impl>`
+note: required because it appears within the type `bun_jsc::Strong`
+    --> src/jsc/Strong.rs:11:12
+     |
+  11 | pub struct Strong {
+     |            ^^^^^^
+note: required because it appears within the type `Deliver`
+    --> src/runtime/image/Image.rs:1449:10
+     |
+1449 | pub enum Deliver {
+     |          ^^^^^^^
+note: required because it appears within the type `PipelineTask<'a>`
+    --> src/runtime/image/Image.rs:1394:12
+     |
+1394 | pub struct PipelineTask<'a> {
+     |            ^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `std::ptr::NonNull<[u8]>` cannot be sent between threads safely
+    --> src/runtime/image/Image.rs:1382:43
+     |
+1382 | impl<'a> ConcurrentPromiseTaskContext for PipelineTask<'a> {
+     |                                           ^^^^^^^^^^^^^^^^ `std::ptr::NonNull<[u8]>` cannot be sent between threads safely
+     |
+     = help: within `PipelineTask<'a>`, the trait `Send` is not implemented for `std::ptr::NonNull<[u8]>`
+note: required because it appears within the type `Encoded`
+    --> src/runtime/image/codecs.rs:485:12
+     |
+ 485 | pub struct Encoded {
+     |            ^^^^^^^
+note: required because it appears within the type `TaskResult`
+    --> src/runtime/image/Image.rs:1477:10
+     |
+1477 | pub enum TaskResult {
+     |          ^^^^^^^^^^
+note: required because it appears within the type `PipelineTask<'a>`
+    --> src/runtime/image/Image.rs:1394:12
+     |
+1394 | pub struct PipelineTask<'a> {
+     |            ^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*const ()` cannot be sent between threads safely
+    --> src/runtime/image/Image.rs:1382:43
+     |
+1382 | impl<'a> ConcurrentPromiseTaskContext for PipelineTask<'a> {
+     |                                           ^^^^^^^^^^^^^^^^ `*const ()` cannot be sent between threads safely
+     |
+     = help: within `PipelineTask<'a>`, the trait `Send` is not implemented for `*const ()`
+note: required because it appears within the type `PhantomData<*const ()>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/marker.rs:811:12
+     |
+ 811 | pub struct PhantomData<T: PointeeSized>;
+     |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::JSValue`
+    --> src/jsc/JSValue.rs:32:12
+     |
+  32 | pub struct JSValue(pub usize, PhantomData<*const ()>);
+     |            ^^^^^^^
+note: required because it appears within the type `Input`
+    --> src/runtime/image/Image.rs:1408:12
+     |
+1408 | pub struct Input {
+     |            ^^^^^
+note: required because it appears within the type `PipelineTask<'a>`
+    --> src/runtime/image/Image.rs:1394:12
+     |
+1394 | pub struct PipelineTask<'a> {
+     |            ^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+error[E0277]: `*mut u8` cannot be shared between threads safely
+    --> src/runtime/image/Image.rs:1382:43
+     |
+1382 | impl<'a> ConcurrentPromiseTaskContext for PipelineTask<'a> {
+     |                                           ^^^^^^^^^^^^^^^^ `*mut u8` cannot be shared between threads safely
+     |
+     = help: within `bun_jsc::JSGlobalObject`, the trait `Sync` is not implemented for `*mut u8`
+     = note: required because it appears within the type `(*mut u8, PhantomPinned)`
+note: required because it appears within the type `PhantomData<(*mut u8, PhantomPinned)>`
+    --> /home/ubuntu/.rustup/toolchains/nightly-2026-05-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/marker.rs:811:12
+     |
+ 811 | pub struct PhantomData<T: PointeeSized>;
+     |            ^^^^^^^^^^^
+note: required because it appears within the type `bun_jsc::JSGlobalObject`
+    --> src/jsc/JSGlobalObject.rs:28:38
+     |
+  28 | bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
+     |                                      ^^^^^^^^^^^^^^
+     = note: required for `&'a bun_jsc::JSGlobalObject` to implement `Send`
+note: required because it appears within the type `PipelineTask<'a>`
+    --> src/runtime/image/Image.rs:1394:12
+     |
+1394 | pub struct PipelineTask<'a> {
+     |            ^^^^^^^^^^^^
+note: required by a bound in `ConcurrentPromiseTaskContext`
+    --> src/jsc/ConcurrentPromiseTask.rs:14:49
+     |
+  14 | pub trait ConcurrentPromiseTaskContext: Sized + Send {
+     |                                                 ^^^^ required by this bound in `ConcurrentPromiseTaskContext`
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/server/server_body.rs:3415:54
+     |
+3415 |         let ctx_slot = unsafe { (*this.request_pool).get() };
+     |                                                      ^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::try_get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+   --> src/runtime/server/mod.rs:705:56
+    |
+705 |         let ctx_slot = unsafe { (*server.request_pool).try_get() };
+    |                                                        ^^^^^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/bake/DevServer.rs:2097:55
+     |
+2097 |         let deferred_ptr = self.deferred_request_pool.get();
+     |                                                       ^^^
+
+warning: use of deprecated method `bun_collections::HiveArrayFallback::<T, CAPACITY>::try_get`: returns *mut T to uninitialized memory; use get_init / emplace / claim
+    --> src/runtime/api/bun/h2_frame_parser.rs:7375:33
+     |
+7375 |                 let slot = pool.try_get();
+     |                                 ^^^^^^^
+
+For more information about this error, try `rustc --explain E0277`.
+warning: `bun_runtime` (lib) generated 4 warnings
+error: could not compile `bun_runtime` (lib) due to 57 previous errors; 4 warnings emitted

@@ -1,0 +1,9 @@
+[package]
+name = "exp_005_yarn_uninit_dep_slice"
+version = "0.0.1"
+edition = "2021"
+[[bin]]
+name = "repro"
+path = "src/main.rs"
+
+[workspace]

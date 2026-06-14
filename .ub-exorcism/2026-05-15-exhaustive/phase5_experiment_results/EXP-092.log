@@ -1,0 +1,44 @@
+   Compiling exp_092_streams_readresult_safe_api v0.0.0 (/data/projects/bun/.ub-exorcism/2026-05-15-exhaustive/experiments/EXP-092)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp_092_streams_readresult_safe_api`
+warning: field `0` is never read
+ --> src/main.rs:8:15
+  |
+8 |     IntoArray(usize),
+  |     --------- ^^^^^
+  |     |
+  |     field in this variant
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+  |
+8 -     IntoArray(usize),
+8 +     IntoArray(()),
+  |
+
+error: Undefined Behavior: deallocating alloc111, which is stack variable memory, using Rust heap deallocation operation
+   --> /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:876:17
+    |
+876 |                 self.alloc.deallocate(ptr, layout);
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Undefined Behavior occurred here
+    |
+    = help: this indicates a bug in the program: it performed an invalid operation, and caused Undefined Behavior
+    = help: see https://doc.rust-lang.org/nightly/reference/behavior-considered-undefined.html for further information
+    = note: stack backtrace:
+            0: alloc::raw_vec::RawVecInner::deallocate
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:876:17: 876:51
+            1: <alloc::raw_vec::RawVec<u8> as std::ops::Drop>::drop
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs:424:18: 424:50
+            2: std::ptr::drop_in_place::<alloc::raw_vec::RawVec<u8>> - shim(Some(alloc::raw_vec::RawVec<u8>))
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:809:1: 811:25
+            3: std::ptr::drop_in_place::<std::vec::Vec<u8>> - shim(Some(std::vec::Vec<u8>))
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:809:1: 811:25
+            4: std::mem::drop::<std::vec::Vec<u8>>
+                at /home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/mod.rs:1004:1: 1004:2
+            5: main
+                at src/main.rs:46:9: 46:16
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error; 1 warning emitted
+

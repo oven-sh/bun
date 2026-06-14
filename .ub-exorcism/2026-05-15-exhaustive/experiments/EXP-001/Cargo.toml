@@ -1,0 +1,10 @@
+[package]
+name = "exp_001_linear_fifo_niche"
+version = "0.0.1"
+edition = "2021"
+[[bin]]
+name = "repro"
+path = "src/main.rs"
+
+# Detach from Bun's parent workspace so cargo treats this as standalone.
+[workspace]

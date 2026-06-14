@@ -1,0 +1,25 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp-088-estring-utf16-public-fields`
+error: Undefined Behavior: trying to retag from <287> for SharedReadOnly permission at alloc108[0x2], but that tag does not exist in the borrow stack for this location
+  --> src/main.rs:41:18
+   |
+41 |         unsafe { core::slice::from_raw_parts(self.data.as_ptr().cast::<u16>(), self.data.len()) }
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this error occurs as part of retag at alloc108[0x0..0x4]
+   |
+   = help: this indicates a potential bug in the program: it performed an invalid operation, but the Stacked Borrows rules it violated are still experimental
+   = help: see https://github.com/rust-lang/unsafe-code-guidelines/blob/master/wip/stacked-borrows.md for further information
+help: <287> was created by a SharedReadOnly retag at offsets [0x0..0x2]
+  --> src/main.rs:10:18
+   |
+10 |             ptr: bytes.as_ptr(),
+   |                  ^^^^^^^^^^^^^^
+   = note: stack backtrace:
+           0: EString::slice16
+               at src/main.rs:41:18: 41:96
+           1: main
+               at src/main.rs:59:17: 59:40
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error
+

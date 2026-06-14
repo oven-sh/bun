@@ -1,0 +1,31 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/home/ubuntu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/bin/cargo-miri runner /tmp/cargo-target/miri/x86_64-unknown-linux-gnu/debug/exp_029_envstr_strict_provenance`
+warning: variant `Refcounted` is never constructed
+ --> src/main.rs:7:5
+  |
+5 | enum Tag {
+  |      --- variant in this enum
+6 |     Empty = 0,
+7 |     Refcounted = 1,
+  |     ^^^^^^^^^^
+  |
+  = note: `Tag` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+error: unsupported operation: integer-to-pointer casts and `ptr::with_exposed_provenance` are not supported with `-Zmiri-strict-provenance`
+  --> src/main.rs:45:46
+   |
+45 |         unsafe { core::slice::from_raw_parts(self.ptr() as usize as *const u8, self.len()) }
+   |                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported operation occurred here
+   |
+   = help: use Strict Provenance APIs (https://doc.rust-lang.org/nightly/std/ptr/index.html#strict-provenance, https://crates.io/crates/sptr) instead
+   = note: stack backtrace:
+           0: EnvStr::cast_slice
+               at src/main.rs:45:46: 45:78
+           1: main
+               at src/main.rs:56:17: 56:33
+
+note: some details are omitted, run with `MIRIFLAGS=-Zmiri-backtrace=full` for a verbose backtrace
+
+error: aborting due to 1 previous error; 1 warning emitted
+

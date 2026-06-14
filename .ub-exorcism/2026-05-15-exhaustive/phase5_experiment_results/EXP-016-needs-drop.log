@@ -1,0 +1,16 @@
+Expr	false
+Stmt	false
+G::Decl	false
+G::Property	true
+B::Property	false
+Ref	false
+StoreRef<Scope>	false
+u8	false
+Vec<Expr, AstAlloc>	true
+Vec<Stmt, AstAlloc>	true
+Vec<G::Decl, AstAlloc>	true
+Vec<G::Property, AstAlloc>	true
+Vec<B::Property, AstAlloc>	true
+Vec<Ref, AstAlloc>	true
+Vec<StoreRef<Scope>, AstAlloc>	true
+Vec<u8, AstAlloc>	true

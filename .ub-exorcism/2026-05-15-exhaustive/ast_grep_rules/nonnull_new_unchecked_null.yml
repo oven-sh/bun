@@ -1,0 +1,14 @@
+id: nonnull-new-unchecked-null
+language: rust
+severity: error
+message: NonNull::new_unchecked over a potentially-null source. UB if pointer is null.
+rule:
+  any:
+    - pattern: NonNull::new_unchecked(std::ptr::null_mut())
+    - pattern: NonNull::new_unchecked(std::ptr::null())
+    - pattern: NonNull::new_unchecked(ptr::null_mut())
+    - pattern: NonNull::new_unchecked(ptr::null())
+    - pattern: NonNull::new_unchecked(null_mut())
+    - pattern: NonNull::new_unchecked(null())
+    - pattern: NonNull::new_unchecked(0 as *mut $T)
+    - pattern: NonNull::new_unchecked(0 as *const $T)

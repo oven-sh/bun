@@ -1744,6 +1744,15 @@ impl UpdateInteractiveCommand {
                         !package_url.is_empty(),
                     );
 
+                    // PORT NOTE: route through the `pretty!` macro (compile-time
+                    // `<tag>` rewrite) rather than `Output::pretty(format_args!(..))`
+                    // — the hyperlink emits OSC 8 terminator bytes `ESC \` and the
+                    // function-form re-runs the tag parser over the already-rendered
+                    // output, so the `\` would be eaten by the `\<` escape arm and
+                    // the trailing `r` of the `<r>` reset tag would leak as literal
+                    // text. See issue #30693 ("ai" → "air"). Matches Zig, where
+                    // `Output.pretty` is `comptime fmt` and the tag rewrite runs on
+                    // the template before substitution.
                     if selected {
                         if checkbox_color == "red" {
                             bun_core::pretty!("<r><red>{}<r>", hyperlink);

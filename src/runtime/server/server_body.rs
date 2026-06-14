@@ -3361,9 +3361,9 @@ where
         request_value.ensure_still_alive();
 
         let response_value = match this.config.on_request.call(&global, server_js, &args) {
-                Ok(v) => v,
-                Err(err) => global.take_exception(err),
-            };
+            Ok(v) => v,
+            Err(err) => global.take_exception(err),
+        };
         let request_object_ptr: *mut Request = request_object;
         scopeguard::defer! {
             // uWS request will not live longer than this function

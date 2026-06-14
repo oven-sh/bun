@@ -3052,22 +3052,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `websocket.is_some()` — but the doc'd contract is "writes all slots
         // unconditionally" so a future call site can't leave stale roots behind.
         let mut zeros = [JSValue::ZERO; 7];
-        let [open, message, close, drain, error, ping, pong] =
-            match self.config.websocket.as_mut() {
-                Some(ws) => {
-                    let h = &mut ws.handler;
-                    [
-                        &mut h.on_open,
-                        &mut h.on_message,
-                        &mut h.on_close,
-                        &mut h.on_drain,
-                        &mut h.on_error,
-                        &mut h.on_ping,
-                        &mut h.on_pong,
-                    ]
-                }
-                None => zeros.each_mut(),
-            };
+        let [open, message, close, drain, error, ping, pong] = match self.config.websocket.as_mut()
+        {
+            Some(ws) => {
+                let h = &mut ws.handler;
+                [
+                    &mut h.on_open,
+                    &mut h.on_message,
+                    &mut h.on_close,
+                    &mut h.on_drain,
+                    &mut h.on_error,
+                    &mut h.on_ping,
+                    &mut h.on_pong,
+                ]
+            }
+            None => zeros.each_mut(),
+        };
         wrap_handler_slot(open, server_js, global, Self::js_gc_ws_on_open_set);
         wrap_handler_slot(message, server_js, global, Self::js_gc_ws_on_message_set);
         wrap_handler_slot(close, server_js, global, Self::js_gc_ws_on_close_set);

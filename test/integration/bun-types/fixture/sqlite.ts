@@ -35,10 +35,12 @@ const query3 = db.prepare<
 const allResults3 = query3.all({ $id: "asdf" });
 expectType<Array<{ name: string; dob: number }>>(allResults3);
 
-db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
+db.run(
+  "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)"
+);
 const insert = db.prepare("INSERT INTO cats (name, age) VALUES ($name, $age)");
 const insertManyCats = db.transaction((cats: Array<{ $name: string; $age: number }>) => {
-  for (const cat of cats) insert.run(cat);
+    for (const cat of cats) insert.run(cat);
 });
 insertManyCats([
   {

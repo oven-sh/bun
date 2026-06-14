@@ -205,6 +205,30 @@ describe.concurrent("fetch() with streaming", () => {
     }
   });
 
+  it.each([9, 10, 11, 12, 13, 14, 15])(
+    "decodes a Content-Encoding: deflate body compressed with a %i-bit window",
+    async windowBits => {
+      // A <32 KiB window makes CMF != 0x78, which Bun used to misread as raw deflate and reject.
+      const original = Buffer.alloc(17 * 1024, "abcdefghijklmnop");
+      const compressed = zlib.deflateSync(original, { windowBits });
+      using server = Bun.serve({
+        port: 0,
+        fetch() {
+          return new Response(compressed, {
+            headers: {
+              "Content-Type": "application/octet-stream",
+              "Content-Encoding": "deflate",
+              "Content-Length": String(compressed.length),
+            },
+          });
+        },
+      });
+      const res = await fetch(server.url);
+      const got = Buffer.from(await res.arrayBuffer());
+      expect(got.equals(original)).toBe(true);
+    },
+  );
+
   for (let file of files) {
     it("stream can handle response.body + await response.something() #4500", async () => {
       let server: ReturnType<typeof http.createServer> | null = null;

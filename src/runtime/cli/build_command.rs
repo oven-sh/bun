@@ -998,15 +998,25 @@ impl BuildCommand {
                             .map(|o| String::from_utf8_lossy(&o.stdout).contains("codesign"))
                             .unwrap_or(false);
                         if !already_signed {
-                            // binary-sign-tool sign first, then chmod
+                            // binary-sign-tool sign → write to temp path, then rename.
+                            // This creates a NEW file at the destination path, which gets
+                            // the directory's default SELinux context (without MLS categories).
+                            // In-place signing (-inFile X -outFile X) preserves the source
+                            // file's MLS categories inherited from the bun process, which
+                            // prevents execution on OHOS.
+                            let signed_path = format!("{}.signed", outfile_str);
                             let _ = std::process::Command::new("binary-sign-tool")
                                 .arg("sign")
                                 .arg("-inFile")
                                 .arg(outfile_str)
                                 .arg("-outFile")
-                                .arg(outfile_str)
+                                .arg(&signed_path)
                                 .arg("-selfSign")
                                 .arg("1")
+                                .output();
+                            let _ = std::process::Command::new("mv")
+                                .arg(&signed_path)
+                                .arg(outfile_str)
                                 .output();
                         }
                         let _ = std::process::Command::new("chmod")

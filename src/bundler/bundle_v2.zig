@@ -205,6 +205,8 @@ pub const BundleV2 = struct {
         client_transpiler.options = this_transpiler.options;
 
         client_transpiler.options.target = .browser;
+        client_transpiler.options.polyfill_node_globals = true;
+        client_transpiler.options.mark_builtins_as_external = false;
         client_transpiler.options.main_fields = options.Target.DefaultMainFields.get(options.Target.browser);
         client_transpiler.options.conditions = try options.ESMConditions.init(
             alloc,
@@ -235,6 +237,7 @@ pub const BundleV2 = struct {
         try client_transpiler.configureDefines();
         client_transpiler.resolver.opts = client_transpiler.options;
         client_transpiler.resolver.env_loader = client_transpiler.env;
+        client_transpiler.resolver.care_about_browser_field = true;
         this.client_transpiler = client_transpiler;
         return client_transpiler;
     }

@@ -908,6 +908,10 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
+    // Slots are filled one at a time in connect()'s pool-start loop, and
+    // createPooledConnection can synchronously run user code (for example a
+    // function-valued `password`) that re-enters methods scanning this array,
+    // so every scan must tolerate unassigned holes.
     this.connections = new Array(connectionInfo.max);
   }
 
@@ -1128,7 +1132,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        if (connection.state === PooledConnectionState.connected) {
+        if (connection?.state === PooledConnectionState.connected) {
           return true;
         }
       }
@@ -1143,7 +1147,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        if (connection.state === PooledConnectionState.connected) {
+        if (connection?.state === PooledConnectionState.connected) {
           connection.connection?.flush();
         }
       }
@@ -1169,7 +1173,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        switch (connection.state) {
+        switch (connection?.state) {
           case PooledConnectionState.pending:
           case PooledConnectionState.connected: {
             // cancelRetry only returns true while a connect retry is parked
@@ -1272,7 +1276,9 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         for (let i = 0; i < pollSize; i++) {
           const connection = this.connections[i];
           // we need a new connection and we have some connections that can retry
-          if (connection.state === PooledConnectionState.closed) {
+          // (an unassigned hole is a connection still being created, so it
+          // lands in the "pending" branch below)
+          if (connection?.state === PooledConnectionState.closed) {
             if (connection.retry()) {
               // lets wait for connection to be released
               if (!retry_in_progress) {

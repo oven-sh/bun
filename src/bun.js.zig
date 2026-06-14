@@ -495,9 +495,26 @@ pub const Run = struct {
                     vm.eventLoop().tickPossiblyForever();
                 }
             } else {
-                while (vm.isEventLoopAlive()) {
-                    vm.tick();
-                    vm.eventLoop().autoTickActive();
+                while (true) {
+                    while (vm.isEventLoopAlive()) {
+                        vm.tick();
+                        vm.eventLoop().autoTickActive();
+                    }
+
+                    vm.onBeforeExit();
+
+                    // The entry's evaluation promise may still be pending if
+                    // loadEntryPoint bailed on an idle loop. beforeExit may
+                    // have just settled it (Node parity), but the resulting
+                    // microtask isn't counted by isEventLoopAlive(); drain
+                    // once and re-enter only if that produced more work.
+                    if (vm.pending_internal_promise) |p| {
+                        if (p.status() == .pending) {
+                            vm.tick();
+                            if (vm.isEventLoopAlive()) continue;
+                        }
+                    }
+                    break;
                 }
 
                 if (this.ctx.runtime_options.eval.eval_and_print) {
@@ -528,7 +545,23 @@ pub const Run = struct {
                     to_print.print(vm.global, .Log, .Log);
                 }
 
-                vm.onBeforeExit();
+                // The entry's evaluation may have settled after the early
+                // post-loadEntryPoint check (which ran while it was still
+                // .pending). Handle late rejection so it isn't swallowed, and
+                // map a still-pending promise to Node's exit code 13.
+                if (vm.pending_internal_promise) |p| switch (p.status()) {
+                    .rejected => if (vm.pending_internal_promise_reported_at != vm.hot_reload_counter) {
+                        _ = vm.uncaughtException(vm.global, p.result(vm.global.vm()), true);
+                        p.setHandled();
+                        vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+                        if (vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 1;
+                    },
+                    .pending => if (vm.exit_handler.exit_code == 0) {
+                        vm.reportUnsettledTopLevelAwait();
+                        vm.exit_handler.exit_code = 13;
+                    },
+                    .fulfilled => {},
+                };
             }
 
             if (vm.log.msgs.items.len > 0) {

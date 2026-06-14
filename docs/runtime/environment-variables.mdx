@@ -103,11 +103,11 @@ FOO=`hello`
 
 ### Expansion
 
-Environment variables are automatically _expanded_. This means you can reference previously-defined variables in your environment variables.
+Environment variables are automatically _expanded_ when using \`backticks\`. This means you can reference previously-defined variables in your environment variables.
 
 ```ini .env icon="settings"
 FOO=world
-BAR=hello$FOO
+BAR=`hello$FOO`
 ```
 
 ```ts
@@ -121,7 +121,7 @@ DB_USER=postgres
 DB_PASSWORD=secret
 DB_HOST=localhost
 DB_PORT=5432
-DB_URL=postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME
+DB_URL=`postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME`
 ```
 
 This can be disabled by escaping the `$` with a backslash.

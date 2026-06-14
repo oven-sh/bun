@@ -233,13 +233,26 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
         auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
-        // for now, we don't permit SHARE_ENV, because the behavior isn't implemented
-        if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull())) {
+
+        // `worker_threads.SHARE_ENV` is a unique symbol defined in
+        // worker_threads.ts. It tells the worker to use the parent's
+        // environment. The global `Worker` constructor path does not go through
+        // that module, so we identify the symbol here by its description.
+        bool isShareEnv = false;
+        if (envValue && envValue.isSymbol()) {
+            if (auto description = asSymbol(envValue)->tryGetDescriptiveString())
+                isShareEnv = *description == "Symbol(nodejs.worker_threads.SHARE_ENV)"_s;
+        }
+
+        if (!isShareEnv && envValue && !(envValue.isObject() || envValue.isUndefinedOrNull())) {
             return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
         }
         JSObject* envObject = nullptr;
 
-        if (envValue && envValue.isCell()) {
+        if (isShareEnv) {
+            // Initialize the worker with a snapshot of the parent's environment.
+            envObject = globalObject->processEnvObject();
+        } else if (envValue && envValue.isCell()) {
             envObject = dynamicDowncast<JSC::JSObject>(envValue);
         } else if (globalObject->m_processEnvObject.isInitialized()) {
             envObject = globalObject->processEnvObject();

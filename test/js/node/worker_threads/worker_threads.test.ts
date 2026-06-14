@@ -250,6 +250,44 @@ test("support worker eval that throws", async () => {
   await worker.terminate();
 });
 
+describe("SHARE_ENV", () => {
+  // https://github.com/oven-sh/bun/issues/32247
+  // Passing worker_threads.SHARE_ENV used to throw ERR_INVALID_ARG_TYPE even
+  // though the error message advertised it as a valid value.
+  test("the global Worker accepts { env: SHARE_ENV } without throwing", async () => {
+    const url = URL.createObjectURL(new Blob([`postMessage("ok")`], { type: "application/javascript" }));
+    try {
+      const worker = new globalThis.Worker(url, { env: SHARE_ENV });
+      const { promise, resolve, reject } = Promise.withResolvers();
+      worker.addEventListener("message", e => resolve(e.data));
+      worker.addEventListener("error", e => reject(e.error ?? new Error(e.message || "worker error")));
+      expect(await promise).toBe("ok");
+      worker.terminate();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  });
+
+  test("a worker with { env: SHARE_ENV } inherits the parent environment", async () => {
+    const key = "BUN_TEST_SHARE_ENV_32247";
+    process.env[key] = "shared-value";
+    try {
+      const worker = new Worker(
+        `const { parentPort } = require("worker_threads"); parentPort.postMessage(process.env[${JSON.stringify(key)}]);`,
+        { eval: true, env: SHARE_ENV },
+      );
+      const { promise, resolve, reject } = Promise.withResolvers();
+      worker.on("message", resolve);
+      worker.on("error", reject);
+      worker.on("exit", code => reject(new Error(`worker exited early with code ${code}`)));
+      expect(await promise).toBe("shared-value");
+      await worker.terminate();
+    } finally {
+      delete process.env[key];
+    }
+  });
+});
+
 describe("execArgv option", async () => {
   // this needs to be a subprocess to ensure that the parent's execArgv is not empty
   // otherwise we could not distinguish between the worker inheriting the parent's execArgv

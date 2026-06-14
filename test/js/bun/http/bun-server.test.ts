@@ -622,20 +622,22 @@ test("should be able to await server.stop(true) with keep alive", async () => {
   expect(async () => await fetch(server.url)).toThrow();
 });
 
-test("late keep-alive request to a route after stop()+GC answers 503", async () => {
-  // Per-route handlers live in ServerRouteList, which is reachable from JS only
-  // through the Server wrapper. After a graceful stop() the user may drop the
-  // wrapper, and a subsequent GC may finalize it before an idle keep-alive
-  // connection sends one more request. Run in a subprocess so the previous
-  // js_value_assert_alive() panic on that path surfaces as a non-zero exit
-  // instead of taking down the test runner.
-  //
-  // To reach the 503 guard the wrapper must already be downgraded when the
-  // late request dispatches. We sequence that by holding the FIRST request
-  // in-flight (pending_requests > 0) across stop(), pipelining the LATE
-  // request behind it, then releasing: first completes → pending_requests
-  // drops to 0 → deinit_if_we_can() downgrades js_value → uws reads the
-  // pipelined request → on_user_route_request hits the is_strong gate → 503.
+// Shared rig for the two "late keep-alive 503" tests below: open a raw TCP
+// socket, hold the first request in-flight across stop()/close(), pipeline a
+// second request behind it, release, GC, and print the second response's
+// status line. The subprocess runs the rig so a (former) panic in the dispatch
+// trampoline surfaces as a non-zero exit instead of taking down the runner.
+//
+// To reach the 503 guard the wrapper must already be downgraded when the late
+// request dispatches. We sequence that by holding the FIRST request in-flight
+// (pending_requests > 0) across stop(), pipelining the LATE request behind it,
+// then releasing: first completes → pending_requests drops to 0 →
+// deinit_if_we_can() downgrades js_value → uws reads the pipelined request →
+// the trampoline's js_value_for_dispatch() gate fires → 503.
+//
+// `serverSnippet` must define `port` (the listen port) and `stop()` in scope,
+// and may read `release`/`inflight`/`hits` for the hold protocol.
+async function runLateKeepAlive503(reqPath: string, serverSnippet: string) {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -646,28 +648,27 @@ test("late keep-alive request to a route after stop()+GC answers 503", async () 
         let received = "";
         let sockClosed = false;
         let waiter = Promise.withResolvers();
-        const nextResponse = () => {
-          // Wait until a complete HTTP/1.1 response (headers + 2-byte body or
-          // an empty body for 503) has arrived, then consume it.
-          return (async () => {
-            while (true) {
-              const headerEnd = received.indexOf("\\r\\n\\r\\n");
-              if (headerEnd !== -1) {
-                const head = received.slice(0, headerEnd);
-                const m = /content-length: (\\d+)/i.exec(head);
-                const bodyLen = m ? Number(m[1]) : 0;
-                const total = headerEnd + 4 + bodyLen;
-                if (received.length >= total) {
-                  const status = head.split("\\r\\n")[0];
-                  received = received.slice(total);
-                  return status;
-                }
+        // Wait until a complete HTTP/1.1 response (headers + content-length
+        // body, or empty for 503) has arrived, then consume + return its
+        // status line.
+        const nextResponse = async () => {
+          while (true) {
+            const headerEnd = received.indexOf("\\r\\n\\r\\n");
+            if (headerEnd !== -1) {
+              const head = received.slice(0, headerEnd);
+              const m = /content-length: (\\d+)/i.exec(head);
+              const bodyLen = m ? Number(m[1]) : 0;
+              const total = headerEnd + 4 + bodyLen;
+              if (received.length >= total) {
+                const status = head.split("\\r\\n")[0];
+                received = received.slice(total);
+                return status;
               }
-              if (sockClosed) return "";
-              await waiter.promise;
-              waiter = Promise.withResolvers();
             }
-          })();
+            if (sockClosed) return "";
+            await waiter.promise;
+            waiter = Promise.withResolvers();
+          }
         };
 
         const release = Promise.withResolvers();
@@ -675,28 +676,13 @@ test("late keep-alive request to a route after stop()+GC answers 503", async () 
         let hits = 0;
 
         await (async () => {
-          const server = Bun.serve({
-            port: 0,
-            hostname: "127.0.0.1",
-            routes: {
-              "/r": async () => {
-                if (++hits === 1) {
-                  inflight.resolve();
-                  await release.promise; // keep pending_requests > 0 across stop()
-                }
-                return new Response("ok");
-              },
-            },
-          });
+          ${serverSnippet}
 
           globalThis.sock = await Bun.connect({
             hostname: "127.0.0.1",
-            port: server.port,
+            port,
             socket: {
-              data(socket, data) {
-                received += data.toString("latin1");
-                waiter.resolve();
-              },
+              data(_s, d) { received += d.toString("latin1"); waiter.resolve(); },
               close() { sockClosed = true; waiter.resolve(); },
               error() { sockClosed = true; waiter.resolve(); },
             },
@@ -704,22 +690,20 @@ test("late keep-alive request to a route after stop()+GC answers 503", async () 
 
           // First request: handler parks on \`release\`, keeping
           // pending_requests > 0 so stop() defers the js_value downgrade.
-          sock.write("GET /r HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+          sock.write("GET ${reqPath} HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
           await inflight.promise;
-
           // Pipeline the late request behind the held one. uws won't read it
           // until the first response is sent, by which time js_value is Weak.
-          sock.write("GET /r HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+          sock.write("GET ${reqPath} HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
 
           // Graceful stop: listener closes; downgrade deferred (request in flight).
-          server.stop();
+          stop();
         })();
-        // The only \`server\` binding is now out of scope.
+        // The only server binding is now out of scope.
 
-        // Let the first request complete: pending_requests → 0,
-        // deinit_if_we_can() downgrades js_value to Weak. uws then reads the
-        // pipelined request and on_user_route_request sees
-        // js_value_for_dispatch() == None → 503. Previously: panic.
+        // First request completes → pending_requests → 0 → js_value downgrades.
+        // The pipelined request then hits the trampoline with the wrapper
+        // gone → 503. Previously: panic.
         release.resolve();
         const first = await nextResponse();
         if (!first.includes("200")) throw new Error("first request failed: " + first);
@@ -748,106 +732,56 @@ test("late keep-alive request to a route after stop()+GC answers 503", async () 
   // before dispatch and the guard was never exercised.
   expect(stdout.trim()).toMatch(/^HTTP\/1\.1 503\b/);
   expect(exitCode).toBe(0);
+}
+
+test("late keep-alive request to a route after stop()+GC answers 503", async () => {
+  // Per-route handlers live in ServerRouteList, which is reachable from JS only
+  // through the Server wrapper — exercises on_user_route_request's gate.
+  await runLateKeepAlive503(
+    "/r",
+    `
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        routes: {
+          "/r": async () => {
+            if (++hits === 1) {
+              inflight.resolve();
+              await release.promise; // keep pending_requests > 0 across stop()
+            }
+            return new Response("ok");
+          },
+        },
+      });
+      const port = server.port;
+      const stop = () => server.stop();
+    `,
+  );
 });
 
 test("late keep-alive request to a node:http server after close()+GC answers 503", async () => {
-  // Same shape as the route test above, but through node:http so the request
-  // dispatches via on_node_http_request_with_upgrade_ctx — the trampoline that
-  // was missing the 503 guard until the respond_stopped_503 helper sweep.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-        const http = require("node:http");
-        const { fullGC } = require("bun:jsc");
-
-        let received = "";
-        let sockClosed = false;
-        let waiter = Promise.withResolvers();
-        const nextResponse = async () => {
-          while (true) {
-            const headerEnd = received.indexOf("\\r\\n\\r\\n");
-            if (headerEnd !== -1) {
-              const head = received.slice(0, headerEnd);
-              const m = /content-length: (\\d+)/i.exec(head);
-              const bodyLen = m ? Number(m[1]) : 0;
-              const total = headerEnd + 4 + bodyLen;
-              if (received.length >= total) {
-                const status = head.split("\\r\\n")[0];
-                received = received.slice(total);
-                return status;
-              }
-            }
-            if (sockClosed) return "";
-            await waiter.promise;
-            waiter = Promise.withResolvers();
-          }
-        };
-
-        const release = Promise.withResolvers();
-        const inflight = Promise.withResolvers();
-        let hits = 0;
-
-        await (async () => {
-          const srv = http.createServer(async (req, res) => {
-            if (++hits === 1) {
-              inflight.resolve();
-              await release.promise; // hold socket non-idle through close()
-            }
-            res.writeHead(200, { "content-length": 2 });
-            res.end("ok");
-          });
-          await new Promise(r => srv.listen(0, "127.0.0.1", r));
-
-          globalThis.sock = await Bun.connect({
-            hostname: "127.0.0.1",
-            port: srv.address().port,
-            socket: {
-              data(_s, d) { received += d.toString("latin1"); waiter.resolve(); },
-              close() { sockClosed = true; waiter.resolve(); },
-              error() { sockClosed = true; waiter.resolve(); },
-            },
-          });
-
-          sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
-          await inflight.promise;
-          // Pipeline the late request while the first is still in-flight.
-          sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
-
-          // close() → closeIdleConnections() (skips this socket) → stop().
-          // Also drops node:http's own reference to the Bun server.
-          srv.close();
-        })();
-
-        // First request completes → pending_requests → 0 → js_value downgrades.
-        // The pipelined request then hits on_node_http_request with the
-        // wrapper gone → 503.
-        release.resolve();
-        const first = await nextResponse();
-        if (!first.includes("200")) throw new Error("first request failed: " + first);
-        const second = await nextResponse();
-
-        for (let i = 0; i < 10; i++) {
-          Bun.gc(true);
-          fullGC();
-          await Bun.sleep(0);
+  // Same shape but through node:http so the request dispatches via
+  // on_node_http_request_with_upgrade_ctx — the trampoline that was missing
+  // the 503 guard until the respond_stopped_503 helper sweep.
+  await runLateKeepAlive503(
+    "/",
+    `
+      const http = require("node:http");
+      const srv = http.createServer(async (req, res) => {
+        if (++hits === 1) {
+          inflight.resolve();
+          await release.promise; // hold socket non-idle through close()
         }
-        console.log(second);
-
-        sock.end();
-        process.exit(0);
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toMatch(/^HTTP\/1\.1 503\b/);
-  expect(exitCode).toBe(0);
+        res.writeHead(200, { "content-length": 2 });
+        res.end("ok");
+      });
+      await new Promise(r => srv.listen(0, "127.0.0.1", r));
+      const port = srv.address().port;
+      // close() → closeIdleConnections() (skips this socket) → stop().
+      // Also drops node:http's own reference to the Bun server.
+      const stop = () => srv.close();
+    `,
+  );
 });
 
 test("server wrapper survives GC while a websocket is connected after stop()", async () => {
@@ -2108,7 +2042,7 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         // adding a GC root ourselves. Assign client directly to the outer var
         // rather than returning it — returning keeps the async frame's scope
         // (which contains server) alive via the resolved-value chain in JSC.
-        let client, serverWeak;
+        let client;
         await (async () => {
           const server = Bun.serve({
             port: 0,
@@ -2120,7 +2054,6 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
               message(ws, m) { ws.send(server.port + ":" + m); },
             },
           });
-          serverWeak = new WeakRef(server);
           client = new WebSocket(server.url.href.replace("http", "ws"));
           client.onopen = () => clientOpen.resolve();
           client.onmessage = e => echoed.resolve(e.data);
@@ -2143,11 +2076,9 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         client.close();
         await closed.promise;
         client = null;
-        // Graceful stop with an open ws does not auto-finalize when the ws
-        // closes; force-finish via the WeakRef so the native side drops its
-        // event-loop ref. The WeakRef adds no root — if tracing failed above,
-        // deref() would already be undefined.
-        serverWeak.deref()?.stop(true);
+        // The last ws closing triggers on_websocket_closed → deinit_if_we_can,
+        // which downgrades the wrapper without an explicit stop(true) — that's
+        // the path under test, so no force-finish here.
         const afterClose = await gcUntilCountAtMost(baseline);
 
         console.log(JSON.stringify({ baseline, whileConnected, echo, afterClose }));

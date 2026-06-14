@@ -1,5 +1,6 @@
 // Hardcoded module "node:perf_hooks"
 const { throwNotImplemented } = require("internal/shared");
+const { validateFunction, validateObject } = require("internal/validators");
 
 const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
   min: number,
@@ -113,6 +114,199 @@ class PerformanceResourceTiming {
 }
 $toClass(PerformanceResourceTiming, "PerformanceResourceTiming", PerformanceEntry);
 
+// --- timerify + 'function' entryType support -------------------------------
+// The global PerformanceObserver is WebCore's and only knows web entry types,
+// so node-only 'function' entries (produced by performance.timerify) are
+// tracked and dispatched from JS here.
+
+class PerformanceNodeEntry {
+  name;
+  entryType;
+  startTime;
+  duration;
+  detail;
+
+  constructor(name, entryType, startTime, duration, detail) {
+    this.name = name;
+    this.entryType = entryType;
+    this.startTime = startTime;
+    this.duration = duration;
+    this.detail = detail;
+  }
+
+  toJSON() {
+    return {
+      name: this.name,
+      entryType: this.entryType,
+      startTime: this.startTime,
+      duration: this.duration,
+      detail: this.detail,
+    };
+  }
+}
+// Link the prototype chain so entries are `instanceof PerformanceEntry` like
+// node's PerformanceNodeEntry. `extends PerformanceEntry` can't work (the
+// WebCore constructor throws "Illegal constructor"), and $toClass would
+// replace the prototype object, losing the class's own toJSON; instances
+// carry own data fields, so the inherited brand-checked accessors are
+// shadowed and never invoked.
+Object.setPrototypeOf(PerformanceNodeEntry.prototype, PerformanceEntry.prototype);
+Object.setPrototypeOf(PerformanceNodeEntry, PerformanceEntry);
+Object.defineProperty(PerformanceNodeEntry, "name", { value: "PerformanceNodeEntry" });
+
+class PerformanceNodeObserverEntryList {
+  #entries;
+  constructor(entries) {
+    this.#entries = entries;
+  }
+  getEntries() {
+    return this.#entries.slice();
+  }
+  getEntriesByType(type) {
+    return this.#entries.filter(entry => entry.entryType === type);
+  }
+  getEntriesByName(name, type) {
+    return this.#entries.filter(entry => entry.name === name && (type === undefined || entry.entryType === type));
+  }
+}
+Object.defineProperty(PerformanceNodeObserverEntryList, "name", { value: "PerformanceObserverEntryList" });
+
+const functionObservers = new Set();
+let pendingFunctionEntries = [];
+let functionDispatchPending = false;
+
+function dispatchFunctionEntries() {
+  functionDispatchPending = false;
+  const entries = pendingFunctionEntries;
+  pendingFunctionEntries = [];
+  const list = new PerformanceNodeObserverEntryList(entries);
+  for (const observer of functionObservers) {
+    observer[kDispatchNodeEntries](list);
+  }
+}
+
+function enqueueFunctionEntry(entry) {
+  if (functionObservers.size === 0) return;
+  pendingFunctionEntries.push(entry);
+  if (!functionDispatchPending) {
+    functionDispatchPending = true;
+    queueMicrotask(dispatchFunctionEntries);
+  }
+}
+
+const kDispatchNodeEntries = Symbol("kDispatchNodeEntries");
+
+class NodePerformanceObserver extends PerformanceObserver {
+  #callback;
+
+  constructor(callback) {
+    super(callback);
+    this.#callback = callback;
+  }
+
+  static get supportedEntryTypes() {
+    return [...super.supportedEntryTypes, "function"].sort();
+  }
+
+  observe(options) {
+    if (!$isObject(options)) {
+      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+    }
+    if (options.entryTypes !== undefined) {
+      const entryTypes = options.entryTypes;
+      if (!$isArray(entryTypes)) {
+        throw $ERR_INVALID_ARG_TYPE("options.entryTypes", "string[]", entryTypes);
+      }
+      if (entryTypes.length === 0) {
+        return;
+      }
+      const webTypes = entryTypes.filter(type => type !== "function");
+      const observesFunction = webTypes.length !== entryTypes.length;
+      if (webTypes.length !== 0) {
+        super.observe({ ...options, entryTypes: webTypes });
+      } else {
+        // Function-only list: replace semantics also drop any previously
+        // observed web entry types (node clears the whole set before
+        // re-adding from the new array).
+        super.disconnect();
+      }
+      // The entryTypes form replaces the observed set (unlike the additive
+      // type form), so clear any prior "function" registration when the new
+      // list doesn't include it. Registration happens after super.observe()
+      // so a throw there doesn't leave a stale entry behind.
+      if (observesFunction) {
+        functionObservers.add(this);
+      } else {
+        functionObservers.delete(this);
+      }
+      return;
+    }
+    if (options.type === "function") {
+      functionObservers.add(this);
+      return;
+    }
+    return super.observe(options);
+  }
+
+  disconnect() {
+    functionObservers.delete(this);
+    return super.disconnect();
+  }
+
+  [kDispatchNodeEntries](list) {
+    this.#callback(list, this);
+  }
+}
+Object.defineProperty(NodePerformanceObserver, "name", { value: "PerformanceObserver" });
+
+function timerify(fn, options = {}) {
+  validateFunction(fn, "fn");
+  validateObject(options, "options");
+  const { histogram } = options;
+  if (
+    histogram !== undefined &&
+    (histogram === null || typeof histogram !== "object" || typeof histogram.record !== "function")
+  ) {
+    throw $ERR_INVALID_ARG_TYPE("options.histogram", "RecordableHistogram", histogram);
+  }
+
+  function timerified(...args) {
+    const isConstructorCall = new.target !== undefined;
+    const start = performance.now();
+    const result = isConstructorCall ? Reflect.construct(fn, args, fn) : fn.$apply(this, args);
+    if (!isConstructorCall && typeof result?.finally === "function") {
+      return result.finally(() => {
+        processTimerifyComplete(fn.name, start, args, histogram);
+      });
+    }
+    processTimerifyComplete(fn.name, start, args, histogram);
+    return result;
+  }
+
+  Object.defineProperties(timerified, {
+    length: {
+      configurable: false,
+      enumerable: true,
+      value: fn.length,
+    },
+    name: {
+      configurable: false,
+      enumerable: true,
+      value: `timerified ${fn.name}`,
+    },
+  });
+
+  return timerified;
+}
+
+function processTimerifyComplete(name, start, args, histogram) {
+  const duration = performance.now() - start;
+  if (histogram !== undefined) {
+    histogram.record(Math.ceil(duration * 1e6));
+  }
+  enqueueFunctionEntry(new PerformanceNodeEntry(name, "function", start, duration, args));
+}
+
 export default {
   performance: {
     mark(_) {
@@ -146,6 +340,7 @@ export default {
     onresourcetimingbufferfull: performance.onresourcetimingbufferfull,
     nodeTiming: createPerformanceNodeTiming(),
     now: () => performance.now(),
+    timerify,
     eventLoopUtilization: eventLoopUtilization,
     clearResourceTimings: function () {},
   },
@@ -169,9 +364,10 @@ export default {
   PerformanceEntry,
   PerformanceMark,
   PerformanceMeasure,
-  PerformanceObserver,
+  PerformanceObserver: NodePerformanceObserver,
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
+  timerify,
   monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
     const impl = require("internal/perf_hooks/monitorEventLoopDelay");
     return impl(options);

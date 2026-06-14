@@ -11,6 +11,32 @@ describe("AsyncLocalStorage", () => {
       });
     }).toThrow("error");
   });
+
+  // The post-run restoration assert must account for getStore() falling
+  // through to defaultValue once the entry is removed (debug builds only).
+  test("run() works with a defaultValue and no prior context", () => {
+    const s = new AsyncLocalStorage({ defaultValue: "def" });
+    expect(s.run("x", () => 42)).toBe(42);
+    expect(s.getStore()).toBe("def");
+
+    // nested inside another storage's context: entry is spliced, not cleared
+    const other = new AsyncLocalStorage();
+    other.run(1, () => {
+      const inner = new AsyncLocalStorage({ defaultValue: "d2" });
+      expect(inner.run("y", () => 7)).toBe(7);
+      expect(inner.getStore()).toBe("d2");
+    });
+
+    // disable() during the callback: getStore() is undefined afterwards
+    const s3 = new AsyncLocalStorage({ defaultValue: "d3" });
+    expect(
+      s3.run("z", () => {
+        s3.disable();
+        return 9;
+      }),
+    ).toBe(9);
+    expect(s3.getStore()).toBeUndefined();
+  });
 });
 
 test("AsyncResource", () => {

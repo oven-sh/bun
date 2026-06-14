@@ -703,11 +703,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globa
 
     auto value = callFrame->argument(0);
 
-    if (value.isNull() || JSC::isArray(globalObject, value) || value.isCallable()) {
+    if (value.isNull() || value.isCallable()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
     }
 
-    if (!value.isObject()) {
+    bool valueIsArray = JSC::isArray(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (valueIsArray || !value.isObject()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
     }
 
@@ -716,11 +718,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globa
 
 JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
 {
-    if (value.isNull() || JSC::isArray(globalObject, value) || value.isCallable()) {
+    if (value.isNull() || value.isCallable()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
     }
 
-    if (!value.isObject()) {
+    bool valueIsArray = JSC::isArray(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (valueIsArray || !value.isObject()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
     }
 

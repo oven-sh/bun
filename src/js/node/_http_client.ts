@@ -233,6 +233,13 @@ function ClientRequest(input, options, cb) {
     this[kAbortController]?.abort?.();
     this.socket.destroy(err);
 
+    // Node propagates the destroy error to the request via the socket's
+    // 'error' event (socketErrorListener re-emits it on the request). Our
+    // fetch-backed socket has no such relay, so emit it here.
+    if (err) {
+      process.nextTick(emitErrorNextTick, this, err);
+    }
+
     return this;
   };
 
@@ -1100,6 +1107,10 @@ function emitContinueAndSocketNT(self) {
   if (!self._closed && self.getHeader("expect") === "100-continue") {
     self.emit("continue");
   }
+}
+
+function emitErrorNextTick(req, err) {
+  req.emit("error", err);
 }
 
 function emitAbortNextTick(self) {

@@ -52,6 +52,7 @@ type Http2ConnectOptions = {
 const TLSSocket = tls.TLSSocket;
 const Socket = net.Socket;
 const EventEmitter = require("node:events");
+const { AsyncResource } = require("node:async_hooks");
 const { Duplex } = Stream;
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
 const { promisify } = require("internal/promisify");
@@ -2334,8 +2335,17 @@ class Http2Stream extends Duplex {
   }
 }
 class ClientHttp2Stream extends Http2Stream {
+  #asyncResource;
   constructor(streamId, session, headers) {
     super(streamId, session, headers);
+    // Capture the async context active when the request was created so that
+    // events emitted from native parser callbacks (response, data, end, ...)
+    // observe it, matching Node's Http2Stream async resource semantics.
+    this.#asyncResource = new AsyncResource("Http2Stream");
+  }
+
+  emit(event, ...args) {
+    return this.#asyncResource.runInAsyncScope(super.emit, this, event, ...args);
   }
 }
 function tryClose(fd) {

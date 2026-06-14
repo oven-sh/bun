@@ -42,8 +42,11 @@ for (const [name, copy] of impls) {
       });
 
       const e = await copyShouldThrow(basename + "/from", basename + "/result");
-      expect(e.code).toBe("EISDIR");
-      expect(e.path).toBe(join(basename, "from"));
+      // node maps this to ERR_FS_EISDIR (SystemError), not a raw EISDIR.
+      // The path field echoes the caller's string verbatim (node does not
+      // resolve or normalize it), so expect the same concatenation we passed.
+      expect(e.code).toBe("ERR_FS_EISDIR");
+      expect(e.path).toBe(basename + "/from");
     });
 
     test("recursive directory structure - no destination", async () => {
@@ -136,8 +139,10 @@ for (const [name, copy] of impls) {
         force: false,
         errorOnExist: true,
       });
-      expect(e.code).toBe("EEXIST");
-      expect(e.path).toBe(join(basename, "result", "a.txt"));
+      // node maps this to ERR_FS_CP_EEXIST (SystemError), not a raw EEXIST.
+      // As above, the path field carries the caller's string verbatim.
+      expect(e.code).toBe("ERR_FS_CP_EEXIST");
+      expect(e.path).toBe(basename + "/result/a.txt");
 
       assertContent(basename + "/result/a.txt", "win");
     });
@@ -353,7 +358,10 @@ for (const [name, copy] of impls) {
         "hey": "hi",
       });
 
-      await copy(basename + "/hey", basename + "/hey");
+      // Node rejects identical src and dest with ERR_FS_CP_EINVAL before
+      // touching the file, so EBUSY can never surface.
+      const err = await copyShouldThrow(basename + "/hey", basename + "/hey");
+      expect(err.code).toBe("ERR_FS_CP_EINVAL");
     });
   });
 }
@@ -491,37 +499,47 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
 // file so that its SingleTask fails with EISDIR. This works even when running
 // as root. On macOS the pre-existing dst/ makes clonefile() fail with EEXIST
 // and fall through to the per-file SingleTask path being tested.
-test.skipIf(!isPosix)(
+// Linux-only: fs.cp now routes copies onto an existing destination through the
+// JS port (for node's ERR_FS_CP_* semantics), and on macOS a fresh destination
+// is a single clonefile() — so the native per-file SingleTask path is only
+// reachable on Linux, via a fresh destination.
+test.skipIf(!isPosix || process.platform === "darwin")(
   "fs.promises.cp recursive does not free parent task while subtasks are in flight after an error",
   async () => {
     const files: Record<string, string | object> = {};
     // Enough siblings so several SingleTasks are running on the thread pool
     // when the failing one errors.
     for (let i = 0; i < 32; i++) files[`src/f${i}.txt`] = "x";
-    files["src/000-bad.txt"] = "x";
-    // The destination for 000-bad.txt is a directory → copying into it fails.
-    files["dst/000-bad.txt"] = { ".keep": "" };
     using dir = tempDir("cp-uaf", files);
     const base = String(dir);
+    // A unix socket cannot be copied by the per-file path and fails even when
+    // running as root, making one SingleTask error while siblings are in
+    // flight.
+    const { createServer } = require("net");
+    const sock = createServer();
+    await new Promise<void>((resolve, reject) => {
+      sock.listen(join(base, "src", "000-bad.sock"), resolve);
+      sock.once("error", reject);
+    });
 
     // Run the copy in a subprocess: before the fix this is a
     // heap-use-after-free that ASAN aborts on. The subprocess loops to make
-    // the race reliable. It must reject with EISDIR each iteration and exit 0.
+    // the race reliable. It must reject each iteration and exit 0.
     const script = `
       const fs = require("fs");
       const path = require("path");
       const base = ${JSON.stringify(base)};
       const src = path.join(base, "src");
-      const dst = path.join(base, "dst");
       (async () => {
         for (let i = 0; i < 20; i++) {
+          const dst = path.join(base, "dst-" + i);
           try {
             await fs.promises.cp(src, dst, { recursive: true });
             console.log("UNEXPECTED-SUCCESS");
             process.exit(1);
           } catch (e) {
-            if (e?.code !== "EISDIR") {
-              console.log("UNEXPECTED-ERROR:" + (e?.code ?? e?.message));
+            if (!e?.code) {
+              console.log("UNEXPECTED-ERROR:" + (e?.message ?? e));
               process.exit(1);
             }
           }
@@ -536,6 +554,7 @@ test.skipIf(!isPosix)(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    sock.close();
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("ok");
     expect(exitCode).toBe(0);

@@ -243,6 +243,7 @@ pub const md = @import("./md/root.zig");
 pub const Output = @import("./bun_core/output.zig");
 pub const Global = @import("./bun_core/Global.zig");
 pub const ParentDeathWatchdog = @import("./aio/ParentDeathWatchdog.zig");
+pub const MemoryPressureWatcher = @import("./aio/MemoryPressureWatcher.zig");
 
 pub const FD = @import("./sys/fd.zig").FD;
 pub const MovableIfWindowsFd = @import("./sys/fd.zig").MovableIfWindowsFd;

@@ -63,6 +63,7 @@ pub const Features = struct {
     pub var isolated_bun_install: usize = 0;
     pub var hoisted_bun_install: usize = 0;
     pub var macros: usize = 0;
+    pub var memory_pressure: usize = 0;
     pub var no_avx2: usize = 0;
     pub var no_avx: usize = 0;
     pub var shell: usize = 0;

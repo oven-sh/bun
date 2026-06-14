@@ -81,6 +81,77 @@ describe("ReadStream.prototype.setRawMode", () => {
       returnsThis: true,
     });
   });
+
+  test.skipIf(!isWindows)("supports raw mode on reopened CONIN$ streams", async () => {
+    let output = "";
+    const decoder = new TextDecoder();
+    const done = Promise.withResolvers<void>();
+    const eof = Promise.withResolvers<void>();
+
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          const tty = require("node:tty");
+          let err;
+          const fd = fs.openSync("\\\\\\\\.\\\\CONIN$", "r+");
+          const input = new tty.ReadStream(fd);
+          input.on("error", e => (err = e.message));
+          const before = input.isRaw;
+          const ret = input.setRawMode(true);
+          const afterTrue = input.isRaw;
+          input.setRawMode(false);
+          const afterFalse = input.isRaw;
+          input.destroy();
+          process.stdout.write(
+            "RESULT " +
+              JSON.stringify({
+                isTTY: input.isTTY,
+                before,
+                afterTrue,
+                afterFalse,
+                returnsThis: ret === input,
+                ...(err ? { err } : {}),
+              }),
+          );
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      terminal: {
+        cols: 200,
+        rows: 24,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("RESULT ") && output.includes("}")) done.resolve();
+        },
+        exit() {
+          eof.resolve();
+        },
+      },
+    });
+
+    await Promise.race([done.promise, eof.promise]);
+    proc.kill();
+    await proc.exited;
+    proc.terminal?.close();
+    output += decoder.decode();
+
+    const stripped = Bun.stripANSI(output).replace(/[\r\n]/g, "");
+    const match = stripped.match(/RESULT (\{[^}]*\})/);
+    if (!match) {
+      throw new Error("child did not emit RESULT; terminal output was: " + JSON.stringify(output));
+    }
+    expect(JSON.parse(match[1])).toEqual({
+      isTTY: true,
+      before: false,
+      afterTrue: true,
+      afterFalse: false,
+      returnsThis: true,
+    });
+  });
 });
 
 describe("WriteStream.prototype.getColorDepth", () => {

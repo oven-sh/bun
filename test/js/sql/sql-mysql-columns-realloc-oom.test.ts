@@ -167,6 +167,7 @@ test("MySQL: OOM reallocating statement.columns does not leave a dangling slice"
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
+    timeout: 60_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 

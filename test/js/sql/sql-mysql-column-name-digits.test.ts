@@ -28,6 +28,7 @@ async function runFixture(url: string) {
     env: { ...bunEnv, MYSQL_URL: url },
     stdout: "pipe",
     stderr: "pipe",
+    timeout: 60_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
@@ -87,6 +88,7 @@ if (isDockerEnabled()) {
       stdout: "ignore",
       stderr: "ignore",
       stdin: "ignore",
+      timeout: 60_000,
     }).unref();
     return waitForSocket(30_000);
   }

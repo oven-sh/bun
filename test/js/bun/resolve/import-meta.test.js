@@ -276,9 +276,15 @@ it("import.meta is discoverable in a standalone module", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Assert the process succeeded before parsing, so a crash or non-JSON output surfaces
-  // stderr/exitCode in the failure diff instead of an opaque JSON.parse error.
-  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  // Parse defensively so a crash or non-JSON output surfaces stdout/stderr/exitCode
+  // instead of an opaque JSON.parse error. stderr content is not asserted because
+  // debug/ASAN lanes can emit benign noise.
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`child did not print JSON (exit ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
+  }
 
   const keys = [
     "dir",
@@ -293,12 +299,13 @@ it("import.meta is discoverable in a standalone module", async () => {
     "resolveSync",
     "url",
   ];
-  expect(JSON.parse(stdout)).toEqual({
+  expect(parsed).toEqual({
     names: keys,
     ownKeys: keys,
     urlDescriptorDefined: true,
     prototypeIsNull: true,
   });
+  expect(exitCode).toBe(0);
 });
 
 it('require("bun") works', () => {

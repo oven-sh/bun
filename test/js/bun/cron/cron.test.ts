@@ -1605,6 +1605,27 @@ describe("Bun.cron.parse", () => {
     expect(results.map(t => new Date(t).getUTCDay())).toEqual([1, 3, 5, 1, 3, 5]);
   });
 
+  test("named weekday ranges ending in SUN behave like 5-7 / 6-7 (Vixie semantics)", () => {
+    const from = Date.UTC(2025, 0, 1, 12, 0, 0); // Wednesday
+    for (const [named, numeric] of [
+      ["FRI-SUN", "5-7"],
+      ["SAT-SUN", "6-7"],
+      ["THU-SUN", "4-7"],
+      ["MON-SUN", "1-7"],
+      ["fri-sun", "5-7"],
+      ["Friday-Sunday", "5-7"],
+    ] as const) {
+      expect({ expr: named, results: nextN(`0 0 * * ${named}`, from, 7) }).toEqual({
+        expr: named,
+        results: nextN(`0 0 * * ${numeric}`, from, 7),
+      });
+    }
+    // Spot-check FRI-SUN hits exactly Fri(5), Sat(6), Sun(0)
+    expect(nextN("0 0 * * FRI-SUN", from, 6).map(t => new Date(t).getUTCDay())).toEqual([5, 6, 0, 5, 6, 0]);
+    // Numeric `5-0` is still rejected — promotion is gated on named tokens.
+    expect(() => Bun.cron.parse("0 0 * * 5-0", from)).toThrow(/range must be ascending/i);
+  });
+
   test("day 7 and SUN both schedule on Sundays", () => {
     const from = Date.UTC(2025, 0, 13, 0, 0, 0); // Monday
     expect(nextN("0 0 * * 7", from, 3)).toEqual(nextN("0 0 * * SUN", from, 3));

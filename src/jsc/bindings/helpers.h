@@ -393,7 +393,16 @@ static const WTF::String toStringStatic(ZigString str)
 
 static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    WTF::String message = toString(*str);
+    // External-tagged strings transfer ownership: the caller heap-allocated
+    // the bytes and marked them global so the JS string adopts them (and
+    // frees them via free_global_string) — keep that path, like toIdentifier
+    // does. Everything else is copied: an untagged ZigString would otherwise
+    // become a JSString that aliases the caller's bytes with no ownership,
+    // and several callers (AsyncModule's resolve/download error paths) pass
+    // stack-local buffers that are freed before JS can ever read
+    // error.message. The TypeError/SyntaxError/RangeError siblings below
+    // already copy.
+    WTF::String message = isTaggedExternalPtr(str->ptr) ? toString(*str) : toStringCopy(*str);
     if (message.isNull() && str->len > 0) [[unlikely]] {
         // pending exception while creating an error.
         return {};

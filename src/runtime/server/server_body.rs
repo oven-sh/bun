@@ -2183,7 +2183,10 @@ where
         // async-context re-wrap is unconditional — `with_async_context_if_needed`
         // is a no-op when no ALS frame is active, so re-wrapping on every
         // reload keeps the captured frame in sync with the call-time context.
-        let server_js = self.js_value_for_dispatch();
+        // `on_reload` is a host_fn — the wrapper is `callframe.this()` on the
+        // JS stack, alive even if `js_value` was downgraded after stop(). The
+        // slot writes must reach it so the new handlers are GC-rooted.
+        let server_js = Some(self.js_value_assert_alive());
         if !new_config.on_request.is_empty_or_undefined_or_null() {
             super::wrap_handler_slot(
                 &mut new_config.on_request,

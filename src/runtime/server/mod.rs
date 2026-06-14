@@ -270,13 +270,10 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// `Cell` because the open/close accounting arrives through shared
     /// `AnyServer` handles on the JS thread.
     pub active_websocket_count: core::cell::Cell<u32>,
-    /// Set for the duration of [`NewServer::deinit_if_we_can`]; lets a nested
-    /// call (reached via a callback the body fires) early-return instead of
-    /// re-running the downgrade/teardown while the outer frame still holds
-    /// `&mut self`. A `Cell` rather than a `ServerFlags` bit so the
-    /// scopeguard's deferred clear holds a `&Cell` (interior mutability) — a
-    /// raw `*mut ServerFlags` captured before the body forms fresh `&mut self`
-    /// reborrows would be invalidated under Stacked Borrows.
+    /// Set across [`NewServer::deinit_if_we_can`] and the synchronous
+    /// `app.close()` drain in `stop_listening`; lets a nested call (reached
+    /// via a callback the body fires) early-return instead of re-running the
+    /// downgrade/teardown while the outer frame still holds `&mut self`.
     deinit_running: core::cell::Cell<bool>,
     pub request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
     /// Null until the H3 listen path runs (`HAS_H3 && config.http3`); never

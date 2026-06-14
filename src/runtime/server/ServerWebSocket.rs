@@ -1376,11 +1376,14 @@ impl ServerWebSocket {
             break 'brk args.ptr[1].to_slice_or_null(global_this)?;
         };
 
+        // Copy the server backref BEFORE end(): on_close re-enters and the
+        // user's close handler may call stop(true), which clears handler.server.
+        let server = self.handler().server;
         self.update_flags(|f| f.set_closed(true));
         self.websocket().end(code, message_value.slice());
         // on_close re-entered with was_closed=true so it skipped the
         // accounting; balance the count here.
-        if let Some(server) = self.handler().server {
+        if let Some(server) = server {
             server.on_websocket_closed();
         }
         Ok(JSValue::UNDEFINED)
@@ -1400,11 +1403,14 @@ impl ServerWebSocket {
             return Ok(JSValue::UNDEFINED);
         }
 
+        // Copy the server backref BEFORE close(): on_close re-enters and the
+        // user's close handler may call stop(true), which clears handler.server.
+        let server = self.handler().server;
         self.update_flags(|f| f.set_closed(true));
         self.websocket().close();
         // on_close re-entered with was_closed=true so it skipped the
         // accounting; balance the count here.
-        if let Some(server) = self.handler().server {
+        if let Some(server) = server {
             server.on_websocket_closed();
         }
 

@@ -2038,10 +2038,9 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         const closed = Promise.withResolvers();
 
         // Scope server so the only post-stop root is the connected websocket.
-        // Hold a WeakRef so we can stop(true) after the ws closes without
-        // adding a GC root ourselves. Assign client directly to the outer var
-        // rather than returning it — returning keeps the async frame's scope
-        // (which contains server) alive via the resolved-value chain in JSC.
+        // Assign client directly to the outer var rather than returning it —
+        // returning keeps the async frame's scope (which contains server)
+        // alive via the resolved-value chain in JSC.
         let client;
         await (async () => {
           const server = Bun.serve({

@@ -103,9 +103,11 @@ test("pool scans tolerate unassigned connection slots during pool start", async 
   });
   try {
     sql.connect().catch(() => {});
-    // the pool-start fill loop runs synchronously inside connect(), invoking
-    // password() once per pool slot
-    expect(passwordCalls).toBe(2);
+    // The pool grows lazily (#30632): the first connect() opens a single
+    // slot, invoking password() once. The re-entrant connect() inside
+    // password() runs while that slot is still being created (not yet in
+    // connections[]), so it enqueues without opening another slot.
+    expect(passwordCalls).toBe(1);
     expect(errors).toEqual([]);
   } finally {
     // force an immediate close even with waiters queued

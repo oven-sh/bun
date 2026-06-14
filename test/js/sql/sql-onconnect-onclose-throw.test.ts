@@ -162,6 +162,9 @@ test.concurrent(
 // close) threw a TypeError on the holes when called from inside the callback.
 // The callback is now deferred until the pool is fully constructed. Nothing
 // is dialed: password() throws before the connection is created.
+//
+// With lazy pool growth (#30632) a single query opens one slot even at
+// max: 2, so exactly one onclose fires.
 test.concurrent("postgres: pool calls from onclose are safe when connecting fails synchronously", async () => {
   const fixture = /* ts */ `
 import { SQL } from "bun";
@@ -194,7 +197,7 @@ try {
 process.exit(0);
 `;
   const { stdout, exitCode } = await runFixture(fixture);
-  expect(stdout).toBe("reentry ok\nreentry ok\nquery rejected: password error\n");
+  expect(stdout).toBe("reentry ok\nquery rejected: password error\n");
   expect(exitCode).toBe(0);
 });
 

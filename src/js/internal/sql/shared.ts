@@ -815,6 +815,16 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     }
     return true;
   }
+  /// Bypasses `retry()`'s auth-code gate and forces a fresh handshake on
+  /// this slot. Only meaningful when `connectionInfo.password` is a
+  /// function — the re-evaluation is what lets a rotated IAM token / Vault
+  /// lease actually take effect on a slot whose previous handshake failed
+  /// with a non-retryable auth error.
+  forceRetry(): boolean {
+    if (this.adapter.closed) return false;
+    this.doRetry();
+    return true;
+  }
 }
 
 function closeNT(onClose: (err: Error) => void, err: Error | null) {
@@ -895,7 +905,16 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
 
+  /// Live pool entries. Grown lazily on demand up to `maxPoolSize` —
+  /// `#tryGrowPool()` appends one slot at a time via push(), so the array is
+  /// dense (no unassigned holes) and only shrinks when `#close()` nulls slots
+  /// after clearing `poolStarted`. A slot being created is not in the array
+  /// yet (push happens after `createPooledConnection` returns), so user code
+  /// that re-enters a scan during a synchronous `password` never sees it.
   public readonly connections: PooledConnection[];
+  /// Hard cap on the number of connections this pool is allowed to open.
+  /// `connections.length` is the CURRENT size and grows from 0 up to this.
+  public readonly maxPoolSize: number;
   public readonly readyConnections: Set<PooledConnection> = new Set();
 
   public waitingQueue: Array<(err: Error | null, result: any) => void> = [];
@@ -908,11 +927,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
-    // Slots are filled one at a time in connect()'s pool-start loop, and
-    // createPooledConnection can synchronously run user code (for example a
-    // function-valued `password`) that re-enters methods scanning this array,
-    // so every scan must tolerate unassigned holes.
-    this.connections = new Array(connectionInfo.max);
+    this.connections = [];
+    this.maxPoolSize = connectionInfo.max;
   }
 
   protected abstract createPooledConnection(): PooledConnection;
@@ -1007,8 +1023,35 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
   maxDistribution() {
     if (!this.waitingQueue.length) return 0;
-    const result = Math.ceil((this.waitingQueue.length + this.totalQueries) / this.connections.length);
+    // Target distribution against the pool ceiling, not the current size.
+    // With lazy pool growth `connections.length` starts small and would
+    // collapse every queued query onto the first connection.
+    const result = Math.ceil((this.waitingQueue.length + this.totalQueries) / this.maxPoolSize);
     return result ? result : 1;
+  }
+
+  /// Open a new connection and append it to the pool if we have room. The
+  /// new connection starts connecting immediately and will enter
+  /// `readyConnections` via `release()` once its TCP/auth handshake finishes.
+  /// Returns the new connection, or null if we're already at `maxPoolSize`.
+  #tryGrowPool(): PooledConnection | null {
+    if (this.closed) return null;
+    if (this.connections.length >= this.maxPoolSize) return null;
+    const connection = this.createPooledConnection();
+    this.connections.push(connection);
+    return connection;
+  }
+
+  /// Count connections that are still completing their handshake. A pending
+  /// connection will soon join `readyConnections`, so we don't need to grow
+  /// the pool further just because no connection is ready *right now*.
+  #pendingConnectionsCount(): number {
+    let count = 0;
+    const len = this.connections.length;
+    for (let i = 0; i < len; i++) {
+      if (this.connections[i].state === PooledConnectionState.pending) count++;
+    }
+    return count;
   }
 
   flushConcurrentQueries() {
@@ -1022,6 +1065,21 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         c => !(c.flags & PooledConnectionFlags.preReserved) && c.queryCount < maxDistribution,
       );
       if (nonReservedConnections.length === 0) {
+        // No idle connection can take another query. Grow the pool only if
+        // the number of still-handshaking connections is less than the
+        // backlog — otherwise those pending connections will drain the
+        // queue on their own once they become ready.
+        //
+        // `release()` hands freshly-connected slots to `reservedQueue`
+        // first (and returns early, never feeding `waitingQueue`), so up
+        // to `reservedQueue.length` pending sockets are already spoken for
+        // and don't count as capacity for `waitingQueue`.
+        const pending = this.#pendingConnectionsCount();
+        const pendingForWaiting = Math.max(0, pending - this.reservedQueue.length);
+        const unservedWaiters = this.waitingQueue.length - pendingForWaiting;
+        if (unservedWaiters > 0 && this.connections.length < this.maxPoolSize) {
+          this.#tryGrowPool();
+        }
         return;
       }
       const orderedConnections = nonReservedConnections.sort((a, b) => a.queryCount - b.queryCount);
@@ -1276,21 +1334,24 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         for (let i = 0; i < pollSize; i++) {
           const connection = this.connections[i];
           // we need a new connection and we have some connections that can retry
-          // (an unassigned hole is a connection still being created, so it
-          // lands in the "pending" branch below)
-          if (connection?.state === PooledConnectionState.closed) {
+          if (connection.state === PooledConnectionState.closed) {
             if (connection.retry()) {
               // lets wait for connection to be released
-              if (!retry_in_progress) {
-                // avoid adding to the queue twice, we wanna to retry every available pool connection
-                retry_in_progress = true;
-                if (reserved) {
-                  // we are not sure what connection will be available so we dont pre reserve
-                  this.reservedQueue.push(onConnected);
-                } else {
-                  this.waitingQueue.push(onConnected);
-                }
+              retry_in_progress = true;
+              if (reserved) {
+                // we are not sure what connection will be available so we dont pre reserve
+                this.reservedQueue.push(onConnected);
+              } else {
+                this.waitingQueue.push(onConnected);
               }
+              // One revived slot is enough to serve this caller. Reviving
+              // every closed slot here would redial the whole pool when a
+              // single query arrives after all slots idled out — the
+              // #30632 burst, shifted from cold start to post-idle.
+              // Additional slots are revived on demand as more queries
+              // arrive (each enters this scan), or grown via
+              // flushConcurrentQueries() if the pool is still below max.
+              break;
             } else {
               // we have some error, lets grab it and fail if unable to start a connection
               storedError = connection.storedError;
@@ -1309,28 +1370,59 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
           } else {
             this.waitingQueue.push(onConnected);
           }
+          // Caller is waiting behind in-flight connections. If the pool is
+          // not at max yet, open another connection in parallel rather than
+          // letting everyone pile up behind the first socket.
+          this.#tryGrowPool();
         } else if (!retry_in_progress) {
-          // impossible to connect or retry
-          onConnected(storedError ?? this.connectionClosedError(), null);
+          // Every existing slot is closed and `retry()` refused all of
+          // them. That's the non-retryable class of errors (bad password,
+          // unknown auth method, TLS failures). Opening another connection
+          // with the SAME `connectionInfo` will hit the identical failure
+          // and just burn a TCP+auth round-trip per waiter — UNLESS the
+          // password is supplied as a function (dynamic credential, e.g.
+          // IAM token), in which case a fresh attempt may genuinely pick
+          // up a new secret.
+          if (typeof this.connectionInfo.password === "function") {
+            if (reserved) {
+              this.reservedQueue.push(onConnected);
+            } else {
+              this.waitingQueue.push(onConnected);
+            }
+            // Reuse an existing closed slot via `forceRetry()` instead of
+            // growing. A slot that failed auth with `canBeConnected` unset
+            // can never be revived by `retry()`, so growing here would
+            // strand it: it counts against `maxPoolSize` forever while a
+            // fresh slot takes its place. Reaching this branch means every
+            // slot is closed (`all_closed`) and the pool is non-empty
+            // (`poolStarted` implies at least one slot), so the first
+            // iteration always finds a slot to revive.
+            for (let i = 0; i < pollSize; i++) {
+              const c = this.connections[i];
+              if (c.state === PooledConnectionState.closed) {
+                c.forceRetry();
+                break;
+              }
+            }
+          } else {
+            // impossible to connect or retry
+            onConnected(storedError ?? this.connectionClosedError(), null);
+          }
         }
         return;
       }
-      // we never started the pool, lets start it
+      // We never started the pool. Only open one connection for the first
+      // query — further connections are opened lazily by
+      // `flushConcurrentQueries()` as demand grows, up to `maxPoolSize`.
       if (reserved) {
         this.reservedQueue.push(onConnected);
       } else {
         this.waitingQueue.push(onConnected);
       }
       this.poolStarted = true;
-      const pollSize = this.connections.length;
-      // pool is always at least 1 connection
-      const firstConnection = this.createPooledConnection();
-      this.connections[0] = firstConnection;
-      if (reserved) {
+      const firstConnection = this.#tryGrowPool();
+      if (reserved && firstConnection) {
         firstConnection.flags |= PooledConnectionFlags.preReserved; // lets pre reserve the first connection
-      }
-      for (let i = 1; i < pollSize; i++) {
-        this.connections[i] = this.createPooledConnection();
       }
       return;
     }
@@ -1361,8 +1453,10 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         connectionWithLeastQueries.flags |= PooledConnectionFlags.preReserved;
       }
 
-      // no connection available to be reserved lets wait for a connection to be released
+      // No ready connection can be reserved. Grow the pool if we still can,
+      // so the caller isn't stuck waiting behind the currently-open sockets.
       this.reservedQueue.push(onConnected);
+      this.#tryGrowPool();
     } else {
       this.waitingQueue.push(onConnected);
       this.flushConcurrentQueries();

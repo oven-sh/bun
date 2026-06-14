@@ -18,7 +18,11 @@ export default [
     // pinned for the task's duration — so the slice stays valid off-thread.
     // (No `hasPendingActivity` polling; the JSRef upgrade/downgrade is
     //  explicit at schedule/then.)
-    values: ["sourceJS"],
+    // `compositeJS` roots the JS array of overlay inputs passed to
+    // `.composite()` across the async task — the layer bytes are copied at
+    // call time, but rooting the descriptors keeps `Image` overlay inputs
+    // (and their borrowed ArrayBuffers) reachable for the wrapper's lifetime.
+    values: ["sourceJS", "compositeJS"],
     configurable: false,
     JSType: "0b11101110",
     klass: {
@@ -41,6 +45,10 @@ export default [
       flip: { fn: "doFlip", length: 0 },
       flop: { fn: "doFlop", length: 0 },
       modulate: { fn: "doModulate", length: 1 },
+      // Record overlay layers (bottom-to-top); blended after every other
+      // pipeline stage, in final post-resize coordinate space. Repeat calls
+      // replace the layer list (Sharp semantics).
+      composite: { fn: "doComposite", length: 1 },
       // Chainable output-format setters (Sharp-style); the encode happens
       // when a terminal below is awaited.
       jpeg: { fn: "doFormatJpeg", length: 1 },
@@ -64,6 +72,10 @@ export default [
       // <img src> / blurDataURL.
       placeholder: { fn: "doPlaceholder", length: 0, async: true },
       metadata: { fn: "doMetadata", length: 0, async: true },
+      // Post-pipeline RGBA8 pixels as `{data: Uint8Array, width, height,
+      // channels: 4}` — the `.raw().toBuffer({resolveWithObject: true})`
+      // equivalent, minus the encode round-trip.
+      pixels: { fn: "doPixels", length: 0, async: true },
 
       // Read-only after a pipeline has run; -1 before.
       width: { getter: "getWidth" },

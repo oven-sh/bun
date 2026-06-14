@@ -3,7 +3,7 @@ title: Image
 description: Decode, transform, and encode images with a fast native pipeline
 ---
 
-`Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF — built on libjpeg-turbo, spng, libwebp, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
+`Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, compositing, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF — built on libjpeg-turbo, spng, libwebp, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
 
 ```ts
 await Bun.file("photo.jpg").image().resize(400, 400, { fit: "inside" }).webp({ quality: 80 }).write("thumb.webp");
@@ -40,6 +40,22 @@ new Bun.Image(input, {
   autoOrient: true,
 });
 ```
+
+### Raw RGBA input
+
+To re-ingest pixels you've produced or mutated yourself — for example from `.pixels()` (see [Terminals](#terminals)) — pass a `raw` descriptor in the options. This bypasses format sniffing entirely; the bytes are treated as a decoded pixel buffer:
+
+```ts
+const img = new Bun.Image(data, {
+  raw: {
+    width: 256,
+    height: 256,
+    channels: 4, // 4 = RGBA, or 3 = RGB (expanded to RGBA on ingest)
+  },
+});
+```
+
+All three fields are required. `data.length` must be exactly `width × height × channels` and both dimensions must be non-zero — anything else throws at construction time with a clear error. Whatever the input channel count, the pipeline operates on (and `.pixels()` returns) 4-channel RGBA.
 
 ## Metadata
 
@@ -97,6 +113,58 @@ img.modulate({
 });
 ```
 
+## Composite
+
+`composite()` overlays other images onto the base — watermarks, logos, badges, collages. It takes an ordered array of layers, blended bottom-to-top:
+
+```ts
+await Bun.file("photo.jpg")
+  .image()
+  .resize(1200)
+  .composite([
+    { image: "logo.png", gravity: "southeast" },
+    { image: watermarkBytes, top: 20, left: 20, opacity: 0.5 },
+  ])
+  .jpeg({ quality: 85 })
+  .write("out.jpg");
+```
+
+Like sharp, composite runs as the **last** pipeline stage — after `resize`, `rotate`, `modulate`, and the rest. So `top`/`left` coordinates are in the final post-resize space, and overlays are **not** scaled by the base's `resize()`. To transform an overlay first, run its own pipeline to bytes and pass the result:
+
+```ts
+const logo = await Bun.file("logo.png").image().resize(120).png().bytes();
+img.composite([{ image: logo, gravity: "southeast" }]);
+```
+
+Each layer accepts:
+
+| Option          | Default    | Behavior                                                                                                                                                                                                                        |
+| --------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `image`         | _required_ | The overlay: an `Image`, a path string, or encoded bytes (`Buffer` / `TypedArray` / `ArrayBuffer`). Unlike the constructor, `Blob` is not accepted — see below                                                                  |
+| `top`, `left`   | —          | Pixel offset of the overlay's top-left corner. Set both or neither; overrides `gravity`. Negative values are allowed — pixels falling outside the base are clipped                                                              |
+| `gravity`       | `"centre"` | Placement when `top`/`left` aren't given: `"centre"` (the `"center"` spelling also works) or one of the 8 compass points (`"north"`, `"northeast"`, `"east"`, `"southeast"`, `"south"`, `"southwest"`, `"west"`, `"northwest"`) |
+| `blend`         | `"over"`   | Blend mode. Currently only Porter–Duff `"over"` (source-over) is supported                                                                                                                                                      |
+| `opacity`       | `1`        | `0`–`1`; multiplies the overlay's alpha before blending. **Bun extension** — see deviations below                                                                                                                               |
+| `premultiplied` | `false`    | Set `true` if the overlay's RGB channels are already premultiplied by alpha, to skip the premultiply pass                                                                                                                       |
+
+Rules and behavior:
+
+- An `Image` created from a path-backed `Bun.file()` works as an overlay — it resolves to its path, read at blend time. For `Bun.s3()` / fd-backed sources, pass `await file.bytes()` or the path string — raw `Blob` values and fd/S3-backed `Image` overlays throw.
+- An `Image` overlay contributes its **input** bytes; its chained ops are not applied. Encode first (e.g. `await img.png().bytes()`) to transform an overlay. A raw-pixel-sourced `Image` (constructed with a `raw` descriptor) works directly — its pixel buffer is blended as-is, no encode round-trip needed.
+- An overlay must be **no larger than the base** in either dimension — an oversized overlay rejects the terminal with an error, matching sharp.
+- Repeat `composite()` calls **replace** the layer set rather than appending, matching sharp.
+- Overlay bytes are copied when `composite()` is called, so it's safe to mutate or reuse a passed buffer afterwards.
+- Each overlay decode is subject to the same `maxPixels` guard as the base image.
+- JPEG overlays follow the base `Image`'s `autoOrient` setting (default `true`): EXIF orientation is applied to the overlay before placement and the oversized rule, so a portrait-shot photo blends upright. Construct the base with `autoOrient: false` to blend overlays in their stored orientation.
+- Blending happens in premultiplied-alpha space and always uses a deterministic portable integer kernel — regardless of `Bun.Image.backend`, blended output is byte-identical across Linux, macOS, and Windows.
+
+### Deviations from sharp
+
+- **Per-layer `opacity` is a Bun extension.** Sharp has no per-layer opacity — sharp users emulate it by extracting raw pixels and multiplying the alpha channel by hand. Bun exposes it directly: the overlay's alpha is multiplied by `opacity` before the blend.
+- **No ICC color management during compositing.** Layers are blended as decoded RGBA8 without converting embedded ICC profiles to a common colorspace (libvips composites in sRGB by default). If the base and an overlay carry different color profiles, the numeric channel values are blended as-is — convert the images to a common profile yourself before compositing if you need color-managed results.
+
+Also currently unsupported: `{ text }` and SVG overlay inputs, animated (multi-frame) composites, `tile`, and blend modes beyond `"over"`.
+
 ## Output formats
 
 Calling a format method sets the encode target; without one, the source format is reused.
@@ -123,11 +191,30 @@ await img.buffer(); // Buffer
 await img.blob(); // Blob with .type set to the output MIME
 await img.toBase64(); // string
 await img.dataurl(); // "data:image/png;base64,…"
+await img.pixels(); // { data: Uint8Array, width, height, channels: 4 }
 await img.write("out.webp"); // number (bytes written)
 await img.write(Bun.s3("bucket/out.webp"));
 ```
 
 `.write()` accepts the same destinations as `Bun.write` — a path string, `Bun.file()`, `Bun.s3()`, or an fd. If you didn't chain a format method and the destination is a path string, the extension picks one (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`).
+
+### Raw pixel output
+
+`.pixels()` skips the encode step entirely and resolves the decoded pixel buffer — the equivalent of sharp's `.raw().toBuffer({ resolveWithObject: true })`:
+
+```ts
+const { data, width, height, channels } = await Bun.file("photo.jpg").image().resize(256).pixels();
+// data: Uint8Array of width × height × 4 bytes — 8-bit RGBA, row-major, no row padding
+// channels: always 4
+```
+
+The buffer reflects the image **after** every chained op (resize, rotate, modulate, composite), and is always 4-channel RGBA8 regardless of the source format. The result is a valid `raw` descriptor, so mutated pixels round-trip straight back through the constructor:
+
+```ts
+const px = await new Bun.Image(src).pixels();
+for (let i = 3; i < px.data.length; i += 4) px.data[i] = (px.data[i] * 0.5) | 0; // halve alpha
+const png = await new Bun.Image(px.data, { raw: px }).png().bytes();
+```
 
 ## Placeholders
 

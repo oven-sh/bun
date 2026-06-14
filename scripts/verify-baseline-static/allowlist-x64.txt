@@ -904,14 +904,16 @@ _RNvNt<rust-hash>12blake2b_simd4avx214compress1_loop  [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
-# Bun.Image highway kernels (image_resize.cpp). Gate: HWY_DYNAMIC_DISPATCH ->
-# hwy::SupportedTargets() via CPUID. Same gate as the highway_strings block.
-# (40 symbols; union of glibc + musl LTO outcomes)
+# Bun.Image highway kernels (image_resize.cpp, image_composite.cpp).
+# Gate: HWY_DYNAMIC_DISPATCH -> hwy::SupportedTargets() via CPUID. Same gate
+# as the highway_strings block.
+# (45 symbols; union of glibc + musl LTO outcomes)
 # ----------------------------------------------------------------------------
 _ZN9bun_image10N_AVX3_SPRL12ModulateImplEPhmff  [AVX, AVX512F]
 _ZN9bun_image10N_AVX3_SPRL12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 _ZN9bun_image10N_AVX3_SPRL13Rotate180ImplEPKhmmPh  [AVX, AVX2, AVX512F]
 _ZN9bun_image10N_AVX3_SPRL13Rotate270ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN9bun_image10N_AVX3_SPRL17CompositeOverImplEPhjjPKhjjllji  [AVX, AVX2, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN9bun_image10N_AVX3_SPRL18NearestPaletteImplEPKhjiiii  [AVX]
 _ZN9bun_image10N_AVX3_SPRL8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
 _ZN9bun_image10N_AVX3_SPRL9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]
@@ -920,6 +922,7 @@ _ZN9bun_image11N_AVX3_ZEN4L12ModulateImplEPhmff  [AVX, AVX512F]
 _ZN9bun_image11N_AVX3_ZEN4L12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 _ZN9bun_image11N_AVX3_ZEN4L13Rotate180ImplEPKhmmPh  [AVX, AVX2, AVX512F]
 _ZN9bun_image11N_AVX3_ZEN4L13Rotate270ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN9bun_image11N_AVX3_ZEN4L17CompositeOverImplEPhjjPKhjjllji  [AVX, AVX2, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN9bun_image11N_AVX3_ZEN4L18NearestPaletteImplEPKhjiiii  [AVX]
 _ZN9bun_image11N_AVX3_ZEN4L8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
 _ZN9bun_image11N_AVX3_ZEN4L9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]
@@ -928,6 +931,7 @@ _ZN9bun_image6N_AVX2L12ModulateImplEPhmff  [AVX, AVX2, FMA]
 _ZN9bun_image6N_AVX2L12Rotate90ImplEPKhmmPh  [AVX]
 _ZN9bun_image6N_AVX2L13Rotate180ImplEPKhmmPh  [AVX, AVX2]
 _ZN9bun_image6N_AVX2L13Rotate270ImplEPKhmmPh  [AVX]
+_ZN9bun_image6N_AVX2L17CompositeOverImplEPhjjPKhjjllji  [AVX, AVX2, BMI1, BMI2]
 _ZN9bun_image6N_AVX2L18NearestPaletteImplEPKhjiiii  [AVX]
 _ZN9bun_image6N_AVX2L8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, BMI1, FMA]
 _ZN9bun_image6N_AVX2L9FlipHImplEPKhmmPh  [AVX, AVX2]
@@ -936,6 +940,7 @@ _ZN9bun_image6N_AVX3L12ModulateImplEPhmff  [AVX, AVX512F]
 _ZN9bun_image6N_AVX3L12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 _ZN9bun_image6N_AVX3L13Rotate180ImplEPKhmmPh  [AVX, AVX2, AVX512F]
 _ZN9bun_image6N_AVX3L13Rotate270ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN9bun_image6N_AVX3L17CompositeOverImplEPhjjPKhjjllji  [AVX, AVX2, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN9bun_image6N_AVX3L18NearestPaletteImplEPKhjiiii  [AVX]
 _ZN9bun_image6N_AVX3L8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, FMA]
 _ZN9bun_image6N_AVX3L9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]
@@ -944,6 +949,7 @@ _ZN9bun_image9N_AVX3_DLL12ModulateImplEPhmff  [AVX, AVX512F]
 _ZN9bun_image9N_AVX3_DLL12Rotate90ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 _ZN9bun_image9N_AVX3_DLL13Rotate180ImplEPKhmmPh  [AVX, AVX2, AVX512F]
 _ZN9bun_image9N_AVX3_DLL13Rotate270ImplEPKhmmPh  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN9bun_image9N_AVX3_DLL17CompositeOverImplEPhjjPKhjjllji  [AVX, AVX2, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN9bun_image9N_AVX3_DLL18NearestPaletteImplEPKhjiiii  [AVX]
 _ZN9bun_image9N_AVX3_DLL8VertPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
 _ZN9bun_image9N_AVX3_DLL9FlipHImplEPKhmmPh  [AVX, AVX2, AVX512F]

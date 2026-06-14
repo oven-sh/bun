@@ -78,6 +78,19 @@ pub struct Image {
     /// collect the wrapper without polling `hasPendingActivity` every cycle.
     this_ref: JsCell<JsRef>,
     pending_tasks: Cell<u32>,
+    /// Overlays recorded by `.composite([...])`. Kept outside `Pipeline` so it
+    /// stays `Copy` (the Cell get/modify/set pattern); cloned into each
+    /// `PipelineTask` at schedule time so chained calls between schedule and
+    /// completion don't race the worker. Repeat `.composite()` calls replace.
+    composite_layers: JsCell<Vec<CompositeLayer>>,
+    /// Byte total for `estimated_size()`. `estimatedSize` is called from
+    /// JSC's concurrent GC marker threads ("Called from any thread"), so it
+    /// must not walk `source`/`composite_layers` heap structures the JS
+    /// thread can drop mid-iteration (`.composite()` replaces the layer
+    /// Vec). Recomputed on the JS thread at every mutation site and read as
+    /// a single word from the GC thread — the same `reported_estimated_size`
+    /// convention Request/Response/Blob use.
+    reported_estimated_size: Cell<usize>,
 }
 
 impl Default for Image {
@@ -91,6 +104,8 @@ impl Default for Image {
             last_height: Cell::new(-1),
             this_ref: JsCell::new(JsRef::empty()),
             pending_tasks: Cell::new(0),
+            composite_layers: JsCell::new(Vec::new()),
+            reported_estimated_size: Cell::new(mem::size_of::<Image>()),
         }
     }
 }
@@ -119,6 +134,17 @@ pub enum Source {
     /// task off the resulting Promise. After the first read completes the
     /// source is swapped to `.owned` so subsequent terminals reuse the bytes.
     Blob(Strong),
+    /// Raw RGBA8 pixels from the `{raw: {width, height, channels}}`
+    /// constructor option (Sharp's raw-input descriptor). Validated
+    /// (`len == width × height × channels`, dims ≥ 1) and copied — with
+    /// 3-channel input expanded to RGBA — at construction, so the worker
+    /// uses the bytes as the decoded frame directly: no `Format::sniff`,
+    /// no decode, no EXIF/ICC (raw pixels carry no container metadata).
+    Raw {
+        rgba: Vec<u8>,
+        width: u32,
+        height: u32,
+    },
 }
 
 // `Vec<u8>`, `ZString`, and
@@ -227,6 +253,108 @@ impl Default for Modulate {
     }
 }
 
+/// One overlay recorded by `.composite([...])`. Layers live beside `Pipeline`
+/// (not inside it) so `Pipeline` keeps its `Copy` snapshot semantics; each
+/// scheduled task gets its own clone of the layer list.
+#[derive(Clone)]
+pub struct CompositeLayer {
+    pub input: CompositeInput,
+    /// Explicit `(left, top)` placement. Overrides `gravity` when set
+    /// (Sharp requires both-or-neither). Negative offsets are allowed and
+    /// clip at blend time.
+    pub position: Option<(i32, i32)>,
+    /// Placement when `position` is `None`. Sharp's default is centre.
+    pub gravity: Gravity,
+    pub blend: BlendMode,
+    /// Per-layer alpha multiplier in `0.0..=1.0`; `1.0` = identity. Bun
+    /// extension — Sharp has no per-layer opacity.
+    pub opacity: f32,
+    /// Overlay pixels are already alpha-premultiplied, so the premultiply
+    /// pass before blending is skipped.
+    pub premultiplied: bool,
+}
+
+/// Overlay bytes for one composite layer. Mirrors `Source` minus the
+/// JS-backed variants: buffer inputs are copied at `.composite()` call time
+/// (one memcpy per overlay) so a task never has to pin more than the base's
+/// ArrayBuffer across the WorkPool roundtrip.
+#[derive(Clone)]
+pub enum CompositeInput {
+    /// Encoded overlay bytes, copied from the JS input at call time.
+    Owned(Vec<u8>),
+    /// Owned, NUL-terminated path. Read on the worker thread with the same
+    /// guards as a `Source::Path` base.
+    Path(ZBox),
+    /// Decoded RGBA8, copied from a raw-pixel-sourced `Image` overlay
+    /// (`Source::Raw`) at call time. Already validated by that Image's
+    /// constructor (`len == w×h×4`, dims ≥ 1), so the worker skips the
+    /// sniff/decode entirely and blends these bytes as-is.
+    Raw {
+        rgba: Vec<u8>,
+        width: u32,
+        height: u32,
+    },
+}
+
+/// Overlay placement when no explicit `top`/`left` is given. Matches Sharp's
+/// gravity set: centre plus the 8 compass points.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum Gravity {
+    #[default]
+    Centre,
+    North,
+    Northeast,
+    East,
+    Southeast,
+    South,
+    Southwest,
+    West,
+    Northwest,
+}
+
+/// Compositing operator. v1 ships Porter-Duff `over` only; an enum so
+/// further modes slot in without re-shaping the task snapshot.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum BlendMode {
+    #[default]
+    Over,
+}
+
+static GRAVITY_MAP: phf::Map<&'static [u8], Gravity> = phf::phf_map! {
+    b"centre" => Gravity::Centre,
+    // Sharp accepts both spellings.
+    b"center" => Gravity::Centre,
+    b"north" => Gravity::North,
+    b"northeast" => Gravity::Northeast,
+    b"east" => Gravity::East,
+    b"southeast" => Gravity::Southeast,
+    b"south" => Gravity::South,
+    b"southwest" => Gravity::Southwest,
+    b"west" => Gravity::West,
+    b"northwest" => Gravity::Northwest,
+};
+impl jsc::FromJsEnum for Gravity {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
+        v.to_enum_from_map(
+            global,
+            prop,
+            &GRAVITY_MAP,
+            "'centre', 'north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west' or 'northwest'",
+        )
+    }
+}
+
+static BLEND_MAP: phf::Map<&'static [u8], BlendMode> = phf::phf_map! {
+    b"over" => BlendMode::Over,
+};
+impl jsc::FromJsEnum for BlendMode {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
+        v.to_enum_from_map(global, prop, &BLEND_MAP, "'over'")
+    }
+}
+
 /// `@intFromFloat` is safety-checked UB on NaN/±Inf/out-of-range; every
 /// number we read from JS goes through this so hostile input throws/clamps
 /// instead of aborting. NaN → lo, ±Inf → the matching bound; bounds are f64
@@ -296,13 +424,28 @@ impl Image {
         let mut img = Box::<Image>::default();
         // errdefer img.finalize() — `Box` drops on `?` automatically.
         apply_options(&mut img, global, options)?;
+        // `{raw}` requires the pixel bytes in hand at construction so the
+        // length/dims contract can be checked synchronously; a Blob receiver
+        // (file/S3/fd) doesn't have them yet. Throw rather than silently
+        // sniffing pixel data as an encoded image.
+        if raw_from_options(global, options)?.is_some() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Image: the `raw` option requires the pixel bytes as an ArrayBuffer or TypedArray input",
+            )));
+        }
         // For Blob receivers `source_from_js` either dupes (in-memory blob) or
         // creates a Strong (file/S3); the cached `sourceJS` slot is only used
         // for the `.js_buffer` path, which a Blob never produces. The only
         // reason `source_from_js` takes `this_value` at all is to set that slot
         // for ArrayBuffer inputs — pass `.zero` and assert below.
-        img.source
-            .set(source_from_js(global, blob_value, JSValue::ZERO)?);
+        img.source.set(source_from_js(
+            global,
+            blob_value,
+            JSValue::ZERO,
+            None,
+            img.max_pixels,
+        )?);
+        img.refresh_reported_size();
         debug_assert!(!matches!(img.source.get(), Source::JsBuffer));
         Ok(img.to_js(global))
     }
@@ -317,15 +460,36 @@ impl Image {
     }
 
     pub fn estimated_size(&self) -> usize {
+        // GC-thread-safe single-word read; see `reported_estimated_size`.
+        self.reported_estimated_size.get()
+    }
+
+    /// Recompute `reported_estimated_size`. JS thread only — it walks the
+    /// `source`/`composite_layers` heap structures, so call it after every
+    /// `source.set` / `composite_layers.set`.
+    fn refresh_reported_size(&self) {
         // Only the bytes WE own. .js_buffer is the caller's ArrayBuffer (already
         // counted via the cached value slot); the worker's RGBA scratch is
-        // task-scoped and freed before any GC could observe it.
-        mem::size_of::<Image>()
+        // task-scoped and freed before any GC could observe it. Composite
+        // overlay bytes ARE ours — copied at `.composite()` call time.
+        let size = mem::size_of::<Image>()
             + match self.source.get() {
                 Source::JsBuffer | Source::Blob(_) => 0,
                 Source::Owned(b) => b.len(),
                 Source::Path(p) => p.len(),
+                Source::Raw { rgba, .. } => rgba.len(),
             }
+            + self
+                .composite_layers
+                .get()
+                .iter()
+                .map(|l| match &l.input {
+                    CompositeInput::Owned(b) => b.len(),
+                    CompositeInput::Path(p) => p.len(),
+                    CompositeInput::Raw { rgba, .. } => rgba.len(),
+                })
+                .sum::<usize>();
+        self.reported_estimated_size.set(size);
     }
 }
 
@@ -336,10 +500,28 @@ fn from_input_js(
     this_value: JSValue,
 ) -> JsResult<Box<Image>> {
     let mut img = Box::<Image>::default();
-    // `opt.get` can throw (Proxy/getter); without this the heap-allocated
-    // *Image and the duplicated source bytes leak. (Handled by `Box` Drop on `?`.)
-    img.source.set(source_from_js(global, input, this_value)?);
+    // Options first: `{raw}` decides how `input` is interpreted, and the raw
+    // dims are guarded against `maxPixels` during source construction.
+    // `opt.get` can throw (Proxy/getter); the heap-allocated *Image and any
+    // duplicated source bytes are handled by `Box` Drop on `?`.
     apply_options(&mut img, global, options)?;
+    let raw = raw_from_options(global, options)?;
+    img.source.set(source_from_js(
+        global,
+        input,
+        this_value,
+        raw,
+        img.max_pixels,
+    )?);
+    img.refresh_reported_size();
+    // Raw dims are constructor-known — let `.width`/`.height` answer
+    // immediately, the way they would after the first awaited terminal.
+    if let Source::Raw { width, height, .. } = img.source.get() {
+        img.last_width
+            .set(i32::try_from(*width).expect("validated ≤ i32::MAX"));
+        img.last_height
+            .set(i32::try_from(*height).expect("validated ≤ i32::MAX"));
+    }
     Ok(img)
 }
 
@@ -358,11 +540,143 @@ fn apply_options(img: &mut Image, global: &JSGlobalObject, opt: JSValue) -> JsRe
     Ok(())
 }
 
+/// Parsed `{raw: {width, height, channels}}` constructor option — Sharp's
+/// raw-input descriptor. Presence switches the constructor into raw-pixel
+/// mode: the input is treated as an already-decoded pixel buffer instead of
+/// an encoded image (see `Source::Raw`).
+struct RawOptions {
+    width: u32,
+    height: u32,
+    /// 3 (RGB, expanded to RGBA on ingest) or 4 (RGBA).
+    channels: u8,
+}
+
+fn raw_from_options(global: &JSGlobalObject, opt: JSValue) -> JsResult<Option<RawOptions>> {
+    if !opt.is_object() {
+        return Ok(None);
+    }
+    let Some(raw) = opt.get(global, "raw")? else {
+        return Ok(None);
+    };
+    if raw.is_null() {
+        return Ok(None);
+    }
+    if !raw.is_object() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Image: `raw` must be an object: {{width, height, channels}}",
+        )));
+    }
+    let width = raw_dim(global, raw, "width")?;
+    let height = raw_dim(global, raw, "height")?;
+    let channels = match raw.get(global, "channels")? {
+        Some(v) if v.is_number() && (v.as_number() == 3.0 || v.as_number() == 4.0) => {
+            v.as_number() as u8
+        }
+        _ => {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Image: raw.channels must be 3 or 4",))
+            );
+        }
+    };
+    Ok(Some(RawOptions {
+        width,
+        height,
+        channels,
+    }))
+}
+
+/// One raw dimension: a positive integer that fits the i32 range the rest of
+/// the pipeline assumes (`last_width`/`last_height`, kernel args). `0`,
+/// fractions, NaN/±Inf and non-numbers all throw — a wrong dimension would
+/// silently re-stride the whole pixel grid, so no `coerce_int` clamping here.
+fn raw_dim(global: &JSGlobalObject, raw: JSValue, name: &str) -> JsResult<u32> {
+    if let Some(v) = raw.get(global, name)? {
+        if v.is_number() {
+            let x = v.as_number();
+            if x.is_finite() && x.fract() == 0.0 && x >= 1.0 && x <= f64::from(i32::MAX) {
+                return Ok(x as u32);
+            }
+        }
+    }
+    Err(global.throw_invalid_arguments(format_args!(
+        "Image: raw.{name} must be an integer between 1 and 2147483647",
+    )))
+}
+
+/// Build `Source::Raw` from user-supplied pixel bytes: enforce the exact
+/// `len == width × height × channels` contract plus the `maxPixels` guard,
+/// and expand 3-channel RGB to the pipeline's RGBA (opaque alpha). Copying
+/// here — on the JS thread, at construction — is what lets the worker treat
+/// the bytes as the decoded frame with no JS buffer pinned across the
+/// WorkPool roundtrip, and surfaces every validation error synchronously.
+fn raw_source_from_bytes(
+    global: &JSGlobalObject,
+    bytes: &[u8],
+    raw: &RawOptions,
+    max_pixels: u64,
+) -> JsResult<Source> {
+    let (w, h) = (raw.width, raw.height);
+    // Same decompression-bomb cap the decoders apply via `codecs::guard`,
+    // checked before any allocation. u64 mul cannot overflow two u32 factors.
+    if (w as u64) * (h as u64) > max_pixels {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Image: raw dimensions ({w} × {h}) exceed maxPixels",
+        )));
+    }
+    let expected = (w as u64) * (h as u64) * u64::from(raw.channels);
+    if bytes.len() as u64 != expected {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Image: raw input is {} bytes; width × height × channels = {w} × {h} × {} requires exactly {expected}",
+            bytes.len(),
+            raw.channels,
+        )));
+    }
+    let rgba = if raw.channels == 4 {
+        bytes.to_vec()
+    } else {
+        // RGB → RGBA: pre-fill with 0xFF so alpha is opaque, then overwrite
+        // the colour bytes of each pixel.
+        let mut out = vec![0xFFu8; (w as usize) * (h as usize) * 4];
+        for (dst, src) in out.chunks_exact_mut(4).zip(bytes.chunks_exact(3)) {
+            dst[..3].copy_from_slice(src);
+        }
+        out
+    };
+    Ok(Source::Raw {
+        rgba,
+        width: w,
+        height: h,
+    })
+}
+
 fn source_from_js(
     global: &JSGlobalObject,
     value: JSValue,
     this_value: JSValue,
+    raw: Option<RawOptions>,
+    max_pixels: u64,
 ) -> JsResult<Source> {
+    // `{raw}` mode: `value` IS the pixel buffer. Validate and copy on the JS
+    // thread right now — errors surface at construction, and a later detach
+    // of the JS buffer can't affect us — expanding 3-channel RGB to RGBA.
+    // `Format::sniff` never sees these bytes (raw pixels can start with any
+    // byte pattern, including a JPEG SOI).
+    if let Some(r) = raw {
+        let Some(ab) = value.as_array_buffer(global) else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Image: the `raw` option requires the pixel bytes as an ArrayBuffer or TypedArray input",
+            )));
+        };
+        // Same rejection as the encoded path below — we copy synchronously,
+        // but a growable/shared buffer mutating mid-copy still has no sane
+        // semantics, and `buf.slice()` is the documented workaround.
+        if ab.resizable || ab.shared {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Image(): resizable / shared ArrayBuffer is not supported; pass a fixed-length view (e.g. buf.slice())",
+            )));
+        }
+        return raw_source_from_bytes(global, ab.byte_slice(), &r, max_pixels);
+    }
     // String → file path or data:/base64 URL. Everything else → bytes.
     if value.is_string() {
         let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
@@ -433,6 +747,108 @@ fn source_from_js(
     Err(global.throw_invalid_arguments(format_args!(
         "Image() input must be a path string, data: URL, ArrayBuffer, TypedArray or Blob",
     )))
+}
+
+/// Resolve one `.composite()` overlay's `image` value to bytes the layer
+/// owns. v1 contract: copy at call time (one memcpy per overlay) so nothing
+/// JS-side has to stay alive or be pinned across the async task; path
+/// strings are duped and read on the worker like a path-sourced base.
+fn composite_input_from_js(
+    global: &JSGlobalObject,
+    value: JSValue,
+    max_pixels: u64,
+) -> JsResult<CompositeInput> {
+    if value.is_string() {
+        // Reuse the constructor's path / data:-URL handling. The string arms
+        // never touch `this_value` (only ArrayBuffer inputs cache into the
+        // wrapper's sourceJS slot), so ZERO is safe here.
+        return Ok(
+            match source_from_js(global, value, JSValue::ZERO, None, max_pixels)? {
+                Source::Owned(b) => CompositeInput::Owned(b),
+                Source::Path(p) => CompositeInput::Path(p),
+                // A string input only ever resolves to bytes or a path.
+                Source::JsBuffer | Source::Blob(_) | Source::Raw { .. } => unreachable!(),
+            },
+        );
+    }
+    if let Some(ab) = value.as_array_buffer(global) {
+        // Copied on the JS thread right now, so resizable/shared buffers are
+        // fine here — there's no TOCTOU window, unlike the borrowed base
+        // source that `source_from_js` has to reject.
+        return Ok(CompositeInput::Owned(ab.byte_slice().to_vec()));
+    }
+    if let Some(other) = value.as_class_ref::<Image>() {
+        // Snapshot the other Image's *input* bytes. Its pipeline ops are NOT
+        // applied — same as Sharp, where an overlay is its input file.
+        return match other.source.get() {
+            Source::JsBuffer => match other.js_thread_bytes(value, global) {
+                Some(b) => Ok(CompositeInput::Owned(b.to_vec())),
+                None => Err(global.throw_invalid_arguments(format_args!(
+                    "composite: overlay Image's source ArrayBuffer was detached"
+                ))),
+            },
+            Source::Owned(b) => Ok(CompositeInput::Owned(b.clone())),
+            Source::Path(p) => Ok(CompositeInput::Path(p.clone())),
+            // A path-backed `Bun.file()` Image resolves like a path string —
+            // the worker reads it at blend time (same store inspection as the
+            // sync `new Response(image)` path in `encode_for_body`). fd/S3
+            // Blobs have no bytes until an async read; refuse those.
+            Source::Blob(strong) => {
+                if let Some(blob) = strong.get().as_class_ref::<Blob>() {
+                    if let Some(store) = blob.store.get() {
+                        if let blob_store::Data::File(file) = &store.data {
+                            if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+                                return Ok(CompositeInput::Path(ZBox::from_bytes(path.slice())));
+                            }
+                        }
+                    }
+                }
+                Err(global.throw_invalid_arguments(format_args!(
+                    "composite: fd/S3-backed Bun.file overlay — pass `await file.bytes()` or a path string"
+                )))
+            }
+            // Raw pixels skip the worker's decode: copy them (same call-time
+            // contract as every other overlay input) with their dims.
+            Source::Raw {
+                rgba,
+                width,
+                height,
+            } => Ok(CompositeInput::Raw {
+                rgba: rgba.clone(),
+                width: *width,
+                height: *height,
+            }),
+        };
+    }
+    Err(global.throw_invalid_arguments(format_args!(
+        "composite: `image` must be an Image, ArrayBuffer, TypedArray, path string or data: URL"
+    )))
+}
+
+/// `top`/`left` for one composite layer: absent / undefined / null ⇒ `None`;
+/// anything else must be a number. Negatives are allowed — they clip at
+/// blend time rather than throwing (Sharp passes them through unclamped).
+fn composite_offset(
+    global: &JSGlobalObject,
+    item: JSValue,
+    name: &'static str,
+) -> JsResult<Option<i32>> {
+    match item.get(global, name)? {
+        Some(v) if !v.is_undefined_or_null() => {
+            if !v.is_number() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "composite: `{name}` must be a number"
+                )));
+            }
+            Ok(Some(coerce_int!(
+                i32,
+                v.as_number(),
+                f64::from(i32::MIN),
+                f64::from(i32::MAX)
+            )))
+        }
+        _ => Ok(None),
+    }
 }
 
 // ───────────────────────────── chainable ops ────────────────────────────────
@@ -546,6 +962,106 @@ impl Image {
             }
         }
         self.update_pipeline(|p| p.modulate = Some(m));
+        Ok(callframe.this())
+    }
+
+    /// Sharp-compatible `.composite(layers)` — records the overlay list and
+    /// copies each overlay's bytes NOW (see `composite_input_from_js`); the
+    /// decode → blend work runs as the last pipeline stage when a terminal
+    /// is awaited. A repeat call REPLACES the recorded list, the same
+    /// slot-overwrite semantics as every other chainable op (and Sharp).
+    #[bun_jsc::host_fn(method)]
+    pub fn do_composite(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = callframe.arguments();
+        if args.len() < 1 || !args[0].is_array() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "composite(layers) expects an array of overlay objects"
+            )));
+        }
+        let list = args[0];
+        // `is_array` above ⇒ a real JS Array, whose length fits u32.
+        let len = u32::try_from(list.get_length(global)?).expect("int cast");
+        // Cap the pre-allocation, not the layer count — a hostile
+        // `new Array(4e9)` must not reserve gigabytes before the per-item
+        // validation below ever runs (its holes throw at i=0 anyway).
+        let mut layers: Vec<CompositeLayer> = Vec::with_capacity(len.min(64) as usize);
+        for i in 0..len {
+            let item = list.get_index(global, i)?;
+            if !item.is_object() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "composite: layer {i} must be an object with an `image` property"
+                )));
+            }
+            let input = match item.get(global, "image")? {
+                Some(v) if !v.is_undefined_or_null() => v,
+                _ => {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "composite: layer {i} is missing `image`"
+                    )));
+                }
+            };
+            let input = composite_input_from_js(global, input, self.max_pixels)?;
+
+            // Explicit placement comes as a pair and overrides gravity.
+            let top = composite_offset(global, item, "top")?;
+            let left = composite_offset(global, item, "left")?;
+            let position = match (left, top) {
+                (Some(left), Some(top)) => Some((left, top)),
+                (None, None) => None,
+                _ => {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "composite: layer {i} must set both `top` and `left`, or neither"
+                    )));
+                }
+            };
+
+            let gravity = item
+                .get_optional_enum::<Gravity>(global, "gravity")?
+                .unwrap_or_default();
+            let blend = item
+                .get_optional_enum::<BlendMode>(global, "blend")?
+                .unwrap_or_default();
+
+            let mut opacity: f32 = 1.0;
+            if let Some(v) = item.get(global, "opacity")? {
+                if v.is_number() {
+                    let x = v.as_number();
+                    // Same non-finite policy as `.modulate()`: identity, so
+                    // NaN/±Inf never reach the blend kernel.
+                    opacity = if x.is_finite() {
+                        x.clamp(0.0, 1.0) as f32
+                    } else {
+                        1.0
+                    };
+                }
+            }
+            let premultiplied = match item.get(global, "premultiplied")? {
+                Some(v) => v.to_boolean(),
+                None => false,
+            };
+
+            layers.push(CompositeLayer {
+                input,
+                position,
+                gravity,
+                blend,
+                opacity,
+                premultiplied,
+            });
+        }
+        self.composite_layers.set(layers);
+        self.refresh_reported_size();
+        // Root the user's overlay array in the wrapper's `compositeJS` cached
+        // slot (GC-visited via WriteBarrier, like `sourceJS`). The owned byte
+        // copies above already make the worker safe; this keeps the overlay
+        // *descriptors* — `Image` inputs and their borrowed ArrayBuffers —
+        // reachable across the async task for as long as the wrapper is.
+        // Replaced wholesale on each call, matching the layer-list overwrite.
+        js::composite_js_set_cached(callframe.this(), global, list);
         Ok(callframe.this())
     }
 
@@ -688,6 +1204,10 @@ impl Image {
                     unsafe { &*std::ptr::from_ref::<[u8]>(ab.byte_slice()) }
                 }),
             Source::Owned(b) => Some(b.as_slice()),
+            // Raw bytes have no header to probe — callers (`do_metadata`,
+            // the composite-overlay path) answer raw sources from the
+            // constructor descriptor before calling here.
+            Source::Raw { .. } => None,
             Source::Path(_) | Source::Blob(_) => None,
         }
     }
@@ -778,6 +1298,18 @@ impl Image {
                 path: Some(std::ptr::from_ref::<ZStr>(p.as_zstr())),
                 ..Default::default()
             }),
+            // SAFETY: same contract as `Owned` — the constructor-built Vec
+            // outlives the task because `this_ref` is held Strong while
+            // pending_tasks > 0 (see `schedule()`).
+            Source::Raw {
+                rgba,
+                width,
+                height,
+            } => Ok(Input {
+                bytes: bun_ptr::RawSlice::new(rgba.as_slice()),
+                raw: Some((*width, *height)),
+                ..Default::default()
+            }),
             // schedule() peels this off before pin_for_task is reached.
             Source::Blob(_) => unreachable!(),
         }
@@ -850,6 +1382,7 @@ impl Image {
                 source: JsCell::new(Source::Owned(bytes)),
                 ..Default::default()
             });
+            img.refresh_reported_size();
             return Ok(img.to_js(global));
         }
         #[cfg(not(any(target_os = "macos", windows)))]
@@ -904,6 +1437,26 @@ impl Image {
 impl Image {
     #[bun_jsc::host_fn(method)]
     pub fn do_metadata(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        // Raw sources have no header: dims come from the constructor
+        // descriptor and there's no container format to sniff. Copy the dims
+        // out so no `&Source` borrow is held across the JS calls below.
+        let raw_dims = match self.source.get() {
+            Source::Raw { width, height, .. } => Some((*width, *height)),
+            _ => None,
+        };
+        if let Some((w, h)) = raw_dims {
+            self.last_width.set(i32::try_from(w).expect("int cast"));
+            self.last_height.set(i32::try_from(h).expect("int cast"));
+            let obj = JSValue::create_empty_object(global, 3);
+            obj.put(global, b"width", JSValue::js_number(f64::from(w)));
+            obj.put(global, b"height", JSValue::js_number(f64::from(h)));
+            obj.put(
+                global,
+                b"format",
+                jsc::bun_string_jsc::create_utf8_for_js(global, b"raw")?,
+            );
+            return Ok(JSPromise::resolved_promise_value(global, obj));
+        }
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
         // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
@@ -947,6 +1500,16 @@ impl Image {
             Kind::Metadata,
             Deliver::Uint8Array,
         )
+    }
+
+    /// `.pixels()` — resolve the post-pipeline RGBA8 buffer as
+    /// `{data: Uint8Array, width, height, channels: 4}`. Sharp's
+    /// `.raw().toBuffer({resolveWithObject: true})` equivalent, minus the
+    /// encode round-trip; chained format setters are ignored because nothing
+    /// is encoded.
+    #[bun_jsc::host_fn(method)]
+    pub fn do_pixels(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        self.schedule(global, cf.this(), Kind::Raw, Deliver::Uint8Array)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1106,6 +1669,8 @@ impl Image {
             // Struct copy — the worker reads its own snapshot so further chained
             // calls on the JS side between schedule and completion don't race.
             pipeline: self.pipeline.get(),
+            // Same snapshot contract for the (non-`Copy`) overlay list.
+            layers: self.composite_layers.get().clone(),
             input,
             kind,
             deliver,
@@ -1166,6 +1731,7 @@ impl Image {
                         let p = ZBox::from_bytes(path.slice());
                         // `Source::Blob`'s `Strong` Drop releases the JS ref.
                         self.source.set(Source::Path(p));
+                        self.refresh_reported_size();
                     } else {
                         return Err(global.throw(format_args!("{REFUSE}")));
                     }
@@ -1192,6 +1758,7 @@ impl Image {
             image: std::ptr::from_ref::<Image>(self),
             global,
             pipeline: self.pipeline.get(),
+            layers: self.composite_layers.get().clone(),
             input,
             kind: Kind::Encode(self.pipeline.get().output),
             deliver: Deliver::Uint8Array,
@@ -1208,6 +1775,9 @@ impl Image {
         );
         // Release `input` (see hoisting note above).
         mem::take(&mut task.input).release();
+        // `ManuallyDrop` suppresses field Drops (see PORT NOTE above) — the
+        // layer snapshot owns heap buffers, so free it explicitly.
+        drop(mem::take(&mut task.layers));
         match result {
             TaskResult::Encoded { out, format, w, h } => {
                 self.last_width.set(i32::try_from(w).expect("int cast"));
@@ -1218,9 +1788,13 @@ impl Image {
                 "{}",
                 bstr::BStr::new(error_message(e).as_bytes())
             ))),
+            TaskResult::ErrWithCode { code, msg } => {
+                Err(global.throw_value(error_with_code(global, code, msg)))
+            }
             // Preserve errno/path/syscall instead of flattening to DecodeFailed.
             TaskResult::IoErr(e) => Err(global.throw_value(e.to_js(global))),
-            TaskResult::Meta { .. } => unreachable!(),
+            // `kind` above is always `Kind::Encode` — `run()` can't produce these.
+            TaskResult::Meta { .. } | TaskResult::Raw { .. } => unreachable!(),
         }
     }
 }
@@ -1322,6 +1896,7 @@ impl<'a> BlobReadChain<'a> {
                 // on the already-swapped source.
                 if matches!(image.source.get(), Source::Blob(_)) {
                     image.source.set(Source::Owned(bytes));
+                    image.refresh_reported_size();
                 } else {
                     drop(bytes);
                 }
@@ -1391,6 +1966,11 @@ pub struct PipelineTask<'a> {
     image: *const Image,
     global: &'a JSGlobalObject,
     pipeline: Pipeline,
+    /// Clone of `image.composite_layers` taken at schedule time — same
+    /// snapshot contract as `pipeline`, just `Clone` instead of `Copy`. The
+    /// overlay bytes are owned (`Vec<u8>`/`ZBox`), so the worker never touches
+    /// JS-side memory for them.
+    layers: Vec<CompositeLayer>,
     input: Input,
     kind: Kind,
     deliver: Deliver,
@@ -1413,6 +1993,10 @@ pub struct Input {
     pinned: JSValue,
     /// Our own dupe of a FastTypedArray's bytes — freed in `then()`.
     copied: Option<Vec<u8>>,
+    /// `Some((width, height))` when `bytes` holds a raw RGBA8 frame from a
+    /// `Source::Raw` input. `run()` then uses the bytes as the decoded frame
+    /// directly — no sniff/probe/decode, no EXIF, no ICC.
+    raw: Option<(u32, u32)>,
 }
 
 impl Default for Input {
@@ -1422,6 +2006,7 @@ impl Default for Input {
             path: None,
             pinned: JSValue::ZERO,
             copied: None,
+            raw: None,
         }
     }
 }
@@ -1463,6 +2048,10 @@ pub enum Kind {
     /// `None` ⇒ re-encode in the source format (resolved after decode).
     Encode(Option<codecs::EncodeOptions>),
     Metadata,
+    /// `.pixels()` — decode → apply pipeline → hand the post-pipeline RGBA8
+    /// buffer to JS as `{data, width, height, channels: 4}` without encoding.
+    /// Raw is post-pipeline, same as Sharp's `.raw()`.
+    Raw,
     /// `.placeholder()` — decode → box-resize ≤100 → ThumbHash → render
     /// → PNG → `data:` URL. The whole chain runs on the worker; the
     /// hash itself never crosses the JS boundary unless we add an
@@ -1482,7 +2071,21 @@ pub enum TaskResult {
         h: u32,
         format: codecs::Format,
     },
+    /// Post-pipeline RGBA8 pixels, taken straight out of `codecs::Decoded`
+    /// (global allocator) — no encode step.
+    Raw {
+        rgba: Vec<u8>,
+        w: u32,
+        h: u32,
+    },
     Err(codecs::Error),
+    /// Errors with no `codecs::Error` analogue (e.g. an oversized composite
+    /// overlay) — carries its own `.code`/message instead of borrowing one of
+    /// the codec error's fixed strings.
+    ErrWithCode {
+        code: &'static ZStr,
+        msg: &'static ZStr,
+    },
     IoErr(sys::Error),
 }
 
@@ -1559,7 +2162,7 @@ impl<'a> PipelineTask<'a> {
         // IHDR/SOF/VP8 header; we used to decode the full RGBA buffer first
         // (~70× slower on a 1920×1080 PNG). EXIF orientation only swaps the
         // reported dims, no pixels involved.
-        if matches!(self.kind, Kind::Metadata) {
+        if matches!(self.kind, Kind::Metadata) && self.input.raw.is_none() {
             match codecs::probe(input, self.max_pixels) {
                 Ok(p) => {
                     let mut w = p.width;
@@ -1587,42 +2190,68 @@ impl<'a> PipelineTask<'a> {
             }
         }
 
-        // Decode-time downscale hint. The IDCT picker constrains in *stored*
-        // axes, so any 90/270 rotate that runs before resize — explicit OR
-        // EXIF auto-orient — needs the hint axes swapped, otherwise one axis
-        // can be over-shrunk and then upscaled, throwing away detail.
-        // (flip/flop are pure mirrors that never change w/h, so the hint
-        //  stays valid through them.)
-        let hint: codecs::DecodeHint = if let Some(r) = self.pipeline.resize {
-            let mut tw = r.w;
-            // r.h==0 means "preserve aspect" — constrain on width only.
-            let mut th = if r.h != 0 { r.h } else { r.w };
-            let swap_explicit = self.pipeline.rotate == 90 || self.pipeline.rotate == 270;
-            let swap_exif = self.auto_orient && {
-                let t = exif::read_jpeg(input).transform();
-                t.rotate == 90 || t.rotate == 270
-            };
-            if swap_explicit != swap_exif {
-                mem::swap(&mut tw, &mut th);
-            }
-            codecs::DecodeHint {
-                target_w: tw,
-                target_h: th,
-            }
+        let (mut decoded, src_format) = if let Some((w, h)) = self.input.raw {
+            // Raw RGBA8 source: the constructor validated `len == w×h×ch`,
+            // rejected 0-dims and expanded 3-channel input, so these bytes
+            // ARE the decoded frame. `Format::sniff` must not run — raw
+            // pixels can start with any byte pattern (including a JPEG SOI,
+            // which would route them through the EXIF parsing below) — and a
+            // raw buffer carries no ICC profile. The copy gives this task its
+            // own mutable frame; the source Vec stays intact for later
+            // terminals.
+            (
+                codecs::Decoded {
+                    rgba: input.to_vec(),
+                    width: w,
+                    height: h,
+                    icc_profile: None,
+                },
+                // No source container to "re-encode in the source format";
+                // the no-format-chained fallback below emits PNG, same as
+                // the decode-only formats.
+                codecs::Format::Png,
+            )
         } else {
-            codecs::DecodeHint::default()
-        };
+            // Decode-time downscale hint. The IDCT picker constrains in *stored*
+            // axes, so any 90/270 rotate that runs before resize — explicit OR
+            // EXIF auto-orient — needs the hint axes swapped, otherwise one axis
+            // can be over-shrunk and then upscaled, throwing away detail.
+            // (flip/flop are pure mirrors that never change w/h, so the hint
+            //  stays valid through them.)
+            let hint: codecs::DecodeHint = if let Some(r) = self.pipeline.resize {
+                let mut tw = r.w;
+                // r.h==0 means "preserve aspect" — constrain on width only.
+                let mut th = if r.h != 0 { r.h } else { r.w };
+                let swap_explicit = self.pipeline.rotate == 90 || self.pipeline.rotate == 270;
+                let swap_exif = self.auto_orient && {
+                    let t = exif::read_jpeg(input).transform();
+                    t.rotate == 90 || t.rotate == 270
+                };
+                if swap_explicit != swap_exif {
+                    mem::swap(&mut tw, &mut th);
+                }
+                codecs::DecodeHint {
+                    target_w: tw,
+                    target_h: th,
+                }
+            } else {
+                codecs::DecodeHint::default()
+            };
 
-        let mut decoded = match codecs::decode(input, self.max_pixels, hint) {
-            Ok(d) => d,
-            Err(e) => {
-                self.result = TaskResult::Err(e);
-                return;
-            }
-        };
-        // `defer decoded.deinit()` — `codecs::Decoded` Drop frees rgba/icc.
+            let decoded = match codecs::decode(input, self.max_pixels, hint) {
+                Ok(d) => d,
+                Err(e) => {
+                    self.result = TaskResult::Err(e);
+                    return;
+                }
+            };
+            // `defer decoded.deinit()` — `codecs::Decoded` Drop frees rgba/icc.
 
-        let src_format = codecs::Format::sniff(input).unwrap_or(codecs::Format::Png);
+            (
+                decoded,
+                codecs::Format::sniff(input).unwrap_or(codecs::Format::Png),
+            )
+        };
 
         // EXIF auto-orient: applied BEFORE any user op so resize targets and
         // metadata report the visually-upright dimensions, the way Sharp does.
@@ -1637,7 +2266,9 @@ impl<'a> PipelineTask<'a> {
         }
 
         if matches!(self.kind, Kind::Metadata) {
-            // Reached only for HEIC/AVIF (probe fell through).
+            // Reached only for HEIC/AVIF (probe fell through) — raw sources
+            // never schedule Metadata (`do_metadata` answers them on the JS
+            // thread from the constructor descriptor).
             self.result = TaskResult::Meta {
                 w: decoded.width,
                 h: decoded.height,
@@ -1656,6 +2287,27 @@ impl<'a> PipelineTask<'a> {
 
         if let Err(e) = self.apply_pipeline(&mut decoded) {
             self.result = TaskResult::Err(e);
+            return;
+        }
+
+        // Composite is the LAST pipeline stage (after modulate) — Sharp also
+        // runs it after every base op (pipeline.cc:640–740), so overlay
+        // coordinates are in final post-resize space and `.pixels()` sees the
+        // blended result.
+        if let Err(r) = self.apply_composite(&mut decoded) {
+            self.result = r;
+            return;
+        }
+
+        // `.pixels()` — the decoded RGBA buffer IS the output; skip the encode
+        // block entirely. Raw is post-pipeline (rotate/flip/resize/modulate
+        // already applied above), matching Sharp's `.raw()`.
+        if matches!(self.kind, Kind::Raw) {
+            self.result = TaskResult::Raw {
+                rgba: mem::take(&mut decoded.rgba),
+                w: decoded.width,
+                h: decoded.height,
+            };
             return;
         }
 
@@ -1721,7 +2373,9 @@ impl<'a> PipelineTask<'a> {
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `self.image.*` there would race the synchronous getters.
         match &self.result {
-            TaskResult::Encoded { w, h, .. } | TaskResult::Meta { w, h, .. } => {
+            TaskResult::Encoded { w, h, .. }
+            | TaskResult::Meta { w, h, .. }
+            | TaskResult::Raw { w, h, .. } => {
                 image.last_width.set(i32::try_from(*w).expect("int cast"));
                 image.last_height.set(i32::try_from(*h).expect("int cast"));
             }
@@ -1885,7 +2539,39 @@ impl<'a> PipelineTask<'a> {
                 obj.put(global, b"format", fmt_js);
                 promise.resolve(global, obj)?;
             }
+            TaskResult::Raw { rgba, w, h } => {
+                // Hand the post-pipeline RGBA buffer to JS without a copy:
+                // wrap the Vec's allocation as a Uint8Array whose finalizer is
+                // the matching global-allocator free (same handoff as the
+                // `Encoded` arm above; ownership transfers to JS, so suppress
+                // the codec `Drop`).
+                let out = mem::ManuallyDrop::new(codecs::Encoded::from_owned(rgba));
+                // SAFETY: `out.bytes` is a non-null fat pointer into a live
+                // allocation; valid until `out.free` runs. Mutability is for
+                // the `from_bytes` signature only — JS takes ownership.
+                let mut_slice = unsafe {
+                    core::slice::from_raw_parts_mut(
+                        out.bytes.as_ptr().cast::<u8>(),
+                        out.bytes.len(),
+                    )
+                };
+                let data = match ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array)
+                    .to_js_with_context(global, core::ptr::null_mut(), Some(out.free))
+                {
+                    Ok(v) => v,
+                    Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
+                };
+                let obj = JSValue::create_empty_object(global, 4);
+                obj.put(global, b"data", data);
+                obj.put(global, b"width", JSValue::js_number(f64::from(w)));
+                obj.put(global, b"height", JSValue::js_number(f64::from(h)));
+                obj.put(global, b"channels", JSValue::js_number(4.0));
+                promise.resolve(global, obj)?;
+            }
             TaskResult::Err(e) => promise.reject(global, Ok(reject_error(global, e)))?,
+            TaskResult::ErrWithCode { code, msg } => {
+                promise.reject(global, Ok(error_with_code(global, code, msg)))?;
+            }
             TaskResult::IoErr(e) => promise.reject(global, Ok(e.to_js(global)))?,
         }
         Ok(())
@@ -1938,6 +2624,101 @@ impl<'a> PipelineTask<'a> {
         }
         if let Some(m) = p.modulate {
             codecs::modulate(&mut d.rgba, m.brightness, m.saturation);
+        }
+        Ok(())
+    }
+
+    /// Composite stage — the last pipeline op. Layers blend bottom-to-top,
+    /// strictly one at a time: decode overlay → enforce overlay ≤ base →
+    /// resolve placement → blend → drop the overlay before the next decode,
+    /// so peak memory stays base + one overlay (libvips' n-ary composite is
+    /// sequential pairwise accumulation, so per-layer blending is
+    /// mathematically identical).
+    ///
+    /// Errors carry a full `TaskResult` so a path-sourced overlay keeps
+    /// errno/path fidelity (`IoErr`) instead of flattening to `DecodeFailed`.
+    fn apply_composite(&self, d: &mut codecs::Decoded) -> Result<(), TaskResult> {
+        for layer in &self.layers {
+            // Resolve the layer to (rgba, w, h). Encoded inputs decode here
+            // with the same `max_pixels` guard as the base, applied per
+            // overlay, so a decompression-bomb overlay is rejected before
+            // its RGBA buffer is allocated (no decode hint — overlays are
+            // never resized). Raw inputs were validated at construction;
+            // re-check the *pixel-count* guard against THIS image's
+            // `max_pixels` (the overlay Image's own limit may differ).
+            let decoded_overlay: codecs::Decoded;
+            let (overlay_rgba, ow, oh): (&[u8], u32, u32) = match &layer.input {
+                CompositeInput::Raw {
+                    rgba,
+                    width,
+                    height,
+                } => {
+                    if u64::from(*width) * u64::from(*height) > self.max_pixels {
+                        return Err(TaskResult::Err(codecs::Error::TooManyPixels));
+                    }
+                    (rgba, *width, *height)
+                }
+                input => {
+                    let file_bytes: Vec<u8>;
+                    let bytes: &[u8] = match input {
+                        CompositeInput::Owned(b) => b,
+                        CompositeInput::Path(p) => {
+                            file_bytes = read_overlay_file(p.as_zstr())?;
+                            &file_bytes
+                        }
+                        CompositeInput::Raw { .. } => unreachable!(),
+                    };
+                    let mut dec =
+                        codecs::decode(bytes, self.max_pixels, codecs::DecodeHint::default())
+                            .map_err(TaskResult::Err)?;
+                    // Overlays follow the pipeline's EXIF policy, same as the
+                    // base at the top of `run()` — a portrait-shot JPEG
+                    // watermark blends upright when `autoOrient` (default) is
+                    // on, and the oversized rule below sees the upright dims.
+                    if self.auto_orient
+                        && codecs::Format::sniff(bytes) == Some(codecs::Format::Jpeg)
+                    {
+                        let orient = exif::read_jpeg(bytes);
+                        if orient != exif::Orientation::Normal {
+                            apply_orientation(&mut dec, orient).map_err(TaskResult::Err)?;
+                        }
+                    }
+                    decoded_overlay = dec;
+                    (
+                        &decoded_overlay.rgba,
+                        decoded_overlay.width,
+                        decoded_overlay.height,
+                    )
+                }
+            };
+            // Sharp's rule (pipeline.cc:669): the overlay must fit the base.
+            if ow > d.width || oh > d.height {
+                return Err(TaskResult::ErrWithCode {
+                    code: zstr!("ERR_IMAGE_COMPOSITE_OVERSIZED"),
+                    msg: zstr!("Image to composite must have same dimensions or smaller"),
+                });
+            }
+            // Explicit top/left override gravity and may be negative (clipped
+            // at blend time); gravity placement is always in-bounds because
+            // overlay ≤ base was just enforced.
+            let (left, top) = match layer.position {
+                Some((l, t)) => (i64::from(l), i64::from(t)),
+                None => resolve_gravity(layer.gravity, d.width, d.height, ow, oh),
+            };
+            match layer.blend {
+                BlendMode::Over => codecs::composite_over(
+                    &mut d.rgba,
+                    d.width,
+                    d.height,
+                    overlay_rgba,
+                    ow,
+                    oh,
+                    left,
+                    top,
+                    opacity_q255(layer.opacity),
+                    layer.premultiplied,
+                ),
+            }
         }
         Ok(())
     }
@@ -2009,6 +2790,74 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> (u32, u32) {
         return (sw, sh);
     }
     (w, h)
+}
+
+/// Read an overlay path with the same hardening as a `Source::Path` base in
+/// `run()`: O_NONBLOCK open (a FIFO with no writer must not park the WorkPool
+/// thread), `!S_ISREG` → ENODEV (`/dev/zero` would pread forever), and the
+/// encoded-size cap before reading anything.
+fn read_overlay_file(p: &ZStr) -> Result<Vec<u8>, TaskResult> {
+    #[cfg(unix)]
+    let oflags = sys::O::RDONLY | sys::O::NONBLOCK;
+    #[cfg(not(unix))]
+    let oflags = sys::O::RDONLY;
+    let file = match sys::File::openat(sys::Fd::cwd(), p, oflags, 0) {
+        sys::Result::Ok(f) => f,
+        sys::Result::Err(e) => return Err(TaskResult::IoErr(e.with_path(p.as_bytes()))),
+    };
+    let st = match file.stat() {
+        sys::Result::Ok(s) => s,
+        sys::Result::Err(e) => return Err(TaskResult::IoErr(e.with_path(p.as_bytes()))),
+    };
+    if !sys::S::ISREG(st.st_mode as _) {
+        return Err(TaskResult::IoErr(sys::Error {
+            errno: sys::E::ENODEV as _,
+            syscall: sys::Tag::read,
+            path: p.as_bytes().to_vec().into_boxed_slice(),
+            ..Default::default()
+        }));
+    }
+    if u64::try_from(st.st_size.max(0)).expect("int cast") > MAX_INPUT_FILE_BYTES {
+        return Err(TaskResult::Err(codecs::Error::TooManyPixels));
+    }
+    match file.read_to_end() {
+        Ok(bytes) => Ok(bytes),
+        Err(e) => Err(TaskResult::IoErr(e.with_path(p.as_bytes()))),
+    }
+}
+
+/// Sharp's `CalculateCrop` placement math (common.cc): centre rounds toward
+/// the bottom-right via the `+1`; the compass points sit flush against their
+/// edge. Overlay ≤ base is enforced before this is called, so every result
+/// is in-bounds — only explicit `top`/`left` can place an overlay partially
+/// (or wholly) outside the base.
+fn resolve_gravity(g: Gravity, bw: u32, bh: u32, ow: u32, oh: u32) -> (i64, i64) {
+    let (bw, bh) = (i64::from(bw), i64::from(bh));
+    let (ow, oh) = (i64::from(ow), i64::from(oh));
+    let cx = (bw - ow + 1) / 2;
+    let cy = (bh - oh + 1) / 2;
+    match g {
+        Gravity::Centre => (cx, cy),
+        Gravity::North => (cx, 0),
+        Gravity::Northeast => (bw - ow, 0),
+        Gravity::East => (bw - ow, cy),
+        Gravity::Southeast => (bw - ow, bh - oh),
+        Gravity::South => (cx, bh - oh),
+        Gravity::Southwest => (0, bh - oh),
+        Gravity::West => (0, cy),
+        Gravity::Northwest => (0, 0),
+    }
+}
+
+/// Map an opacity in `0.0..=1.0` to `0..=255` (1/255 steps) so the per-layer
+/// multiply in the blend kernel is pure integer math. This is the *only*
+/// quantisation in the blend — the kernel is exact rational arithmetic over
+/// denominator 255ⁿ until its single final rounding back to bytes. Parse time
+/// already clamps, but the layer struct is `pub`, so clamp again rather than
+/// trust it.
+#[inline]
+fn opacity_q255(opacity: f32) -> u32 {
+    (f64::from(opacity).clamp(0.0, 1.0) * 255.0).round() as u32
 }
 
 fn apply_orientation(

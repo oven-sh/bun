@@ -928,10 +928,12 @@ bun::xxh3::N_AVX10_2::HashLong    [AVX, AVX2, AVX512DQ, AVX512F, BMI2]
 
 
 # ----------------------------------------------------------------------------
-# Bun.Image highway kernels (image_resize.cpp). Gate: HWY_DYNAMIC_DISPATCH ->
-# hwy::SupportedTargets() via CPUID. Same gate as the highway_strings block.
-# (40 symbols; PDB demangles these to bun_image::N_*::*)
+# Bun.Image highway kernels (image_resize.cpp, image_composite.cpp).
+# Gate: HWY_DYNAMIC_DISPATCH -> hwy::SupportedTargets() via CPUID. Same gate
+# as the highway_strings block.
+# (45 symbols; PDB demangles these to bun_image::N_*::*)
 # ----------------------------------------------------------------------------
+bun_image::N_AVX2::CompositeOverImpl  [AVX, AVX2, BMI1, BMI2]
 bun_image::N_AVX2::FlipHImpl  [AVX, AVX2]
 bun_image::N_AVX2::HorizPass  [AVX, AVX2, FMA]
 bun_image::N_AVX2::ModulateImpl  [AVX, AVX2, FMA]
@@ -940,6 +942,7 @@ bun_image::N_AVX2::Rotate180Impl  [AVX, AVX2]
 bun_image::N_AVX2::Rotate270Impl  [AVX]
 bun_image::N_AVX2::Rotate90Impl  [AVX]
 bun_image::N_AVX2::VertPass  [AVX, AVX2, BMI1, FMA]
+bun_image::N_AVX3::CompositeOverImpl  [AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun_image::N_AVX3::FlipHImpl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3::HorizPass  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]
@@ -948,6 +951,7 @@ bun_image::N_AVX3::Rotate180Impl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3::Rotate270Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3::Rotate90Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3::VertPass  [AVX, AVX512BW, AVX512F, AVX512VL, BMI1, FMA]
+bun_image::N_AVX3_DL::CompositeOverImpl  [AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun_image::N_AVX3_DL::FlipHImpl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_DL::HorizPass  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]
 bun_image::N_AVX3_DL::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]
@@ -956,6 +960,7 @@ bun_image::N_AVX3_DL::Rotate180Impl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_DL::Rotate270Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_DL::Rotate90Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_DL::VertPass  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
+bun_image::N_AVX3_SPR::CompositeOverImpl  [AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun_image::N_AVX3_SPR::FlipHImpl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_SPR::HorizPass  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]
 bun_image::N_AVX3_SPR::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]
@@ -964,6 +969,7 @@ bun_image::N_AVX3_SPR::Rotate180Impl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_SPR::Rotate270Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_SPR::Rotate90Impl  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
 bun_image::N_AVX3_SPR::VertPass  [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI1, FMA]
+bun_image::N_AVX3_ZEN4::CompositeOverImpl  [AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun_image::N_AVX3_ZEN4::FlipHImpl  [AVX, AVX2, AVX512F]
 bun_image::N_AVX3_ZEN4::HorizPass  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI]
 bun_image::N_AVX3_ZEN4::ModulateImpl  [AVX, AVX512DQ, AVX512F, AVX512VL]

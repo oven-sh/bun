@@ -647,6 +647,18 @@ unsafe extern "C" {
     fn bun_image_rotate_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, deg: i32);
     fn bun_image_flip_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, horiz: i32);
     fn bun_image_modulate_rgba8(buf: *mut u8, len: usize, brightness: f32, saturation: f32);
+    fn bun_image_composite_over_rgba8(
+        base: *mut u8,
+        bw: u32,
+        bh: u32,
+        overlay: *const u8,
+        ow: u32,
+        oh: u32,
+        left: i64,
+        top: i64,
+        opacity: u32,
+        premultiplied: i32,
+    );
 }
 
 /// In-place brightness/saturation. brightness multiplies V (so 1.0 is
@@ -655,6 +667,48 @@ unsafe extern "C" {
 pub(crate) fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
     // SAFETY: ptr+len from a valid slice; C++ kernel writes within bounds.
     unsafe { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
+}
+
+/// In-place Porter-Duff `over` of one RGBA8 overlay onto `base` at
+/// (`left`, `top`), in premultiplied-alpha space the way libvips composites.
+/// `opacity` is a per-layer alpha multiplier in 1/255 steps (0..=255);
+/// `premultiplied` skips the kernel's premultiply pass for overlays whose
+/// pixels already are. Offsets may be negative or overhang — the kernel clips
+/// to the intersection. Exact integer math throughout: byte-identical on
+/// every platform/ISA (the docs' byte-identical guarantee), see
+/// image_composite.cpp for the fixed-point derivation.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn composite_over(
+    base: &mut [u8],
+    bw: u32,
+    bh: u32,
+    overlay: &[u8],
+    ow: u32,
+    oh: u32,
+    left: i64,
+    top: i64,
+    opacity: u32,
+    premultiplied: bool,
+) {
+    debug_assert!(base.len() == (bw as usize) * (bh as usize) * 4);
+    debug_assert!(overlay.len() == (ow as usize) * (oh as usize) * 4);
+    // SAFETY: ptr+len pairs from valid slices whose dims the debug_asserts
+    // pin; the kernel clips (left, top, ow, oh) against (bw, bh) and writes
+    // only within the intersection.
+    unsafe {
+        bun_image_composite_over_rgba8(
+            base.as_mut_ptr(),
+            bw,
+            bh,
+            overlay.as_ptr(),
+            ow,
+            oh,
+            left,
+            top,
+            opacity,
+            i32::from(premultiplied),
+        )
+    }
 }
 
 pub(crate) fn resize(

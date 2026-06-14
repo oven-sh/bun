@@ -4,7 +4,7 @@ const child_process = require('child_process');
 const assert = require('assert');
 
 // Regression test for https://github.com/nodejs/node/issues/37806:
-const proc = child_process.spawn(process.execPath, ['-i']);
+const proc = child_process.spawn(process.execPath, ['--interactive']);
 proc.on('error', common.mustNotCall());
 proc.on('exit', common.mustCall((code) => {
   assert.strictEqual(code, 0);

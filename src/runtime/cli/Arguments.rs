@@ -196,6 +196,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--smol                            Use less memory, but run garbage collection more often"
     ),
     parse_param!(
+        "--interactive                     Start a Node.js-compatible REPL, like node --interactive"
+    ),
+    parse_param!(
         "-r, --preload <STR>...            Import a module before other modules are loaded"
     ),
     parse_param!("--require <STR>...                Alias of --preload, for Node.js compatibility"),
@@ -1081,6 +1084,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
+        ctx.runtime_options.interactive = args.flag(b"--interactive");
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");

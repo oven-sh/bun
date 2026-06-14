@@ -2950,6 +2950,18 @@ impl RunCommand {
         Ok(true)
     }
 
+    /// `bun --interactive` — boots the embedded `eval/node-repl.ts` script,
+    /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
+    /// which is Bun's own native REPL.
+    pub fn exec_node_repl(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+        ctx.runtime_options.eval.script =
+            bun_core::runtime_embed_file!(Codegen, "eval/node-repl.ts")
+                .as_bytes()
+                .to_vec()
+                .into_boxed_slice();
+        Self::exec_eval(ctx)
+    }
+
     /// Synthetic `cwd/[eval]`
     /// entry point + boot. `Arguments::parse` has already stashed the script
     /// in `ctx.runtime_options.eval.script`. Public so `Command::start` can

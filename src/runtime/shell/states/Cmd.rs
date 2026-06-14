@@ -492,6 +492,21 @@ impl Cmd {
         // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
         spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
 
+        // Fill env from export_env + cmd_local_env. Must happen BEFORE
+        // argv[0] resolution: `fill_env` updates `spawn_args.path` when it
+        // copies a PATH entry, so resolution honors PATH set via `.env()`,
+        // `export`, or a `PATH=… cmd` prefix (cmd_local_env filled last, so
+        // it wins). The `which` builtin already resolves through the shell
+        // environment; this keeps external commands consistent with it.
+        // Fixes #25885.
+        {
+            let env = interp.as_cmd_mut(this).base.shell_mut();
+            let mut iter = env.export_env.iterator();
+            spawn_args.fill_env::<false>(&mut iter);
+            let mut iter = env.cmd_local_env.iterator();
+            spawn_args.fill_env::<false>(&mut iter);
+        }
+
         // Resolve argv[0] via PATH (`bun_which::which`).
         let resolved: Option<Vec<u8>> = {
             let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -543,15 +558,6 @@ impl Cmd {
         // `execve`).
         resolved.push(0);
         interp.as_cmd_mut(this).args[0] = resolved;
-
-        // Fill env from export_env + cmd_local_env.
-        {
-            let env = interp.as_cmd_mut(this).base.shell_mut();
-            let mut iter = env.export_env.iterator();
-            spawn_args.fill_env::<false>(&mut iter);
-            let mut iter = env.cmd_local_env.iterator();
-            spawn_args.fill_env::<false>(&mut iter);
-        }
 
         // Convert shell IO → subprocess stdio.
         let mut shellio = ShellIO::default();

@@ -275,29 +275,30 @@ it("import.meta is discoverable in a standalone module", async () => {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const result = JSON.parse(stdout);
-  expect({ stderr, result }).toEqual({
-    stderr: expect.any(String),
-    result: {
-      names: ["dir", "dirname", "env", "file", "filename", "main", "path", "require", "resolve", "resolveSync", "url"],
-      ownKeys: [
-        "dir",
-        "dirname",
-        "env",
-        "file",
-        "filename",
-        "main",
-        "path",
-        "require",
-        "resolve",
-        "resolveSync",
-        "url",
-      ],
-      urlDescriptorDefined: true,
-      prototypeIsNull: true,
-    },
+
+  // Assert the process succeeded before parsing, so a crash or non-JSON output surfaces
+  // stderr/exitCode in the failure diff instead of an opaque JSON.parse error.
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+  const keys = [
+    "dir",
+    "dirname",
+    "env",
+    "file",
+    "filename",
+    "main",
+    "path",
+    "require",
+    "resolve",
+    "resolveSync",
+    "url",
+  ];
+  expect(JSON.parse(stdout)).toEqual({
+    names: keys,
+    ownKeys: keys,
+    urlDescriptorDefined: true,
+    prototypeIsNull: true,
   });
-  expect(exitCode).toBe(0);
 });
 
 it('require("bun") works', () => {

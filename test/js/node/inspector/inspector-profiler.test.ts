@@ -226,8 +226,11 @@ describe("node:inspector", () => {
     });
 
     test("Profiler.setSamplingInterval rejects values above INT_MAX", () => {
-      // Node.js rejects > 2147483647 with ERR_INSPECTOR_COMMAND. Previously Bun
-      // silently accepted these and hit an out-of-range double-to-int conversion.
+      // Node.js rejects > 2147483647 via V8's CDP parameter validation
+      // (ERR_INSPECTOR_COMMAND, "Invalid parameters"). Bun routes through
+      // validateInteger so the error surfaces as ERR_OUT_OF_RANGE. Previously
+      // Bun silently accepted these and hit an out-of-range double-to-int
+      // conversion in the native binding.
       session.post("Profiler.enable");
       expect(session.post("Profiler.setSamplingInterval", { interval: 2147483647 })).toEqual({});
       expect(() => session.post("Profiler.setSamplingInterval", { interval: 2147483648 })).toThrow(

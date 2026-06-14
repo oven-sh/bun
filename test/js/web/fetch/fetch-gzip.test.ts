@@ -1,6 +1,6 @@
 import { Socket } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { gcTick } from "harness";
+import { bunEnv, bunExe, gcTick } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -297,6 +297,57 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
   done();
 });
 
+describe("gzip response edge cases", () => {
+  // Behavior pins for the libdeflate fast path and its fallbacks: honest
+  // streams decode byte-exactly; integrity violations (which both libdeflate
+  // and zlib verify) reject with ZlibError regardless of which decode path
+  // ran. The corrupted-trailer cases cover each exit from the exact-size
+  // reservation: `crc-corrupt` enters it and falls through on BadData,
+  // `isize-undersized` enters it with a reservation too small for the actual
+  // data and falls through on InsufficientSpace, and `isize-oversized`
+  // (~4.28 GB trailer) is rejected by the 32 MB cap and takes the shared
+  // scratch-buffer path instead.
+  const payload = Buffer.alloc(300 * 1024);
+  for (let i = 0; i < payload.length; i++) payload[i] = (i * 13) & 0xff;
+
+  function corrupt(data: Buffer, offsetFromEnd: number) {
+    const gz = Buffer.from(Bun.gzipSync(data));
+    gz[gz.length - offsetFromEnd] ^= 0xff;
+    return gz;
+  }
+
+  const cases: Record<string, { body: Uint8Array; expected: Buffer | "error" }> = {
+    "honest-large": { body: Bun.gzipSync(payload), expected: payload },
+    "honest-small": { body: Bun.gzipSync(Buffer.from("hello gzip world")), expected: Buffer.from("hello gzip world") },
+    "empty": { body: Bun.gzipSync(Buffer.alloc(0)), expected: Buffer.alloc(0) },
+    // ISIZE trailer is the last 4 bytes, little-endian; 300 KiB = 0x0004B000.
+    // Flipping the MSB yields 0xFF04B000 (> 32 MB cap); flipping the second
+    // byte yields 0x00044F00 = 282368 (< actual 307200, so the exact-size
+    // reservation comes up short).
+    "isize-oversized": { body: corrupt(payload, 1), expected: "error" },
+    "isize-undersized": { body: corrupt(payload, 3), expected: "error" },
+    "crc-corrupt": { body: corrupt(payload, 8), expected: "error" },
+    "truncated": { body: Buffer.from(Bun.gzipSync(payload)).subarray(0, 1000), expected: "error" },
+  };
+
+  for (const [name, c] of Object.entries(cases)) {
+    it(`decodes or rejects: ${name}`, async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(c.body, { headers: { "Content-Encoding": "gzip" } }),
+      });
+      if (c.expected === "error") {
+        // Depending on delivery, the rejection can surface from fetch()
+        // itself (fully-buffered body) or from reading the body.
+        await expect(fetch(server.url).then(r => r.arrayBuffer())).rejects.toThrow("ZlibError");
+      } else {
+        const got = Buffer.from(await (await fetch(server.url)).arrayBuffer());
+        expect(Buffer.compare(got, c.expected)).toBe(0);
+      }
+    });
+  }
+});
+
 describe("empty compressed responses", () => {
   // A response that declares Content-Encoding but sends zero body bytes must
   // resolve as an empty body, like Node — not fail with ZlibError.
@@ -309,7 +360,9 @@ describe("empty compressed responses", () => {
       // end() rather than write(): FIN the connection after the response so
       // nothing is left parked in the keep-alive pool when the server closes.
       const raw = createNetServer(socket => void socket.end(write));
-      await new Promise<void>(resolve => raw.listen(0, () => resolve()));
+      // Explicit IPv4 loopback: a bare listen(0) can bind only the IPv6
+      // unspecified address on some hosts while the fetch targets 127.0.0.1.
+      await new Promise<void>(resolve => raw.listen(0, "127.0.0.1", () => resolve()));
       const port = (raw.address() as { port: number }).port;
       try {
         const res = await fetch(`http://127.0.0.1:${port}/`);
@@ -319,4 +372,81 @@ describe("empty compressed responses", () => {
       }
     });
   }
+});
+
+describe("gzip ISIZE trailer handling", () => {
+  // The 4-byte ISIZE trailer is attacker-controlled input that sizes the
+  // decompress reservation. A lying value must neither break decoding nor
+  // leave a grossly oversized allocation pinned behind the body's bytes.
+  it("gzip with trailing data decodes the first member without corruption", async () => {
+    // Trailing bytes (a second gzip member) make the first member's ISIZE
+    // trailer not the buffer's last 4 bytes — the reservation fast path must
+    // fall through without duplicating or corrupting output. Decoding only
+    // the first member matches released Bun's (and the slow path's) behavior.
+    const a = Buffer.from("first-member ");
+    const b = Buffer.from("second-member");
+    const body = Buffer.concat([Buffer.from(Bun.gzipSync(a)), Buffer.from(Bun.gzipSync(b))]);
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(body, { headers: { "Content-Encoding": "gzip" } }),
+    });
+    const text = await (await fetch(server.url)).text();
+    expect(text).toBe("first-member ");
+  });
+
+  it("a lying huge ISIZE on a tiny body does not retain the reservation", async () => {
+    // 30 MB ISIZE on a ~40-byte body: the response must decode correctly and
+    // the process must not accumulate ~30 MB per request of GC-invisible
+    // capacity behind the adopted bytes. The reservation's pages are never
+    // touched, so retained capacity is invisible to RSS — on Linux, measure
+    // the VmSize delta across the loop, which it cannot hide from.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // valid tiny gzip + trailing junk whose last 4 bytes spell a huge
+        // ISIZE: the reservation reads the buffer's final 4 bytes, which with
+        // trailing data are attacker-chosen (the real trailer is intact, so
+        // the stream itself still decodes)
+        const lie = Buffer.alloc(4);
+        lie.writeUInt32LE(30 * 1024 * 1024, 0);
+        const gz = Buffer.concat([Buffer.from(Bun.gzipSync(Buffer.from("tiny body payload"))), lie]);
+        using server = Bun.serve({
+          port: 0,
+          fetch: () => new Response(gz, { headers: { "Content-Encoding": "gzip" } }),
+        });
+        function vmSizeMB() {
+          if (process.platform !== "linux") return null;
+          const status = require("node:fs").readFileSync("/proc/self/status", "utf8");
+          return Number(status.match(/VmSize:\\s+(\\d+) kB/)[1]) / 1024;
+        }
+        const vszBefore = vmSizeMB();
+        const held = [];
+        for (let i = 0; i < 64; i++) {
+          held.push(await (await fetch(server.url)).bytes());
+          if (held[i].length !== 17) throw new Error("bad decode: " + held[i].length);
+        }
+        Bun.gc(true);
+        // 64 lying responses x 30MB capacity would be ~1.9GB; bounded means fixed
+        console.log(JSON.stringify({
+          rssMB: Math.round(process.memoryUsage.rss() / 1048576),
+          vszDeltaMB: vszBefore === null ? null : Math.round(vmSizeMB() - vszBefore),
+        }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { rssMB, vszDeltaMB } = JSON.parse(stdout.trim().split("\n").at(-1));
+    expect(rssMB).toBeLessThan(700);
+    if (process.platform === "linux") {
+      // retained reservations would be 64 x ~30MB ≈ 1.9GB of address space
+      expect(vszDeltaMB).toBeLessThan(1024);
+    }
+    expect(exitCode).toBe(0);
+  });
 });

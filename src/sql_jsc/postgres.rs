@@ -63,20 +63,8 @@ pub mod postgres_request;
 pub mod data_cell;
 
 pub mod types {
-    #[path = "bool.rs"]
-    pub mod r#bool;
-
-    #[path = "bytea.rs"]
-    pub mod bytea;
-
     #[path = "date.rs"]
     pub mod date;
-
-    #[path = "json.rs"]
-    pub mod json;
-
-    #[path = "PostgresString.rs"]
-    pub mod postgres_string;
 
     #[path = "tag_jsc.rs"]
     pub mod tag_jsc;

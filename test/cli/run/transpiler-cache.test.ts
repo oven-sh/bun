@@ -261,6 +261,40 @@ describe("transpiler cache", () => {
     expect(run(["--feature=OTHER", "--feature=SUPER_SECRET"])).toBe("enabled");
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
+  test("bun test does not replay a cache entry written by a plain run", () => {
+    // `bun test` binds bare `describe`/`test`/`expect` by injecting an import
+    // from "bun:test" at transpile time. A plain `bun <file>` run of the same
+    // bytes transpiles without that injection, so replaying its cache entry
+    // under `bun test` would silently register zero tests.
+    const code =
+      `console.log("DESCRIBE_IS:" + typeof describe);\n` +
+      `if (typeof describe !== "undefined") {\n` +
+      `  describe("poisoned", () => {\n` +
+      `    test("jest globals are injected", () => {\n` +
+      `      expect(1).toBe(1);\n` +
+      `    });\n` +
+      `  });\n` +
+      `}\n`;
+    const filler = Buffer.alloc((50 * 1024 * 1.5) | 0, "/").toString();
+    writeFileSync(join(temp_dir, "poisoned.test.ts"), code + "//" + filler);
+
+    // Plain run: no jest globals; writes the cache entry.
+    const plain = bunRun(join(temp_dir, "poisoned.test.ts"), env);
+    expect(plain.stdout).toBe("DESCRIBE_IS:undefined");
+    expect(newCacheCount()).toBe(1);
+
+    // The test runner must re-transpile instead of replaying the entry.
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "test", "poisoned.test.ts"],
+      cwd: temp_dir,
+      env,
+    });
+    const stdout = result.stdout.toString();
+    const stderr = result.stderr.toString();
+    expect(stdout).toContain("DESCRIBE_IS:function");
+    expect(stderr).toContain("1 pass");
+    expect(result.exitCode).toBe(0);
+  });
 });
 
 test("rejects cached module records containing out-of-range string indices", () => {

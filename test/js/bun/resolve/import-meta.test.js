@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 import { expect, it, mock } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
 import { tmpdir } from "node:os";
@@ -218,6 +218,74 @@ it("import.meta.filename", () => {
 
 it("import.meta.path", () => {
   expect(path).toEndWith(ospath("/test/js/bun/resolve/import-meta.test.js"));
+});
+
+// https://github.com/oven-sh/bun/issues/32246
+it("import.meta members are own, discoverable properties", () => {
+  const names = Object.getOwnPropertyNames(import.meta);
+
+  // Node exposes url/dirname/filename/resolve/main as own properties; Bun adds
+  // dir/file/path/require/resolveSync/env. Before the fix these lived on a hidden
+  // prototype, so getOwnPropertyNames / ownKeys / getOwnPropertyDescriptor missed them.
+  for (const key of ["url", "dirname", "filename", "resolve", "main", "dir", "file", "path", "require"]) {
+    expect(names).toContain(key);
+    expect(key in import.meta).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(import.meta, key)).not.toBeUndefined();
+  }
+
+  // Reflect.ownKeys agrees with getOwnPropertyNames (no hidden/symbol-only members).
+  expect(Reflect.ownKeys(import.meta)).toEqual(names);
+
+  // The Node-compatible members are enumerable (matching Node's Object.keys);
+  // the Bun-only extras are discoverable but not enumerable, so they stay out of
+  // Object.keys / spread / console.log (e.g. import.meta.env would dump process.env).
+  const enumerable = Object.keys(import.meta).sort();
+  expect(enumerable).toEqual(["dirname", "filename", "main", "resolve", "url"]);
+  for (const extra of ["dir", "file", "path", "require", "resolveSync", "env"]) {
+    expect(names).toContain(extra);
+    expect(enumerable).not.toContain(extra);
+  }
+
+  // The discoverable url resolves to the actual module url.
+  expect(import.meta.url).toBe(Object.getOwnPropertyDescriptor(import.meta, "url").get.call(import.meta));
+  expect(import.meta.url).toStartWith("file://");
+
+  // import.meta keeps a null prototype, matching Node.
+  expect(Object.getPrototypeOf(import.meta)).toBe(null);
+});
+
+// https://github.com/oven-sh/bun/issues/32246
+it("import.meta is discoverable in a standalone module", async () => {
+  using dir = tempDir("import-meta-32246", {
+    "mod.mjs": `console.log(
+      JSON.stringify({
+        names: Object.getOwnPropertyNames(import.meta).sort(),
+        ownKeys: Reflect.ownKeys(import.meta).sort(),
+        urlDescriptorDefined: Object.getOwnPropertyDescriptor(import.meta, "url") !== undefined,
+        prototypeIsNull: Object.getPrototypeOf(import.meta) === null,
+      }),
+    );`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "mod.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = JSON.parse(stdout);
+  expect({ stderr, result }).toEqual({
+    stderr: expect.any(String),
+    result: {
+      names: ["dir", "dirname", "env", "file", "filename", "main", "path", "require", "resolve", "resolveSync", "url"],
+      ownKeys: ["dir", "dirname", "env", "file", "filename", "main", "path", "require", "resolve", "resolveSync", "url"],
+      urlDescriptorDefined: true,
+      prototypeIsNull: true,
+    },
+  });
+  expect(exitCode).toBe(0);
 });
 
 it('require("bun") works', () => {

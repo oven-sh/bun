@@ -2475,11 +2475,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
         });
 
-    m_importMetaBakeObjectStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner, true));
-        });
-
     m_asyncBoundFunctionStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
             init.set(AsyncContextFrame::createStructure(init.vm, init.owner));

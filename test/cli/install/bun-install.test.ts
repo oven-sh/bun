@@ -695,6 +695,219 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  async function testPathBasedRegistryWithoutTrailingSlash(
+    source: "cli" | "bunfig" | "npmrc",
+    dependency: { name: string; version: string; tarballPath: string; tgz: string },
+    registrySuffix = "",
+    registryTransform: (registry: string) => string = registry => registry,
+  ) {
+    await withContext(defaultOpts, async ctx => {
+      const registry = registryTransform(`${ctx.registry_url}api/npm${registrySuffix}`);
+      const registryPath = `/${ctx.id}/api/npm`;
+      const encodedName = dependency.name.replace("/", "%2f");
+      const manifestPath = `${registryPath}/${encodedName}`;
+      const tarballPath = `${registryPath}/${dependency.tarballPath}`;
+      const requestPaths: string[] = [];
+
+      setContextHandler(ctx, async request => {
+        expect(request.method).toBe("GET");
+        const { pathname } = new URL(request.url);
+        requestPaths.push(`${request.method} ${pathname}`);
+
+        if (pathname === manifestPath) {
+          expect(request.headers.get("accept")).toBe(
+            "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+          );
+          expect(await request.text()).toBe("");
+          return Response.json({
+            name: dependency.name,
+            versions: {
+              [dependency.version]: {
+                name: dependency.name,
+                version: dependency.version,
+                dist: {
+                  tarball: `${ctx.registry_url}api/npm/${dependency.tarballPath}`,
+                },
+              },
+            },
+            "dist-tags": {
+              latest: dependency.version,
+            },
+          });
+        }
+
+        if (pathname === tarballPath) {
+          return new Response(file(join(import.meta.dir, dependency.tgz)));
+        }
+
+        return new Response("not found", { status: 404 });
+      });
+
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            [dependency.name]: dependency.version,
+          },
+        }),
+      );
+
+      const args = ["install", "--no-cache"];
+      if (source === "cli") {
+        await writeFile(
+          join(ctx.package_dir, "bunfig.toml"),
+          `
+[install]
+cache = false
+saveTextLockfile = false
+linker = "hoisted"
+`,
+        );
+        args.push("--registry", registry);
+      } else if (source === "bunfig") {
+        await writeFile(
+          join(ctx.package_dir, "bunfig.toml"),
+          `
+[install]
+cache = false
+registry = "${registry}"
+saveTextLockfile = false
+linker = "hoisted"
+`,
+        );
+      } else {
+        await writeFile(
+          join(ctx.package_dir, "bunfig.toml"),
+          `
+[install]
+cache = false
+saveTextLockfile = false
+linker = "hoisted"
+`,
+        );
+        await writeFile(join(ctx.package_dir, ".npmrc"), `registry=${registry}\n`);
+      }
+
+      const proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("Saved lockfile");
+      expect(stdout).toContain(`+ ${dependency.name}@${dependency.version}`);
+      expect(exitCode).toBe(0);
+      expect(requestPaths).toEqual([`GET ${manifestPath}`, `GET ${tarballPath}`]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ...dependency.name.split("/")))).toContain(
+        "package.json",
+      );
+    });
+  }
+
+  it.each([
+    ["--registry", "cli"],
+    ["bunfig.toml", "bunfig"],
+    [".npmrc", "npmrc"],
+  ] as const)("should preserve a path-based registry without trailing slash from %s", async (_, source) => {
+    await testPathBasedRegistryWithoutTrailingSlash(source, {
+      name: "bar",
+      version: "0.0.2",
+      tarballPath: "bar-0.0.2.tgz",
+      tgz: "bar-0.0.2.tgz",
+    });
+  });
+
+  it("should preserve a path-based registry without trailing slash for scoped packages", async () => {
+    await testPathBasedRegistryWithoutTrailingSlash("cli", {
+      name: "@barn/moo",
+      version: "0.1.0",
+      tarballPath: "@barn/moo-0.1.0.tgz",
+      tgz: "moo-0.1.0.tgz",
+    });
+  });
+
+  it("should preserve a path-based registry without trailing slash when query contains slashes", async () => {
+    await testPathBasedRegistryWithoutTrailingSlash(
+      "bunfig",
+      {
+        name: "bar",
+        version: "0.0.2",
+        tarballPath: "bar-0.0.2.tgz",
+        tgz: "bar-0.0.2.tgz",
+      },
+      "?path=a/b",
+    );
+  });
+
+  it("should preserve a path-based registry without trailing slash when scheme is uppercase", async () => {
+    await testPathBasedRegistryWithoutTrailingSlash(
+      "bunfig",
+      {
+        name: "bar",
+        version: "0.0.2",
+        tarballPath: "bar-0.0.2.tgz",
+        tgz: "bar-0.0.2.tgz",
+      },
+      "",
+      registry => registry.replace("http://", "HTTP://"),
+    );
+  });
+
+  it("should reject manifest URLs that escape a path-based registry without trailing slash", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const registry = `${ctx.registry_url}api/npm`;
+      const requestPaths: string[] = [];
+
+      setContextHandler(ctx, request => {
+        const { pathname } = new URL(request.url);
+        requestPaths.push(`${request.method} ${pathname}`);
+        return new Response("not found", { status: 404 });
+      });
+
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            "..\\escape": "0.0.1",
+          },
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "bunfig.toml"),
+        `
+[install]
+cache = false
+registry = "${registry}"
+saveTextLockfile = false
+linker = "hoisted"
+`,
+      );
+
+      const proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("manifest URL");
+      expect(stderr).toContain("is not on registry");
+      expect(stdout).not.toContain("1 package installed");
+      expect(exitCode).not.toBe(0);
+      expect(requestPaths).toEqual([]);
+    });
+  });
+
   // The Rust port adds a same-origin guard in `NetworkTask::for_tarball` so a
   // malicious registry can't point `dist.tarball` at a third-party host and
   // harvest the scope's `Authorization` header. The guard must compare

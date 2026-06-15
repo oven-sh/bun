@@ -14068,3 +14068,51 @@ test("listen() during backoff on an already-subscribed channel fires pre-existin
 
   await db.unlisten("shared_chan");
 });
+
+// An unlisten() that lands while a LISTEN for the same channel is awaiting
+// its ack runs its registered-set delete as a no-op (the in-flight task has
+// not added the channel yet) and queues UNLISTEN behind that LISTEN. When
+// the LISTEN acks, the in-flight task must re-check that the channel is
+// still tracked before recording the registration, or the stale entry makes
+// a later listen() on that channel believe it is already subscribed on the
+// live connection and resolve without sending LISTEN.
+test("listen() after an unlisten raced a held LISTEN ack still sends LISTEN", async () => {
+  await using mock = await createMockListenServer({});
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  // A sibling channel keeps the dedicated connection open through the
+  // unlisten below (otherwise the last-subscription path closes it and
+  // clears the registered set, masking the stale entry).
+  await db.listen("stale_keep", () => {});
+
+  // Freeze the LISTEN/UNLISTEN acks for stale_ch so the in-flight task parks
+  // at its post-LISTEN await.
+  mock.holdAcksFor(["stale_ch"]);
+  const listenP = db.listen("stale_ch", () => {});
+  await mock.waitForQuery(qs => qs.includes('LISTEN "stale_ch"'));
+
+  // The in-flight task is now suspended past its pre-await channel check;
+  // synchronously drop the channel and queue UNLISTEN behind the held LISTEN.
+  const unlistenP = db.unlisten("stale_ch");
+  mock.holdAcksFor([]);
+  mock.releaseHeldAcks();
+  await listenP;
+  await unlistenP;
+
+  // Re-subscribe on the same live connection. This must send LISTEN; a
+  // stale registered-set entry from the raced ack would short-circuit it.
+  await db.listen("stale_ch", () => {});
+
+  const unlistenIdx = mock.queries.indexOf('UNLISTEN "stale_ch"');
+  expect(unlistenIdx).toBeGreaterThan(-1);
+  const afterUnlisten = mock.queries.slice(unlistenIdx + 1);
+  expect(afterUnlisten).toContain('LISTEN "stale_ch"');
+
+  await db.unlisten("stale_ch");
+  await db.unlisten("stale_keep");
+});

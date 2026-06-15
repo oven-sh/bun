@@ -750,6 +750,10 @@ class PostgresAdapter
           if (this.#listenRegisteredChannels.has(channel)) continue;
           try {
             await this.#runListenQuery(conn, `LISTEN ${this.#quoteChannel(channel)}`);
+            // Channel fully unlistened during the ack RTT: its UNLISTEN is
+            // already queued; don't record a stale registration that would
+            // short-circuit a later listen() on this channel.
+            if (!this.#listenChannels.has(channel)) continue;
             // A concurrent listen() may have registered and fired the
             // pre-existing onlistens for this channel while this sweep's
             // LISTEN was in flight; re-firing would double them.
@@ -895,6 +899,12 @@ class PostgresAdapter
           // the channel's onlistens after the sweep already did.
           if (this.#listenRegisteredChannels.has(channel)) return;
           await this.#runListenQuery(conn, `LISTEN ${this.#quoteChannel(channel)}`);
+          // The channel may have been fully unlistened while the ack was in
+          // flight. unlisten()'s registered-set delete was a no-op (not added
+          // yet) and its UNLISTEN queued behind this LISTEN, so recording the
+          // registration now would leave a stale entry that makes a later
+          // listen() on this channel short-circuit without sending LISTEN.
+          if (!this.#listenChannels.has(channel)) return;
           if (!this.#listenRegisteredChannels.has(channel)) {
             // First registration of this channel on the current connection
             // (listen() during the backoff window created it): that is the

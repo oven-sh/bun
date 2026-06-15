@@ -351,11 +351,9 @@ describe("zlib.brotli", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({
-      stdout: JSON.stringify(["flushed", "err:Z_BUF_ERROR"]),
-      exitCode: 0,
-    });
     void stderr;
+    expect(stdout.trim()).toBe(JSON.stringify(["flushed", "err:Z_BUF_ERROR"]));
+    expect(exitCode).toBe(0);
   });
 
   it("BrotliDecompress.flush(Z_FINISH) still decodes valid input", async () => {
@@ -378,11 +376,9 @@ describe("zlib.brotli", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
-      stdout: ["flushed", "data:hello world"],
-      exitCode: 0,
-    });
     void stderr;
+    expect(stdout.trim().split("\n")).toEqual(["flushed", "data:hello world"]);
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import { nodeHttpInternals } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";

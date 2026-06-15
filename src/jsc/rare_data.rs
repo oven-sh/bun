@@ -133,7 +133,7 @@ impl EntropyCache {
         self.fill();
     }
     pub fn fill(&mut self) {
-        bun_core::csprng(&mut self.cache);
+        bun_boringssl::rand_bytes(&mut self.cache);
         self.index = 0;
     }
     pub fn get(&mut self) -> [u8; 16] {

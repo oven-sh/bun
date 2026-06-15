@@ -21,7 +21,7 @@ impl UUID {
     pub fn init() -> UUID {
         let mut uuid = UUID { bytes: [0u8; 16] };
 
-        bun_core::csprng(&mut uuid.bytes);
+        bun_boringssl::rand_bytes(&mut uuid.bytes);
         // Version 4
         uuid.bytes[6] = (uuid.bytes[6] & 0x0f) | 0x40;
         // Variant 1

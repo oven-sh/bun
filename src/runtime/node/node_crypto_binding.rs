@@ -263,7 +263,7 @@ pub mod random {
 
         fn run_task(&mut self) {
             if let Some(scratch) = &mut self.scratch {
-                bun_core::csprng(scratch);
+                boringssl::rand_bytes(scratch);
                 return;
             }
             // SAFETY: `bytes` points into an ArrayBuffer kept alive by `self.value`
@@ -273,7 +273,7 @@ pub mod random {
             let slice = unsafe {
                 core::slice::from_raw_parts_mut(self.bytes.add(self.offset as usize), self.length)
             };
-            bun_core::csprng(slice);
+            boringssl::rand_bytes(slice);
         }
 
         fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue) {
@@ -389,13 +389,14 @@ pub mod random {
             }
 
             // Uniform random in [min, max) via Lemire's nearly-divisionless
-            // rejection sampling, backed by `bun_core::csprng` (BoringSSL RAND_bytes).
+            // rejection sampling, backed by BoringSSL `RAND_bytes` (thread-local
+            // AES-CTR DRBG, no syscall per call).
             let res: i64 = {
                 let range = (max - min) as u64;
                 debug_assert!(range > 0);
                 let mut buf = [0u8; 8];
                 let x = loop {
-                    bun_core::csprng(&mut buf);
+                    boringssl::rand_bytes(&mut buf);
                     let x = u64::from_ne_bytes(buf);
                     let m = (x as u128).wrapping_mul(range as u128);
                     let l = m as u64;
@@ -553,7 +554,7 @@ pub mod random {
 
             if callback.is_undefined() {
                 // sync
-                bun_core::csprng(bytes);
+                boringssl::rand_bytes(bytes);
                 return Ok(result);
             }
 
@@ -612,7 +613,7 @@ pub mod random {
                 return Ok(buf_value);
             }
 
-            bun_core::csprng(&mut buf.slice_mut()[offset as usize..][..size]);
+            boringssl::rand_bytes(&mut buf.slice_mut()[offset as usize..][..size]);
 
             Ok(buf_value)
         }

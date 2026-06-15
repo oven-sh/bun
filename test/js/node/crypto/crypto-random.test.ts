@@ -1,6 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
+import { join } from "path";
 
 describe("randomInt args validation", () => {
   it("default min is 0 so max should be greater than 0", () => {
@@ -227,3 +228,94 @@ describe("checkPrime candidate handling", () => {
     expect(result).toBe(true);
   });
 });
+
+// crypto.random* must use the BoringSSL userspace DRBG, not a kernel syscall
+// per call. The Rust port initially routed these through bun_core::csprng,
+// which on Linux calls libc getrandom(2) every time, incurring a syscall per
+// randomInt()/randomBytes()/randomFillSync() call where the Zig build (and
+// Node) incur zero after DRBG seeding.
+//
+// Verified by interposing libc getrandom via LD_PRELOAD and counting calls.
+// Linux/glibc only: musl may inline getrandom as a raw syscall, Windows/macOS
+// use different entropy syscalls, and the fix is platform-independent (same
+// BoringSSL RAND_bytes on every target).
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
+  "crypto.random* uses a userspace DRBG (no getrandom per call)",
+  () => {
+    const N = 5000;
+    // BoringSSL seeds its thread-local CTR-DRBG once from the OS and thereafter
+    // runs in userspace. Allow a small budget for process startup, JSC, worker
+    // threads, etc.; the regression produced >= N calls.
+    const MAX_GETRANDOM_CALLS = 200;
+    const interposerSrc = `
+      #define _GNU_SOURCE
+      #include <stdio.h>
+      #include <dlfcn.h>
+      #include <sys/types.h>
+      static long count = 0;
+      static ssize_t (*real_getrandom)(void *, size_t, unsigned int) = 0;
+      ssize_t getrandom(void *buf, size_t buflen, unsigned int flags) {
+        if (!real_getrandom)
+          real_getrandom = (ssize_t (*)(void *, size_t, unsigned int))dlsym(RTLD_NEXT, "getrandom");
+        __atomic_fetch_add(&count, 1, __ATOMIC_RELAXED);
+        return real_getrandom(buf, buflen, flags);
+      }
+      __attribute__((destructor)) static void fini(void) {
+        fprintf(stderr, "\\nGETRANDOM_CALLS=%ld\\n", count);
+      }
+    `;
+
+    let so: string;
+    let disposeDir: Disposable;
+    beforeAll(async () => {
+      const dir = tempDir("crypto-getrandom", { "interpose.c": interposerSrc });
+      disposeDir = dir;
+      so = join(String(dir), "interpose.so");
+      await using ccProc = Bun.spawn({
+        cmd: [cc!, "-shared", "-fPIC", "-O2", "-o", so, join(String(dir), "interpose.c"), "-ldl"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [ccStderr, ccExit] = await Promise.all([ccProc.stderr.text(), ccProc.exited]);
+      if (ccExit !== 0) throw new Error("cc failed: " + ccStderr);
+    });
+    afterAll(() => disposeDir?.[Symbol.dispose]());
+
+    async function countGetrandom(script: string): Promise<number> {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, LD_PRELOAD: so },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const m = stderr.match(/^GETRANDOM_CALLS=(\d+)$/m);
+      if (!m) throw new Error("interposer did not report a count; stderr=" + stderr + " stdout=" + stdout);
+      expect(stdout.trim()).toBe("ok");
+      expect(exitCode).toBe(0);
+      return Number(m[1]);
+    }
+
+    it.each([
+      ["randomInt", `const c=require("crypto");for(let i=0;i<${N};i++)c.randomInt(0,1000);console.log("ok")`],
+      ["randomBytes", `const c=require("crypto");for(let i=0;i<${N};i++)c.randomBytes(8);console.log("ok")`],
+      [
+        "randomFillSync",
+        `const c=require("crypto");const b=new Uint8Array(8);for(let i=0;i<${N};i++)c.randomFillSync(b);console.log("ok")`,
+      ],
+      [
+        "randomUUID (disableEntropyCache)",
+        `const c=require("crypto");for(let i=0;i<${N};i++)c.randomUUID({disableEntropyCache:true});console.log("ok")`,
+      ],
+      [
+        "getRandomValues (large)",
+        `const b=new Uint8Array(1024);for(let i=0;i<${N};i++)crypto.getRandomValues(b);console.log("ok")`,
+      ],
+    ])("%s does not call getrandom(2) per iteration", async (_name, script) => {
+      const calls = await countGetrandom(script);
+      expect(calls).toBeLessThan(MAX_GETRANDOM_CALLS);
+    });
+  },
+);

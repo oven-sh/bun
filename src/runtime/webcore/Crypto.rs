@@ -166,7 +166,7 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
             slice[..src.len()].copy_from_slice(src);
         }
         _ => {
-            bun_core::csprng(slice);
+            bun_boringssl_sys::rand_bytes(slice);
         }
     }
 }

@@ -3,6 +3,25 @@
 pub mod boringssl;
 pub use boringssl::*;
 
+/// Fill `buf` with cryptographically-secure random bytes via BoringSSL `RAND_bytes`.
+///
+/// BoringSSL's `RAND_bytes` is a thread-local AES-CTR DRBG seeded once from the
+/// OS entropy source and then run entirely in userspace, so this does not incur
+/// a syscall per call. Prefer this over `bun_core::csprng` for hot paths
+/// (`bun_core` sits below this crate and falls back to raw `getrandom(2)` /
+/// `getentropy` / `RtlGenRandom` per call).
+#[inline]
+pub fn rand_bytes(buf: &mut [u8]) {
+    if buf.is_empty() {
+        return;
+    }
+    // SAFETY: `buf` is a valid writable slice of `buf.len()` bytes. BoringSSL's
+    // `RAND_bytes` always returns 1 (it `abort()`s on failure).
+    unsafe {
+        boringssl::RAND_bytes(buf.as_mut_ptr(), buf.len());
+    }
+}
+
 /// Constant-time byte-slice equality via BoringSSL `CRYPTO_memcmp`.
 ///
 /// Returns `false` when lengths differ (the length comparison itself is NOT

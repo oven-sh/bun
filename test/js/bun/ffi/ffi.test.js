@@ -681,6 +681,20 @@ it("read.* with negative byteOffset does not abort the process", async () => {
     try { read.u8(base, "not a number"); } catch { threw = true; }
     if (!threw) throw new Error("expected read.u8 to throw on non-number byteOffset");
 
+    // Sibling helpers (ptr / toArrayBuffer / toBuffer / CString) share the same
+    // signed-offset shape; a huge negative offset saturates to i64::MIN in
+    // to_int64() and must not abort on the negation. The calls below may throw
+    // or return an error value; either is fine as long as the process survives.
+    const { toArrayBuffer, toBuffer, CString } = require("bun:ffi");
+    for (const fn of [
+      () => ptr(buf, -1e300),
+      () => toArrayBuffer(base, -1e300, 4),
+      () => toBuffer(base, -1e300, 4),
+      () => new CString(base, -1e300, 4),
+    ]) {
+      try { fn(); } catch {}
+    }
+
     console.log("ok");
   `;
   await using proc = Bun.spawn({

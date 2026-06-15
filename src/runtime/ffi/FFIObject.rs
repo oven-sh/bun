@@ -463,9 +463,9 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
 
         let bytei64 = off.to_int64();
         if bytei64 < 0 {
-            addr = addr.saturating_sub(usize::try_from(-bytei64).expect("int cast"));
+            addr = addr.saturating_sub(bytei64.unsigned_abs() as usize);
         } else {
-            addr += usize::try_from(bytei64).expect("int cast");
+            addr = addr.saturating_add(bytei64 as usize);
         }
 
         if addr > array_buffer.ptr as usize + array_buffer.byte_len as usize {
@@ -535,9 +535,9 @@ fn get_ptr_slice(
         if byte_off.is_number() {
             let off = byte_off.to_int64();
             if off < 0 {
-                addr = addr.saturating_sub(usize::try_from(-off).expect("int cast"));
+                addr = addr.saturating_sub(off.unsigned_abs() as usize);
             } else {
-                addr = addr.saturating_add(usize::try_from(off).expect("int cast"));
+                addr = addr.saturating_add(off as usize);
             }
 
             if addr == 0 {

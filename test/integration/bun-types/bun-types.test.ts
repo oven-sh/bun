@@ -846,6 +846,13 @@ describe("@types/bun integration test", () => {
       expect(installedNodeTypes.version.split(".")[0]).toBe("24");
 
       const { diagnostics } = await diagnose(fixtureDir);
+
+      // Prove bun-types is actually loaded, otherwise the assertion below would
+      // pass vacuously. A TS2688 ("Cannot find type definition file") means
+      // `types: ["bun"]` (or its `/// <reference types="bun-types" />`) failed to
+      // resolve, so globals.d.ts was never type-checked in the first place.
+      expect(diagnostics.filter(d => d.code === 2688)).toEqual([]);
+
       const unresolvedNodeUtil = diagnostics.filter(
         d => d.code === 2694 && d.message.includes("TextEncoderEncodeIntoResult"),
       );

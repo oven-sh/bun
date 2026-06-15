@@ -169,6 +169,29 @@ describe("Bun.build", () => {
     ).toThrow();
   });
 
+  test("root that does not exist throws FileNotFound", () => {
+    const root = join(import.meta.dir, "does-not-exist-root-dir-9f3a2b1c");
+    expect(() =>
+      Bun.build({
+        entrypoints: ["./entry.js"],
+        root,
+      }),
+    ).toThrow(`FileNotFound: failed to open root directory: ${root}`);
+  });
+
+  test("root that is a file throws NotDir", () => {
+    const dir = tempDirWithFiles("bun-build-root-notdir", {
+      "file.txt": "hi",
+    });
+    const root = join(dir, "file.txt");
+    expect(() =>
+      Bun.build({
+        entrypoints: ["./entry.js"],
+        root,
+      }),
+    ).toThrow(`NotDir: failed to open root directory: ${root}`);
+  });
+
   test("returns errors properly", async () => {
     Bun.gc(true);
     const build = await buildNoThrow({

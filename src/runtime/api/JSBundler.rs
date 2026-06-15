@@ -857,12 +857,37 @@ pub mod js_bundler {
                     );
                 };
 
+                // The Zig implementation used `std.fs.cwd().openDir(...)` /
+                // `getFdPath` whose `@errorName` yields Zig stdlib names
+                // (`FileNotFound`, `NotDir`, ...). `bun_sys::Error::name()`
+                // returns errno tags (`ENOENT`, `ENOTDIR`, ...); map them back
+                // so the user-visible message matches the released behavior.
+                let open_err_name = |err: &bun_sys::Error| -> &'static str {
+                    use bun_sys::E;
+                    match err.get_errno() {
+                        E::ENOENT => "FileNotFound",
+                        E::EACCES => "AccessDenied",
+                        E::EPERM => "PermissionDenied",
+                        E::ENOTDIR => "NotDir",
+                        E::ELOOP => "SymLinkLoop",
+                        E::ENAMETOOLONG => "NameTooLong",
+                        E::ENOMEM => "SystemResources",
+                        E::EMFILE => "ProcessFdQuotaExceeded",
+                        E::ENFILE => "SystemFdQuotaExceeded",
+                        E::ENODEV => "NoDevice",
+                        E::ENXIO => "NoDevice",
+                        E::EBUSY => "DeviceBusy",
+                        E::EINVAL => "BadPathName",
+                        _ => "Unexpected",
+                    }
+                };
+
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
                     Ok(d) => d,
                     Err(err) => {
                         return Err(global_this.throw(format_args!(
                             "{}: failed to open root directory: {}",
-                            bstr::BStr::new(err.name()),
+                            open_err_name(&err),
                             bstr::BStr::new(path.slice())
                         )));
                     }
@@ -875,7 +900,7 @@ pub mod js_bundler {
                     Err(err) => {
                         return Err(global_this.throw(format_args!(
                             "{}: failed to get full root directory path: {}",
-                            bstr::BStr::new(err.name()),
+                            open_err_name(&err),
                             bstr::BStr::new(path.slice())
                         )));
                     }

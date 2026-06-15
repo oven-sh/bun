@@ -377,6 +377,10 @@ it("inspect", () => {
   const mapWithInfiniteSize = new Map([[1, 1]]);
   Object.defineProperty(mapWithInfiniteSize, "size", { value: Infinity });
   expect(Bun.inspect(mapWithInfiniteSize)).toBe("Map(2147483647) {\n  1: 1,\n}");
+
+  const setWithInfiniteSize = new Set([1]);
+  Object.defineProperty(setWithInfiniteSize, "size", { value: Infinity });
+  expect(Bun.inspect(setWithInfiniteSize)).toBe("Set(2147483647) {\n  1,\n}");
   expect(Bun.inspect(<div>foo</div>)).toBe("<div>foo</div>");
   expect(Bun.inspect(<div hello>foo</div>)).toBe("<div hello=true>foo</div>");
   expect(Bun.inspect(<div hello={1}>foo</div>)).toBe("<div hello=1>foo</div>");

@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
@@ -322,6 +322,67 @@ describe("zlib.brotli", () => {
       });
       expect(compressed.toString()).toEqual(Buffer.from(compressedString3, "base64").toString());
     }
+  });
+
+  // Node validates the native write()/writeSync() flush argument against the
+  // zlib range (0..=6), so passing a zlib flush constant like Z_FINISH (4) or
+  // Z_BLOCK (5) to a brotli stream reaches the native set_flush. The Rust
+  // port mapped only 0..=3 and panicked on the rest; these should instead
+  // complete the flush and let end() surface the usual Z_BUF_ERROR.
+  it.each([
+    ["Z_FINISH", zlib.constants.Z_FINISH],
+    ["Z_BLOCK", zlib.constants.Z_BLOCK],
+  ])("BrotliDecompress.flush(%s) completes instead of aborting", async (_, kind) => {
+    const script = `
+      const z = require("zlib");
+      const d = z.createBrotliDecompress();
+      const events = [];
+      d.on("error", e => {
+        events.push("err:" + e.code);
+        console.log(JSON.stringify(events));
+      });
+      d.flush(${kind}, () => events.push("flushed"));
+      d.end();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      stdout: JSON.stringify(["flushed", "err:Z_BUF_ERROR"]),
+      exitCode: 0,
+    });
+    void stderr;
+  });
+
+  it("BrotliDecompress.flush(Z_FINISH) still decodes valid input", async () => {
+    const script = `
+      const z = require("zlib");
+      const d = z.createBrotliDecompress();
+      const buf = z.brotliCompressSync(Buffer.from("hello world"));
+      const out = [];
+      d.on("data", b => out.push(b));
+      d.on("error", e => { console.log("err:" + e.code); process.exit(1); });
+      d.on("end", () => console.log("data:" + Buffer.concat(out).toString()));
+      d.write(buf);
+      d.flush(z.constants.Z_FINISH, () => console.log("flushed"));
+      d.end();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+      stdout: ["flushed", "data:hello world"],
+      exitCode: 0,
+    });
+    void stderr;
   });
 });
 

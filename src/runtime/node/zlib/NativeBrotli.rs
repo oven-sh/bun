@@ -415,16 +415,20 @@ mod _impl {
         }
 
         pub fn set_flush(&mut self, flush: c_int) {
-            // Caller passes a valid BrotliEncoderOperation discriminant (Node
-            // zlib constants 0..=3). Exhaustive match — `Op` is `#[repr(u32)]`
-            // so the prior `c_int` bit-cast was a width hazard anyway. Out-of-
-            // range traps.
+            // The shared `write`/`writeSync` validation accepts the zlib
+            // flush range (0..=6), so `Z_FINISH` (4) / `Z_BLOCK` (5) /
+            // `Z_TREES` (6) can reach here. Node stores the raw int; the
+            // decoder never consumes it and `get_error_info` only compares
+            // against `Op::finish`, while the brotli encoder treats any
+            // unknown op as a non-flushing, non-terminal step. Map anything
+            // outside the brotli operation set to `process` so both paths
+            // match Node instead of panicking.
             self.flush = match flush {
                 0 => Op::process,
                 1 => Op::flush,
                 2 => Op::finish,
                 3 => Op::emit_metadata,
-                n => unreachable!("invalid BrotliEncoderOperation {n}"),
+                _ => Op::process,
             };
         }
 

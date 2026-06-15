@@ -84,6 +84,20 @@ describe.each([
     },
   },
   {
+    // Interior NUL: the C bind() path truncates at the first NUL, so the
+    // reported hostname/url must match what was actually bound.
+    if: hasIPv4,
+    options: {
+      hostname: "127.0.0.1\0evil",
+      port: 0,
+    },
+    hostname: "127.0.0.1",
+    url: {
+      protocol: "http:",
+      hostname: "127.0.0.1",
+    },
+  },
+  {
     if: hasIPv6,
     options: {
       hostname: "::1",

@@ -1157,9 +1157,11 @@ impl ServerConfig {
             let host_str = host.to_utf8();
 
             if !host_str.slice().is_empty() {
-                // Does not reject interior
-                // NUL; the C `bind()` consumer will simply truncate at it.
-                let hostname = ZBox::from_bytes(host_str.slice());
+                // The C `bind()` consumer treats this as a NUL-terminated string,
+                // so store only the bytes before the first NUL. This keeps
+                // `server.hostname` / `server.url` consistent with what was
+                // actually bound.
+                let hostname = ZBox::from_bytes(bun_core::slice_to_nul(host_str.slice()));
                 if let Address::Tcp { hostname: h, .. } = &mut args.address {
                     *h = Some(hostname);
                 }

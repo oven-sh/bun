@@ -7138,12 +7138,18 @@ impl NodeFS {
         // The sync case borrows `vm.rareData().pipeReadBuffer()` (a per-VM
         // 256 KB heap slab) when a VM is present, otherwise leaves the buffer
         // zero-length so the loop is skipped and we fall through to fstat.
-        // The async path heap-allocates a 256 KB buffer instead.
-        let mut async_stack_buffer: Vec<u8> = if flavor == Flavor::Sync {
-            Vec::new()
-        } else {
-            vec![0u8; 256 * 1024]
-        };
+        // The async path heap-allocates a 256 KB buffer instead (Zig used a
+        // comptime-sized stack array; Rust cannot size a stack array on
+        // `flavor`, so heap is forced, but the slab stays uninitialised: it
+        // is write-only, `Syscall::read` hands it straight to the kernel).
+        use bun_collections::vec_ext::VecExt as _;
+        let mut async_stack_buffer: Vec<u8> = Vec::new();
+        if flavor != Flavor::Sync && async_stack_buffer.try_reserve_exact(256 * 1024).is_ok() {
+            // SAFETY: `u8` has no validity invariant; the buffer is handed
+            // straight to the kernel which only stores into it. Only the
+            // `[..total]` prefix actually filled by `read` is ever observed.
+            unsafe { async_stack_buffer.expand_to_capacity() };
+        }
         let pre_stat_buf: &mut [u8] = if flavor == Flavor::Sync {
             match self.vm {
                 // SAFETY: `self.vm` is the live owning `*mut VirtualMachine`;
@@ -7285,7 +7291,6 @@ impl NodeFS {
         // specialisation), which dominated `readFileSync` of large files. Use
         // `VecExt::expand_to_capacity` (the tail is write-only — `Syscall::read`
         // hands it straight to the kernel, which only stores into it).
-        use bun_collections::vec_ext::VecExt as _;
         // SAFETY: `u8` has no validity invariant; the buffer is handed straight
         // to the kernel which only stores into it.
         unsafe { buf.expand_to_capacity() };

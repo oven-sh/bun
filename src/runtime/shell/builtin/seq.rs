@@ -276,6 +276,11 @@ fn parse_f32(bytes: &[u8]) -> Option<f32> {
 
 /// Parse the body of a C99 hex float (caller has already consumed `0x`).
 /// Hex mantissa with at most one `.`, optional `p`/`P` binary exponent.
+///
+/// All exponent/index arithmetic saturates: Bun.$ argv is in-process (no OS
+/// ARG_MAX), so input length is unbounded. Any saturated exponent is far
+/// outside f64 range; the caller's `is_finite()` handles the overflow side and
+/// underflow correctly yields 0.
 fn parse_hex_float(s: &[u8]) -> Option<f64> {
     let mut mantissa: u64 = 0;
     let mut frac_digits: i32 = 0;
@@ -300,12 +305,9 @@ fn parse_hex_float(s: &[u8]) -> Option<f64> {
         if mantissa >> 60 == 0 {
             mantissa = (mantissa << 4) | d as u64;
             if seen_dot {
-                frac_digits += 1;
+                frac_digits = frac_digits.saturating_add(1);
             }
         } else if !seen_dot {
-            // Bun.$ argv is in-process (no OS ARG_MAX); saturate so a
-            // ~537M-digit mantissa can't overflow i32. Anything past ~2100
-            // overflows f64 and is rejected by the caller's is_finite().
             dropped_int_bits = dropped_int_bits.saturating_add(4);
         }
         i += 1;
@@ -316,10 +318,20 @@ fn parse_hex_float(s: &[u8]) -> Option<f64> {
     let mut exp: i32 = 0;
     if i < s.len() {
         let exp_bytes = &s[i + 1..];
-        if exp_bytes.is_empty() {
+        let (exp_neg, exp_digits) = match exp_bytes.first() {
+            Some(b'-') => (true, &exp_bytes[1..]),
+            Some(b'+') => (false, &exp_bytes[1..]),
+            _ => (false, exp_bytes),
+        };
+        if exp_digits.is_empty() || !exp_digits.iter().all(u8::is_ascii_digit) {
             return None;
         }
-        exp = bun_core::fmt::parse_int::<i32>(exp_bytes, 10).ok()?;
+        for &d in exp_digits {
+            exp = exp.saturating_mul(10).saturating_add((d - b'0') as i32);
+        }
+        if exp_neg {
+            exp = exp.saturating_neg();
+        }
     }
     if mantissa == 0 {
         // Short-circuit so a huge exponent (`0x0p1024`) doesn't reach
@@ -327,8 +339,8 @@ fn parse_hex_float(s: &[u8]) -> Option<f64> {
         return Some(0.0);
     }
     let exp = exp
-        .checked_sub(frac_digits.checked_mul(4)?)?
-        .checked_add(dropped_int_bits)?;
+        .saturating_sub(frac_digits.saturating_mul(4))
+        .saturating_add(dropped_int_bits);
     // powi on 2.0 is exact (repeated squaring of exact powers of two).
     Some(mantissa as f64 * 2.0_f64.powi(exp))
 }

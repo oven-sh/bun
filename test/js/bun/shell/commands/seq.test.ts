@@ -123,6 +123,18 @@ describe("seq", async () => {
     .stderr("")
     .runAsTest("hex zero with out-of-range exponent");
 
+  TestBuilder.command`seq 0x0p9999999999 0x0p9999999999`
+    .exitCode(0)
+    .stdout("0\n")
+    .stderr("")
+    .runAsTest("hex zero with exponent past i32 range");
+
+  TestBuilder.command`seq 0x1p-9999999999 0x1p-9999999999`
+    .exitCode(0)
+    .stdout("0\n")
+    .stderr("")
+    .runAsTest("hex with huge negative exponent underflows to zero");
+
   TestBuilder.command`seq 0x`.exitCode(1).stdout("").stderr("seq: invalid argument\n").runAsTest("bare 0x is invalid");
 
   TestBuilder.command`seq 0xg`
@@ -136,6 +148,12 @@ describe("seq", async () => {
     .stdout("")
     .stderr("seq: invalid argument\n")
     .runAsTest("hex p with no exponent is invalid");
+
+  TestBuilder.command`seq 0x0pZ`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: invalid argument\n")
+    .runAsTest("non-digit hex exponent is invalid");
 
   TestBuilder.command`seq _1`
     .exitCode(1)

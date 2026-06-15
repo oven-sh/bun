@@ -531,6 +531,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
             auto len = parent.paths->length();
             for (size_t i = 0; i < len; i++) {
                 auto path = parent.paths->getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, {});
                 array->push(globalObject, path);
             }
             RELEASE_AND_RETURN(scope, array);
@@ -792,6 +793,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto arg1 = callFrame->argument(0);
     auto name = makeAtomString(arg1.toWTFString(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});

@@ -485,10 +485,12 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
             // O(m*n) but works for now
             for (unsigned m = 0; m < expectedLength; m++) {
                 JSValue expectedValue = expectedArray->getIndex(globalObject, m);
+                RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
                 bool found = false;
 
                 for (unsigned n = 0; n < otherLength; n++) {
                     JSValue otherValue = otherArray->getIndex(globalObject, n);
+                    RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
                     Vector<std::pair<JSValue, JSValue>, 16> stack;
                     MarkedArgumentBuffer gcBuffer;
                     bool foundNow = Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, gcBuffer, stack, throwScope, true);

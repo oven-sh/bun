@@ -147,6 +147,7 @@ KeyObject prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue ke
 
         BufferEncodingType encoding = BufferEncodingType::utf8;
         JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyView, encoding));
+        RETURN_IF_EXCEPTION(scope, {});
         auto* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
 
         Vector<uint8_t> copy;

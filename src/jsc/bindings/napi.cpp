@@ -2844,6 +2844,7 @@ extern "C" napi_status napi_instanceof(napi_env env, napi_value object, napi_val
         *result = false;
     } else {
         *result = constructorObject->hasInstance(globalObject, objectValue);
+        RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     }
 
     return napi_set_last_error(env, napi_ok);

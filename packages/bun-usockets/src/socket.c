@@ -662,9 +662,12 @@ void us_socket_pause(struct us_socket_t *s) {
     s->flags.is_paused = 1;
     /* A shut-down socket can't write either; watch nothing so the kqueue
      * watched==0 sentinel (or EPOLLHUP on epoll) detects peer close without
-     * reading the data the caller paused for. */
+     * reading the data the caller paused for. Test the raw poll type — the
+     * SSL-aware us_socket_is_shut_down() is true after close_notify even when
+     * us_internal_ssl_shutdown left the poll type at POLL_TYPE_SOCKET, and the
+     * sentinel's dispatch gate keys on the raw type. */
     us_poll_change(&s->p, s->group->loop,
-        us_socket_is_shut_down(s) ? 0 : LIBUS_SOCKET_WRITABLE);
+        us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN ? 0 : LIBUS_SOCKET_WRITABLE);
 }
 
 void us_socket_resume(struct us_socket_t *s) {

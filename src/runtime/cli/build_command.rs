@@ -975,6 +975,41 @@ impl BuildCommand {
                     }
                 }
 
+                // OHOS: binary-sign-tool sign + chmod the compiled output.
+                // The standalone detection now uses /proc/self/exe, so signing
+                // no longer breaks embedded module graph resolution.
+                #[cfg(target_env = "ohos")]
+                {
+                    let outfile_path = if root_path.is_empty() || root_path == b"." {
+                        outfile.to_vec()
+                    } else {
+                        let mut full = root_path.to_vec();
+                        if !full.ends_with(b"/") {
+                            full.push(b'/');
+                        }
+                        full.extend_from_slice(outfile);
+                        full
+                    };
+                    let outfile_str = std::str::from_utf8(&outfile_path[..]).unwrap_or("");
+                    if !outfile_str.is_empty() {
+                        let signed_path = format!("{}.signed", outfile_str);
+                        let _ = std::process::Command::new("binary-sign-tool")
+                            .arg("sign")
+                            .arg("-inFile")
+                            .arg(outfile_str)
+                            .arg("-outFile")
+                            .arg(&signed_path)
+                            .arg("-selfSign")
+                            .arg("1")
+                            .status();
+                        let _ = std::fs::rename(&signed_path, outfile_str);
+                        let _ = std::process::Command::new("chmod")
+                            .arg("755")
+                            .arg(outfile_str)
+                            .status();
+                    }
+                }
+
                 let compiled_elapsed = ((bun_core::time::nano_timestamp() - bundled_end) as i64)
                     / (bun_core::time::NS_PER_MS as i64);
                 let compiled_elapsed_digit_count =

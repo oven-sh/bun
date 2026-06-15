@@ -443,6 +443,34 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  itBundled("compile/Bun.embeddedFilesStoredName", {
+    // Bun.embeddedFiles and Bun.file() share a per-file blob cache; whichever
+    // runs first must populate the store's `stored_name` so structured clone
+    // round-trips the path regardless of access order.
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import asset from "./asset.bin" with { type: "file" };
+        // Populate the cache via Bun.embeddedFiles FIRST.
+        const arr = Bun.embeddedFiles;
+        if (arr.length !== 1) throw new Error("expected 1 embedded file, got " + arr.length);
+        const viaFile = Bun.file(asset);
+        const clonedFile = structuredClone(viaFile);
+        const clonedEmbedded = structuredClone(arr[0]);
+        if (clonedFile.name !== asset) {
+          throw new Error("structuredClone(Bun.file(asset)).name = " + JSON.stringify(clonedFile.name) + ", expected " + JSON.stringify(asset));
+        }
+        if (clonedEmbedded.name !== asset) {
+          throw new Error("structuredClone(embeddedFiles[0]).name = " + JSON.stringify(clonedEmbedded.name) + ", expected " + JSON.stringify(asset));
+        }
+        console.log("PASS");
+      `,
+      "/asset.bin": "binary\x00data",
+    },
+    outfile: "dist/out",
+    run: { stdout: "PASS", setCwd: true },
+  });
   itBundled("compile/ResolveEmbeddedFileOutfile", {
     compile: true,
     // TODO: this shouldn't be necessary, or we should add a map aliasing files.

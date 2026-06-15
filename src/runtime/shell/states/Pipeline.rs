@@ -306,16 +306,32 @@ impl Pipeline {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
-        if interp.as_pipeline(this).io.stderr.needs_io().is_some() {
+        if let OutKind::Fd(fd) = &interp.as_pipeline(this).io.stderr {
+            let writer = std::sync::Arc::clone(&fd.writer);
+            let captured = fd.captured;
             // Leave `StartingCmds` so `drain_pipelines` doesn't re-enter
             // `next_starting` and retry the failing syscall in a loop; stay
             // suspended until the error write completes.
             interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::Pipeline);
-            if let OutKind::Fd(fd) = &interp.as_pipeline(this).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
+            let y = writer.enqueue(child, captured, &buf);
+            // `IOWriter::on_error` dispatches `on_io_writer_chunk` via a
+            // re-entrant `run_yield` when the write fails synchronously inside
+            // `enqueue` (e.g. `__start()` returns an error). Driving completion
+            // from that inner trampoline frame would free this node while the
+            // outer frame still has it on `pipeline_stack`. `on_io_writer_chunk`
+            // detects the in-flight enqueue via `WaitingWriteErr` and only
+            // transitions to `Done{1}` without driving; steer the outer frame
+            // to completion here instead.
+            if matches!(
+                interp.as_pipeline(this).state,
+                PipelineState::Done { .. }
+            ) {
+                return Yield::Next(this);
             }
-            unreachable!()
+            // Armed for async completion: `on_io_writer_chunk` may now drive.
+            interp.as_pipeline_mut(this).state = PipelineState::Pending;
+            return y;
         }
         if let OutKind::Pipe = &interp.as_pipeline(this).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
@@ -348,24 +364,37 @@ impl Pipeline {
         Yield::Next(this)
     }
 
-    /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: finish the pipeline with exit code 1. Only reached
-    /// from `write_failing_error`, whose callers guarantee no children are
-    /// running; a write failure here is error-on-error and is dropped so the
-    /// pipeline still completes.
+    /// IOWriter completion callback for the error message enqueued in
+    /// `write_failing_error`: finish the pipeline with exit code 1. Only
+    /// reached from `write_failing_error`, whose callers guarantee no children
+    /// are running; a write failure here is error-on-error and is dropped so
+    /// the pipeline still completes.
     pub fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
         _written: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        debug_assert!(matches!(
-            interp.as_pipeline(this).state,
-            PipelineState::WaitingWriteErr
-        ));
         if let Some(e) = err {
             e.deref();
         }
+        // `WaitingWriteErr` means `write_failing_error` is still inside
+        // `IOWriter::enqueue` and this callback fired via a re-entrant
+        // `run_yield` from `IOWriter::on_error`. Driving completion here would
+        // free this node while the outer trampoline frame still has it on
+        // `pipeline_stack`; transition to `Done` without driving and let
+        // `write_failing_error` return `Yield::Next(this)` to the outer frame.
+        if matches!(
+            interp.as_pipeline(this).state,
+            PipelineState::WaitingWriteErr
+        ) {
+            interp.as_pipeline_mut(this).state = PipelineState::Done { exit_code: 1 };
+            return Yield::done();
+        }
+        debug_assert!(matches!(
+            interp.as_pipeline(this).state,
+            PipelineState::Pending
+        ));
         Self::finish_failing_error(interp, this)
     }
 

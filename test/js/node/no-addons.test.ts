@@ -37,6 +37,8 @@ describe("worker execArgv --no-addons parsing matches RunCommand clap", () => {
     [["-r", "--", "--no-addons"], "ERR_DLOPEN_DISABLED"],
     // here `--no-addons` is `-r`'s value, not a flag; addons stay enabled
     [["-r", "--no-addons"], "ERR_DLOPEN_FAILED"],
+    // bare `-` is a positional; parsing stops before `--no-addons`
+    [["-", "--no-addons"], "ERR_DLOPEN_FAILED"],
   ])("%j", async (execArgv, expected) => {
     const worker = new Worker(body, { eval: true, execArgv });
     try {

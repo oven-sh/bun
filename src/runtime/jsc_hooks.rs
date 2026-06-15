@@ -1479,9 +1479,9 @@ unsafe fn parse_worker_exec_argv_allow_addons(
     // *next* token? `--long=val` and `OneOptional` params never pull from the
     // iterator. A bare `--long` / `-s` pulls when its `takes_value` is
     // `One`/`Many`. A chained-short cluster (`-br`) pulls when every prefix
-    // char is a `None`/`OneOptional` short and the last char is a
-    // `One`/`Many` short with nothing after it — `StreamingClap::chainging`
-    // calls `iter.next()` in exactly that case.
+    // char is a `None` short and the last char is a `One`/`Many` short with
+    // nothing after it — `StreamingClap::chainging` calls `iter.next()` in
+    // exactly that case.
     fn flag_consumes_next_token(bytes: &[u8]) -> bool {
         if let Some(long) = bytes.strip_prefix(b"--") {
             let param = RUN_PARAMS.iter().find(|p| p.names.matches_long(long));
@@ -1496,7 +1496,11 @@ unsafe fn parse_worker_exec_argv_allow_addons(
                     return false;
                 };
                 match param.takes_value {
-                    Values::None | Values::OneOptional => continue,
+                    Values::None => continue,
+                    // `StreamingClap::chainging` stops chaining at a
+                    // `OneOptional` short without pulling from the iterator;
+                    // remaining cluster chars are dropped.
+                    Values::OneOptional => return false,
                     // `One`/`Many`: pulls from the iterator only when this is
                     // the last char; otherwise the rest of the cluster (or
                     // the text after `=`) is the inline value.
@@ -1522,10 +1526,9 @@ unsafe fn parse_worker_exec_argv_allow_addons(
             continue;
         }
         // `stop_after_positional_at = 1` — first positional ends parsing.
-        if bytes.first() != Some(&b'-') {
-            break;
-        }
-        if bytes == b"--" {
+        // `StreamingClap::parse_next_arg` treats bare `-` and `--` as
+        // positionals.
+        if bytes.first() != Some(&b'-') || bytes == b"-" || bytes == b"--" {
             break;
         }
         if bytes == b"--no-addons" {

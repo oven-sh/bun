@@ -28,11 +28,12 @@ pub const Decompressor = union(enum) {
                         body_out_str.allocator,
                         bun.http.default_allocator,
                         .{
-                            // zlib.MAX_WBITS = 15
-                            // to (de-)compress deflate format, use wbits = -zlib.MAX_WBITS
-                            // to (de-)compress deflate format with headers we use wbits = 0 (we can detect the first byte using 120)
-                            // to (de-)compress gzip format, use wbits = zlib.MAX_WBITS | 16
-                            .windowBits = if (encoding == Encoding.gzip) Zlib.MAX_WBITS | 16 else (if (buffer.len > 1 and buffer[0] == 120) 0 else -Zlib.MAX_WBITS),
+                            .windowBits = if (encoding == Encoding.gzip)
+                                Zlib.MAX_WBITS | 16
+                            else if (hasZlibHeader(buffer))
+                                0
+                            else
+                                -Zlib.MAX_WBITS,
                         },
                     );
                     this.* = .{ .zlib = reader };
@@ -109,6 +110,13 @@ pub const Decompressor = union(enum) {
         }
     }
 };
+
+fn hasZlibHeader(buffer: []const u8) bool {
+    return buffer.len >= 2 and
+        (buffer[0] & 0x0f) == 8 and
+        (buffer[0] >> 4) <= 7 and
+        ((@as(u16, buffer[0]) << 8) | @as(u16, buffer[1])) % 31 == 0;
+}
 
 const Zlib = @import("../zlib/zlib.zig");
 const Encoding = @import("../http_types/Encoding.zig").Encoding;

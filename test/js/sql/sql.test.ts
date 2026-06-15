@@ -12761,10 +12761,10 @@ test("rejects Postgres connection options containing null bytes", async () => {
 });
 
 // Native createInstance argument validation (src/sql_jsc/shared/
-// connection_args.rs / query_args.rs) — the username/password/database and
-// tls checks the JS layer delegates to the driver. Every error here is thrown
-// by the native parser before any socket is created, so no server needs to be
-// listening: the address below is never dialed.
+// ConnectionCtorArgs.rs / QueryCtorArgs.rs, and the Postgres null-byte guard
+// in PostgresSQLConnection.rs). Every error here is thrown by the native
+// parser before any socket is created, so no server needs to be listening:
+// the address below is never dialed.
 describe("shared createInstance validation (no server)", () => {
   const base = { adapter: "postgres", hostname: "127.0.0.1", port: 1, max: 1 } as const;
 
@@ -12772,8 +12772,9 @@ describe("shared createInstance validation (no server)", () => {
   // `key\0value\0`; a NUL byte inside one would inject extra parameters, so
   // the native parser must refuse it before connecting. The rejection is an
   // ERR_INVALID_ARG_TYPE TypeError, matching the MySQL adapter and the Zig
-  // reference (`PostgresSQLConnection.zig` `throwInvalidArguments`) — the
-  // previous port threw a plain code-less Error here.
+  // reference (`PostgresSQLConnection.zig` `throwInvalidArguments`). `path`
+  // is guarded the same way natively, but the JS layer drops it via
+  // `existsSync` before it ever reaches createInstance.
   test.concurrent.each(["username", "password", "database"] as const)(
     "rejects %s containing null bytes",
     async field => {
@@ -12793,8 +12794,7 @@ describe("shared createInstance validation (no server)", () => {
     // An unparseable CA makes `SSL_CTX` creation fail synchronously inside
     // createInstance, before any socket exists. The failure carries
     // `code: "ERR_BORINGSSL"` like the MySQL adapter and the Zig reference
-    // (`err.toJS(globalObject)`) — the previous port threw a plain code-less
-    // Error with a static message.
+    // (`err.toJS(globalObject)`).
     await using sql = new SQL({ ...base, username: "u", tls: { ca: "not a pem" } });
     const err: any = await sql`select 1`.then(
       () => null,

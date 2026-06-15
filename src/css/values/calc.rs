@@ -384,14 +384,12 @@ impl<V: CalcValue> Calc<V> {
                 })?;
 
                 // According to the spec, the minimum should "win" over the maximum if they are in the wrong order.
-                let cmp = if let (Some(mx), Calc::Value(cv)) = (&max, &center) {
-                    if let Calc::Value(mv) = mx {
+                let cmp = match (&max, &center) {
+                    (Some(Calc::Value(mv)), Calc::Value(cv)) => {
                         protocol::PartialCmp::partial_cmp(&**cv, &**mv)
-                    } else {
-                        None
                     }
-                } else {
-                    None
+                    (Some(Calc::Number(mv)), Calc::Number(cv)) => cv.partial_cmp(mv),
+                    _ => None,
                 };
 
                 // If center is known to be greater than the maximum, replace it with maximum and remove the max argument.
@@ -406,10 +404,12 @@ impl<V: CalcValue> Calc<V> {
                 }
 
                 if cmp.is_some() {
-                    let cmp = if let (Some(Calc::Value(mv)), Calc::Value(cv)) = (&min, &center) {
-                        protocol::PartialCmp::partial_cmp(&**cv, &**mv)
-                    } else {
-                        None
+                    let cmp = match (&min, &center) {
+                        (Some(Calc::Value(mv)), Calc::Value(cv)) => {
+                            protocol::PartialCmp::partial_cmp(&**cv, &**mv)
+                        }
+                        (Some(Calc::Number(mv)), Calc::Number(cv)) => cv.partial_cmp(mv),
+                        _ => None,
                     };
 
                     // If center is known to be less than the minimum, replace it with minimum and remove the min argument.

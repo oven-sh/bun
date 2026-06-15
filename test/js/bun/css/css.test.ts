@@ -157,6 +157,9 @@ describe("css tests", () => {
     minify_test(".foo{width:clamp(10vw,30px,20px)}", ".foo{width:max(10vw,20px)}");
     minify_test(".foo{width:clamp(10px,5vw,20px)}", ".foo{width:clamp(10px,5vw,20px)}");
     minify_test(".foo{width:clamp(10px,15px,20vw)}", ".foo{width:clamp(10px,15px,20vw)}");
+    minify_test(".foo{line-height:clamp(1,1.5,2)}", ".foo{line-height:1.5}");
+    minify_test(".foo{line-height:clamp(2,1.5,4)}", ".foo{line-height:2}");
+    minify_test(".foo{line-height:clamp(1,5,4)}", ".foo{line-height:4}");
   });
   describe("border_spacing", () => {
     minify_test(

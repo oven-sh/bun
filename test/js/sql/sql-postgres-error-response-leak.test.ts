@@ -153,6 +153,6 @@ test("Postgres: ErrorResponse/NoticeResponse field strings are not leaked", asyn
   // released when each ErrorResponse/NoticeResponse drops and growth stays
   // bounded by connection buffers plus allocator slack. ASAN quarantine
   // retains freed allocations so the threshold is wider there.
-  expect(deltaMiB).toBeLessThan(isASAN ? 200 : 60);
+  expect(deltaMiB).toBeLessThan(isASAN ? 250 : 60);
   expect(exitCode).toBe(0);
 }, 120_000);

@@ -912,3 +912,67 @@ test("getEventListeners", () => {
 test("EventEmitter.name", () => {
   expect(EventEmitter.name).toBe("EventEmitter");
 });
+
+describe("native EventEmitter propagates exception from _events getter", () => {
+  // The native EventEmitter implementation (used for e.g. `process`) reads the
+  // `_events` property via getIfPropertyExists, which can run a user getter.
+  // If that getter throws, the exception must propagate to the caller instead
+  // of being swallowed and replaced with a generic "invalid this" TypeError.
+  const nativeProto = Object.getPrototypeOf(process);
+
+  const cases: Array<[string, (obj: object) => void]> = [
+    ["on", obj => nativeProto.on.call(obj, "foo", () => {})],
+    ["addListener", obj => nativeProto.addListener.call(obj, "foo", () => {})],
+    ["once", obj => nativeProto.once.call(obj, "foo", () => {})],
+    ["emit", obj => nativeProto.emit.call(obj, "foo")],
+    ["removeListener", obj => nativeProto.removeListener.call(obj, "foo", () => {})],
+    ["removeAllListeners", obj => nativeProto.removeAllListeners.call(obj)],
+    ["eventNames", obj => nativeProto.eventNames.call(obj)],
+    ["listenerCount", obj => nativeProto.listenerCount.call(obj, "foo")],
+    ["listeners", obj => nativeProto.listeners.call(obj, "foo")],
+    ["getMaxListeners", obj => nativeProto.getMaxListeners.call(obj)],
+  ];
+
+  test.each(cases)("%s", (_name, invoke) => {
+    const sentinel = new Error("getter threw");
+    const obj = {};
+    Object.defineProperty(obj, "_events", {
+      get() {
+        throw sentinel;
+      },
+      configurable: true,
+    });
+
+    let caught: unknown;
+    try {
+      invoke(obj);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(sentinel);
+  });
+
+  test("Proxy _events getter that throws", () => {
+    const sentinel = new Error("proxy get threw");
+    const obj = new Proxy(
+      {},
+      {
+        has(_target, key) {
+          return key === "_events";
+        },
+        get(_target, key) {
+          if (key === "_events") throw sentinel;
+          return undefined;
+        },
+      },
+    );
+
+    let caught: unknown;
+    try {
+      nativeProto.on.call(obj, "foo", () => {});
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(sentinel);
+  });
+});

@@ -1,8 +1,8 @@
-use crate::shell::EnvStr;
-use crate::shell::builtin::{Builtin, BuiltinState, IoKind};
+use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
+use crate::shell::{EnvStr, is_valid_var_name};
 use bun_collections::index_sort;
 
 #[derive(Default)]
@@ -30,7 +30,12 @@ impl Export {
             if s.is_empty() {
                 continue;
             }
-            let (name, value) = match bun_core::strings::index_of_char_usize(s, b'=') {
+            let eq = bun_core::strings::index_of_char_usize(s, b'=');
+            if eq.is_none() && !is_valid_var_name(s) {
+                let arg = s.to_vec();
+                return Self::write_invalid_identifier(interp, cmd, &arg);
+            }
+            let (name, value) = match eq {
                 Some(eq) => (&s[..eq], &s[eq + 1..]),
                 None => (s, &b""[..]),
             };
@@ -45,6 +50,35 @@ impl Export {
             label.deref();
             val.deref();
         }
+        Builtin::done(interp, cmd, 0)
+    }
+
+    fn write_invalid_identifier(interp: &Interpreter, cmd: NodeId, arg: &[u8]) -> Yield {
+        let inner = Builtin::fmt_error_arena(
+            interp,
+            cmd,
+            Some(Kind::Export),
+            format_args!("`{}`: not a valid identifier", bstr::BStr::new(arg)),
+        )
+        .to_vec();
+        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+            Self::state_mut(interp, cmd).state = State::WaitingIo;
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
+            return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
+                child,
+                Some(Kind::Export),
+                format_args!("{}\n", bstr::BStr::new(&inner)),
+                safeguard,
+            );
+        }
+        let buf = Builtin::fmt_error_arena(
+            interp,
+            cmd,
+            Some(Kind::Export),
+            format_args!("{}\n", bstr::BStr::new(&inner)),
+        )
+        .to_vec();
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
         Builtin::done(interp, cmd, 0)
     }
 

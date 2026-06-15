@@ -110,6 +110,7 @@ use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 use crate::webcore::streams::Pending as StreamPending;
 
+#[cfg(not(bun_standalone))]
 use crate::api::JSTranspiler::AsyncTransformTask;
 use crate::api::bun_subprocess::Subprocess;
 #[cfg(not(windows))]
@@ -117,6 +118,7 @@ use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::cron::CronJob;
 use crate::api::glob::AsyncGlobWalkTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
+#[cfg(not(bun_standalone))]
 use crate::image::AsyncImageTask;
 #[cfg(not(windows))]
 use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
@@ -162,6 +164,7 @@ use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
 use bun_sql_jsc::postgres::PostgresSQLConnection;
 
+#[cfg(not(bun_standalone))]
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
@@ -321,8 +324,14 @@ pub fn run_task(
 
         // ── glob / image / transpiler ────────────────────────────────────
         task_tag::AsyncGlobWalkTask => run_then_destroy!(AsyncGlobWalkTask<'_>),
+        #[cfg(not(bun_standalone))]
         task_tag::AsyncImageTask => run_then_destroy!(AsyncImageTask<'_>),
+        #[cfg(not(bun_standalone))]
         task_tag::AsyncTransformTask => run_then_destroy!(AsyncTransformTask<'_>),
+        #[cfg(bun_standalone)]
+        task_tag::AsyncImageTask | task_tag::AsyncTransformTask => {
+            unreachable!("Bun.Image / Bun.Transpiler are not available in standalone executables")
+        }
 
         // ── blob copy/read/write promise tasks ───────────────────────────
         task_tag::CopyFilePromiseTask => run_then_destroy!(CopyFilePromiseTask<'_>),
@@ -1070,6 +1079,11 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             // field of a live DevServer.
             DevServer::emit_memory_visualizer_message_timer(unsafe { &mut *t }, unsafe { &*now });
         }
+        #[cfg(bun_standalone)]
+        EventLoopTimerTag::BunTest => {
+            unreachable!("bun:test is not available in standalone executables")
+        }
+        #[cfg(not(bun_standalone))]
         EventLoopTimerTag::BunTest => {
             let container = owner!(BunTest, timer);
             // SAFETY: container is the payload of a live `Rc<BunTestCell>`; the

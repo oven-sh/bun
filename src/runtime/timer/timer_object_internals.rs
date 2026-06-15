@@ -149,6 +149,7 @@ impl TimerObjectInternals {
     ///
     /// `vm` is the live per-thread VM; `All.lock` must NOT be held (the
     /// `set_enable_keeping_event_loop_alive` write reaches `&mut All`).
+    #[cfg_attr(bun_standalone, allow(dead_code))]
     pub(crate) fn release_heap_pin(this: core::ptr::NonNull<Self>, vm: *mut VirtualMachine) {
         // SAFETY: caller guarantees the parent box is live (refcount ≥ 1).
         let internals = unsafe { this.as_ref() };

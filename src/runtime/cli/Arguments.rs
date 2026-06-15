@@ -380,6 +380,7 @@ macro_rules! maybe_bake_debug_params {
     };
 }
 
+#[cfg(not(bun_standalone))]
 pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
         parse_param!(
@@ -529,10 +530,12 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
     ],
     maybe_bake_debug_params!(),
 );
+#[cfg(not(bun_standalone))]
 pub(crate) const BUILD_PARAMS: &[ParamType] =
     concat_params!(BUILD_ONLY_PARAMS, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
 // TODO: update test completions
+#[cfg(not(bun_standalone))]
 pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
         "--no-orphans                     Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
@@ -605,6 +608,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."
     ),
 ];
+#[cfg(not(bun_standalone))]
 pub(crate) const TEST_PARAMS: &[ParamType] = concat_params!(
     TEST_ONLY_PARAMS,
     RUNTIME_PARAMS_,
@@ -646,7 +650,9 @@ pub(crate) const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
 )]
 pub static AUTO_TABLE: &clap::ConvertedTable = clap::comptime_table!(AUTO_PARAMS);
 pub static RUN_TABLE: &clap::ConvertedTable = clap::comptime_table!(RUN_PARAMS, cold);
+#[cfg(not(bun_standalone))]
 pub static BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(BUILD_PARAMS, cold);
+#[cfg(not(bun_standalone))]
 pub static TEST_TABLE: &clap::ConvertedTable = clap::comptime_table!(TEST_PARAMS, cold);
 pub(crate) static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
     clap::comptime_table!(BASE_RUNTIME_TRANSPILER_PARAMS, cold);
@@ -659,7 +665,9 @@ pub(crate) fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
     match cmd {
         CommandTag::AutoCommand => AUTO_TABLE,
         CommandTag::RunCommand | CommandTag::RunAsNodeCommand => RUN_TABLE,
+        #[cfg(not(bun_standalone))]
         CommandTag::BuildCommand => BUILD_TABLE,
+        #[cfg(not(bun_standalone))]
         CommandTag::TestCommand => TEST_TABLE,
         CommandTag::BunxCommand => RUN_TABLE,
         _ => BASE_RUNTIME_TRANSPILER_TABLE,
@@ -812,6 +820,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
     }
 
+    #[cfg(not(bun_standalone))]
     if cmd == CommandTag::TestCommand {
         parse_test_command_options(&args, ctx);
     }
@@ -1316,6 +1325,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
     ctx.bundler_options.ignore_dce_annotations = args.flag(b"--ignore-dce-annotations");
 
+    #[cfg(not(bun_standalone))]
     if cmd == CommandTag::BuildCommand {
         parse_build_command_options(cmd, &args, &mut opts, ctx, &mut diag);
     }
@@ -1526,6 +1536,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 /// shard / parallel / seed / etc. Split out of [`parse`] so the `bun run <script>`
 /// and bare-`bun <file>` hot path (`USES_GLOBAL_OPTIONS` ⇒ `parse` runs on every
 /// invocation) doesn't carry the test-runner flag handling in its instruction pages.
+#[cfg(not(bun_standalone))]
 #[cold]
 #[inline(never)]
 fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
@@ -1818,6 +1829,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
 /// `--compile` / `CompileTarget`, sourcemap / format / minify, Windows executable
 /// metadata, etc. Split out of [`parse`] for the same reason as
 /// [`parse_test_command_options`].
+#[cfg(not(bun_standalone))]
 #[cold]
 #[inline(never)]
 fn parse_build_command_options(

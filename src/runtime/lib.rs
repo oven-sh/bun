@@ -60,8 +60,14 @@ pub mod generated_js2native; // include!()s ${BUN_CODEGEN_DIR}/generated_js2nati
 pub mod generated_jssink; // include!()s ${BUN_CODEGEN_DIR}/generated_jssink.rs
 
 pub mod dns_jsc;
+#[cfg(not(bun_standalone))]
 pub mod image;
-#[cfg_attr(bun_standalone, allow(dead_code))]
+#[cfg(bun_standalone)]
+pub use crate::api::standalone_api_stubs::image;
+#[cfg(not(bun_standalone))]
+pub mod test_runner;
+#[cfg(bun_standalone)]
+#[path = "test_runner_standalone_stub.rs"]
 pub mod test_runner;
 pub mod valkey_jsc;
 
@@ -71,13 +77,11 @@ pub mod valkey_jsc;
 // Surface those names here
 // so `*_command.rs` and `test/parallel/*.rs` files resolve their
 // `use crate::…` lines without per-file edits.
-pub use cli::{
-    Cli, Command, command, filter_arg, filter_run, multi_run, run_command, test_command,
-};
+pub use cli::{Cli, Command, command, run_command};
 #[cfg(not(bun_standalone))]
 pub use cli::{
-    add_completions, build_command, bunx_command, create_command, package_manager_command,
-    shell_completions,
+    add_completions, build_command, bunx_command, create_command, filter_arg, filter_run,
+    multi_run, package_manager_command, shell_completions, test_command,
 };
 
 pub mod webview;

@@ -36,8 +36,18 @@ macro_rules! create_source_code_getter {
         // `$code_path` is relative to `BUN_CODEGEN_DIR` (codegen output, not
         // the source tree).
         fn get() -> &'static str {
+            // bun-standalone never bundles for `--target=browser` (it has no
+            // bundler), so the browser polyfills are unreachable. Dropping
+            // the `include_bytes!` saves ~90 KB of `.rodata`.
+            #[cfg(bun_standalone)]
+            unreachable!(concat!(
+                "node-fallback polyfill `",
+                $code_path,
+                "` is not available in standalone executables"
+            ));
             // `bun_codegen_embed` is set via RUSTFLAGS by scripts/build/rust.ts;
             // plain `cargo check` doesn't pass `--check-cfg` for it.
+            #[cfg(not(bun_standalone))]
             #[allow(unexpected_cfgs)]
             let source: &'static str = {
                 #[cfg(bun_codegen_embed)]
@@ -64,6 +74,7 @@ macro_rules! create_source_code_getter {
                     ::bun_core::runtime_embed_file!(Codegen, $code_path)
                 }
             };
+            #[cfg(not(bun_standalone))]
             source
         }
         get as fn() -> &'static str

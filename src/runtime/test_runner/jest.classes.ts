@@ -871,4 +871,13 @@ export default [
   // define({
   //   name: "Jest2",
   // }),
-];
+].map(d =>
+  // Under `cfg(bun_standalone)` the entire `crate::test_runner` module is
+  // gated out; the codegen emits a ZST stub + zero-returning thunks for every
+  // class here so the C++ `extern` symbols still link. None of these are
+  // user-reachable in a standalone executable (the `bun:test` module loader
+  // throws first), so the stubs never actually run.
+  // `Object.assign` (not spread) — `define()` returns a class instance whose
+  // prototype carries `hasOwnProperties()`; spreading would drop it.
+  Object.assign(d, { standaloneStub: "bun:test is not available in standalone executables" }),
+);

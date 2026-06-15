@@ -33,20 +33,19 @@ pub mod Classes {
     pub use crate::crypto::CryptoHasher;
     pub use crate::image as Image;
     pub use crate::shell::Interpreter as ShellInterpreter;
+    // Under `cfg(bun_standalone)` `crate::test_runner` is the ZST stub module
+    // and these paths don't resolve; the codegen-emitted ZST stubs in
+    // `generated_classes.rs` are the canonical types there instead.
+    #[cfg(not(bun_standalone))]
     pub use crate::test_runner::done_callback::DoneCallback;
-    pub use crate::test_runner::expect::Expect;
-    pub use crate::test_runner::expect::ExpectAny;
-    pub use crate::test_runner::expect::ExpectAnything;
-    pub use crate::test_runner::expect::ExpectArrayContaining;
-    pub use crate::test_runner::expect::ExpectCloseTo;
-    pub use crate::test_runner::expect::ExpectCustomAsymmetricMatcher;
-    pub use crate::test_runner::expect::ExpectMatcherContext;
-    pub use crate::test_runner::expect::ExpectMatcherUtils;
-    pub use crate::test_runner::expect::ExpectObjectContaining;
-    pub use crate::test_runner::expect::ExpectStatic;
-    pub use crate::test_runner::expect::ExpectStringContaining;
-    pub use crate::test_runner::expect::ExpectStringMatching;
-    pub use crate::test_runner::expect::ExpectTypeOf;
+    #[cfg(not(bun_standalone))]
+    pub use crate::test_runner::expect::{
+        Expect, ExpectAny, ExpectAnything, ExpectArrayContaining, ExpectCloseTo,
+        ExpectCustomAsymmetricMatcher, ExpectMatcherContext, ExpectMatcherUtils,
+        ExpectObjectContaining, ExpectStatic, ExpectStringContaining, ExpectStringMatching,
+        ExpectTypeOf,
+    };
+    #[cfg(not(bun_standalone))]
     pub use crate::test_runner::scope_functions::ScopeFunctions;
     pub use crate::webcore::Blob;
     // `crate::shell::ParsedShellScript` is a `(())` placeholder; the real struct

@@ -1777,12 +1777,15 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
+            #[cfg(not(bun_standalone))]
             let bun_test_timeout: Timespec =
                 if let Some(runner) = crate::test_runner::jest::Jest::runner() {
                     runner.get_active_timeout()
                 } else {
                     Timespec::EPOCH
                 };
+            #[cfg(bun_standalone)]
+            let bun_test_timeout: Timespec = Timespec::EPOCH;
             let has_bun_test_timeout = !bun_test_timeout.eql(&Timespec::EPOCH);
 
             if has_bun_test_timeout {
@@ -1832,6 +1835,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     // Support bun:test timeouts AND spawnSync() timeout.
                     // There is a scenario where inside of spawnSync() a totally
                     // different test fails, and that SHOULD be okay.
+                    #[cfg(not(bun_standalone))]
                     if has_bun_test_timeout {
                         if bun_test_timeout.order(&now) == core::cmp::Ordering::Less {
                             let mut active_file_strong = crate::test_runner::jest::Jest::runner()

@@ -131,6 +131,19 @@ export class ClassDefinition {
    */
   sharedThis?: boolean;
   /**
+   * When set, the generated Rust thunks become cfg-split: under
+   * `cfg(not(bun_standalone))` they call the real inherent methods as usual;
+   * under `cfg(bun_standalone)` the backing type is a ZST stub and every thunk
+   * returns its zero value (throwing a TypeError first for any thunk that has
+   * a `global` parameter and a JSValue / pointer return). The real Rust module
+   * can then be `#[cfg(not(bun_standalone))]`-gated out entirely while the C++
+   * `extern` symbols still link.
+   *
+   * Pass a string to customise the error message; `true` uses a generic
+   * "<class> is not available in standalone executables" message.
+   */
+  standaloneStub?: boolean | string;
+  /**
    * Class constructor is newable. Called before the JSValue corresponding to
    * the object is created. Throwing an exception prevents the object from being
    * created.

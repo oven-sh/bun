@@ -108,6 +108,15 @@ function systemLibs(cfg: Config): string[] {
       "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
       "ws2_32.lib",
       "delayimp.lib", // required for /delayload: in release
+      // The full build picks these up via Rust `#[link(name = "...")]` attrs
+      // (image/backend_wic.rs, windows_sys, install). Under bun_standalone the
+      // .o members carrying those `.drectve` link directives can be
+      // dead-stripped while C++ (rescle, WIC bindings) still references the
+      // symbols, so list them explicitly. All are system DLL import libs.
+      "shell32.lib",
+      "ole32.lib",
+      "oleaut32.lib",
+      "user32.lib",
     );
   }
 

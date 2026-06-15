@@ -1626,6 +1626,7 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     }
 }
 
+#[cfg_attr(bun_standalone, allow(dead_code))]
 pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
     let state = runtime_state();
     if state.is_null() {
@@ -1664,6 +1665,13 @@ pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
 /// into `debugger.test_reporter_agent.handle` by the caller). Called on the JS
 /// thread.
 unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::TestReporterHandle) {
+    #[cfg(bun_standalone)]
+    {
+        let _ = agent;
+        return;
+    }
+    #[cfg(not(bun_standalone))]
+    {
     use crate::test_runner::bun_test::{DescribeScope, Phase, TestScheduleEntry};
     use crate::test_runner::jest::Jest;
     use bun_jsc::debugger::{TestReporterHandle, TestType};
@@ -1765,6 +1773,7 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
             }
         }
     }
+    } // cfg(not(bun_standalone))
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1774,6 +1783,7 @@ unsafe fn retroactively_report_discovered_tests(agent: *mut bun_jsc::debugger::T
 /// `Jest.runner.?.bun_test_root.onBeforePrint()` — flush the test reporter's
 /// line state before user `console.log` output interleaves with it.
 fn console_on_before_print() {
+    #[cfg(not(bun_standalone))]
     if let Some(runner) = crate::test_runner::jest::Jest::runner() {
         runner.bun_test_root.on_before_print();
     }
@@ -1949,6 +1959,9 @@ fn console_print_runtime_object_inner<const C: bool>(
         let _ = resolve_log.msg.write_format::<C>(&mut w);
         return Ok(true);
     }
+    #[cfg(bun_standalone)]
+    let _ = name_buf;
+    #[cfg(not(bun_standalone))]
     {
         use crate::test_runner::pretty_format::{JestPrettyFormat, WrappedWriter};
         // `writer_` is `&mut dyn bun_io::Write`; wrap once more so the

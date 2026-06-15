@@ -289,10 +289,12 @@ pub mod package_manager_command;
 
 // Surfaced for `crate::test_runner::{bun_test,jest,Execution}` which
 // need `CommandLineReporter`. This is the sole live mount of the file.
+#[cfg(not(bun_standalone))]
 #[path = "test_command.rs"]
 pub mod test_command;
 /// `bun test` support modules (Scanner / ChangedFilesFilter / ParallelRunner).
 /// Mounted here so `test_command.rs` can `use crate::cli::test::scanner` etc.
+#[cfg(not(bun_standalone))]
 pub mod test {
     #[path = "Scanner.rs"]
     pub mod scanner;
@@ -388,8 +390,10 @@ pub mod add_command;
 #[cfg(not(bun_standalone))]
 #[path = "audit_command.rs"]
 pub mod audit_command;
+#[cfg(not(bun_standalone))]
 #[path = "filter_arg.rs"]
 pub mod filter_arg;
+#[cfg(not(bun_standalone))]
 #[path = "filter_run.rs"]
 pub mod filter_run;
 #[cfg(not(bun_standalone))]
@@ -460,9 +464,12 @@ pub mod update_interactive_command;
 #[cfg(not(bun_standalone))]
 #[path = "why_command.rs"]
 pub mod why_command;
+#[cfg(not(bun_standalone))]
 pub use filter_run as FilterRun;
+#[cfg(not(bun_standalone))]
 #[path = "multi_run.rs"]
 pub mod multi_run;
+#[cfg(not(bun_standalone))]
 pub use multi_run as MultiRun;
 
 // ─── crate-local helper for param-table concatenation ────────────────────────
@@ -1589,6 +1596,7 @@ pub mod command {
         };
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
+        #[cfg(not(bun_standalone))]
         if ctx.parallel || ctx.sequential {
             // Result<Infallible, _>: if this returns at all, it's Err.
             let Err(err) = super::multi_run::run(ctx);
@@ -1596,11 +1604,17 @@ pub mod command {
             Global::exit(1);
         }
 
+        #[cfg(not(bun_standalone))]
         if !ctx.filters.is_empty() || ctx.workspaces {
             // Result<Infallible, _>: if this returns at all, it's Err.
             let Err(err) = super::filter_run::run_scripts_with_filter(ctx);
             pretty_errorln!("<r><red>error<r>: {}", err.name());
             Global::exit(1);
+        }
+
+        #[cfg(bun_standalone)]
+        if ctx.parallel || ctx.sequential || !ctx.filters.is_empty() || ctx.workspaces {
+            crate::standalone_build::unavailable_command(b"run --filter");
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
@@ -2114,7 +2128,9 @@ To create a project with the official Next.js scaffolding tool, run\n\
         match cmd {
             Tag::AutoCommand => arguments::AUTO_PARAMS,
             Tag::RunCommand | Tag::RunAsNodeCommand => arguments::RUN_PARAMS,
+            #[cfg(not(bun_standalone))]
             Tag::BuildCommand => arguments::BUILD_PARAMS,
+            #[cfg(not(bun_standalone))]
             Tag::TestCommand => arguments::TEST_PARAMS,
             Tag::BunxCommand => arguments::RUN_PARAMS,
             _ => arguments::BASE_RUNTIME_TRANSPILER_PARAMS,
@@ -2160,6 +2176,7 @@ Examples<d>:<r>
                 );
                 Output::flush();
             }
+            #[cfg(not(bun_standalone))]
             Tag::BuildCommand => {
                 pretty!(
                     "\
@@ -2191,6 +2208,7 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
                 );
                 Output::flush();
             }
+            #[cfg(not(bun_standalone))]
             Tag::TestCommand => {
                 pretty!(
                     "\

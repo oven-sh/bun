@@ -337,6 +337,7 @@ impl TimerHeap {
     }
 
     #[inline]
+    #[cfg_attr(bun_standalone, allow(dead_code))]
     pub(crate) fn find_max(&self) -> Option<*mut EventLoopTimer> {
         // SAFETY: all reachable nodes were inserted via `insert()` and remain
         // live for the heap's lifetime (intrusive invariant maintained by `All`).
@@ -345,6 +346,7 @@ impl TimerHeap {
     }
 
     #[inline]
+    #[cfg_attr(bun_standalone, allow(dead_code))]
     pub(crate) fn count(&self) -> usize {
         // SAFETY: all reachable nodes were inserted via `insert()` and remain
         // live for the heap's lifetime (intrusive invariant maintained by `All`).

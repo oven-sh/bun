@@ -504,24 +504,28 @@ describe.each(["string", "object"])("fetch({proxy}) %s form does not leak the pr
 // does dupe_ref(), so +2). Response::init adopts one ref; the local +1 was
 // never released, leaking one StringImpl ≈ "file://<path>".length per call.
 test("fetch(file://...) does not leak the response url WTFStringImpl", async () => {
-  // The leaked impl is "file://<resolved abs path>", capped at PATH_MAX, so
-  // use a ~3800-byte nonexistent absolute path (under Linux PATH_MAX 4096;
-  // Windows PathBuffer is 64 KiB so the same length is fine) and enough
-  // iterations for the small per-call leak to show in RSS.
+  // The leaked impl is "file://<resolved abs path>", and fetch_impl decodes
+  // url.path into a stack PathBuffer that is 1024 bytes on macOS/BSD, 4096 on
+  // Linux, ~98 KiB on Windows. Use a ~900-byte path so decode_into succeeds on
+  // every platform and url_string is actually assigned, with enough iterations
+  // for the small per-call leak to show in RSS.
   const script = /* js */ `
-    const pad = Buffer.alloc(3800, "a").toString();
+    const pad = Buffer.alloc(900, "a").toString();
     async function hit(i) {
       // Fresh path per iteration so each leaked ref pins a distinct impl.
       // The file does not exist; the Response is created (with url_string set)
       // and the lazy Blob body is never read, so no fs I/O happens.
       await fetch("file:///" + i + pad);
     }
-    for (let i = 0; i < 100; i++) { try { await hit(-i); } catch {} }
+    for (let i = 0; i < 200; i++) { try { await hit(-i); } catch {} }
     Bun.gc(true);
     const baseline = process.memoryUsage.rss();
 
-    const ITERS = 5000;
-    for (let i = 0; i < ITERS; i++) { try { await hit(i); } catch {} }
+    const ITERS = 20000;
+    for (let i = 0; i < ITERS; i++) {
+      try { await hit(i); } catch {}
+      if ((i & 1023) === 0) Bun.gc(true);
+    }
     Bun.gc(true);
     const final = process.memoryUsage.rss();
 
@@ -531,8 +535,8 @@ test("fetch(file://...) does not leak the response url WTFStringImpl", async () 
       finalMB: (final / 1024 / 1024) | 0,
       deltaMB: Math.round(deltaMB * 10) / 10,
     }));
-    // ~3.8 KiB × 5000 ≈ 18.6 MiB raw leak (measured ~33 MiB on debug+ASAN)
-    // when the extra ref is dropped on the floor; ~11 MiB noise with the fix.
+    // ~0.9 KiB × 20000 ≈ 18 MiB raw leak (measured ~32 MiB on debug+ASAN)
+    // when the extra ref is dropped on the floor; ~12 MiB noise with the fix.
     if (deltaMB > 20) {
       throw new Error("fetch(file://) leaked " + deltaMB.toFixed(1) + " MB over " + ITERS + " iterations");
     }
@@ -555,7 +559,7 @@ test("fetch(file://...) does not leak the response url WTFStringImpl", async () 
     stderr: "",
     exitCode: 0,
   });
-}, 90000);
+}, 120000);
 
 // Regression for src/runtime/webcore/fetch/FetchTasklet.zig:601,614 —
 // Holder.resolve/reject use `self.promise.swap()` which *consumes* (clears)

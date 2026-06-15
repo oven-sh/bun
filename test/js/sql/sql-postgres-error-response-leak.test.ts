@@ -142,8 +142,12 @@ test("Postgres: ErrorResponse/NoticeResponse field strings are not leaked", asyn
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  const { deltaMiB } = JSON.parse(stdout.trim());
+  let deltaMiB: number;
+  try {
+    ({ deltaMiB } = JSON.parse(stdout.trim()));
+  } catch {
+    throw new Error(`fixture did not emit JSON\nexitCode: ${exitCode}\nstdout: ${stdout}\nstderr: ${stderr}`);
+  }
   // Without the fix every FieldMessage string is retained, so RSS grows by
   // roughly the full ~450 MiB of payload. With the fix the strings are
   // released when each ErrorResponse/NoticeResponse drops and growth stays

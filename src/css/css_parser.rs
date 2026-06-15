@@ -4294,6 +4294,10 @@ pub mod nth {
 
     /// Parse the *An+B* notation, as found in the `:nth-child()` selector.
     pub fn parse_nth(input: &mut Parser) -> CssResult<NthResult> {
+        // SAFETY: `input.arena()` re-borrows the parser arena through `&self`;
+        // detach that borrow so `input` can be re-borrowed mutably below. The
+        // arena outlives the parser (it owns all parsed allocations).
+        let arena: &Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
         let tok = input.next()?;
         match tok {
             Token::Number(n) => {
@@ -4309,7 +4313,7 @@ pub mod nth {
                     } else if strings::eql_case_insensitive_asciii_check_length(unit, b"n-") {
                         return parse_signless_b(input, a, -1);
                     } else {
-                        if let Ok(b) = parse_n_dash_digits(unit) {
+                        if let Ok(b) = parse_n_dash_digits(arena, unit) {
                             return Ok((a, b));
                         } else {
                             return Err(input.new_unexpected_token_error(Token::Ident(unit)));
@@ -4337,7 +4341,7 @@ pub mod nth {
                     } else {
                         (value, 1)
                     };
-                    if let Ok(b) = parse_n_dash_digits(slice) {
+                    if let Ok(b) = parse_n_dash_digits(arena, slice) {
                         return Ok((a, b));
                     }
                     return Err(input.new_unexpected_token_error(Token::Ident(value)));
@@ -4352,7 +4356,7 @@ pub mod nth {
                     } else if strings::eql_case_insensitive_asciii_check_length(value, b"-n") {
                         return parse_signless_b(input, 1, -1);
                     } else {
-                        if let Ok(b) = parse_n_dash_digits(value) {
+                        if let Ok(b) = parse_n_dash_digits(arena, value) {
                             return Ok((1, b));
                         } else {
                             return Err(input.new_unexpected_token_error(Token::Ident(value)));
@@ -4407,21 +4411,20 @@ pub mod nth {
         Err(input.new_unexpected_token_error(tok))
     }
 
-    fn parse_n_dash_digits(str: &[u8]) -> Maybe<i32, ()> {
+    fn parse_n_dash_digits(arena: &Bump, str: &[u8]) -> Maybe<i32, ()> {
         let bytes = str;
         if bytes.len() >= 3
             && strings::eql_case_insensitive_asciii_check_length(&bytes[0..2], b"n-")
             && bytes[2..].iter().all(|&b| b >= b'0' && b <= b'9')
         {
-            parse_number_saturate(&str[1..]) // Include the minus sign
+            parse_number_saturate(arena, &str[1..]) // Include the minus sign
         } else {
             Err(())
         }
     }
 
-    fn parse_number_saturate(string: &[u8]) -> Maybe<i32, ()> {
-        let arena = Bump::new();
-        let mut input = ParserInput::new(string, &arena);
+    fn parse_number_saturate(arena: &Bump, string: &[u8]) -> Maybe<i32, ()> {
+        let mut input = ParserInput::new(string, arena);
         let mut parser = Parser::new(&mut input, None, ParserOpts::default(), None);
         let tok = match parser.next_including_whitespace_and_comments() {
             Ok(v) => v,

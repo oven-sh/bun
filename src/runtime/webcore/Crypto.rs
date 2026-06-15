@@ -127,8 +127,7 @@ impl Crypto {
 
     // DOMJIT fast path.
     pub fn random_uuid_without_type_checks(&self, global: &JSGlobalObject) -> JSValue {
-        let (str, bytes) = BunString::create_uninitialized_latin1(36);
-        // `defer str.deref()` — BunString's Drop handles the deref.
+        let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
 
         // randomUUID must have been called already many times before this kicks
         // in so we can skip the rare_data pointer check.
@@ -142,7 +141,7 @@ impl Crypto {
                 .expect("infallible: size matches"),
         );
         // DOMJIT fast path returns bare JSValue; OOM here is unrecoverable.
-        str.to_js(global).unwrap_or(JSValue::ZERO)
+        str.transfer_to_js(global).unwrap_or(JSValue::ZERO)
     }
 
     // `#[JsClass]` emits `CryptoClass__construct` calling this.

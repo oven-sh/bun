@@ -296,7 +296,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 
     JSC::JSValue moduleName = callFrame->argument(0);
     JSValue from = callFrame->argument(1);
-    bool isESM = callFrame->argument(2).asBoolean();
+    bool isESM = callFrame->argument(2).isTrue();
     bool isRequireDotResolve = callFrame->argument(3).isTrue();
     JSValue userPathList = callFrame->argument(4);
 

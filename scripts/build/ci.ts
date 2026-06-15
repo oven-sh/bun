@@ -382,8 +382,13 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // build-time constant, so generate the same payload host-side instead
   // (the feature list is parsed out of src/analytics/lib.rs; see
   // features-json.ts).
-  if (cfg.crossTarget !== undefined) {
-    console.log("Generating features.json (host-side; cross-compiled binary cannot run here)...");
+  // Standalone binaries can't run features.mjs either: it imports
+  // bun:internal-for-testing whose module body eagerly evaluates the
+  // upgrade/pack/install lazy-slot getters that throw under
+  // cfg(bun_standalone). Every field is a build-time constant, so the
+  // host-side generator is equivalent.
+  if (cfg.crossTarget !== undefined || cfg.standalone) {
+    console.log("Generating features.json (host-side)...");
     writeFileSync(resolve(buildDir, "features.json"), crossFeaturesJson(cfg));
   } else {
     console.log("Generating features.json...");

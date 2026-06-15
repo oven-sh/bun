@@ -419,7 +419,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
         ),
         parse_param!(
-            "--compile-runtime <STR>          Which Bun runtime to embed: \"standalone\" (default, smaller) or \"full\""
+            "--compile-runtime <STR>          Which Bun runtime to embed: \"full\" (default) or \"standalone\" (smaller)"
         ),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
@@ -2027,11 +2027,10 @@ fn parse_build_command_options(
                 Global::crash();
             }
         };
-    } else if ctx.bundler_options.compile {
-        // Default to the slim standalone runtime for `--compile` output.
-        ctx.bundler_options.compile_target.runtime =
-            bun_options_types::compile_target::CompileRuntime::Standalone;
     }
+    // The `--compile` default stays `CompileRuntime::Full` until
+    // `@oven/bun-standalone-*` packages exist on npm (first canary after this
+    // change). Flip to `Standalone` once the download path resolves.
 
     if let Some(compile_exec_argv) = args.option(b"--compile-exec-argv") {
         if !ctx.bundler_options.compile {

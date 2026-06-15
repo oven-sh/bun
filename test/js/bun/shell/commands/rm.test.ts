@@ -238,11 +238,12 @@ function packagejson() {
 }`;
 }
 
-// With `rm -rf a b`, a failure removing the directory `a` itself (after its
-// children are gone) must not abort the concurrent removal of `b`. The nested
-// `a/sub/ss` layout forces the failure into `delete_after_waiting_for_children`:
-// the grandchild `ss` is removed, then `rmdirat("a/sub")` hits EACCES because
-// `a` is read-only. The sibling `b` tree must still be fully removed.
+// With `rm -rf a b`, a failure removing `a/sub` after its children are gone
+// must not abort the concurrent removal of `b`. The nested `a/sub/ss*` layout
+// routes the failure through `delete_after_waiting_for_children`: the
+// grandchildren are removed, then `rmdirat("a/sub")` hits EACCES because `a`
+// is read-only. Multiple grandchildren ensure `sub` publishes `need_to_wait`
+// before any of them can finish. The sibling `b` must still be fully removed.
 test.if(isPosix)("rm -rf: failure removing one directory does not abort sibling arguments", async () => {
   const fixture = `
       const { $ } = require("bun");
@@ -256,7 +257,9 @@ test.if(isPosix)("rm -rf: failure removing one directory does not abort sibling 
       }
 
       const r = path.join(base, "work");
-      fs.mkdirSync(path.join(r, "a", "sub", "ss"), { recursive: true });
+      fs.mkdirSync(path.join(r, "a", "sub", "ss0"), { recursive: true });
+      fs.mkdirSync(path.join(r, "a", "sub", "ss1"), { recursive: true });
+      fs.mkdirSync(path.join(r, "a", "sub", "ss2"), { recursive: true });
       fs.mkdirSync(path.join(r, "b"), { recursive: true });
       for (let i = 0; i < 500; i++) fs.writeFileSync(path.join(r, "b", String(i)), "x");
       fs.chmodSync(path.join(r, "a"), 0o555);
@@ -269,7 +272,7 @@ test.if(isPosix)("rm -rf: failure removing one directory does not abort sibling 
       console.log(JSON.stringify({
         bRemaining,
         subExists: fs.existsSync(path.join(r, "a", "sub")),
-        ssExists: fs.existsSync(path.join(r, "a", "sub", "ss")),
+        subRemaining: fs.readdirSync(path.join(r, "a", "sub")).length,
         exitCode: res.exitCode,
       }));
       fs.rmSync(r, { recursive: true, force: true });
@@ -291,13 +294,13 @@ test.if(isPosix)("rm -rf: failure removing one directory does not abort sibling 
     } catch {
       result = { parseError: true, stdout, stderr };
     }
-    // `a/sub/ss` is removed; `a/sub` survives because `a` is read-only.
+    // `a/sub/ss*` are removed; `a/sub` survives because `a` is read-only.
     // `b` must be fully removed regardless.
     expect({ result, exitCode }).toEqual({
       result: {
         bRemaining: -1,
         subExists: true,
-        ssExists: false,
+        subRemaining: 0,
         exitCode: 1,
       },
       exitCode: 0,

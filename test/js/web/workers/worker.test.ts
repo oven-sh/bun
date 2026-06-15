@@ -202,60 +202,30 @@ describe("web worker", () => {
     });
   });
 
-  test("worker with event listeners doesn't close event loop", done => {
-    const x = Bun.spawn({
+  test("worker with event listeners doesn't close event loop", async () => {
+    await using x = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), "worker-fixture-many-messages.js"],
       env: bunEnv,
       stdio: ["inherit", "pipe", "inherit"],
     });
 
-    const timer = setTimeout(() => {
-      x.kill();
-      done(new Error("timeout"));
-    }, 1000);
-
-    x.exited.then(async code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        done(new Error("exited with non-zero code"));
-      } else {
-        const text = await new Response(x.stdout).text();
-        if (!text.includes("done")) {
-          console.log({ text });
-          done(new Error("event loop killed early"));
-        } else {
-          done();
-        }
-      }
-    });
+    const [stdout, code] = await Promise.all([x.stdout.text(), x.exited]);
+    // "done" means the worker processed every message before the event loop
+    // closed, rather than the loop dying early.
+    expect(stdout).toContain("done");
+    expect(code).toBe(0);
   });
 
-  test("worker with event listeners doesn't close event loop 2", done => {
-    const x = Bun.spawn({
+  test("worker with event listeners doesn't close event loop 2", async () => {
+    await using x = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "many-messages-event-loop.js"), "worker-fixture-many-messages2.js"],
       env: bunEnv,
       stdio: ["inherit", "pipe", "inherit"],
     });
 
-    const timer = setTimeout(() => {
-      x.kill();
-      done(new Error("timeout"));
-    }, 1000);
-
-    x.exited.then(async code => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        done(new Error("exited with non-zero code"));
-      } else {
-        const text = await new Response(x.stdout).text();
-        if (!text.includes("done")) {
-          console.log({ text });
-          done(new Error("event loop killed early"));
-        } else {
-          done();
-        }
-      }
-    });
+    const [stdout, code] = await Promise.all([x.stdout.text(), x.exited]);
+    expect(stdout).toContain("done");
+    expect(code).toBe(0);
   });
 
   test("worker with process.exit", done => {

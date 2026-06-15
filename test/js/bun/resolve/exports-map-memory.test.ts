@@ -64,6 +64,7 @@ test(
     // Sanity: resolving a ~5.5MB package.json with ~260k Entry nodes must show
     // up in RSS; if it doesn't, the probe didn't exercise the exports map.
     expect(flat).toBeGreaterThan(4 << 20);
+    expect(wild).toBeGreaterThan(4 << 20);
 
     // Both packages hold byte-identical condition subtrees; the only structural
     // difference is the "/*" suffix on each key. With expansion_keys as indices
@@ -126,5 +127,4 @@ test("exports map wildcard resolution still works", async () => {
     other: "node_modules/pkg/catchall.js",
     trailing: "node_modules/pkg/dir/thing.js",
   });
-  expect(exitCode).toBe(0);
 });

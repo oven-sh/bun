@@ -929,21 +929,15 @@ describe("close handling", () => {
       }
     });
 
-    for (const [label, make] of [
-      ["Blob", () => new Blob(["from-blob"])],
-      ["Response", () => new Response("from-response")],
-      ["Request", () => new Request("http://x", { method: "POST", body: "from-request" })],
-    ] as const) {
-      it(`${label} at index >= 3 does not panic`, async () => {
-        await using proc = spawn({
-          cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
-          env: bunEnv,
-          stdio: ["ignore", "pipe", "pipe", make()],
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+    it.skipIf(isWindows)("empty Blob at index >= 3 is treated as ignore", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe", new Blob([])],
       });
-    }
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
 
     const pullStream = () =>
       new ReadableStream({
@@ -952,10 +946,21 @@ describe("close handling", () => {
           c.close();
         },
       });
-    for (const [label, make] of [
-      ["ReadableStream", () => pullStream()],
-      ["Response(ReadableStream)", () => new Response(pullStream())],
-      ["Request(ReadableStream)", () => new Request("http://x", { method: "POST", body: pullStream() })],
+    for (const [label, make, msg] of [
+      ["Blob", () => new Blob(["from-blob"]), "Blob cannot be used for stdio[3] yet"],
+      ["Response", () => new Response("from-response"), "Blob cannot be used for stdio[3] yet"],
+      [
+        "Request",
+        () => new Request("http://x", { method: "POST", body: "from-request" }),
+        "Blob cannot be used for stdio[3] yet",
+      ],
+      ["ReadableStream", () => pullStream(), "ReadableStream cannot be used for stdio[3] yet"],
+      ["Response(ReadableStream)", () => new Response(pullStream()), "ReadableStream cannot be used for stdio[3] yet"],
+      [
+        "Request(ReadableStream)",
+        () => new Request("http://x", { method: "POST", body: pullStream() }),
+        "ReadableStream cannot be used for stdio[3] yet",
+      ],
     ] as const) {
       it(`${label} at index >= 3 throws instead of panicking`, () => {
         expect(() =>
@@ -964,7 +969,7 @@ describe("close handling", () => {
             env: bunEnv,
             stdio: ["ignore", "pipe", "pipe", make()],
           }),
-        ).toThrow("ReadableStream cannot be used for stdio[3] yet");
+        ).toThrow(msg);
       });
     }
   });

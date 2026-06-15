@@ -277,15 +277,17 @@ fn parse_f32(bytes: &[u8]) -> Option<f32> {
 /// Parse the body of a C99 hex float (caller has already consumed `0x`).
 /// Hex mantissa with at most one `.`, optional `p`/`P` binary exponent.
 ///
-/// Bun.$ argv is in-process (no OS ARG_MAX), so input length is unbounded.
-/// Per-digit accumulators saturate in i32 and are combined in i64 before the
-/// final clamp so two saturated terms can't cancel; a clamped exponent is far
-/// outside f64 range (overflow is rejected by the caller's `is_finite()`,
-/// underflow yields 0).
+/// Bun.$ argv is in-process (no OS ARG_MAX), so input length is bounded only
+/// by the address space. `frac_digits` and `dropped_int_bits` advance at most
+/// 4 per input byte, so they cannot reach i64 saturation for any addressable
+/// input and are exact when combined. `exp` is parsed from decimal and can
+/// saturate at i64::MAX, but then dwarfs the other two terms so the combined
+/// sign is preserved; the final clamp to i32 for powi yields inf (rejected by
+/// the caller's `is_finite()`) or underflows to 0.
 fn parse_hex_float(s: &[u8]) -> Option<f64> {
     let mut mantissa: u64 = 0;
-    let mut frac_digits: i32 = 0;
-    let mut dropped_int_bits: i32 = 0;
+    let mut frac_digits: i64 = 0;
+    let mut dropped_int_bits: i64 = 0;
     let mut seen_dot = false;
     let mut seen_digit = false;
     let mut i = 0;
@@ -306,17 +308,17 @@ fn parse_hex_float(s: &[u8]) -> Option<f64> {
         if mantissa >> 60 == 0 {
             mantissa = (mantissa << 4) | d as u64;
             if seen_dot {
-                frac_digits = frac_digits.saturating_add(1);
+                frac_digits += 1;
             }
         } else if !seen_dot {
-            dropped_int_bits = dropped_int_bits.saturating_add(4);
+            dropped_int_bits += 4;
         }
         i += 1;
     }
     if !seen_digit {
         return None;
     }
-    let mut exp: i32 = 0;
+    let mut exp: i64 = 0;
     if i < s.len() {
         let exp_bytes = &s[i + 1..];
         let (exp_neg, exp_digits) = match exp_bytes.first() {
@@ -328,7 +330,7 @@ fn parse_hex_float(s: &[u8]) -> Option<f64> {
             return None;
         }
         for &d in exp_digits {
-            exp = exp.saturating_mul(10).saturating_add((d - b'0') as i32);
+            exp = exp.saturating_mul(10).saturating_add((d - b'0') as i64);
         }
         if exp_neg {
             exp = exp.saturating_neg();
@@ -339,7 +341,9 @@ fn parse_hex_float(s: &[u8]) -> Option<f64> {
         // `0.0 * inf = NaN` below.
         return Some(0.0);
     }
-    let exp = (exp as i64 - frac_digits as i64 * 4 + dropped_int_bits as i64)
+    let exp = exp
+        .saturating_sub(frac_digits.saturating_mul(4))
+        .saturating_add(dropped_int_bits)
         .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
     // powi on 2.0 is exact (repeated squaring of exact powers of two).
     Some(mantissa as f64 * 2.0_f64.powi(exp))

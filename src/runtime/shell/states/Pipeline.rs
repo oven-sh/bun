@@ -13,6 +13,8 @@ use crate::shell::states::subshell::Subshell;
 use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
 
+use std::io::Write as _;
+
 pub struct Pipeline {
     pub base: Base,
     pub node: bun_ptr::BackRef<ast::Pipeline>,
@@ -31,7 +33,11 @@ pub enum CmdOrResult {
 pub enum PipelineState {
     StartingCmds { idx: u32 },
     Pending,
-    WaitingWriteErr,
+    /// Setup failed (socketpair / dupe env). The error message is being
+    /// written to stderr; once the write completes *and* any
+    /// already-started children have exited, the pipeline finishes with
+    /// exit code 1.
+    WaitingWriteErr { write_done: bool },
     Done { exit_code: ExitCode },
 }
 
@@ -81,7 +87,7 @@ impl Pipeline {
     pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         match interp.as_pipeline(this).state {
             PipelineState::StartingCmds { idx } => Self::next_starting(interp, this, idx),
-            PipelineState::Pending | PipelineState::WaitingWriteErr => Yield::suspended(),
+            PipelineState::Pending | PipelineState::WaitingWriteErr { .. } => Yield::suspended(),
             PipelineState::Done { exit_code } => {
                 let parent = interp.as_pipeline(this).base.parent;
                 interp.child_done(parent, this, exit_code)
@@ -143,13 +149,12 @@ impl Pipeline {
                             closefd(p[0]);
                             closefd(p[1]);
                         }
-                        // Leave `StartingCmds` so `drain_pipelines` doesn't
-                        // re-enter `next_starting` and retry the failing
-                        // syscall in a loop; stay suspended until the error
-                        // write completes.
-                        interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
-                        interp.throw(ShellErr::new_sys(&e));
-                        return Yield::failed();
+                        let sys = e.to_shell_system_error();
+                        return Self::write_failing_error(
+                            interp,
+                            this,
+                            format_args!("bun: {}\n", bstr::BStr::new(sys.message.byte_slice())),
+                        );
                     }
                 }
             }
@@ -226,12 +231,12 @@ impl Pipeline {
         } {
             Ok(d) => d,
             Err(e) => {
-                // On dupe failure,
-                // close the pipe ends not yet wrapped in an IOReader/IOWriter,
-                // deref `cmd_io`, transition to `.waiting_write_err`, and
-                // suspend. Without the state transition `drain_pipelines`
-                // would re-enter at the same `idx`, re-wrapping the same fds
-                // in fresh IOReader/IOWriter each iteration.
+                // On dupe failure, close the pipe ends not yet wrapped in an
+                // IOReader/IOWriter and deref `cmd_io`. Already-started
+                // children keep running; `write_failing_error` leaves
+                // `StartingCmds` so `drain_pipelines` won't re-enter at the
+                // same `idx`, and `try_finish_err` waits for those children
+                // before reporting to the parent.
                 drop(child_io);
                 {
                     let me = interp.as_pipeline_mut(this);
@@ -244,10 +249,13 @@ impl Pipeline {
                             closefd(p[1]);
                         }
                     }
-                    me.state = PipelineState::WaitingWriteErr;
                 }
-                interp.throw(ShellErr::new_sys(&e));
-                return Yield::failed();
+                let sys = e.to_shell_system_error();
+                return Self::write_failing_error(
+                    interp,
+                    this,
+                    format_args!("bun: {}\n", bstr::BStr::new(sys.message.byte_slice())),
+                );
             }
         };
 
@@ -268,6 +276,72 @@ impl Pipeline {
         interp.start_node(child)
     }
 
+    /// Setup failure (`socketpair_for_shell` / `dupe_for_subshell`): write
+    /// `"bun: <message>\n"` to the shell's stderr and finish with exit code
+    /// 1, so a `.nothrow()` shell sees a recoverable result rather than a
+    /// rejected promise.
+    ///
+    /// `.fd` stderr enqueues an async write and parks in `WaitingWriteErr`
+    /// (resumed by `on_io_writer_chunk`); otherwise append to the captured
+    /// stderr buffer. In both cases `try_finish_err` only reports to the
+    /// parent once the write *and* any already-started children are done —
+    /// unlike the reference, this port starts children incrementally, so
+    /// `dupe_for_subshell` can fail with earlier children already running.
+    fn write_failing_error(
+        interp: &Interpreter,
+        this: NodeId,
+        args: core::fmt::Arguments<'_>,
+    ) -> Yield {
+        let mut buf = Vec::new();
+        let _ = buf.write_fmt(args);
+        if interp.as_pipeline(this).io.stderr.needs_io().is_some() {
+            interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr { write_done: false };
+            let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::Pipeline);
+            if let OutKind::Fd(fd) = &interp.as_pipeline(this).io.stderr {
+                return fd.writer.enqueue(child, fd.captured, &buf);
+            }
+            unreachable!()
+        }
+        if let OutKind::Pipe = &interp.as_pipeline(this).io.stderr {
+            // SAFETY: single trampoline frame; no other borrow of the env's
+            // (or its parent's) stderr buffer is live.
+            let stderr = unsafe {
+                interp
+                    .as_pipeline_mut(this)
+                    .base
+                    .shell_mut()
+                    .buffered_stderr_mut()
+            };
+            stderr.extend_from_slice(&buf);
+        }
+        interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr { write_done: true };
+        Self::try_finish_err(interp, this)
+    }
+
+    /// If the stderr write has completed and no started children remain,
+    /// transition to `Done { 1 }`. Returning `Next(this)` (rather than
+    /// calling `child_done(parent, ..)` directly) lets the trampoline remove
+    /// this node from `pipeline_stack` before it's freed.
+    fn try_finish_err(interp: &Interpreter, this: NodeId) -> Yield {
+        let ready = {
+            let me = interp.as_pipeline(this);
+            let write_done = matches!(
+                me.state,
+                PipelineState::WaitingWriteErr { write_done: true }
+            );
+            let children_done = me
+                .cmds
+                .as_ref()
+                .is_none_or(|c| c.iter().all(|s| matches!(s, CmdOrResult::Result(_))));
+            write_done && children_done
+        };
+        if ready {
+            interp.as_pipeline_mut(this).state = PipelineState::Done { exit_code: 1 };
+            return Yield::Next(this);
+        }
+        Yield::suspended()
+    }
+
     /// IOWriter completion callback for the error message written in
     /// `WaitingWriteErr`: throw on write failure, otherwise finish the
     /// pipeline with exit code 1.
@@ -279,14 +353,14 @@ impl Pipeline {
     ) -> Yield {
         debug_assert!(matches!(
             interp.as_pipeline(this).state,
-            PipelineState::WaitingWriteErr
+            PipelineState::WaitingWriteErr { .. }
         ));
         if let Some(e) = err {
             interp.throw(ShellErr::from_system(e));
             return Yield::failed();
         }
-        let parent = interp.as_pipeline(this).base.parent;
-        interp.child_done(parent, this, 1)
+        interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr { write_done: true };
+        Self::try_finish_err(interp, this)
     }
 
     pub fn child_done(
@@ -321,6 +395,15 @@ impl Pipeline {
         // Subshell frees its own; Assigns is skipped.
         Self::deinit_child_duped_env(interp, child);
         interp.deinit_node(child);
+        if matches!(
+            interp.as_pipeline(this).state,
+            PipelineState::WaitingWriteErr { .. }
+        ) {
+            // Setup failed after some children had already been started;
+            // finish with exit 1 once they've all drained and the stderr
+            // write is done.
+            return Self::try_finish_err(interp, this);
+        }
         if all_done {
             // Exit code = last command's exit code (bash semantics).
             // For a single-runnable pipeline `last_exit_code` stays 0: only

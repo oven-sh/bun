@@ -1682,7 +1682,16 @@ describe("stringify memory", () => {
           if (growthMB > 64) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
         `,
       ],
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        // Under ASAN every freed allocation parks in the allocator quarantine
+        // (default quarantine_size_mb=256) instead of being returned, so the
+        // RSS-delta heuristic over-reports even when nothing leaks. Disable
+        // the quarantine for this measurement process so the 64 MB threshold
+        // keeps separating "fixed" from "leaking ~200 MB". Harmless when the
+        // binary is not ASAN-built.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

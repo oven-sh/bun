@@ -147,12 +147,20 @@ impl JSS3Error {
         }
     }
 
-    // The three `bun_core::String` fields deref themselves via `Drop`, so no
-    // explicit `Drop` impl is needed here.
-
     pub(crate) fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
-        // `defer this.deinit()` → `self` is consumed and dropped at scope exit.
+        // `self` is consumed; `Drop` derefs the three strings after the FFI
+        // call returns (C++ only reads them, it does not consume the refs).
         S3Error__toErrorInstance(&self, global)
+    }
+}
+
+impl Drop for JSS3Error {
+    fn drop(&mut self) {
+        // `bun_core::String` is `Copy` and has no `Drop`; release the +1 from
+        // `create_atom_if_possible` explicitly.
+        self.path.deref();
+        self.code.deref();
+        self.message.deref();
     }
 }
 

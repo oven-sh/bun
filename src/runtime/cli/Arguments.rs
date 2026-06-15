@@ -2023,10 +2023,7 @@ fn parse_build_command_options(
             b"standalone" => bun_options_types::compile_target::CompileRuntime::Standalone,
             b"full" => bun_options_types::compile_target::CompileRuntime::Full,
             _ => {
-                Output::err_generic(
-                    "--compile-runtime must be \"standalone\" or \"full\"",
-                    (),
-                );
+                Output::err_generic("--compile-runtime must be \"standalone\" or \"full\"", ());
                 Global::crash();
             }
         };

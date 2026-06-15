@@ -13,9 +13,9 @@ import { chmod, copy, exists, join, write, writeJson } from "../src/fs";
 import { getRelease, getSemver } from "../src/github";
 import type { Platform } from "../src/platform";
 import { platforms, standalonePlatforms } from "../src/platform";
+import { spawn } from "../src/spawn";
 
 const allPlatforms = [...platforms, ...standalonePlatforms];
-import { spawn } from "../src/spawn";
 
 const module = "bun";
 const owner = "@oven";

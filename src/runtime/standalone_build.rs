@@ -35,9 +35,7 @@ pub fn unavailable_command(name: &[u8]) -> ! {
     bun_core::pretty_errorln!(
         "This is a standalone executable built with <b>bun build --compile<r>. It contains the",
     );
-    bun_core::pretty_errorln!(
-        "Bun runtime but not the bundler, package manager, or test runner.",
-    );
+    bun_core::pretty_errorln!("Bun runtime but not the bundler, package manager, or test runner.",);
     bun_core::pretty_errorln!("");
     bun_core::pretty_errorln!(
         "To use <b>bun {}<r>, install Bun: <cyan>https://bun.com/get<r>",

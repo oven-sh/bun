@@ -96,8 +96,14 @@ mod css {
         )*};
     }
     stub!(
-        _test, attr_test, minify_error_test_with_options, minify_test,
-        minify_test_with_options, prefix_test, prefix_test_with_options, test_with_options,
+        _test,
+        attr_test,
+        minify_error_test_with_options,
+        minify_test,
+        minify_test_with_options,
+        prefix_test,
+        prefix_test_with_options,
+        test_with_options,
     );
 }
 pub use css::_test as css_jsc_css_internals__test;

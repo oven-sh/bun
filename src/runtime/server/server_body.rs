@@ -704,31 +704,31 @@ impl AnyRoute {
             }
             #[cfg(not(bun_standalone))]
             {
-            use bun_collections::zig_hash_map::MapEntry as StdEntry;
-            let entry = init_ctx
-                .dedupe_html_bundle_map
-                .entry(html_bundle.cast_const());
-            // HashMap aborts on OOM (repo-wide abort-on-OOM policy).
-            return Ok(Some(match entry {
-                StdEntry::Vacant(v) => {
-                    // The rc=1 `Route::init(..)` goes in the map and
-                    // that same value is returned to the caller (the map slot is a
-                    // non-owning borrow, freed by `dedupe_html_bundle_map.deinit`
-                    // *without* deref). `RefPtr<T>` has no `Drop`, so a bit-copy
-                    // here keeps the net refcount at 1 — bumping for the map
-                    // slot would leak +1 per first-seen HTMLBundle.
-                    // SAFETY: `html_bundle` is the live `RefPtr<HTMLBundle>` from the
-                    // route map; `init` consumes its +1 ref into the new `Route`.
-                    let route = html_bundle::Route::init(html_bundle);
-                    // SAFETY: `route.data` is the just-allocated NonNull (rc=1);
-                    // wrap without bumping so the map slot stays non-owning
-                    // (`RefPtr<T>` has no `Drop`; the map slot is a non-owning bit-copy).
-                    let borrowed = unsafe { RefPtr::from_raw(route.as_ptr()) };
-                    v.insert(borrowed);
-                    AnyRoute::Html(route)
-                }
-                StdEntry::Occupied(o) => AnyRoute::Html(o.get().dupe_ref()),
-            }));
+                use bun_collections::zig_hash_map::MapEntry as StdEntry;
+                let entry = init_ctx
+                    .dedupe_html_bundle_map
+                    .entry(html_bundle.cast_const());
+                // HashMap aborts on OOM (repo-wide abort-on-OOM policy).
+                return Ok(Some(match entry {
+                    StdEntry::Vacant(v) => {
+                        // The rc=1 `Route::init(..)` goes in the map and
+                        // that same value is returned to the caller (the map slot is a
+                        // non-owning borrow, freed by `dedupe_html_bundle_map.deinit`
+                        // *without* deref). `RefPtr<T>` has no `Drop`, so a bit-copy
+                        // here keeps the net refcount at 1 — bumping for the map
+                        // slot would leak +1 per first-seen HTMLBundle.
+                        // SAFETY: `html_bundle` is the live `RefPtr<HTMLBundle>` from the
+                        // route map; `init` consumes its +1 ref into the new `Route`.
+                        let route = html_bundle::Route::init(html_bundle);
+                        // SAFETY: `route.data` is the just-allocated NonNull (rc=1);
+                        // wrap without bumping so the map slot stays non-owning
+                        // (`RefPtr<T>` has no `Drop`; the map slot is a non-owning bit-copy).
+                        let borrowed = unsafe { RefPtr::from_raw(route.as_ptr()) };
+                        v.insert(borrowed);
+                        AnyRoute::Html(route)
+                    }
+                    StdEntry::Occupied(o) => AnyRoute::Html(o.get().dupe_ref()),
+                }));
             }
         }
 

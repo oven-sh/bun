@@ -11,8 +11,8 @@
 // gate; this file is the behavioural one.
 
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
 import { bunEnv, normalizeBunSnapshot } from "harness";
+import { existsSync } from "node:fs";
 
 const standaloneExe = process.env.BUN_STANDALONE_EXE;
 

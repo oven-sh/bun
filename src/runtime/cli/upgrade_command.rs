@@ -90,15 +90,15 @@ impl Version {
     pub const ZIP_FILENAME: &'static str = crate::cli::shared::release::ZIP_FILENAME;
     pub const BASELINE_ZIP_FILENAME: &'static str =
         crate::cli::shared::release::BASELINE_ZIP_FILENAME;
-    pub const PROFILE_FOLDER_NAME: &'static str =
-        crate::cli::shared::release::PROFILE_FOLDER_NAME;
+    pub const PROFILE_FOLDER_NAME: &'static str = crate::cli::shared::release::PROFILE_FOLDER_NAME;
     pub const PROFILE_ZIP_FILENAME: &'static str =
         crate::cli::shared::release::PROFILE_ZIP_FILENAME;
 
     const CURRENT_VERSION: &'static str =
         const_format::concatcp!("bun-v", Global::package_json_version);
 
-    pub const BUN__GITHUB_BASELINE_URL: &'static ZStr = crate::cli::shared::BUN__GITHUB_BASELINE_URL;
+    pub const BUN__GITHUB_BASELINE_URL: &'static ZStr =
+        crate::cli::shared::BUN__GITHUB_BASELINE_URL;
 
     pub fn is_current(&self) -> bool {
         &*self.tag == Self::CURRENT_VERSION.as_bytes()

@@ -58,7 +58,8 @@ pub mod release {
     pub const ZIP_FILENAME: &str = const_format::concatcp!(FOLDER_NAME, ".zip");
     pub const BASELINE_ZIP_FILENAME: &str = const_format::concatcp!(BASELINE_FOLDER_NAME, ".zip");
 
-    pub const PROFILE_FOLDER_NAME: &str = const_format::concatcp!("bun-", TRIPLET, SUFFIX, "-profile");
+    pub const PROFILE_FOLDER_NAME: &str =
+        const_format::concatcp!("bun-", TRIPLET, SUFFIX, "-profile");
     pub const PROFILE_ZIP_FILENAME: &str = const_format::concatcp!(PROFILE_FOLDER_NAME, ".zip");
 }
 

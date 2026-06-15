@@ -617,9 +617,8 @@ impl Stdio {
         if i != 0 {
             // The parent-side writer that pumps Blob bytes into the child's
             // pipe (`Writable::Buffer` / memfd) is only wired up for stdin.
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Blob cannot be used for stdio[{i}] yet"
-            )));
+            return Err(global
+                .throw_invalid_arguments(format_args!("Blob cannot be used for stdio[{i}] yet")));
         }
 
         *self = Stdio::Blob(blob);

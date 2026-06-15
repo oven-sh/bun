@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, mergeWindowEnvs } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isPosix, mergeWindowEnvs, tempDir } from "harness";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -120,6 +120,44 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     expect(exitCode).not.toBe(0);
     void stdout;
   });
+});
+
+// `handle_root_error` recognizes the named error `CurrentWorkingDirectoryUnlinked`
+// and prints an actionable hint. Zig's stdlib mapped `getcwd` ENOENT to that name;
+// the Rust `bun_sys::Error` → `bun_core::Error` conversion dropped the syscall tag
+// and emitted a bare "ENOENT", so the hint was unreachable and users saw the
+// generic "Bun could not find a file" fallback instead.
+//
+// POSIX-only: Windows refuses to remove a directory that is any process's cwd.
+describe.if(isPosix)("cwd deleted before startup", () => {
+  for (const cmd of [
+    ["-e", "console.log(1)"],
+    ["run", "foo"],
+  ]) {
+    test(`bun ${cmd[0]} prints the cwd-deleted hint`, async () => {
+      using dir = tempDir("cwd-unlinked", {});
+      const gone = String(dir);
+
+      await using proc = Bun.spawn({
+        cmd: [
+          "/bin/sh",
+          "-c",
+          `cd "${gone}" && rmdir "${gone}" && exec "${bunExe()}" ${cmd.map(a => `'${a}'`).join(" ")}`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "",
+        stderr: expect.stringContaining("The current working directory was deleted"),
+        exitCode: 1,
+      });
+      expect(stderr).not.toContain("Bun could not find a file");
+    });
+  }
 });
 
 test.if(process.platform === "darwin")("macOS has the assumed image offset", () => {

@@ -309,6 +309,80 @@ for (let [gcTick, label] of [
         expect(await readableStreamToText(stdout!)).toBe("hello there!");
       });
 
+      it("Bun.file().slice() works as stdin (path-backed)", async () => {
+        const stdinPath = join(tmpdirSync(), "stdin.txt");
+        writeFileSync(stdinPath, "0123456789abcdef");
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: Bun.file(stdinPath).slice(5, 10),
+          env: bunEnv,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "56789", stderr: "", exitCode: 0 });
+      });
+
+      it("Bun.file().slice() works as stdin (fd-backed)", async () => {
+        const stdinPath = join(tmpdirSync(), "stdin.txt");
+        writeFileSync(stdinPath, "0123456789abcdef");
+        const fd = openSync(stdinPath, "r");
+        try {
+          await using proc = spawn({
+            cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: Bun.file(fd).slice(5, 10),
+            env: bunEnv,
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: "56789", stderr: "", exitCode: 0 });
+        } finally {
+          closeSync(fd);
+        }
+      });
+
+      it("Bun.file().slice(0) works as stdin (full-file slice still uses fd fast path)", async () => {
+        const stdinPath = join(tmpdirSync(), "stdin.txt");
+        writeFileSync(stdinPath, "0123456789abcdef");
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: Bun.file(stdinPath).slice(0),
+          env: bunEnv,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0123456789abcdef", stderr: "", exitCode: 0 });
+      });
+
+      it("Bun.file().slice() past EOF works as stdin", async () => {
+        const stdinPath = join(tmpdirSync(), "stdin.txt");
+        writeFileSync(stdinPath, "0123456789abcdef");
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: Bun.file(stdinPath).slice(10, 1000),
+          env: bunEnv,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "abcdef", stderr: "", exitCode: 0 });
+      });
+
+      it("Bun.file().slice() works as stdin via spawnSync", () => {
+        const stdinPath = join(tmpdirSync(), "stdin.txt");
+        writeFileSync(stdinPath, "0123456789abcdef");
+        const { stdout, exitCode } = spawnSync({
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+          stdout: "pipe",
+          stdin: Bun.file(stdinPath).slice(5, 10),
+          env: bunEnv,
+        });
+        expect(stdout.toString()).toBe("56789");
+        expect(exitCode).toBe(0);
+      });
+
       it("Bun.file() works as stdin and stdout", async () => {
         const stdinPath = join(tmpdirSync(), "stdout.txt");
         writeFileSync(stdinPath, "hello!");

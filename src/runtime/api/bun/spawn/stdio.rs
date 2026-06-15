@@ -1,5 +1,5 @@
 use bun_collections::VecExt;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, SysErrorJsc as _};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd, FdExt as _};
@@ -549,45 +549,89 @@ impl Stdio {
         let fd = FdStdio::from_int(i).unwrap().fd();
 
         if blob.needs_to_read_file() {
-            if let Some(store) = blob.store() {
-                if let StoreData::File(ref file) = store.data {
-                    match file.pathlike {
-                        PathOrFileDescriptor::Fd(store_fd) => {
-                            if store_fd == fd {
-                                *self = Stdio::Inherit;
-                            } else {
-                                // TODO: is this supposed to be `store.data.file.pathlike.fd`?
-                                if let Some(tag) = FdStdio::from_int(i) {
-                                    match tag {
-                                        FdStdio::StdIn => {
-                                            if i == 1 || i == 2 {
-                                                return Err(global.throw_invalid_arguments(
-                                                    format_args!(
-                                                        "stdin cannot be used for stdout or stderr"
-                                                    ),
-                                                ));
+            if let webcore::blob::Any::Blob(ref b) = blob {
+                if let Some(store) = b.store() {
+                    if let StoreData::File(ref file) = store.data {
+                        // A sliced file blob can't be handed to the child as a raw fd/path —
+                        // the child would read the whole file. Buffer the window instead.
+                        let offset = b.offset.get();
+                        let size = b.size.get();
+                        let is_entire_file = offset == 0 && size == webcore::blob::MAX_SIZE;
+
+                        match file.pathlike {
+                            PathOrFileDescriptor::Fd(store_fd) => {
+                                if is_entire_file {
+                                    if store_fd == fd {
+                                        *self = Stdio::Inherit;
+                                    } else {
+                                        // TODO: is this supposed to be `store.data.file.pathlike.fd`?
+                                        if let Some(tag) = FdStdio::from_int(i) {
+                                            match tag {
+                                                FdStdio::StdIn => {
+                                                    if i == 1 || i == 2 {
+                                                        return Err(global
+                                                            .throw_invalid_arguments(format_args!(
+                                                            "stdin cannot be used for stdout or stderr"
+                                                        )));
+                                                    }
+                                                }
+                                                FdStdio::StdOut | FdStdio::StdErr => {
+                                                    if i == 0 {
+                                                        return Err(global
+                                                            .throw_invalid_arguments(format_args!(
+                                                            "stdout and stderr cannot be used for stdin"
+                                                        )));
+                                                    }
+                                                }
                                             }
                                         }
-                                        FdStdio::StdOut | FdStdio::StdErr => {
-                                            if i == 0 {
-                                                return Err(global.throw_invalid_arguments(
-                                                    format_args!(
-                                                        "stdout and stderr cannot be used for stdin"
-                                                    ),
-                                                ));
-                                            }
-                                        }
+
+                                        *self = Stdio::Fd(store_fd);
                                     }
+                                    return Ok(());
                                 }
 
-                                *self = Stdio::Fd(store_fd);
+                                if i == 1 || i == 2 {
+                                    return Err(global.throw_invalid_arguments(format_args!(
+                                        "Blobs are immutable, and cannot be used for stdout/stderr"
+                                    )));
+                                }
+                                let bytes = read_file_slice(global, store_fd, offset, size)?;
+                                *self = if bytes.is_empty() {
+                                    Stdio::Ignore
+                                } else {
+                                    Stdio::Blob(webcore::blob::Any::from_owned_slice(bytes))
+                                };
+                                return Ok(());
                             }
+                            PathOrFileDescriptor::Path(ref path) => {
+                                if is_entire_file {
+                                    *self = Stdio::Path(path.clone());
+                                    return Ok(());
+                                }
 
-                            return Ok(());
-                        }
-                        PathOrFileDescriptor::Path(ref path) => {
-                            *self = Stdio::Path(path.clone());
-                            return Ok(());
+                                if i == 1 || i == 2 {
+                                    return Err(global.throw_invalid_arguments(format_args!(
+                                        "Blobs are immutable, and cannot be used for stdout/stderr"
+                                    )));
+                                }
+                                let opened = match sys::File::openat(
+                                    Fd::cwd(),
+                                    path.slice(),
+                                    sys::O::RDONLY,
+                                    0,
+                                ) {
+                                    Ok(f) => f,
+                                    Err(err) => return Err(global.throw_value(err.to_js(global))),
+                                };
+                                let bytes = read_file_slice(global, opened.fd(), offset, size)?;
+                                *self = if bytes.is_empty() {
+                                    Stdio::Ignore
+                                } else {
+                                    Stdio::Blob(webcore::blob::Any::from_owned_slice(bytes))
+                                };
+                                return Ok(());
+                            }
                         }
                     }
                 }
@@ -609,6 +653,40 @@ impl Stdio {
         *self = Stdio::Blob(blob);
         Ok(())
     }
+}
+
+/// Read up to `size` bytes from `fd` starting at `offset`. Used for sliced
+/// file blobs as stdin, where the fd/path fast path would feed the whole file.
+fn read_file_slice(
+    global: &JSGlobalObject,
+    fd: Fd,
+    offset: webcore::blob::SizeType,
+    size: webcore::blob::SizeType,
+) -> JsResult<Vec<u8>> {
+    let want = usize::try_from(size).unwrap_or(usize::MAX);
+    let mut buf = Vec::<u8>::new();
+    let mut pos = i64::try_from(offset).unwrap_or(i64::MAX);
+    while buf.len() < want {
+        let remaining = want - buf.len();
+        let old_len = buf.len();
+        buf.resize(old_len + remaining.min(64 * 1024), 0);
+        match sys::pread(fd, &mut buf[old_len..], pos) {
+            Ok(0) => {
+                buf.truncate(old_len);
+                break;
+            }
+            Ok(n) => {
+                buf.truncate(old_len + n);
+                pos = pos.saturating_add(i64::try_from(n).expect("int cast"));
+            }
+            Err(err) if err.get_errno() == sys::E::EINTR => {
+                buf.truncate(old_len);
+                continue;
+            }
+            Err(err) => return Err(global.throw_value(err.to_js(global))),
+        }
+    }
+    Ok(buf)
 }
 
 impl Drop for Stdio {

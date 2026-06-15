@@ -303,7 +303,10 @@ fn parse_hex_float(s: &[u8]) -> Option<f64> {
                 frac_digits += 1;
             }
         } else if !seen_dot {
-            dropped_int_bits += 4;
+            // Bun.$ argv is in-process (no OS ARG_MAX); saturate so a
+            // ~537M-digit mantissa can't overflow i32. Anything past ~2100
+            // overflows f64 and is rejected by the caller's is_finite().
+            dropped_int_bits = dropped_int_bits.saturating_add(4);
         }
         i += 1;
     }

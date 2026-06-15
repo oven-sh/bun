@@ -647,6 +647,52 @@ it("read", () => {
   delete globalThis.buffer;
 });
 
+it("read.* with negative byteOffset does not abort the process", async () => {
+  // A negative offset previously hit `usize::try_from(-1).expect(...)` in the
+  // slow-path reader, aborting the process. Run in a subprocess so a panic
+  // surfaces as a non-zero exit instead of killing this test file.
+  const src = `
+    const { ptr, read } = require("bun:ffi");
+    const buf = new Uint8Array(32);
+    for (let i = 0; i < buf.length; i++) buf[i] = i;
+    const base = ptr(buf);
+    const dv = new DataView(buf.buffer);
+    const at = 8;
+    const p = base + at;
+
+    const assert = (name, got, want) => {
+      if (!Object.is(got, want)) throw new Error(name + ": got " + got + " want " + want);
+    };
+
+    assert("u8",  read.u8(p, -1),  dv.getUint8(at - 1));
+    assert("i8",  read.i8(p, -1),  dv.getInt8(at - 1));
+    assert("u16", read.u16(p, -2), dv.getUint16(at - 2, true));
+    assert("i16", read.i16(p, -2), dv.getInt16(at - 2, true));
+    assert("u32", read.u32(p, -4), dv.getUint32(at - 4, true));
+    assert("i32", read.i32(p, -4), dv.getInt32(at - 4, true));
+    assert("f32", read.f32(p, -4), dv.getFloat32(at - 4, true));
+    assert("f64", read.f64(p, -8), dv.getFloat64(at - 8, true));
+    assert("i64", read.i64(p, -8), dv.getBigInt64(at - 8, true));
+    assert("u64", read.u64(p, -8), dv.getBigUint64(at - 8, true));
+    assert("ptr",    read.ptr(p, -8),    Number(dv.getBigUint64(at - 8, true)));
+    assert("intptr", read.intptr(p, -8), Number(dv.getBigInt64(at - 8, true)));
+
+    let threw = false;
+    try { read.u8(base, "not a number"); } catch { threw = true; }
+    if (!threw) throw new Error("expected read.u8 to throw on non-number byteOffset");
+
+    console.log("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+});
+
 if (ok) {
   describe("run ffi", () => {
     ffiRunner(false);

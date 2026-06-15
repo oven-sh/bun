@@ -262,12 +262,23 @@ pub mod reader {
         if arguments.is_empty() || !arguments[0].is_number() {
             return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
         }
-        let off = if arguments.len() > 1 {
-            usize::try_from(arguments[1].to_int32()).expect("int cast")
-        } else {
-            0usize
-        };
-        Ok(arguments[0].as_ptr_address() + off)
+        let mut addr = arguments[0].as_ptr_address();
+        if arguments.len() > 1 {
+            let byte_off = arguments[1];
+            if !byte_off.is_empty_or_undefined_or_null() {
+                if !byte_off.is_number() {
+                    return Err(global_object
+                        .throw_invalid_arguments(format_args!("Expected number for byteOffset")));
+                }
+                let off = byte_off.to_int64();
+                if off < 0 {
+                    addr = addr.saturating_sub(off.unsigned_abs() as usize);
+                } else {
+                    addr = addr.saturating_add(off as usize);
+                }
+            }
+        }
+        Ok(addr)
     }
 
     /// Read a `T` from a user-supplied raw address (unaligned).

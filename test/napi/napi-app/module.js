@@ -1331,8 +1331,8 @@ nativeTests.test_threadsafe_function_microtask_order = async () => {
 
 // napi_get_all_property_names with a key filter (enumerable/writable/configurable)
 // walks property descriptors; when the target is a Proxy whose
-// getOwnPropertyDescriptor or getPrototypeOf trap throws, the call must
-// return napi_pending_exception rather than napi_ok.
+// getOwnPropertyDescriptor trap throws inside that loop, the call must return
+// napi_pending_exception rather than napi_ok.
 nativeTests.test_get_all_property_names_throwing_proxy = () => {
   // ownKeys succeeds so key collection passes and we enter the descriptor
   // filter loop; getOwnPropertyDescriptor then throws inside it.

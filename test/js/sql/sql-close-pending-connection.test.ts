@@ -67,3 +67,50 @@ for (const [name, scheme, closedCode] of drivers) {
     }
   });
 }
+
+// https://github.com/oven-sh/bun/issues/32198
+//
+// The pool's connection array is allocated as `new Array(max)` and filled one
+// slot at a time when the pool starts. A function-valued `password` option
+// runs synchronously during that fill, so pool methods re-entered from it
+// used to dereference unassigned slots and throw a raw TypeError.
+test("pool scans tolerate unassigned connection slots during pool start", async () => {
+  const { port, server, sockets } = await neverAnsweringServer();
+  let passwordCalls = 0;
+  const errors: unknown[] = [];
+  const sql = new SQL({
+    adapter: "postgres",
+    hostname: "127.0.0.1",
+    port,
+    username: "u",
+    database: "d",
+    max: 2,
+    connectionTimeout: 0,
+    password: () => {
+      passwordCalls++;
+      try {
+        sql.flush();
+      } catch (e) {
+        errors.push(e);
+      }
+      try {
+        sql.connect().catch(() => {});
+      } catch (e) {
+        errors.push(e);
+      }
+      return "";
+    },
+  });
+  try {
+    sql.connect().catch(() => {});
+    // the pool-start fill loop runs synchronously inside connect(), invoking
+    // password() once per pool slot
+    expect(passwordCalls).toBe(2);
+    expect(errors).toEqual([]);
+  } finally {
+    // force an immediate close even with waiters queued
+    await sql.close({ timeout: "0" });
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+});

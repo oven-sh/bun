@@ -23,7 +23,6 @@
 #include <JavaScriptCore/JavaScript.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExpObject.h>
-#include <JavaScriptCore/RegularExpression.h>
 #include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/SubspaceInlines.h>
@@ -40,13 +39,27 @@ namespace Zig {
 extern "C" void Bun__onDidAppendPlugin(void* bunVM, JSGlobalObject* globalObject);
 using OnAppendPluginCallback = void (*)(void*, JSGlobalObject* globalObject);
 
+static inline bool isValidNamespaceCharacter(char16_t c)
+{
+    return isASCIIAlphanumeric(c) || c == '_' || c == '-' || c == '/' || c == '@';
+}
+
+// Equivalent to /^[/@a-zA-Z0-9_\-]+$/. Hand-rolled because this is reachable
+// from multiple VMs (workers) concurrently and Yarr::RegularExpression is not
+// thread-safe: match() drives a per-instance BumpPointerAllocator.
 static bool isValidNamespaceString(String& namespaceString)
 {
-    static JSC::Yarr::RegularExpression* namespaceRegex = nullptr;
-    if (!namespaceRegex) {
-        namespaceRegex = new JSC::Yarr::RegularExpression("^([/@a-zA-Z0-9_\\-]+)$"_s);
+    if (namespaceString.isEmpty()) return false;
+    if (namespaceString.is8Bit()) {
+        for (auto c : namespaceString.span8()) {
+            if (!isValidNamespaceCharacter(c)) return false;
+        }
+    } else {
+        for (auto c : namespaceString.span16()) {
+            if (!isValidNamespaceCharacter(c)) return false;
+        }
     }
-    return namespaceRegex->match(namespaceString) > -1;
+    return true;
 }
 
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin, void* ctx, OnAppendPluginCallback callback)

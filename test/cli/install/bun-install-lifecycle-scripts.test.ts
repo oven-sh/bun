@@ -3348,6 +3348,48 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
   });
+
+  // RT signals (>= 32) only exist on Linux.
+  test.skipIf(!isLinux)(
+    "re-raises the same real-time signal the lifecycle script was terminated by" +
+      (forceWaiterThread ? " (waiter thread)" : ""),
+    async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            postinstall: "kill -35 $$",
+          },
+        }),
+      );
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const [out, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(err).toContain("terminated by");
+      // `exited` resolves to 128 + WTERMSIG for a signaled child. 128 + 35 = 163.
+      // The bug re-raised SIGTERM instead, giving { exited: 143, signalCode: "SIGTERM" }.
+      expect({ out, exited, signalCode: proc.signalCode }).toEqual({
+        out: expect.any(String),
+        exited: 163,
+        signalCode: null,
+      });
+    },
+  );
 }
 
 test.concurrent("ignore-scripts is read from npmrc", async () => {

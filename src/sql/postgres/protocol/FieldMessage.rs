@@ -33,6 +33,15 @@ impl fmt::Display for FieldMessage {
     }
 }
 
+impl Drop for FieldMessage {
+    /// Every variant holds a `bun_core::String` with a +1 refcount from
+    /// `String::clone_utf8` in `init()`. `String` is `Copy` and has no `Drop`,
+    /// so release the ref here.
+    fn drop(&mut self) {
+        self.payload().deref();
+    }
+}
+
 impl FieldMessage {
     /// Every variant carries a single `bun.String` payload.
     pub fn payload(&self) -> &String {

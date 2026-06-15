@@ -689,6 +689,7 @@ impl BlobExt for Blob {
                 self.offset.get(),
                 self.size.get(),
                 NewInternalReadFileHandler::<C, F>::run,
+                NewInternalReadFileHandler::<C, F>::discard,
                 ctx.cast::<c_void>(),
             );
         }
@@ -3947,6 +3948,15 @@ where
         // through `*mut c_void`; this is the inverse pointer cast.
         F::call(handler.cast::<C>(), bytes);
     }
+
+    /// Worker-shutdown discard path. `handler` is caller-owned (not
+    /// heap-allocated by this layer), so there is nothing to free here;
+    /// the caller's storage is reclaimed by the worker teardown that
+    /// triggered the discard.
+    ///
+    /// # Safety
+    /// See [`read_file::ReadFileOnDiscardCallback`].
+    pub unsafe fn discard(_handler: *mut c_void) {}
 }
 
 // ──────────────────────────────────────────────────────────────────────────

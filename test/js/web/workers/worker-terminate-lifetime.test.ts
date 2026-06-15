@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import path from "node:path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.
@@ -114,6 +115,66 @@ test(
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Regression: BUN-2WBH. Windows worker with an in-flight Bun.file().text()
+// during shutdown used to crash in JSLock::currentThreadIsHoldingLock from
+// ReadFileUV::finalize — the uv_fs_read completion fired in Loop::shutdown's
+// final uv_run after the worker's JSC VM was already torn down.
+//
+// The ReadFileUV path is #[cfg(windows)]-only; on POSIX the read completion
+// goes through the concurrent task queue which is not dispatched past worker
+// shutdown, so the hazard is unreachable there.
+test.skipIf(!isWindows)(
+  "worker with in-flight Bun.file read during shutdown does not crash",
+  async () => {
+    using dir = tempDir("worker-readfile-shutdown", {
+      "data.bin": Buffer.alloc(2 * 1024 * 1024, 0x61).toString("binary"),
+    });
+    const dataPath = path.join(String(dir), "data.bin");
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const workerSrc = \`
+          // Start several reads so at least one is still on the libuv
+          // threadpool when process.exit(0) begins worker shutdown. If any
+          // completion runs JS past VM teardown it would segfault; the then()
+          // sentinel additionally catches a completion that runs late but
+          // without crashing.
+          const p = process.env.READFILE_SHUTDOWN_DATA;
+          for (let i = 0; i < 8; i++) {
+            Bun.file(p).text().then(() => {
+              console.error("readfile microtask ran after worker shutdown");
+              process.exit(42);
+            }, () => {});
+          }
+          process.exit(0);
+        \`;
+        const workers = [];
+        for (let i = 0; i < ${perRound}; i++) {
+          workers.push(new Worker("data:text/javascript," + encodeURIComponent(workerSrc)));
+        }
+        const codes = await Promise.all(workers.map(w => new Promise(r => {
+          w.addEventListener("close", e => r(e.code ?? e.exitCode ?? 0), { once: true });
+        })));
+        for (const c of codes) if (c !== 0) { console.error("bad exit", c); process.exit(1); }
+      `,
+      ],
+      env: { ...bunEnv, READFILE_SHUTDOWN_DATA: dataPath },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("readfile microtask ran after worker shutdown");
+    expect(stderr).not.toContain("bad exit");
     expect(stdout).toBe("");
     expect(exitCode).toBe(0);
   },

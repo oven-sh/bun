@@ -84,6 +84,13 @@ pub trait ReadFileCompletion {
     /// `ctx` must be a heap-allocated `Self` whose ownership is transferred to
     /// this call (it is reclaimed via `bun_core::heap::take`).
     unsafe fn run(ctx: *mut Self, bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()>;
+
+    /// Frees `ctx` without touching the JSC heap. Called from the Windows
+    /// worker-shutdown discard path instead of [`Self::run`].
+    ///
+    /// # Safety
+    /// Same ownership contract as [`Self::run`].
+    unsafe fn discard(ctx: *mut Self);
 }
 
 impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
@@ -124,6 +131,18 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
         }
         Ok(())
     }
+
+    unsafe fn discard(handler: *mut Self) {
+        // SAFETY: handler was heap-allocated by doReadFile(); we take ownership here.
+        let mut handler = unsafe { bun_core::heap::take(handler) };
+        // SAFETY: intentional leak — the JSC `HandleSet` that backs the
+        // Strong handle is already freed when this runs on Windows
+        // `Loop::shutdown`'s final `uv_run`; dropping it would dereference
+        // freed memory. `context` (a `Blob`/`StoreRef`) drops normally.
+        #[allow(clippy::mem_forget)]
+        core::mem::forget(core::mem::take(&mut handler.promise));
+        drop(handler);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -131,6 +150,14 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub type ReadFileOnReadFileCallback = fn(ctx: *mut c_void, bytes: ReadFileResultType);
+
+/// Frees the `ctx` passed alongside [`ReadFileOnReadFileCallback`] without
+/// resolving the promise or entering JS. Called on the Windows
+/// worker-shutdown discard path.
+///
+/// # Safety
+/// Must match the concrete `ctx` type the paired run callback expects.
+pub type ReadFileOnDiscardCallback = unsafe fn(ctx: *mut c_void);
 
 pub struct ReadFileRead {
     /// Always a `Box::<[u8]>::into_raw` from the producer's read buffer
@@ -935,6 +962,7 @@ pub struct ReadFileUV<'a> {
     pub errno: Option<Error>,
     pub on_complete_data: *mut c_void,
     pub on_complete_fn: ReadFileOnReadFileCallback,
+    pub on_complete_discard: ReadFileOnDiscardCallback,
     pub is_regular_file: bool,
 
     pub req: libuv::fs_t,
@@ -1040,6 +1068,7 @@ impl<'a> ReadFileUV<'a> {
             max_len,
             // Erase the typed handler to the C ABI cb.
             H::run as ReadFileOnReadFileCallback,
+            H::discard as ReadFileOnDiscardCallback,
             handler,
         )
     }
@@ -1052,6 +1081,7 @@ impl<'a> ReadFileUV<'a> {
         off: SizeType,
         max_len: SizeType,
         on_complete_fn: ReadFileOnReadFileCallback,
+        on_complete_discard: ReadFileOnDiscardCallback,
         handler: *mut c_void,
     ) {
         log!("ReadFileUV.start");
@@ -1081,6 +1111,7 @@ impl<'a> ReadFileUV<'a> {
             errno: None,
             on_complete_data: handler,
             on_complete_fn,
+            on_complete_discard,
             is_regular_file: false,
             req: bun_core::ffi::zeroed(),
             open_callback: Self::on_file_open,
@@ -1099,6 +1130,32 @@ impl<'a> ReadFileUV<'a> {
         // SAFETY: `this` was heap-allocated in start(); we reclaim ownership here.
         let mut this_box = unsafe { bun_core::heap::take(this) };
         let event_loop = this_box.event_loop;
+
+        // SAFETY: `virtual_machine` back-references the VM that owns
+        // `event_loop`; it is still allocated (the VM box is freed only after
+        // `Loop::shutdown` returns, see `WebWorker::shutdown`).
+        let is_shutting_down = unsafe {
+            event_loop
+                .virtual_machine
+                .is_some_and(|vm| vm.as_ref().is_shutting_down())
+        };
+        if is_shutting_down {
+            // JSC VM (and its `HandleSet` / `JSLock`) is already torn down by
+            // the time this fires on Windows `Loop::shutdown`'s final
+            // `uv_run`. Discard the handler without touching JS, free the
+            // read buffer via normal Drop of `this_box`, and release the
+            // event-loop ref.
+            log!("ReadFileUV.finalize discard (worker shutting down)");
+            let discard = this_box.on_complete_discard;
+            let cb_ctx = this_box.on_complete_data;
+            // SAFETY: `cb_ctx` is the handler pointer paired with `discard`
+            // at `start`/`start_with_ctx`; `discard` consumes it.
+            unsafe { discard(cb_ctx) };
+            this_box.req.deinit();
+            drop(this_box);
+            event_loop.unref_concurrently();
+            return;
+        }
 
         let cb = this_box.on_complete_fn;
         let cb_ctx = this_box.on_complete_data;
@@ -1425,6 +1482,10 @@ impl<'a> ReadFileUV<'a> {
 /// implementor supplies the already-erased thunk.
 pub trait ReadFileUvHandler {
     fn run(ctx: *mut c_void, bytes: ReadFileResultType);
+
+    /// # Safety
+    /// See [`ReadFileOnDiscardCallback`].
+    unsafe fn discard(ctx: *mut c_void);
 }
 
 /// Any `ReadFileCompletion` is usable as a `ReadFileUV` handler — the libuv
@@ -1435,5 +1496,11 @@ impl<C: ReadFileCompletion> ReadFileUvHandler for C {
         // SAFETY: `ctx` is the `*mut C` passed unmodified through
         // `on_complete_data`; ownership transfers per `ReadFileCompletion::run`.
         let _ = unsafe { <C as ReadFileCompletion>::run(ctx.cast::<C>(), bytes) };
+    }
+
+    unsafe fn discard(ctx: *mut c_void) {
+        // SAFETY: `ctx` is the `*mut C` passed unmodified through
+        // `on_complete_data`; ownership transfers per `ReadFileCompletion::discard`.
+        unsafe { <C as ReadFileCompletion>::discard(ctx.cast::<C>()) };
     }
 }

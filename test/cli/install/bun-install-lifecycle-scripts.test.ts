@@ -4046,7 +4046,7 @@ test.concurrent("failed lifecycle script output preserves non-UTF-8 bytes", asyn
     env,
   });
 
-  const [stderrBytes, exitCode] = await Promise.all([proc.stderr.bytes(), proc.stdout.bytes(), proc.exited]);
+  const [stderrBytes, , exitCode] = await Promise.all([proc.stderr.bytes(), proc.stdout.bytes(), proc.exited]);
 
   const hex = Buffer.from(stderrBytes).toString("hex");
   // Script stdout: must appear byte-for-byte (AB<C0><C1>CD).

@@ -1419,8 +1419,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         };
         let url_path_decoded = &path_buf2[0..decoded_len as usize];
 
+        // Carries a +1 WTFStringImpl ref on both assignment arms (`create_format`
+        // for blob:, `file_url_from_string` → `Bun::toStringRef` for file:).
+        // `Response::init` wraps it in `OwnedString` and adopts that +1, so it
+        // is passed by value below without an extra `.clone()`.
         let url_string: BunString;
-        // `defer url_string.deref()` → Drop.
 
         // This can be a blob: url or a file: url.
         let blob_to_use: Blob = 'blob: {
@@ -1542,7 +1545,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 ..Default::default()
             },
             Body::new(BodyValue::Blob(blob_to_use)),
-            url_string.clone(),
+            url_string,
             false,
         )));
 

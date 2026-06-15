@@ -498,6 +498,65 @@ describe.each(["string", "object"])("fetch({proxy}) %s form does not leak the pr
   );
 });
 
+// fetch.rs url_type != Remote: url_string carries a +1 WTFStringImpl ref
+// (create_format for blob:, file_url_from_string → Bun::toStringRef for file:)
+// that was passed to Response::init as url_string.clone() (inherent clone()
+// does dupe_ref(), so +2). Response::init adopts one ref; the local +1 was
+// never released, leaking one StringImpl ≈ "file://<path>".length per call.
+test("fetch(file://...) does not leak the response url WTFStringImpl", async () => {
+  // The leaked impl is "file://<resolved abs path>", capped at PATH_MAX, so
+  // use a ~3800-byte nonexistent absolute path (under Linux PATH_MAX 4096;
+  // Windows PathBuffer is 64 KiB so the same length is fine) and enough
+  // iterations for the small per-call leak to show in RSS.
+  const script = /* js */ `
+    const pad = Buffer.alloc(3800, "a").toString();
+    async function hit(i) {
+      // Fresh path per iteration so each leaked ref pins a distinct impl.
+      // The file does not exist; the Response is created (with url_string set)
+      // and the lazy Blob body is never read, so no fs I/O happens.
+      await fetch("file:///" + i + pad);
+    }
+    for (let i = 0; i < 100; i++) { try { await hit(-i); } catch {} }
+    Bun.gc(true);
+    const baseline = process.memoryUsage.rss();
+
+    const ITERS = 5000;
+    for (let i = 0; i < ITERS; i++) { try { await hit(i); } catch {} }
+    Bun.gc(true);
+    const final = process.memoryUsage.rss();
+
+    const deltaMB = (final - baseline) / 1024 / 1024;
+    console.log(JSON.stringify({
+      baselineMB: (baseline / 1024 / 1024) | 0,
+      finalMB: (final / 1024 / 1024) | 0,
+      deltaMB: Math.round(deltaMB * 10) / 10,
+    }));
+    // ~3.8 KiB × 5000 ≈ 18.6 MiB raw leak (measured ~33 MiB on debug+ASAN)
+    // when the extra ref is dropped on the floor; ~11 MiB noise with the fix.
+    if (deltaMB > 20) {
+      throw new Error("fetch(file://) leaked " + deltaMB.toFixed(1) + " MB over " + ITERS + " iterations");
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", script],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  console.log(stdout.trim());
+  if (exitCode !== 0) console.error(stderr);
+  expect({ stdout: stdout.includes("deltaMB"), stderr, exitCode }).toEqual({
+    stdout: true,
+    stderr: "",
+    exitCode: 0,
+  });
+}, 90000);
+
 // Regression for src/runtime/webcore/fetch/FetchTasklet.zig:601,614 —
 // Holder.resolve/reject use `self.promise.swap()` which *consumes* (clears)
 // the jsc.Strong handle on the fetch() promise before calling resolve()/reject().

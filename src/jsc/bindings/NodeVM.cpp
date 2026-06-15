@@ -725,8 +725,8 @@ JSC::Structure* NodeVMSpecialSandbox::createStructure(JSC::VM& vm, JSC::JSGlobal
 
 NodeVMSpecialSandbox::NodeVMSpecialSandbox(VM& vm, Structure* structure, NodeVMGlobalObject* globalObject)
     : Base(vm, structure)
+    , m_parentGlobal(globalObject, JSC::WriteBarrierEarlyInit)
 {
-    m_parentGlobal.set(vm, this, globalObject);
 }
 
 void NodeVMSpecialSandbox::finishCreation(VM& vm)

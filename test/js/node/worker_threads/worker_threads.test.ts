@@ -278,6 +278,32 @@ describe("execArgv option", async () => {
     await run('["--no-warnings"]', '["--no-warnings"]\n');
   });
   // TODO(@190n) get our handling of non-string array elements in line with Node's
+
+  describe("--no-addons is honored after a value-taking flag", () => {
+    // The value token for `-r` / `--title` / `--port` / `-e` must not be
+    // treated as the first positional when parsing the worker's execArgv.
+    const body = `try { process.dlopen({ exports: {} }, "/nonexistent.node"); } catch (e) { require("node:worker_threads").parentPort.postMessage(e.code); }`;
+    it.each([
+      [["--no-addons"]],
+      [["-r", "./preload.js", "--no-addons"]],
+      [["--require", "./preload.js", "--no-addons"]],
+      [["--title", "foo", "--no-addons"]],
+      [["--port", "3000", "--no-addons"]],
+      [["-e", "void 0", "--no-addons"]],
+      [["--no-addons", "-r", "./preload.js"]],
+    ])("%j", async execArgv => {
+      const worker = new Worker(body, { eval: true, execArgv });
+      try {
+        const code = await new Promise((resolve, reject) => {
+          worker.on("message", resolve);
+          worker.on("error", reject);
+        });
+        expect(code).toBe("ERR_DLOPEN_DISABLED");
+      } finally {
+        await worker.terminate();
+      }
+    });
+  });
 });
 
 test("eval does not leak source code", async () => {

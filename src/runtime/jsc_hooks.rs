@@ -1457,8 +1457,10 @@ unsafe fn apply_standalone_runtime_flags(
 /// reads the single `--no-addons` flag from the result (per the in-tree
 /// `// TODO: currently this only checks for --no-addons`), so this body scans
 /// the converted argv directly with the same `stop_after_positional_at = 1`
-/// short-circuit. Full clap routing can return when `ComptimeClap` grows a
-/// borrowed-lifetime variant.
+/// short-circuit — consulting `RUN_PARAMS` so a value token following a
+/// value-taking flag (`-r x`, `--title x`, …) is consumed rather than treated
+/// as the first positional. Full clap routing can return when `ComptimeClap`
+/// grows a borrowed-lifetime variant.
 ///
 /// # Safety
 /// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
@@ -1466,7 +1468,30 @@ unsafe fn apply_standalone_runtime_flags(
 unsafe fn parse_worker_exec_argv_allow_addons(
     exec_argv: &[bun_core::WTFStringImpl],
 ) -> Option<bool> {
+    use crate::cli::arguments::RUN_PARAMS;
+    use bun_clap::Values;
+
+    // Does `bytes` name a `RUN_PARAMS` flag whose value is supplied by the
+    // *next* token? True only for the bare `--long` / `-s` spellings of a
+    // `One`/`Many` param; `--long=val`, `-s=val`, `-sval`, chained shorts and
+    // `OneOptional` params all carry their value (if any) inline and do not
+    // pull from the iterator in `StreamingClap`.
+    fn flag_consumes_next_token(bytes: &[u8]) -> bool {
+        let param = if let Some(long) = bytes.strip_prefix(b"--") {
+            RUN_PARAMS.iter().find(|p| p.names.matches_long(long))
+        } else if bytes.len() == 2 && bytes[0] == b'-' {
+            RUN_PARAMS.iter().find(|p| p.names.short == Some(bytes[1]))
+        } else {
+            None
+        };
+        matches!(
+            param.map(|p| p.takes_value),
+            Some(Values::One | Values::Many)
+        )
+    }
+
     let mut no_addons = false;
+    let mut prev_wants_value = false;
     for &arg in exec_argv {
         if arg.is_null() {
             continue;
@@ -1474,8 +1499,13 @@ unsafe fn parse_worker_exec_argv_allow_addons(
         // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
         let owned = unsafe { &*arg }.to_owned_slice_z();
         let bytes = owned.as_bytes();
-        // `stop_after_positional_at = 1` — first non-flag token ends parsing.
+        // `stop_after_positional_at = 1` — first positional ends parsing. A
+        // non-`-` token that the previous flag consumes as its value is not a
+        // positional.
         if bytes.first() != Some(&b'-') {
+            if core::mem::take(&mut prev_wants_value) {
+                continue;
+            }
             break;
         }
         if bytes == b"--" {
@@ -1484,6 +1514,7 @@ unsafe fn parse_worker_exec_argv_allow_addons(
         if bytes == b"--no-addons" {
             no_addons = true;
         }
+        prev_wants_value = flag_consumes_next_token(bytes);
     }
     // Override `allow_addons` unconditionally on successful parse.
     Some(!no_addons)

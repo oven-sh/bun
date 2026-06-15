@@ -1,4 +1,4 @@
-import { jest, mock } from "bun:test";
+import { expect, jest, mock } from "bun:test";
 import { expectType } from "./utilities";
 
 const mock1 = mock((arg: string) => {
@@ -8,6 +8,12 @@ const mock1 = mock((arg: string) => {
 const arg1 = mock1("1");
 expectType<number>(arg1);
 mock;
+
+// Call-count matchers should be declared on Matchers (issue #32332)
+expect(mock1).toHaveBeenCalled();
+expect(mock1).toHaveBeenCalledOnce();
+expect(mock1).not.toHaveBeenCalledOnce();
+expect(mock1).toHaveBeenCalledTimes(1);
 
 type arg2 = jest.Spied<() => string>;
 declare var arg2: arg2;

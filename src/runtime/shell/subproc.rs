@@ -2319,7 +2319,10 @@ impl PipeReader {
                 unsafe { (*me).state = PipeReaderState::Done(Box::default()) };
                 ReadableStream::from_owned_slice(global_object, bytes.into_vec(), 0)
             }
-            PipeReaderState::Err(_err) => {
+            PipeReaderState::Err(err) => {
+                if let Some(e) = err {
+                    e.deref();
+                }
                 let empty = ReadableStream::empty(global_object)?;
                 ReadableStream::cancel(
                     &ReadableStream::from_js(empty, global_object)

@@ -89,13 +89,17 @@ describe.concurrent("node-module-module", () => {
   });
 
   test("_nodeModulePaths() does not leak the input string", async () => {
+    // 20 components keeps the joined path well under macOS PATH_MAX (1024)
+    // while generating 21 result strings per call, so the leak signal
+    // dominates RSS noise within a few thousand iterations.
     const code = /* js */ `
         const m = require("module");
-        const pad = Buffer.alloc(2000, "a").toString();
-        for (let i = 0; i < 2000; i++) m._nodeModulePaths("/" + pad + i);
+        const comp = Buffer.alloc(30, "a").toString();
+        const base = "/" + Array(20).fill(comp).join("/");
+        for (let i = 0; i < 200; i++) m._nodeModulePaths(base + i);
         Bun.gc(true); Bun.gc(true);
         const before = process.memoryUsage.rss();
-        for (let i = 0; i < 30000; i++) m._nodeModulePaths("/" + pad + i);
+        for (let i = 0; i < 5000; i++) m._nodeModulePaths(base + i);
         Bun.gc(true); Bun.gc(true); Bun.gc(true);
         process.stdout.write(String((process.memoryUsage.rss() - before) / 1024 / 1024));
       `;
@@ -115,9 +119,9 @@ describe.concurrent("node-module-module", () => {
     if (!Number.isFinite(growthMB)) {
       throw new Error(`subprocess did not report growth\nstdout: ${stdout}\nstderr: ${stderr}\nexit: ${exitCode}`);
     }
-    expect(growthMB).toBeLessThan(64);
+    expect(growthMB).toBeLessThan(25);
     expect(exitCode).toBe(0);
-  }, 30_000);
+  }, 20_000);
 
   test("Module.wrap", () => {
     var mod = { exports: {} };

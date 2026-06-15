@@ -4,11 +4,11 @@ use core::ffi::c_void;
 use crate::jsc::{
     CallFrame, EventLoopSqlExt as _, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
     GlobalRef, HasAutoFlush, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, KeepAlive,
-    VirtualMachine, VirtualMachineSqlExt as _, api::server_config::SSLConfig,
-    codegen::js_mysql_connection as js, webcore::AutoFlusher,
+    VirtualMachine, VirtualMachineSqlExt as _, codegen::js_mysql_connection as js,
+    webcore::AutoFlusher,
 };
 use crate::shared::CachedStructure;
-use bun_boringssl_sys as boringssl;
+use crate::shared::connection_ctor_args::{self, ConnectionCtorArgs};
 use bun_core::strings;
 use bun_core::{TimespecMockMode, timespec};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
@@ -470,75 +470,15 @@ impl JSMySQLConnection {
         // no other live borrow in this scope.
         let vm = global_object.bun_vm().as_mut();
         let arguments = callframe.arguments();
-        let hostname_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global_object)?);
-        let port = arguments[1].coerce::<i32>(global_object)?;
-
-        let username_str = bun_core::OwnedString::new(arguments[2].to_bun_string(global_object)?);
-        let password_str = bun_core::OwnedString::new(arguments[3].to_bun_string(global_object)?);
-        let database_str = bun_core::OwnedString::new(arguments[4].to_bun_string(global_object)?);
-        // TODO: update this to match MySQL.
-        let ssl_mode: SSLMode = match arguments[5].to_int32() {
-            0 => SSLMode::Disable,
-            1 => SSLMode::Prefer,
-            2 => SSLMode::Require,
-            3 => SSLMode::VerifyCa,
-            4 => SSLMode::VerifyFull,
-            _ => SSLMode::Disable,
+        let Some(args) = ConnectionCtorArgs::<SSLMode>::parse(global_object, &mut *vm, arguments)?
+        else {
+            return Ok(JSValue::ZERO);
         };
-
-        let tls_object = arguments[6];
-
-        let mut tls_config: SSLConfig = SSLConfig::default();
-        let mut secure: Option<*mut uws::SslCtx> = None;
-        if ssl_mode != SSLMode::Disable {
-            tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
-                SSLConfig::default()
-            } else if tls_object.is_object() {
-                match SSLConfig::from_js(&mut *vm, global_object, tls_object) {
-                    Ok(Some(c)) => c,
-                    Ok(None) => SSLConfig::default(),
-                    Err(_) => return Ok(JSValue::ZERO),
-                }
-            } else {
-                return Err(global_object
-                    .throw_invalid_arguments(format_args!("tls must be a boolean or an object")));
-            };
-
-            if global_object.has_exception() {
-                drop(tls_config);
-                return Ok(JSValue::ZERO);
-            }
-
-            // We always request the cert so we can verify it and also we manually
-            // abort the connection if the hostname doesn't match. Built here so
-            // CA/cert errors throw synchronously, applied later by upgradeToTLS.
-            // Goes through the per-VM weak `SSLContextCache` so every pooled
-            // connection / reconnect shares one `SSL_CTX*` per distinct config.
-            let mut err = uws::create_bun_socket_error_t::none;
-            secure = vm
-                .ssl_ctx_cache()
-                .get_or_create_opts(&tls_config.as_usockets_for_client_verification(), &mut err);
-            if secure.is_none() {
-                drop(tls_config);
-                return Err(
-                    global_object.throw_value(crate::jsc::create_bun_socket_error_to_js(
-                        err,
-                        global_object,
-                    )),
-                );
-            }
-        }
         // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
         // below. Ownership passes to `MySQLConnection.init` once `Box::new`
         // succeeds — we null the locals at that point so the connect-fail path
         // (which `deref()`s the connection) doesn't double-free.
-        let tls_guard = scopeguard::guard((secure, tls_config), |(s, cfg)| {
-            if let Some(s) = s {
-                // SAFETY: secure was created by ssl_ctx_cache; we own one ref until transferred.
-                unsafe { boringssl::SSL_CTX_free(s) };
-            }
-            drop(cfg);
-        });
+        let tls_guard = connection_ctor_args::guard_tls(args.secure, args.tls_config);
 
         let options_str = bun_core::OwnedString::new(arguments[7].to_bun_string(global_object)?);
         let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
@@ -546,9 +486,9 @@ impl JSMySQLConnection {
         // `init` takes `Box<[u8]>` per field (each separately owned), so we
         // copy each string into its own allocation. `options_buf` becomes an
         // empty box.
-        let username: Box<[u8]> = Box::from(username_str.to_utf8_without_ref().slice());
-        let password: Box<[u8]> = Box::from(password_str.to_utf8_without_ref().slice());
-        let database: Box<[u8]> = Box::from(database_str.to_utf8_without_ref().slice());
+        let username: Box<[u8]> = Box::from(args.username_str.to_utf8_without_ref().slice());
+        let password: Box<[u8]> = Box::from(args.password_str.to_utf8_without_ref().slice());
+        let database: Box<[u8]> = Box::from(args.database_str.to_utf8_without_ref().slice());
         let options: Box<[u8]> = Box::from(options_str.to_utf8_without_ref().slice());
         let path: Box<[u8]> = Box::from(path_str.to_utf8_without_ref().slice());
         let options_buf: Box<[u8]> = Box::default();
@@ -595,7 +535,7 @@ impl JSMySQLConnection {
                 options_buf,
                 tls_config,
                 secure,
-                ssl_mode,
+                args.ssl_mode,
                 allow_public_key_retrieval,
             )),
             auto_flusher: JsCell::new(AutoFlusher::default()),
@@ -616,7 +556,7 @@ impl JSMySQLConnection {
         let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
 
         {
-            let hostname = hostname_str.to_utf8();
+            let hostname = args.hostname_str.to_utf8();
 
             // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
             // group after the SSLRequest exchange.
@@ -636,7 +576,7 @@ impl JSMySQLConnection {
                     uws::DispatchKind::Mysql,
                     None,
                     hostname.slice(),
-                    port,
+                    args.port,
                     ptr,
                     false,
                 )
@@ -698,8 +638,22 @@ impl JSMySQLConnection {
         scopeguard::defer! {
             this.update_reference_type();
         }
-        let queries = this.get_queries_array();
-        this.connection_mut().clean_queue_and_close(None, queries);
+        use my_sql_connection::Status as S;
+        match this.connection.get().status {
+            // A close while the connect/handshake is still in flight gets no
+            // socket event (uws skips the on_close dispatch for sockets whose
+            // connect never completed), so the socket-close -> on_close ->
+            // fail chain never runs: fail directly so the JS onclose callback
+            // fires and the status goes terminal instead of staying
+            // Connecting forever.
+            S::Connecting | S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => {
+                this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
+            }
+            S::Connected | S::Disconnected | S::Failed => {
+                let queries = this.get_queries_array();
+                this.connection_mut().clean_queue_and_close(None, queries);
+            }
+        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1054,7 +1008,21 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // RAII guard adopts that existing ref (no `ref_()` here); raw-pointer
         // shaped so no reference outlives the potential free.
         let _ref = DerefOnDrop(this.as_ctx_ptr());
-        this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
+        // A close before the handshake finished means the server (or an
+        // intermediary like a container port proxy) accepted the TCP
+        // connection but went away before completing startup — e.g. the
+        // database is still initializing. Report it as a connect failure
+        // (the connection was never established) rather than a closed
+        // connection so the error is actionable.
+        use my_sql_connection::Status as S;
+        let (message, err): (&'static [u8], AnyMySQLErrorT) = match this.connection.get().status {
+            S::Connecting | S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => (
+                b"Connection closed before the connection was established",
+                AnyMySQLErrorT::ConnectionFailed,
+            ),
+            _ => (b"Connection closed", AnyMySQLErrorT::ConnectionClosed),
+        };
+        this.fail(message, err);
     }
 
     pub fn on_end(_: &JSMySQLConnection, socket: NewSocketHandler<SSL>) {
@@ -1063,8 +1031,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32) {
-        // TODO: proper propagation of the error
-        this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
+        this.fail(b"Failed to connect", AnyMySQLErrorT::ConnectionRefused);
     }
 
     pub fn on_timeout(this: &JSMySQLConnection, _: NewSocketHandler<SSL>) {

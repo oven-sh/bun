@@ -1776,18 +1776,6 @@ pub struct RuntimeHooks {
     /// path. The caller gates the call on `vm.standalone_module_graph`.
     pub load_standalone_sourcemap:
         fn(path: &[u8]) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>>,
-    /// `bake::production::PerThread` source-map JSON lookup
-    /// (`pt.source_maps.get(filename) → pt.bundled_outputs[idx].value.asSlice()`).
-    /// `pt` is the opaque `*mut PerThread` round-tripped through C++ via
-    /// `BakeGlobalObject__attachPerThreadData` / `…__getPerThreadData`;
-    /// `PerThread` lives in `bun_runtime::bake::production` (forward-dep
-    /// cycle), so `BakeSourceProvider::get_external_data` reaches it through
-    /// this slot. Returns the bundled `.map` JSON for `source_filename`, or
-    /// `None` if not in the table; the slice borrows
-    /// `PerThread.bundled_outputs` (lives for the bake build session, which
-    /// outlives any error-stack source-map resolution).
-    pub bake_per_thread_source_map:
-        unsafe fn(pt: *mut c_void, source_filename: &[u8]) -> Option<*const [u8]>,
     /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)`.
     /// Walks the active test file's
     /// scope tree and emits `reportTestFoundWithLocation` for every test
@@ -3438,15 +3426,28 @@ impl VirtualMachine {
     /// the concrete `bun_install::PackageManager` here — the resolver's
     /// `PackageManager` is exactly that struct, just type-erased at a lower
     /// tier.
+    ///
+    /// Panics when the lazy init fails (unreadable top-level dir). Production
+    /// callers (AsyncModule's pending-task machinery) only run after a pending
+    /// dependency was enqueued, which requires a previously successful
+    /// `get_package_manager`, so the init error is surfaced as a resolve
+    /// failure in `Resolver::load_node_modules` long before reaching here.
+    /// The one caller outside that machinery is the `bun:internal-for-testing`
+    /// `parseLockfile` binding (`install_jsc/install_binding.rs`), which may
+    /// lazy-init here and accepts the panic on its test-only surface.
     #[inline]
     pub fn package_manager(&mut self) -> &mut bun_install::PackageManager {
-        let pm = self.transpiler.get_package_manager();
+        let pm = self
+            .transpiler
+            .get_package_manager()
+            .expect("package manager init already succeeded when the pending task was enqueued");
         // SAFETY: `bun_resolver::package_json::PackageManager` is an opaque
         // forward-decl of `bun_install::PackageManager`; the pointer was
         // produced by `PackageManager::init_with_runtime` (the install crate)
         // and only ever names that one type, so the concrete 64-byte alignment
-        // is preserved through the `dyn` erasure. `get_package_manager` never
-        // returns null (it lazy-inits the process-static singleton).
+        // is preserved through the `dyn` erasure. On success
+        // `get_package_manager` never returns null (it lazy-inits the
+        // process-static singleton).
         unsafe {
             &mut *NonNull::new_unchecked(pm)
                 .cast::<bun_install::PackageManager>()

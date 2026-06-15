@@ -93,8 +93,9 @@ pub enum ReadBytesResult {
     Err(Box<bun_jsc::SystemError>),
 }
 
-/// Handler trait for `read_bytes_to_handler` — the body only requires
-/// `on_read_bytes`.
+/// Handler trait for `read_bytes_to_handler`. Exactly one of
+/// `on_read_bytes` (normal completion) or `on_read_discard` (Windows
+/// worker-shutdown path) is called per read.
 pub trait ReadBytesHandler {
     fn on_read_bytes(&mut self, result: ReadBytesResult);
 

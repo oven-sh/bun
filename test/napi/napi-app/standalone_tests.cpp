@@ -3450,6 +3450,48 @@ test_node_api_sharedarraybuffer(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// napi_get_all_property_names must propagate exceptions thrown by Proxy traps
+// (getOwnPropertyDescriptor / getPrototypeOf) that run inside its descriptor
+// filter loop. info[1] is the target object, info[2] is the
+// napi_key_collection_mode (0 = include_prototypes, 1 = own_only).
+static napi_value
+test_napi_get_all_property_names_throws(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value target = info[1];
+  int mode = info[2].As<Napi::Number>().Int32Value();
+  napi_key_collection_mode key_mode =
+      mode == 0 ? napi_key_include_prototypes : napi_key_own_only;
+
+  napi_value result = nullptr;
+  napi_status status = napi_get_all_property_names(
+      env, target, key_mode, napi_key_enumerable, napi_key_keep_numbers,
+      &result);
+  printf("napi_get_all_property_names(mode=%d) status -> %d\n", mode,
+         (int)status);
+
+  bool is_exception_pending = false;
+  NODE_API_CALL(env, napi_is_exception_pending(env, &is_exception_pending));
+  printf("napi_is_exception_pending -> %s\n",
+         is_exception_pending ? "true" : "false");
+
+  if (is_exception_pending) {
+    napi_value exception;
+    NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exception));
+    napi_value message_val;
+    if (napi_get_named_property(env, exception, "message", &message_val) ==
+        napi_ok) {
+      char message[256] = {0};
+      size_t message_len = 0;
+      napi_get_value_string_utf8(env, message_val, message,
+                                 sizeof(message) - 1, &message_len);
+      printf("exception message: %s\n", message);
+    }
+  }
+
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
@@ -3525,6 +3567,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_node_api_set_prototype);
   REGISTER_FUNCTION(env, exports, test_node_api_create_object_with_properties);
   REGISTER_FUNCTION(env, exports, test_node_api_sharedarraybuffer);
+  REGISTER_FUNCTION(env, exports, test_napi_get_all_property_names_throws);
 }
 
 } // namespace napitests

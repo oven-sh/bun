@@ -9,6 +9,13 @@ import { itBundled } from "./expectBundled";
 // calling a component twice with the same props must only invoke the jsx
 // factory once when compilation happened.
 //
+// Each test runs the full compiler pipeline (parse -> semantic analysis ->
+// HIR/SSA/inference/codegen -> emit) in the spawned build process, so scale
+// the 5s local-release timeout like other heavier bundler suites do
+// (bundler_plugin.test.ts, bundler_edgecase.test.ts). CI uses its own
+// timeouts and ignores this.
+const timeoutScale = 3;
+//
 // NOTE: the first key of `files` is the entry point, so the stubs must be
 // spread after it.
 const runtimeStubs = {
@@ -44,6 +51,7 @@ describe("bundler", () => {
     itBundled(`react-compiler/${backend}/MemoizesComponent`, {
       backend,
       reactCompiler: true,
+      timeoutScale,
       files: {
         "/entry.jsx": /* jsx */ `
           function Box({ label }) {
@@ -68,6 +76,7 @@ describe("bundler", () => {
   }
 
   itBundled("react-compiler/OffByDefault", {
+    timeoutScale,
     files: {
       "/entry.jsx": /* jsx */ `
         function Box({ label }) {
@@ -90,6 +99,7 @@ describe("bundler", () => {
   itBundled("react-compiler/UseNoMemoDirective", {
     backend: "cli",
     reactCompiler: true,
+    timeoutScale,
     files: {
       "/entry.jsx": /* jsx */ `
         function Box({ label }) {
@@ -113,6 +123,7 @@ describe("bundler", () => {
   itBundled("react-compiler/SkipsNodeModules", {
     backend: "cli",
     reactCompiler: true,
+    timeoutScale,
     files: {
       "/entry.jsx": /* jsx */ `
         import { LibBox } from "some-ui-lib";
@@ -141,6 +152,7 @@ describe("bundler", () => {
   itBundled("react-compiler/UnsupportedSyntaxBailsGracefully", {
     backend: "cli",
     reactCompiler: true,
+    timeoutScale,
     files: {
       "/entry.jsx": /* jsx */ `
         class Brand {
@@ -168,6 +180,7 @@ describe("bundler", () => {
   itBundled("react-compiler/TypeScriptComponent", {
     backend: "cli",
     reactCompiler: true,
+    timeoutScale,
     files: {
       "/entry.tsx": /* tsx */ `
         interface Props {
@@ -196,6 +209,7 @@ describe("bundler", () => {
   itBundled("react-compiler/CustomHookMemoized", {
     backend: "cli",
     reactCompiler: true,
+    timeoutScale,
     files: {
       "/entry.jsx": /* jsx */ `
         import { useStyles } from "./useStyles.js";

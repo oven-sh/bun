@@ -520,6 +520,11 @@ function expectBundled(
     generateOutput = true,
     onAfterApiBundle,
     throw: _throw = false,
+    // Consumed by itBundled's test registration, not here — destructured so
+    // it doesn't land in unknownProps (whose throw the dry-run call swallows,
+    // silently dropping the test). edgecase/AwsCdkLib and
+    // plugin/ResolveManySegfault were both being skipped by this.
+    timeoutScale: _timeoutScale,
     ...unknownProps
   } = opts;
 

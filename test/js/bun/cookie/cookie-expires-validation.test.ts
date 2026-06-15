@@ -124,6 +124,24 @@ describe("Bun.Cookie expires validation", () => {
       }).toThrowErrorMatchingInlineSnapshot(`"Invalid cookie expiration date"`);
     });
 
+    test("accepts string that parses to epoch (0 ms)", () => {
+      const cookie = new Bun.Cookie("name", "value", { expires: "Thu, 01 Jan 1970 00:00:00 GMT" });
+      expect(cookie.expires).toEqual(new Date(0));
+    });
+
+    test("throws for string with out-of-range year", () => {
+      expect(() => {
+        new Bun.Cookie("name", "value", { expires: "Wed, 01 Jan 300000000 00:00:00 GMT" });
+      }).toThrow("Invalid cookie expiration date");
+    });
+
+    test("Cookie.parse ignores Expires attribute with out-of-range year", () => {
+      const cookie = Bun.Cookie.parse("a=b; Expires=Wed, 01 Jan 300000000 00:00:00 GMT");
+      expect(cookie.name).toBe("a");
+      expect(cookie.value).toBe("b");
+      expect(cookie.expires).toBeUndefined();
+    });
+
     test("throws for arrays", () => {
       expect(() => {
         new Bun.Cookie("name", "value", { expires: [2023, 11, 25] });

@@ -76,16 +76,12 @@ static int64_t getExpiresValue(JSGlobalObject* lexicalGlobalObject, JSC::ThrowSc
         auto expiresStr = convert<IDLUSVString>(*lexicalGlobalObject, expiresValue);
         RETURN_IF_EXCEPTION(throwScope, Cookie::emptyExpiresAtValue);
         auto nullTerminatedSpan = expiresStr.utf8();
-        if (auto parsed = WTF::parseDate(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(nullTerminatedSpan.data()), nullTerminatedSpan.length()))) {
-            if (!std::isfinite(parsed) || std::abs(parsed) > WTF::maxECMAScriptTime) {
-                throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Invalid cookie expiration date"_s));
-                return Cookie::emptyExpiresAtValue;
-            }
-            return static_cast<int64_t>(parsed);
-        } else {
+        double parsed = WTF::parseDate(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(nullTerminatedSpan.data()), nullTerminatedSpan.length()));
+        if (!std::isfinite(parsed) || std::abs(parsed) > WTF::maxECMAScriptTime) {
             throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Invalid cookie expiration date"_s));
             return Cookie::emptyExpiresAtValue;
         }
+        return static_cast<int64_t>(parsed);
     }
 
     return Bun::ERR::INVALID_ARG_VALUE(throwScope, lexicalGlobalObject, "expires"_s, expiresValue, "Invalid expires value. Must be a Date or a number"_s);

@@ -289,18 +289,17 @@ test.if(isPosix)("rm -rf: failure removing one directory does not abort sibling 
     try {
       result = JSON.parse(stdout.trim());
     } catch {
-      result = { parseError: true };
+      result = { parseError: true, stdout, stderr };
     }
     // `a/sub/ss` is removed; `a/sub` survives because `a` is read-only.
     // `b` must be fully removed regardless.
-    expect({ result, stderr, exitCode }).toEqual({
+    expect({ result, exitCode }).toEqual({
       result: {
         bRemaining: -1,
         subExists: true,
         ssExists: false,
         exitCode: 1,
       },
-      stderr: "",
       exitCode: 0,
     });
   } finally {

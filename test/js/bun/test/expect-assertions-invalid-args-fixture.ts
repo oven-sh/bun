@@ -3,145 +3,124 @@ import { expect, jest, test } from "bun:test";
 // Each test asserts that a matcher throwing an *argument-validation* error
 // (wrong arity or wrong argument type) does not increment the assertion
 // counter, matching Jest and the original implementation.
+//
+// The `threw` check uses a plain `throw` (not `expect`) so the counter stays
+// at 0 while still failing the test if the matcher stops rejecting bad args.
+
+function mustThrow(name: string, fn: () => void) {
+  let threw = false;
+  try {
+    fn();
+  } catch {
+    threw = true;
+  }
+  if (!threw) throw new Error(`${name} with invalid args must throw`);
+}
 
 test("toBe argcount", () => {
   expect.assertions(0);
-  try {
-    // @ts-expect-error
-    expect(1).toBe();
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toBe()", () => expect(1).toBe());
 });
 
 test("toBeOneOf argcount", () => {
   expect.assertions(0);
-  try {
-    // @ts-expect-error
-    expect(1).toBeOneOf();
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toBeOneOf()", () => expect(1).toBeOneOf());
 });
 
 test("toBeTypeOf argcount", () => {
   expect.assertions(0);
-  try {
-    // @ts-expect-error
-    expect(1).toBeTypeOf();
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toBeTypeOf()", () => expect(1).toBeTypeOf());
 });
 
 test("toBeTypeOf type", () => {
   expect.assertions(0);
-  try {
-    // @ts-expect-error
-    expect(1).toBeTypeOf(123);
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toBeTypeOf(number)", () => expect(1).toBeTypeOf(123));
 });
 
 test("toBeWithin argcount", () => {
   expect.assertions(0);
-  try {
-    // @ts-expect-error
-    expect(5).toBeWithin();
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toBeWithin()", () => expect(5).toBeWithin());
 });
 
 test("toBeWithin type start", () => {
   expect.assertions(0);
-  try {
-    // @ts-expect-error
-    expect(5).toBeWithin("a", 10);
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toBeWithin(str, num)", () => expect(5).toBeWithin("a", 10));
 });
 
 test("toBeWithin type end", () => {
   expect.assertions(0);
-  try {
-    // @ts-expect-error
-    expect(5).toBeWithin(0, "z");
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toBeWithin(num, str)", () => expect(5).toBeWithin(0, "z"));
 });
 
 test("toContain argcount", () => {
   expect.assertions(0);
-  try {
-    // @ts-expect-error
-    expect([1]).toContain();
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toContain()", () => expect([1]).toContain());
 });
 
 test("toContainEqual argcount", () => {
   expect.assertions(0);
-  try {
-    // @ts-expect-error
-    expect([1]).toContainEqual();
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toContainEqual()", () => expect([1]).toContainEqual());
 });
 
 test("toEqual argcount", () => {
   expect.assertions(0);
-  try {
-    // @ts-expect-error
-    expect(1).toEqual();
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toEqual()", () => expect(1).toEqual());
 });
 
 test("toEqualIgnoringWhitespace argcount", () => {
   expect.assertions(0);
-  try {
-    // @ts-expect-error
-    expect("x").toEqualIgnoringWhitespace();
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toEqualIgnoringWhitespace()", () => expect("x").toEqualIgnoringWhitespace());
 });
 
 test("toHaveLength argcount", () => {
   expect.assertions(0);
-  try {
-    // @ts-expect-error
-    expect([1]).toHaveLength();
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toHaveLength()", () => expect([1]).toHaveLength());
 });
 
 test("toMatch argcount", () => {
   expect.assertions(0);
-  try {
-    // @ts-expect-error
-    expect("x").toMatch();
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toMatch()", () => expect("x").toMatch());
 });
 
 test("toStrictEqual argcount", () => {
   expect.assertions(0);
-  try {
-    // @ts-expect-error
-    expect(1).toStrictEqual();
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toStrictEqual()", () => expect(1).toStrictEqual());
 });
 
 test("toHaveBeenCalled argcount", () => {
   expect.assertions(0);
   const fn = jest.fn();
-  try {
-    // @ts-expect-error
-    expect(fn).toHaveBeenCalled(1);
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toHaveBeenCalled(arg)", () => expect(fn).toHaveBeenCalled(1));
 });
 
 test("toHaveNthReturnedWith type", () => {
   expect.assertions(0);
   const fn = jest.fn(() => 1);
   fn();
-  try {
-    // @ts-expect-error
-    expect(fn).toHaveNthReturnedWith("x", 1);
-  } catch {}
+  // @ts-expect-error
+  mustThrow("toHaveNthReturnedWith(str, ...)", () => expect(fn).toHaveNthReturnedWith("x", 1));
 });
 
 test("toHaveNthReturnedWith n<=0", () => {
   expect.assertions(0);
   const fn = jest.fn(() => 1);
   fn();
-  try {
-    expect(fn).toHaveNthReturnedWith(0, 1);
-  } catch {}
+  mustThrow("toHaveNthReturnedWith(0, ...)", () => expect(fn).toHaveNthReturnedWith(0, 1));
 });
 
 // Valid calls must still count: one assertion each.

@@ -1827,6 +1827,161 @@ static napi_value test_napi_empty_buffer_info(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// napi_get_typedarray_info / napi_get_dataview_info must report the view's
+// real byteOffset into the returned ArrayBuffer. `data` is offset-adjusted
+// (points at the view's first element), so `data == arraybuffer_data +
+// byte_offset` must hold. Bun previously hardcoded byte_offset = 0 while
+// `arraybuffer` was the full backing buffer, so reconstructing the view via
+// `new TypedArray(arraybuffer, byte_offset, length)` produced a misaligned
+// view.
+static napi_value
+test_napi_typedarray_byte_offset(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Backing ArrayBuffer of 32 bytes filled with 0..31 so views see
+  // offset-dependent data.
+  void *ab_data = nullptr;
+  napi_value arraybuffer;
+  NODE_API_CALL(env, napi_create_arraybuffer(env, 32, &ab_data, &arraybuffer));
+  for (size_t i = 0; i < 32; i++) {
+    static_cast<uint8_t *>(ab_data)[i] = static_cast<uint8_t>(i);
+  }
+
+  // --- TypedArray with nonzero offset ---
+  {
+    const size_t expected_offset = 8;
+    const size_t expected_length = 4;
+    napi_value view;
+    NODE_API_CALL(env, napi_create_typedarray(env, napi_uint8_array,
+                                              expected_length, arraybuffer,
+                                              expected_offset, &view));
+
+    napi_typedarray_type type = static_cast<napi_typedarray_type>(-1);
+    size_t length = SIZE_MAX;
+    void *data = reinterpret_cast<void *>(0xDEADBEEF);
+    napi_value out_ab = nullptr;
+    size_t byte_offset = SIZE_MAX;
+    NODE_API_CALL(env, napi_get_typedarray_info(env, view, &type, &length,
+                                                &data, &out_ab, &byte_offset));
+
+    if (type != napi_uint8_array) {
+      printf("FAIL: napi_get_typedarray_info type = %d, expected "
+             "napi_uint8_array\n",
+             type);
+      return env.Undefined();
+    }
+    if (length != expected_length) {
+      printf("FAIL: napi_get_typedarray_info length = %zu, expected %zu\n",
+             length, expected_length);
+      return env.Undefined();
+    }
+    if (byte_offset != expected_offset) {
+      printf("FAIL: napi_get_typedarray_info byte_offset = %zu, expected "
+             "%zu\n",
+             byte_offset, expected_offset);
+      return env.Undefined();
+    }
+    void *out_ab_data = nullptr;
+    size_t out_ab_len = 0;
+    NODE_API_CALL(
+        env, napi_get_arraybuffer_info(env, out_ab, &out_ab_data, &out_ab_len));
+    if (out_ab_data != ab_data || out_ab_len != 32) {
+      printf("FAIL: napi_get_typedarray_info arraybuffer is not the full "
+             "backing buffer (data=%p expected %p, len=%zu expected 32)\n",
+             out_ab_data, ab_data, out_ab_len);
+      return env.Undefined();
+    }
+    if (data != static_cast<uint8_t *>(out_ab_data) + byte_offset) {
+      printf("FAIL: napi_get_typedarray_info data (%p) != arraybuffer data "
+             "(%p) + byte_offset (%zu)\n",
+             data, out_ab_data, byte_offset);
+      return env.Undefined();
+    }
+    if (static_cast<uint8_t *>(data)[0] != expected_offset) {
+      printf("FAIL: napi_get_typedarray_info data[0] = %u, expected %zu\n",
+             static_cast<uint8_t *>(data)[0], expected_offset);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_get_typedarray_info byte_offset = %zu, data = "
+           "arraybuffer + byte_offset\n",
+           byte_offset);
+  }
+
+  // --- TypedArray with zero offset (regression guard) ---
+  {
+    napi_value view;
+    NODE_API_CALL(env, napi_create_typedarray(env, napi_uint8_array, 4,
+                                              arraybuffer, 0, &view));
+    size_t byte_offset = SIZE_MAX;
+    void *data = nullptr;
+    NODE_API_CALL(env, napi_get_typedarray_info(env, view, nullptr, nullptr,
+                                                &data, nullptr, &byte_offset));
+    if (byte_offset != 0 || data != ab_data) {
+      printf("FAIL: napi_get_typedarray_info zero-offset view byte_offset = "
+             "%zu, data = %p (expected 0, %p)\n",
+             byte_offset, data, ab_data);
+      return env.Undefined();
+    }
+    printf("PASS: napi_get_typedarray_info zero-offset view byte_offset = 0\n");
+  }
+
+  // --- DataView with nonzero offset ---
+  {
+    const size_t expected_offset = 12;
+    const size_t expected_length = 6;
+    napi_value view;
+    NODE_API_CALL(env, napi_create_dataview(env, expected_length, arraybuffer,
+                                            expected_offset, &view));
+
+    size_t byte_length = SIZE_MAX;
+    void *data = reinterpret_cast<void *>(0xDEADBEEF);
+    napi_value out_ab = nullptr;
+    size_t byte_offset = SIZE_MAX;
+    NODE_API_CALL(env, napi_get_dataview_info(env, view, &byte_length, &data,
+                                              &out_ab, &byte_offset));
+
+    if (byte_length != expected_length) {
+      printf("FAIL: napi_get_dataview_info byte_length = %zu, expected %zu\n",
+             byte_length, expected_length);
+      return env.Undefined();
+    }
+    if (byte_offset != expected_offset) {
+      printf(
+          "FAIL: napi_get_dataview_info byte_offset = %zu, expected %zu\n",
+          byte_offset, expected_offset);
+      return env.Undefined();
+    }
+    void *out_ab_data = nullptr;
+    size_t out_ab_len = 0;
+    NODE_API_CALL(
+        env, napi_get_arraybuffer_info(env, out_ab, &out_ab_data, &out_ab_len));
+    if (out_ab_data != ab_data || out_ab_len != 32) {
+      printf("FAIL: napi_get_dataview_info arraybuffer is not the full "
+             "backing buffer (data=%p expected %p, len=%zu expected 32)\n",
+             out_ab_data, ab_data, out_ab_len);
+      return env.Undefined();
+    }
+    if (data != static_cast<uint8_t *>(out_ab_data) + byte_offset) {
+      printf("FAIL: napi_get_dataview_info data (%p) != arraybuffer data "
+             "(%p) + byte_offset (%zu)\n",
+             data, out_ab_data, byte_offset);
+      return env.Undefined();
+    }
+    if (static_cast<uint8_t *>(data)[0] != expected_offset) {
+      printf("FAIL: napi_get_dataview_info data[0] = %u, expected %zu\n",
+             static_cast<uint8_t *>(data)[0], expected_offset);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_get_dataview_info byte_offset = %zu, data = "
+           "arraybuffer + byte_offset\n",
+           byte_offset);
+  }
+
+  return ok(env);
+}
+
 // Test for napi_typeof with boxed primitive objects (String, Number, Boolean)
 // See: https://github.com/oven-sh/bun/issues/25351
 static napi_value napi_get_typeof(const Napi::CallbackInfo &info) {
@@ -2383,6 +2538,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
+  REGISTER_FUNCTION(env, exports, test_napi_typedarray_byte_offset);
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
   REGISTER_FUNCTION(env, exports, test_external_buffer_data_lifetime);
   REGISTER_FUNCTION(env, exports, test_external_arraybuffer_finalizer);

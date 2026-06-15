@@ -318,6 +318,16 @@ describe.concurrent("napi", () => {
     });
   });
 
+  describe("napi_get_typedarray_info / napi_get_dataview_info", () => {
+    it("report the view's byte_offset into the returned arraybuffer", async () => {
+      const result = await checkSameOutput("test_napi_typedarray_byte_offset", []);
+      expect(result).toContain("PASS: napi_get_typedarray_info byte_offset = 8, data = arraybuffer + byte_offset");
+      expect(result).toContain("PASS: napi_get_typedarray_info zero-offset view byte_offset = 0");
+      expect(result).toContain("PASS: napi_get_dataview_info byte_offset = 12, data = arraybuffer + byte_offset");
+      expect(result).not.toContain("FAIL");
+    });
+  });
+
   describe("napi_async_work", () => {
     it("null checks execute callbacks", async () => {
       const output = await checkSameOutput("test_napi_async_work_execute_null_check", []);

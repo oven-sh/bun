@@ -15,7 +15,8 @@ const { urlToHttpOptions } = require("internal/url");
 const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
-const { ConnResetException } = require("internal/shared");
+const { ConnResetException, ExceptionWithHostPort } = require("internal/shared");
+const { UV_ECONNREFUSED } = process.binding("uv");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -329,7 +330,7 @@ function ClientRequest(input, options, cb) {
       }
     };
 
-    const go = (url, proxy, softFail = false) => {
+    const go = (url, proxy, softFail = false, connectHost = host) => {
       const tls =
         protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
 
@@ -489,8 +490,7 @@ function ClientRequest(input, options, cb) {
         this[kFetchRequest]
           .catch(err => {
             if (err.code === "ConnectionRefused") {
-              err = new Error("ECONNREFUSED");
-              err.code = "ECONNREFUSED";
+              err = new ExceptionWithHostPort(UV_ECONNREFUSED, "connect", connectHost, Number(port));
             } else if (err.code === "InvalidContentLength") {
               // The native client refuses to deliver a response with a
               // malformed or conflicting Content-Length. Node surfaces this
@@ -583,13 +583,15 @@ function ClientRequest(input, options, cb) {
 
         const iterate = () => {
           if (candidates.length === 0) {
-            // If we get to this point, it means that none of the addresses could be connected to.
-            fail(`connect ECONNREFUSED ${host}:${port}`, "Error", "ECONNREFUSED", "connect");
+            // Every address has been attempted. The final one ran with softFail=false,
+            // so its request already emitted the connection error with the attempted
+            // address; emitting again here would surface a duplicate "error" event.
             return;
           }
 
-          const [url, proxy] = getURL(candidates.shift().address);
-          go(url, proxy, candidates.length > 0).catch(iterate);
+          const { address } = candidates.shift();
+          const [url, proxy] = getURL(address);
+          go(url, proxy, candidates.length > 0, address).catch(iterate);
         };
 
         iterate();

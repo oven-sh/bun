@@ -24,7 +24,7 @@ import http, {
 import https, { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
-import { tmpdir } from "node:os";
+import { constants as osConstants, tmpdir } from "node:os";
 import * as path from "node:path";
 import { PassThrough } from "node:stream";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
@@ -862,6 +862,81 @@ describe("node:http", () => {
         });
         req.end();
       });
+    });
+
+    // https://github.com/oven-sh/bun/issues/32344
+    async function refusedPort(): Promise<number> {
+      // Bind an ephemeral port, then release it so connecting to it is refused.
+      const probe = createServer();
+      const port = await new Promise<number>((resolve, reject) => {
+        probe.on("error", reject);
+        probe.listen(0, "127.0.0.1", () => resolve((probe.address() as AddressInfo).port));
+      });
+      await new Promise<void>(resolve => probe.close(() => resolve()));
+      return port;
+    }
+
+    it("surfaces ECONNREFUSED as a Node-shaped error with errno/syscall/address/port", async () => {
+      const port = await refusedPort();
+
+      const { promise, resolve, reject } = Promise.withResolvers<any>();
+      const req = request({ host: "127.0.0.1", port, path: "/test" }, res => {
+        res.resume();
+        reject(new Error(`request unexpectedly succeeded with status ${res.statusCode}`));
+      });
+      req.on("error", resolve);
+      req.end();
+
+      const err = await promise;
+      expect(err.message).toBe(`connect ECONNREFUSED 127.0.0.1:${port}`);
+      expect(err.code).toBe("ECONNREFUSED");
+      expect(err.syscall).toBe("connect");
+      expect(err.address).toBe("127.0.0.1");
+      expect(err.port).toBe(port);
+      expect(err instanceof Error).toBe(true);
+      expect(Number.isInteger(err.errno)).toBe(true);
+      expect(err.errno).toBeLessThan(0);
+      if (process.platform !== "win32") {
+        expect(err.errno).toBe(-osConstants.errno.ECONNREFUSED);
+      }
+    });
+
+    it("with a custom lookup, emits a single ECONNREFUSED for the resolved address", async () => {
+      const port = await refusedPort();
+
+      const errors: any[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const req = request(
+        {
+          host: "does-not-resolve.invalid",
+          hostname: "does-not-resolve.invalid",
+          port,
+          path: "/test",
+          lookup: (_hostname, _options, cb) => cb(null, [{ address: "127.0.0.1", family: 4 }]),
+        },
+        res => {
+          res.resume();
+          reject(new Error(`request unexpectedly succeeded with status ${res.statusCode}`));
+        },
+      );
+      req.on("error", err => {
+        errors.push(err);
+        if (errors.length === 1) resolve();
+      });
+      req.end();
+
+      await promise;
+      // Give any duplicate "error" emit (scheduled via process.nextTick) a chance to fire.
+      await new Promise<void>(r => setImmediate(r));
+      await new Promise<void>(r => setImmediate(r));
+
+      expect(errors).toHaveLength(1);
+      const [err] = errors;
+      expect(err.message).toBe(`connect ECONNREFUSED 127.0.0.1:${port}`);
+      expect(err.code).toBe("ECONNREFUSED");
+      expect(err.syscall).toBe("connect");
+      expect(err.address).toBe("127.0.0.1");
+      expect(err.port).toBe(port);
     });
   });
 

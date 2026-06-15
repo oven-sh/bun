@@ -241,6 +241,10 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_timeout(Self::ssl_flag(), self.as_raw(), seconds)
     }
 
+    pub fn get_timeout(&mut self) -> u8 {
+        c::uws_res_get_timeout(Self::ssl_flag(), self.as_raw())
+    }
+
     pub fn reset_timeout(&mut self) {
         c::uws_res_reset_timeout(Self::ssl_flag(), self.as_raw())
     }
@@ -760,6 +764,14 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.timeout(seconds))
     }
 
+    pub fn get_timeout(self) -> u8 {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).get_timeout(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).get_timeout(),
+            AnyResponse::H3(_) => 0,
+        }
+    }
+
     pub fn on_data<U: 'static, H>(self, _handler: H, optional_data: *mut U)
     where
         H: Fn(*mut U, &[u8], bool) + Copy + 'static,
@@ -1095,6 +1107,7 @@ pub mod c {
             close_connection: bool,
         );
         pub(crate) safe fn uws_res_timeout(ssl: i32, res: &mut uws_res, timeout: u8);
+        pub(crate) safe fn uws_res_get_timeout(ssl: i32, res: &mut uws_res) -> u8;
         pub(crate) safe fn uws_res_reset_timeout(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_get_buffered_amount(ssl: i32, res: &mut uws_res) -> u64;
         pub(crate) fn uws_res_write(

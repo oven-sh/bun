@@ -1,5 +1,5 @@
 use core::cell::Cell;
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_void;
 use core::ptr;
 
 use bitflags::bitflags;
@@ -2134,10 +2134,18 @@ impl NodeHTTPResponse {
             return false;
         }
 
-        // ECMAScript ToUint32 — same bit pattern as
-        // ToInt32 reinterpreted as unsigned (negative inputs wrap, e.g. -1 → u32::MAX).
-        let secs = (seconds.to_int32() as c_uint).min(255) as u8;
+        // `JSValue.toU32` clamps negatives to 0 and saturates at u32::MAX; do not
+        // use `to_int32() as c_uint` here (that would wrap -1 → u32::MAX → 255).
+        let secs = seconds.to_u32().min(255) as u8;
         raw.timeout(secs);
         true
+    }
+
+    #[uws::uws_callback(export = "NodeHTTPResponse__getTimeout")]
+    pub(crate) fn ffi_get_timeout(&self) -> i32 {
+        let Some(raw) = self.raw_response.get() else {
+            return -1;
+        };
+        raw.get_timeout() as i32
     }
 }

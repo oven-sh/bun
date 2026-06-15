@@ -37,6 +37,7 @@ extern "C" uWS::HttpRequest* Request__getUWSRequest(void*);
 extern "C" void Request__setInternalEventCallback(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" void Request__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" bool NodeHTTPResponse__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
+extern "C" int32_t NodeHTTPResponse__getTimeout(void*);
 extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation);
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
@@ -963,6 +964,16 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetTimeout, (JSGlobalObject * globalObject, CallF
     }
 
     return JSValue::encode(jsUndefined());
+}
+JSC_DEFINE_HOST_FUNCTION(jsHTTPGetTimeout, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    JSValue requestValue = callFrame->argument(0);
+
+    if (auto* nodeHttpResponse = dynamicDowncast<WebCore::JSNodeHTTPResponse>(requestValue)) {
+        return JSValue::encode(jsNumber(NodeHTTPResponse__getTimeout(nodeHttpResponse->wrapped())));
+    }
+
+    return JSValue::encode(jsNumber(-1));
 }
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetServerIdleTimeout, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {

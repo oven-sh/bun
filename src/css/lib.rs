@@ -435,9 +435,7 @@ pub enum Token {
 
 impl core::fmt::Display for Token {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Render the full CSS token shape so `Unexpected token: …` diagnostics
-        // show `#foo`, `@foo`, `url(a b)`, `"…"`, `foo(` instead of the bare
-        // inner slice. Matches `Token.format` in css_parser.zig.
+        // Matches `Token.format` in css_parser.zig.
         let mut w = bun_io::FmtAdapter::new(f);
         self.to_css_generic(&mut w).map_err(|_| core::fmt::Error)
     }

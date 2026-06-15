@@ -5944,7 +5944,7 @@ impl Token {
 }
 
 // `impl Display for Token` lives at crate root (lib.rs) and delegates to
-// `Token::to_css_generic` above so error messages render the full token shape.
+// `Token::to_css_generic` above.
 
 /// Byte-writer trait for `serializer` and `to_css_generic`.
 /// Aliased to the canonical `bun_io::Write`; the associated

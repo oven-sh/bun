@@ -1,5 +1,6 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
@@ -975,4 +976,29 @@ describe("native EventEmitter propagates exception from _events getter", () => {
     }
     expect(caught).toBe(sentinel);
   });
+});
+
+test.skipIf(!isDebug)("native EventEmitter on plain object satisfies validateExceptionChecks", async () => {
+  // The second call reads back the JSEventEmitter stored on `_events` by the
+  // first call, exercising the early-return path in jsEventEmitterCastFast
+  // that follows getIfPropertyExists. The exception-scope check must be
+  // satisfied before that return.
+  const code = `
+    const nativeProto = Object.getPrototypeOf(process);
+    const obj = {};
+    let xFired = false;
+    nativeProto.on.call(obj, "x", () => { xFired = true; });
+    nativeProto.on.call(obj, "y", () => {});
+    nativeProto.emit.call(obj, "x");
+    if (!xFired) throw new Error("listener did not fire");
+    process.stdout.write("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });

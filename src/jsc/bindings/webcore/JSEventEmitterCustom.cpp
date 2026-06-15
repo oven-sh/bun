@@ -60,12 +60,11 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto clientData = WebCore::clientData(vm);
     auto name = clientData->builtinNames()._eventsPublicName();
-    if (JSValue _events = thisObject->getIfPropertyExists(lexicalGlobalObject, name)) {
-        if (_events.isCell() && _events.inherits<JSEventEmitter>()) {
-            return uncheckedDowncast<JSEventEmitter>(asObject(_events));
-        }
-    }
+    JSValue _events = thisObject->getIfPropertyExists(lexicalGlobalObject, name);
     RETURN_IF_EXCEPTION(throwScope, nullptr);
+    if (_events && _events.isCell() && _events.inherits<JSEventEmitter>()) {
+        return uncheckedDowncast<JSEventEmitter>(asObject(_events));
+    }
 
     auto* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto impl = EventEmitter::create(*globalObject->scriptExecutionContext());

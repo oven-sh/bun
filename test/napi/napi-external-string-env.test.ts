@@ -57,9 +57,11 @@ describe("node_api_create_external_string_* finalizer holds Ref<NapiEnv>", () =>
     childEnv.ASAN_OPTIONS = [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":");
   }
 
-  test.each(["createLatin1", "createUtf16"])("worker teardown runs the %s finalizer with a live env", async fn => {
-    using dir = tempDir("napi-ext-string-env", {
-      "fixture.js": `
+  test.concurrent.each(["createLatin1", "createUtf16"])(
+    "worker teardown runs the %s finalizer with a live env",
+    async fn => {
+      using dir = tempDir("napi-ext-string-env", {
+        "fixture.js": `
           const { Worker, isMainThread, parentPort } = require("worker_threads");
           if (isMainThread) {
             const w = new Worker(__filename);
@@ -89,28 +91,29 @@ describe("node_api_create_external_string_* finalizer holds Ref<NapiEnv>", () =>
               " sample=" + globalThis.__strings[0]);
           }
         `,
-    });
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.js"],
-      env: childEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.js"],
+        env: childEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const expectedContent =
-      fn === "createLatin1" ? "external-latin1-string-xxxxxxxx" : "external-utf16-string-xxxxxxxxx";
-    // Every external string created in the worker must have had its finalizer
-    // invoked by the time the worker's VM is torn down. The combined-object
-    // assertion surfaces all three values in one diff when the child crashes
-    // or ASAN writes to stderr.
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: expect.stringContaining("finalized=64"),
-      stderr: "",
-      exitCode: 0,
-    });
-    expect(stdout).toContain("worker: created 64 sample=" + expectedContent);
-  });
+      const expectedContent =
+        fn === "createLatin1" ? "external-latin1-string-xxxxxxxx" : "external-utf16-string-xxxxxxxxx";
+      // Every external string created in the worker must have had its finalizer
+      // invoked by the time the worker's VM is torn down. The combined-object
+      // assertion surfaces all three values in one diff when the child crashes
+      // or ASAN writes to stderr.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: expect.stringContaining("finalized=64"),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(stdout).toContain("worker: created 64 sample=" + expectedContent);
+    },
+  );
 });

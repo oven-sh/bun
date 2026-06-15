@@ -706,8 +706,7 @@ pub(crate) fn format_label(
                     )?;
                 }
                 b'j' | b'o' => {
-                    let mut str = bun_core::String::empty();
-                    // `str` released by Drop.
+                    let mut str = bun_core::OwnedString::new(bun_core::String::empty());
                     // Use jsonStringifyFast for SIMD-optimized serialization
                     current_arg.json_stringify_fast(global_this, &mut str)?;
                     let owned_slice = str.to_owned_slice();

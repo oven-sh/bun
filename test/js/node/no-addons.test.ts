@@ -43,9 +43,7 @@ describe("worker execArgv --no-addons parsing matches RunCommand clap", () => {
       const code = await new Promise((resolve, reject) => {
         worker.once("message", resolve);
         worker.once("error", reject);
-        worker.once("exit", exitCode =>
-          reject(new Error(`worker exited (code=${exitCode}) before posting a message`)),
-        );
+        worker.once("exit", exitCode => reject(new Error(`worker exited (code=${exitCode}) before posting a message`)));
       });
       expect(code).toBe(expected);
     } finally {

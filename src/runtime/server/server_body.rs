@@ -2186,7 +2186,7 @@ where
         // `on_reload` is a host_fn — the wrapper is `callframe.this()` on the
         // JS stack, alive even if `js_value` was downgraded after stop(). The
         // slot writes must reach it so the new handlers are GC-rooted.
-        let server_js = Some(self.js_value_assert_alive());
+        let server_js = self.js_value_assert_alive();
         if !new_config.on_request.is_empty_or_undefined_or_null() {
             super::wrap_handler_slot(
                 &mut new_config.on_request,
@@ -2246,9 +2246,7 @@ where
 
         let route_list_value = self.set_routes();
         if new_config.had_routes_object {
-            if let Some(server_js_value) = server_js {
-                Self::js_gc_route_list_set(server_js_value, global, route_list_value);
-            }
+            Self::js_gc_route_list_set(server_js, global, route_list_value);
         }
 
         if self.inspector_server_id.get() != 0 {
@@ -3666,7 +3664,7 @@ pub(super) fn server_set_on_client_error_(
                     this.on_clienterror = callback;
                     super::wrap_handler_slot(
                         &mut this.on_clienterror,
-                        Some(server),
+                        server,
                         global,
                         <$T>::js_gc_on_client_error_set,
                     );

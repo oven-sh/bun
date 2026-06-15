@@ -1657,19 +1657,19 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             // `serve()` stack across `init`/`listen` until this point.
             crate::server::wrap_handler_slot(
                 &mut server_ref.config.on_request,
-                Some(obj),
+                obj,
                 global_object,
                 <$ServerType>::js_gc_on_request_set,
             );
             crate::server::wrap_handler_slot(
                 &mut server_ref.config.on_error,
-                Some(obj),
+                obj,
                 global_object,
                 <$ServerType>::js_gc_on_error_set,
             );
             crate::server::wrap_handler_slot(
                 &mut server_ref.config.on_node_http_request,
-                Some(obj),
+                obj,
                 global_object,
                 <$ServerType>::js_gc_on_node_http_request_set,
             );
@@ -1677,7 +1677,7 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             // slots default ZERO so `write_ws_handler_slots`'s clear path
             // would be 7 wasted FFI calls.
             if server_ref.config.websocket.is_some() {
-                server_ref.write_ws_handler_slots(Some(obj), global_object);
+                server_ref.write_ws_handler_slots(obj, global_object);
             }
             server_ref.js_value.set_strong(obj, global_object);
 

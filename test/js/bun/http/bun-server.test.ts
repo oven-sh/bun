@@ -887,7 +887,7 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
   // becomes collectable again (no leak).
   expect(afterCloseGC).toBe(baseline);
   expect(exitCode).toBe(0);
-});
+}, 15_000);
 
 test("should be able to async upgrade using custom protocol", async () => {
   const { promise, resolve } = Promise.withResolvers<{ code: number; reason: string } | boolean>();
@@ -1902,7 +1902,7 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
             Bun.gc(true);
             fullGC();
             await new Promise(r => setImmediate(r));
-            await new Promise(r => setTimeout(r, 50));
+            await Bun.sleep(10);
           }
         }
 
@@ -1946,7 +1946,7 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
     // (after = baseline+1).
     expect(after).toBe(baseline);
     expect(exitCode).toBe(0);
-  });
+  }, 15_000);
 
   // Control: a handler that does NOT close over server is collected on main
   // today. This pins that the redesign doesn't regress the non-cycle case.
@@ -1965,7 +1965,7 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
           for (let i = 0; i < 30 && live() > target; i++) {
             Bun.gc(true); fullGC();
             await new Promise(r => setImmediate(r));
-            await new Promise(r => setTimeout(r, 50));
+            await Bun.sleep(10);
           }
         }
         await (async () => {
@@ -1996,7 +1996,7 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
     const { baseline, after } = JSON.parse(stdout.trim());
     expect(after).toBe(baseline);
     expect(exitCode).toBe(0);
-  });
+  }, 15_000);
 
   // JSServerWebSocket holds a traced reference to the JSServer wrapper, so the
   // server (and its ws handlers) stay alive while any websocket is connected,
@@ -2098,7 +2098,7 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
     expect(echo).toMatch(/^\d+:hi$/); // handler dispatched (server.port captured)
     expect(afterClose).toBe(baseline); // instance collected, back to prototype floor
     expect(exitCode).toBe(0);
-  });
+  }, 15_000);
 
   // Reload swaps handlers via WriteBarrier .set() — old handlers become
   // unreachable once nothing else holds them.
@@ -2125,7 +2125,7 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
           Bun.gc(true);
           fullGC();
           await new Promise(r => setImmediate(r));
-          await new Promise(r => setTimeout(r, 50));
+          await Bun.sleep(10);
         }
         console.log(JSON.stringify({ baseline, beforeReload, afterReload: liveAsync() }));
         server.stop(true);

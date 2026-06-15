@@ -599,14 +599,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 /// wrapper's WriteBarrier slot". If `*shadow` is unset (empty/undefined/null),
 /// normalize it to `ZERO` and clear the slot; otherwise apply the
 /// async-context wrap and write the wrapped fn into both the slot and
-/// `*shadow`. `server_js` may be `None` (wrapper already collected during a
-/// late reload), in which case only the shadow is updated. Keeping the
-/// is-empty check, the wrap step, and the shadow↔slot pairing in one helper
-/// is what stops the serve / reload / ws / clientError sites from drifting.
+/// `*shadow`. Every call site already holds a live wrapper (`ptr_to_js` on
+/// serve, `callframe.this()` on reload / setOnClientError), so `server_js`
+/// is always valid. Keeping the is-empty check, the wrap step, and the
+/// shadow↔slot pairing in one helper is what stops the serve / reload / ws /
+/// clientError sites from drifting.
 #[inline]
 pub(crate) fn wrap_handler_slot(
     shadow: &mut JSValue,
-    server_js: Option<JSValue>,
+    server_js: JSValue,
     global: &JSGlobalObject,
     set: fn(JSValue, &JSGlobalObject, JSValue),
 ) {
@@ -615,9 +616,7 @@ pub(crate) fn wrap_handler_slot(
     } else {
         shadow.with_async_context_if_needed(global)
     };
-    if let Some(server_js) = server_js {
-        set(server_js, global, v);
-    }
+    set(server_js, global, v);
     *shadow = v;
 }
 
@@ -3036,13 +3035,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// WriteBarrier slots, applying the async-context wrap (deferred from
     /// `Handler::from_js` so the wrapped fn is rooted the moment it exists).
     /// Writes all slots unconditionally — `JSValue::ZERO` clears, so a reload
-    /// that omits a callback drops the previous root. `server_js` may be
-    /// `None` (wrapper already collected during a late reload), in which case
-    /// the shadows are still wrapped but the slot writes are skipped — same
-    /// contract as [`wrap_handler_slot`]. Called after `ptr_to_js` in
-    /// `serve()` and after the websocket-context swap in `on_reload_from_zig`;
-    /// dispatch keeps reading the shadow.
-    pub fn write_ws_handler_slots(&mut self, server_js: Option<JSValue>, global: &JSGlobalObject) {
+    /// that omits a callback drops the previous root. Same contract as
+    /// [`wrap_handler_slot`]; called after `ptr_to_js` in `serve()` and after
+    /// the websocket-context swap in `on_reload_from_zig`; dispatch keeps
+    /// reading the shadow.
+    pub fn write_ws_handler_slots(&mut self, server_js: JSValue, global: &JSGlobalObject) {
         // No websocket config: route a throwaway ZERO through each slot so a
         // transition to "no websocket" drops the previous roots. Redundant on
         // initial serve (slots default ZERO) — `serve()` gates this call on

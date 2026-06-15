@@ -6623,6 +6623,8 @@ impl NodeFS {
 
         let mut iterator = DirIterator::WrappedIterator::init(fd);
         let mut dirent_path_prev = BunString::EMPTY;
+        let mut name_heap: Vec<u8> = Vec::new();
+        let mut dirent_heap: Vec<u8> = Vec::new();
 
         loop {
             let current = match iterator.next() {
@@ -6647,23 +6649,33 @@ impl NodeFS {
 
             // The root subtask's basename *is* root_path; the caller passes
             // `is_root` explicitly.
-            if !is_root
-                && basename.as_bytes().len() + 1 + utf8_name.len() + 1 >= paths::MAX_PATH_BYTES
-            {
-                continue;
-            }
+            // name_to_copy: bare name at root, else `basename/utf8_name`. Both
+            // inputs are already normalized (basename came from a prior join,
+            // utf8_name is a single readdir component with `.`/`..` filtered),
+            // so the join is a plain concatenation. When it fits, reuse the
+            // PathBuffer via join_z_buf; when it doesn't, fall back to a heap Vec
+            // so the entry is still reported rather than silently dropped.
             let name_to_copy: &[u8] = if is_root {
                 utf8_name
-            } else {
+            } else if basename.as_bytes().len() + 1 + utf8_name.len() + 1 < buf.len() {
                 paths::resolve_path::join_z_buf::<paths::platform::Auto>(
                     &mut buf[..],
                     &[basename.as_bytes(), utf8_name],
                 )
                 .as_bytes()
+            } else {
+                name_heap.clear();
+                name_heap.reserve(basename.as_bytes().len() + 1 + utf8_name.len() + 1);
+                name_heap.extend_from_slice(basename.as_bytes());
+                name_heap.push(paths::SEP);
+                name_heap.extend_from_slice(utf8_name);
+                name_heap.push(0);
+                &name_heap[..name_heap.len() - 1]
             };
-            // SAFETY: both branches yield NUL-terminated storage — `utf8_name` is a
-            // slice over the iterator's NUL-terminated dirent name, and
-            // `join_z_buf` writes a sentinel.
+            // SAFETY: all three branches yield NUL-terminated storage — `utf8_name`
+            // is a slice over the iterator's NUL-terminated dirent name,
+            // `join_z_buf` writes a sentinel, and the heap fallback pushes an
+            // explicit NUL past the returned slice.
             let name_to_copy_z =
                 unsafe { ZStr::from_raw(name_to_copy.as_ptr(), name_to_copy.len()) };
 
@@ -6707,10 +6719,15 @@ impl NodeFS {
             }
 
             if T::IS_DIRENT {
-                let joined = paths::resolve_path::join::<paths::platform::Auto>(&[
-                    root_basename,
-                    name_to_copy,
-                ]);
+                let parts: [&[u8]; 2] = [root_basename, name_to_copy];
+                let needed = parts[0].len() + 1 + parts[1].len() + 1;
+                if dirent_heap.len() < needed {
+                    dirent_heap.resize(needed, 0);
+                }
+                let joined = paths::resolve_path::join_string_buf::<paths::platform::Auto>(
+                    &mut dirent_heap[..],
+                    &parts,
+                );
                 let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
                 if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
                     dirent_path_prev.deref();
@@ -6759,6 +6776,9 @@ impl NodeFS {
         let root_fd: &mut FD = *_close_root;
         // The close guard captures `&mut root_fd`, so all reads below go
         // through the same place.
+
+        let mut name_heap: Vec<u8> = Vec::new();
+        let mut dirent_heap: Vec<u8> = Vec::new();
 
         while let Some(item) = stack.pop_front() {
             let is_root = first_is_root && item.is_empty();
@@ -6831,20 +6851,29 @@ impl NodeFS {
                 };
                 let utf8_name = current.name.slice();
 
-                // name_to_copy: bare name at root, else `basename/utf8_name` joined into `buf`.
-                if !is_root
-                    && basename_bytes.len() + 1 + utf8_name.len() + 1 >= paths::MAX_PATH_BYTES
-                {
-                    continue;
-                }
+                // name_to_copy: bare name at root, else `basename/utf8_name`. Both
+                // inputs are already normalized (basename came from a prior join,
+                // utf8_name is a single readdir component with `.`/`..` filtered),
+                // so the join is a plain concatenation. When it fits, reuse the
+                // caller's PathBuffer via join_z_buf; when it doesn't, fall back to
+                // a heap Vec so the entry is still reported rather than silently
+                // dropped from the listing.
                 let name_to_copy: &[u8] = if is_root {
                     utf8_name
-                } else {
+                } else if basename_bytes.len() + 1 + utf8_name.len() + 1 < buf.len() {
                     paths::resolve_path::join_z_buf::<paths::platform::Auto>(
                         &mut buf[..],
                         &[basename_bytes, utf8_name],
                     )
                     .as_bytes()
+                } else {
+                    name_heap.clear();
+                    name_heap.reserve(basename_bytes.len() + 1 + utf8_name.len() + 1);
+                    name_heap.extend_from_slice(basename_bytes);
+                    name_heap.push(paths::SEP);
+                    name_heap.extend_from_slice(utf8_name);
+                    name_heap.push(0);
+                    &name_heap[..name_heap.len() - 1]
                 };
 
                 // Track effective kind - may be resolved from .unknown via stat
@@ -6888,10 +6917,15 @@ impl NodeFS {
                 }
 
                 if T::IS_DIRENT {
-                    let joined = paths::resolve_path::join::<paths::platform::Auto>(&[
-                        root_basename.as_bytes(),
-                        name_to_copy,
-                    ]);
+                    let parts: [&[u8]; 2] = [root_basename.as_bytes(), name_to_copy];
+                    let needed = parts[0].len() + 1 + parts[1].len() + 1;
+                    if dirent_heap.len() < needed {
+                        dirent_heap.resize(needed, 0);
+                    }
+                    let joined = paths::resolve_path::join_string_buf::<paths::platform::Auto>(
+                        &mut dirent_heap[..],
+                        &parts,
+                    );
                     let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
                     if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
                         dirent_path_prev.deref();

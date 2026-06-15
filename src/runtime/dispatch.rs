@@ -151,6 +151,7 @@ use crate::api::bun_process::Process;
 #[cfg(unix)]
 use crate::api::bun_process::waiter_thread_posix::ResultTask as ProcessWaiterThreadTask;
 
+#[cfg(not(bun_standalone))]
 use bun_bundler::DeferredBatchTask::DeferredBatchTask as BundleV2DeferredBatchTask;
 
 use crate::socket::upgraded_duplex::UpgradedDuplex;
@@ -437,11 +438,17 @@ pub fn run_task(
                 vm,
             )?;
         }
+        #[cfg(bun_standalone)]
+        task_tag::BundleV2DeferredBatchTask => {
+            unreachable!("Bun.build is not available in standalone executables")
+        }
+        #[cfg(not(bun_standalone))]
         task_tag::BundleV2DeferredBatchTask => {
             // `bun_bundler` is JSC-free so the exception-scope check is hoisted
             // to this dispatch arm; without it, `JSBundlerPlugin__drainDeferred`'s
             // THROW_SCOPE is left unchecked and trips JSC exception validation
             // at the next `drainMicrotasks` scope.
+            #[cfg(not(bun_standalone))]
             let _ = bun_jsc::call_check_slow(global, || {
                 cast!(BundleV2DeferredBatchTask).run_on_js_thread();
             });

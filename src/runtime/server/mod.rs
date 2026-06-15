@@ -84,6 +84,7 @@ pub use file_route::FileRoute;
 pub mod file_response_stream;
 pub use file_response_stream::FileResponseStream;
 
+#[cfg_attr(bun_standalone, allow(dead_code, unused_imports))]
 #[path = "HTMLBundle.rs"]
 pub mod html_bundle;
 pub use html_bundle::HTMLBundle;
@@ -110,6 +111,7 @@ pub mod inspector_bun_frontend_dev_server_agent;
 // `server_body.rs` holds the large method bodies (`on_request`, `on_upgrade`,
 // route setup, …) split out to keep this module declaration file readable.
 
+#[cfg_attr(bun_standalone, allow(dead_code, unused_imports))]
 #[path = "server_body.rs"]
 mod server_body;
 pub use server_body::{
@@ -154,6 +156,7 @@ pub enum AnyRoute {
     /// Bundle an HTML import — `import html from "./index.html"; "/": html`
     Html(bun_ptr::RefPtr<html_bundle::Route>),
     /// Use file-system routing — `"/*": { dir: …, style: "nextjs-pages" }`
+    #[cfg(not(bun_standalone))]
     FrameworkRouter(crate::bake::framework_router::TypeIndex),
 }
 
@@ -169,6 +172,7 @@ impl AnyRoute {
             AnyRoute::Static(p) => bun_ptr::BackRef::from(*p).memory_cost(),
             AnyRoute::File(p) => bun_ptr::BackRef::from(*p).memory_cost(),
             AnyRoute::Html(r) => r.data().memory_cost(),
+            #[cfg(not(bun_standalone))]
             AnyRoute::FrameworkRouter(_) => {
                 core::mem::size_of::<crate::bake::FileSystemRouterType>()
             }
@@ -183,6 +187,7 @@ impl AnyRoute {
                 // SAFETY: RefPtr keeps the pointee live while held in the route table.
                 unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(r.as_ptr()) };
             }
+            #[cfg(not(bun_standalone))]
             AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
     }
@@ -193,6 +198,7 @@ impl AnyRoute {
             // SAFETY: see above.
             AnyRoute::File(p) => unsafe { FileRoute::deref(p.as_ptr()) },
             AnyRoute::Html(r) => r.deref(),
+            #[cfg(not(bun_standalone))]
             AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
     }
@@ -202,6 +208,7 @@ impl AnyRoute {
             AnyRoute::Static(p) => bun_ptr::BackRef::from(*p).server.set(server),
             AnyRoute::File(p) => bun_ptr::BackRef::from(*p).set_server(server),
             AnyRoute::Html(r) => r.data().server.set(server),
+            #[cfg(not(bun_standalone))]
             AnyRoute::FrameworkRouter(_) => {} // DevServer holds its own .server
         }
     }
@@ -288,6 +295,10 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// counted ref held here is released in `Drop for NewServer`.
     pub plugins: Option<bun_ptr::BackRef<ServePlugins>>,
 
+    /// `crate::bake::DevServer::DevServer` is uninhabited under
+    /// `cfg(bun_standalone)`, so this field is a ZST and statically `None`; the
+    /// `if let Some(dev) = …` bodies that touch DevServer fields are cfg-gated
+    /// at the use sites.
     pub dev_server: Option<Box<crate::bake::DevServer::DevServer>>,
 
     /// Route → index in RouteList.cpp. User routes may be applied multiple
@@ -495,10 +506,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     // ─────────────────────────────────────────────────────────────────────────
 
     pub fn memory_cost(&self) -> usize {
+        #[cfg(not(bun_standalone))]
+        let dev_cost = self.dev_server.as_ref().map_or(0, |d| d.memory_cost());
+        #[cfg(bun_standalone)]
+        let dev_cost = 0usize;
         core::mem::size_of::<Self>()
             + self.base_url_string_for_joining.len()
             + self.config.memory_cost()
-            + self.dev_server.as_ref().map_or(0, |d| d.memory_cost())
+            + dev_cost
     }
 
     pub fn h3_alt_svc(&self) -> Option<&[u8]> {
@@ -1675,6 +1690,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Detach DevServer. This is needed because there are aggressive
             // tests that check for DevServer memory soundness. Keeping the JS
             // binding alive should not pin `dev.memory_cost()` bytes.
+            #[cfg(not(bun_standalone))]
             if let Some(dev) = self.dev_server.take() {
                 if let Some(app) = self.app {
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
@@ -1942,6 +1958,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // (since-moved) stack slot. On Err, the `Box<Self>` drop frees the
         // half-built server.
         // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
+        #[cfg(not(bun_standalone))]
         if let Some(bake_options) = unsafe { &mut (*server).config.bake } {
             // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
             let broadcast = unsafe {
@@ -1999,6 +2016,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // reshaped for borrowck — `dev_server` is `Option<Box<..>>`;
         // snapshot the raw `*mut DevServer` so per-iteration `&mut` derives
         // don't conflict with `&mut self.config` / `&mut self.user_routes`.
+        // (Under `cfg(bun_standalone)` the Box payload is uninhabited so this is
+        // statically `None`; the gated bodies below are dead code.)
         let dev_server: Option<*mut crate::bake::DevServer::DevServer> =
             self.dev_server.as_deref_mut().map(std::ptr::from_mut);
 
@@ -2265,6 +2284,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             );
                         }
                     }
+                    #[cfg(not(bun_standalone))]
                     if let Some(dev) = dev_server {
                         // SAFETY: `dev` is the live `*mut DevServer` snapshotted
                         // from `self.dev_server` above; no other `&mut` to it
@@ -2277,6 +2297,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                     needs_plugins = true;
                 }
+                #[cfg(not(bun_standalone))]
                 AnyRoute::FrameworkRouter(_) => {}
             }
         }
@@ -2316,7 +2337,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let h3_star_covered = star_methods_covered_by_user;
 
         // --- 8. Handle DevServer routes & track "/*" coverage ---
+        #[cfg_attr(bun_standalone, allow(unused_mut))]
         let mut has_dev_server_for_star_path = false;
+        #[cfg(not(bun_standalone))]
         if let Some(dev) = dev_server {
             // dev.setRoutes might register its own "/*" HTTP handler
             // SAFETY: `dev` is the live `*mut DevServer` snapshotted from
@@ -2330,6 +2353,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 star_methods_covered_by_user = http_method::Set::all();
             }
         }
+        #[cfg(bun_standalone)]
+        let _ = dev_server;
 
         // Setup user websocket fallback route aka fetch function; if fetch is
         // not provided will respond with 403.
@@ -3459,6 +3484,7 @@ impl AnyServer {
     pub fn set_inspector_server_id(&mut self, id: jsc::DebuggerId) {
         any_server_dispatch_mut!(self, |s| {
             s.inspector_server_id = id;
+            #[cfg(not(bun_standalone))]
             if let Some(dev_server) = s.dev_server.as_deref_mut() {
                 dev_server.inspector_server_id = id;
             }

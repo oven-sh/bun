@@ -233,6 +233,7 @@ pub mod discord_command;
 #[cfg(not(bun_standalone))]
 #[path = "list-of-yarn-commands.rs"]
 pub mod list_of_yarn_commands;
+#[cfg(not(bun_standalone))]
 #[path = "shell_completions.rs"]
 pub mod shell_completions;
 #[cfg(not(bun_standalone))]
@@ -575,7 +576,14 @@ pub(crate) static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::Racy
 ///
 /// Canonical static lives in `bun_install` so both crates read/write the SAME
 /// flag (`RunCommand::create_fake_temporary_node_executable` lives there).
+/// Under `bun_standalone` the install tier is severed, so a local static is
+/// used instead — the standalone runtime never spawns lifecycle scripts that
+/// need to observe the shared flag from `bun_install`.
+#[cfg(not(bun_standalone))]
 pub use bun_install::PRETEND_TO_BE_NODE;
+#[cfg(bun_standalone)]
+pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
 pub(crate) static IS_BUNX_EXE: core::sync::atomic::AtomicBool =

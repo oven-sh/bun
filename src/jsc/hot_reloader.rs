@@ -1328,6 +1328,7 @@ where
 // never reached. The bundler crate (T5) can't name this generic, so it calls
 // in via the `#[no_mangle]` hook below.
 
+#[cfg(not(bun_standalone))]
 impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     type EventLoop = bun_event_loop::AnyEventLoop<'static>;
 
@@ -1403,12 +1404,14 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
 
 /// `'static` because the only caller (`bun build --watch`)
 /// allocates the transpiler from the process-lifetime CLI arena.
+#[cfg(not(bun_standalone))]
 type BundlerWatcher =
     NewHotReloader<bun_bundler::BundleV2<'static>, bun_event_loop::AnyEventLoop<'static>, true>;
 
 /// CYCLEBREAK extern hook: called from `BundleV2::init` (T5) when
 /// `cli_watch_flag` is set. Defined here (not in
 /// `bun_bundler`) because the bundler crate can't name `NewHotReloader`.
+#[cfg(not(bun_standalone))]
 #[unsafe(no_mangle)]
 fn __bun_jsc_enable_hot_module_reloading_for_bundler(
     bv2: core::ptr::NonNull<bun_bundler::BundleV2<'static>>,

@@ -6,7 +6,9 @@ use std::io::Write as _;
 use crate::api::js_bundler::PluginJscExt as _;
 use crate::api::{SocketAddress, js_bundler as JSBundler};
 use crate::bake::dev_server::DevServer;
+#[cfg(not(bun_standalone))]
 use crate::bake::framework_router as FrameworkRouter;
+#[cfg(not(bun_standalone))]
 use crate::bake::{self as bake};
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::BlobExt;
@@ -751,6 +753,15 @@ impl AnyRoute {
 
         if argument.is_object() {
             if let Some(dir) = argument.get_optional_slice(global, b"dir")? {
+                #[cfg(bun_standalone)]
+                {
+                    let _ = (dir, path);
+                    return Err(global.throw_type_error(format_args!(
+                        "Directory routes require the bundler, which is not available in standalone executables"
+                    )));
+                }
+                #[cfg(not(bun_standalone))]
+                {
                 let relative_root = init_ctx.js_string_allocations.track(dir);
 
                 let style: FrameworkRouter::Style =
@@ -814,6 +825,7 @@ impl AnyRoute {
                         u8::try_from(init_ctx.framework_router_list.len() - 1).expect("int cast"),
                     ),
                 )));
+                }
             }
         }
 
@@ -834,8 +846,10 @@ impl AnyRoute {
 
 pub struct ServerInitContext<'a> {
     pub dedupe_html_bundle_map: HashMap<*const HTMLBundle, RefPtr<html_bundle::Route>>,
+    #[cfg(not(bun_standalone))]
     pub js_string_allocations: bake::StringRefList,
     pub global: &'a JSGlobalObject,
+    #[cfg(not(bun_standalone))]
     pub framework_router_list: Vec<bake::FileSystemRouterType>,
     pub user_routes: &'a mut Vec<server_config::StaticRouteEntry>,
 }
@@ -960,6 +974,7 @@ impl ServePlugins {
                             unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(route) };
                             html_bundle_routes.push(route);
                         }
+                        #[cfg(not(bun_standalone))]
                         ServePluginsCallback::DevServer(server) => {
                             debug_assert!(
                                 dev_server.is_none()
@@ -968,7 +983,11 @@ impl ServePlugins {
                             ); // one dev server per server
                             *dev_server = Some(NonNull::from(server));
                         }
+                        #[cfg(bun_standalone)]
+                        ServePluginsCallback::DevServer(server) => match *server {},
                     }
+                    #[cfg(bun_standalone)]
+                    let _ = dev_server;
                     return Ok(GetOrStartLoadResult::Pending);
                 }
                 ServePluginsState::Loaded(_) => break,
@@ -1108,6 +1127,7 @@ impl ServePlugins {
             // SAFETY: paired with the `ref_` taken when the route was pushed.
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
+        #[cfg(not(bun_standalone))]
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load (stored as a back-reference
             // by `get_or_start_load`; the owning Box<DevServer> is held by the
@@ -1116,6 +1136,8 @@ impl ServePlugins {
                 std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut(),
             )));
         }
+        #[cfg(bun_standalone)]
+        let _ = dev_server;
     }
 
     pub fn handle_on_reject(&mut self, global: &JSGlobalObject, err: JSValue) {
@@ -1142,10 +1164,13 @@ impl ServePlugins {
             // SAFETY: route was ref'd when stored; pair with that ref
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
+        #[cfg(not(bun_standalone))]
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load
             bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_rejected());
         }
+        #[cfg(bun_standalone)]
+        let _ = dev_server;
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());
         global.bun_vm().as_mut().run_error_handler(err, None);
@@ -2213,6 +2238,7 @@ where
         }
 
         // These get re-applied when we set the static routes again.
+        #[cfg(not(bun_standalone))]
         if let Some(dev_server) = self.dev_server.as_deref_mut() {
             // Prevent a use-after-free in the hash table keys.
             dev_server.html_router.clear();
@@ -3394,6 +3420,17 @@ where
             httplog!("{} - {}", BStr::new(&m), BStr::new(&u));
         }
 
+        #[cfg(bun_standalone)]
+        {
+            // No DevServer under standalone — `should_add_chrome_devtools_json_route`
+            // is statically false, so this handler is never registered. Keep the
+            // body type-checking by yielding.
+            let _ = resp;
+            req.set_yield(true);
+            return;
+        }
+        #[cfg(not(bun_standalone))]
+        {
         let authorized = 'brk: {
             let Some(dev_server) = self.dev_server.as_deref() else {
                 break 'brk false;
@@ -3469,6 +3506,7 @@ where
         resp.write_status(b"200 OK");
         resp.write_header(b"Content-Type", b"application/json");
         resp.end(&json_string, resp.should_close_connection());
+        }
     }
 
     pub fn on404(

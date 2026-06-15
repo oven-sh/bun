@@ -59,6 +59,7 @@ pub mod glob;
 pub mod hash_object;
 #[path = "api/html_rewriter.rs"]
 pub mod html_rewriter;
+#[cfg(not(bun_standalone))]
 #[path = "api/js_bundle_completion_task.rs"]
 pub mod js_bundle_completion_task;
 #[path = "api/JSBundler.rs"]
@@ -75,6 +76,7 @@ pub mod lolhtml_jsc;
 pub mod markdown_object;
 #[path = "api/NativePromiseContext.rs"]
 pub mod native_promise_context;
+#[cfg(not(bun_standalone))]
 #[path = "api/output_file_jsc.rs"]
 pub mod output_file_jsc;
 #[path = "api/standalone_graph_jsc.rs"]

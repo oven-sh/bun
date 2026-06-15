@@ -65,7 +65,20 @@ pub struct ServerConfig {
     pub negative_routes: Vec<ZBox>,
     pub user_routes_to_build: Vec<UserRouteBuilder>,
 
+    #[cfg(not(bun_standalone))]
     pub bake: Option<crate::bake::UserOptions>,
+}
+
+impl ServerConfig {
+    /// `self.bake.is_some()` — under `cfg(bun_standalone)` the field is compiled
+    /// out (DevServer/Bake is unavailable), so this is statically `false`.
+    #[inline(always)]
+    pub(crate) fn has_bake(&self) -> bool {
+        #[cfg(not(bun_standalone))]
+        return self.bake.is_some();
+        #[cfg(bun_standalone)]
+        false
+    }
 }
 
 impl Default for ServerConfig {
@@ -96,6 +109,7 @@ impl Default for ServerConfig {
             static_routes: Vec::new(),
             negative_routes: Vec::new(),
             user_routes_to_build: Vec::new(),
+            #[cfg(not(bun_standalone))]
             bake: None,
         }
     }
@@ -289,6 +303,7 @@ impl ServerConfig {
             static_routes: core::mem::take(&mut self.static_routes),
             negative_routes: core::mem::take(&mut self.negative_routes),
             user_routes_to_build: core::mem::take(&mut self.user_routes_to_build),
+            #[cfg(not(bun_standalone))]
             bake: self.bake.take(),
         };
 
@@ -647,6 +662,7 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
 /// layering wart and this conversion stands in for an arena-dupe until the two
 /// structs unify. All bytes are duped into `arena` so the resulting `&'static`
 /// slices live as long as `UserOptions.arena`.
+#[cfg(not(bun_standalone))]
 fn convert_file_system_router_type(
     arena: &bun_alloc::Arena,
     src: crate::bake::FileSystemRouterType,
@@ -834,7 +850,9 @@ impl ServerConfig {
                 // NOTE: bake owns the arena (created below and moved into
                 // `UserOptions`).
                 dedupe_html_bundle_map: Default::default(),
+                #[cfg(not(bun_standalone))]
                 framework_router_list: Vec::new(),
+                #[cfg(not(bun_standalone))]
                 js_string_allocations: crate::bake::StringRefList::EMPTY,
                 user_routes: &mut args.static_routes,
                 global,
@@ -990,6 +1008,7 @@ impl ServerConfig {
 
             // When HTML bundles are provided, ensure DevServer options are ready
             // The presence of these options causes Bun.serve to initialize things.
+            #[cfg(not(bun_standalone))]
             if !init_ctx.dedupe_html_bundle_map.is_empty()
                 || !init_ctx.framework_router_list.is_empty()
             {
@@ -1208,6 +1227,15 @@ impl ServerConfig {
                     if !bun_core::FeatureFlags::bake() {
                         break 'brk;
                     }
+                    #[cfg(bun_standalone)]
+                    {
+                        let _ = bake_args_js;
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Bun.serve `app` requires the bundler, which is not available in standalone executables. Install Bun: https://bun.com/get",
+                        )));
+                    }
+                    #[cfg(not(bun_standalone))]
+                    {
                     if args.bake.is_some() {
                         // "app" is likely to be removed in favor of the HTML loader.
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -1222,6 +1250,7 @@ impl ServerConfig {
                     }
 
                     args.bake = Some(crate::bake::UserOptions::from_js(bake_args_js, global)?);
+                    }
                 }
             }
         }
@@ -1294,7 +1323,7 @@ impl ServerConfig {
             }
             let on_request = on_request_.with_async_context_if_needed(global);
             args.on_request = Some(Strong::create(on_request, global));
-        } else if args.bake.is_none()
+        } else if !args.has_bake()
             && args.on_node_http_request.is_none()
             && ((args.static_routes.len() + args.user_routes_to_build.len()) == 0
                 && !opts.has_user_routes)
@@ -1563,7 +1592,7 @@ impl ServerConfig {
 
         // NOTE: deferred assertion from top of fn
         if !args.development.is_hmr_enabled() {
-            debug_assert!(args.bake.is_none());
+            debug_assert!(!args.has_bake());
         }
 
         Ok(args)

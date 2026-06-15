@@ -22,19 +22,69 @@ pub use bun_sql_jsc::postgres::create_binding as sql_jsc_postgres_create_binding
 // The real body already lives in this crate.
 pub use crate::api::crash_handler_jsc::js_bindings::generate as crash_handler_crash_handler_js_bindings_generate;
 
+#[cfg(not(bun_standalone))]
 pub use bun_install_jsc::dependency_jsc::dependency_from_js as install_dependency_from_js;
+#[cfg(not(bun_standalone))]
 pub use bun_install_jsc::dependency_jsc::tag_infer_from_js as install_dependency_version_tag_infer_from_js;
+#[cfg(not(bun_standalone))]
 pub use bun_install_jsc::hosted_git_info_jsc::js_from_url as install_hosted_git_info_testing_ap_is_js_from_url;
+#[cfg(not(bun_standalone))]
 pub use bun_install_jsc::hosted_git_info_jsc::js_parse_url as install_hosted_git_info_testing_ap_is_js_parse_url;
+#[cfg(not(bun_standalone))]
 pub use bun_install_jsc::install_binding::bun_install_js_bindings::generate as install_jsc_install_binding_bun_install_js_bindings_generate;
+#[cfg(not(bun_standalone))]
 pub use bun_install_jsc::npm_jsc::architecture_is_match as install_npm_architecture_js_function_architecture_is_match;
+#[cfg(not(bun_standalone))]
 pub use bun_install_jsc::npm_jsc::operating_system_is_match as install_npm_operating_system_js_function_operating_system_is_match;
+#[cfg(not(bun_standalone))]
 pub use bun_install_jsc::npm_jsc::package_manifest_bindings_generate as install_npm_package_manifest_bindings_generate;
 
 // The `*_jsc` bodies live in `bun_install_jsc::ini_jsc`
 // (ini's only JSC consumer is `bun install`'s npmrc loader).
+#[cfg(not(bun_standalone))]
 pub use bun_install_jsc::ini_jsc::ini_testing_load_npmrc_from_js as ini_ini_ini_testing_ap_is_load_npmrc_from_js;
+#[cfg(not(bun_standalone))]
 pub use bun_install_jsc::ini_jsc::ini_testing_parse as ini_ini_ini_testing_ap_is_parse;
+#[cfg(bun_standalone)]
+mod install_js2native_stubs {
+    use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+    macro_rules! stub {
+        ($($name:ident),* $(,)?) => {$(
+            pub fn $name(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+                Err(global.throw_type_error(format_args!(
+                    "bun install internals are not available in standalone executables",
+                )))
+            }
+        )*};
+    }
+    // `*_generate` are lazy js2native fns: codegen calls them with `(global)`
+    // only (no `CallFrame`).
+    macro_rules! stub_lazy {
+        ($($name:ident),* $(,)?) => {$(
+            pub fn $name(global: &JSGlobalObject) -> JsResult<JSValue> {
+                Err(global.throw_type_error(format_args!(
+                    "bun install internals are not available in standalone executables",
+                )))
+            }
+        )*};
+    }
+    stub!(
+        install_dependency_from_js,
+        install_dependency_version_tag_infer_from_js,
+        install_hosted_git_info_testing_ap_is_js_from_url,
+        install_hosted_git_info_testing_ap_is_js_parse_url,
+        install_npm_architecture_js_function_architecture_is_match,
+        install_npm_operating_system_js_function_operating_system_is_match,
+        ini_ini_ini_testing_ap_is_load_npmrc_from_js,
+        ini_ini_ini_testing_ap_is_parse,
+    );
+    stub_lazy!(
+        install_jsc_install_binding_bun_install_js_bindings_generate,
+        install_npm_package_manifest_bindings_generate,
+    );
+}
+#[cfg(bun_standalone)]
+pub use install_js2native_stubs::*;
 
 pub use bun_jsc::bindgen_test::get_bindgen_test_functions as jsc_bindgen_test_get_bindgen_test_functions;
 pub use bun_jsc::counters::create_counters_object as jsc_counters_create_counters_object;
@@ -48,9 +98,32 @@ pub use bun_jsc::bun_string_jsc::js_escape_reg_exp as string_escape_reg_exp_js_e
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp_for_package_name_matching as string_escape_reg_exp_js_escape_reg_exp_for_package_name_matching;
 pub use bun_jsc::bun_string_jsc::unicode_testing_apis::to_utf16_alloc_sentinel as bun_core_string_immutable_unicode_testing_ap_is_to_utf16_alloc_sentinel;
 
+#[cfg(not(bun_standalone))]
 pub use bun_patch_jsc::testing::patch_apply as patch_patch_testing_ap_is_apply;
+#[cfg(not(bun_standalone))]
 pub use bun_patch_jsc::testing::patch_make_diff as patch_patch_testing_ap_is_make_diff;
+#[cfg(not(bun_standalone))]
 pub use bun_patch_jsc::testing::patch_parse as patch_patch_testing_ap_is_parse;
+#[cfg(bun_standalone)]
+mod patch_js2native_stubs {
+    use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+    macro_rules! stub {
+        ($($name:ident),* $(,)?) => {$(
+            pub fn $name(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+                Err(global.throw_type_error(format_args!(
+                    "bun patch internals are not available in standalone executables",
+                )))
+            }
+        )*};
+    }
+    stub!(
+        patch_patch_testing_ap_is_apply,
+        patch_patch_testing_ap_is_make_diff,
+        patch_patch_testing_ap_is_parse,
+    );
+}
+#[cfg(bun_standalone)]
+pub use patch_js2native_stubs::*;
 
 pub use bun_sourcemap_jsc::internal_jsc::testing_find as sourcemap_internal_source_map_testing_ap_is_find;
 pub use bun_sourcemap_jsc::internal_jsc::testing_from_vlq as sourcemap_internal_source_map_testing_ap_is_from_vlq;

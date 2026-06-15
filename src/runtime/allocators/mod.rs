@@ -28,5 +28,6 @@ pub fn register_safety_vtables() {
     for vt in bun_alloc::mimalloc_arena::std_vtables() {
         bun_safety::register_alloc_vtable(vt);
     }
+    #[cfg(not(bun_standalone))]
     bun_safety::register_alloc_vtable(&bun_bundler::bundle_v2::EXTERNAL_FREE_VTABLE);
 }

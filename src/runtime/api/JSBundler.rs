@@ -1290,6 +1290,14 @@ pub mod js_bundler {
         pub prefix: OwnedString,
     }
 
+    #[cfg(bun_standalone)]
+    fn build(global_this: &JSGlobalObject, _arguments: &[JSValue]) -> JsResult<JSValue> {
+        Err(global_this.throw(format_args!(
+            "Bun.build is not available in standalone executables. Install Bun: https://bun.com/get"
+        )))
+    }
+
+    #[cfg(not(bun_standalone))]
     fn build(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
         if arguments.is_empty() || !arguments[0].is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!(

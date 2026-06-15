@@ -554,6 +554,7 @@ impl JSBundleCompletionTask {
             return Ok(());
         }
 
+        #[cfg(not(bun_standalone))]
         if let Some(html_build_task) = this.html_build_task {
             this.plugins = None;
             // SAFETY: `html_build_task` is a backref set by `HTMLBundle::Route` which

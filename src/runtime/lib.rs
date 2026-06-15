@@ -23,6 +23,10 @@ pub mod socket;
 #[path = "webcore.rs"]
 pub mod webcore;
 
+#[cfg(not(bun_standalone))]
+pub mod bake;
+#[cfg(bun_standalone)]
+#[path = "bake_standalone_stub.rs"]
 pub mod bake;
 pub mod cli;
 pub mod shell;
@@ -68,12 +72,12 @@ pub mod valkey_jsc;
 // so `*_command.rs` and `test/parallel/*.rs` files resolve their
 // `use crate::…` lines without per-file edits.
 pub use cli::{
-    Cli, Command, command, filter_arg, filter_run, multi_run, run_command, shell_completions,
-    test_command,
+    Cli, Command, command, filter_arg, filter_run, multi_run, run_command, test_command,
 };
 #[cfg(not(bun_standalone))]
 pub use cli::{
     add_completions, build_command, bunx_command, create_command, package_manager_command,
+    shell_completions,
 };
 
 pub mod webview;

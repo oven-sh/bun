@@ -1294,13 +1294,24 @@ unsafe fn bake_per_thread_source_map(
     pt: *mut c_void,
     source_filename: &[u8],
 ) -> Option<*const [u8]> {
-    // SAFETY: per fn contract — `pt` is the unerased `*mut PerThread` C++
-    // stored opaquely; only this crate knows its layout.
-    let pt = unsafe { &*pt.cast::<crate::bake::production::PerThread>() };
-    let idx = pt.source_maps.get(source_filename)?;
-    Some(std::ptr::from_ref::<[u8]>(
-        pt.bundled_outputs[idx.get() as usize].value.as_slice(),
-    ))
+    #[cfg(bun_standalone)]
+    {
+        // No `bun build --app` ⇒ no `BakeGlobalObject` ⇒ `pt` is never non-null
+        // (caller-side `BakeGlobalObject__isBakeGlobalObject` already returned
+        // false). Unreachable, but kept link-safe for the vtable below.
+        let _ = (pt, source_filename);
+        None
+    }
+    #[cfg(not(bun_standalone))]
+    {
+        // SAFETY: per fn contract — `pt` is the unerased `*mut PerThread` C++
+        // stored opaquely; only this crate knows its layout.
+        let pt = unsafe { &*pt.cast::<crate::bake::production::PerThread>() };
+        let idx = pt.source_maps.get(source_filename)?;
+        Some(std::ptr::from_ref::<[u8]>(
+            pt.bundled_outputs[idx.get() as usize].value.as_slice(),
+        ))
+    }
 }
 
 /// `BakeSourceProvider.getExternalData`.

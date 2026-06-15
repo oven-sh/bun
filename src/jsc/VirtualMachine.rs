@@ -4275,6 +4275,7 @@ impl VirtualMachine {
         jsc_vm.log = NonNull::new(&raw mut log);
         jsc_vm.transpiler.resolver.log = NonNull::from(&mut log);
         jsc_vm.transpiler.linker.log = &raw mut log;
+        #[cfg(not(bun_standalone))]
         if let Some(pm) = jsc_vm.transpiler.resolver.package_manager {
             // SAFETY: the `dyn AutoInstaller` is always `PackageManager`
             // (sole impl — see `VirtualMachine::package_manager`).
@@ -4301,6 +4302,7 @@ impl VirtualMachine {
                 // `_resolve` may have lazily created the PM with
                 // `pm.log = resolver.log` (our stack `log`), so restore even
                 // if it was `None` when we swapped.
+                #[cfg(not(bun_standalone))]
                 if let Some(pm) = jsc_vm.transpiler.resolver.package_manager {
                     // SAFETY: sole `dyn AutoInstaller` impl is `PackageManager`.
                     unsafe {

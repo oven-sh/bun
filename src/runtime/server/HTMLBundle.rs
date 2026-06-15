@@ -6,22 +6,32 @@ use core::cell::Cell;
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_ast::Loader;
 use bun_ast::Log;
-use bun_bundler::bundle_v2::BundleV2Result;
-use bun_bundler::options::{self as bundler_options, LoaderExt as _};
-use bun_bundler::output_file::Value as OutputFileValue;
 use bun_core::strings;
-use bun_http::Headers;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, IntrusiveRc, RefCount};
 use bun_uws::{AnyRequest, AnyResponse};
 
+#[cfg(not(bun_standalone))]
+use bun_ast::Loader;
+#[cfg(not(bun_standalone))]
+use bun_bundler::bundle_v2::BundleV2Result;
+#[cfg(not(bun_standalone))]
+use bun_bundler::options::{self as bundler_options, LoaderExt as _};
+#[cfg(not(bun_standalone))]
+use bun_bundler::output_file::Value as OutputFileValue;
+#[cfg(not(bun_standalone))]
+use bun_http::Headers;
+
+#[cfg(not(bun_standalone))]
 use crate::api::js_bundle_completion_task::{
     JSBundleCompletionTask, create_and_schedule_completion_task,
 };
-use crate::api::js_bundler::js_bundler::{self as JSBundler, Config as JSBundlerConfig};
+use crate::api::js_bundler::js_bundler::{self as JSBundler};
+#[cfg(not(bun_standalone))]
+use crate::api::js_bundler::js_bundler::Config as JSBundlerConfig;
+#[cfg(not(bun_standalone))]
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::bake::dev_server::route_bundle;
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
@@ -179,7 +189,13 @@ pub enum RouteMethod {
 
 pub enum State {
     Pending,
+    /// Under `cfg(bun_standalone)` no `JSBundleCompletionTask` exists (the
+    /// bundler is compiled out and `html_route_from_js` throws before any
+    /// `Route` is created), so the payload degrades to `()`.
+    #[cfg(not(bun_standalone))]
     Building(Option<*mut JSBundleCompletionTask>),
+    #[cfg(bun_standalone)]
+    Building(()),
     Err(Log),
     /// Intrusive-refcounted; freed via `StaticRoute::deref_` in `State::deinit`.
     Html(*mut StaticRoute),
@@ -198,6 +214,7 @@ impl State {
             State::Err(_log) => {
                 // Log drops itself
             }
+            #[cfg(not(bun_standalone))]
             State::Building(Some(c)) => {
                 // SAFETY: `c` was produced by `create_and_schedule_completion_task`
                 // (heap::alloc, refcount ≥ 1) and we hold one of those refs.
@@ -206,7 +223,10 @@ impl State {
                     RefCount::<JSBundleCompletionTask>::deref(c);
                 }
             }
+            #[cfg(not(bun_standalone))]
             State::Building(None) => {}
+            #[cfg(bun_standalone)]
+            State::Building(()) => {}
             State::Html(html) => {
                 // SAFETY: `html` was produced by `StaticRoute::clone` (heap::alloc,
                 // refcount == 1) or via `ref_()`; this drops our ref.
@@ -280,6 +300,7 @@ impl Route {
         };
 
         if server.config().is_development() {
+            #[cfg(not(bun_standalone))]
             if let Some(dev) = server.dev_server_mut() {
                 // DevServer's HMR path is *uws.Request-typed; H3 isn't routed
                 // there (no h3_app on plain-HTTP debug servers in practice),
@@ -407,12 +428,29 @@ impl Route {
                 self.on_plugins_resolved(plugins.map(NonNull::from))?;
             }
             GetOrStartLoadResult::Pending => {
+                #[cfg(not(bun_standalone))]
                 self.state.set(State::Building(None));
+                #[cfg(bun_standalone)]
+                self.state.set(State::Building(()));
             }
         }
         Ok(())
     }
 
+    #[cfg(bun_standalone)]
+    pub fn on_plugins_resolved(
+        &self,
+        _plugins: Option<NonNull<JSBundler::Plugin>>,
+    ) -> Result<(), bun_core::Error> {
+        // Unreachable: `html_route_from_js` throws under `bun_standalone` before
+        // any `Route` is created, so no `ServePluginsCallback::HtmlBundleRoute`
+        // is ever registered.
+        self.state.set(State::Err(Log::init()));
+        self.resume_pending_responses();
+        Ok(())
+    }
+
+    #[cfg(not(bun_standalone))]
     pub fn on_plugins_resolved(
         &self,
         plugins: Option<NonNull<JSBundler::Plugin>>,
@@ -524,6 +562,7 @@ impl Route {
         Ok(())
     }
 
+    #[cfg(not(bun_standalone))]
     pub fn on_complete(&self, completion_task: &mut JSBundleCompletionTask) {
         // For the build task — matches the ref() taken in on_plugins_resolved.
         // SAFETY: self is IntrusiveRc-managed; `adopt` consumes the prior +1 on Drop.

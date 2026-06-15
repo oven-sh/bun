@@ -681,6 +681,10 @@ it("read.* with negative byteOffset does not abort the process", async () => {
     try { read.u8(base, "not a number"); } catch { threw = true; }
     if (!threw) throw new Error("expected read.u8 to throw on non-number byteOffset");
 
+    // ptr(buf, null) previously reached JSC__JSValue__toInt64 on a non-number
+    // (debug ASSERT / release UB). A null offset must behave like no offset.
+    assert("ptr(buf, null)", ptr(buf, null), ptr(buf));
+
     // Sibling helpers (ptr / toArrayBuffer / toBuffer / CString) share the same
     // signed-offset shape; a huge negative offset saturates to i64::MIN in
     // to_int64() and must not abort on the negation. The calls below may throw

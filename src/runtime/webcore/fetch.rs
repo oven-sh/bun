@@ -1027,9 +1027,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             if !proxy_url_arg.is_undefined_or_null() {
                                 if proxy_url_arg.is_string() && proxy_url_arg.get_length(ctx)? > 0 {
                                     // +1 ref; see the string-format branch above.
-                                    let href = bun_core::OwnedString::new(
-                                        jsc::URL::href_from_js(proxy_url_arg, global_this)?,
-                                    );
+                                    let href = bun_core::OwnedString::new(jsc::URL::href_from_js(
+                                        proxy_url_arg,
+                                        global_this,
+                                    )?);
                                     if href.tag() == BunStringTag::Dead {
                                         let err = ctx.to_type_error(
                                             jsc::ErrorCode::INVALID_ARG_VALUE,

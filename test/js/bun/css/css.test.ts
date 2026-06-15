@@ -149,6 +149,22 @@ describe("css tests", () => {
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
+  describe("calc rem() and mod()", () => {
+    // rem(A, B): result takes the sign of A (truncated division).
+    minify_test(`.a{width:rem(7px,-3px)}`, `.a{width:1px}`);
+    minify_test(`.a{width:rem(-7px,3px)}`, `.a{width:-1px}`);
+    minify_test(`.a{width:rem(-7px,-3px)}`, `.a{width:-1px}`);
+    minify_test(`.a{width:rem(7px,3px)}`, `.a{width:1px}`);
+    minify_test(`.a{transition-duration:rem(7s,-3s)}`, `.a{transition-duration:1s}`);
+    minify_test(`.a{transition-duration:rem(-7s,3s)}`, `.a{transition-duration:-1s}`);
+    minify_test(`.a{transform:rotate(rem(-7deg,3deg))}`, `.a{transform:rotate(-1deg)}`);
+    minify_test(`.a{transform:rotate(rem(7deg,-3deg))}`, `.a{transform:rotate(1deg)}`);
+    // mod(A, B): result takes the sign of B (floored division).
+    minify_test(`.a{width:mod(7px,-3px)}`, `.a{width:-2px}`);
+    minify_test(`.a{width:mod(-7px,3px)}`, `.a{width:2px}`);
+    minify_test(`.a{width:mod(-7px,-3px)}`, `.a{width:-1px}`);
+    minify_test(`.a{width:mod(7px,3px)}`, `.a{width:1px}`);
+  });
   describe("border_spacing", () => {
     minify_test(
       `

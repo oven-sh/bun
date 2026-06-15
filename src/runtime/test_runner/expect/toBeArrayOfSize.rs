@@ -34,7 +34,7 @@ pub(crate) fn to_be_array_of_size(
 
     let not = this.flags.get().not();
     let mut pass = value.js_type().is_array()
-        && i32::try_from(value.get_length(global)?).unwrap() == size.to_int32();
+        && value.get_length(global)? as i64 == size.to_int64();
 
     if not {
         pass = !pass;

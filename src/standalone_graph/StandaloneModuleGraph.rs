@@ -332,41 +332,253 @@ mod pe {
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 mod elf {
-    // Declared inline rather than in a dedicated `*_sys` crate: this crate is
-    // the symbol's only consumer.
-    unsafe extern "C" {
-        pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
+    // ── Non-OHOS: use the linker-resolved BUN_COMPILED vaddr ─────────────
+    #[cfg(not(target_env = "ohos"))]
+    mod imp {
+        unsafe extern "C" {
+            pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
+        }
+
+        /// Returns `(base, len)` for the embedded ELF segment data.
+        /// Uses the linker-resolved virtual address of the `.bun` section.
+        pub(super) fn get_data() -> Option<(*mut u8, usize)> {
+            // SAFETY: FFI call to C++ binding that returns &BUN_COMPILED.size.
+            let vaddr_ptr = unsafe { Bun__getStandaloneModuleGraphELFVaddr() };
+            if vaddr_ptr.is_null() {
+                return None;
+            }
+            // SAFETY: read unaligned u64 vaddr.
+            let vaddr = unsafe { core::ptr::read_unaligned(vaddr_ptr) };
+            if vaddr == 0 {
+                return None;
+            }
+            let target = vaddr as *mut u8;
+            // SAFETY: target points to 8-byte little-endian length prefix.
+            let payload_len =
+                u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
+            if payload_len < 8 {
+                return None;
+            }
+            // SAFETY: payload_len bytes follow the 8-byte header at `target`.
+            Some((unsafe { target.add(8) }, payload_len as usize))
+        }
     }
 
-    /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
-    /// `*mut u8` so write-provenance is preserved end-to-end — collapsing to
-    /// `&[u8]` here would freeze it to read-only and make the later
-    /// `from_bytes` writable subslices UB under Stacked Borrows.
+    // ── OHOS: binary-sign-tool corrupts LOAD segments, killing vaddr
+    //   resolution. Instead, open /proc/self/exe, parse ELF section
+    //   headers to find `.bun`, and mmap the file at that offset.
+    //   Section headers survive signing (the tool only rewrites LOAD +
+    //   NOTE segments).  Fall back to a TRAILER scan if headers are
+    //   stripped. ─────────────────────────────────────────────────────────
+    #[cfg(target_env = "ohos")]
+    mod imp {
+        use core::mem::size_of;
+        use std::fs::File;
+        use std::os::unix::fs::FileExt;
+        use std::os::unix::io::AsRawFd;
+
+        const TRAILER: &[u8] = b"\n---- Bun! ----\n";
+
+        struct Elf64Ehdr([u8; 64]);
+        impl Elf64Ehdr {
+            fn magic(&self) -> &[u8] { &self.0[0..4] }
+            fn shoff(&self) -> u64 {
+                u64::from_le_bytes(self.0[0x28..0x30].try_into().unwrap())
+            }
+            fn shentsize(&self) -> u16 {
+                u16::from_le_bytes(self.0[0x3a..0x3c].try_into().unwrap())
+            }
+            fn shnum(&self) -> u16 {
+                u16::from_le_bytes(self.0[0x3c..0x3e].try_into().unwrap())
+            }
+            fn shstrndx(&self) -> u16 {
+                u16::from_le_bytes(self.0[0x3e..0x40].try_into().unwrap())
+            }
+        }
+
+        struct Elf64Shdr([u8; 64]);
+        impl Elf64Shdr {
+            fn name(&self) -> u32 {
+                u32::from_le_bytes(self.0[0x00..0x04].try_into().unwrap())
+            }
+            fn offset(&self) -> u64 {
+                u64::from_le_bytes(self.0[0x18..0x20].try_into().unwrap())
+            }
+            fn size(&self) -> u64 {
+                u64::from_le_bytes(self.0[0x20..0x28].try_into().unwrap())
+            }
+        }
+
+        /// Read section header table entry at `sh_off`.
+        fn read_shdr(file: &File, sh_off: u64) -> Option<Elf64Shdr> {
+            let mut raw = [0u8; 64];
+            file.read_exact_at(&mut raw, sh_off).ok()?;
+            Some(Elf64Shdr(raw))
+        }
+
+        /// Parse the ELF, find `.bun` section, mmap at its file offset.
+        /// Verifies: 8-byte byte_count header + TRAILER at expected end.
+        /// Returns `(base + 8, payload_len)` matching the public contract.
+        fn get_data_via_sections(file: &File, _file_size: u64) -> Option<(*mut u8, usize)> {
+            let mut ehdr_raw = [0u8; 64];
+            file.read_exact_at(&mut ehdr_raw, 0).ok()?;
+            let ehdr = Elf64Ehdr(ehdr_raw);
+            if &ehdr.magic() != b"\x7fELF" {
+                return None;
+            }
+
+            let shoff = ehdr.shoff();
+            let shentsize = ehdr.shentsize();
+            let shnum = ehdr.shnum() as usize;
+            let shstrndx = ehdr.shstrndx() as usize;
+            if shentsize < 64 || shnum == 0 || shstrndx >= shnum {
+                return None;
+            }
+
+            let strtab_shdr = read_shdr(file, shoff + (shstrndx as u64) * (shentsize as u64))?;
+            let strtab_off = strtab_shdr.offset();
+            let strtab_size = strtab_shdr.size() as usize;
+            let mut strtab = vec![0u8; strtab_size];
+            file.read_exact_at(&mut strtab, strtab_off).ok()?;
+
+            // Scan sections for ".bun".
+            for i in 0..shnum {
+                let shdr = read_shdr(file, shoff + (i as u64) * (shentsize as u64))?;
+                let name_off = shdr.name() as usize;
+                if name_off + 5 > strtab_size {
+                    continue;
+                }
+                if &strtab[name_off..name_off + 5] != b".bun\x00" {
+                    continue;
+                }
+                let sh_size = shdr.size() as usize;
+                let sh_offset = shdr.offset();
+                if sh_size < 8 + TRAILER.len() || sh_offset == 0 {
+                    return None;
+                }
+
+                let mut header = [0u8; 8];
+                file.read_exact_at(&mut header, sh_offset).ok()?;
+                let byte_count = u64::from_le_bytes(header) as usize;
+                // byte_count = payload.len() (modules data + TRAILER, no 8-byte header)
+                // sh_size = 8 + byte_count (includes the 8-byte header)
+                if byte_count + 8 != sh_size {
+                    return None;
+                }
+
+                let trailer_off = sh_offset + sh_size as u64 - TRAILER.len() as u64;
+                let mut trailer_buf = [0u8; 16];
+                file.read_exact_at(&mut trailer_buf, trailer_off).ok()?;
+                if &trailer_buf != TRAILER {
+                    return None;
+                }
+
+                // mmap the section.  Use PROT_WRITE so JSC mutates bytecode in-place.
+                let mapping = unsafe {
+                    libc::mmap(
+                        std::ptr::null_mut(),
+                        sh_size,
+                        libc::PROT_READ | libc::PROT_WRITE,
+                        libc::MAP_PRIVATE,
+                        file.as_raw_fd(),
+                        sh_offset as libc::off_t,
+                    )
+                };
+                if mapping == libc::MAP_FAILED {
+                    return None;
+                }
+
+                // Return (data_start, byte_count) matching the original contract:
+                // len = byte_count (includes header offset + data + TRAILER).
+                // The caller uses base + len - offset to find Offsets + TRAILER.
+                return Some((unsafe { mapping.add(8) as *mut u8 }, byte_count));
+            }
+            None
+        }
+
+        /// Fallback: mmap entire file, scan backward for TRAILER, then
+        /// find byte_count via self-consistency: candidate + byte_count == section_end.
+        fn get_data_via_trailer_scan(file: &File, file_size: u64) -> Option<(*mut u8, usize)> {
+            let fsize = file_size as usize;
+            if fsize < size_of::<u64>() + TRAILER.len() {
+                return None;
+            }
+
+            let mapping = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    fsize,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_PRIVATE,
+                    file.as_raw_fd(),
+                    0,
+                )
+            };
+            if mapping == libc::MAP_FAILED {
+                return None;
+            }
+            let file_view = unsafe { std::slice::from_raw_parts(mapping as *const u8, fsize) };
+
+            let mut trailer_off = fsize.saturating_sub(TRAILER.len());
+            let found = loop {
+                let chunk_start = trailer_off.saturating_sub(4096);
+                let chunk = &file_view[chunk_start..trailer_off + TRAILER.len()];
+                if let Some(pos) = chunk.windows(TRAILER.len()).rposition(|w| w == TRAILER) {
+                    break Some(chunk_start + pos);
+                }
+                if chunk_start == 0 {
+                    break None;
+                }
+                trailer_off = chunk_start;
+            };
+            let trailer_off = found?;
+            let section_end = trailer_off + TRAILER.len();
+
+            // Search backward from section_end for a self-consistent byte_count.
+            // byte_count must be <= section_end (it can't start before the file).
+            // Scan in 16-byte steps (aligned to u64).
+            let search_start = section_end.saturating_sub(64 * 1024 * 1024); // max 64 MB
+            let mut candidate = section_end.saturating_sub(size_of::<u64>());
+            loop {
+                let mut raw = [0u8; 8];
+                raw.copy_from_slice(&file_view[candidate..candidate + 8]);
+                let byte_count = u64::from_le_bytes(raw) as usize;
+                // byte_count must be >= 8 + TRAILER.len() and >= section_end - candidate
+                // and the section end must match exactly.
+                if byte_count >= size_of::<u64>() + TRAILER.len()
+                    && candidate + byte_count == section_end
+                {
+                    // Validate TRAILER again at expected position (belt-and-suspenders).
+                    let trailer_check = &file_view[section_end - TRAILER.len()..section_end];
+                    if trailer_check == TRAILER {
+                        return Some((
+                            unsafe { mapping.add(candidate + size_of::<u64>()) as *mut u8 },
+                            byte_count, // ← len must equal byte_count (includes trailer)
+                        ));
+                    }
+                }
+                if candidate <= search_start {
+                    break None;
+                }
+                candidate -= size_of::<u64>();
+            }
+        }
+
+        pub(super) fn get_data() -> Option<(*mut u8, usize)> {
+            let file = File::open("/proc/self/exe").ok()?;
+            let file_size = file.metadata().ok()?.len();
+
+            // Try section-header method first (fast path).
+            if let Some(result) = get_data_via_sections(&file, file_size) {
+                return Some(result);
+            }
+            // Fallback: TRAILER scan (for stripped binaries).
+            get_data_via_trailer_scan(&file, file_size)
+        }
+    }
+
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
-        // SAFETY: FFI call.
-        let vaddr_ptr = unsafe { Bun__getStandaloneModuleGraphELFVaddr() };
-        if vaddr_ptr.is_null() {
-            return None;
-        }
-        // SAFETY: read unaligned u64 vaddr.
-        let vaddr = unsafe { core::ptr::read_unaligned(vaddr_ptr) };
-        if vaddr == 0 {
-            return None;
-        }
-        // BUN_COMPILED.size holds the virtual address of the appended data.
-        // The kernel mapped it via PT_LOAD, so we can dereference directly.
-        // Format at target: [u64 payload_len][payload bytes]
-        // Synthesize a `*mut u8` directly so the provenance carries write
-        // permission for the in-place bytecode mutation done by JSC.
-        let target = vaddr as *mut u8;
-        // SAFETY: target points to 8-byte little-endian length prefix.
-        let payload_len =
-            u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
-        if payload_len < 8 {
-            return None;
-        }
-        // SAFETY: payload_len bytes follow the 8-byte header at `target`.
-        Some((unsafe { target.add(8) }, payload_len as usize))
+        imp::get_data()
     }
 }
 

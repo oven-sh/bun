@@ -309,9 +309,12 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 
         const int watched = us_poll_events(poll);
         events &= watched;
-        /* EV_EOF only stands in for eof when this poll watches nothing — see
-         * the comment above. Any READABLE poll discovers eof via recv()==0. */
-        const int eof = bits.ev_eof && watched == 0;
+        /* EV_EOF only stands in for eof on a shut-down poll watching nothing —
+         * see the comment above. Any READABLE poll discovers eof via recv()==0;
+         * a non-SHUT_DOWN poll at watched==0 (allow_half_open after FIN, or a
+         * plain pause) must not re-enter on_end. */
+        const int eof = bits.ev_eof && watched == 0
+                     && us_internal_poll_type(poll) == POLL_TYPE_SOCKET_SHUT_DOWN;
         if (events || bits.error || eof) {
             us_internal_dispatch_ready_poll(poll, bits.error, eof, events);
         }

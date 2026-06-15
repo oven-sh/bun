@@ -659,9 +659,12 @@ void us_socket_pause(struct us_socket_t *s) {
     if (s->flags.is_paused) return;
     // closed cannot be paused because it is already closed
     if (us_socket_is_closed(s)) return;
-    // we are readable and writable so we can just pause readable side
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_WRITABLE);
     s->flags.is_paused = 1;
+    /* A shut-down socket can't write either; watch nothing so the kqueue
+     * watched==0 sentinel (or EPOLLHUP on epoll) detects peer close without
+     * reading the data the caller paused for. */
+    us_poll_change(&s->p, s->group->loop,
+        us_socket_is_shut_down(s) ? 0 : LIBUS_SOCKET_WRITABLE);
 }
 
 void us_socket_resume(struct us_socket_t *s) {

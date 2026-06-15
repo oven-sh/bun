@@ -3999,3 +3999,61 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
   });
 }
+
+test.concurrent("failed lifecycle script output preserves non-UTF-8 bytes", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+
+  const depDir = join(packageDir, "dep");
+  await mkdir(depDir, { recursive: true });
+  await Promise.all([
+    write(
+      join(depDir, "emit.js"),
+      // 0xC0 and 0xC1 never appear in valid UTF-8.
+      `process.stdout.write(Buffer.from([0x41, 0x42, 0xC0, 0xC1, 0x43, 0x44]));\n` +
+        `process.stderr.write(Buffer.from([0x61, 0x62, 0xFE, 0xFF, 0x63, 0x64]));\n` +
+        `process.exit(1);\n`,
+    ),
+    write(
+      join(depDir, "package.json"),
+      JSON.stringify({
+        name: "dep",
+        version: "1.0.0",
+        scripts: {
+          postinstall: `${bunExe()} emit.js`,
+        },
+      }),
+    ),
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          dep: "file:./dep",
+        },
+        trustedDependencies: ["dep"],
+      }),
+    ),
+  ]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderrBytes, exitCode] = await Promise.all([proc.stderr.bytes(), proc.stdout.bytes(), proc.exited]);
+
+  const hex = Buffer.from(stderrBytes).toString("hex");
+  // Script stdout: must appear byte-for-byte (AB<C0><C1>CD).
+  expect(hex).toContain("4142c0c14344");
+  // Script stderr: must appear byte-for-byte (ab<FE><FF>cd).
+  expect(hex).toContain("6162feff6364");
+  // Must not contain U+FFFD (EF BF BD), the replacement char BStr's Display would emit.
+  expect(hex).not.toContain("efbfbd");
+  expect(exitCode).not.toBe(0);
+});

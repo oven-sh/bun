@@ -829,18 +829,23 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             Output::disable_buffering();
             Output::flush();
 
+            // Write the captured bytes verbatim. Routing through `format_args!` /
+            // `BStr`'s `Display` impl would replace every invalid-UTF-8 byte with
+            // U+FFFD, corrupting CP1252/Latin-1/binary output from the script.
             if stdout_len > 0 {
                 let stdout = self.stdout.final_buffer();
-                let _ = Output::error_writer()
-                    .write_fmt(format_args!("{}\n", bstr::BStr::new(stdout.as_slice())));
+                let w = Output::error_writer();
+                let _ = w.write_all(stdout.as_slice());
+                let _ = w.write_all(b"\n");
                 stdout.clear();
                 stdout.shrink_to_fit();
             }
 
             if stderr_len > 0 {
                 let stderr = self.stderr.final_buffer();
-                let _ = Output::error_writer()
-                    .write_fmt(format_args!("{}\n", bstr::BStr::new(stderr.as_slice())));
+                let w = Output::error_writer();
+                let _ = w.write_all(stderr.as_slice());
+                let _ = w.write_all(b"\n");
                 stderr.clear();
                 stderr.shrink_to_fit();
             }

@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import os from "node:os";
 import { isLinux } from "harness";
+import os from "node:os";
 
 test("which rlly long", async () => {
   const longstr = "a".repeat(100000);

@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import os from "node:os";
 import { isLinux } from "harness";
+import os from "node:os";
 import { createTestBuilder } from "../test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 

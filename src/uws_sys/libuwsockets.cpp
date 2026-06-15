@@ -550,6 +550,15 @@ extern "C"
       uwsApp->setFlags(require_host_header, use_strict_method_validation);
     }
   }
+  void uws_app_set_slash_normalization(int ssl, uws_app_t *app, bool ignore_trailing_slash, bool ignore_duplicate_slashes) {
+    if (ssl) {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->setSlashNormalization(ignore_trailing_slash, ignore_duplicate_slashes);
+    } else {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->setSlashNormalization(ignore_trailing_slash, ignore_duplicate_slashes);
+    }
+  }
 
   void uws_app_destroy(int ssl, uws_app_t *app)
   {

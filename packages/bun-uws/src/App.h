@@ -747,6 +747,11 @@ public:
         return std::move(*this);
     }
 
+    TemplatedApp &&setSlashNormalization(bool ignoreTrailingSlash, bool ignoreDuplicateSlashes) {
+        httpContext->getSocketContextData()->router.setSlashNormalization(ignoreTrailingSlash, ignoreDuplicateSlashes);
+        return std::move(*this);
+    }
+
 };
 
 typedef TemplatedApp<false> App;

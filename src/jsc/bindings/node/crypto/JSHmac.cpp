@@ -114,8 +114,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Get the HMAC instance
-    JSValue thisHmac = callFrame->thisValue();
-    JSHmac* hmac = dynamicDowncast<JSHmac>(thisHmac);
+    JSHmac* hmac = dynamicDowncast<JSHmac>(callFrame->thisValue());
+    if (!hmac) [[unlikely]] {
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "Hmac"_s);
+    }
 
     // Check if the HMAC is already finalized
     if (hmac->m_finalized) {

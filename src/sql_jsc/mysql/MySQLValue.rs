@@ -4,7 +4,7 @@
 
 use crate::jsc::{
     IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsError, JsResult,
-    MarkedArgumentBuffer, StringJsc as _, bun_string_jsc, js_error_to_mysql,
+    MarkedArgumentBuffer, StringJsc as _, js_error_to_mysql,
 };
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{OwnedString, String as BunString};
@@ -137,7 +137,6 @@ pub enum Value {
     BytesData(Data),
     Date(DateTime),
     Time(Time),
-    // Decimal(Decimal),
 }
 
 /// BLOB parameter bytes. `MySQLQuery.bind()` fills every `Value` before
@@ -231,7 +230,6 @@ impl Value {
             Value::Time(d) => {
                 pos = d.to_binary(field_type, &mut buffer) as usize;
             }
-            // Value::Decimal(dec) => return dec.to_binary(field_type),
             Value::StringData(data) | Value::BytesData(data) => {
                 // `bun_sql::shared::Data` is not
                 // `Clone`, so return a `Temporary` aliasing the
@@ -792,15 +790,6 @@ impl Time {
         }
     }
 
-    pub fn to_unix_timestamp(&self) -> i64 {
-        let mut total_ms: i64 = 0;
-        total_ms = total_ms.saturating_add((self.days as i64).saturating_mul(86400000));
-        total_ms = total_ms.saturating_add((self.hours as i64).saturating_mul(3600000));
-        total_ms = total_ms.saturating_add((self.minutes as i64).saturating_mul(60000));
-        total_ms = total_ms.saturating_add((self.seconds as i64).saturating_mul(1000));
-        total_ms
-    }
-
     pub fn from_data(data: &Data) -> Result<Time, bun_core::Error> {
         Ok(Self::from_binary(data.slice()))
     }
@@ -866,47 +855,6 @@ impl Time {
             _ => unreachable!(),
         }
     }
-}
-
-pub struct Decimal {
-    // MySQL DECIMAL is stored as a sequence of base-10 digits
-    pub digits: Box<[u8]>,
-    pub scale: u8,
-    pub negative: bool,
-}
-
-impl Decimal {
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
-        let mut str: Vec<u8> = Vec::new();
-
-        if self.negative {
-            str.push(b'-');
-        }
-
-        let decimal_pos = self.digits.len() - self.scale as usize;
-        for (i, digit) in self.digits.iter().enumerate() {
-            if i == decimal_pos && self.scale > 0 {
-                str.push(b'.');
-            }
-            str.push(digit + b'0');
-        }
-
-        bun_string_jsc::create_utf8_for_js(global_object, &str).unwrap_or(JSValue::ZERO)
-    }
-
-    pub fn to_binary(&self, _field_type: FieldType) -> Result<Data, bun_core::Error> {
-        // Intentional runtime "feature not yet implemented". The `Decimal` arm
-        // of `Value` is commented out, so this is unreachable today.
-        bun_core::todo_panic!("Decimal.toBinary not implemented")
-    }
-
-    // pub fn from_data(data: &Data) -> Result<Decimal, bun_core::Error> {
-    //     Ok(Self::from_binary(data.slice()))
-    // }
-
-    // pub fn from_binary(_: &[u8]) -> Decimal {
-    //     bun_core::todo_panic!("Decimal.fromBinary not implemented")
-    // }
 }
 
 // Helper functions for date calculations

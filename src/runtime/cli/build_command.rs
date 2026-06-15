@@ -975,13 +975,11 @@ impl BuildCommand {
                     }
                 }
 
-                // OHOS: binary-sign-tool sign + chmod the compiled output.
+                // OHOS: sign and chmod the compiled output.
                 // The standalone detection now uses /proc/self/exe, so signing
                 // no longer breaks embedded module graph resolution.
                 #[cfg(target_env = "ohos")]
                 {
-                    // Use the outfile directly if it is absolute; otherwise
-                    // prepend root_path to get the filesystem path for signing.
                     let outfile_path = if outfile.starts_with(b"/") {
                         outfile.to_vec()
                     } else if root_path.is_empty() || root_path == b"." {
@@ -994,22 +992,15 @@ impl BuildCommand {
                         full.extend_from_slice(outfile);
                         full
                     };
-                    let outfile_str = std::str::from_utf8(&outfile_path[..]).unwrap_or("");
-                    if !outfile_str.is_empty() {
-                        let signed_path = format!("{}.signed", outfile_str);
-                        let _ = std::process::Command::new("binary-sign-tool")
-                            .arg("sign")
-                            .arg("-inFile")
-                            .arg(outfile_str)
-                            .arg("-outFile")
-                            .arg(&signed_path)
-                            .arg("-selfSign")
-                            .arg("1")
-                            .status();
-                        let _ = std::fs::rename(&signed_path, outfile_str);
+                    if !outfile_path.is_empty() {
+                        use bun_sys::ZStr;
+                        let mut nul_path = outfile_path.clone();
+                        nul_path.push(0);
+                        let zstr = ZStr::from_slice_with_nul(&nul_path);
+                        bun_sys::ohos_sign_binary(zstr);
                         let _ = std::process::Command::new("chmod")
                             .arg("755")
-                            .arg(outfile_str)
+                            .arg(std::str::from_utf8(&outfile_path).unwrap_or(""))
                             .status();
                     }
                 }

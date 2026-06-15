@@ -1619,13 +1619,27 @@ pub(crate) fn inject(
                 return Fd::INVALID;
             }
 
-            // Write the modified ELF data back to the file
+            // Write the modified ELF data back to the file.
+            // On OHOS, truncate first to break any COW/reflink relationship
+            // that copy_file_range may have created between the source and
+            // temp file. Without this, subsequent writes may silently fail
+            // to update the on-disk data.
+            #[cfg(target_env = "ohos")]
+            let _ = Syscall::ftruncate(cloned_executable_fd, 0);
+
             let write_file = bun_sys::File::borrow(&cloned_executable_fd);
             if let Err(err) = write_file.write_all(&elf_file.data) {
                 bun_core::pretty_errorln!("Error writing ELF file: {}", err);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
+
+            // OHOS: fsync before move, because move_file_z_with_handle may use
+            // copy_file_range (EXDEV fallback) which reads from disk, not the
+            // page cache. Without fsync, the on-disk data may be stale.
+            #[cfg(target_env = "ohos")]
+            unsafe { libc::fsync(cloned_executable_fd.native()); }
+
             // Truncate the file to the exact size of the modified ELF
             let _ = Syscall::ftruncate(
                 cloned_executable_fd,

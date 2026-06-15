@@ -6232,6 +6232,43 @@ pub mod RTLD {
     pub const LOCAL: i32 = 0;
 }
 
+/// OHOS: sign a binary with `binary-sign-tool` if it is not already signed.
+/// Required because OHOS refuses to execute unsigned ELF binaries (exit 126).
+/// Used by `dlopen` (for `.so`/`.node` loading) and by `bun build --compile`
+/// (the output binary is a modified copy of bun whose original signature is
+/// invalidated by the `.bun` section injection).
+#[cfg(target_env = "ohos")]
+pub fn ohos_sign_binary(path: &ZStr) {
+    use std::process::Command;
+    let path_str = match path.as_cstr().to_str() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    // Skip if already signed.
+    if Command::new("binary-sign-tool")
+        .args(["display-sign", "-inFile", path_str])
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        return;
+    }
+    let _ = Command::new("binary-sign-tool")
+        .args(["sign", "-selfSign", "1", "-inFile", path_str, "-outFile", path_str])
+        .output();
+}
+
+/// OHOS: sign a binary by byte path (convenience wrapper for callers that
+/// have a `&[u8]` path instead of a `ZStr`).
+#[cfg(target_env = "ohos")]
+pub fn ohos_sign_binary_bytes(path: &[u8]) {
+    let mut buf = Vec::with_capacity(path.len() + 1);
+    buf.extend_from_slice(path);
+    buf.push(0);
+    // `from_slice_with_nul` requires trailing NUL which we just appended.
+    let zstr = ZStr::from_slice_with_nul(&buf);
+    ohos_sign_binary(zstr);
+}
+
 /// sys.zig:4557 — `dlopen(filename, flags)`. Windows → `LoadLibraryA`.
 pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
     #[cfg(all(unix, not(target_env = "ohos")))]
@@ -6242,21 +6279,7 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
     }
     #[cfg(target_env = "ohos")]
     {
-        fn ensure_signed(path: &ZStr) {
-            use std::process::Command;
-            let path_str = path.as_cstr().to_str().unwrap_or("");
-            if Command::new("binary-sign-tool")
-                .args(["display-sign", "-inFile", path_str])
-                .output()
-                .is_ok_and(|o| o.status.success())
-            {
-                return;
-            }
-            let _ = Command::new("binary-sign-tool")
-                .args(["sign", "-selfSign", "1", "-inFile", path_str, "-outFile", path_str])
-                .output();
-        }
-        ensure_signed(filename);
+        ohos_sign_binary(filename);
         // SAFETY: filename is NUL-terminated.
         let p = unsafe { libc::dlopen(filename.as_ptr(), flags) };
         if p.is_null() { None } else { Some(p) }

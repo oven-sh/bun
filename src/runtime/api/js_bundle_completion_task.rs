@@ -436,23 +436,17 @@ impl JSBundleCompletionTask {
             entry.dest_path.clone_from(&full_outfile_path);
             entry.is_executable = true;
 
-            // OHOS: binary-sign-tool sign + chmod the compiled output.
+            // OHOS: sign and chmod the compiled output.
             #[cfg(target_env = "ohos")]
             {
                 let outfile_str =
                     std::str::from_utf8(&full_outfile_path).unwrap_or("");
                 if !outfile_str.is_empty() {
-                    let signed_path = format!("{}.signed", outfile_str);
-                    let _ = std::process::Command::new("binary-sign-tool")
-                        .arg("sign")
-                        .arg("-inFile")
-                        .arg(outfile_str)
-                        .arg("-outFile")
-                        .arg(&signed_path)
-                        .arg("-selfSign")
-                        .arg("1")
-                        .status();
-                    let _ = std::fs::rename(&signed_path, outfile_str);
+                    use bun_sys::ZStr;
+                    let mut nul_path = full_outfile_path.to_vec();
+                    nul_path.push(0);
+                    let zstr = ZStr::from_slice_with_nul(&nul_path);
+                    bun_sys::ohos_sign_binary(zstr);
                     let _ = std::process::Command::new("chmod")
                         .arg("755")
                         .arg(outfile_str)

@@ -242,7 +242,9 @@ test("require.resolve does not crash when options.paths contains a non-absolute 
   // createRequire().resolve goes through the same resolver path.
   let caught;
   try {
-    Module.createRequire(join(realpathSync(tmpdir()), "x.js")).resolve("foo", { paths: ["./rel"] });
+    Module.createRequire(join(realpathSync(tmpdir()), "x.js")).resolve("this-pkg-does-not-exist-zzz", {
+      paths: ["./rel"],
+    });
   } catch (e) {
     caught = e.code;
   }

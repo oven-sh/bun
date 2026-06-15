@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isOhos, isPosix, isWindows, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "path";
 
@@ -11,8 +11,8 @@ describe("Bun.build compile", () => {
 
     const os = isMacOS ? "darwin" : isLinux ? "linux" : isWindows ? "windows" : "unknown";
     const arch = isArm64 ? "aarch64" : "x64";
-    const musl = isMusl ? "-musl" : "";
-    const target = `bun-${os}-${arch}${musl}` as any;
+    const libc = isOhos ? "-ohos" : isMusl ? "-musl" : "";
+    const target = `bun-${os}-${arch}${libc}` as any;
     const outdir = join(dir + "", "out");
 
     const result = await Bun.build({
@@ -568,11 +568,18 @@ describe("compiled binary in a deleted cwd", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // The entry never runs (VM init aborts first), the ENOENT surfaces, and the
-      // process exits 1 — a crash would terminate via a signal, never exit 1.
-      expect(stdout).toBe("");
-      expect(stderr).toContain("ENOENT");
-      expect(exitCode).toBe(1);
+      if (isOhos) {
+        // OHOS: getcwd returns "/" instead of ENOENT when cwd is deleted,
+        // so the binary may run normally (exit 0) or fail gracefully.
+        // The critical invariant is: no crash (exit via signal).
+        expect(exitCode).not.toBe(null); // not killed by signal
+      } else {
+        // The entry never runs (VM init aborts first), the ENOENT surfaces, and the
+        // process exits 1 — a crash would terminate via a signal, never exit 1.
+        expect(stdout).toBe("");
+        expect(stderr).toContain("ENOENT");
+        expect(exitCode).toBe(1);
+      }
     },
     60_000,
   );

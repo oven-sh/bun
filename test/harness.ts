@@ -34,7 +34,8 @@ export const libcFamily: "glibc" | "musl" =
       ? "glibc"
       : "musl";
 
-export const isMusl = isLinux && libcFamily === "musl";
+export const isOhos = isLinux && typeof process.release?.sourceUrl === "string" && process.release.sourceUrl.includes("ohos");
+export const isMusl = isLinux && libcFamily === "musl" && !isOhos;
 export const isGlibc = isLinux && libcFamily === "glibc";
 export const isBuildKite = process.env.BUILDKITE === "true";
 export const isVerbose = process.env.DEBUG === "1";

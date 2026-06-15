@@ -4494,6 +4494,14 @@ impl<'a> Resolver<'a> {
                             if err == bun_core::err!("EACCES")
                                 || err == bun_core::err!("EPERM")
                             {
+                                // If this is the last queue entry, `continue` would
+                                // re-enter the while-loop with `queue_slice_len == 0`,
+                                // which exits immediately and hits `unreachable!()`.
+                                // Return Ok(None) — the directory is unreadable, same
+                                // as the ENOENT path below.
+                                if queue_slice_len == 0 {
+                                    return Ok(None);
+                                }
                                 continue 'queue_walk;
                             }
 

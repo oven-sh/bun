@@ -401,7 +401,26 @@ impl<V: CalcValue> Calc<V> {
                         let val = max.take().unwrap();
                         center = val;
                     } else {
-                        min = None;
+                        max = None;
+                    }
+                }
+
+                if cmp.is_some() {
+                    let cmp = if let (Some(Calc::Value(mv)), Calc::Value(cv)) = (&min, &center) {
+                        protocol::PartialCmp::partial_cmp(&**cv, &**mv)
+                    } else {
+                        None
+                    };
+
+                    // If center is known to be less than the minimum, replace it with minimum and remove the min argument.
+                    // Otherwise, if center is known to be greater than the minimum, remove the min argument.
+                    if let Some(cmp_val) = cmp {
+                        if cmp_val == Ordering::Less {
+                            let val = min.take().unwrap();
+                            center = val;
+                        } else {
+                            min = None;
+                        }
                     }
                 }
 

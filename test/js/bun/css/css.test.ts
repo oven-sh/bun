@@ -149,6 +149,15 @@ describe("css tests", () => {
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
+  describe("clamp simplification", () => {
+    minify_test(".foo{width:clamp(10px,15px,20px)}", ".foo{width:15px}");
+    minify_test(".foo{width:clamp(10px,5px,20px)}", ".foo{width:10px}");
+    minify_test(".foo{width:clamp(10px,30px,20px)}", ".foo{width:20px}");
+    minify_test(".foo{width:clamp(10vw,5px,20px)}", ".foo{width:max(10vw,5px)}");
+    minify_test(".foo{width:clamp(10vw,30px,20px)}", ".foo{width:max(10vw,20px)}");
+    minify_test(".foo{width:clamp(10px,5vw,20px)}", ".foo{width:clamp(10px,5vw,20px)}");
+    minify_test(".foo{width:clamp(10px,15px,20vw)}", ".foo{width:clamp(10px,15px,20vw)}");
+  });
   describe("border_spacing", () => {
     minify_test(
       `

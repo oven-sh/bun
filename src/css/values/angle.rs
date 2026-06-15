@@ -217,6 +217,9 @@ impl Angle {
 
     // css.implementHash / css.implementDeepClone — provided by
     // `#[derive(CssHash, DeepClone)]` above (POD f32 payload → bitwise).
+    // `CssHash` is intentionally structural (matching `angle.zig`, which pairs
+    // a structural `implementHash` with a degrees-based `eql`); nothing keys a
+    // `CssHash` map on an `Angle`-containing value with `CssEql` as equality.
 }
 
 // NOT structural variant comparison: Deg(180) == Turn(0.5) == Grad(200).

@@ -4335,7 +4335,7 @@ uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue val)
     // condition folds NaN (both comparisons false) and ±Inf into the reject
     // branch without a separate isfinite() check.
     double d = value.asDouble();
-    if (!(d >= 0.0 && d < 18446744073709551616.0))
+    if (!(d >= 0.0 && d < 0x1p64))
         return 0;
     return truncateDoubleToUint64(d);
 }

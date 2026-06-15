@@ -6721,13 +6721,17 @@ impl NodeFS {
             if T::IS_DIRENT {
                 let parts: [&[u8]; 2] = [root_basename, name_to_copy];
                 let needed = parts[0].len() + 1 + parts[1].len() + 1;
-                if dirent_heap.len() < needed {
-                    dirent_heap.resize(needed, 0);
-                }
-                let joined = paths::resolve_path::join_string_buf::<paths::platform::Auto>(
-                    &mut dirent_heap[..],
-                    &parts,
-                );
+                let joined: &[u8] = if needed <= paths::resolve_path::JOIN_BUF_LEN {
+                    paths::resolve_path::join::<paths::platform::Auto>(&parts)
+                } else {
+                    if dirent_heap.len() < needed {
+                        dirent_heap.resize(needed, 0);
+                    }
+                    paths::resolve_path::join_string_buf::<paths::platform::Auto>(
+                        &mut dirent_heap[..],
+                        &parts,
+                    )
+                };
                 let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
                 if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
                     dirent_path_prev.deref();
@@ -6919,13 +6923,17 @@ impl NodeFS {
                 if T::IS_DIRENT {
                     let parts: [&[u8]; 2] = [root_basename.as_bytes(), name_to_copy];
                     let needed = parts[0].len() + 1 + parts[1].len() + 1;
-                    if dirent_heap.len() < needed {
-                        dirent_heap.resize(needed, 0);
-                    }
-                    let joined = paths::resolve_path::join_string_buf::<paths::platform::Auto>(
-                        &mut dirent_heap[..],
-                        &parts,
-                    );
+                    let joined: &[u8] = if needed <= paths::resolve_path::JOIN_BUF_LEN {
+                        paths::resolve_path::join::<paths::platform::Auto>(&parts)
+                    } else {
+                        if dirent_heap.len() < needed {
+                            dirent_heap.resize(needed, 0);
+                        }
+                        paths::resolve_path::join_string_buf::<paths::platform::Auto>(
+                            &mut dirent_heap[..],
+                            &parts,
+                        )
+                    };
                     let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
                     if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
                         dirent_path_prev.deref();

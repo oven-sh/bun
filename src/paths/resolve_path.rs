@@ -1430,8 +1430,14 @@ pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'
     PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf_z::<P>(cwd, tl_buf_mut(b), parts))
 }
 
+/// Size of the thread-local buffer used by [`join`] / [`join_z`]. Callers that
+/// want to keep the zero-alloc fast path but fall back to their own buffer
+/// when the concatenation would not fit can gate on this.
+pub const JOIN_BUF_LEN: usize = 4096;
+
 thread_local! {
-    pub(crate) static JOIN_BUF: UnsafeCell<[u8; 4096]> = const { UnsafeCell::new([0u8; 4096]) };
+    pub(crate) static JOIN_BUF: UnsafeCell<[u8; JOIN_BUF_LEN]> =
+        const { UnsafeCell::new([0u8; JOIN_BUF_LEN]) };
 }
 
 pub fn join<P: PlatformT>(parts: &[&[u8]]) -> &'static [u8] {

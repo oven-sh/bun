@@ -128,11 +128,12 @@ test(
 // (Bun.secrets rejection → Secrets::Error::toJS → createError) after the
 // parent called terminate() and the VM termination trap was armed.
 //
-// Skipped on macOS: there Bun.secrets.get resolves with null (NotFound)
-// instead of rejecting so the createError path is not reached, and keychain
-// latency would expose the separate work-pool → freed-VM race tracked in
-// #32071 which this PR does not address.
-test.skipIf(isMacOS)(
+// Debug-only: reportZappedCellAndCrash is gated on ASSERT_ENABLED, and on
+// release builds worker shutdown outruns the fast-failing secrets jobs so
+// the separate work-pool → freed-VM race tracked in #32071 fires instead.
+// Skipped on macOS where Bun.secrets.get resolves with null (NotFound) and
+// never reaches createError.
+test.skipIf(isMacOS || !isDebug)(
   "creating a coded error while a TerminationException is pending does not crash",
   async () => {
     await using proc = Bun.spawn({

@@ -493,7 +493,10 @@ impl<const SSL: bool> WebSocket<SSL> {
                         LinearFifo::<u8, DynamicBuffer<u8>>::init(),
                     );
                     self.dispatch_compressed_data(buf.readable_slice(0), kind);
-                    drop(buf);
+                    // Restore the taken fifo so `clear_receive_buffers(false)`
+                    // can keep its capacity for the next message instead of
+                    // starting from a fresh zero-capacity `init()`.
+                    self.receive_buffer = buf;
                     self.clear_receive_buffers(false);
                     self.receiving_compressed = false;
                     self.message_is_compressed = false;
@@ -523,7 +526,10 @@ impl<const SSL: bool> WebSocket<SSL> {
                     LinearFifo::<u8, DynamicBuffer<u8>>::init(),
                 );
                 self.dispatch_data(buf.readable_slice(0), kind);
-                drop(buf);
+                // Restore the taken fifo so `clear_receive_buffers(false)`
+                // can keep its capacity for the next message instead of
+                // starting from a fresh zero-capacity `init()`.
+                self.receive_buffer = buf;
                 self.clear_receive_buffers(false);
                 self.message_is_compressed = false;
                 return 0;
@@ -556,7 +562,10 @@ impl<const SSL: bool> WebSocket<SSL> {
                     LinearFifo::<u8, DynamicBuffer<u8>>::init(),
                 );
                 self.dispatch_data(buf.readable_slice(0), kind);
-                drop(buf);
+                // Restore the taken fifo so `clear_receive_buffers(false)`
+                // can keep its capacity for the next message instead of
+                // starting from a fresh zero-capacity `init()`.
+                self.receive_buffer = buf;
                 self.clear_receive_buffers(false);
                 self.message_is_compressed = false;
             }

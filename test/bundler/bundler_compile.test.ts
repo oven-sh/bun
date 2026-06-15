@@ -443,6 +443,31 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  itBundled("compile/Bun.embeddedFiles.type", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import a from "./asset.txt" with { type: "file" };
+        import b from "./image.png" with { type: "file" };
+        import c from "./page.html" with { type: "file" };
+        void a; void b; void c;
+        const types = Object.fromEntries(Bun.embeddedFiles.map(f => [f.name, f.type]));
+        console.log(JSON.stringify(types));
+      `,
+      "/asset.txt": "hi",
+      "/image.png": "x",
+      "/page.html": "<html>",
+    },
+    outfile: "dist/out",
+    run: {
+      stdout: JSON.stringify({
+        "asset.txt": "text/plain;charset=utf-8",
+        "image.png": "image/png",
+        "page.html": "text/html;charset=utf-8",
+      }),
+    },
+  });
   itBundled("compile/ResolveEmbeddedFileOutfile", {
     compile: true,
     // TODO: this shouldn't be necessary, or we should add a map aliasing files.

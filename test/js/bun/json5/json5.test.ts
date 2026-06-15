@@ -1665,18 +1665,16 @@ describe("stringify memory", () => {
   // under bun-asan; widen the threshold there.
   const thresholdMB = isASAN ? 80 : 30;
 
-  test(
-    "does not leak with a string space argument",
-    async () => {
-      // Unique >10-char space string per call so each iteration allocates a
-      // fresh WTFStringImpl for the stored space and hits the clamp branch in
-      // newline(). Nested object/array so indent > 0.
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "--smol",
-          "-e",
-          /* js */ `
+  test("does not leak with a string space argument", async () => {
+    // Unique >10-char space string per call so each iteration allocates a
+    // fresh WTFStringImpl for the stored space and hits the clamp branch in
+    // newline(). Nested object/array so indent > 0.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--smol",
+        "-e",
+        /* js */ `
           const obj = { a: [1, 2, 3], b: { c: 4 }, d: 5 };
           const pad = Buffer.alloc(8000, " ").toString();
           for (let i = 0; i < 500; i++) Bun.JSON5.stringify(obj, null, pad + i);
@@ -1687,14 +1685,12 @@ describe("stringify memory", () => {
           const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
           if (growthMB > ${thresholdMB}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
         `,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
-    },
-    60_000,
-  );
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  }, 60_000);
 });

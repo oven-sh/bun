@@ -272,9 +272,12 @@ impl<'a> InternalState<'a> {
 
                 // gzip stores the size of the uncompressed data in the last 4 bytes of the stream
                 // But it's only valid if the stream is less than 4.7 GB, since it's 4 bytes.
-                // If we know that the stream is going to be larger than our
-                // pre-allocated buffer, then let's dynamically allocate the exact
-                // size.
+                // When the trailer gives us a plausible size, decompress straight
+                // into the caller's buffer instead of going through the shared
+                // scratch buffer and copying the whole body a second time. A lying
+                // trailer is harmless: the reservation is capped at 32 MB, and an
+                // undersized reservation makes decompress_to_vec fail with
+                // InsufficientSpace, which falls through to the streaming slow path.
                 if self.encoding == Encoding::Gzip
                     && buffer.len() > 16
                     && buffer.len() < 1024 * 1024 * 1024
@@ -285,9 +288,7 @@ impl<'a> InternalState<'a> {
                             .expect("infallible: size matches"),
                     );
                     // Since this is arbtirary input from the internet, let's set an upper bound of 32 MB for the allocation size.
-                    if (estimated_size as usize) > deflater.shared_buffer.len()
-                        && estimated_size < 32 * 1024 * 1024
-                    {
+                    if estimated_size > 0 && estimated_size < 32 * 1024 * 1024 {
                         body_out_str.list.reserve_exact(
                             (estimated_size as usize).saturating_sub(body_out_str.list.len()),
                         );
@@ -297,8 +298,38 @@ impl<'a> InternalState<'a> {
                             &mut body_out_str.list,
                             bun_libdeflate::Encoding::Gzip,
                         );
-                        if result.status == bun_libdeflate::Status::Success {
+                        // Trailing bytes after the gzip stream mean the ISIZE
+                        // we reserved from wasn't the real trailer — fall to
+                        // the streaming slow path, which handles multi-member
+                        // streams and rejects garbage.
+                        if result.status == bun_libdeflate::Status::Success
+                            && result.read == buffer.len()
+                        {
                             still_needs_to_decompress = false;
+                            // Right-size before the buffer leaves the HTTP
+                            // layer: the list can carry large capacity from a
+                            // previous response on a reused connection, and
+                            // it is later adopted as-is into JS objects whose
+                            // GC accounting sees only `len`.
+                            let list = &mut body_out_str.list;
+                            if list.capacity() > list.len().saturating_mul(2)
+                                && list.capacity() - list.len() > 64 * 1024
+                            {
+                                list.shrink_to_fit();
+                            }
+                        } else {
+                            // The buffer's last 4 bytes weren't the real
+                            // trailer (trailing data) or the decode failed,
+                            // so the reservation was sized from
+                            // attacker-chosen bytes. Discard the partial
+                            // output and the oversized reservation before the
+                            // slow path reuses this list; the capacity would
+                            // otherwise ride along behind the body's bytes
+                            // (up to 32 MB pinned per tiny response).
+                            body_out_str.list.clear();
+                            if body_out_str.list.capacity() > 64 * 1024 {
+                                body_out_str.list.shrink_to_fit();
+                            }
                         }
 
                         break 'libdeflate;

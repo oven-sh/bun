@@ -2267,11 +2267,23 @@ impl FetchTasklet {
             }
         } else {
             if success {
-                bun_core::handle_oom(
-                    task_ref
-                        .scheduled_response_buffer
-                        .write(task_ref.response_buffer.list.as_slice()),
-                );
+                if task_ref.scheduled_response_buffer.list.is_empty() && !task_ref.result.has_more {
+                    // Final delivery into an empty scheduled buffer — the common
+                    // buffered-response case, where this callback carries the
+                    // complete body. Hand the accumulated bytes over instead of
+                    // copying them. Intermediate streaming chunks keep the copy
+                    // below so `response_buffer` retains its capacity for reuse.
+                    core::mem::swap(
+                        &mut task_ref.scheduled_response_buffer.list,
+                        &mut task_ref.response_buffer.list,
+                    );
+                } else {
+                    bun_core::handle_oom(
+                        task_ref
+                            .scheduled_response_buffer
+                            .write(task_ref.response_buffer.list.as_slice()),
+                    );
+                }
             }
             // reset for reuse
             task_ref.response_buffer.reset();

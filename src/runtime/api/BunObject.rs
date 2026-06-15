@@ -2037,11 +2037,8 @@ pub(crate) fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> 
     for (i, index) in sort_indices.iter().enumerate() {
         use crate::api::standalone_graph_jsc::FileJsc as _;
         let file: &mut GraphFile = &mut unsorted_files[*index as usize];
-        // `File::blob()` caches a Blob whose `name` is the embedded path with
-        // the `/$bunfs/root/` prefix stripped (e.g. `assets/nested/data.txt`),
-        // preserving any subdirectory from the asset naming template. Using
-        // `basename()` here instead would flatten that to `data.txt` and
-        // disagree with the `with { type: 'file' }` import binding (#31575).
+        // `file_blob` keeps the embedded path (minus the `/$bunfs/root/` prefix)
+        // as the blob name, preserving any subdirectory from the asset template.
         let input_blob: &mut Blob = file.file_blob(global_this);
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
         let blob = Blob::new(input_blob.dupe_with_content_type(true));

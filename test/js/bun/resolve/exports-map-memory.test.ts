@@ -26,50 +26,54 @@ function makeExports(wildcard: boolean): string {
   return JSON.stringify({ name: wildcard ? "pkg-wild" : "pkg-flat", exports: exportsObj });
 }
 
-test("exports map with wildcard keys does not duplicate condition subtrees in memory", { timeout: 60_000 }, async () => {
-  using dir = tempDir("exports-map-memory", {
-    "node_modules/pkg-flat/package.json": makeExports(false),
-    "node_modules/pkg-wild/package.json": makeExports(true),
-    "probe.js": `
+test(
+  "exports map with wildcard keys does not duplicate condition subtrees in memory",
+  { timeout: 60_000 },
+  async () => {
+    using dir = tempDir("exports-map-memory", {
+      "node_modules/pkg-flat/package.json": makeExports(false),
+      "node_modules/pkg-wild/package.json": makeExports(true),
+      "probe.js": `
       Bun.gc(true);
       const before = process.memoryUsage().rss;
       try { Bun.resolveSync(process.argv[2], import.meta.dir); } catch {}
       Bun.gc(true);
       process.stdout.write(String(process.memoryUsage().rss - before));
     `,
-  });
-
-  async function measure(spec: string): Promise<number> {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "probe.js", spec],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const delta = parseInt(stdout.trim(), 10);
-    if (exitCode !== 0 || !Number.isFinite(delta)) {
-      throw new Error(`probe '${spec}' failed: exit=${exitCode}\nstdout: ${stdout}\nstderr: ${stderr}`);
+
+    async function measure(spec: string): Promise<number> {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "probe.js", spec],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const delta = parseInt(stdout.trim(), 10);
+      if (exitCode !== 0 || !Number.isFinite(delta)) {
+        throw new Error(`probe '${spec}' failed: exit=${exitCode}\nstdout: ${stdout}\nstderr: ${stderr}`);
+      }
+      return delta;
     }
-    return delta;
-  }
 
-  const flat = await measure("pkg-flat/p0");
-  const wild = await measure("pkg-wild/p0/x");
+    const flat = await measure("pkg-flat/p0");
+    const wild = await measure("pkg-wild/p0/x");
 
-  // Sanity: resolving a ~5.5MB package.json with ~260k Entry nodes must show
-  // up in RSS; if it doesn't, the probe didn't exercise the exports map.
-  expect(flat).toBeGreaterThan(4 << 20);
+    // Sanity: resolving a ~5.5MB package.json with ~260k Entry nodes must show
+    // up in RSS; if it doesn't, the probe didn't exercise the exports map.
+    expect(flat).toBeGreaterThan(4 << 20);
 
-  // Both packages hold byte-identical condition subtrees; the only structural
-  // difference is the "/*" suffix on each key. With expansion_keys as indices
-  // the wildcard package costs `flat + O(keys * sizeof(u32))`, so the diff is
-  // noise. Before the fix it cost `flat + (full deep copy of every subtree)`,
-  // which measured at (wild-flat)/flat of ~0.26 on release and ~0.17 on
-  // debug+ASAN (ASAN's fixed overhead on the JSON AST dilutes the ratio).
-  expect(wild - flat).toBeLessThan(flat * 0.1);
-});
+    // Both packages hold byte-identical condition subtrees; the only structural
+    // difference is the "/*" suffix on each key. With expansion_keys as indices
+    // the wildcard package costs `flat + O(keys * sizeof(u32))`, so the diff is
+    // noise. Before the fix it cost `flat + (full deep copy of every subtree)`,
+    // which measured at (wild-flat)/flat of ~0.26 on release and ~0.17 on
+    // debug+ASAN (ASAN's fixed overhead on the JSON AST dilutes the ratio).
+    expect(wild - flat).toBeLessThan(flat * 0.1);
+  },
+);
 
 // After switching expansion_keys to indices, wildcard + pattern resolution and
 // the PATTERN_KEY_COMPARE specificity ordering must be unchanged.

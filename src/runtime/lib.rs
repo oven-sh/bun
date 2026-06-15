@@ -60,10 +60,7 @@ pub mod generated_js2native; // include!()s ${BUN_CODEGEN_DIR}/generated_js2nati
 pub mod generated_jssink; // include!()s ${BUN_CODEGEN_DIR}/generated_jssink.rs
 
 pub mod dns_jsc;
-#[cfg(not(bun_standalone))]
 pub mod image;
-#[cfg(bun_standalone)]
-pub use crate::api::standalone_api_stubs::image;
 #[cfg(not(bun_standalone))]
 pub mod test_runner;
 #[cfg(bun_standalone)]

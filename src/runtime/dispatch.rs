@@ -110,7 +110,6 @@ use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 use crate::webcore::streams::Pending as StreamPending;
 
-#[cfg(not(bun_standalone))]
 use crate::api::JSTranspiler::AsyncTransformTask;
 use crate::api::bun_subprocess::Subprocess;
 #[cfg(not(windows))]
@@ -118,7 +117,6 @@ use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::cron::CronJob;
 use crate::api::glob::AsyncGlobWalkTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
-#[cfg(not(bun_standalone))]
 use crate::image::AsyncImageTask;
 #[cfg(not(windows))]
 use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
@@ -324,14 +322,8 @@ pub fn run_task(
 
         // ── glob / image / transpiler ────────────────────────────────────
         task_tag::AsyncGlobWalkTask => run_then_destroy!(AsyncGlobWalkTask<'_>),
-        #[cfg(not(bun_standalone))]
         task_tag::AsyncImageTask => run_then_destroy!(AsyncImageTask<'_>),
-        #[cfg(not(bun_standalone))]
         task_tag::AsyncTransformTask => run_then_destroy!(AsyncTransformTask<'_>),
-        #[cfg(bun_standalone)]
-        task_tag::AsyncImageTask | task_tag::AsyncTransformTask => {
-            unreachable!("Bun.Image / Bun.Transpiler are not available in standalone executables")
-        }
 
         // ── blob copy/read/write promise tasks ───────────────────────────
         task_tag::CopyFilePromiseTask => run_then_destroy!(CopyFilePromiseTask<'_>),

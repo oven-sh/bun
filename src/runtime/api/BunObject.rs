@@ -1880,12 +1880,7 @@ pub(crate) fn get_hash_object(global_this: &JSGlobalObject, _: &JSObject) -> JSV
 pub(crate) fn get_jsonc_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     crate::api::jsonc_object::create(global_this)
 }
-#[cfg(not(bun_standalone))]
 pub(crate) fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::api::markdown_object::create(global_this)
-}
-#[cfg(bun_standalone)]
-pub(crate) fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     crate::api::markdown_object::create(global_this)
 }
 pub(crate) fn get_toml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

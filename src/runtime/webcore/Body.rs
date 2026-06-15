@@ -990,7 +990,6 @@ impl Value {
                 ));
             }
 
-            #[cfg(not(bun_standalone))]
             if let Some(image) = value.as_class_ref::<crate::image::Image>() {
                 // Body init is synchronous, so encode now and wrap as a Blob
                 // with the right MIME type. The off-thread path is still

@@ -67,22 +67,16 @@ pub mod html_rewriter;
 pub mod js_bundle_completion_task;
 #[path = "api/JSBundler.rs"]
 pub mod js_bundler;
-#[cfg(not(bun_standalone))]
 #[path = "api/JSTranspiler.rs"]
 pub mod js_transpiler;
-#[cfg(bun_standalone)]
-pub use standalone_api_stubs::js_transpiler;
 #[path = "api/JSON5Object.rs"]
 pub mod json5_object;
 #[path = "api/JSONCObject.rs"]
 pub mod jsonc_object;
 #[path = "api/lolhtml_jsc.rs"]
 pub mod lolhtml_jsc;
-#[cfg(not(bun_standalone))]
 #[path = "api/MarkdownObject.rs"]
 pub mod markdown_object;
-#[cfg(bun_standalone)]
-pub use standalone_api_stubs::markdown_object;
 #[path = "api/NativePromiseContext.rs"]
 pub mod native_promise_context;
 #[cfg(not(bun_standalone))]
@@ -97,11 +91,10 @@ pub mod unsafe_object;
 #[path = "api/YAMLObject.rs"]
 pub mod yaml_object;
 
-// ─── cfg(bun_standalone) stub bodies for the four modules above ──────────────
-// Heavy JS APIs (`Bun.Transpiler`/`FileSystemRouter`/`Image`/`markdown`) are
-// compiled out of `bun-standalone`; this file provides the type names + method
-// signatures the codegen include and downstream callers reference, with bodies
-// that throw on construction.
+// ─── cfg(bun_standalone) stub for `Bun.FileSystemRouter` ─────────────────────
+// `bun_router` + the directory-walk machinery are not useful inside a compiled
+// executable; the stub provides the type names + method signatures the codegen
+// references, with a constructor that throws.
 #[cfg(bun_standalone)]
 #[path = "api/standalone_api_stubs.rs"]
 pub mod standalone_api_stubs;

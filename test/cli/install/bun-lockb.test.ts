@@ -176,7 +176,15 @@ it("recovers from a corrupted binary lockfile instead of panicking", async () =>
   expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(true);
 });
 
-it("fails loudly when a binary lockfile's tree parents form a cycle", async () => {
+it.each([
+  // tree[1].parent = 1: a self-cycle. Walking the parent chain never reaches
+  // the root and hits the MAX_DEPTH guard.
+  { name: "form a cycle", parent: 1, reason: "cycle" },
+  // tree[1].parent = 99: points past trees.len(). The parent walk exits via
+  // the bounds guard without reaching the root, so the built path would be
+  // missing every segment above the break.
+  { name: "point out of bounds", parent: 99, reason: "out of bounds" },
+])("fails loudly when a binary lockfile's tree parents $name", async ({ parent, reason }) => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 
   // Folder deps are never hoisted (Tree.rs places them in their own tree
@@ -186,7 +194,7 @@ it("fails loudly when a binary lockfile's tree parents form a cycle", async () =
     write(
       packageJson,
       JSON.stringify({
-        name: "tree-cycle-lockb",
+        name: "tree-parent-lockb",
         version: "1.0.0",
         dependencies: { "pkg-a": "file:./pkg-a" },
       }),
@@ -224,9 +232,7 @@ it("fails loudly when a binary lockfile's tree parents form a cycle", async () =
   expect(lockb.readUInt32LE(tree1 + 0)).toBe(1);
   expect(lockb.readUInt32LE(tree1 + 8)).toBe(0);
 
-  // Make tree[1] its own parent. Walking the parent chain now never
-  // reaches the root and hits the MAX_DEPTH guard.
-  lockb.writeUInt32LE(1, tree1 + 8);
+  lockb.writeUInt32LE(parent, tree1 + 8);
   await write(lockbPath, lockb);
 
   // `bun pm ls` iterates the on-disk trees directly (no re-hoist) so it
@@ -241,13 +247,15 @@ it("fails loudly when a binary lockfile's tree parents form a cycle", async () =
   const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
   const err = stderrForInstall(rawErr);
 
-  // Previously the Rust port silently returned the bare "node_modules"
-  // path with depth=0 for the cyclic node and `bun pm ls` exited 0 having
-  // dropped the nested dependencies. The corrupted lockfile must be
-  // reported instead of producing a wrong path.
-  expect(err).toContain("Lockfile is malformed");
-  expect(err).toContain("cycle");
-  expect(out).toBeDefined();
+  // Previously the tree iterator silently returned a truncated path for
+  // the corrupted node and `bun pm ls` exited 0 having dropped the nested
+  // dependencies. The corrupted lockfile must be reported instead of
+  // producing a wrong path.
+  expect({ out, err }).toEqual({
+    out: expect.any(String),
+    err: expect.stringContaining("Lockfile is malformed"),
+  });
+  expect(err).toContain(reason);
   expect(code).not.toBe(0);
 });
 

@@ -356,6 +356,19 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
             depth_buf_len += 1;
         }
 
+        if parent_id != 0 {
+            // A well-formed parent chain always terminates at the root
+            // (id 0). Exiting the loop via the `parent_id < trees.len()`
+            // guard means a non-root node's parent points past the end of
+            // the trees buffer, so the path built below would be missing
+            // every segment above the break.
+            Output::err_generic(
+                "Lockfile is malformed (dependency tree parent is out of bounds)",
+                (),
+            );
+            bun_core::Global::crash();
+        }
+
         depth_buf_len -= 1;
 
         depth = depth_buf_len;

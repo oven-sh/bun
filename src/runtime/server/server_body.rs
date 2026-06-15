@@ -2246,7 +2246,7 @@ where
 
         let route_list_value = self.set_routes();
         if new_config.had_routes_object {
-            if let Some(server_js_value) = self.js_value_for_dispatch() {
+            if let Some(server_js_value) = server_js {
                 Self::js_gc_route_list_set(server_js_value, global, route_list_value);
             }
         }

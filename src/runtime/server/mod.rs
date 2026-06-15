@@ -906,7 +906,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Same is-Strong gate as the network trampolines. Unreachable today —
         // the saved request's `pending_requests` increment blocks the
         // downgrade — but explicit so a future accounting bug 503s instead of
-        // panicking in `js_value_assert_alive` below.
+        // dispatching with a stale wrapper.
         // SAFETY: `this` is the live server backref for this request.
         let Some(server_js) = unsafe { &*this }.js_value_for_dispatch() else {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
@@ -1093,8 +1093,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) {
         // Idle keep-alive sockets aren't counted in pending_requests, so the
-        // wrapper can have been collected before this fires. Refuse and close
-        // rather than panicking in js_value_assert_alive() below.
+        // wrapper can have downgraded before this fires. Refuse and close
+        // rather than dispatching with a stale wrapper.
         // SAFETY: `this` is the live server backref for this request.
         let Some(js_value) = unsafe { &*this }.js_value_for_dispatch() else {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));

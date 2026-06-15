@@ -89,10 +89,21 @@ impl Parser<'_> {
         if raw_label.is_empty() || self.ref_defs.is_empty() {
             return None;
         }
-        // Labels longer than the spec cap can never match a stored definition
-        // (parse_ref_def enforces the same limit), so skip normalizing them.
-        if raw_label.len() > MAX_LINK_LABEL_LEN {
-            return None;
+        // A link label cannot contain an unescaped '[': parse_ref_def rejects
+        // such definitions, and normalize_label does not process escapes, so no
+        // stored normalized label contains one either. Rejecting here keeps the
+        // nested-bracket family (`[x]: /url` + `[[[...]]]`) from normalizing an
+        // O(n) label for each of n openers. The 999-character spec cap is
+        // intentionally not applied to the raw lookup label: matching is on the
+        // normalized form, so a reference whose raw bytes exceed the cap only
+        // because of collapsible whitespace must still resolve.
+        let mut i = 0;
+        while i < raw_label.len() {
+            match raw_label[i] {
+                b'\\' if i + 1 < raw_label.len() => i += 2,
+                b'[' => return None,
+                _ => i += 1,
+            }
         }
         let normalized = self.normalize_label(raw_label);
         if normalized.is_empty() {

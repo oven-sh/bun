@@ -249,8 +249,7 @@ fn parse_f32(bytes: &[u8]) -> Option<f32> {
     }
 
     let hex = rest.len() >= 2 && rest[0] == b'0' && matches!(rest[1], b'x' | b'X');
-    let is_digit =
-        |b: u8| b.is_ascii_digit() || (hex && matches!(b, b'a'..=b'f' | b'A'..=b'F'));
+    let is_digit = |b: u8| b.is_ascii_digit() || (hex && matches!(b, b'a'..=b'f' | b'A'..=b'F'));
 
     // Zig rule: every `_` must sit between two digits of the active base.
     let mut stripped: &[u8] = rest;
@@ -258,10 +257,7 @@ fn parse_f32(bytes: &[u8]) -> Option<f32> {
     if rest.contains(&b'_') {
         for (i, &b) in rest.iter().enumerate() {
             if b == b'_'
-                && !(i > 0
-                    && i + 1 < rest.len()
-                    && is_digit(rest[i - 1])
-                    && is_digit(rest[i + 1]))
+                && !(i > 0 && i + 1 < rest.len() && is_digit(rest[i - 1]) && is_digit(rest[i + 1]))
             {
                 return None;
             }

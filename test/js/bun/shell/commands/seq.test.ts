@@ -117,11 +117,7 @@ describe("seq", async () => {
     .stderr("")
     .runAsTest("underscore digit separator in hex");
 
-  TestBuilder.command`seq 0x`
-    .exitCode(1)
-    .stdout("")
-    .stderr("seq: invalid argument\n")
-    .runAsTest("bare 0x is invalid");
+  TestBuilder.command`seq 0x`.exitCode(1).stdout("").stderr("seq: invalid argument\n").runAsTest("bare 0x is invalid");
 
   TestBuilder.command`seq 0xg`
     .exitCode(1)

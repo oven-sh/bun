@@ -278,7 +278,7 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [ccStderr, ccExit] = await Promise.all([ccProc.stderr.text(), ccProc.exited]);
+      const [, ccStderr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
       if (ccExit !== 0) throw new Error("cc failed: " + ccStderr);
     });
     afterAll(() => disposeDir?.[Symbol.dispose]());

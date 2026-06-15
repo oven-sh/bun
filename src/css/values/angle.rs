@@ -18,7 +18,7 @@ const TAG_TURN: u8 = 8;
 /// Angles may be explicit or computed by `calc()`, but are always stored and serialized
 /// as their computed value.
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, crate::generics::CssHash, crate::generics::DeepClone)]
+#[derive(Clone, Copy, crate::generics::CssHash, crate::generics::DeepClone)]
 pub enum Angle {
     /// An angle in degrees. There are 360 degrees in a full circle.
     Deg(CSSNumber) = TAG_DEG,
@@ -179,7 +179,7 @@ impl Angle {
     }
 
     pub(crate) fn eql(self, rhs: Angle) -> bool {
-        self.to_degrees() == rhs.to_degrees()
+        self == rhs
     }
 
     pub(crate) fn mul_f32(self, other: f32) -> Angle {
@@ -219,11 +219,21 @@ impl Angle {
     // `#[derive(CssHash, DeepClone)]` above (POD f32 payload → bitwise).
 }
 
+// NOT structural variant comparison: Deg(180) == Turn(0.5) == Grad(200).
+// Containers holding an `Angle` (Transform, Rotate, LineDirection, ConicGradient,
+// FontStyle, ...) reach this through their own `#[derive(PartialEq)]`, so the
+// rule merger and declaration deduper see cross-unit angles as equal.
+impl PartialEq for Angle {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.to_degrees() == other.to_degrees()
+    }
+}
+
 impl crate::generics::CssEql for Angle {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        // NOT structural variant comparison: Deg(180) eql Rad(PI) eql Turn(0.5).
-        self.to_degrees() == other.to_degrees()
+        *self == *other
     }
 }
 

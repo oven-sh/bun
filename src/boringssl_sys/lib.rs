@@ -7,9 +7,7 @@ pub use boringssl::*;
 ///
 /// BoringSSL's `RAND_bytes` is a thread-local AES-CTR DRBG seeded once from the
 /// OS entropy source and then run entirely in userspace, so this does not incur
-/// a syscall per call. Prefer this over `bun_core::csprng` for hot paths
-/// (`bun_core` sits below this crate and falls back to raw `getrandom(2)` /
-/// `getentropy` / `RtlGenRandom` per call).
+/// a syscall per call. This is the CSPRNG for all of Bun.
 #[inline]
 pub fn rand_bytes(buf: &mut [u8]) {
     if buf.is_empty() {

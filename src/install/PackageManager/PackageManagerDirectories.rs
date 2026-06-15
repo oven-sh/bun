@@ -1284,7 +1284,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
             .to_le_bytes(),
     );
     let mut base64_bytes = [0u8; 64];
-    bun_core::csprng(&mut base64_bytes);
+    bun_boringssl_sys::rand_bytes(&mut base64_bytes);
 
     // Format each byte as zero-padded 2-char lower hex (128 chars total).
     let tmpname_len = {

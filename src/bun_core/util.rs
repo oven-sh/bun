@@ -2818,14 +2818,14 @@ pub fn is_writable(fd: Fd) -> Pollable {
     }
 }
 
-// ── csprng ────────────────────────────────────────────────────────────────
-// bun_core sits below
-// boringssl_sys in the crate graph, so we go to the OS CSPRNG directly:
-// getrandom(2) on Linux, SecRandomCopyBytes/getentropy on Darwin,
-// RtlGenRandom on Windows. All are the same entropy source BoringSSL seeds
-// from. PERF: if a hot path needs the BoringSSL DRBG, install a
-// vtable hook from bun_runtime at startup.
-pub fn csprng(bytes: &mut [u8]) {
+// ── os_entropy ────────────────────────────────────────────────────────────
+// Raw OS entropy source: getrandom(2) on Linux, getentropy on Darwin/BSD,
+// RtlGenRandom on Windows. bun_core sits below boringssl_sys in the crate
+// graph so it cannot reach `RAND_bytes`; this is used only to seed
+// `fast_random()`'s thread-local PRNG once per thread. Every other caller
+// must use `bun_boringssl_sys::rand_bytes` (userspace DRBG, no syscall per
+// call).
+fn os_entropy(bytes: &mut [u8]) {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut filled = 0usize;
@@ -3764,7 +3764,7 @@ pub fn fast_random() -> u64 {
                 return n;
             }
             let mut buf = [0u8; 8];
-            csprng(&mut buf);
+            os_entropy(&mut buf);
             v = u64::from_ne_bytes(buf);
             SEED.store(v, O::Relaxed);
             v = SEED.load(O::Relaxed);

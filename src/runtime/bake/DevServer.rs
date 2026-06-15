@@ -5404,7 +5404,7 @@ impl DevServer {
             },
             client_script_generation: {
                 let mut buf = [0u8; 4];
-                bun_core::csprng(&mut buf);
+                bun_boringssl_sys::rand_bytes(&mut buf);
                 u32::from_ne_bytes(buf)
             },
             server_state: route_bundle::State::Unqueued,

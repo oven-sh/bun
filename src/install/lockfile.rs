@@ -1987,7 +1987,7 @@ impl Lockfile {
 
         let mut tmpname_buf = [0u8; 512];
         let mut base64_bytes = [0u8; 8];
-        bun_core::csprng(&mut base64_bytes);
+        bun_boringssl_sys::rand_bytes(&mut base64_bytes);
         let tmpname: &ZStr = {
             let mut cursor: &mut [u8] = &mut tmpname_buf[..];
             let start_len = cursor.len();

@@ -940,6 +940,7 @@ dependencies = [
  "bun_analytics",
  "bun_ast",
  "bun_base64",
+ "bun_boringssl_sys",
  "bun_bunfig",
  "bun_clap",
  "bun_collections",

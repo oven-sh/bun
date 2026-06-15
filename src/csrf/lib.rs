@@ -93,7 +93,7 @@ pub fn generate<'a>(
 ) -> Result<&'a mut [u8], Error> {
     // Generate nonce from entropy
     let mut nonce = [0u8; 16];
-    bun_core::csprng(&mut nonce);
+    boring::rand_bytes(&mut nonce);
 
     // Current timestamp in milliseconds
     let timestamp: i64 = bun_core::time::milli_timestamp();

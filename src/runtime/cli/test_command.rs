@@ -1694,7 +1694,7 @@ impl CommandLineReporter {
                     // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds
                     let mut base64_bytes = [0u8; 8];
                     let mut shortname_buf = [0u8; 512];
-                    bun_core::csprng(&mut base64_bytes);
+                    bun_boringssl_sys::rand_bytes(&mut base64_bytes);
                     // Temp name: `.lcov.info.<lowercase hex of 8 random bytes>.tmp`.
                     let tmpname = {
                         use std::io::Write as _;

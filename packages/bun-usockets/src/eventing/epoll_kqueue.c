@@ -215,14 +215,23 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
     /* Kqueue delivers each filter (READ, WRITE, TIMER, etc.) as a separate kevent,
      * so the same fd/poll can appear twice in ready_polls. We coalesce them into a
      * single set of flags per poll before dispatching, matching epoll's behavior
-     * where each fd appears once with a combined bitmask. */
+     * where each fd appears once with a combined bitmask.
+     *
+     * EV_EOF is intentionally NOT mapped to dispatch's `eof`. Kqueue sets EV_EOF on
+     * EVFILT_READ for a half-close (peer FIN — analogous to EPOLLRDHUP, which the
+     * epoll path also does not map) and on EVFILT_WRITE when the peer's read side is
+     * gone. Treating either as `eof` made loop.c close the socket before the recv
+     * loop had drained the kernel buffer — e.g. an EVFILT_WRITE-only event carrying
+     * EV_EOF skips recv entirely, and a busy-loop bail-out can leave bytes unread in
+     * the same tick the flag arrived. EVFILT_READ is level-triggered and keeps
+     * firing after a FIN, so recv()==0 (loop.c) is the single source of `eof`, same
+     * as Linux. RST/hard errors remain covered by EV_ERROR and the recv-error path. */
     struct kevent_flags {
         uint8_t readable : 1;
         uint8_t writable : 1;
         uint8_t error    : 1;
-        uint8_t eof      : 1;
         uint8_t skip     : 1;
-        uint8_t _pad     : 3;
+        uint8_t _pad     : 4;
     };
 
     _Static_assert(sizeof(struct kevent_flags) == 1, "kevent_flags must be 1 byte");
@@ -246,7 +255,6 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 #endif
             .writable = (filter == EVFILT_WRITE),
             .error = !!(flags & EV_ERROR),
-            .eof = !!(flags & EV_EOF),
         };
 
         /* Look backward for a prior entry with the same poll to coalesce into.
@@ -257,7 +265,6 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                 coalesced[j].readable |= bits.readable;
                 coalesced[j].writable |= bits.writable;
                 coalesced[j].error |= bits.error;
-                coalesced[j].eof |= bits.eof;
                 coalesced[i] = (struct kevent_flags){ .skip = 1 };
                 merged = 1;
                 break;
@@ -286,8 +293,8 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                    | (bits.writable ? LIBUS_SOCKET_WRITABLE : 0);
 
         events &= us_poll_events(poll);
-        if (events || bits.error || bits.eof) {
-            us_internal_dispatch_ready_poll(poll, bits.error, bits.eof, events);
+        if (events || bits.error) {
+            us_internal_dispatch_ready_poll(poll, bits.error, 0, events);
         }
     }
 #endif

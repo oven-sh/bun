@@ -1,10 +1,4 @@
-// JSC__isBigIntInInt64Range / JSC__isBigIntInUInt64Range had their (min,max)
-// parameters swapped relative to the Rust callers AND used OR where the
-// inclusive range check needs AND. Net effect: they returned true exactly
-// when the value was OUT of range. Through the MySQL parameter binder this
-// rejected every in-range BigInt with ERR_OUT_OF_RANGE and silently accepted
-// (then truncated) out-of-range ones.
-//
+// https://github.com/oven-sh/bun/pull/32265
 // Uses a minimal mock MySQL server so the test runs without Docker.
 
 import { SQL } from "bun";

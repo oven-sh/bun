@@ -730,7 +730,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_expires, (JSGlobalObject * lexi
     if (impl.hasExpiry()) {
         if (thisObject->m_expires) {
             auto* dateInstance = thisObject->m_expires.get();
-            if (static_cast<int64_t>(dateInstance->internalNumber()) == impl.expires()) {
+            if (dateInstance->internalNumber() == static_cast<double>(impl.expires())) {
                 return JSValue::encode(dateInstance);
             }
         }

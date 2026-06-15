@@ -205,6 +205,16 @@ describe("Bun.Cookie expires validation", () => {
       const cookie = new Bun.Cookie("name", "value", { expires: beforeEpoch });
       expect(cookie.expires).toEqual(beforeEpoch);
     });
+
+    test("getter returns a fresh Date when the cached one was mutated to NaN", () => {
+      const cookie = new Bun.Cookie("name", "value", { expires: 1000 });
+      const first = cookie.expires;
+      expect(first.getTime()).toBe(1000 * 1000);
+      first.setTime(NaN);
+      const second = cookie.expires;
+      expect(second.getTime()).toBe(1000 * 1000);
+      expect(second).not.toBe(first);
+    });
   });
 
   describe("Conversion edge cases", () => {

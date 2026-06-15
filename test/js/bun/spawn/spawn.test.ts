@@ -896,6 +896,55 @@ describe("close handling", () => {
       expect(exitCode).toBe(0);
     });
   }
+
+  describe("stdio[N>=3] blob-like inputs", () => {
+    const readFd3 = `const fs = require("fs"); const b = Buffer.alloc(64); const n = fs.readSync(3, b); process.stdout.write(b.subarray(0, n));`;
+
+    it.skipIf(isWindows)("Bun.file(path) at index >= 3 is readable in the child", async () => {
+      const file = join(tmp, "stdio-extra-bunfile.txt");
+      writeFileSync(file, "from-bun-file");
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", readFd3],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe", Bun.file(file)],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "from-bun-file", stderr: "", exitCode: 0 });
+    });
+
+    it.skipIf(isWindows)("Bun.file(fd) at index >= 3 is readable in the child", async () => {
+      const file = join(tmp, "stdio-extra-bunfile-fd.txt");
+      writeFileSync(file, "from-bun-file-fd");
+      const fd = openSync(file, "r");
+      try {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", readFd3],
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe", Bun.file(fd)],
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "from-bun-file-fd", stderr: "", exitCode: 0 });
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    for (const [label, make] of [
+      ["Blob", () => new Blob(["from-blob"])],
+      ["Response", () => new Response("from-response")],
+      ["Request", () => new Request("http://x", { method: "POST", body: "from-request" })],
+    ] as const) {
+      it(`${label} at index >= 3 does not panic`, async () => {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe", make()],
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+      });
+    }
+  });
 });
 
 it("dispose keyword works", async () => {

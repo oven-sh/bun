@@ -227,13 +227,13 @@ impl Stdio {
 
         let result = match self {
             Self::Blob(blob) => 'brk: {
-                let fd = FdStdio::from_int(i).unwrap().fd();
+                let fd = FdStdio::from_int(i).map(FdStdio::fd);
                 if blob.needs_to_read_file() {
                     if let Some(store) = blob.store() {
                         if let StoreData::File(ref file) = store.data {
                             match file.pathlike {
                                 PathOrFileDescriptor::Fd(store_fd) => {
-                                    if store_fd == fd {
+                                    if Some(store_fd) == fd {
                                         break 'brk SpawnOptionsStdio::Inherit;
                                     }
 
@@ -546,14 +546,14 @@ impl Stdio {
         blob: webcore::blob::Any,
         i: i32,
     ) -> JsResult<()> {
-        let fd = FdStdio::from_int(i).unwrap().fd();
+        let fd = FdStdio::from_int(i).map(FdStdio::fd);
 
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {
                 if let StoreData::File(ref file) = store.data {
                     match file.pathlike {
                         PathOrFileDescriptor::Fd(store_fd) => {
-                            if store_fd == fd {
+                            if Some(store_fd) == fd {
                                 *self = Stdio::Inherit;
                             } else {
                                 // TODO: is this supposed to be `store.data.file.pathlike.fd`?

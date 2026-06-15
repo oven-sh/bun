@@ -2262,6 +2262,11 @@ impl<'a> ValueBufferer<'a> {
                                 // outlives the read (ValueBufferer is heap-pinned by caller).
                                 unsafe { &mut *sink }.on_finished_loading_file(bytes);
                             }
+                            unsafe fn discard(_sink: *mut ValueBufferer<'b>) {
+                                // `sink` is `&mut self` of a caller-pinned
+                                // `ValueBufferer`; nothing to free on the
+                                // Windows worker-shutdown discard path.
+                            }
                         }
                         let global = self.global;
                         blob.do_read_file_internal::<Self, LoadFileAdapter>(

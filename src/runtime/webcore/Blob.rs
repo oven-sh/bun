@@ -97,6 +97,17 @@ pub enum ReadBytesResult {
 /// `on_read_bytes`.
 pub trait ReadBytesHandler {
     fn on_read_bytes(&mut self, result: ReadBytesResult);
+
+    /// Windows worker-shutdown discard path: release the handler pointer
+    /// passed to `read_bytes_to_handler` without entering JS. Implementors
+    /// that leak a `Box` into the read dispatch reclaim it here and
+    /// `mem::forget` any JSC `Strong` handles (the JSC `HandleSet` is
+    /// already freed when this runs).
+    ///
+    /// # Safety
+    /// `ctx` is the exact pointer originally passed to
+    /// `read_bytes_to_handler`; this call consumes it.
+    unsafe fn on_read_discard(ctx: *mut Self);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -145,7 +156,8 @@ pub trait BlobExt {
     fn do_read_file<F: read_file::ReadFileToJs>(&self, global: &JSGlobalObject) -> JSValue;
     /// # Safety
     /// `ctx` must be a valid, exclusively-accessible `*mut H` that stays alive
-    /// until `H::on_read_bytes` is invoked (synchronously or via the async task).
+    /// until `H::on_read_bytes` or `H::on_read_discard` is invoked
+    /// (synchronously or via the async task).
     unsafe fn read_bytes_to_handler<H: ReadBytesHandler>(
         &self,
         ctx: *mut H,
@@ -525,7 +537,7 @@ impl BlobExt for Blob {
     ///
     /// # Safety
     /// `ctx` must be a valid, exclusively-accessible `*mut H` that stays alive
-    /// until `H::on_read_bytes` is invoked.
+    /// until `H::on_read_bytes` or `H::on_read_discard` is invoked.
     unsafe fn read_bytes_to_handler<H: ReadBytesHandler>(
         &self,
         ctx: *mut H,
@@ -551,6 +563,11 @@ impl BlobExt for Blob {
                             }
                         },
                     );
+                }
+                unsafe fn discard(c: *mut H) {
+                    // SAFETY: `c` is the `*mut H` passed by the caller;
+                    // forwarded unchanged per `ReadBytesHandler::on_read_discard`.
+                    unsafe { H::on_read_discard(c) };
                 }
             }
             self.do_read_file_internal::<H, Adapter<H>>(ctx, global);
@@ -3933,6 +3950,15 @@ pub enum FormDataEntry<'a> {
 /// plain `fn(*mut c_void, ReadFileResultType)` thunk, monomorphized per `(C, F)`.
 pub trait InternalReadFileFn<C> {
     fn call(ctx: *mut C, bytes: read_file::ReadFileResultType);
+
+    /// Windows worker-shutdown discard path: release `ctx` without entering
+    /// JS. Borrow-style callers (ctx owned elsewhere) implement this as a
+    /// no-op; heap-allocated callers reclaim the Box and `mem::forget` any
+    /// JSC `Strong` handles.
+    ///
+    /// # Safety
+    /// Same `ctx` ownership contract as [`Self::call`].
+    unsafe fn discard(ctx: *mut C);
 }
 
 pub struct NewInternalReadFileHandler<C, F>(core::marker::PhantomData<(C, F)>);
@@ -3949,14 +3975,18 @@ where
         F::call(handler.cast::<C>(), bytes);
     }
 
-    /// Worker-shutdown discard path. `handler` is caller-owned (not
-    /// heap-allocated by this layer), so there is nothing to free here;
-    /// the caller's storage is reclaimed by the worker teardown that
-    /// triggered the discard.
+    /// Worker-shutdown discard path. Forwards to the concrete
+    /// `InternalReadFileFn::discard`, which knows whether `ctx` is
+    /// heap-allocated (e.g. `BlobReadChain`) or borrow-style
+    /// (e.g. `ValueBufferer`).
     ///
     /// # Safety
     /// See [`read_file::ReadFileOnDiscardCallback`].
-    pub unsafe fn discard(_handler: *mut c_void) {}
+    pub unsafe fn discard(handler: *mut c_void) {
+        // SAFETY: every call site passes a `*mut C` round-tripped
+        // through `*mut c_void`; this is the inverse pointer cast.
+        unsafe { F::discard(handler.cast::<C>()) };
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -175,3 +175,27 @@ describe("RequestInit signal presence", () => {
     });
   });
 });
+
+// https://github.com/oven-sh/bun/issues/28928
+// `new Request(input, { body: undefined })` must inherit the streaming body
+// from `input` by teeing the readable that `check_body_stream_ref` already
+// migrated into the JS-side cache. Going through `Value::clone(None)` here
+// creates an empty disconnected ByteStream instead, so `.text()` on the copy
+// never resolves.
+test("new Request(input, init) with a streaming body inherits it when init.body is undefined", async () => {
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("hello world"));
+      controller.close();
+    },
+  });
+  const original = new Request("http://localhost/test", {
+    method: "POST",
+    body,
+    duplex: "half",
+  });
+
+  const copy = new Request(original, { body: undefined });
+  expect(copy.method).toBe("POST");
+  expect(await copy.text()).toBe("hello world");
+});

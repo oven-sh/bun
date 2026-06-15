@@ -1471,23 +1471,40 @@ unsafe fn parse_worker_exec_argv_allow_addons(
     use crate::cli::arguments::RUN_PARAMS;
     use bun_clap::Values;
 
+    fn find_short(c: u8) -> Option<&'static bun_clap::Param<bun_clap::Help>> {
+        RUN_PARAMS.iter().find(|p| p.names.short == Some(c))
+    }
+
     // Does `bytes` name a `RUN_PARAMS` flag whose value is supplied by the
-    // *next* token? True only for the bare `--long` / `-s` spellings of a
-    // `One`/`Many` param; `--long=val`, `-s=val`, `-sval`, chained shorts and
-    // `OneOptional` params all carry their value (if any) inline and do not
-    // pull from the iterator in `StreamingClap`.
+    // *next* token? `--long=val` and `OneOptional` params never pull from the
+    // iterator. A bare `--long` / `-s` pulls when its `takes_value` is
+    // `One`/`Many`. A chained-short cluster (`-br`) pulls when every prefix
+    // char is a `None`/`OneOptional` short and the last char is a
+    // `One`/`Many` short with nothing after it — `StreamingClap::chainging`
+    // calls `iter.next()` in exactly that case.
     fn flag_consumes_next_token(bytes: &[u8]) -> bool {
-        let param = if let Some(long) = bytes.strip_prefix(b"--") {
-            RUN_PARAMS.iter().find(|p| p.names.matches_long(long))
-        } else if bytes.len() == 2 && bytes[0] == b'-' {
-            RUN_PARAMS.iter().find(|p| p.names.short == Some(bytes[1]))
-        } else {
-            None
-        };
-        matches!(
-            param.map(|p| p.takes_value),
-            Some(Values::One | Values::Many)
-        )
+        if let Some(long) = bytes.strip_prefix(b"--") {
+            let param = RUN_PARAMS.iter().find(|p| p.names.matches_long(long));
+            return matches!(
+                param.map(|p| p.takes_value),
+                Some(Values::One | Values::Many)
+            );
+        }
+        if let Some(shorts) = bytes.strip_prefix(b"-") {
+            for (i, &c) in shorts.iter().enumerate() {
+                let Some(param) = find_short(c) else {
+                    return false;
+                };
+                match param.takes_value {
+                    Values::None | Values::OneOptional => continue,
+                    // `One`/`Many`: pulls from the iterator only when this is
+                    // the last char; otherwise the rest of the cluster (or
+                    // the text after `=`) is the inline value.
+                    Values::One | Values::Many => return i + 1 == shorts.len(),
+                }
+            }
+        }
+        false
     }
 
     let mut no_addons = false;
@@ -1499,13 +1516,13 @@ unsafe fn parse_worker_exec_argv_allow_addons(
         // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
         let owned = unsafe { &*arg }.to_owned_slice_z();
         let bytes = owned.as_bytes();
-        // `stop_after_positional_at = 1` — first positional ends parsing. A
-        // non-`-` token that the previous flag consumes as its value is not a
-        // positional.
+        // The previous `One`/`Many` flag consumes this token as its value via
+        // raw `iter.next()` — regardless of a leading `-` or a literal `--`.
+        if core::mem::take(&mut prev_wants_value) {
+            continue;
+        }
+        // `stop_after_positional_at = 1` — first positional ends parsing.
         if bytes.first() != Some(&b'-') {
-            if core::mem::take(&mut prev_wants_value) {
-                continue;
-            }
             break;
         }
         if bytes == b"--" {

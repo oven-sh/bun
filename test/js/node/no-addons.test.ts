@@ -17,26 +17,34 @@ test("--no-addons throws an error on process.dlopen", () => {
   expect(err).toContain("\nerror: Cannot load native addon because loading addons is disabled.");
 });
 
-describe("worker execArgv honors --no-addons after value-taking flags", () => {
-  // The value token for `-r` / `--title` / `--port` / `-e` must not be
-  // treated as the first positional when parsing the worker's execArgv.
+describe("worker execArgv --no-addons parsing matches RunCommand clap", () => {
+  // A value token following a value-taking flag (`-r x`, `--title x`, ...)
+  // must not be treated as the first positional when scanning execArgv, and
+  // the value is consumed regardless of its own content (even `--` or a
+  // `-`-prefixed string).
   const body = `try { process.dlopen({ exports: {} }, "/nonexistent.node"); } catch (e) { require("node:worker_threads").parentPort.postMessage(e.code); }`;
   test.each([
-    [["--no-addons"]],
-    [["-r", "./preload.js", "--no-addons"]],
-    [["--require", "./preload.js", "--no-addons"]],
-    [["--title", "foo", "--no-addons"]],
-    [["--port", "3000", "--no-addons"]],
-    [["-e", "void 0", "--no-addons"]],
-    [["--no-addons", "-r", "./preload.js"]],
-  ])("%j", async execArgv => {
+    [["--no-addons"], "ERR_DLOPEN_DISABLED"],
+    [["-r", "./preload.js", "--no-addons"], "ERR_DLOPEN_DISABLED"],
+    [["--require", "./preload.js", "--no-addons"], "ERR_DLOPEN_DISABLED"],
+    [["--title", "foo", "--no-addons"], "ERR_DLOPEN_DISABLED"],
+    [["--port", "3000", "--no-addons"], "ERR_DLOPEN_DISABLED"],
+    [["-e", "void 0", "--no-addons"], "ERR_DLOPEN_DISABLED"],
+    [["--no-addons", "-r", "./preload.js"], "ERR_DLOPEN_DISABLED"],
+    // chained shorts ending in a value-taking short pull the next token
+    [["-br", "./preload.js", "--no-addons"], "ERR_DLOPEN_DISABLED"],
+    // the value is consumed via raw iter.next(), even if it is `--`
+    [["-r", "--", "--no-addons"], "ERR_DLOPEN_DISABLED"],
+    // here `--no-addons` is `-r`'s value, not a flag; addons stay enabled
+    [["-r", "--no-addons"], "ERR_DLOPEN_FAILED"],
+  ])("%j", async (execArgv, expected) => {
     const worker = new Worker(body, { eval: true, execArgv });
     try {
       const code = await new Promise((resolve, reject) => {
         worker.on("message", resolve);
         worker.on("error", reject);
       });
-      expect(code).toBe("ERR_DLOPEN_DISABLED");
+      expect(code).toBe(expected);
     } finally {
       await worker.terminate();
     }

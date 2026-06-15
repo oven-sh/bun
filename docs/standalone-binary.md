@@ -75,45 +75,27 @@ Linux-x64 release, non-LTO, measured on this branch:
 |                           |          bytes |        MB |
 | ------------------------- | -------------: | --------: |
 | stripped `bun`            |     70,389,048 |     67.13 |
-| stripped `bun-standalone` |     67,439,800 |     64.32 |
-| **delta**                 | **−2,949,248** | **−2.81** |
+| stripped `bun-standalone` |     62,392,896 |     59.50 |
+| **delta**                 | **−7,996,152** | **−7.63** |
+
+`bloaty` section diff: `.text` −6.80 MB, `.rodata` −849 KB.
 
 Per-crate VM size from `bloaty -d compileunits` (full → standalone):
 
 | crate             | full MB | standalone MB |     Δ |
 | ----------------- | ------: | ------------: | ----: |
-| `bun_runtime`     |    6.45 |          5.35 | −1.10 |
-| `bun_install`     |    2.03 |          1.10 | −0.93 |
-| `bun_bundler`     |    1.61 |          1.43 | −0.18 |
-| `bun_css`         |    1.77 |          1.74 | −0.03 |
+| `bun_runtime`     |    6.45 |          4.75 | −1.70 |
+| `bun_install`     |    2.03 |          0.03 | −2.00 |
+| `bun_css`         |    1.77 |             0 | −1.77 |
+| `bun_bundler`     |    1.61 |          0.44 | −1.17 |
 | `bun_css_jsc`     |    0.10 |             0 | −0.10 |
-| `bun_install_jsc` |    0.05 |          0.06 | +0.01 |
+| `bun_install_jsc` |    0.05 |             0 | −0.05 |
 
-The remaining `bun_css` / `bun_bundler` / `bun_install` weight is held alive
-by **struct-field references from live runtime types**, which gc-sections
-cannot sever even when the code paths are unreachable:
-
-- `bun_runtime::server::ServerInstance.dev_server: Option<Box<DevServer>>`
-  → `bake::IncrementalGraph<bundle_v2::Side>` → `BundleV2` → `Chunk.css`.
-- `HTMLBundle` codegen class (`HTMLBundle__create`/`finalize` referenced
-  from `ZigGeneratedClasses.cpp`) owns `BundleV2Result`.
-- `bun_bundler::Chunk` has `bun_css::BundlerStyleSheet` field types, and
-  `Chunk` is reachable from `Transpiler` (which the runtime keeps).
-- `run_command.rs` workspace-script lookup and `shell_completions.rs`
-  reference `bun_install` directly.
-
-Recovering the remaining ~4 MB requires structural splits (own PRs):
-
-- cfg the `dev_server` field + `AnyRoute::FrameworkRouter` variant to a
-  ZST under `bun_standalone`; cfg `pub mod bake` entirely.
-- Gate `HTMLBundle.classes.ts` codegen on a `BUN_STANDALONE` define so
-  `ZigGeneratedClasses.cpp` stops referencing it (only C++-side change
-  needed; the same `.a` can carry both via weak symbols, or split codegen).
-- Split `bun_bundler` into `bun_transpiler` (Transpiler/options/defines/
-  cache/analyze, always on) and `bun_bundler` (BundleV2/Chunk/linker,
-  gated). This is what severs the `bun_css` dependency.
-- Route `run_command`'s `package.json` scripts lookup through
-  `bun_parsers::json` instead of `bun_install`.
+The remaining `bun_bundler` 0.44 MB is the `Transpiler` half (single-file
+TS→JS, options/defines/cache, `analyze_transpiled_module`) which is
+structurally embedded in `VirtualMachine` and required by the module loader.
 
 The < 35 MB target additionally requires shipping a reduced ICU data file
-(small-icu ≈ 5 MB instead of 24 MB) — a WebKit-prebuilt change.
+(small-icu ≈ 5 MB instead of 24 MB) — a WebKit-prebuilt change. The hard
+floor with full ICU is JSC 22.9 MB + ICU 23.7 MB + bindings/crypto/codecs
+≈ 57 MB.

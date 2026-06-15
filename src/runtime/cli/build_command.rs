@@ -289,6 +289,15 @@ impl BuildCommand {
                     Global::exit(1);
                 }
 
+                // When compiling to an executable, only `external` sourcemaps
+                // work, as the runtime does not look at the source map
+                // comment. After validating the user's choice, secretly
+                // override it. (Standalone HTML builds keep the user's choice
+                // because browsers do read the comment.)
+                if this_transpiler.options.source_map != options::SourceMapOption::None {
+                    this_transpiler.options.source_map = options::SourceMapOption::External;
+                }
+
                 let base_public_path =
                     bun_standalone_module_graph::StandaloneModuleGraph::target_base_public_path(
                         compile_target.os,

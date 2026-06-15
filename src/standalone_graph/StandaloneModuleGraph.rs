@@ -486,8 +486,10 @@ impl LazySourceMap {
                 });
 
                 stored.external_source_names = file_names;
-                // `from_provider` packs the pointer (plus implicit kind/load_hint)
-                // into the `SourceContentPtr` bitfield.
+                // `from_provider` stores the pointer as a raw address in
+                // `SourceContentPtr.data`; the provider dispatch is never
+                // invoked for this type-punned pointer (guarded by
+                // `is_standalone_module_graph`).
                 stored.underlying_provider = SourceMap::SourceContentPtr::from_provider(
                     bun_core::heap::into_raw(data).cast::<SourceMap::SourceProviderMap>(),
                 );

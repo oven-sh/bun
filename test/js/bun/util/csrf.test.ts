@@ -184,6 +184,48 @@ describe("Bun.CSRF", () => {
     expect(() => CSRF.verify(token, { secret, sessionId: 123 })).toThrow();
   });
 
+  test("expiresIn/maxAge validation uses RangeError with ERR_OUT_OF_RANGE", () => {
+    function capture(fn: () => unknown) {
+      try {
+        fn();
+      } catch (e: any) {
+        return { constructor: e.constructor.name, code: e.code, message: e.message };
+      }
+      throw new Error("expected to throw");
+    }
+
+    // Out of range (> Number.MAX_SAFE_INTEGER)
+    expect(capture(() => CSRF.generate(secret, { expiresIn: 1e20 }))).toEqual({
+      constructor: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message:
+        'The value of "expiresIn" is out of range. It must be >= 0 and <= 9007199254740991. Received 100000000000000000000',
+    });
+
+    // Out of range (negative)
+    expect(capture(() => CSRF.generate(secret, { expiresIn: -5 }))).toEqual({
+      constructor: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: 'The value of "expiresIn" is out of range. It must be >= 0 and <= 9007199254740991. Received -5',
+    });
+
+    // Non-integer number
+    expect(capture(() => CSRF.generate(secret, { expiresIn: 1.5 }))).toEqual({
+      constructor: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "expiresIn" property must be of type integer. Received number',
+    });
+
+    // verify() maxAge follows the same contract
+    const token = CSRF.generate(secret);
+    expect(capture(() => CSRF.verify(token, { secret, maxAge: 1e20 }))).toEqual({
+      constructor: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message:
+        'The value of "maxAge" is out of range. It must be >= 0 and <= 9007199254740991. Received 100000000000000000000',
+    });
+  });
+
   test("handle bad decoding", () => {
     const ambigousSecret = "test-secret";
 

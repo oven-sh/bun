@@ -631,6 +631,8 @@ impl PostgresSQLQuery {
                     Ok(v) => v,
                     Err(err) => {
                         drop(signature);
+                        // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
+                        unsafe { Self::deref(this_ptr) };
                         return Err(
                             global_object.throw_error(err.into(), "failed to allocate statement")
                         );
@@ -787,6 +789,8 @@ impl PostgresSQLQuery {
                                 .with_mut(|m| m.remove(&signature_hash));
                         }
                         drop(signature);
+                        // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
+                        unsafe { Self::deref(this_ptr) };
                         if !global_object.has_exception() {
                             return Err(global_object.throw_value(postgres_error_to_js(
                                 global_object,
@@ -855,6 +859,9 @@ impl PostgresSQLQuery {
             .with_mut(|q| q.write_item(this_ptr))
             .is_err()
         {
+            this.release_statement();
+            // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
+            unsafe { Self::deref(this_ptr) };
             return Err(global_object.throw_out_of_memory());
         }
 

@@ -329,7 +329,7 @@ describe("zlib.brotli", () => {
   // Z_BLOCK (5) to a brotli stream reaches the native set_flush. The Rust
   // port mapped only 0..=3 and panicked on the rest; these should instead
   // complete the flush and let end() surface the usual Z_BUF_ERROR.
-  it.each([
+  it.concurrent.each([
     ["Z_FINISH", zlib.constants.Z_FINISH],
     ["Z_BLOCK", zlib.constants.Z_BLOCK],
   ])("BrotliDecompress.flush(%s) completes instead of aborting", async (_, kind) => {
@@ -356,7 +356,7 @@ describe("zlib.brotli", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("BrotliDecompress.flush(Z_FINISH) still decodes valid input", async () => {
+  it.concurrent("BrotliDecompress.flush(Z_FINISH) still decodes valid input", async () => {
     const script = `
       const z = require("zlib");
       const d = z.createBrotliDecompress();
@@ -381,7 +381,7 @@ describe("zlib.brotli", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("BrotliCompress.flush(Z_FINISH) still produces decodable output", async () => {
+  it.concurrent("BrotliCompress.flush(Z_FINISH) still produces decodable output", async () => {
     // set_flush is shared between encode and decode; on the encode path the
     // stored flush op is passed directly to BrotliEncoderCompressStream, so
     // the out-of-range mapping must not break the finish sequence.

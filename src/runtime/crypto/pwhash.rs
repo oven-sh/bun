@@ -385,7 +385,7 @@ pub mod bcrypt {
         }
     }
 
-    /// Verify a PHC-encoded bcrypt hash: `$bcrypt$r=N$<b64 salt>$<b64 hash>`.
+    /// Verify a PHC-encoded bcrypt hash: `$bcrypt$[v=V$]r=N$<b64 salt>$<b64 hash>`.
     ///
     /// The Rust `bcrypt` crate has no PHC codec, so parse the string here,
     /// recompute via the raw block cipher, and compare the 23-byte digests.
@@ -398,6 +398,16 @@ pub mod bcrypt {
         if alg_id != "bcrypt" {
             return Err(bun_core::err!("PasswordVerificationFailed"));
         }
+
+        // Optional `v=<version>` segment (PHC string-format spec). bcrypt has
+        // no versioning that affects the digest, so accept and discard it.
+        let rest = match rest.strip_prefix("v=") {
+            Some(after_v) => {
+                let (_, rest) = after_v.split_once('$').ok_or_else(invalid)?;
+                rest
+            }
+            None => rest,
+        };
 
         // r=N (rounds must fit in 6 bits; checked below)
         let (params, rest) = rest.split_once('$').ok_or_else(invalid)?;

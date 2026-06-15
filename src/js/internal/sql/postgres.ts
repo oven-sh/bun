@@ -696,6 +696,22 @@ class PostgresAdapter
     }
   }
 
+  // Fire every onlisten currently registered for a channel (the reconnect
+  // sweep's behavior after a successful re-LISTEN). The new subscription's
+  // own onlisten is not in the map yet — listen() inserts it after its ack —
+  // so callers that also represent a new subscription fire theirs separately.
+  #fireOnlistenForChannel(channel: string) {
+    const onlistenPairs = this.#listenOnlistenCallbacks.get(channel);
+    if (!onlistenPairs) return;
+    for (const onlistens of onlistenPairs.values()) {
+      for (const fn of onlistens) {
+        try {
+          fn.$call(undefined, this.#listenState);
+        } catch {}
+      }
+    }
+  }
+
   #scheduleListenReconnect(immediate = false) {
     // Reconnect retries indefinitely as long as there are tracked channels and
     // the adapter is open. There is no global attempt cap — if PG is permanently
@@ -734,19 +750,14 @@ class PostgresAdapter
           if (this.#listenRegisteredChannels.has(channel)) continue;
           try {
             await this.#runListenQuery(conn, `LISTEN ${this.#quoteChannel(channel)}`);
+            // A concurrent listen() may have registered and fired the
+            // pre-existing onlistens for this channel while this sweep's
+            // LISTEN was in flight; re-firing would double them.
+            if (this.#listenRegisteredChannels.has(channel)) continue;
             this.#listenRegisteredChannels.add(channel);
             const failures = this.#listenChannelFailures.get(channel);
             if (failures !== undefined) this.#listenChannelFailures.delete(channel);
-            const onlistenPairs = this.#listenOnlistenCallbacks.get(channel);
-            if (onlistenPairs) {
-              for (const onlistens of onlistenPairs.values()) {
-                for (const fn of onlistens) {
-                  try {
-                    fn.$call(undefined, this.#listenState);
-                  } catch {}
-                }
-              }
-            }
+            this.#fireOnlistenForChannel(channel);
           } catch (err) {
             // The rejection came from the connection dying, not from this
             // channel: don't blame the channel; onClose owns the reschedule.
@@ -879,9 +890,21 @@ class PostgresAdapter
             this.#closeListenConnectionIfIdle();
             return;
           }
+          // Already acked on this connection (the fast-forwarded sweep ran
+          // first): nothing left to do here, and re-issuing would re-fire
+          // the channel's onlistens after the sweep already did.
+          if (this.#listenRegisteredChannels.has(channel)) return;
           await this.#runListenQuery(conn, `LISTEN ${this.#quoteChannel(channel)}`);
-          this.#listenRegisteredChannels.add(channel);
-          this.#listenChannelFailures.delete(channel);
+          if (!this.#listenRegisteredChannels.has(channel)) {
+            // First registration of this channel on the current connection
+            // (listen() during the backoff window created it): that is the
+            // sweep's job for this channel, so fire the pre-existing
+            // onlistens the sweep would have. The new subscription's own
+            // onlisten is not in the map yet and is fired by listen() below.
+            this.#listenRegisteredChannels.add(channel);
+            this.#listenChannelFailures.delete(channel);
+            this.#fireOnlistenForChannel(channel);
+          }
         })().finally(() => {
           if (this.#listenInFlight.get(channel) === inFlight) this.#listenInFlight.delete(channel);
         });

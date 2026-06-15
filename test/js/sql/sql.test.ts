@@ -13988,3 +13988,83 @@ test("unlisten() resolves even when the connection drops during the UNLISTEN rou
   await recoveredB;
   await db.unlisten("u_b");
 });
+
+// A listen() during the reconnect backoff window on a channel that already
+// has subscribers can create the replacement connection and ack LISTEN
+// before the fast-forwarded sweep reaches that channel. That ack is then
+// the channel's reconnect registration: it must fire the pre-existing
+// onlistens the sweep would have, and the new subscription's own onlisten
+// must still fire exactly once.
+test("listen() during backoff on an already-subscribed channel fires pre-existing onlistens on reconnect", async () => {
+  await using mock = await createMockListenServer({});
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  // A preceding channel so the sweep's first await is not for shared_chan
+  // (the in-flight task's LISTEN then acks before the sweep reaches it).
+  let onlistenOther = 0;
+  const { promise: relistenedOther, resolve: resolveOther } = Promise.withResolvers<void>();
+  await db.listen(
+    "shared_other",
+    () => {},
+    () => {
+      if (++onlistenOther === 2) resolveOther();
+    },
+  );
+
+  let onlisten1 = 0;
+  const { promise: relistened1, resolve: resolve1 } = Promise.withResolvers<void>();
+  await db.listen(
+    "shared_chan",
+    () => {},
+    () => {
+      if (++onlisten1 === 2) resolve1();
+    },
+  );
+
+  mock.destroyConnections();
+
+  // Add a second subscriber on shared_chan during backoff; retry until one
+  // lands on the replacement connection it creates.
+  let onlisten2 = 0;
+  let sub2: { unlisten: () => Promise<void> } | undefined;
+  for (let i = 0; i < 50 && !sub2; i++) {
+    try {
+      sub2 = await db.listen(
+        "shared_chan",
+        () => {},
+        () => {
+          onlisten2++;
+        },
+      );
+    } catch {}
+  }
+  expect(sub2).toBeDefined();
+
+  // The fast-forwarded sweep re-registers shared_other; once its onlisten
+  // fires again the sweep has finished for this connection.
+  await relistenedOther;
+  // The in-flight path that registered shared_chan fired its pre-existing
+  // onlisten (onlisten1) on reconnect.
+  await relistened1;
+
+  // Barrier: UNLISTEN pipelines behind everything the sweep and the
+  // in-flight task wrote on this connection, so the counts are final.
+  await db.unlisten("shared_other");
+
+  expect(onlisten1).toBe(2);
+  // Depending on whether the retried listen() landed before or after the
+  // adapter observed the drop, onlisten2 legitimately gets just its initial
+  // fire (the new subscription created the replacement) or an additional
+  // reconnect fire (it joined before the drop was observed and the sweep
+  // fired it). Both are correct; the invariant is it never exceeds the
+  // pre-existing subscriber.
+  expect(onlisten2).toBeGreaterThanOrEqual(1);
+  expect(onlisten2).toBeLessThanOrEqual(onlisten1);
+
+  await db.unlisten("shared_chan");
+});

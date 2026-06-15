@@ -362,6 +362,9 @@ impl IOReader {
 
     fn run_yield(&self, y: Yield) {
         let Some(interp) = self.state().interp else {
+            if let Yield::OnIoWriterChunk { err: Some(e), .. } = &y {
+                e.deref();
+            }
             debug_assert!(
                 matches!(y, Yield::Done | Yield::Suspended),
                 "IOReader async callback fired without interp backref"

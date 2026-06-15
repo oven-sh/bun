@@ -1919,6 +1919,9 @@ impl PipeReader {
     /// re-derive `&PipeReader` via the `Readable::Pipe` `Arc`).
     pub(crate) fn run_yield_with(interp: *mut crate::shell::interpreter::Interpreter, y: Yield) {
         if interp.is_null() {
+            if let Yield::OnIoWriterChunk { err: Some(e), .. } = &y {
+                e.deref();
+            }
             debug_assert!(
                 matches!(y, Yield::Done | Yield::Suspended | Yield::Failed),
                 "PipeReader async callback fired without interp backref"

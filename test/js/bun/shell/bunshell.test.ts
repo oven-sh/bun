@@ -1323,6 +1323,32 @@ describe("deno_task", () => {
 
     TestBuilder.command`echo hi | ${BUN} -e 'process.exit(69)'`.exitCode(69).stdout("").runAsTest("last exit code 3");
 
+    test.if(isPosix)("pipe setup EMFILE writes to stderr and resolves with exit 1", async () => {
+      // A pipeline whose socketpair() allocation hits RLIMIT_NOFILE should
+      // surface as `bun: Too many open files\n` on stderr with exit code 1,
+      // not as a thrown JS error that rejects the Bun.$ promise.
+      const script = `
+        const cats = new Array(100).fill("cat").join(" | ");
+        const r = await Bun.$({ raw: ["echo a | " + cats] }).nothrow().quiet();
+        console.log(JSON.stringify({
+          exitCode: r.exitCode,
+          stderr: r.stderr.toString(),
+        }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `ulimit -n 128 && exec "$@"`, "--", bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ exitCode: 1, stderr: "bun: Too many open files\n" }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     describe("pipeline stack behavior", () => {
       // Test deep pipeline chains to stress the stack implementation
       TestBuilder.command`echo 1 | echo 2 | echo 3 | echo 4 | echo 5 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`

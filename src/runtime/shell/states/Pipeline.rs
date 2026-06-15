@@ -247,11 +247,8 @@ impl Pipeline {
                     }
                 }
                 let sys = e.to_shell_system_error();
-                let y = Self::write_failing_error(
-                    interp,
-                    this,
-                    format_args!("bun: {}\n", sys.message),
-                );
+                let y =
+                    Self::write_failing_error(interp, this, format_args!("bun: {}\n", sys.message));
                 sys.deref();
                 return y;
             }

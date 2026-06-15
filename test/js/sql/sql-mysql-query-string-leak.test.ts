@@ -108,6 +108,7 @@ test("MySQL: query string is not leaked across query lifecycle", async () => {
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
+    timeout: 60_000,
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

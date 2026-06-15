@@ -3703,6 +3703,26 @@ it("chown should verify its arguments", () => {
   expect(() => fs.chown("doesnt-matter.txt", 0, "a")).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
 });
 
+// https://github.com/oven-sh/bun/issues/32050
+it("lchown succeeds on every platform", async () => {
+  const dir = tmpdirSync();
+  const file = join(dir, "lchown.txt");
+  writeFileSync(file, "x");
+  // A dangling symlink distinguishes lchown from chown: it operates on the
+  // link itself, so the missing target must not matter.
+  const link = join(dir, "lchown-link");
+  symlinkSync(join(dir, "does-not-exist"), link);
+
+  for (const target of [file, link]) {
+    // uid/gid of -1 means "leave unchanged", so this succeeds unprivileged.
+    expect(fs.lchownSync(target, -1, -1)).toBeUndefined();
+    await expect(fs.promises.lchown(target, -1, -1)).resolves.toBeUndefined();
+    await new Promise<void>((resolve, reject) => {
+      fs.lchown(target, -1, -1, err => (err ? reject(err) : resolve()));
+    });
+  }
+});
+
 it("open flags verification", async () => {
   const invalid = 4_294_967_296;
   expect(() => fs.open(__filename, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");

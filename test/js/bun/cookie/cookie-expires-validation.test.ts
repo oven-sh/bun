@@ -70,17 +70,22 @@ describe("Bun.Cookie expires validation", () => {
       expect(cookie.expires).toEqual(new Date(seconds * 1000));
     });
 
-    test.each([1e16, -1e16, 8640000000001, -8640000000001, Number.MAX_VALUE, -Number.MAX_VALUE, Number.MAX_SAFE_INTEGER])(
-      "throws RangeError for out-of-range Number %p",
-      value => {
-        expect(() => {
-          new Bun.Cookie("name", "value", { expires: value });
-        }).toThrow(RangeError);
-        expect(() => {
-          new Bun.Cookie("name", "value", { expires: value });
-        }).toThrow("expires must be a Number within the range of a valid Date");
-      },
-    );
+    test.each([
+      1e16,
+      -1e16,
+      8640000000001,
+      -8640000000001,
+      Number.MAX_VALUE,
+      -Number.MAX_VALUE,
+      Number.MAX_SAFE_INTEGER,
+    ])("throws RangeError for out-of-range Number %p", value => {
+      expect(() => {
+        new Bun.Cookie("name", "value", { expires: value });
+      }).toThrow(RangeError);
+      expect(() => {
+        new Bun.Cookie("name", "value", { expires: value });
+      }).toThrow("expires must be a Number within the range of a valid Date");
+    });
 
     test("throws RangeError for out-of-range Number via setter", () => {
       const cookie = new Bun.Cookie("name", "value");

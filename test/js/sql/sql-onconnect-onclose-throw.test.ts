@@ -22,6 +22,7 @@ async function runFixture(code: string, env: Record<string, string> = {}) {
     env: { ...bunEnv, ...env },
     cwd: String(dir),
     stderr: "pipe",
+    timeout: 60_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };

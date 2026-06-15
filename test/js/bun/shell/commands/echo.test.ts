@@ -96,8 +96,7 @@ describe("echo special cases", async () => {
     .runAsTest("mixed trailing newlines still collapse to one");
 
   // /dev/full yields ENOSPC on write; the builtin must surface the positive
-  // errno as its exit code (SystemError stores errno negated, so a raw cast
-  // of the field to u16 would wrap to 65000+).
+  // errno as its exit code.
   test.if(isLinux)("write failure exit code is positive errno", async () => {
     const { exitCode } = await $`echo hello > /dev/full`.nothrow();
     expect(exitCode).toBe(os.constants.errno.ENOSPC);

@@ -161,7 +161,15 @@ test.skipIf(isMacOS)(
         console.log("OK");
       `,
       ],
-      env: bunEnv,
+      // Leak detection disabled for this subprocess: work-pool completions
+      // that re-queue onto the worker's concurrent queue after its last
+      // tick leak their ConcurrentTask / AnyTaskJob boxes until #32071
+      // lands. The regression under test is a crash, not a leak, so ASAN's
+      // UAF detection stays on.
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

@@ -88,6 +88,41 @@ describe.concurrent("node-module-module", () => {
     ]);
   });
 
+  test(
+    "_nodeModulePaths() does not leak the input string",
+    async () => {
+      const code = /* js */ `
+        const m = require("module");
+        const pad = Buffer.alloc(2000, "a").toString();
+        for (let i = 0; i < 2000; i++) m._nodeModulePaths("/" + pad + i);
+        Bun.gc(true); Bun.gc(true);
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 30000; i++) m._nodeModulePaths("/" + pad + i);
+        Bun.gc(true); Bun.gc(true); Bun.gc(true);
+        process.stdout.write(String((process.memoryUsage.rss() - before) / 1024 / 1024));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--smol", "-e", code],
+        env: {
+          ...bunEnv,
+          // Disable ASAN's free-quarantine so the RSS delta reflects live
+          // allocations only; harmless on non-ASAN builds.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const growthMB = Number(stdout.trim());
+      if (!Number.isFinite(growthMB)) {
+        throw new Error(`subprocess did not report growth\nstdout: ${stdout}\nstderr: ${stderr}\nexit: ${exitCode}`);
+      }
+      expect(growthMB).toBeLessThan(64);
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
   test("Module.wrap", () => {
     var mod = { exports: {} };
     expect(eval(wrap("exports.foo = 1; return 42"))(mod.exports, mod)).toBe(42);

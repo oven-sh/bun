@@ -292,9 +292,10 @@ impl Pipeline {
     }
 
     /// Write an error message to the pipeline's stderr and finish with exit 1.
-    /// For `.fd` stderr enqueues an async write and parks in
-    /// `WaitingWriteErr` (resumed by `on_io_writer_chunk`); otherwise appends
-    /// to the captured stderr buffer and transitions to `Done { 1 }`.
+    /// For `.fd` stderr enqueues an async write (holding `WaitingWriteErr`
+    /// only during `enqueue()` as a re-entrancy guard, then flipping to
+    /// `Pending` for async resumption by `on_io_writer_chunk`); otherwise
+    /// appends to the captured stderr buffer and transitions to `Done { 1 }`.
     ///
     /// Callers must guarantee no pipeline children are running: completion
     /// bubbles `child_done(parent, this, 1)` and frees this node.
@@ -309,9 +310,9 @@ impl Pipeline {
         if let OutKind::Fd(fd) = &interp.as_pipeline(this).io.stderr {
             let writer = std::sync::Arc::clone(&fd.writer);
             let captured = fd.captured;
-            // Leave `StartingCmds` so `drain_pipelines` doesn't re-enter
-            // `next_starting` and retry the failing syscall in a loop; stay
-            // suspended until the error write completes.
+            // Mark the in-flight `enqueue()` so a re-entrant
+            // `on_io_writer_chunk` (via `IOWriter::on_error`) defers driving
+            // completion to this outer frame.
             interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::Pipeline);
             let y = writer.enqueue(child, captured, &buf);

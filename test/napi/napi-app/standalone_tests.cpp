@@ -2230,6 +2230,51 @@ static napi_value test_napi_get_named_property_copied_string(const Napi::Callbac
   return ok(env);
 }
 
+static void free_external_utf16(napi_env env, void *data, void *hint) {
+  free(data);
+}
+
+// node_api_create_external_string_{latin1,utf16} must write false to the
+// `copied` out-parameter when the string is not copied. The utf16 variant
+// previously left it uninitialized, so an addon that pre-set it to a nonzero
+// value would believe the string was copied and free the buffer while the
+// ExternalStringImpl still referenced it.
+static napi_value
+test_node_api_create_external_string_copied(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  {
+    char *buf = static_cast<char *>(malloc(6));
+    memcpy(buf, "hello", 6);
+    bool copied = true;
+    napi_value out;
+    NODE_API_CALL(env, node_api_create_external_string_latin1(
+                           env, buf, 5, free_external_utf16, nullptr, &out,
+                           &copied));
+    printf("latin1 copied=%s\n", copied ? "true" : "false");
+    if (copied) {
+      free(buf);
+    }
+  }
+
+  {
+    static const char16_t src[] = u"hello";
+    char16_t *buf = static_cast<char16_t *>(malloc(sizeof(src)));
+    memcpy(buf, src, sizeof(src));
+    bool copied = true;
+    napi_value out;
+    NODE_API_CALL(env, node_api_create_external_string_utf16(
+                           env, buf, 5, free_external_utf16, nullptr, &out,
+                           &copied));
+    printf("utf16 copied=%s\n", copied ? "true" : "false");
+    if (copied) {
+      free(buf);
+    }
+  }
+
+  return ok(env);
+}
+
 // https://github.com/oven-sh/bun/issues/25933
 // When a threadsafe function is created inside AsyncLocalStorage.run(),
 // the js_callback gets wrapped in AsyncContextFrame. napi_typeof must
@@ -2391,6 +2436,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports,
                     test_external_buffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
+  REGISTER_FUNCTION(env, exports, test_node_api_create_external_string_copied);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_async_context_frame);
   REGISTER_FUNCTION(env, exports, test_napi_create_tsfn_async_context_frame);

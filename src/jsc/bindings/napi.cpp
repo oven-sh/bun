@@ -1504,6 +1504,10 @@ node_api_create_external_string_utf16(napi_env env,
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);
 
+    if (copied) {
+        *copied = false;
+    }
+
     NAPI_RETURN_SUCCESS(env);
 }
 

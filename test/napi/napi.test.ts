@@ -200,6 +200,14 @@ describe.concurrent("napi", () => {
     });
   });
 
+  describe("node_api_create_external_string_*", () => {
+    it("writes false to the copied out-parameter", async () => {
+      const result = await checkSameOutput("test_node_api_create_external_string_copied", []);
+      expect(result).toContain("latin1 copied=false");
+      expect(result).toContain("utf16 copied=false");
+    });
+  });
+
   it("#1288", async () => {
     const result = await checkSameOutput("self", []);
     expect(result).toBe("hello world!");

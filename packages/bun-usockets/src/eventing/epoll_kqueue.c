@@ -224,8 +224,12 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
      * loop had drained the kernel buffer — e.g. an EVFILT_WRITE-only event carrying
      * EV_EOF skips recv entirely, and a busy-loop bail-out can leave bytes unread in
      * the same tick the flag arrived. EVFILT_READ is level-triggered and keeps
-     * firing after a FIN, so recv()==0 (loop.c) is the single source of `eof`, same
-     * as Linux. RST/hard errors remain covered by EV_ERROR and the recv-error path. */
+     * firing after a FIN, so recv()==0 (loop.c) is the single source of `eof`,
+     * same as Linux. RST/hard errors surface via the recv()/send() error paths;
+     * connect failures via getsockopt(SO_ERROR) in us_internal_socket_after_open.
+     * (EV_ERROR only flags changelist-processing failures — the wait kevent64
+     * calls below pass a NULL changelist, so `error` is effectively always 0
+     * here; it is kept for symmetry with the epoll path.) */
     struct kevent_flags {
         uint8_t readable : 1;
         uint8_t writable : 1;
@@ -461,7 +465,9 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
      * EVFILT_WRITE "to receive FIN" — that only ever worked via EV_EOF, which
      * the dispatch loop no longer maps. A paused socket now watches nothing on
      * kqueue, which is what it effectively did before anyway since the one-shot
-     * fired immediately on any idle-writable socket.) */
+     * fired immediately on any idle-writable socket. EV_DELETE on an
+     * already-fired one-shot returns ENOENT, which KEVENT_FLAG_ERROR_EVENTS
+     * routes into the result list and we ignore.) */
     if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
         EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD | EV_ONESHOT : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }

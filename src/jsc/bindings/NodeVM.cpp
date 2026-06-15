@@ -750,7 +750,7 @@ DEFINE_VISIT_CHILDREN(NodeVMSpecialSandbox);
 
 NodeVMGlobalObject::NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions contextOptions, JSValue importer)
     : Base(vm, structure, &globalObjectMethodTable())
-    , m_dynamicImportCallback(vm, this, importer)
+    , m_dynamicImportCallback(importer, JSC::WriteBarrierEarlyInit)
     , m_contextOptions(contextOptions)
 {
 }

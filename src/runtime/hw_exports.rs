@@ -449,7 +449,14 @@ pub(crate) unsafe extern "C" fn bindgen_DevServer_dispatchGetDeinitCountForTesti
     out: *mut usize,
 ) -> bool {
     // SAFETY: `out` is a valid C++ stack local out-param.
-    unsafe { *out = crate::bake::get_deinit_count_for_testing() };
+    #[cfg(bun_standalone)]
+    unsafe {
+        *out = 0
+    };
+    #[cfg(not(bun_standalone))]
+    unsafe {
+        *out = crate::bake::get_deinit_count_for_testing()
+    };
     true
 }
 

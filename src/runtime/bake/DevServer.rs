@@ -10,6 +10,7 @@
 //! For questions about its core philosophy, email `devserver@paperclover.net`
 
 #![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` is not yet a declared cargo feature.
+#![cfg_attr(bun_standalone, allow(dead_code, unused_imports))]
 
 use ::core::ffi::c_void;
 use bun_bundler::mal_prelude::*;
@@ -6911,7 +6912,17 @@ bun_jsc::jsc_host_abi! {
         request_ptr: *mut c_void,
         url: BunString,
     ) -> JSValue {
-        jsc::to_js_host_call(global, || bundle_new_route_js_function_impl(global, request_ptr, url))
+        jsc::to_js_host_call(global, || {
+            #[cfg(bun_standalone)]
+            {
+                let _ = (request_ptr, url);
+                return Err(global.throw(format_args!(
+                    "Bake DevServer is not available in standalone executables"
+                )));
+            }
+            #[cfg(not(bun_standalone))]
+            bundle_new_route_js_function_impl(global, request_ptr, url)
+        })
     }
 }
 
@@ -7033,6 +7044,14 @@ pub(super) fn bake_get_new_route_params_js_function_impl(
     callframe: &CallFrame,
 ) -> JSValue {
     jsc::to_js_host_call(global, || {
+        #[cfg(bun_standalone)]
+        {
+            let _ = callframe;
+            return Err(global.throw(format_args!(
+                "Bake DevServer is not available in standalone executables"
+            )));
+        }
+        #[cfg(not(bun_standalone))]
         new_route_params_for_bundle_promise_for_js(global, callframe)
     })
 }

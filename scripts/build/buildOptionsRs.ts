@@ -66,6 +66,7 @@ export function generateBuildOptionsRs(cfg: Config): string {
     "// default (config.ts) is the negation of this predicate.",
     "pub const ENABLE_LOGS: bool = cfg!(debug_assertions);",
     "pub const ENABLE_ASAN: bool = cfg!(bun_asan);",
+    "pub const STANDALONE_BUILD: bool = cfg!(bun_standalone);",
     "pub const ENABLE_TINYCC: bool = !cfg!(any(",
     `    all(windows, target_arch = "aarch64"),`,
     `    target_os = "android",`,

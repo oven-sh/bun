@@ -535,13 +535,15 @@ function getTestAgent(platform, options) {
  * @param {Target} target
  * @param {PipelineOptions} options
  * @param {"cpp-only" | "rust-only" | "link-only"} mode
+ * @param {{standalone?: boolean}} [extra]
  * @returns {string}
  */
-function getBuildArgs(target, options, mode) {
+function getBuildArgs(target, options, mode, extra = {}) {
   const { os, arch, abi, baseline, profile, crossCompile } = target;
   const { canary } = options;
 
   const args = [`--profile=ci-${mode}`];
+  if (extra.standalone) args.push("--standalone=on");
 
   // rust-only cross-compiles (linux host → linux/freebsd targets); os/arch/abi
   // must all be explicit — host detection (detectLinuxAbi checks
@@ -580,9 +582,10 @@ function getBuildArgs(target, options, mode) {
  * @param {Target} target
  * @param {PipelineOptions} options
  * @param {"cpp-only" | "rust-only" | "link-only"} mode
+ * @param {{standalone?: boolean}} [extra]
  * @returns {string}
  */
-function getBuildCommand(target, options, mode) {
+function getBuildCommand(target, options, mode, extra) {
   // Windows code signing is handled by a dedicated 'windows-sign' step after
   // all Windows builds complete — see getWindowsSignStep(). smctl is x64-only,
   // so signing on the build agent wouldn't work for ARM64 anyway.
@@ -592,7 +595,7 @@ function getBuildCommand(target, options, mode) {
   // is wrong. PATH on the agent has node via bootstrap.sh.
   // --experimental-strip-types for Node 24's .ts support (unflagged in
   // 25+; drop once CI bumps past the ABI-141 blocker).
-  return `node --experimental-strip-types scripts/build.ts ${getBuildArgs(target, options, mode)}`;
+  return `node --experimental-strip-types scripts/build.ts ${getBuildArgs(target, options, mode, extra)}`;
 }
 
 /**
@@ -667,6 +670,63 @@ function getLinkBunStep(platform, options) {
     // build-rust steps (derived from BUILDKITE_STEP_KEY) before ninja runs.
     command: getBuildCommand(platform, options, "link-only"),
   };
+}
+
+/**
+ * Second cargo build for the reduced-footprint `bun-standalone` runtime
+ * (`--features standalone`). Same agent fan-out as build-rust.
+ *
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getBuildRustStandaloneStep(platform, options) {
+  return {
+    key: `${getTargetKey(platform)}-build-rust-standalone`,
+    retry: getRetry(),
+    label: `${getTargetLabel(platform)} - build-rust-standalone`,
+    agents: getRustAgent(platform, options),
+    cancel_on_build_failing: isMergeQueue(),
+    command: getBuildCommand(platform, options, "rust-only", { standalone: true }),
+    timeout_in_minutes: 35,
+  };
+}
+
+/**
+ * Second link for `bun-standalone`. Reuses the same `build-cpp` archive
+ * (the C++ side is identical); only the Rust staticlib differs.
+ *
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getLinkBunStandaloneStep(platform, options) {
+  return {
+    key: `${getTargetKey(platform)}-build-bun-standalone`,
+    label: `${getTargetLabel(platform)} - build-bun-standalone`,
+    depends_on: [`${getTargetKey(platform)}-build-cpp`, `${getTargetKey(platform)}-build-rust-standalone`],
+    agents: getLinkBunAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    env: {
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+    },
+    command: getBuildCommand(platform, options, "link-only", { standalone: true }),
+  };
+}
+
+/**
+ * Whether to build `bun-standalone` for this platform. Only the plain
+ * release lanes that ship to users for `bun build --compile` — not asan,
+ * and not Android/FreeBSD until --compile supports those targets.
+ *
+ * @param {Platform} platform
+ */
+function shouldBuildStandalone(platform) {
+  if ((platform.profile ?? "release") !== "release") return false;
+  if (platform.abi === "android") return false;
+  if (platform.os === "freebsd") return false;
+  return true;
 }
 
 /**
@@ -810,6 +870,11 @@ function getTestBunStep(platform, options, testOptions = {}) {
   const { buildId, testFiles } = testOptions;
 
   const args = [`--step=${getTargetKey(platform)}-build-bun`];
+  // bun-standalone is built by a sibling step; runner.node.mjs downloads it
+  // best-effort and exports BUN_STANDALONE_EXE for test/cli/standalone-binary.test.ts.
+  if (shouldBuildStandalone(platform)) {
+    args.push(`--standalone-step=${getTargetKey(platform)}-build-bun-standalone`);
+  }
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }
@@ -824,6 +889,11 @@ function getTestBunStep(platform, options, testOptions = {}) {
   const depends = [];
   if (!buildId) {
     depends.push(`${getTargetKey(platform)}-build-bun`);
+    if (shouldBuildStandalone(platform)) {
+      // Soft dependency: wait for the standalone build so the artifact exists,
+      // but don't block tests if that step failed.
+      depends.push({ step: `${getTargetKey(platform)}-build-bun-standalone`, allow_failure: true });
+    }
   }
 
   return {
@@ -924,6 +994,12 @@ function getWindowsSignStep(windowsPlatforms, options) {
     const stepKey = `${getTargetKey(platform)}-build-bun`;
     artifacts.push(`${triplet}-profile.zip`, `${triplet}.zip`);
     buildSteps.push(stepKey, stepKey);
+    if (shouldBuildStandalone(platform)) {
+      const standaloneTriplet = triplet.replace(/^bun-/, "bun-standalone-");
+      const standaloneStepKey = `${getTargetKey(platform)}-build-bun-standalone`;
+      artifacts.push(`${standaloneTriplet}-profile.zip`, `${standaloneTriplet}.zip`);
+      buildSteps.push(standaloneStepKey, standaloneStepKey);
+    }
   }
 
   // Signing runs on a real Windows x64 machine (smctl; doesn't work on
@@ -932,7 +1008,10 @@ function getWindowsSignStep(windowsPlatforms, options) {
   return {
     key: "windows-sign",
     label: `${getBuildkiteEmoji("windows")} sign`,
-    depends_on: windowsPlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+    depends_on: windowsPlatforms.flatMap(p => [
+      `${getTargetKey(p)}-build-bun`,
+      ...(shouldBuildStandalone(p) ? [`${getTargetKey(p)}-build-bun-standalone`] : []),
+    ]),
     agents: getEc2Agent({ os: "windows", arch: "x64", release: "2019" }, options, {
       instanceType: getAzureVmSize("windows", "x64", "test"),
     }),
@@ -958,7 +1037,14 @@ function getWindowsSignStep(windowsPlatforms, options) {
  * @returns {Step}
  */
 function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {}) {
-  const targets = releasePlatforms.map(p => ({ triplet: getTargetTriplet(p) }));
+  const standalone = releasePlatforms.filter(shouldBuildStandalone);
+  const targets = [
+    ...releasePlatforms.map(p => ({ triplet: getTargetTriplet(p) })),
+    // packageAndUpload sets `binary-size:bun-standalone-<triplet>` from the
+    // standalone link step; track those alongside the full binary so size
+    // regressions in either variant trip the threshold.
+    ...standalone.map(p => ({ triplet: getTargetTriplet(p).replace(/^bun-/, "bun-standalone-") })),
+  ];
   const args = [`--targets '${JSON.stringify(targets)}'`, `--threshold-mb ${BINARY_SIZE_THRESHOLD_MB}`];
   if (recordOnly) args.push("--no-fail");
   if (!options.canary) args.push("--release");
@@ -971,7 +1057,10 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
       options,
       { instanceType: "c8g.large" },
     ),
-    depends_on: releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+    depends_on: [
+      ...releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+      ...standalone.map(p => `${getTargetKey(p)}-build-bun-standalone`),
+    ],
     allow_dependency_failure: true,
     soft_fail: !!options.skipSizeCheck,
     retry: {
@@ -997,9 +1086,13 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
 
   // When signing ran, depend on windows-sign instead of the raw Windows builds
   // so we wait for signed artifacts before releasing.
+  const buildKeys = p => [
+    `${getTargetKey(p)}-build-bun`,
+    ...(shouldBuildStandalone(p) ? [`${getTargetKey(p)}-build-bun-standalone`] : []),
+  ];
   const depends_on = signed
-    ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
-    : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
+    ? [...buildPlatforms.filter(p => p.os !== "windows").flatMap(buildKeys), "windows-sign"]
+    : buildPlatforms.flatMap(buildKeys);
 
   return {
     key: "release",
@@ -1488,6 +1581,10 @@ async function getPipeline(options = {}) {
         steps.push(getBuildCppStep(target, options));
         steps.push(getBuildRustStep(target, options));
         steps.push(getLinkBunStep(target, options));
+        if (shouldBuildStandalone(target)) {
+          steps.push(getBuildRustStandaloneStep(target, options));
+          steps.push(getLinkBunStandaloneStep(target, options));
+        }
 
         if (needsBaselineVerification(target)) {
           steps.push(getVerifyBaselineStep(target, options));

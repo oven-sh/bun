@@ -74,6 +74,9 @@ impl BuildCommand {
         }
 
         if ctx.bundler_options.bake {
+            #[cfg(bun_standalone)]
+            crate::standalone_build::unavailable_command(b"build --app");
+            #[cfg(not(bun_standalone))]
             return crate::bake::production::build_command(ctx);
         }
 

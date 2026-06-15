@@ -387,6 +387,7 @@ function parseArgs(argv: string[]): CliArgs {
     "unifiedSources",
     "archiveDeps",
     "timeTrace",
+    "standalone",
     "ci",
     "buildkite",
   ]);

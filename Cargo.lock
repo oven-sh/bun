@@ -2014,7 +2014,6 @@ dependencies = [
  "bun_exe_format",
  "bun_http",
  "bun_io",
- "bun_js_parser",
  "bun_libarchive",
  "bun_opaque",
  "bun_options_types",

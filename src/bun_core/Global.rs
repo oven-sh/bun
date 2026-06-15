@@ -428,12 +428,21 @@ pub mod debug_flags {
 // Version strings
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Suffix distinguishing the reduced-footprint `bun-standalone` binary in
+/// `--version`/`--revision` output, the unhandled-error footer, and the
+/// crash-reporter version line. Empty for the full binary.
+pub const STANDALONE_SUFFIX: &str = if cfg!(bun_standalone) {
+    "-standalone"
+} else {
+    ""
+};
+
 /// Does not have the canary tag, because it is exposed in `Bun.version`
 /// "1.0.0" or "1.0.0-debug"
 pub const package_json_version: &str = if cfg!(debug_assertions) {
-    concatcp!(version_string, "-debug")
+    concatcp!(version_string, STANDALONE_SUFFIX, "-debug")
 } else {
-    version_string
+    concatcp!(version_string, STANDALONE_SUFFIX)
 };
 
 /// `package_json_version` with a trailing `\n` baked in, so
@@ -443,27 +452,43 @@ pub const package_json_version_nl: &str = concatcp!(package_json_version, "\n");
 /// This is used for `bun` without any arguments, it `package_json_version` but with canary if it is a canary build.
 /// like "1.0.0-canary.12"
 pub const package_json_version_with_canary: &str = if cfg!(debug_assertions) {
-    concatcp!(version_string, "-debug")
+    concatcp!(version_string, STANDALONE_SUFFIX, "-debug")
 } else if env::IS_CANARY {
-    formatcp!("{}-canary.{}", version_string, env::CANARY_REVISION)
+    formatcp!(
+        "{}{}-canary.{}",
+        version_string,
+        STANDALONE_SUFFIX,
+        env::CANARY_REVISION
+    )
 } else {
-    version_string
+    concatcp!(version_string, STANDALONE_SUFFIX)
 };
 
 /// The version and a short hash in parenthesis.
 pub const package_json_version_with_sha: &str = if env::GIT_SHA.is_empty() {
     package_json_version
 } else if cfg!(debug_assertions) {
-    formatcp!("{} ({})", version_string, env::GIT_SHA_SHORT)
+    formatcp!(
+        "{}{} ({})",
+        version_string,
+        STANDALONE_SUFFIX,
+        env::GIT_SHA_SHORT
+    )
 } else if env::IS_CANARY {
     formatcp!(
-        "{}-canary.{} ({})",
+        "{}{}-canary.{} ({})",
         version_string,
+        STANDALONE_SUFFIX,
         env::CANARY_REVISION,
         env::GIT_SHA_SHORT
     )
 } else {
-    formatcp!("{} ({})", version_string, env::GIT_SHA_SHORT)
+    formatcp!(
+        "{}{} ({})",
+        version_string,
+        STANDALONE_SUFFIX,
+        env::GIT_SHA_SHORT
+    )
 };
 
 /// What is printed by `bun --revision`
@@ -471,16 +496,27 @@ pub const package_json_version_with_sha: &str = if env::GIT_SHA.is_empty() {
 pub const package_json_version_with_revision: &str = if env::GIT_SHA.is_empty() {
     package_json_version
 } else if cfg!(debug_assertions) {
-    formatcp!("{}-debug+{}", version_string, env::GIT_SHA_SHORT)
+    formatcp!(
+        "{}{}-debug+{}",
+        version_string,
+        STANDALONE_SUFFIX,
+        env::GIT_SHA_SHORT
+    )
 } else if env::IS_CANARY {
     formatcp!(
-        "{}-canary.{}+{}",
+        "{}{}-canary.{}+{}",
         version_string,
+        STANDALONE_SUFFIX,
         env::CANARY_REVISION,
         env::GIT_SHA_SHORT
     )
 } else {
-    formatcp!("{}+{}", version_string, env::GIT_SHA_SHORT)
+    formatcp!(
+        "{}{}+{}",
+        version_string,
+        STANDALONE_SUFFIX,
+        env::GIT_SHA_SHORT
+    )
 };
 
 // Node-style platform string. Distinct from Environment.os.nameString() on

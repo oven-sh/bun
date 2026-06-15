@@ -1,5 +1,12 @@
 //! `Bun.build()` plugin host + `BuildArtifact` JS wrapper.
 
+// Under `bun_standalone` the `Bun.build()` entry point and the C++-called
+// plugin thunks are stubbed (see the `cfg(bun_standalone)` block at the bottom
+// of `mod js_bundler`); their helper functions become dead so the bundler call
+// graph can be dropped by `--gc-sections`. The non-standalone build still
+// enforces `dead_code = "deny"`.
+#![cfg_attr(bun_standalone, allow(dead_code, unused_imports))]
+
 use bun_options_types::LoaderExt as _;
 use core::ffi::c_void;
 
@@ -1387,6 +1394,7 @@ pub mod js_bundler {
     /// # Safety
     /// `resolve` must be the live `*mut Resolve` previously handed to C++ via
     /// `Resolve::dispatch`; sole owner on the JS thread for the call duration.
+    #[cfg(not(bun_standalone))]
     #[unsafe(no_mangle)]
     pub(crate) unsafe extern "C" fn JSBundlerPlugin__onResolveAsync(
         resolve: *mut Resolve,
@@ -1505,6 +1513,7 @@ pub mod js_bundler {
     /// `load` must be the live `*mut Load` previously handed to C++ via
     /// `Load::dispatch`, and `global` must be the plugin's owning
     /// `JSGlobalObject`; both valid and exclusively accessed on the JS thread.
+    #[cfg(not(bun_standalone))]
     #[unsafe(no_mangle)]
     pub(crate) unsafe extern "C" fn JSBundlerPlugin__onDefer(
         load: *mut Load,
@@ -1514,6 +1523,7 @@ pub mod js_bundler {
         unsafe { jsc::to_js_host_call(&*global, || (&mut *load).on_defer(&*global)) }
     }
 
+    #[cfg(not(bun_standalone))]
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn JSBundlerPlugin__onLoadAsync(
         this: &mut Load,
@@ -1781,6 +1791,7 @@ pub mod js_bundler {
     /// the live `*mut Resolve` (when `which == 0`) or `*mut Load` (when
     /// `which == 1`) previously handed to C++ via `dispatch`; sole owner on
     /// the JS thread.
+    #[cfg(not(bun_standalone))]
     #[unsafe(no_mangle)]
     pub(crate) unsafe extern "C" fn JSBundlerPlugin__addError(
         ctx: *mut c_void,
@@ -1809,6 +1820,59 @@ pub mod js_bundler {
             }
             _ => panic!("invalid error type"),
         }
+    }
+
+    // ─── bun-standalone stubs ───────────────────────────────────────────────
+    // The shared C++ archive references these symbols unconditionally, so they
+    // must keep linking under `cfg(bun_standalone)` even though `Bun.build()`
+    // (the only path that hands C++ a live `Resolve`/`Load`/`Plugin`) is gated
+    // out. Signatures stay C-ABI-identical via `*mut c_void`; bodies are
+    // unreachable because no plugin is ever dispatched.
+    #[cfg(bun_standalone)]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn JSBundlerPlugin__onResolveAsync(
+        _resolve: *mut c_void,
+        _unused: *mut c_void,
+        _path_value: JSValue,
+        _namespace_value: JSValue,
+        _external_value: JSValue,
+    ) {
+        unreachable!("Bun.build is not available in standalone executables");
+    }
+
+    #[cfg(bun_standalone)]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn JSBundlerPlugin__onDefer(
+        _load: *mut c_void,
+        global: *mut JSGlobalObject,
+    ) -> JSValue {
+        // SAFETY: `global` is the plugin's owning `JSGlobalObject` per the C++ caller.
+        unsafe { &*global }.throw_type_error(format_args!(
+            "Bun.build is not available in standalone executables. Install Bun: https://bun.com/get"
+        ));
+        JSValue::ZERO
+    }
+
+    #[cfg(bun_standalone)]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn JSBundlerPlugin__onLoadAsync(
+        _this: *mut c_void,
+        _unused: *mut c_void,
+        _source_code_value: JSValue,
+        _loader_as_int: JSValue,
+    ) {
+        unreachable!("Bun.build is not available in standalone executables");
+    }
+
+    #[cfg(bun_standalone)]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn JSBundlerPlugin__addError(
+        _ctx: *mut c_void,
+        _plugin: *mut c_void,
+        _exception: JSValue,
+        _which: JSValue,
+    ) {
+        unreachable!("Bun.build is not available in standalone executables");
     }
 }
 
@@ -1840,6 +1904,13 @@ pub use bun_bundler::options::OutputKind;
 /// `extern "Rust"` in `bun_jsc::webcore_types`; link-time resolved.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
+    #[cfg(bun_standalone)]
+    {
+        // No `Bun.build()` ⇒ no `BuildArtifact` instances can exist.
+        let _ = value;
+        return None;
+    }
+    #[cfg(not(bun_standalone))]
     <BuildArtifact as bun_jsc::JsClass>::from_js(value).map(|b| {
         // SAFETY: `from_js` returns the non-null `*mut BuildArtifact` kept alive by
         // the JS wrapper; `addr_of_mut!` only computes the field address (no deref).

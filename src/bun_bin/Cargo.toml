@@ -16,6 +16,13 @@ crate-type = ["staticlib"]
 [lints]
 workspace = true
 
+[features]
+default = []
+# Reduced-footprint `bun-standalone` binary used as the runtime for
+# `bun build --compile` output. Paired with `--cfg=bun_standalone` (a global
+# RUSTFLAG set by scripts/build/rust.ts) so any crate can branch on it.
+standalone = ["bun_runtime/standalone"]
+
 [dependencies]
 bstr.workspace = true
 bun_io.workspace = true

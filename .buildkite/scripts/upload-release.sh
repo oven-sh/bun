@@ -125,7 +125,7 @@ function download_buildkite_artifact() {
   # (build-bun unsigned, windows-sign signed). Pin to the sign step to
   # guarantee we get the signed one.
   local step_args=()
-  if [[ -n "$WINDOWS_ARTIFACT_STEP" && "$name" == bun-windows-* ]]; then
+  if [[ -n "$WINDOWS_ARTIFACT_STEP" && ( "$name" == bun-windows-* || "$name" == bun-standalone-windows-* ) ]]; then
     step_args=(--step "$WINDOWS_ARTIFACT_STEP")
   fi
   run_command buildkite-agent artifact download "$name" "$dir" "${step_args[@]}"
@@ -238,6 +238,36 @@ function create_release() {
     bun-windows-aarch64-profile.zip
   )
 
+  # Reduced-footprint --compile runtime. Same triplets minus android/freebsd
+  # (see shouldBuildStandalone in .buildkite/ci.mjs). buildkite-agent artifact
+  # download without --step searches the whole build, so these are picked up
+  # from the *-build-bun-standalone steps.
+  local standalone_artifacts=(
+    bun-standalone-darwin-aarch64.zip
+    bun-standalone-darwin-aarch64-profile.zip
+    bun-standalone-darwin-x64.zip
+    bun-standalone-darwin-x64-profile.zip
+    bun-standalone-linux-aarch64.zip
+    bun-standalone-linux-aarch64-profile.zip
+    bun-standalone-linux-x64.zip
+    bun-standalone-linux-x64-profile.zip
+    bun-standalone-linux-x64-baseline.zip
+    bun-standalone-linux-x64-baseline-profile.zip
+    bun-standalone-linux-aarch64-musl.zip
+    bun-standalone-linux-aarch64-musl-profile.zip
+    bun-standalone-linux-x64-musl.zip
+    bun-standalone-linux-x64-musl-profile.zip
+    bun-standalone-linux-x64-musl-baseline.zip
+    bun-standalone-linux-x64-musl-baseline-profile.zip
+    bun-standalone-windows-x64.zip
+    bun-standalone-windows-x64-profile.zip
+    bun-standalone-windows-x64-baseline.zip
+    bun-standalone-windows-x64-baseline-profile.zip
+    bun-standalone-windows-aarch64.zip
+    bun-standalone-windows-aarch64-profile.zip
+  )
+  artifacts+=("${standalone_artifacts[@]}")
+
   function upload_artifact() {
     local artifact="$1"
     download_buildkite_artifact "$artifact"
@@ -253,6 +283,15 @@ function create_release() {
 
   for artifact in "${artifacts[@]}"; do
     upload_artifact "$artifact"
+  done
+
+  # bun-standalone-* zips ship alongside the regular zips. Derived from the
+  # main artifact list so a new platform can't be forgotten here. Best-effort:
+  # a missing standalone artifact warns but doesn't abort the release
+  # (download_buildkite_artifact's `exit 1` only kills the subshell).
+  for artifact in "${artifacts[@]}"; do
+    local standalone="${artifact/bun-/bun-standalone-}"
+    ( upload_artifact "$standalone" ) || echo "warn: skipping missing standalone artifact: $standalone"
   done
 
   update_github_release "$tag"

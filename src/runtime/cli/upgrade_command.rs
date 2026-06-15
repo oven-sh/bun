@@ -4,7 +4,6 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
-use bun_core::Global::SyncCStr;
 use bun_core::MutableString;
 use bun_core::{self, Environment, Global, Output, Progress, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
@@ -41,18 +40,7 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
     }
 }
 
-// `bun_resolver::fs::FileSystem` (the inline canonical type surface
-// in `resolver/lib.rs`) does not yet expose `tmpdir()`; the full impl lives in
-// the un-exported `fs_full` module. Shim it locally — open
-// `RealFS::tmpdir_path()` as a `sys::Dir`, mirroring `RealFS::open_tmp_dir`.
-pub(crate) trait FileSystemTmpdirExt {
-    fn tmpdir(&mut self) -> Result<sys::Dir, bun_core::Error>;
-}
-impl FileSystemTmpdirExt for fs::FileSystem {
-    fn tmpdir(&mut self) -> Result<sys::Dir, bun_core::Error> {
-        sys::Dir::open(fs::RealFS::tmpdir_path()).map_err(Into::into)
-    }
-}
+pub(crate) use crate::cli::shared::FileSystemTmpdirExt;
 
 // `bun.argv` is an `Argv` newtype (not `&[&[u8]]`), so
 // `strings::contains_any` can't take it directly. Local helper that scans the
@@ -93,56 +81,24 @@ impl Version {
         Some(self.tag[b"bun-v".len()..].to_vec())
     }
 
-    // "windows" not "win32"; Android folds to "linux" (`SUFFIX_ABI` below adds
-    // "-android", matching `bun-linux-aarch64-android.zip` on the release page).
-    pub const PLATFORM_LABEL: &'static str = bun_core::env::OS_NAME_NPM;
-
-    pub const ARCH_LABEL: &'static str = if cfg!(target_arch = "aarch64") {
-        "aarch64"
-    } else {
-        "x64"
-    };
-    pub const TRIPLET: &'static str =
-        const_format::concatcp!(Version::PLATFORM_LABEL, "-", Version::ARCH_LABEL);
-    const SUFFIX_ABI: &'static str = if Environment::IS_MUSL {
-        "-musl"
-    } else if Environment::IS_ANDROID {
-        "-android"
-    } else {
-        ""
-    };
-    const SUFFIX_CPU: &'static str = if Environment::BASELINE {
-        "-baseline"
-    } else {
-        ""
-    };
-    const SUFFIX: &'static str = const_format::concatcp!(Version::SUFFIX_ABI, Version::SUFFIX_CPU);
-    pub const FOLDER_NAME: &'static str =
-        const_format::concatcp!("bun-", Version::TRIPLET, Version::SUFFIX);
+    pub const PLATFORM_LABEL: &'static str = crate::cli::shared::release::PLATFORM_LABEL;
+    pub const ARCH_LABEL: &'static str = crate::cli::shared::release::ARCH_LABEL;
+    pub const TRIPLET: &'static str = crate::cli::shared::release::TRIPLET;
+    pub const FOLDER_NAME: &'static str = crate::cli::shared::release::FOLDER_NAME;
     pub const BASELINE_FOLDER_NAME: &'static str =
-        const_format::concatcp!("bun-", Version::TRIPLET, "-baseline");
-    pub const ZIP_FILENAME: &'static str = const_format::concatcp!(Version::FOLDER_NAME, ".zip");
+        crate::cli::shared::release::BASELINE_FOLDER_NAME;
+    pub const ZIP_FILENAME: &'static str = crate::cli::shared::release::ZIP_FILENAME;
     pub const BASELINE_ZIP_FILENAME: &'static str =
-        const_format::concatcp!(Version::BASELINE_FOLDER_NAME, ".zip");
-
-    pub const PROFILE_FOLDER_NAME: &'static str =
-        const_format::concatcp!("bun-", Version::TRIPLET, Version::SUFFIX, "-profile");
+        crate::cli::shared::release::BASELINE_ZIP_FILENAME;
+    pub const PROFILE_FOLDER_NAME: &'static str = crate::cli::shared::release::PROFILE_FOLDER_NAME;
     pub const PROFILE_ZIP_FILENAME: &'static str =
-        const_format::concatcp!(Version::PROFILE_FOLDER_NAME, ".zip");
+        crate::cli::shared::release::PROFILE_ZIP_FILENAME;
 
     const CURRENT_VERSION: &'static str =
         const_format::concatcp!("bun-v", Global::package_json_version);
 
-    pub const BUN__GITHUB_BASELINE_URL: &'static ZStr = {
-        const S: &str = const_format::concatcp!(
-            "https://github.com/oven-sh/bun/releases/download/bun-v",
-            Global::package_json_version,
-            "/",
-            Version::BASELINE_ZIP_FILENAME,
-            "\0"
-        );
-        ZStr::from_static(S.as_bytes())
-    };
+    pub const BUN__GITHUB_BASELINE_URL: &'static ZStr =
+        crate::cli::shared::BUN__GITHUB_BASELINE_URL;
 
     pub fn is_current(&self) -> bool {
         &*self.tag == Self::CURRENT_VERSION.as_bytes()
@@ -152,24 +108,6 @@ impl Version {
         // force-reference — drop in Rust (linker keeps #[no_mangle])
     }
 }
-
-// Exported C symbol — null-terminated
-// Moved out of `impl Version` — Rust impl blocks cannot hold `static` items.
-// `*const c_char` is `!Sync`, so wrap in the `#[repr(transparent)]` `SyncCStr` newtype
-// (same pattern as `Bun__userAgent` in bun_core::Global) so the C++ side still sees a
-// single `const char*`-sized symbol.
-#[unsafe(no_mangle)]
-pub(crate) static Bun__githubURL: SyncCStr = SyncCStr(
-    const_format::concatcp!(
-        "https://github.com/oven-sh/bun/releases/download/bun-v",
-        Global::package_json_version,
-        "/",
-        Version::ZIP_FILENAME,
-        "\0"
-    )
-    .as_ptr()
-    .cast::<c_char>(),
-);
 
 // ──────────────────────────────────────────────────────────────────────────
 

@@ -345,6 +345,7 @@ pub fn run_task(
             cast!(JSCDeferredWorkTask).run()?;
         }
         task_tag::PollPendingModulesTask => {
+            #[cfg(not(bun_standalone))]
             vm.modules.on_poll();
         }
         task_tag::RuntimeTranspilerStore => {

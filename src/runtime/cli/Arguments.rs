@@ -418,6 +418,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
         ),
+        parse_param!(
+            "--compile-runtime <STR>          Which Bun runtime to embed: \"standalone\" (default, smaller) or \"full\""
+        ),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
             "--watch                          Automatically restart the process on file change"
@@ -2009,6 +2012,25 @@ fn parse_build_command_options(
     if args.flag(b"--compile") {
         ctx.bundler_options.compile = true;
         ctx.bundler_options.inline_entrypoint_import_meta_main = true;
+    }
+
+    if let Some(runtime) = args.option(b"--compile-runtime") {
+        if !ctx.bundler_options.compile {
+            Output::err_generic("--compile-runtime requires --compile", ());
+            Global::crash();
+        }
+        ctx.bundler_options.compile_target.runtime = match runtime {
+            b"standalone" => bun_options_types::compile_target::CompileRuntime::Standalone,
+            b"full" => bun_options_types::compile_target::CompileRuntime::Full,
+            _ => {
+                Output::err_generic("--compile-runtime must be \"standalone\" or \"full\"", ());
+                Global::crash();
+            }
+        };
+    } else if ctx.bundler_options.compile {
+        // Default to the slim standalone runtime for `--compile` output.
+        ctx.bundler_options.compile_target.runtime =
+            bun_options_types::compile_target::CompileRuntime::Standalone;
     }
 
     if let Some(compile_exec_argv) = args.option(b"--compile-exec-argv") {

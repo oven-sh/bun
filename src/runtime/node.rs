@@ -539,9 +539,11 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
     }
 }
 
+#[cfg(not(bun_standalone))]
 pub trait MaybeCssExt<R>: Sized {
     fn to_css_result(self) -> Maybe<R, bun_css::ParseError<bun_css::ParserError>>;
 }
+#[cfg(not(bun_standalone))]
 impl<R> MaybeCssExt<R> for Maybe<R, bun_css::BasicParseError> {
     #[inline]
     fn to_css_result(self) -> Maybe<R, bun_css::ParseError<bun_css::ParserError>> {

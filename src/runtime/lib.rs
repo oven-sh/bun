@@ -26,6 +26,7 @@ pub mod webcore;
 pub mod bake;
 pub mod cli;
 pub mod shell;
+pub mod standalone_build;
 // `Run::boot` / `Run::boot_standalone`. Mounted here
 // (not as a separate crate) because every dependency it has is already a dep of
 // `bun_runtime`, and the CLI dispatch in `cli/` needs to call it directly. The
@@ -56,6 +57,7 @@ pub mod generated_jssink; // include!()s ${BUN_CODEGEN_DIR}/generated_jssink.rs
 
 pub mod dns_jsc;
 pub mod image;
+#[cfg_attr(bun_standalone, allow(dead_code))]
 pub mod test_runner;
 pub mod valkey_jsc;
 
@@ -66,9 +68,12 @@ pub mod valkey_jsc;
 // so `*_command.rs` and `test/parallel/*.rs` files resolve their
 // `use crate::…` lines without per-file edits.
 pub use cli::{
-    Cli, Command, add_completions, build_command, bunx_command, command, create_command,
-    filter_arg, filter_run, multi_run, package_manager_command, run_command, shell_completions,
+    Cli, Command, command, filter_arg, filter_run, multi_run, run_command, shell_completions,
     test_command,
+};
+#[cfg(not(bun_standalone))]
+pub use cli::{
+    add_completions, build_command, bunx_command, create_command, package_manager_command,
 };
 
 pub mod webview;

@@ -2,6 +2,7 @@
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
 
+#[cfg(not(bun_standalone))]
 use bun_collections::VecExt;
 use core::mem::size_of;
 use core::ptr::NonNull;
@@ -9,19 +10,25 @@ use std::io::Write as _;
 use std::sync::Arc;
 
 use bun_ast::Loader;
+#[cfg_attr(bun_standalone, allow(unused_imports))]
 use bun_bundler::options::{self, OutputFile};
 use bun_collections::StringArrayHashMap;
+#[cfg_attr(bun_standalone, allow(unused_imports))]
 use bun_core::{Environment, Error as BunError, Output, err};
 use bun_core::{String as BunString, StringPointer, ZStr};
+#[cfg(not(bun_standalone))]
 use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(bun_standalone)))]
 use bun_paths::SEP_STR;
+#[cfg(not(bun_standalone))]
 use bun_paths::fs as bun_fs;
+#[cfg_attr(bun_standalone, allow(unused_imports))]
 use bun_paths::{self as path, PathBuffer, strings};
-#[cfg(windows)]
+#[cfg(all(windows, not(bun_standalone)))]
 use bun_paths::{OSPathBuffer, WPathBuffer};
 use bun_sourcemap as SourceMap;
+#[cfg_attr(bun_standalone, allow(unused_imports))]
 use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
 
 // `bun_webcore::Blob` lives in a higher tier and `cached_blob` is only ever
@@ -704,6 +711,7 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
 
+#[cfg(not(bun_standalone))]
 pub(crate) fn to_bytes(
     prefix: &[u8],
     output_files: &[OutputFile],
@@ -1013,6 +1021,7 @@ pub(crate) fn to_bytes(
     Ok(output)
 }
 
+#[cfg(not(bun_standalone))]
 pub(crate) type InjectOptions = WindowsOptions;
 
 pub enum CompileResult {
@@ -1061,6 +1070,7 @@ impl CompileResult {
     }
 }
 
+#[cfg(not(bun_standalone))]
 pub(crate) fn inject(
     bytes: &[u8],
     self_exe: &ZStr,
@@ -1509,13 +1519,15 @@ pub(crate) fn inject(
     }
 }
 
+#[cfg(not(bun_standalone))]
 use bun_core::Environment::OperatingSystem as CompileTargetOs;
-pub use bun_options_types::compile_target::CompileTarget;
+pub use bun_options_types::compile_target::{CompileRuntime, CompileTarget};
 
 /// Moved up from `bun_options_types` (T3) so it can name
 /// `bun_http::AsyncHTTP` directly
 /// instead of routing through `extern "Rust"` shims; the only callers are the
 /// two `download*` fns below in this crate.
+#[cfg(not(bun_standalone))]
 pub(crate) fn download_to_path(
     target: &CompileTarget,
     env: &mut bun_dotenv::Loader<'_>,
@@ -1643,10 +1655,15 @@ pub(crate) fn download_to_path(
 
                 let mut did_retry = false;
                 loop {
-                    let src_name: &ZStr = if target.os == CompileTargetOs::Windows {
-                        bun_core::zstr!("bun.exe")
-                    } else {
-                        bun_core::zstr!("bun")
+                    let src_name: &ZStr = match (target.runtime, target.os) {
+                        (CompileRuntime::Standalone, CompileTargetOs::Windows) => {
+                            bun_core::zstr!("bun-standalone.exe")
+                        }
+                        (CompileRuntime::Standalone, _) => bun_core::zstr!("bun-standalone"),
+                        (CompileRuntime::Full, CompileTargetOs::Windows) => {
+                            bun_core::zstr!("bun.exe")
+                        }
+                        (CompileRuntime::Full, _) => bun_core::zstr!("bun"),
                     };
                     let mv = bun_sys::move_file_z(tmpdir.fd(), src_name, Fd::INVALID, dest_z);
                     if mv.is_err() {
@@ -1675,6 +1692,26 @@ pub(crate) fn download_to_path(
     Ok(())
 }
 
+#[cfg(bun_standalone)]
+pub fn to_executable(
+    _target: &CompileTarget,
+    _output_files: &[OutputFile],
+    _root_dir: Fd,
+    _module_prefix: &[u8],
+    _outfile: &[u8],
+    _env: &mut bun_dotenv::Loader,
+    _output_format: Format,
+    _windows_options: &WindowsOptions,
+    _compile_exec_argv: &[u8],
+    _self_exe_path: Option<&[u8]>,
+    _flags: Flags,
+) -> Result<CompileResult, BunError> {
+    Ok(CompileResult::fail_fmt(format_args!(
+        "bun build --compile is not available in standalone executables"
+    )))
+}
+
+#[cfg(not(bun_standalone))]
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],
@@ -2213,6 +2250,7 @@ pub struct SerializedSourceMapLoaded {
     pub decompressed_files: Box<[Option<Vec<u8>>]>,
 }
 
+#[cfg(not(bun_standalone))]
 pub(crate) fn serialize_json_source_map_for_standalone(
     header_list: &mut Vec<u8>,
     string_payload: &mut Vec<u8>,

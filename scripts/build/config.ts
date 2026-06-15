@@ -154,6 +154,14 @@ export interface Config {
   archiveDeps: boolean;
   /** Emit clang -ftime-trace .json next to each .o for build profiling. */
   timeTrace: boolean;
+  /**
+   * Build the reduced-footprint `bun-standalone` binary used as the runtime
+   * for `bun build --compile` output. CLI subcommands (install/build/test/…)
+   * and the JS APIs they back are compiled out via the `standalone` cargo
+   * feature on `bun_bin`; the C++ side is unchanged and dead code is dropped
+   * by `--gc-sections` + addrsig at link time. See docs/standalone-binary.md.
+   */
+  standalone: boolean;
 
   // ─── Environment ───
   ci: boolean;
@@ -337,6 +345,7 @@ export interface PartialConfig {
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
+  standalone?: boolean;
   ci?: boolean;
   buildkite?: boolean;
   webkit?: WebKitMode;
@@ -1124,6 +1133,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
+    standalone: partial.standalone ?? false,
     ci,
     buildkite,
     webkit: partial.webkit ?? "prebuilt",
@@ -1394,15 +1404,27 @@ function computeBuildDirName(c: { debug: boolean; release: boolean; asan: boolea
  * without a circular import.
  */
 export function bunExeName(cfg: Config): string {
-  if (cfg.debug) return "bun-debug";
+  // `bun-standalone` is the reduced-footprint --compile runtime; it has the
+  // same debug/release/asan variants as the full binary. The base name
+  // changes so both can sit in one build dir / one CI artifact set.
+  const base = cfg.standalone ? "bun-standalone" : "bun";
+  if (cfg.debug) return `${base}-debug`;
   // Release variants — suffix encodes which features differ from plain release.
   // First match wins.
-  if (cfg.asan && cfg.valgrind) return "bun-asan-valgrind";
-  if (cfg.asan) return "bun-asan";
-  if (cfg.valgrind) return "bun-valgrind";
-  if (cfg.assertions) return "bun-assertions";
-  // Plain release: called bun-profile (the stripped one is `bun`).
-  return "bun-profile";
+  if (cfg.asan && cfg.valgrind) return `${base}-asan-valgrind`;
+  if (cfg.asan) return `${base}-asan`;
+  if (cfg.valgrind) return `${base}-valgrind`;
+  if (cfg.assertions) return `${base}-assertions`;
+  // Plain release: called <base>-profile (the stripped one is `<base>`).
+  return `${base}-profile`;
+}
+
+/**
+ * Basename of the stripped output (`bun` / `bun-standalone`). Kept separate
+ * from `bunExeName()` so callers don't reproduce the standalone branch.
+ */
+export function bunStrippedName(cfg: Config): string {
+  return cfg.standalone ? "bun-standalone" : "bun";
 }
 
 /**
@@ -1444,6 +1466,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.baseline) features.push("baseline");
   if (cfg.valgrind) features.push("valgrind");
   if (cfg.fuzzilli) features.push("fuzzilli");
+  if (cfg.standalone) features.push("standalone");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);

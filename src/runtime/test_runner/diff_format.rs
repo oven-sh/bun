@@ -99,6 +99,13 @@ pub(crate) extern "C" fn zig__renderDiff(
     received_len: usize,
     global_this: &JSGlobalObject,
 ) {
+    #[cfg(bun_standalone)]
+    {
+        let _ = (expected_ptr, expected_len, received_ptr, received_len, global_this);
+        return;
+    }
+    #[cfg(not(bun_standalone))]
+    {
     // SAFETY: caller (BunAnalyzeTranspiledModule.cpp) passes a valid UTF-8 buffer
     // of length `expected_len` that outlives this call.
     let expected = unsafe { bun_core::ffi::slice(expected_ptr.cast::<u8>(), expected_len) };
@@ -112,4 +119,5 @@ pub(crate) extern "C" fn zig__renderDiff(
         ..Default::default()
     };
     let _ = bun_core::output::error_writer().print(format_args!("DIFF:\n{}\n", formatter));
+    }
 }

@@ -694,32 +694,42 @@ impl AnyRoute {
         argument: JSValue,
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
-        use bun_collections::zig_hash_map::MapEntry as StdEntry;
         if let Some(html_bundle) = <HTMLBundle as bun_jsc::JsClass>::from_js(argument) {
-            let entry = init_ctx
-                .dedupe_html_bundle_map
-                .entry(html_bundle.cast_const());
-            // HashMap aborts on OOM (repo-wide abort-on-OOM policy).
-            return Ok(Some(match entry {
-                StdEntry::Vacant(v) => {
-                    // The rc=1 `Route::init(..)` goes in the map and
-                    // that same value is returned to the caller (the map slot is a
-                    // non-owning borrow, freed by `dedupe_html_bundle_map.deinit`
-                    // *without* deref). `RefPtr<T>` has no `Drop`, so a bit-copy
-                    // here keeps the net refcount at 1 — bumping for the map
-                    // slot would leak +1 per first-seen HTMLBundle.
-                    // SAFETY: `html_bundle` is the live `RefPtr<HTMLBundle>` from the
-                    // route map; `init` consumes its +1 ref into the new `Route`.
-                    let route = html_bundle::Route::init(html_bundle);
-                    // SAFETY: `route.data` is the just-allocated NonNull (rc=1);
-                    // wrap without bumping so the map slot stays non-owning
-                    // (`RefPtr<T>` has no `Drop`; the map slot is a non-owning bit-copy).
-                    let borrowed = unsafe { RefPtr::from_raw(route.as_ptr()) };
-                    v.insert(borrowed);
-                    AnyRoute::Html(route)
-                }
-                StdEntry::Occupied(o) => AnyRoute::Html(o.get().dupe_ref()),
-            }));
+            #[cfg(bun_standalone)]
+            {
+                let _ = html_bundle;
+                return Err(init_ctx.global.throw_type_error(format_args!(
+                    "Serving HTML routes requires the bundler, which is not available in standalone executables"
+                )));
+            }
+            #[cfg(not(bun_standalone))]
+            {
+                use bun_collections::zig_hash_map::MapEntry as StdEntry;
+                let entry = init_ctx
+                    .dedupe_html_bundle_map
+                    .entry(html_bundle.cast_const());
+                // HashMap aborts on OOM (repo-wide abort-on-OOM policy).
+                return Ok(Some(match entry {
+                    StdEntry::Vacant(v) => {
+                        // The rc=1 `Route::init(..)` goes in the map and
+                        // that same value is returned to the caller (the map slot is a
+                        // non-owning borrow, freed by `dedupe_html_bundle_map.deinit`
+                        // *without* deref). `RefPtr<T>` has no `Drop`, so a bit-copy
+                        // here keeps the net refcount at 1 — bumping for the map
+                        // slot would leak +1 per first-seen HTMLBundle.
+                        // SAFETY: `html_bundle` is the live `RefPtr<HTMLBundle>` from the
+                        // route map; `init` consumes its +1 ref into the new `Route`.
+                        let route = html_bundle::Route::init(html_bundle);
+                        // SAFETY: `route.data` is the just-allocated NonNull (rc=1);
+                        // wrap without bumping so the map slot stays non-owning
+                        // (`RefPtr<T>` has no `Drop`; the map slot is a non-owning bit-copy).
+                        let borrowed = unsafe { RefPtr::from_raw(route.as_ptr()) };
+                        v.insert(borrowed);
+                        AnyRoute::Html(route)
+                    }
+                    StdEntry::Occupied(o) => AnyRoute::Html(o.get().dupe_ref()),
+                }));
+            }
         }
 
         if let Some(html_route) = Self::bundled_html_manifest_from_js(argument, init_ctx)? {

@@ -19,6 +19,7 @@ pub(crate) mod bake_body;
 
 #[path = "DevServer.rs"]
 mod dev_server_body;
+#[cfg_attr(bun_standalone, allow(unused_imports))]
 pub(crate) use dev_server_body::get_deinit_count_for_testing;
 pub(crate) use dev_server_body::is_allowed_dev_host;
 

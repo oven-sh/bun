@@ -27,7 +27,7 @@ import { dirname, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { ar, cc, cxx, link, pch } from "./compile.ts";
-import { bunExeName, shouldStrip, type Config } from "./config.ts";
+import { bunExeName, bunStrippedName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
@@ -595,8 +595,12 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   }
 
   // Archive from cpp-only: same name cpp-only emits (exe name + lib
-  // prefix/suffix, e.g. libbun-profile.a).
-  const archive = resolve(cfg.buildDir, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`);
+  // prefix/suffix, e.g. libbun-profile.a). cpp-only is never built with
+  // `standalone` (the C++ side is identical), so the standalone link step
+  // consumes the same archive as the full link — the archive name is
+  // computed with `standalone: false` regardless of this link's variant.
+  const cppExeName = bunExeName({ ...cfg, standalone: false });
+  const archive = resolve(cfg.buildDir, `${cfg.libPrefix}${cppExeName}${cfg.libSuffix}`);
 
   // libbun_rust.a from rust-only: same path emitRust writes to. Shared
   // helper so both sides of the CI split agree (cargo's
@@ -711,7 +715,7 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): voi
  * The profile binary keeps its symbols for profiling/debugging release crashes.
  */
 function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]): string {
-  const out = resolve(cfg.buildDir, "bun" + cfg.exeSuffix);
+  const out = resolve(cfg.buildDir, bunStrippedName(cfg) + cfg.exeSuffix);
 
   // Windows: strip equivalent is handled at link time (/OPT:REF etc), no
   // separate strip binary. The "stripped" bun is just a copy. Copy command

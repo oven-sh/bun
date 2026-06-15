@@ -1275,8 +1275,18 @@ describe("readSync", () => {
       code: "ERR_INVALID_ARG_TYPE",
       message: expect.stringContaining('"buffer"'),
     });
-    // Same ordering when offset is a non-numeric type.
-    expect(() => readSync(0, 123 as any, "bad" as any, 5)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    // Same ordering when offset is a non-numeric type (validateInteger would also
+    // throw ERR_INVALID_ARG_TYPE, so assert the message names "buffer").
+    err = undefined;
+    try {
+      readSync(0, 123 as any, "bad" as any, 5);
+    } catch (e) {
+      err = e;
+    }
+    expect({ code: err?.code, message: err?.message }).toEqual({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: expect.stringContaining('"buffer"'),
+    });
   });
 
   it("throws ERR_INVALID_ARG_TYPE for a non-buffer before validating offset (async)", () => {

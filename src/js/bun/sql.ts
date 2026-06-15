@@ -997,7 +997,10 @@ const SQL: typeof Bun.SQL = function SQL(
     // and surface a clear error instead of "sql.listen is not a function".
     const unsupported = () =>
       Promise.$reject(new Error("LISTEN/NOTIFY is not supported by this adapter (PostgreSQL only)"));
-    sql.listen = (channel, onnotify, onlisten?) => {
+    // async so validation throws become rejected Promises, matching the
+    // Postgres adapter path (its listen/unlisten are async methods) and the
+    // d.ts Promise return type.
+    sql.listen = async (channel, onnotify, onlisten?) => {
       validateChannel(channel);
       if (!$isCallable(onnotify)) throw $ERR_INVALID_ARG_TYPE("onnotify", "function", onnotify);
       if (onlisten !== undefined && !$isCallable(onlisten)) {
@@ -1005,7 +1008,7 @@ const SQL: typeof Bun.SQL = function SQL(
       }
       return unsupported();
     };
-    sql.unlisten = (channel, onnotify?) => {
+    sql.unlisten = async (channel, onnotify?) => {
       validateChannel(channel);
       if (onnotify !== undefined && !$isCallable(onnotify)) {
         throw $ERR_INVALID_ARG_TYPE("onnotify", "function", onnotify);

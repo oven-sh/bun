@@ -14116,3 +14116,30 @@ test("listen() after an unlisten raced a held LISTEN ack still sends LISTEN", as
   await db.unlisten("stale_ch");
   await db.unlisten("stale_keep");
 });
+
+// The Postgres adapter's listen/unlisten are async methods, so their
+// argument-validation throws surface as rejected Promises. The non-Postgres
+// stubs must match that shape (and the d.ts Promise return type) so
+// `sql.listen(bad).catch(...)` works the same on every adapter.
+test("non-Postgres listen/unlisten stubs reject validation errors as Promises", async () => {
+  await using db = new SQL("sqlite://:memory:", { adapter: "sqlite" });
+
+  // Each call must return a rejected Promise, not throw before returning.
+  const listenBadChannel = db.listen("", () => {});
+  expect(listenBadChannel).toBeInstanceOf(Promise);
+  await expect(listenBadChannel).rejects.toThrow(/must be a non-empty string/);
+
+  const listenBadOnnotify = db.listen("ch", undefined as any);
+  expect(listenBadOnnotify).toBeInstanceOf(Promise);
+  await expect(listenBadOnnotify).rejects.toThrow(/onnotify/);
+
+  const unlistenBadChannel = db.unlisten("");
+  expect(unlistenBadChannel).toBeInstanceOf(Promise);
+  await expect(unlistenBadChannel).rejects.toThrow(/must be a non-empty string/);
+
+  // Valid arguments: the stub still rejects (unsupported adapter), and that
+  // rejection is also a Promise.
+  const listenValid = db.listen("ch", () => {});
+  expect(listenValid).toBeInstanceOf(Promise);
+  await expect(listenValid).rejects.toThrow(/PostgreSQL only/);
+});

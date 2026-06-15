@@ -139,7 +139,10 @@ describe("tls.connect hostname verification without explicit servername", () => 
         { _secureEstablished: result._secureEstablished, authorized: result.authorized },
         { _secureEstablished: true, authorized: true },
       );
-      assert.ok(result.authorizationError == null, `authorizationError should be unset, got ${result.authorizationError}`);
+      assert.ok(
+        result.authorizationError == null,
+        `authorizationError should be unset, got ${result.authorizationError}`,
+      );
     });
   });
 });

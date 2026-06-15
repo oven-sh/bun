@@ -73,6 +73,7 @@ const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kpendingRead = Symbol("kpendingRead");
 const kupgraded = Symbol("kupgraded");
+const kupgradeDuplexFeeder = Symbol("kupgradeDuplexFeeder");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
@@ -516,6 +517,14 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    // Named-pipe TLS upgrade: feed ciphertext straight to the TLS layer instead of
+    // pushing it onto the connection's readable, so post-upgrade bytes don't re-emit
+    // as cleartext on pre-existing user `data` listeners. See #32242.
+    const feeder = self[kupgradeDuplexFeeder];
+    if (feeder !== undefined) {
+      feeder(buffer);
+      return;
+    }
     if (!self.push(buffer)) socket.pause();
   },
   drain(socket) {
@@ -703,6 +712,7 @@ function Socket(options?) {
   this._parentWrap = null;
   this[kpendingRead] = undefined;
   this[kupgraded] = null;
+  this[kupgradeDuplexFeeder] = undefined;
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
@@ -990,7 +1000,7 @@ Socket.prototype.connect = function connect(...args) {
             tls,
             socket: this[khandlers],
           });
-          connection.on("data", events[0]);
+          connection[kupgradeDuplexFeeder] = events[0];
           connection.on("end", events[1]);
           connection.on("drain", events[2]);
           connection.on("close", events[3]);
@@ -1029,7 +1039,7 @@ Socket.prototype.connect = function connect(...args) {
                   tls,
                   socket: this[khandlers],
                 });
-                connection.on("data", events[0]);
+                connection[kupgradeDuplexFeeder] = events[0];
                 connection.on("end", events[1]);
                 connection.on("drain", events[2]);
                 connection.on("close", events[3]);

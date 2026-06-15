@@ -642,7 +642,9 @@ impl Cmd {
             drop(arena);
             // Revert exec so `deinit` doesn't free a null `child`.
             interp.as_cmd_mut(this).exec = Exec::None;
-            return Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", e));
+            let y = Builtin::cmd_write_failing_error(interp, this, format_args!("{}\n", e));
+            e.deinit();
+            return y;
         }
 
         // Read the subprocess back via the arena instead of holding `child_out`

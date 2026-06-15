@@ -115,7 +115,9 @@ impl Cp {
                 if exec.started {
                     if exec.tasks_count == 0 && exec.output_done >= exec.output_waiting {
                         let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
-                        exec.err = None;
+                        if let Some(e) = exec.err.take() {
+                            e.deinit();
+                        }
                         #[cfg(windows)]
                         let act = if !exec.ebusy.tasks.is_empty() {
                             Action::Ebusy(exit_code)
@@ -314,9 +316,12 @@ impl Cp {
         let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
             let s = Builtin::shell_err_to_string(interp, cmd, Kind::Cp, &e).to_vec();
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.err = Some(e);
+                if let Some(old) = exec.err.replace(e) {
+                    old.deinit();
+                }
+            } else {
+                e.deinit();
             }
-            // `e` drops here when not stored.
             s
         });
         OutputTask::<Cp>::start(output_task, interp, errstr.as_deref())

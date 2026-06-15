@@ -1306,9 +1306,7 @@ impl Subprocess<'_> {
             }
             Status::Signaled(signal) => JSPromise::resolved_promise_value(
                 global_this,
-                JSValue::js_number(
-                    bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(254) as f64
-                ),
+                JSValue::js_number(128u8.wrapping_add(*signal) as f64),
             ),
             Status::Err(err) => {
                 let js_err = err.to_js(global_this);

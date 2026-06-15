@@ -97,11 +97,14 @@ describe.skipIf(!isLinux)("real-time signals", () => {
         stdio: ["ignore", "ignore", "ignore"],
       });
       process.kill(proc.pid, sig);
-      await proc.exited;
-      expect({ signalCode: proc.signalCode, exitCode: proc.exitCode }).toEqual({
+      const exited = await proc.exited;
+      expect({ signalCode: proc.signalCode, exitCode: proc.exitCode, exited }).toEqual({
         signalCode: sig,
         exitCode: null,
+        exited: 128 + sig,
       });
+      // Re-reading `proc.exited` after the exit notification should agree.
+      expect(await proc.exited).toBe(128 + sig);
     });
 
     test(`Bun.$ completes when child is killed by real-time signal ${sig}`, async () => {

@@ -713,10 +713,7 @@ pub enum Status {
     Running,
     Exited(Exited),
     /// Raw signal byte — any `u8` (incl. Linux RT signals 32..=64) is a valid
-    /// payload. `bun_core::SignalCode` is exhaustive 1..=31,
-    /// so storing it here would force lossy `Signaled→Exited` rewrites for RT
-    /// signals — observable as `{exitCode:0, signal:null}` in JS. Carry the raw
-    /// byte and range-check in `signal_code()` instead.
+    /// payload. `signal_code()` wraps it in the open `bun_sys::SignalCode`.
     Signaled(u8),
     Err(bun_sys::Error),
 }
@@ -777,7 +774,6 @@ impl Status {
                 signal: signal.unwrap_or(0),
             }));
         } else if let Some(sig) = signal {
-            // Any byte is valid. Carry the raw byte; `signal_code()` range-checks.
             return Some(Status::Signaled(sig));
         }
 

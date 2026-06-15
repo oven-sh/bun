@@ -444,9 +444,11 @@ describe.concurrent("fd leak", () => {
   // rooted at `to_shell_system_error`/`to_system_error` is reported as leaked.
   //
   // Windows has no ASAN lane and `Malloc=1` is unimplemented there.
-  test.skipIf(!isASAN || isWindows)("SystemError strings are released on shell error paths", async () => {
-    using dir = tempDir("shell-syserr-leak", {
-      "run.ts": /* ts */ `
+  test.skipIf(!isASAN || isWindows)(
+    "SystemError strings are released on shell error paths",
+    async () => {
+      using dir = tempDir("shell-syserr-leak", {
+        "run.ts": /* ts */ `
         import { $ } from "bun";
         $.nothrow();
         const bun = process.execPath;
@@ -466,42 +468,44 @@ describe.concurrent("fd leak", () => {
         }
         console.error("ran");
       `,
-    });
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(String(dir), "run.ts")],
-      env: {
-        ...bunEnv,
-        // Route bmalloc through the system allocator so LSan can observe
-        // WTF::StringImpl allocations.
-        Malloc: "1",
-        ASAN_OPTIONS: "detect_leaks=1:allow_user_segv_handler=1:disable_coredump=0",
-        // LSan always reports some process-lifetime allocations (VM
-        // identifiers, sourcemap buffers). exitcode=0 keeps those from
-        // failing the process; the assertion below inspects the report
-        // for frames specific to this leak.
-        LSAN_OPTIONS: "exitcode=0",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "run.ts")],
+        env: {
+          ...bunEnv,
+          // Route bmalloc through the system allocator so LSan can observe
+          // WTF::StringImpl allocations.
+          Malloc: "1",
+          ASAN_OPTIONS: "detect_leaks=1:allow_user_segv_handler=1:disable_coredump=0",
+          // LSan always reports some process-lifetime allocations (VM
+          // identifiers, sourcemap buffers). exitcode=0 keeps those from
+          // failing the process; the assertion below inspects the report
+          // for frames specific to this leak.
+          LSAN_OPTIONS: "exitcode=0",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // The script itself must have run to completion.
-    expect(stderr).toContain("ran");
+      // The script itself must have run to completion.
+      expect(stderr).toContain("ran");
 
-    // What must be absent is any leak whose allocation stack runs through the
-    // SystemError constructors: those are exactly the WTF::StringImpl refs
-    // this fix releases.
-    const leakedSystemError = stderr
-      .split("\n")
-      .filter(l => l.includes("to_shell_system_error") || l.includes("to_system_error"));
-    if (leakedSystemError.length) {
-      console.error("LSan reported SystemError leak frames:\n" + leakedSystemError.join("\n"));
-    }
-    expect(leakedSystemError).toEqual([]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
-  }, 100_000);
+      // What must be absent is any leak whose allocation stack runs through the
+      // SystemError constructors: those are exactly the WTF::StringImpl refs
+      // this fix releases.
+      const leakedSystemError = stderr
+        .split("\n")
+        .filter(l => l.includes("to_shell_system_error") || l.includes("to_system_error"));
+      if (leakedSystemError.length) {
+        console.error("LSan reported SystemError leak frames:\n" + leakedSystemError.join("\n"));
+      }
+      expect(leakedSystemError).toEqual([]);
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+    },
+    100_000,
+  );
 
   describe.serial("not leaking ParsedShellScript when ShellInterpreter never runs", () => {
     function doit(builtin: boolean) {

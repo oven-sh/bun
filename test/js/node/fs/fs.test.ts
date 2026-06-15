@@ -1262,6 +1262,37 @@ describe("readSync", () => {
     }
   });
 
+  it("throws ERR_INVALID_ARG_TYPE for a non-buffer before validating offset", () => {
+    // Node's validateBuffer runs before validateInteger(offset, ...). When both
+    // arguments are invalid the buffer-type error must win.
+    let err: any;
+    try {
+      readSync(0, "not a buffer" as any, -1, 5);
+    } catch (e) {
+      err = e;
+    }
+    expect({ code: err?.code, message: err?.message }).toEqual({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: expect.stringContaining('"buffer"'),
+    });
+    // Same ordering when offset is a non-numeric type.
+    expect(() => readSync(0, 123 as any, "bad" as any, 5)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+  });
+
+  it("throws ERR_INVALID_ARG_TYPE for a non-buffer before validating offset (async)", () => {
+    // Node throws validation errors synchronously from fs.read().
+    let err: any;
+    try {
+      fs.read(0, "not a buffer" as any, -1, 5, 0, () => {});
+    } catch (e) {
+      err = e;
+    }
+    expect({ code: err?.code, message: err?.message }).toEqual({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: expect.stringContaining('"buffer"'),
+    });
+  });
+
   const firstFourBytes = new Uint32Array(new TextEncoder().encode("File").buffer)[0];
 
   it("works on large files", () => {

@@ -3905,6 +3905,9 @@ pub mod args {
             let buffer_value = arguments.next_eat().ok_or_else(||
                 // theoretically impossible, argument has been passed already
                 ctx.throw_invalid_arguments(format_args!("buffer is required")))?;
+            let buffer = Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
+                ctx.throw_invalid_argument_type_value(b"buffer", b"TypedArray", buffer_value)
+            })?;
 
             let offset_value = arguments.next_eat().unwrap_or(JSValue::NULL);
             // if (offset == null) {
@@ -3931,9 +3934,10 @@ pub mod args {
             } else {
                 0.0
             };
-            let buffer = Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(b"buffer", b"TypedArray", buffer_value)
-            })?;
+            // `length.toNumber()` can re-enter JS and detach `buffer_value`; re-snapshot
+            // the backing store so the subsequent bounds checks and the read itself see
+            // the post-coercion length/pointer. The type check above cannot change.
+            let buffer = Buffer::from_js(ctx, buffer_value).unwrap_or(buffer);
 
             //   if (length === 0) {
             //     return process.nextTick(function tick() {

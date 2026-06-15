@@ -234,6 +234,23 @@ describe("css tests", () => {
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
+  describe("calc rem() and mod()", () => {
+    // rem(A, B): result takes the sign of A (truncated division).
+    minify_test(`.a{margin-left:rem(7px,-3px)}`, `.a{margin-left:1px}`);
+    minify_test(`.a{margin-left:rem(-7px,3px)}`, `.a{margin-left:-1px}`);
+    minify_test(`.a{margin-left:rem(-7px,-3px)}`, `.a{margin-left:-1px}`);
+    minify_test(`.a{margin-left:rem(7px,3px)}`, `.a{margin-left:1px}`);
+    minify_test(`.a{transition-delay:rem(7s,-3s)}`, `.a{transition-delay:1s}`);
+    minify_test(`.a{transition-delay:rem(-7s,3s)}`, `.a{transition-delay:-1s}`);
+    minify_test(`.a{transform:rotate(rem(-7deg,3deg))}`, `.a{transform:rotate(-1deg)}`);
+    minify_test(`.a{transform:rotate(rem(7deg,-3deg))}`, `.a{transform:rotate(1deg)}`);
+    minify_test(`.a{color:lab(from lab(50% -20 30) l rem(a, 7) b)}`, `.a{color:lab(50% -6 30)}`);
+    // mod(A, B): result takes the sign of B (floored division).
+    minify_test(`.a{margin-left:mod(7px,-3px)}`, `.a{margin-left:-2px}`);
+    minify_test(`.a{margin-left:mod(-7px,3px)}`, `.a{margin-left:2px}`);
+    minify_test(`.a{margin-left:mod(-7px,-3px)}`, `.a{margin-left:-1px}`);
+    minify_test(`.a{margin-left:mod(7px,3px)}`, `.a{margin-left:1px}`);
+  });
   describe("border_spacing", () => {
     minify_test(
       `

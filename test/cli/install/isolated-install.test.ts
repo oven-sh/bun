@@ -326,6 +326,47 @@ test("can install folder dependencies", async () => {
   ).toBe("module.exports = 'hello from pkg-1';");
 });
 
+test("store path preserves non-ASCII UTF-8 bytes verbatim", async () => {
+  // The semver String.StorePathFormatter must emit each lockfile-string byte verbatim
+  // (Zig: writer.writeByte). A Rust port that did `write_char(byte as char)` re-encoded
+  // each byte as Latin-1 -> UTF-8, so UTF-8 "é" (c3 a9) became "Ã©" (c3 83 c2 a9) and
+  // the on-disk node_modules/.bun/<store-path> name diverged from prior releases.
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  // "café" = 63 61 66 c3 a9 (NFC). Use an explicit byte sequence so the assertion is
+  // independent of source-file normalization.
+  const caf_e = Buffer.from([0x63, 0x61, 0x66, 0xc3, 0xa9]).toString("utf8");
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-utf8-store-path",
+      dependencies: {
+        "mypkg": `file:./vendor/${caf_e}`,
+      },
+    }),
+  );
+  await write(join(packageDir, "vendor", caf_e, "package.json"), JSON.stringify({ name: "mypkg", version: "1.0.0" }));
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const storeEntry = `mypkg@file+vendor+${caf_e}`;
+
+  // The .bun store directory name must be byte-identical to the Zig output.
+  // On a broken build this contains "mypkg@file+vendor+cafÃ©" instead.
+  expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toEqual([storeEntry]);
+
+  expect(readlinkSync(join(packageDir, "node_modules", "mypkg"))).toBe(
+    join(".bun", storeEntry, "node_modules", "mypkg"),
+  );
+  expect(
+    await file(join(packageDir, "node_modules", ".bun", storeEntry, "node_modules", "mypkg", "package.json")).json(),
+  ).toEqual({
+    name: "mypkg",
+    version: "1.0.0",
+  });
+});
+
 test("can install folder dependencies on root package", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 

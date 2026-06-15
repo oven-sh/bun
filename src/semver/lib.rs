@@ -734,16 +734,31 @@ pub mod semver_string {
 
     impl<'a> fmt::Display for StorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            for &c in self.str.slice(self.buf) {
-                let n = match c {
-                    b'/' => b'+',
-                    b'\\' => b'+',
-                    b':' => b'+',
-                    b'#' => b'+',
-                    _ => c,
-                };
-                use core::fmt::Write;
-                f.write_char(n as char)?;
+            // The Zig reference emits each byte of the lockfile string verbatim via
+            // `writer.writeByte`. `f.write_char(byte as char)` is NOT equivalent: it treats
+            // the byte as a Latin-1 codepoint and re-encodes it as UTF-8, so any byte ≥ 0x80
+            // becomes two bytes (e.g. UTF-8 `c3 a9` → `c3 83 c2 a9`), producing a different
+            // on-disk `node_modules/.bun/<store-path>/` name than the Zig release.
+            //
+            // `core::fmt` cannot emit arbitrary bytes, but the mapped characters are all
+            // ASCII, so mapping preserves UTF-8 validity of the input. Emit each run between
+            // mapped bytes as a validated `&str` (byte-faithful for valid UTF-8 input). If the
+            // lockfile string buffer ever contains non-UTF-8 bytes we surface `fmt::Error`
+            // rather than silently corrupt the path — same contract as
+            // `install::StorePathFormatter`.
+            let bytes = self.str.slice(self.buf);
+            let mut start = 0;
+            for (i, &c) in bytes.iter().enumerate() {
+                if matches!(c, b'/' | b'\\' | b':' | b'#') {
+                    if start < i {
+                        f.write_str(bun_core::str_utf8(&bytes[start..i]).ok_or(fmt::Error)?)?;
+                    }
+                    f.write_str("+")?;
+                    start = i + 1;
+                }
+            }
+            if start < bytes.len() {
+                f.write_str(bun_core::str_utf8(&bytes[start..]).ok_or(fmt::Error)?)?;
             }
             Ok(())
         }

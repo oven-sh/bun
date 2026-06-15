@@ -51,12 +51,13 @@ unsafe extern "C" {
         out_json: Option<&mut BunString>,
         out_text: Option<&mut BunString>,
     );
-    /// Plain by-value `c_int`; sets a global sampler interval, no pointer invariants.
-    safe fn Bun__setSamplingInterval(interval_microseconds: c_int);
+    /// Sets the per-VM sampler interval. `&mut VM` is ABI-identical to a
+    /// non-null `VM*` (see `Bun__startCPUProfiler`).
+    safe fn Bun__setSamplingInterval(vm: &mut VM, interval_microseconds: c_int);
 }
 
-pub fn set_sampling_interval(interval: u32) {
-    Bun__setSamplingInterval(c_int::try_from(interval).expect("int cast"));
+pub fn set_sampling_interval(vm: &mut VM, interval: u32) {
+    Bun__setSamplingInterval(vm, c_int::try_from(interval).expect("int cast"));
 }
 
 pub fn start_cpu_profiler(vm: &mut VM) {

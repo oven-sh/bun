@@ -127,6 +127,14 @@ public:
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    // Per-VM CPU profiler state. JSC::SamplingProfiler is per-VM, so the
+    // running flag / start time / sampling interval must be too; a
+    // process-global would race across workers and let one VM's start/stop
+    // clobber another's.
+    double cpuProfilingStartTime = 0.0;
+    int cpuSamplingInterval = 1000;
+    bool cpuProfilerRunning = false;
+
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to
     // avoid pulling ZigSourceProvider.h into this header; the cache class

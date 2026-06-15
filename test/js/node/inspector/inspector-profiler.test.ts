@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
 
@@ -251,6 +252,104 @@ describe("node:inspector", () => {
       // Both profiles should be valid
       expect(result1.profile.nodes.length).toBeGreaterThanOrEqual(1);
       expect(result2.profile.nodes.length).toBeGreaterThanOrEqual(1);
+    });
+
+    test("profiler state is per-VM, not shared across workers", async () => {
+      // Each worker has its own JSC::VM with its own SamplingProfiler; the
+      // running flag / start time / sampling interval must be per-VM too.
+      // Run in a subprocess so the test file's own VM isn't left with a
+      // sampling profiler attached.
+      const script = `
+        const inspector = require("node:inspector");
+        const { Worker } = require("node:worker_threads");
+
+        const session = new inspector.Session();
+        session.connect();
+        session.post("Profiler.enable");
+        session.post("Profiler.start");
+
+        const worker = new Worker(
+          \`
+          const inspector = require("node:inspector");
+          const { parentPort } = require("node:worker_threads");
+          const session = new inspector.Session();
+          session.connect();
+          session.post("Profiler.enable");
+
+          let setIntervalError = null;
+          try {
+            session.post("Profiler.setSamplingInterval", { interval: 500 });
+          } catch (e) {
+            setIntervalError = e.message;
+          }
+
+          session.post("Profiler.start");
+          let sum = 0;
+          for (let i = 0; i < 10000; i++) sum += Math.sqrt(i);
+
+          let stopError = null;
+          let hasProfile = false;
+          try {
+            const result = session.post("Profiler.stop");
+            hasProfile = !!(result && result.profile && Array.isArray(result.profile.nodes));
+          } catch (e) {
+            stopError = e.message;
+          }
+
+          session.disconnect();
+          parentPort.postMessage({ setIntervalError, stopError, hasProfile });
+          \`,
+          { eval: true },
+        );
+
+        const msg = await new Promise((resolve, reject) => {
+          worker.on("message", resolve);
+          worker.on("error", reject);
+        });
+        await worker.terminate();
+
+        let mainStopError = null;
+        let mainHasProfile = false;
+        try {
+          const result = session.post("Profiler.stop");
+          mainHasProfile = !!(result && result.profile && Array.isArray(result.profile.nodes));
+        } catch (e) {
+          mainStopError = e.message;
+        }
+        session.disconnect();
+
+        console.log(JSON.stringify({
+          workerSetIntervalError: msg.setIntervalError,
+          workerStopError: msg.stopError,
+          workerHasProfile: msg.hasProfile,
+          mainStopError,
+          mainHasProfile,
+        }));
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      let result;
+      try {
+        result = JSON.parse(stdout.trim());
+      } catch {
+        throw new Error(`subprocess did not emit JSON\nstdout: ${stdout}\nstderr: ${stderr}`);
+      }
+      expect(result).toEqual({
+        workerSetIntervalError: null,
+        workerStopError: null,
+        workerHasProfile: true,
+        mainStopError: null,
+        mainHasProfile: true,
+      });
+      expect(exitCode).toBe(0);
     });
 
     test("disconnect() stops running profiler", () => {

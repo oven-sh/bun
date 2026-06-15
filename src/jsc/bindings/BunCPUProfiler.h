@@ -10,8 +10,8 @@ class VM;
 
 namespace Bun {
 
-void setSamplingInterval(int intervalMicroseconds);
-bool isCPUProfilerRunning();
+void setSamplingInterval(JSC::VM& vm, int intervalMicroseconds);
+bool isCPUProfilerRunning(JSC::VM& vm);
 
 // Start the CPU profiler
 void startCPUProfiler(JSC::VM& vm);

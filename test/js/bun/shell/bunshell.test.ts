@@ -1404,10 +1404,7 @@ describe("deno_task", () => {
       .exitCode(0)
       .runAsTest("export rejects invalid identifier");
 
-    TestBuilder.command`export FOO`
-      .stderr("")
-      .exitCode(0)
-      .runAsTest("export accepts bare valid identifier");
+    TestBuilder.command`export FOO`.stderr("").exitCode(0).runAsTest("export accepts bare valid identifier");
   });
 
   describe("pipeline", async () => {

@@ -621,7 +621,11 @@ describe("wildcard exports/imports target with many * does not crash the resolve
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "caught ERR_MODULE_NOT_FOUND", exitCode: 0 });
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "caught ERR_MODULE_NOT_FOUND",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
   });
 
   it.concurrent("imports: {'#*': 'dep/***…'} surfaces a catchable error", async () => {
@@ -645,7 +649,11 @@ describe("wildcard exports/imports target with many * does not crash the resolve
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "caught ERR_MODULE_NOT_FOUND", exitCode: 0 });
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "caught ERR_MODULE_NOT_FOUND",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
   });
 });
 

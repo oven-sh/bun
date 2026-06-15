@@ -285,7 +285,8 @@ impl Start {
                 {
                     if chunk_size_val.is_number() {
                         empty = false;
-                        chunk_size = 256i64.max(trunc_i51(chunk_size_val.to_int64())) as BlobSizeType;
+                        chunk_size =
+                            256i64.max(trunc_i51(chunk_size_val.to_int64())) as BlobSizeType;
                     }
                 }
 

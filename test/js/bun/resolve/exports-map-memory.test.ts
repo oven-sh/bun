@@ -32,11 +32,13 @@ test(
   async () => {
     using dir = tempDir("exports-map-memory", {
       "node_modules/pkg-flat/package.json": makeExports(false),
+      "node_modules/pkg-flat/d.js": "",
       "node_modules/pkg-wild/package.json": makeExports(true),
+      "node_modules/pkg-wild/d.js": "",
       "probe.js": `
       Bun.gc(true);
       const before = process.memoryUsage().rss;
-      try { Bun.resolveSync(process.argv[2], import.meta.dir); } catch {}
+      Bun.resolveSync(process.argv[2], import.meta.dir);
       Bun.gc(true);
       process.stdout.write(String(process.memoryUsage().rss - before));
     `,

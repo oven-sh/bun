@@ -338,8 +338,18 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
 
         while parent_id > 0 && (parent_id as usize) < trees.len() {
             if depth_buf_len == MAX_DEPTH {
-                path_buf[path_written] = 0;
-                return (ZStr::from_buf(path_buf, path_written), 0);
+                // The parent chain cannot legitimately be this long: MAX_DEPTH
+                // segments of "node_modules" alone would already overflow
+                // MAX_PATH_BYTES. Reaching it means the on-disk trees form a
+                // parent cycle (a corrupted bun.lockb). Returning a truncated
+                // path here would let the caller install/link into the wrong
+                // directory, so fail loudly like the other malformed-lockfile
+                // checks below.
+                Output::err_generic(
+                    "Lockfile is malformed (dependency tree has a cycle or exceeds the maximum depth)",
+                    (),
+                );
+                bun_core::Global::crash();
             }
             depth_buf[depth_buf_len] = parent_id;
             parent_id = trees[parent_id as usize].parent;

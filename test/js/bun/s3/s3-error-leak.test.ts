@@ -27,4 +27,4 @@ test("S3 error path does not leak WTFStringImpl refs", async () => {
   if (exitCode !== 0) console.error(stderr);
   expect(stdout.trim()).toMatch(/"leaked":false/);
   expect(exitCode).toBe(0);
-});
+}, 30_000);

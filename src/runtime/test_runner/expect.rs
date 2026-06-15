@@ -1732,6 +1732,12 @@ impl Expect {
     /// Returns `(guard, received_value, not)`. The guard derefs to `&Expect`
     /// and runs `post_match` on drop; `not` is `flags.not()` snapshotted once.
     /// Callers that don't need `not` until later destructure as `(this, v, _)`.
+    ///
+    /// This helper calls `get_value` and then `increment_expect_call_counter`
+    /// before returning. Matchers whose Zig reference validates argument count
+    /// or argument type *before* either of those steps must NOT use this helper
+    /// and instead open-code the sequence so `expect.assertions(n)` observes the
+    /// same count on invalid-argument errors.
     #[inline]
     pub fn matcher_prelude<'a>(
         &'a self,

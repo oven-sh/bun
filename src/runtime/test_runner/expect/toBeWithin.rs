@@ -9,13 +9,8 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (this, value, not) = self.matcher_prelude(
-            global,
-            frame.this(),
-            "toBeWithin",
-            "<green>start<r><d>, <r><green>end<r>",
-        )?;
-
+        let this = self.post_match_guard(global);
+        let this_value = frame.this();
         let _arguments = frame.arguments_old::<2>();
         let arguments = _arguments.slice();
 
@@ -24,6 +19,13 @@ impl Expect {
                 "toBeWithin() requires 2 arguments"
             )));
         }
+
+        let value: JSValue = this.get_value(
+            global,
+            this_value,
+            "toBeWithin",
+            "<green>start<r><d>, <r><green>end<r>",
+        )?;
 
         let start_value = arguments[0];
         start_value.ensure_still_alive();
@@ -43,6 +45,9 @@ impl Expect {
             )));
         }
 
+        this.increment_expect_call_counter();
+
+        let not = this.flags.get().not();
         let mut pass = value.is_number();
         if pass {
             let num = value.as_number();

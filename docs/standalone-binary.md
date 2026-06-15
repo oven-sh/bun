@@ -70,39 +70,50 @@ artifacts are `bun-standalone-<os>-<arch>[-musl][-baseline].zip`.
 
 ## Size
 
-Linux-x64 release, May 2026 linker map:
+Linux-x64 release, non-LTO, measured on this branch:
 
-| | MB |
-|---|--:|
-| stripped `bun` | 83.2 |
-| bundler + css + install + test + bake + toolkit CLI | −7.1 |
-| **`bun-standalone` (this change)** | **~76** |
-| | |
-| ICU data (`.rodata`) | 23.7 |
-| JavaScriptCore `.text` | 22.9 |
-| Bun C++ bindings + WebCore + BoringSSL + codecs | ~10 |
-| runtime transpiler (parser/printer/ast/resolver) | 2.4 |
+| | bytes | MB |
+|---|--:|--:|
+| stripped `bun` | 70,389,048 | 67.13 |
+| stripped `bun-standalone` | 67,439,800 | 64.32 |
+| **delta** | **−2,949,248** | **−2.81** |
 
-The < 35 MB target requires shipping a reduced ICU data file (small-icu is
-~5 MB instead of 24 MB) on top of this; that is a WebKit-prebuilt change
-tracked separately.
+Per-crate VM size from `bloaty -d compileunits` (full → standalone):
 
-## Follow-up work
+| crate | full MB | standalone MB | Δ |
+|---|--:|--:|--:|
+| `bun_runtime` | 6.45 | 5.35 | −1.10 |
+| `bun_install` | 2.03 | 1.10 | −0.93 |
+| `bun_bundler` | 1.61 | 1.43 | −0.18 |
+| `bun_css` | 1.77 | 1.74 | −0.03 |
+| `bun_css_jsc` | 0.10 | 0 | −0.10 |
+| `bun_install_jsc` | 0.05 | 0.06 | +0.01 |
 
-This change lands the build infrastructure and the CLI-dispatch sever. The
-remaining `#[no_mangle]` entry points that keep subsystem code alive are
-mapped in `src/runtime/standalone_build.rs` and gated incrementally:
+The remaining `bun_css` / `bun_bundler` / `bun_install` weight is held alive
+by **struct-field references from live runtime types**, which gc-sections
+cannot sever even when the code paths are unreachable:
 
-  - `Bun.build()` / `JSBundlerPlugin__*` → stub to throw, drops `BundleV2`.
-  - `Bun.color()` / `JS2Zig__css_internals_*` → stub, drops `bun_css`.
-  - `bun:test` module / `Expect*` codegen classes → needs a C++-side
-    `#if !BUN_STANDALONE` around `jest.classes.ts` codegen and
-    `matchAsymmetricMatcherAndGetFlags` in `bindings.cpp`.
-  - `bake` DevServer → cfg the `dev_server` field on `ServerInstance` and the
-    `AnyRoute::FrameworkRouter` variant.
-  - `bun_standalone_graph` read/write split → make `bun_bundler` /
-    `bun_libarchive` / `bun_http` optional behind a `write` feature so the
-    standalone binary only carries the graph reader.
-  - `--compile` target selection → add `standalone: bool` to `CompileTarget`
-    so cross-compile downloads `@oven/bun-standalone-<target>` and same-host
-    builds don't short-circuit to `self_exe_path()`.
+  - `bun_runtime::server::ServerInstance.dev_server: Option<Box<DevServer>>`
+    → `bake::IncrementalGraph<bundle_v2::Side>` → `BundleV2` → `Chunk.css`.
+  - `HTMLBundle` codegen class (`HTMLBundle__create`/`finalize` referenced
+    from `ZigGeneratedClasses.cpp`) owns `BundleV2Result`.
+  - `bun_bundler::Chunk` has `bun_css::BundlerStyleSheet` field types, and
+    `Chunk` is reachable from `Transpiler` (which the runtime keeps).
+  - `run_command.rs` workspace-script lookup and `shell_completions.rs`
+    reference `bun_install` directly.
+
+Recovering the remaining ~4 MB requires structural splits (own PRs):
+
+  - cfg the `dev_server` field + `AnyRoute::FrameworkRouter` variant to a
+    ZST under `bun_standalone`; cfg `pub mod bake` entirely.
+  - Gate `HTMLBundle.classes.ts` codegen on a `BUN_STANDALONE` define so
+    `ZigGeneratedClasses.cpp` stops referencing it (only C++-side change
+    needed; the same `.a` can carry both via weak symbols, or split codegen).
+  - Split `bun_bundler` into `bun_transpiler` (Transpiler/options/defines/
+    cache/analyze, always on) and `bun_bundler` (BundleV2/Chunk/linker,
+    gated). This is what severs the `bun_css` dependency.
+  - Route `run_command`'s `package.json` scripts lookup through
+    `bun_parsers::json` instead of `bun_install`.
+
+The < 35 MB target additionally requires shipping a reduced ICU data file
+(small-icu ≈ 5 MB instead of 24 MB) — a WebKit-prebuilt change.

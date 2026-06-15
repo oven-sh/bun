@@ -43,7 +43,7 @@ describe.skipIf(!standaloneExe || !existsSync(standaloneExe))("bun-standalone", 
       stderr: "pipe",
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+-standalone\b/);
     expect(exitCode).toBe(0);
   });
 

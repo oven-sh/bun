@@ -160,6 +160,14 @@ describe("Bun.CSRF", () => {
     );
   });
 
+  test("expiresIn and maxAge accept NaN as the default", () => {
+    // NaN is treated as the default (0 = no expiry), matching node's integer validators.
+    const token = CSRF.generate(secret, { expiresIn: NaN });
+    expect(typeof token).toBe("string");
+    expect(token.length).toBeGreaterThan(0);
+    expect(CSRF.verify(token, { secret, maxAge: NaN })).toBe(true);
+  });
+
   test("error handling", () => {
     // Empty token
     expect(() => CSRF.verify("", { secret })).toThrow();

@@ -293,7 +293,12 @@ describe("web worker", () => {
       try {
         const [err] = await once(worker, "error");
         expect(err.message).toBe("Error: boom from file worker");
-        expect(err.filename).toBe(workerPath);
+        // Compare the basename + absoluteness rather than the exact path: the
+        // filename round-trips through pathToFileURL -> fileSystemPath -> the
+        // resolver, which can differ from path.join on Windows (separator,
+        // drive-letter case, realpath canonicalization).
+        expect(err.filename).toEndWith("bad-worker.mjs");
+        expect(path.isAbsolute(err.filename)).toBe(true);
         expect(err.lineno).toBe(3);
         expect(err.colno).toBe(11);
         expect(err.error).toBe(null);

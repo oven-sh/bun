@@ -551,6 +551,15 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
      * so far, the app has to track this and call close as needed */
     if (!us_socket_is_closed(s) && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN) {
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
+#ifdef LIBUS_USE_KQUEUE
+        /* If the poll already watches nothing (us_socket_pause earlier and the
+         * one-shot WRITE has since fired so loop.c:475 stripped POLLING_OUT),
+         * us_poll_change(0) early-returns on old==new and never reaches
+         * kqueue_change to arm the watched==0 sentinel. Force it. */
+        if (us_poll_events(&s->p) == 0) {
+            kqueue_change(s->group->loop->fd, us_poll_fd(&s->p), 0, 0, &s->p);
+        } else
+#endif
         us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
     }

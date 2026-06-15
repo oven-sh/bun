@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "../../../harness";
+import { bunEnv, bunExe, isASAN, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -588,7 +588,7 @@ describe("Bun.serve unix socket validation", () => {
     // hostname+unix error path (no actual bind) with a large string and check
     // RSS growth stays bounded.
     const src = `
-      const base = Buffer.alloc(256 * 1024, "x").toString();
+      const base = Buffer.alloc(512 * 1024, "x").toString();
       function once(i) {
         try {
           Bun.serve({ hostname: "127.0.0.1", unix: "/tmp/" + i + base, fetch: () => new Response("ok") });
@@ -613,8 +613,8 @@ describe("Bun.serve unix socket validation", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     if (exitCode !== 0) console.error(stderr);
     const { deltaMB } = JSON.parse(stdout);
-    // Leaking: 1000 * 256KB ≈ 250MB. Fixed: a few MB.
-    expect(deltaMB).toBeLessThan(64);
+    // Leaking: 1000 * 512KB ≈ 500MB. Fixed: ~22MB (flat, independent of string size).
+    expect(deltaMB).toBeLessThan(isASAN ? 192 : 64);
     expect(exitCode).toBe(0);
   });
 

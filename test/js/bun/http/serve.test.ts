@@ -2695,8 +2695,10 @@ it.concurrent("#20283", async () => {
 // release builds the first clone's body never completes because subsequent
 // chunks are routed to the wrong stream. Run in a subprocess so the debug
 // assertion surfaces as a clean test failure instead of killing the runner.
-it.concurrent("req.clone() then new Request(req, init) tees the in-flight server request body", async () => {
-  const script = `
+it.concurrent(
+  "req.clone() then new Request(req, init) tees the in-flight server request body",
+  async () => {
+    const script = `
     const net = require("node:net");
 
     const chunk1 = Buffer.alloc(1000, "A").toString();
@@ -2743,29 +2745,33 @@ it.concurrent("req.clone() then new Request(req, init) tees the in-flight server
     server.stop(true);
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: JSON.stringify({ cloned: 3000, wrapped: 3000, match: true }),
-    stderr: expect.any(String),
-    exitCode: 0,
-  });
-}, 20_000);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ cloned: 3000, wrapped: 3000, match: true }),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  },
+  20_000,
+);
 
 // Same scenario without the raw-socket choreography: a plain fetch() body is
 // small enough to arrive in one read, but the handler still calls clone()
 // followed by new Request(req, init) while the body value is Locked. This is
 // the minimal reproducer for the debug assertion in
 // on_request_body_readable_stream_available.
-it.concurrent("req.clone() then new Request(req, init) with a buffered body does not crash", async () => {
-  const script = `
+it.concurrent(
+  "req.clone() then new Request(req, init) with a buffered body does not crash",
+  async () => {
+    const script = `
     const server = Bun.serve({
       port: 0,
       error(e) {
@@ -2785,21 +2791,23 @@ it.concurrent("req.clone() then new Request(req, init) with a buffered body does
     server.stop(true);
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: JSON.stringify({ cloned: "hello world", wrapped: "hello world" }),
-    stderr: expect.any(String),
-    exitCode: 0,
-  });
-}, 20_000);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ cloned: "hello world", wrapped: "hello world" }),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  },
+  20_000,
+);
 
 // Regression: hostname containing an interior NUL byte must not abort the process.
 // Zig reference: src/runtime/server/ServerConfig.zig — `bun.default_allocator.dupeZ(u8, host_str.slice())`

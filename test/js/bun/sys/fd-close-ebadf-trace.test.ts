@@ -7,9 +7,11 @@
 // dump/close plumbing and the actual caller never appeared.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isPosix } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux } from "harness";
 
-test.skipIf(!isDebug || !isPosix)(
+// Linux-only: relies on ELF `nm -S` emitting a size column with no extra
+// Mach-O underscore prefix on symbol names.
+test.skipIf(!isDebug || !isLinux)(
   "EBADF debug stack trace is anchored at the close() caller, not inside the dump helper",
   async () => {
     const exe = bunExe();

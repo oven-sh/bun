@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe } from "harness";
 import path from "path";
 
 test("S3 error path does not leak WTFStringImpl refs", async () => {
@@ -13,13 +13,12 @@ test("S3 error path does not leak WTFStringImpl refs", async () => {
       HTTPS_PROXY: undefined,
       http_proxy: undefined,
       https_proxy: undefined,
-      // ASAN's default quarantine retains freed allocations, which masks the
-      // fixed/unfixed RSS delta. Disable it so freed WTFStringImpls actually
-      // leave the process.
-      ...(isASAN && {
-        ASAN_OPTIONS:
-          "allow_user_segv_handler=1:disable_coredump=0:quarantine_size_mb=0:thread_local_quarantine_size_kb=0",
-      }),
+      // ASAN's quarantine retains freed allocations, which masks the RSS
+      // delta this test measures. Disable it for the subprocess; harmless
+      // when the binary is not ASAN-built.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
     },
     stderr: "pipe",
     stdout: "pipe",
@@ -28,4 +27,4 @@ test("S3 error path does not leak WTFStringImpl refs", async () => {
   if (exitCode !== 0) console.error(stderr);
   expect(stdout.trim()).toMatch(/"leaked":false/);
   expect(exitCode).toBe(0);
-}, 60_000);
+});

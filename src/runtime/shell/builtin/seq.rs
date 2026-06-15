@@ -228,7 +228,103 @@ impl Seq {
     }
 }
 
-#[inline]
+/// Parse a positional `seq` argument as `f32`.
+///
+/// Grammar matches Zig's `std.fmt.parseFloat(f32, ...)` (the pre-Rust
+/// implementation): decimal floats, C99 hex floats (`0x1p4`, `0x1.8`), and
+/// `_` digit separators. `bun_core::fmt::parse_f32` is JS-number semantics
+/// (`WTF::parseDouble`) and rejects the latter two; both macOS and GNU
+/// coreutils `seq` accept hex.
 fn parse_f32(bytes: &[u8]) -> Option<f32> {
-    bun_core::fmt::parse_f32(bytes)
+    if bytes.is_empty() {
+        return None;
+    }
+    let (neg, rest) = match bytes[0] {
+        b'-' => (true, &bytes[1..]),
+        b'+' => (false, &bytes[1..]),
+        _ => (false, bytes),
+    };
+    if rest.is_empty() || matches!(rest[0], b'+' | b'-') {
+        return None;
+    }
+
+    let hex = rest.len() >= 2 && rest[0] == b'0' && matches!(rest[1], b'x' | b'X');
+    let is_digit =
+        |b: u8| b.is_ascii_digit() || (hex && matches!(b, b'a'..=b'f' | b'A'..=b'F'));
+
+    // Zig rule: every `_` must sit between two digits of the active base.
+    let mut stripped: &[u8] = rest;
+    let buf: Vec<u8>;
+    if rest.contains(&b'_') {
+        for (i, &b) in rest.iter().enumerate() {
+            if b == b'_'
+                && !(i > 0
+                    && i + 1 < rest.len()
+                    && is_digit(rest[i - 1])
+                    && is_digit(rest[i + 1]))
+            {
+                return None;
+            }
+        }
+        buf = rest.iter().copied().filter(|&b| b != b'_').collect();
+        stripped = &buf;
+    }
+
+    let mag = if hex {
+        parse_hex_float(&stripped[2..])?
+    } else {
+        bun_core::fmt::parse_f64(stripped)?
+    };
+    Some(if neg { -mag } else { mag } as f32)
+}
+
+/// Parse the body of a C99 hex float (caller has already consumed `0x`).
+/// Hex mantissa with at most one `.`, optional `p`/`P` binary exponent.
+fn parse_hex_float(s: &[u8]) -> Option<f64> {
+    let mut mantissa: u64 = 0;
+    let mut frac_digits: i32 = 0;
+    let mut dropped_int_bits: i32 = 0;
+    let mut seen_dot = false;
+    let mut seen_digit = false;
+    let mut i = 0;
+    while i < s.len() {
+        let d = match s[i] {
+            b @ b'0'..=b'9' => b - b'0',
+            b @ b'a'..=b'f' => b - b'a' + 10,
+            b @ b'A'..=b'F' => b - b'A' + 10,
+            b'.' if !seen_dot => {
+                seen_dot = true;
+                i += 1;
+                continue;
+            }
+            b'p' | b'P' => break,
+            _ => return None,
+        };
+        seen_digit = true;
+        if mantissa >> 60 == 0 {
+            mantissa = (mantissa << 4) | d as u64;
+            if seen_dot {
+                frac_digits += 1;
+            }
+        } else if !seen_dot {
+            dropped_int_bits += 4;
+        }
+        i += 1;
+    }
+    if !seen_digit {
+        return None;
+    }
+    let mut exp: i32 = 0;
+    if i < s.len() {
+        let exp_bytes = &s[i + 1..];
+        if exp_bytes.is_empty() {
+            return None;
+        }
+        exp = bun_core::fmt::parse_int::<i32>(exp_bytes, 10).ok()?;
+    }
+    let exp = exp
+        .checked_sub(frac_digits.checked_mul(4)?)?
+        .checked_add(dropped_int_bits)?;
+    // powi on 2.0 is exact (repeated squaring of exact powers of two).
+    Some(mantissa as f64 * 2.0_f64.powi(exp))
 }

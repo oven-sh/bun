@@ -503,13 +503,15 @@ describe.each(["string", "object"])("fetch({proxy}) %s form does not leak the pr
 // that was passed to Response::init as url_string.clone() (inherent clone()
 // does dupe_ref(), so +2). Response::init adopts one ref; the local +1 was
 // never released, leaking one StringImpl ≈ "file://<path>".length per call.
-test.concurrent("fetch(file://...) does not leak the response url WTFStringImpl", async () => {
-  // The leaked impl is "file://<resolved abs path>", and fetch_impl decodes
-  // url.path into a stack PathBuffer that is 1024 bytes on macOS/BSD, 4096 on
-  // Linux, ~98 KiB on Windows. Use a ~900-byte path so decode_into succeeds on
-  // every platform and url_string is actually assigned, with enough iterations
-  // for the small per-call leak to show in RSS.
-  const script = /* js */ `
+test.concurrent(
+  "fetch(file://...) does not leak the response url WTFStringImpl",
+  async () => {
+    // The leaked impl is "file://<resolved abs path>", and fetch_impl decodes
+    // url.path into a stack PathBuffer that is 1024 bytes on macOS/BSD, 4096 on
+    // Linux, ~98 KiB on Windows. Use a ~900-byte path so decode_into succeeds on
+    // every platform and url_string is actually assigned, with enough iterations
+    // for the small per-call leak to show in RSS.
+    const script = /* js */ `
     const pad = Buffer.alloc(900, "a").toString();
     // Windows strips the leading "/" then asserts is_absolute_windows() in
     // PosixToWinNormalizer under debug_assertions, which needs a drive letter.
@@ -545,24 +547,26 @@ test.concurrent("fetch(file://...) does not leak the response url WTFStringImpl"
     }
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", "-e", script],
-    env: {
-      ...bunEnv,
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  console.log(stdout.trim());
-  if (exitCode !== 0) console.error(stderr);
-  expect({ stdout: stdout.includes("deltaMB"), stderr, exitCode }).toEqual({
-    stdout: true,
-    stderr: "",
-    exitCode: 0,
-  });
-}, 120000);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", script],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    console.log(stdout.trim());
+    if (exitCode !== 0) console.error(stderr);
+    expect({ stdout: stdout.includes("deltaMB"), stderr, exitCode }).toEqual({
+      stdout: true,
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  120000,
+);
 
 // Regression for src/runtime/webcore/fetch/FetchTasklet.zig:601,614 —
 // Holder.resolve/reject use `self.promise.swap()` which *consumes* (clears)

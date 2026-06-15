@@ -2,7 +2,7 @@
 // Expected values verified against json5@2.2.3 reference implementation.
 import { JSON5 } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 describe("escape sequences", () => {
   test("\\v vertical tab", () => {
@@ -1658,4 +1658,43 @@ describe("deeply nested parse results", () => {
     expect(stdout.replaceAll("\r\n", "\n").trim()).toBe("JSON5 probed\nJSONC probed\ndone");
     expect(exitCode).toBe(0);
   });
+});
+
+describe("stringify memory", () => {
+  // ASAN's quarantine retains freed allocations so RSS deltas run higher
+  // under bun-asan; widen the threshold there.
+  const thresholdMB = isASAN ? 80 : 30;
+
+  test(
+    "does not leak with a string space argument",
+    async () => {
+      // Unique >10-char space string per call so each iteration allocates a
+      // fresh WTFStringImpl for the stored space and hits the clamp branch in
+      // newline(). Nested object/array so indent > 0.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--smol",
+          "-e",
+          /* js */ `
+          const obj = { a: [1, 2, 3], b: { c: 4 }, d: 5 };
+          const pad = Buffer.alloc(8000, " ").toString();
+          for (let i = 0; i < 500; i++) Bun.JSON5.stringify(obj, null, pad + i);
+          Bun.gc(true);
+          const before = process.memoryUsage.rss();
+          for (let i = 0; i < 20000; i++) Bun.JSON5.stringify(obj, null, pad + i);
+          Bun.gc(true);
+          const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+          if (growthMB > ${thresholdMB}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    },
+    60_000,
+  );
 });

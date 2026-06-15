@@ -94,3 +94,63 @@ it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", asy
   await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
   await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
 });
+
+// Regression for #32242: after tls.connect({ socket }) upgrades a named-pipe
+// net.Socket, post-upgrade ciphertext must NOT re-emit as `data` on the
+// original socket's pre-existing listeners.
+it.if(isWindows)("named-pipe TLS upgrade does not re-emit bytes on the original socket", async () => {
+  const { promise: messageReceived, resolve: resolveMessageReceived } = Promise.withResolvers<string>();
+  const { promise: clientReceived, resolve: resolveClientReceived } = Promise.withResolvers<string>();
+  const { promise: done, resolve: resolveDone, reject: rejectDone } = Promise.withResolvers<void>();
+
+  let client: ReturnType<typeof connect> | null = null;
+  let nonTLSClient: ReturnType<typeof net.connect> | null = null;
+  let server: ReturnType<typeof createServer> | null = null;
+
+  // Bytes seen by a pre-existing listener on the ORIGINAL (pre-upgrade) socket.
+  const leakedToOriginal: Buffer[] = [];
+
+  const pipe_name = `\\\\.\\pipe\\test\\${randomUUID()}`;
+  try {
+    server = createServer(tls, socket => {
+      socket.on("error", rejectDone);
+      socket.on("data", data => {
+        socket.write("Goodbye World!");
+        resolveMessageReceived(data.toString());
+      });
+    });
+    server.on("error", rejectDone);
+
+    server.listen(pipe_name);
+    await once(server, "listening");
+
+    nonTLSClient = net.connect(pipe_name);
+    nonTLSClient.on("error", rejectDone);
+    // The STARTTLS-style pre-existing listener. After the TLS upgrade it must
+    // receive nothing — the bytes are encrypted and belong to the TLS layer.
+    nonTLSClient.on("data", chunk => {
+      leakedToOriginal.push(chunk);
+    });
+
+    client = connect({ socket: nonTLSClient, ca: tls.cert });
+    client.on("error", rejectDone);
+    client.on("data", data => {
+      resolveClientReceived(data.toString());
+    });
+
+    await once(client, "secureConnect");
+    client.write("Hello World!");
+
+    expect(await messageReceived).toBe("Hello World!");
+    expect(await clientReceived).toBe("Goodbye World!");
+
+    // The original socket's listener must not have seen any TLS bytes.
+    expect(Buffer.concat(leakedToOriginal).length).toBe(0);
+    resolveDone();
+    await done;
+  } finally {
+    client?.destroy();
+    nonTLSClient?.destroy();
+    server?.close();
+  }
+});

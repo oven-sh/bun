@@ -944,6 +944,29 @@ describe("close handling", () => {
         expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
       });
     }
+
+    const pullStream = () =>
+      new ReadableStream({
+        pull(c) {
+          c.enqueue(new Uint8Array([1]));
+          c.close();
+        },
+      });
+    for (const [label, make] of [
+      ["ReadableStream", () => pullStream()],
+      ["Response(ReadableStream)", () => new Response(pullStream())],
+      ["Request(ReadableStream)", () => new Request("http://x", { method: "POST", body: pullStream() })],
+    ] as const) {
+      it(`${label} at index >= 3 throws instead of panicking`, () => {
+        expect(() =>
+          spawn({
+            cmd: [bunExe(), "-e", ""],
+            env: bunEnv,
+            stdio: ["ignore", "pipe", "pipe", make()],
+          }),
+        ).toThrow("ReadableStream cannot be used for stdio[3] yet");
+      });
+    }
   });
 });
 

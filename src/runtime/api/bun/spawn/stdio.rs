@@ -361,7 +361,11 @@ impl Stdio {
                             "ReadableStream cannot be used for stderr yet. For now, do .stderr"
                         )));
                     }
-                    _ => unreachable!(),
+                    _ => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "ReadableStream cannot be used for stdio[{i}] yet"
+                        )));
+                    }
                 }
 
                 let stream_value = body.to_readable_stream(global)?;
@@ -491,7 +495,11 @@ impl Stdio {
                 0 => b"stdin",
                 1 => b"stdout",
                 2 => b"stderr",
-                _ => unreachable!(),
+                _ => {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "ReadableStream cannot be used for stdio[{i}] yet"
+                    )));
+                }
             };
 
             if is_sync {

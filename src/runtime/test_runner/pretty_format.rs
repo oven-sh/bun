@@ -1947,7 +1947,7 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::JSON => {
-                    let mut str = bun_core::String::empty();
+                    let mut str = bun_core::OwnedString::new(bun_core::String::empty());
 
                     value.json_stringify(self.global_this, self.indent, &mut str)?;
                     self.add_for_new_line(str.length());

@@ -8,7 +8,16 @@ import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isMusl, isPosix, isWindows, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunExe,
+  isMusl,
+  isPosix,
+  isWindows,
+  runWithErrorPromise,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);

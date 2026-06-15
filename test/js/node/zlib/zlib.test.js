@@ -380,6 +380,36 @@ describe("zlib.brotli", () => {
     expect(stdout.trim().split("\n")).toEqual(["flushed", "data:hello world"]);
     expect(exitCode).toBe(0);
   });
+
+  it("BrotliCompress.flush(Z_FINISH) still produces decodable output", async () => {
+    // set_flush is shared between encode and decode; on the encode path the
+    // stored flush op is passed directly to BrotliEncoderCompressStream, so
+    // the out-of-range mapping must not break the finish sequence.
+    const script = `
+      const z = require("zlib");
+      const c = z.createBrotliCompress();
+      const chunks = [];
+      c.on("data", b => chunks.push(b));
+      c.on("error", e => { console.log("err:" + e.code); process.exit(1); });
+      c.on("end", () => {
+        const out = z.brotliDecompressSync(Buffer.concat(chunks));
+        console.log("roundtrip:" + out.toString());
+      });
+      c.write(Buffer.from("hello world"));
+      c.flush(z.constants.Z_FINISH, () => console.log("flushed"));
+      c.end();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void stderr;
+    expect(stdout.trim().split("\n")).toEqual(["flushed", "roundtrip:hello world"]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 it.each([

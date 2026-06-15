@@ -567,10 +567,12 @@ impl WebWorker {
 
         // Keep the parent's event loop alive until the close task releases this.
         // If the user passed `{ ref: false }` we skip — they've opted out of the
-        // worker keeping the process alive. Exception: a nested worker (parent is
-        // itself a worker, not joined on exit) must hold the parent-loop keepalive
-        // regardless, because the child holds a non-owning `BackRef` to the parent VM.
-        if !default_unref || parent_ref.worker_ref().is_some() {
+        // worker keeping the process alive. This must also apply when the parent
+        // is itself a worker (Node compat): an unrefed nested worker must not
+        // block its parent worker's natural exit. The `parent` `BackRef` window
+        // is the documented nested-worker "Known gap" in the file header, same
+        // as the Zig reference.
+        if !default_unref {
             // `worker` is a fresh heap allocation; not yet shared.
             // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop.
             worker_ref.with_parent_poll_ref(|p| p.ref_(bun_io::js_vm_ctx()));
@@ -648,14 +650,10 @@ impl WebWorker {
         // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop, which
         // IS `this.parent`'s loop.
         let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
-        // A nested worker (parent is itself a worker) must keep the parent-loop
-        // keepalive even on `.unref()`: the child holds a non-owning `BackRef` to
-        // the parent VM and worker parents aren't joined on exit.
-        let parent_is_worker = this.parent.get().worker_ref().is_some();
         this.with_parent_poll_ref(|poll| {
             if value {
                 poll.ref_(bun_io::js_vm_ctx());
-            } else if !parent_is_worker {
+            } else {
                 poll.unref(bun_io::js_vm_ctx());
             }
         });

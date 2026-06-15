@@ -39,6 +39,15 @@ pub mod bun_s3 {
 // re-export (e.g. `sink::SinkSignal::init`).
 type BlobSizeType = crate::webcore::BlobSizeType;
 
+/// Zig's `@as(i51, @truncate(x))`: sign-extend the low 51 bits of an i64.
+/// Values with bit 50 set (e.g. `Number.MAX_SAFE_INTEGER`) become negative so the
+/// subsequent `max(0, ..)` clamp drops them to the floor instead of passing a
+/// multi-petabyte size to `ensure_total_capacity_precise`.
+#[inline]
+const fn trunc_i51(x: i64) -> i64 {
+    (x << (64 - 51)) >> (64 - 51)
+}
+
 // Compat: `webcore::Pipe` and Body refer to `streams::Result` / `streams::result::StreamError`.
 pub use StreamResult as Result;
 pub mod result {
@@ -194,7 +203,7 @@ impl Start {
                 {
                     if chunk_size_val.is_number() {
                         empty = false;
-                        chunk_size = 0i64.max(chunk_size_val.to_int64()) as BlobSizeType;
+                        chunk_size = 0i64.max(trunc_i51(chunk_size_val.to_int64())) as BlobSizeType;
                     }
                 }
 
@@ -213,7 +222,7 @@ impl Start {
                     value.fast_get(global_this, jsc::BuiltinName::HighWaterMark)?
                 {
                     if chunk_size_val.is_number() {
-                        chunk_size = 0i64.max(chunk_size_val.to_int64()) as BlobSizeType;
+                        chunk_size = 0i64.max(trunc_i51(chunk_size_val.to_int64())) as BlobSizeType;
                     }
                 }
 
@@ -276,7 +285,7 @@ impl Start {
                 {
                     if chunk_size_val.is_number() {
                         empty = false;
-                        chunk_size = 256i64.max(chunk_size_val.to_int64()) as BlobSizeType;
+                        chunk_size = 256i64.max(trunc_i51(chunk_size_val.to_int64())) as BlobSizeType;
                     }
                 }
 

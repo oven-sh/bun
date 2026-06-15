@@ -1,6 +1,6 @@
 import { ArrayBufferSink } from "bun";
 import { describe, expect, it } from "bun:test";
-import { withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
 
 describe("ArrayBufferSink", () => {
   const fixtures = [
@@ -61,4 +61,30 @@ describe("ArrayBufferSink", () => {
       expect(output.byteLength).toBe(expected.byteLength);
     });
   }
+
+  it("start({ highWaterMark: Number.MAX_SAFE_INTEGER }) does not abort", async () => {
+    const src = `
+      const sink = new Bun.ArrayBufferSink();
+      sink.start({ highWaterMark: Number.MAX_SAFE_INTEGER });
+      sink.write("hello");
+      process.stdout.write(new Uint8Array(sink.end()));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("hello");
+    expect(stderr).not.toContain("memory allocation");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([2 ** 50, 2 ** 51, 2 ** 52, -1])("start({ highWaterMark: %p }) is clamped and writable", hwm => {
+    const sink = new ArrayBufferSink();
+    sink.start({ highWaterMark: hwm });
+    sink.write("ok");
+    expect(new TextDecoder().decode(new Uint8Array(sink.end()))).toBe("ok");
+  });
 });

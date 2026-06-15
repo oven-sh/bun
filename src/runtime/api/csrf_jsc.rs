@@ -33,10 +33,7 @@ fn get_optional_slice(
     match target.get(global, property)? {
         Some(v) if !v.is_undefined_or_null() => {
             if !v.is_string() {
-                // SAFETY: `property` is a `&'static [u8]` literal supplied by
-                // the call-site (`b"algorithm"` etc.) — always ASCII.
-                let prop = unsafe { core::str::from_utf8_unchecked(property) };
-                return Err(global.throw_invalid_argument_type_value(prop, "string", v));
+                return Err(global.throw_invalid_property_type(property, "string", v));
             }
             Ok(Some(v.to_slice(global)?))
         }

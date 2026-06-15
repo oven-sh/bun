@@ -397,6 +397,153 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
   return out.trim();
 }
 
+// FunctionTemplate's constructor used to initialize m_data via WriteBarrier(vm, this, data), which
+// runs vm.writeBarrier() on a cell whose finishCreation() hasn't been called. JSC uses
+// WriteBarrierEarlyInit in member initializer lists for this reason. Run FunctionTemplate::New
+// (and ObjectTemplate::NewInstance, which backs onto InternalFieldObject) in a tight loop with the
+// concurrent collector thread running so the allocation/construction window overlaps GC marking.
+// collectContinuously is very slow on Windows CI and the code path is identical on POSIX.
+describe.todoIf(isBroken && isMusl).skipIf(isWindows)("FunctionTemplate/ObjectTemplate construction under concurrent GC", () => {
+  it(
+    "keeps the data parameter alive while GC runs concurrently",
+    async () => {
+      using dir = tempDir("v8-functiontemplate-gc", {
+        "package.json": JSON.stringify({
+          name: "v8-functiontemplate-gc",
+          version: "1.0.0",
+          devDependencies: { "node-gyp": "~11.2.0" },
+        }),
+        "binding.gyp": JSON.stringify({
+          targets: [
+            {
+              target_name: "ftgc",
+              sources: ["addon.cpp"],
+              cflags: ["-Wno-deprecated-declarations"],
+              cflags_cc: ["-Wno-deprecated-declarations"],
+              xcode_settings: {
+                OTHER_CFLAGS: ["-Wno-deprecated-declarations"],
+                OTHER_CPLUSPLUSFLAGS: ["-Wno-deprecated-declarations"],
+              },
+            },
+          ],
+        }),
+        // Each iteration allocates a fresh string as the FunctionTemplate data and a fresh
+        // InternalFieldObject from an ObjectTemplate, then reads the internal field straight
+        // back to catch the case where a premature barrier let the collector visit a
+        // half-constructed cell. The FunctionTemplate data is verified from JS via the
+        // returned Function's callback (Function::Call is not in the shim yet).
+        "addon.cpp": `#include <node.h>
+#include <string>
+using namespace v8;
+namespace ftgc_test {
+static void echo_data(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(info.Data());
+}
+static void run(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  int n = static_cast<int>(info[0].As<Number>()->Value());
+  Local<ObjectTemplate> ot = ObjectTemplate::New(isolate);
+  ot->SetInternalFieldCount(2);
+  Local<Function> last;
+  for (int i = 0; i < n; i++) {
+    std::string s = std::to_string(i);
+    Local<String> data = String::NewFromUtf8(isolate, s.c_str()).ToLocalChecked();
+    Local<FunctionTemplate> ft = FunctionTemplate::New(isolate, echo_data, data);
+    last = ft->GetFunction(context).ToLocalChecked();
+    Local<Object> obj = ot->NewInstance(context).ToLocalChecked();
+    obj->SetInternalField(0, data);
+    Local<Value> field = obj->GetInternalField(0).As<Value>();
+    if (!field->StrictEquals(data)) {
+      info.GetReturnValue().Set(
+          String::NewFromUtf8(isolate, "FIELD MISMATCH").ToLocalChecked());
+      return;
+    }
+  }
+  info.GetReturnValue().Set(last);
+}
+static void initialize(Local<Object> exports, Local<Value> module,
+                       Local<Context> context) {
+  NODE_SET_METHOD(exports, "run", run);
+}
+NODE_MODULE_CONTEXT_AWARE(NODE_GYP_MODULE_NAME, initialize)
+}  // namespace ftgc_test
+`,
+        "run.js": `const addon = require("./build/Release/ftgc");
+const inner = 500;
+for (let round = 0; round < 20; round++) {
+  const fn = addon.run(inner);
+  if (typeof fn !== "function") {
+    throw new Error(\`round \${round}: run() returned '\${fn}' instead of a function\`);
+  }
+  const got = fn();
+  const expected = String(inner - 1);
+  if (got !== expected) {
+    throw new Error(\`round \${round}: fn() returned '\${got}' instead of '\${expected}'\`);
+  }
+  if (process.isBun) Bun.gc(true);
+}
+console.log("ok");
+`,
+      });
+      const cwd = String(dir);
+
+      {
+        const install = spawn({
+          cmd: [bunExe(), "install", "--ignore-scripts"],
+          cwd,
+          env: bunEnv,
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        expect(await install.exited).toBe(0);
+      }
+
+      {
+        const gypBuild = spawn({
+          cmd: [bunExe(), "--bun", "run", "node-gyp", "rebuild", "--release", "-j", "max"],
+          cwd,
+          env: bunEnv,
+          stdin: "inherit",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [exitCode, out, err] = await Promise.all([
+          gypBuild.exited,
+          new Response(gypBuild.stdout).text(),
+          new Response(gypBuild.stderr).text(),
+        ]);
+        if (exitCode !== 0) {
+          throw new Error(`node-gyp rebuild failed with code ${exitCode}:\n${err}\n${out}`);
+        }
+      }
+
+      const proc = spawn({
+        cmd: [bunExe(), join(cwd, "run.js")],
+        cwd,
+        env: {
+          ...bunEnv,
+          BUN_JSC_collectContinuously: "1",
+        },
+        stdin: "inherit",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      // strip debug-build scoped log lines, same as checkSameOutput does
+      const stripped = out.replaceAll(/^\[\w+\].+$/gm, "").trim();
+      expect(stripped, `stderr:\n${err}`).toBe("ok");
+      expect(exitCode).toBe(0);
+    },
+    10 * 60 * 1000,
+  );
+});
+
 describe.todoIf(isBroken && isMusl)("String::Utf8Length bounds", () => {
   it(
     "saturates at INT32_MAX for strings whose UTF-8 size exceeds it",

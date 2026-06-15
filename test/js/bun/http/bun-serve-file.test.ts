@@ -676,6 +676,20 @@ describe("Bun.file in serve routes", () => {
       expect(await res.text()).toBe(body);
     });
 
+    // RFC 9110 §14.1.2: range bounds are 1*DIGIT. A leading '+' is not a digit,
+    // so the header is unparseable and falls back to full-body 200.
+    it.each(["bytes=+5-", "bytes=+0-+3", "bytes=0-+3", "bytes=-+4"])(
+      "rejects sign-prefixed bound %j and serves full body",
+      async range => {
+        const res = await fetch(new URL(path, server.url), { headers: { Range: range } });
+        expect({
+          status: res.status,
+          contentRange: res.headers.get("content-range"),
+          body: await res.text(),
+        }).toEqual({ status: 200, contentRange: null, body });
+      },
+    );
+
     it("ignores Range for non-GET/HEAD methods", async () => {
       // RFC 9110 §14.2: Range is only defined for GET.
       const res = await fetch(new URL(path, server.url), { method: "POST", headers: { Range: "bytes=0-3" } });

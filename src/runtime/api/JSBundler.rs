@@ -866,8 +866,7 @@ pub mod js_bundler {
                     use bun_sys::E;
                     match err.get_errno() {
                         E::ENOENT => "FileNotFound",
-                        E::EACCES => "AccessDenied",
-                        E::EPERM => "PermissionDenied",
+                        E::EACCES | E::EPERM => "AccessDenied",
                         E::ENOTDIR => "NotDir",
                         E::ELOOP => "SymLinkLoop",
                         E::ENAMETOOLONG => "NameTooLong",

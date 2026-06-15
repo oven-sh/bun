@@ -15,7 +15,9 @@ test("fetch() drains a chunked body when the server FINs in the same tick (kqueu
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr.trim()).toBe("");
-  expect(stdout.trim()).toBe("OK 200");
-  expect(exitCode).toBe(0);
+  expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+    stdout: "OK 200",
+    stderr: "",
+    exitCode: 0,
+  });
 });

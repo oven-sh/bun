@@ -1,4 +1,7 @@
-import { describe } from "bun:test";
+import { $ } from "bun";
+import { describe, expect, test } from "bun:test";
+import os from "node:os";
+import { isLinux } from "harness";
 import { createTestBuilder } from "../test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -91,4 +94,12 @@ describe("echo special cases", async () => {
     .stdout("a\n")
     .stderr("")
     .runAsTest("mixed trailing newlines still collapse to one");
+
+  // /dev/full yields ENOSPC on write; the builtin must surface the positive
+  // errno as its exit code (SystemError stores errno negated, so a raw cast
+  // of the field to u16 would wrap to 65000+).
+  test.if(isLinux)("write failure exit code is positive errno", async () => {
+    const { exitCode } = await $`echo hello > /dev/full`.nothrow();
+    expect(exitCode).toBe(os.constants.errno.ENOSPC);
+  });
 });

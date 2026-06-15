@@ -109,12 +109,14 @@ impl Echo {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
+        if let Some(e) = err {
+            let code = e.get_errno() as crate::shell::ExitCode;
+            e.deref();
+            Self::state_mut(interp, cmd).state = State::Done;
+            return Builtin::done(interp, cmd, code);
+        }
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(
-            interp,
-            cmd,
-            err.map(|e| e.errno as crate::shell::ExitCode).unwrap_or(0),
-        )
+        Builtin::done(interp, cmd, 0)
     }
 }
 

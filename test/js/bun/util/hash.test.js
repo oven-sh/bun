@@ -290,6 +290,11 @@ describe("Bun.hash seed as Number matches the same seed as BigInt", () => {
       expect({ seed, hash: Bun.hash.wyhash(input, seed) }).toEqual({ seed, hash: zero });
     }
   });
+
+  it("fractional Number seeds truncate toward zero", () => {
+    expect(Bun.hash.wyhash(input, 42.7)).toBe(Bun.hash.wyhash(input, 42n));
+    expect(Bun.hash.wyhash(input, 2 ** 51 + 0.5)).toBe(Bun.hash.wyhash(input, 2n ** 51n));
+  });
 });
 
 it("does not crash when changing Int32Array constructor with Bun.hash.xxHash32 as species", () => {

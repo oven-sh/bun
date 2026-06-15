@@ -5567,6 +5567,34 @@ CREATE TABLE ${table_name} (
         expect(result[0].large_texts[2].length).toBe(12000); // 'Hello World ' is 12 chars
       });
 
+      test("text[] - quoted element larger than 16KB unescape scratch", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        // Element contains a space so postgres quotes it in the text-array wire
+        // format, forcing the unescape path. 20000 bytes > 16 KiB stack scratch,
+        // exercising the heap fallback.
+        const big = Buffer.alloc(20000, "ab cd").toString();
+        const result = await sql`SELECT ARRAY[${big}, 'tail "quoted"']::text[] as a`;
+        expect(result[0].a[0]).toBe(big);
+        expect(result[0].a[1]).toBe('tail "quoted"');
+      });
+
+      test("text[][] - nested arrays with quoted elements", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        // Recursive parse_array: each inner array reuses its own unescape scratch.
+        const result = await sql`
+        SELECT ARRAY[
+          ARRAY['a b', 'c"d'],
+          ARRAY['e\\f', 'g,h'],
+          ARRAY['', 'plain']
+        ]::text[][] as nested
+      `;
+        expect(result[0].nested).toEqual([
+          ["a b", 'c"d'],
+          ["e\\f", "g,h"],
+          ["", "plain"],
+        ]);
+      });
+
       test("text[] - mixed length content", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`

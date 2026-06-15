@@ -1203,7 +1203,6 @@ impl<'a> Putter<'a> {
             array,
             structure,
             self.list,
-            self.fields.len() as u32,
             flags,
             result_mode as u8,
             cached_structure,

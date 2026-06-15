@@ -41,13 +41,11 @@ impl<'a> Row<'a> {
         // Passed by ref because CachedStructure is non-Copy (owns Strong + Box).
         cached_structure: Option<&CachedStructure>,
     ) -> crate::jsc::JsResult<JSValue> {
-        let count = self.values.len() as u32;
         SQLDataCell::to_js_object(
             global_object,
             array,
             structure,
             self.values.as_mut(),
-            count,
             flags,
             result_mode as u8,
             cached_structure,
@@ -270,23 +268,22 @@ impl<'a> Row<'a> {
             let bit_pos = ((bitmap_offset + i) & 7) as u8;
             let is_null = (null_bitmap.slice()[byte_pos] & (1u8 << bit_pos)) != 0;
 
+            let column = &self.columns[i];
             if is_null {
                 *value = SQLDataCell::null();
-                continue;
+            } else {
+                *value = decode_binary_value(
+                    self.global_object,
+                    column.column_type,
+                    column.column_length,
+                    self.raw,
+                    self.bigint,
+                    column.flags.contains(ColumnFlags::UNSIGNED),
+                    column.flags.contains(ColumnFlags::BINARY),
+                    column.character_set,
+                    reader,
+                )?;
             }
-
-            let column = &self.columns[i];
-            *value = decode_binary_value(
-                self.global_object,
-                column.column_type,
-                column.column_length,
-                self.raw,
-                self.bigint,
-                column.flags.contains(ColumnFlags::UNSIGNED),
-                column.flags.contains(ColumnFlags::BINARY),
-                column.character_set,
-                reader,
-            )?;
             value.index = match column.name_or_index {
                 // The indexed columns can be out of order.
                 NameOrIndex::Index(idx) => idx,

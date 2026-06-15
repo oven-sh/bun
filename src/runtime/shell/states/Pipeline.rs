@@ -228,9 +228,9 @@ impl Pipeline {
             Ok(d) => d,
             Err(e) => {
                 // Drop `child_io` and close the pipe ends not yet wrapped in
-                // an IOReader/IOWriter; `write_failing_error` transitions out
-                // of `StartingCmds` so `drain_pipelines` doesn't re-enter at
-                // the same `idx` and re-wrap the same fds.
+                // an IOReader/IOWriter; the state transition below (out of
+                // `StartingCmds`) keeps `drain_pipelines` from re-entering at
+                // the same `idx` and re-wrapping the same fds.
                 drop(child_io);
                 {
                     let me = interp.as_pipeline_mut(this);
@@ -243,17 +243,27 @@ impl Pipeline {
                             closefd(p[1]);
                         }
                     }
-                    // The Rust port starts children as it inits them, so at
-                    // `cmd_idx > 0` children `0..cmd_idx` are already running.
-                    // Mark the unspawned slots as exited-with-1 and account
-                    // for them in `exited_count` so `child_done`'s `all_done`
-                    // gate (or `write_failing_error`'s own check) completes the
-                    // pipeline only once the running children have reported in.
+                }
+                // The Rust port starts children as it inits them, so at
+                // `cmd_idx > 0` children `0..cmd_idx` are already running and
+                // may be blocked on stdin. Completing the pipeline would free
+                // it while those children still hold it as their parent;
+                // waiting for them risks hanging if the head never reads. The
+                // Zig reference inits all children before starting any, so it
+                // never has running children here. Until `next_starting` is
+                // restructured to match, keep the pre-port behavior for this
+                // narrow window: throw and let the promise reject.
+                if cmd_idx > 0 {
+                    interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
+                    interp.throw(ShellErr::new_sys(&e));
+                    return Yield::failed();
+                }
+                // `cmd_idx == 0`: no children started. Account for every slot
+                // so `write_failing_error` transitions straight to `Done{1}`.
+                {
+                    let me = interp.as_pipeline_mut(this);
                     if let Some(cmds) = me.cmds.as_mut() {
-                        for slot in &mut cmds[cmd_idx..] {
-                            *slot = CmdOrResult::Result(1);
-                        }
-                        me.exited_count += (cmds.len() - cmd_idx) as u32;
+                        me.exited_count = cmds.len() as u32;
                     }
                 }
                 let sys = e.to_shell_system_error();
@@ -284,9 +294,10 @@ impl Pipeline {
     /// Write an error message to the pipeline's stderr and finish with exit 1.
     /// For `.fd` stderr enqueues an async write and parks in
     /// `WaitingWriteErr` (resumed by `on_io_writer_chunk`); otherwise appends
-    /// to the captured stderr buffer. Transitions to `Done { 1 }` only once
-    /// every already-started child has reported in (the dupe-error site
-    /// pre-bumps `exited_count` for the unspawned slots).
+    /// to the captured stderr buffer and transitions to `Done { 1 }`.
+    ///
+    /// Callers must guarantee no pipeline children are running: completion
+    /// bubbles `child_done(parent, this, 1)` and frees this node.
     fn write_failing_error(
         interp: &Interpreter,
         this: NodeId,
@@ -322,29 +333,26 @@ impl Pipeline {
     }
 
     /// Common tail for `write_failing_error`'s synchronous path and
-    /// `on_io_writer_chunk`: if every started child has already reported in,
-    /// transition to `Done { 1 }` via `Yield::Next(this)` so the trampoline
-    /// removes this node from `pipeline_stack` before it is freed; otherwise
-    /// park in `Pending` and let `child_done` complete the pipeline (the
-    /// dupe-error site stored `Result(1)` in the last slot, so the computed
-    /// exit code there is 1).
+    /// `on_io_writer_chunk`: route through `Done { 1 }` + `Yield::Next(this)`
+    /// so the trampoline removes this node from `pipeline_stack` before
+    /// `next()` bubbles `child_done(parent, this, 1)` and frees it.
     fn finish_failing_error(interp: &Interpreter, this: NodeId) -> Yield {
         let me = interp.as_pipeline_mut(this);
-        let pending = me
-            .cmds
-            .as_ref()
-            .is_some_and(|c| me.exited_count < c.len() as u32);
-        if pending {
-            me.state = PipelineState::Pending;
-            return Yield::suspended();
-        }
+        debug_assert!(
+            me.cmds
+                .as_ref()
+                .is_none_or(|c| me.exited_count >= c.len() as u32),
+            "write_failing_error reached with running children"
+        );
         me.state = PipelineState::Done { exit_code: 1 };
         Yield::Next(this)
     }
 
     /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: throw on write failure, otherwise finish the
-    /// pipeline with exit code 1.
+    /// `WaitingWriteErr`: finish the pipeline with exit code 1. Only reached
+    /// from `write_failing_error`, whose callers guarantee no children are
+    /// running; a write failure here is error-on-error and is dropped so the
+    /// pipeline still completes.
     pub fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
@@ -356,8 +364,7 @@ impl Pipeline {
             PipelineState::WaitingWriteErr
         ));
         if let Some(e) = err {
-            interp.throw(ShellErr::from_system(e));
-            return Yield::failed();
+            e.deref();
         }
         Self::finish_failing_error(interp, this)
     }
@@ -394,15 +401,6 @@ impl Pipeline {
         // Subshell frees its own; Assigns is skipped.
         Self::deinit_child_duped_env(interp, child);
         interp.deinit_node(child);
-        // While an error write to `.fd` stderr is in flight, defer completion
-        // to `on_io_writer_chunk` so the IOWriter callback doesn't land on a
-        // freed node.
-        if matches!(
-            interp.as_pipeline(this).state,
-            PipelineState::WaitingWriteErr
-        ) {
-            return Yield::suspended();
-        }
         if all_done {
             // Exit code = last command's exit code (bash semantics).
             // For a single-runnable pipeline `last_exit_code` stays 0: only

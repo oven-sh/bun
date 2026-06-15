@@ -165,7 +165,7 @@ impl Process {
         matches!(self.status, Status::Exited(_) | Status::Signaled(_))
     }
 
-    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
+    pub fn signal_code(&self) -> Option<bun_sys::SignalCode> {
         self.status.signal_code()
     }
 
@@ -784,27 +784,18 @@ impl Status {
         None
     }
 
-    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
+    /// Returns the open `bun_sys::SignalCode` newtype so any non-zero byte
+    /// (including Linux real-time signals 32..=64) is surfaced. The closed
+    /// `bun_core::SignalCode` enum only covers 1..=31 and would drop RT
+    /// signals entirely.
+    pub fn signal_code(&self) -> Option<bun_sys::SignalCode> {
         let raw = match self {
             Status::Signaled(sig) => *sig,
             Status::Exited(exit) => exit.signal,
             _ => return None,
         };
-        bun_core::SignalCode::from_raw(raw)
-    }
-}
-
-/// Local shim — `bun_core::SignalCode` does not yet expose this.
-/// Shell-convention: 128 + signal number for signals 1..=31, else `None`.
-pub trait SignalCodeExt {
-    fn to_exit_code(self) -> Option<u8>;
-}
-impl SignalCodeExt for bun_core::SignalCode {
-    #[inline]
-    fn to_exit_code(self) -> Option<u8> {
-        let n = self as u8;
-        if (1..=31).contains(&n) {
-            Some(128u8.wrapping_add(n))
+        if raw > 0 {
+            Some(bun_sys::SignalCode(raw))
         } else {
             None
         }

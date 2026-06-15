@@ -1,5 +1,4 @@
 use crate::api::bun::process as bun_process;
-use crate::api::bun::process::SignalCodeExt as _;
 use crate::api::bun::process::sync as spawn_sync;
 use crate::cli::Command;
 use crate::cli::create_command::ExampleTag;

@@ -4,7 +4,7 @@ use std::sync::Arc;
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
-    self as bun_process, Process, Rusage, SignalCodeExt, SpawnOptions, Status,
+    self as bun_process, Process, Rusage, SpawnOptions, Status,
 };
 #[cfg(windows)]
 use crate::api::bun::process::{WindowsOptions, WindowsStdioResult};
@@ -913,10 +913,11 @@ impl ShellSubprocess {
                 // TODO: handle error
             }
 
-            if matches!(status, Status::Signaled(_)) {
-                if let Some(code) = status.signal_code() {
-                    break 'brk Some(code.to_exit_code().unwrap());
-                }
+            if let Status::Signaled(sig) = status {
+                // 128 + signal for any signal byte (named or RT). `to_exit_code()`
+                // only covers 1..=31; RT signals (>31) would fall through and
+                // leave the Cmd unfinished.
+                break 'brk Some(128u8.wrapping_add(*sig));
             }
 
             break 'brk None;

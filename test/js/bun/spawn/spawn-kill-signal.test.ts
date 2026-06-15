@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { shellExe } from "harness";
+import { bunEnv, bunExe, isLinux, shellExe } from "harness";
 import { constants } from "os";
 
 const inputs = {
@@ -82,4 +82,52 @@ describe("subprocess.kill", () => {
       expect(proc.signalCode).toBe("SIGTERM");
     });
   });
+});
+
+// Real-time signals (SIGRTMIN..SIGRTMAX) are Linux-specific and have no named
+// SignalCode variant. `signalCode` must surface the raw number rather than
+// dropping it and returning null.
+describe.skipIf(!isLinux)("real-time signals", () => {
+  // SIGRTMIN is 34 on glibc and 35 on musl; SIGRTMAX is 64 on both. Pick values
+  // inside the range on every libc.
+  for (const sig of [40, 64]) {
+    test(`Bun.spawn signalCode surfaces real-time signal ${sig}`, async () => {
+      await using proc = Bun.spawn({
+        cmd: ["sleep", "100"],
+        stdio: ["ignore", "ignore", "ignore"],
+      });
+      process.kill(proc.pid, sig);
+      await proc.exited;
+      expect({ signalCode: proc.signalCode, exitCode: proc.exitCode }).toEqual({
+        signalCode: sig,
+        exitCode: null,
+      });
+    });
+
+    test(`Bun.$ completes when child is killed by real-time signal ${sig}`, async () => {
+      // The shell runs inside a subprocess so a shell-side hang is observable
+      // as {hung:true} rather than hanging this test file. The inner script
+      // races against a sleep and force-exits so it always terminates.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const shell = Bun.$\`bash -c "kill -${sig} \\$\\$"\`.nothrow().then(r => ({ exitCode: r.exitCode }));
+           const hang = Bun.sleep(3000).then(() => ({ hung: true }));
+           console.log(JSON.stringify(await Promise.race([shell, hang])));
+           process.exit(0);`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ exitCode: 128 + sig }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  }
 });

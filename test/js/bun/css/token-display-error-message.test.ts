@@ -4,13 +4,6 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 const { minifyTest } = cssInternals;
 
-// `impl Display for Token` used to collapse every string-carrying token variant
-// to its bare inner slice, so `Unexpected token: …` diagnostics lost the
-// structural context (`#foo` → `foo`, `@foo` → `foo`, `url(a b)` → `a b`,
-// `"bar"` → `bar`, `foo(` → `foo`). The Display impl now delegates to
-// `Token::to_css_generic`, which renders the full CSS token shape (matching
-// the Zig `Token.format` reference).
-
 function parseError(src: string): string {
   try {
     minifyTest(src, "");

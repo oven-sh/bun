@@ -189,7 +189,8 @@ it("networkInterfaces IPv6 loopback", () => {
   // Skip on hosts where IPv6 is disabled entirely (no ::1 on lo). The preceding
   // test still catches the regression for any IPv6 entries that do exist.
   if (entries.length === 0) return;
-  expect(entries[0]).toEqual({
+  const lo = entries.find(e => e.address === "::1") ?? entries[0];
+  expect(lo).toEqual({
     address: "::1",
     cidr: "::1/128",
     netmask: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",

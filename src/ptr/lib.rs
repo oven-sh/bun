@@ -383,9 +383,9 @@ pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T
 // inherited via auto-traits (no `unsafe impl` needed).
 //
 // This does NOT cover `&'static mut [u8]` / `&'static mut T` forges (e.g.
-// `FileReader::pending_view`, `Decompressor::seat` output, `CmdHandle::cmd_mut`)
-// — those are tracked under the sibling `static-widen-mut` pattern and want a
-// raw-pointer field or a future `RawSliceMut<T>`.
+// `Decompressor::seat` output, `CmdHandle::cmd_mut`) — those are tracked under
+// the sibling `static-widen-mut` pattern and want a raw-pointer field such as
+// `streams::RawSliceMut<T>` (which `FileReader::pending_view` now uses).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A byte slice backed by **process-lifetime** storage.

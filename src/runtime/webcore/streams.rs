@@ -46,6 +46,88 @@ pub mod result {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// RawSliceMut
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Non-owning mutable slice — writable sibling of [`bun_ptr::RawSlice`].
+/// Stores a fat `*mut [T]`: `Copy`, no drop, no lifetime; the holder
+/// guarantees the backing storage (here a GC-rooted JS typed-array buffer)
+/// outlives every use. Unlike `RawSlice`, re-borrowing via [`Self::slice_mut`]
+/// is `unsafe`: each call site must argue liveness and uniqueness.
+#[repr(transparent)]
+pub struct RawSliceMut<T>(*mut [T]);
+
+impl<T> RawSliceMut<T> {
+    /// Empty slice (dangling, len 0).
+    pub const EMPTY: Self = RawSliceMut(core::ptr::slice_from_raw_parts_mut(
+        NonNull::<T>::dangling().as_ptr(),
+        0,
+    ));
+
+    /// Wrap a borrowed slice; the caller guarantees it outlives every use.
+    #[inline]
+    pub const fn new(s: &mut [T]) -> Self {
+        RawSliceMut(core::ptr::from_mut(s))
+    }
+
+    #[inline]
+    pub const fn as_ptr(self) -> *mut [T] {
+        self.0
+    }
+
+    #[inline]
+    pub const fn len(self) -> usize {
+        self.0.len()
+    }
+
+    #[inline]
+    pub const fn is_empty(self) -> bool {
+        self.0.len() == 0
+    }
+
+    /// Re-borrow as `&mut [T]` with a caller-chosen lifetime.
+    ///
+    /// # Safety
+    ///
+    /// For all of `'a`: storage live (GC-rooted for JS buffers), initialized,
+    /// and no other reference into the range. Keep borrows statement-scoped —
+    /// JS re-entry can otherwise alias the buffer.
+    #[inline]
+    pub unsafe fn slice_mut<'a>(self) -> &'a mut [T] {
+        // SAFETY: forwarded to caller; `EMPTY` is a valid dangling empty slice.
+        unsafe { &mut *self.0 }
+    }
+
+    /// Sub-slice from `start` to the end, without materializing a reference.
+    ///
+    /// # Safety
+    ///
+    /// `start <= self.len()`, and `self` must point at live storage.
+    #[inline]
+    pub unsafe fn slice_from(self, start: usize) -> Self {
+        debug_assert!(start <= self.len());
+        let len = self.len();
+        // SAFETY: `start <= len` keeps the offset pointer in-bounds.
+        let base = unsafe { self.0.cast::<T>().add(start) };
+        RawSliceMut(core::ptr::slice_from_raw_parts_mut(base, len - start))
+    }
+}
+
+impl<T> Copy for RawSliceMut<T> {}
+impl<T> Clone for RawSliceMut<T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Default for RawSliceMut<T> {
+    #[inline]
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Start
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -301,9 +383,9 @@ impl Start {
 
 pub enum StreamResult {
     // Self-referential: the pointee's `Pending.result` points back at this value, so a
-    // `&'a mut Pending` borrow can't be expressed; raw pointer with the BORROW_PARAM
+    // `&'a mut Pending` borrow can't be expressed; `NonNull` with the BORROW_PARAM
     // contract (pointee strictly outlives this result).
-    Pending(*mut Pending),
+    Pending(NonNull<Pending>),
     Err(StreamError),
     Done,
     Owned(Vec<u8>),
@@ -401,8 +483,8 @@ impl StreamResult {
 
 pub enum Writable {
     // Self-referential via WritablePending.result (see StreamResult::Pending above);
-    // raw pointer with the BORROW_PARAM contract.
-    Pending(*mut WritablePending),
+    // `NonNull` with the BORROW_PARAM contract.
+    Pending(NonNull<WritablePending>),
     Err(SysError),
     Done,
     Owned(BlobSizeType),
@@ -584,7 +666,7 @@ impl Writable {
             Writable::Done => JSValue::TRUE,
             Writable::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
-                let prom = unsafe { &mut *pending }.promise(global_this);
+                let prom = unsafe { &mut *pending.as_ptr() }.promise(global_this);
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 JSPromise::opaque_ref(prom).to_js()
             }
@@ -893,7 +975,7 @@ impl StreamResult {
             StreamResult::IntoArrayAndDone(array) => Ok(JSValue::from(array.len)),
             StreamResult::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
-                let promise = unsafe { &mut **pending }.promise(global_this);
+                let promise = unsafe { &mut *pending.as_ptr() }.promise(global_this);
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 let promise_js = JSPromise::opaque_ref(promise).to_js();
                 promise_js.protect();
@@ -2512,7 +2594,7 @@ pub enum ReadResult {
 impl ReadResult {
     pub fn to_stream(
         self,
-        pending: *mut Pending,
+        pending: NonNull<Pending>,
         buf: &mut [u8],
         view: JSValue,
         close_on_empty: bool,
@@ -2522,7 +2604,7 @@ impl ReadResult {
 
     pub fn to_stream_with_is_done(
         self,
-        pending: *mut Pending,
+        pending: NonNull<Pending>,
         buf: &mut [u8],
         view: JSValue,
         close_on_empty: bool,

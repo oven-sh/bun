@@ -19,9 +19,9 @@ use crate::webcore::streams;
 bun_core::declare_scope!(FileReader, visible);
 
 // `pending_view` and the `Js`/`Temporary` variants below borrow into a
-// JS-owned typed-array buffer kept alive by `pending_value: Strong` / `ensure_still_alive`.
-// Represented as unbounded `&mut [u8]` / `&[u8]` here to keep function bodies
-// readable; TODO(refactor): replace with a proper raw-slice wrapper (BACKREF lifetime).
+// JS-owned typed-array buffer kept alive by `pending_value: Strong` /
+// `ensure_still_alive`. Mutable views are carried as `streams::RawSliceMut<u8>`;
+// each re-borrow cites the GC rooting in force at that point.
 
 // R-2 (host-fn re-entrancy): every JS-exposed / vtable-reachable method takes
 // `&self`; per-field interior mutability via `Cell` (Copy) / `JsCell` (non-
@@ -42,12 +42,11 @@ pub struct FileReader {
     pub done: Cell<bool>,
     pub pending: JsCell<streams::Pending>,
     pub pending_value: JsCell<Strong>, // Strong.Optional
-    // TODO(refactor): `&'static mut [u8]` forge — borrows a JS typed-array buffer
-    // that GC can move/collect, and `&'static mut` asserts uniqueness the GC
-    // does not honour. `bun_ptr::Interned` is read-only by construction so
-    // does NOT cover this; tracked under the sibling `static-widen-mut`
-    // pattern (field should become `*mut [u8]` / `RawSliceMut<u8>`).
-    pub pending_view: JsCell<&'static mut [u8]>,
+    /// View into the JS typed array of the in-flight pull, rooted by
+    /// `pending_value`. Never read back: fulfillment re-derives the
+    /// destination from `pending_value` (detach-safe); reading this stored
+    /// slice would reintroduce the dangling-on-detach hazard.
+    pub pending_view: Cell<streams::RawSliceMut<u8>>,
     pub fd: Cell<Fd>,
     /// Read-only after construction (set via struct literal in `from_blob_*`).
     pub start_offset: Option<usize>,
@@ -72,7 +71,7 @@ impl Default for FileReader {
             done: Cell::new(false),
             pending: JsCell::new(streams::Pending::default()),
             pending_value: JsCell::new(Strong::empty()),
-            pending_view: JsCell::new(&mut []),
+            pending_view: Cell::new(streams::RawSliceMut::EMPTY),
             fd: Cell::new(Fd::INVALID),
             start_offset: None,
             max_size: None,
@@ -97,9 +96,9 @@ pub const TAG: readable_stream::Tag = readable_stream::Tag::File;
 #[derive(strum::IntoStaticStr)]
 pub enum ReadDuringJSOnPullResult {
     None,
-    // TODO(refactor): `&'static mut` forge — sibling `static-widen-mut` pattern;
-    // see note on `FileReader::pending_view`.
-    Js(&'static mut [u8]),
+    /// In-flight JS pull buffer, rooted by the enclosing `on_pull` frame's
+    /// `EnsureStillAlive(array)`.
+    Js(streams::RawSliceMut<u8>),
     AmountRead(usize),
     /// Borrows the reader/JS buffer for the duration of one `on_pull` call
     /// only. Holder-lifetime, not process-lifetime — `RawSlice<u8>` per
@@ -623,10 +622,11 @@ impl FileReader {
             self.read_inside_on_pull.with_mut(|riop| match riop {
                 ReadDuringJSOnPullResult::Js(in_progress) => {
                     if in_progress.len() >= buf.len() && !has_more {
-                        in_progress[0..buf.len()].copy_from_slice(buf);
-                        let remaining: *mut [u8] = &raw mut in_progress[buf.len()..];
-                        // SAFETY: lifetime laundering — see the `static-widen-mut` note on `ReadDuringJSOnPullResult::Js`.
-                        let remaining = unsafe { &mut *remaining };
+                        // SAFETY: rooted by the enclosing `on_pull` frame; sole live reference, statement-scoped.
+                        let dst = unsafe { in_progress.slice_mut() };
+                        dst[..buf.len()].copy_from_slice(buf);
+                        // SAFETY: `buf.len() <= in_progress.len()` checked above.
+                        let remaining = unsafe { in_progress.slice_from(buf.len()) };
                         *riop = ReadDuringJSOnPullResult::Js(remaining);
                     } else if !in_progress.is_empty() && !has_more {
                         // `buf` outlives the `on_pull` call that consumes this
@@ -768,7 +768,7 @@ impl FileReader {
 
             self.pending_value
                 .with_mut(|p| p.clear_without_deallocation());
-            self.pending_view.set(&mut []);
+            self.pending_view.set(streams::RawSliceMut::EMPTY);
             self.pending.with_mut(|p| p.run());
             close_if_needed!();
             return ret;
@@ -797,7 +797,7 @@ impl FileReader {
         !self.read_inside_on_pull.get().is_none()
     }
 
-    pub fn on_pull(&self, buffer: &'static mut [u8], array: JSValue) -> streams::Result {
+    pub fn on_pull(&self, buffer: streams::RawSliceMut<u8>, array: JSValue) -> streams::Result {
         // `buffer` borrows a JS typed array kept alive by `array`.
         array.ensure_still_alive();
         let _keep = EnsureStillAlive(array);
@@ -808,11 +808,13 @@ impl FileReader {
 
             self.pending_value
                 .with_mut(|p| p.clear_without_deallocation());
-            self.pending_view.set(&mut []);
+            self.pending_view.set(streams::RawSliceMut::EMPTY);
 
             if buffer.len() >= drained.len() as usize {
                 let drained_len = drained.len();
-                buffer[0..drained_len as usize].copy_from_slice(drained.slice());
+                // SAFETY: kept alive by `array` (`EnsureStillAlive` above); sole live reference, statement-scoped.
+                let dst = unsafe { buffer.slice_mut() };
+                dst[0..drained_len as usize].copy_from_slice(drained.slice());
                 // drain() moved ownership of the allocation into `drained` and
                 // left `self.buffered` / the reader buffer empty, so free
                 // `drained` here — freeing `self.buffered` would be a no-op.
@@ -853,7 +855,9 @@ impl FileReader {
                 let global = self.parent_global();
                 self.pending_value.with_mut(|p| p.set(&global, array));
                 self.pending_view.set(buffer);
-                return streams::Result::Pending(self.pending.as_ptr());
+                return streams::Result::Pending(
+                    core::ptr::NonNull::new(self.pending.as_ptr()).expect("embedded field"),
+                );
             }
 
             let buffer_len = buffer.len();
@@ -888,13 +892,15 @@ impl FileReader {
                     if self.reader().is_done() {
                         return streams::Result::Done;
                     }
-                    // fallthrough — but `buffer` was moved into read_inside_on_pull.
-                    // Recover it from `remaining_buf` (amount_read == 0 ⇒ same slice).
+                    // fallthrough — `buffer` is a `RawSliceMut`, which is `Copy`;
+                    // `remaining_buf` is the same slice here (amount_read == 0).
                     let global = self.parent_global();
                     self.pending_value.with_mut(|p| p.set(&global, array));
                     self.pending_view.set(remaining_buf);
                     bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
-                    return streams::Result::Pending(self.pending.as_ptr());
+                    return streams::Result::Pending(
+                        core::ptr::NonNull::new(self.pending.as_ptr()).expect("embedded field"),
+                    );
                 }
                 ReadDuringJSOnPullResult::Temporary(buf) => {
                     bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, buf.len());
@@ -923,8 +929,8 @@ impl FileReader {
                     // are `None` (impossible — we just stored `Js(buffer)` above and
                     // `on_read_chunk` never sets `None`) and `AmountRead` (never
                     // produced by `on_read_chunk`). Unreachable in the current state
-                    // machine; if that invariant ever changes, the buffer slice must
-                    // be recovered from a captured raw ptr+len before the move.
+                    // machine; if that invariant ever changes, `buffer` is still
+                    // available here since `RawSliceMut` is `Copy`.
                     unreachable!(
                         "on_read_chunk never yields None/AmountRead while read_inside_on_pull == Js"
                     );
@@ -939,7 +945,9 @@ impl FileReader {
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
 
-        streams::Result::Pending(self.pending.as_ptr())
+        streams::Result::Pending(
+            core::ptr::NonNull::new(self.pending.as_ptr()).expect("embedded field"),
+        )
     }
 
     pub fn drain(&self) -> Vec<u8> {
@@ -1095,10 +1103,8 @@ impl readable_stream::SourceContext for FileReader {
         Self::on_start(self)
     }
     fn on_pull(&mut self, buf: &mut [u8], arr: JSValue) -> streams::Result {
-        // SAFETY: lifetime laundering — `buf` borrows a JS typed array kept alive
-        // by `arr` (see the lifetime note at the top of the file).
-        let buf = unsafe { &mut *std::ptr::from_mut::<[u8]>(buf) };
-        Self::on_pull(self, buf, arr)
+        // `Self::on_pull` re-borrows only in scopes covered by `arr`'s rooting.
+        Self::on_pull(self, streams::RawSliceMut::new(buf), arr)
     }
     fn on_cancel(&mut self) {
         Self::on_cancel(self)

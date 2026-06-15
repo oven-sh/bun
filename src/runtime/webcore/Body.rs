@@ -2166,6 +2166,30 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
 pub(crate) type ValueBuffererCallback =
     fn(ctx: *mut c_void, bytes: &[u8], err: Option<ValueError>, is_async: bool);
 
+/// Error from [`ValueBufferer::run`]: a native stream-state failure, or a JS
+/// exception left pending on the VM so callers can rethrow it instead of a
+/// flattened synthetic error.
+pub enum BufferError {
+    /// A JS exception is pending on the VM (or OOM/termination).
+    Js(bun_jsc::JsError),
+    /// Native stream-state failure (`StreamAlreadyUsed`, `InvalidStream`, …).
+    Native(bun_core::Error),
+}
+
+impl From<bun_jsc::JsError> for BufferError {
+    #[inline]
+    fn from(e: bun_jsc::JsError) -> Self {
+        BufferError::Js(e)
+    }
+}
+
+impl From<bun_core::Error> for BufferError {
+    #[inline]
+    fn from(e: bun_core::Error) -> Self {
+        BufferError::Native(e)
+    }
+}
+
 pub struct ValueBufferer<'a> {
     pub ctx: *mut c_void,
     pub on_finished_buffering: ValueBuffererCallback,
@@ -2220,13 +2244,13 @@ impl<'a> ValueBufferer<'a> {
         &mut self,
         value: &mut Value,
         owned_readable_stream: Option<ReadableStream>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), BufferError> {
         value.to_blob_if_possible();
 
         match value {
             Value::Used => {
                 bun_core::scoped_log!(BodyValueBufferer, "Used");
-                return Err(bun_core::err!("StreamAlreadyUsed"));
+                return Err(bun_core::err!("StreamAlreadyUsed").into());
             }
             Value::Empty | Value::Null => {
                 bun_core::scoped_log!(BodyValueBufferer, "Empty");
@@ -2404,7 +2428,7 @@ impl<'a> ValueBufferer<'a> {
         &mut self,
         value: &mut Value,
         owned_readable_stream: Option<ReadableStream>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), BufferError> {
         debug_assert!(matches!(value, Value::Locked(_)));
         let Value::Locked(locked) = value else {
             unreachable!()
@@ -2430,12 +2454,12 @@ impl<'a> ValueBufferer<'a> {
             *value = Value::Used;
 
             if stream.is_locked(self.global) {
-                return Err(bun_core::err!("StreamAlreadyUsed"));
+                return Err(bun_core::err!("StreamAlreadyUsed").into());
             }
 
             match stream.ptr {
                 webcore::readable_stream::Source::Invalid => {
-                    return Err(bun_core::err!("InvalidStream"));
+                    return Err(bun_core::err!("InvalidStream").into());
                 }
                 // toBlobIfPossible should've caught this
                 webcore::readable_stream::Source::Blob(_)
@@ -2444,7 +2468,7 @@ impl<'a> ValueBufferer<'a> {
                 | webcore::readable_stream::Source::Direct => {
                     // this is broken right now
                     // return self.create_js_sink(stream);
-                    return Err(bun_core::err!("UnsupportedStreamType"));
+                    return Err(bun_core::err!("UnsupportedStreamType").into());
                 }
                 webcore::readable_stream::Source::Bytes(byte_stream_ptr) => {
                     // BACKREF: see `Source::bytes()` — payload owned by the
@@ -2494,10 +2518,7 @@ impl<'a> ValueBufferer<'a> {
             // someone else is waiting for the stream or waiting for `onStartStreaming`
             let readable = value
                 .to_readable_stream(self.global)
-                .map_err(|_| bun_core::err!("JSError"))?;
-            // The JS exception value is
-            // flattened to a string-coded error because `run`'s callers consume
-            // `bun_core::Error` (the exception itself stays pending on the VM).
+                .map_err(BufferError::Js)?;
             readable.ensure_still_alive();
             readable.protect();
             return self.buffer_locked_body_value(value, None);

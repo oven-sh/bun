@@ -1,5 +1,6 @@
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, Ordering};
 
 #[cfg(windows)]
@@ -1517,7 +1518,9 @@ impl FileSink {
                     p.consumed += pending_written as u64; // @truncate
                     p.result = streams::Writable::Owned(pending_written as u64);
                 });
-                streams::Writable::Pending(self.pending.as_ptr())
+                streams::Writable::Pending(
+                    NonNull::new(self.pending.as_ptr()).expect("embedded field"),
+                )
             }
         }
     }

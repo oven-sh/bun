@@ -1860,6 +1860,11 @@ declare module "bun:test" {
     toBeCalledTimes(expected: number): void;
 
     /**
+     * Ensures that a mock function is called exactly once.
+     */
+    toHaveBeenCalledOnce(): void;
+
+    /**
      * Ensure that a mock function is called with specific arguments.
      */
     toHaveBeenCalledWith(...expected: unknown[]): void;

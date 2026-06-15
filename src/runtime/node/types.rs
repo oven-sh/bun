@@ -1755,6 +1755,12 @@ impl FileSystemFlags {
                 )));
             }
 
+            // Numeric string flags parse into the platform's native `mode_t`
+            // width (u16 on Darwin, u32 on Linux) so the accepted range matches
+            // `std.fmt.parseInt(std.posix.mode_t, ...)` from the Zig reference.
+            // The widen→`try_from` step rejects values that don't fit in the
+            // resulting `c_int` instead of silently wrapping.
+            type FlagsInt = bun_sys::posix::mode_t;
             let flags: Option<i32> = 'brk: {
                 if str.is_16bit() {
                     let chars = str.utf16_slice_aligned();
@@ -1762,14 +1768,16 @@ impl FileSystemFlags {
                         // node allows "0o644" as a string :(
                         let slice = str.to_slice();
                         // slice.deinit() on Drop
-                        break 'brk strings::parse_int::<Mode>(slice.slice(), 10)
+                        break 'brk strings::parse_int::<FlagsInt>(slice.slice(), 10)
                             .ok()
-                            .map(|v| v as i32);
+                            .and_then(|v| i32::try_from(i64::from(v)).ok());
                     }
                 } else {
                     let chars = str.slice();
                     if chars[0].is_ascii_digit() {
-                        break 'brk strings::parse_int::<Mode>(chars, 10).ok().map(|v| v as i32);
+                        break 'brk strings::parse_int::<FlagsInt>(chars, 10)
+                            .ok()
+                            .and_then(|v| i32::try_from(i64::from(v)).ok());
                     }
                 }
 

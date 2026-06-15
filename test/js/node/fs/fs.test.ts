@@ -4044,6 +4044,47 @@ describe("numeric flags produce same result as string flags", () => {
   });
 });
 
+describe("out-of-range numeric string flags are rejected", () => {
+  // FileSystemFlags::from_js parses a leading-digit string into the platform's
+  // native mode_t (u16 on Darwin, u32 on Linux) and then into c_int. Values that
+  // overflow either step must throw "Invalid flag" rather than being silently
+  // wrapped and handed to open(2).
+  it.each(["2147483648", "4294967295", "4294967296"])("openSync(devNull, %j) throws Invalid flag", flag => {
+    let fd: number | undefined;
+    try {
+      expect(() => {
+        fd = openSync(os.devNull, flag as any);
+      }).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: expect.stringContaining(`Invalid flag '${flag}'`),
+        }),
+      );
+    } finally {
+      if (fd !== undefined) closeSync(fd);
+    }
+  });
+
+  it.if(process.platform === "darwin").each(["65536", "2147483647"])(
+    "openSync(devNull, %j) throws Invalid flag (darwin mode_t is u16)",
+    flag => {
+      let fd: number | undefined;
+      try {
+        expect(() => {
+          fd = openSync(os.devNull, flag as any);
+        }).toThrow(
+          expect.objectContaining({
+            code: "ERR_INVALID_ARG_TYPE",
+            message: expect.stringContaining(`Invalid flag '${flag}'`),
+          }),
+        );
+      } finally {
+        if (fd !== undefined) closeSync(fd);
+      }
+    },
+  );
+});
+
 describe("synchronous I/O string flags", () => {
   it("'rs' opens existing file for reading", () => {
     using dir = tempDir("sync-flags", {

@@ -19,6 +19,7 @@ function hammer(tag: string) {
       },
     });
     accepted++;
+    let threw: unknown;
     try {
       Bun.plugin({
         name: `q-${tag}-${i}`,
@@ -26,11 +27,13 @@ function hammer(tag: string) {
           b.onLoad({ filter: /.*/, namespace: "bad ns!" }, () => ({ contents: "", loader: "js" }));
         },
       });
-      throw new Error("invalid namespace was accepted");
     } catch (e) {
-      if (!String((e as Error).message).includes("namespace")) throw e;
-      rejected++;
+      threw = e;
     }
+    if (!String((threw as Error)?.message).includes("namespace can only contain")) {
+      throw new Error(`${tag}: "bad ns!" was not rejected (got: ${threw})`);
+    }
+    rejected++;
   }
   if (accepted !== ITERS || rejected !== ITERS) {
     throw new Error(`${tag}: accepted=${accepted} rejected=${rejected} (expected ${ITERS} each)`);

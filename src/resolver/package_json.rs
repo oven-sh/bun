@@ -2187,7 +2187,7 @@ impl<'a> Package<'a> {
     }
 }
 
-use bun_core::strings::{replace, replacement_size};
+use bun_core::strings::replace_owned;
 
 const INVALID_PERCENT_CHARS: [&[u8]; 4] = [b"%2f", b"%2F", b"%5c", b"%5C"];
 
@@ -2608,20 +2608,22 @@ impl<'a> ESModule<'a> {
                     {
                         if PATTERN {
                             // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
-                            let len = replacement_size(str, b"*", subpath);
-                            let _ = replace(str, b"*", subpath, &mut resolve_target_buf2.0);
-                            let result = &resolve_target_buf2.0[0..len];
+                            // Nothing bounds the number of "*" in a target, so the substituted
+                            // result can exceed MAX_PATH_BYTES; write into a fresh Vec (which is
+                            // boxed into Resolution.path immediately anyway) instead of the
+                            // fixed-size threadlocal buffer.
+                            let result = replace_owned(str, b"*", subpath);
                             if let Some(log) = self.debug_logs.as_deref_mut() {
                                 log.add_note_fmt(format_args!(
                                     "Subsituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
                                     bstr::BStr::new(subpath),
                                     bstr::BStr::new(str),
-                                    bstr::BStr::new(result)
+                                    bstr::BStr::new(&result)
                                 ));
                             }
                             dedent!();
                             return Resolution {
-                                path: Box::<[u8]>::from(result),
+                                path: result.into_boxed_slice(),
                                 status: Status::PackageResolve,
                                 debug: ResolutionDebug {
                                     token: target.first_token,
@@ -2722,29 +2724,31 @@ impl<'a> ESModule<'a> {
 
                 if PATTERN {
                     // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
-                    let len = replacement_size(resolved_target, b"*", subpath);
-                    let _ = replace(resolved_target, b"*", subpath, &mut resolve_target_buf2.0);
-                    let result = &resolve_target_buf2.0[0..len];
+                    // Nothing bounds the number of "*" in a target, so the substituted
+                    // result can exceed MAX_PATH_BYTES; write into a fresh Vec (which is
+                    // boxed into Resolution.path immediately anyway) instead of the
+                    // fixed-size threadlocal buffer.
+                    let result = replace_owned(resolved_target, b"*", subpath);
                     if let Some(log) = self.debug_logs.as_deref_mut() {
                         log.add_note_fmt(format_args!(
                             "Substituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
                             bstr::BStr::new(subpath),
                             bstr::BStr::new(resolved_target),
-                            bstr::BStr::new(result)
+                            bstr::BStr::new(&result)
                         ));
                     }
 
-                    if let Some(invalid) = find_invalid_segment(result) {
+                    if let Some(invalid) = find_invalid_segment(&result) {
                         if let Some(log) = self.debug_logs.as_deref_mut() {
                             log.add_note_fmt(format_args!(
                                 "The path \"{}\" is invalid because it contains an invalid segment \"{}\"",
-                                bstr::BStr::new(result),
+                                bstr::BStr::new(&result),
                                 bstr::BStr::new(invalid)
                             ));
                         }
                         dedent!();
                         return Resolution {
-                            path: Box::<[u8]>::from(result),
+                            path: result.into_boxed_slice(),
                             status: Status::InvalidModuleSpecifier,
                             debug: ResolutionDebug {
                                 token: target.first_token,
@@ -2753,8 +2757,8 @@ impl<'a> ESModule<'a> {
                         };
                     }
 
-                    let status: Status = if strings::ends_with_char_or_is_zero_length(result, b'*')
-                        && strings::index_of_char(result, b'*').unwrap() as usize
+                    let status: Status = if strings::ends_with_char_or_is_zero_length(&result, b'*')
+                        && strings::index_of_char(&result, b'*').unwrap() as usize
                             == result.len() - 1
                     {
                         Status::ExactEndsWithStar
@@ -2763,7 +2767,7 @@ impl<'a> ESModule<'a> {
                     };
                     dedent!();
                     return Resolution {
-                        path: Box::<[u8]>::from(result),
+                        path: result.into_boxed_slice(),
                         status,
                         debug: ResolutionDebug {
                             token: target.first_token,

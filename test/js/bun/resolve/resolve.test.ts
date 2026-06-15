@@ -589,6 +589,66 @@ describe("wildcard exports with @ in matched subpath", () => {
   });
 });
 
+// Nothing in the Node.js packages spec limits an exports/imports target to a
+// single "*", so a target like "./****…" substitutes the matched subpath once
+// per star. The substituted result was written into a fixed MAX_PATH_BYTES
+// threadlocal buffer (1024 on macOS, 4096 on Linux); with enough stars a
+// malicious package.json could overflow it and panic the process instead of
+// surfacing a catchable resolution error. Node.js returns ERR_MODULE_NOT_FOUND
+// for the same input.
+describe("wildcard exports/imports target with many * does not crash the resolver", () => {
+  const stars = Buffer.alloc(50, "*").toString();
+  const subpath = Buffer.alloc(100, "a").toString();
+
+  it.concurrent("exports: {'./*': './***…'} surfaces a catchable error", async () => {
+    using dir = tempDir("resolver-wildcard-many-stars-exports", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        exports: { "./*": "./" + stars },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-install",
+        "-e",
+        `import("pkg/${subpath}").then(() => console.log("resolved"), e => console.log("caught", e.code));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "caught ERR_MODULE_NOT_FOUND", exitCode: 0 });
+  });
+
+  it.concurrent("imports: {'#*': 'dep/***…'} surfaces a catchable error", async () => {
+    using dir = tempDir("resolver-wildcard-many-stars-imports", {
+      "package.json": JSON.stringify({
+        name: "host",
+        imports: { "#*": "dep/" + stars },
+      }),
+      "node_modules/.keep": "",
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-install",
+        "-e",
+        `import("#${subpath}").then(() => console.log("resolved"), e => console.log("caught", e.code));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "caught ERR_MODULE_NOT_FOUND", exitCode: 0 });
+  });
+});
+
 // A package.json `imports` entry whose value is a bare package specifier
 // (e.g. `"#res": "@myproject/resolver"`) is handed back to package-resolve
 // for a second pass. Per the Node.js packages spec these are URL-like

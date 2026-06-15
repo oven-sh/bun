@@ -1224,7 +1224,16 @@ impl Request {
                         match request.body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match request.body_value_mut().clone(global_this) {
+                                // Route through the JS-side cached stream so we tee the
+                                // existing readable instead of creating a second
+                                // disconnected ByteStream after `check_body_stream_ref`
+                                // has already migrated `locked.readable` into the
+                                // `js.gc.stream` slot. Going through `Value::clone(None)`
+                                // re-enters `tee()` with `on_start_streaming` consumed and
+                                // re-fires `on_readable_stream_available`, which overwrites
+                                // the server's `request_body_readable_stream_ref` and
+                                // orphans any reader of the previous stream.
+                                match request.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
                                     }
@@ -1273,11 +1282,13 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Body) {
-                        let body_value = response.get_body_value();
-                        match body_value {
+                        match response.get_body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
-                                match body_value.clone(global_this) {
+                                // See the `Request` branch above: tee through the
+                                // JS-side cached stream rather than creating a second
+                                // disconnected one.
+                                match response.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
                                     }

@@ -2685,6 +2685,122 @@ it.concurrent("#20283", async () => {
   expect(json).toEqual({ cookies: {}, clonedCookies: {} });
 });
 
+// The two-arg `new Request(req, init)` path must tee the source body through
+// the JS-side cached stream, the same way `req.clone()` does. Cloning first
+// migrates the readable into the JS cache and consumes `onStartStreaming`, so
+// a later `new Request(req, { ... })` that bypasses the cache would create a
+// second disconnected ByteStream and re-fire `onReadableStreamAvailable`,
+// overwriting the server's `request_body_readable_stream_ref`. In debug builds
+// that trips an assertion in `on_request_body_readable_stream_available`; in
+// release builds the first clone's body never completes because subsequent
+// chunks are routed to the wrong stream. Run in a subprocess so the debug
+// assertion surfaces as a clean test failure instead of killing the runner.
+it.concurrent("req.clone() then new Request(req, init) tees the in-flight server request body", async () => {
+  const script = `
+    const net = require("node:net");
+
+    const chunk1 = Buffer.alloc(1000, "A").toString();
+    const chunk2 = Buffer.alloc(1000, "B").toString();
+    const chunk3 = Buffer.alloc(1000, "C").toString();
+    const total = chunk1.length + chunk2.length + chunk3.length;
+
+    let sendRest;
+    const restReady = new Promise(r => { sendRest = r; });
+
+    const server = Bun.serve({
+      port: 0,
+      error(e) {
+        console.error("server error:", e?.stack ?? e);
+        process.exit(1);
+      },
+      async fetch(req) {
+        // Both operations run while the body is still Locked and streaming.
+        const cloned = req.clone();
+        const wrapped = new Request(req, { headers: { "x-forwarded": "1" } });
+
+        // Only now let the remaining body chunks arrive, so they must flow
+        // through the already-established stream ref.
+        sendRest();
+
+        const [a, b] = await Promise.all([cloned.text(), wrapped.text()]);
+        return Response.json({ cloned: a.length, wrapped: b.length, match: a === b && a.length === total });
+      },
+    });
+
+    const sock = net.connect(server.port, "127.0.0.1");
+    await new Promise((res, rej) => { sock.once("connect", res); sock.once("error", rej); });
+
+    sock.write(
+      "POST / HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: " + total + "\\r\\nConnection: close\\r\\n\\r\\n" + chunk1,
+    );
+    await restReady;
+    sock.write(chunk2 + chunk3);
+
+    let raw = "";
+    for await (const d of sock) raw += d;
+    const body = raw.split("\\r\\n\\r\\n")[1] ?? "";
+    console.log(body);
+    server.stop(true);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ cloned: 3000, wrapped: 3000, match: true }),
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+}, 20_000);
+
+// Same scenario without the raw-socket choreography: a plain fetch() body is
+// small enough to arrive in one read, but the handler still calls clone()
+// followed by new Request(req, init) while the body value is Locked. This is
+// the minimal reproducer for the debug assertion in
+// on_request_body_readable_stream_available.
+it.concurrent("req.clone() then new Request(req, init) with a buffered body does not crash", async () => {
+  const script = `
+    const server = Bun.serve({
+      port: 0,
+      error(e) {
+        console.error("server error:", e?.stack ?? e);
+        process.exit(1);
+      },
+      async fetch(req) {
+        const cloned = req.clone();
+        const wrapped = new Request(req, { headers: { "x-forwarded": "1" } });
+        const [a, b] = await Promise.all([cloned.text(), wrapped.text()]);
+        return Response.json({ cloned: a, wrapped: b });
+      },
+    });
+
+    const res = await fetch(server.url, { method: "POST", body: "hello world" });
+    console.log(JSON.stringify(await res.json()));
+    server.stop(true);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ cloned: "hello world", wrapped: "hello world" }),
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+}, 20_000);
+
 // Regression: hostname containing an interior NUL byte must not abort the process.
 // Zig reference: src/runtime/server/ServerConfig.zig — `bun.default_allocator.dupeZ(u8, host_str.slice())`
 // copies the raw bytes and the underlying C socket layer truncates at the first NUL, so

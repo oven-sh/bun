@@ -4082,6 +4082,32 @@ where
         // `*mut RequestContext` registered as the body callback context.
         let this = unsafe { bun_ptr::callback_ctx::<Self>(ptr) };
         debug_assert!(!this.request_body_readable_stream_ref.has());
+
+        // `on_start_streaming_request_body` is the normal drain path, but it
+        // is consumed via `.take()` in `Body::Value::{to_readable_stream,tee}`
+        // and this callback can fire again later without a preceding drain.
+        // Flush any bytes that slipped into `request_body_buf` in the interim
+        // so the streaming branch of `on_buffered_body_chunk` never observes
+        // a non-empty buffer, instead of silently dropping them.
+        if !this.request_body_buf.is_empty() {
+            if let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr {
+                // BACKREF: `Source::Bytes` payload is the live non-null
+                // `m_ctx` heap `ByteStream` kept alive by `readable`.
+                let bytes = bun_ptr::BackRef::from(
+                    NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
+                );
+                let buffered = core::mem::take(&mut this.request_body_buf);
+                this.request_body_streamed_len = this
+                    .request_body_streamed_len
+                    .saturating_add(buffered.len());
+                let _ = bytes.on_data(WebCore::streams::Result::Owned(buffered));
+            }
+        }
+
+        // Deinit any previous strong ref before overwriting so the GC handle
+        // is released. Callers should tee the existing stream instead of
+        // reaching this path; the debug_assert above guards regressions.
+        this.request_body_readable_stream_ref.deinit();
         this.request_body_readable_stream_ref =
             readable_stream::Strong::init(readable, global_this);
     }

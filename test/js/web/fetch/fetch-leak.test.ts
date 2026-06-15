@@ -419,6 +419,83 @@ test("fetch() does not leak streaming decompressor state across fragmented compr
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 }, 60000);
 
+// fetch.rs 'extract_proxy: jsc::URL::href_from_js() returns a +1 WTFStringImpl
+// ref into a bun_core::String, which is Copy and has no Drop. Without wrapping
+// in OwnedString the +1 is never released, leaking one WTFStringImpl (≈ the
+// proxy URL's byte length) per fetch({proxy}) call. Both the string form
+// (proxy: "http://...") and the object form (proxy: {url: "http://..."}) go
+// through href_from_js at separate call sites.
+describe.each(["string", "object"])("fetch({proxy}) %s form does not leak the proxy href WTFStringImpl", form => {
+  test.concurrent(
+    "RSS stays bounded",
+    async () => {
+      // Target a non-existent blob: URL so each fetch() parses the proxy option
+      // (where the leak occurs) then rejects synchronously in the blob registry
+      // lookup, with no network I/O.
+      const script = /* js */ `
+        // ~256 KiB path so each leaked WTFStringImpl shows up in RSS well above
+        // allocator noise. Build a FRESH proxy string per iteration: reusing one
+        // JS string would make href_from_js return the same StringImpl every
+        // call (only the refcount grows, RSS stays flat) and hide the leak.
+        const pad = Buffer.alloc(256 * 1024, "a").toString();
+
+        async function hit(i) {
+          const proxyUrl = "http://127.0.0.1:1/" + i + "/" + pad;
+          const opts = ${form === "string" ? `{ proxy: proxyUrl }` : `{ proxy: { url: proxyUrl } }`};
+          try { await fetch("blob:not-a-real-blob", opts); } catch {}
+        }
+
+        // Warm up (JIT, allocator page commit).
+        for (let i = 0; i < 20; i++) await hit(-i);
+        Bun.gc(true);
+        const baseline = process.memoryUsage.rss();
+
+        const ITERS = 150;
+        for (let i = 0; i < ITERS; i++) await hit(i);
+        Bun.gc(true);
+        const final = process.memoryUsage.rss();
+
+        const deltaMB = (final - baseline) / 1024 / 1024;
+        console.log(JSON.stringify({
+          form: ${JSON.stringify(form)},
+          baselineMB: (baseline / 1024 / 1024) | 0,
+          finalMB: (final / 1024 / 1024) | 0,
+          deltaMB: Math.round(deltaMB * 10) / 10,
+        }));
+        // 150 × 256 KiB ≈ 37 MiB leaked when the +1 is dropped on the floor
+        // (measured ~43 MiB on debug+ASAN); with the deref in place the delta
+        // is URL-size-independent noise (~10 MiB on debug+ASAN, ~0 on release).
+        if (deltaMB > 20) {
+          throw new Error("fetch({proxy}) leaked " + deltaMB.toFixed(1) + " MB over " + ITERS + " iterations");
+        }
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--smol", "-e", script],
+        env: {
+          ...bunEnv,
+          // ASAN quarantine retains freed allocations; this path churns several
+          // 256 KiB buffers per iteration, which would dominate the RSS delta
+          // and mask the real signal. Disable quarantine in the child so only
+          // never-freed memory shows up.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      console.log(stdout.trim());
+      if (exitCode !== 0) console.error(stderr);
+      expect({ stdout: stdout.includes("deltaMB"), stderr, exitCode }).toEqual({
+        stdout: true,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    90000,
+  );
+});
+
 // Regression for src/runtime/webcore/fetch/FetchTasklet.zig:601,614 —
 // Holder.resolve/reject use `self.promise.swap()` which *consumes* (clears)
 // the jsc.Strong handle on the fetch() promise before calling resolve()/reject().

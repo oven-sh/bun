@@ -98,6 +98,16 @@ describe.each([
     },
   },
   {
+    // Leading NUL: truncates to empty and is treated as unset (same as hostname: "").
+    options: {
+      hostname: "\0evil",
+      port: 0,
+    },
+    url: {
+      protocol: "http:",
+    },
+  },
+  {
     if: hasIPv6,
     options: {
       hostname: "::1",

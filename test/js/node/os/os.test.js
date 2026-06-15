@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
 import { isWindows } from "harness";
+import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
 it("arch", () => {
@@ -156,12 +157,44 @@ it("networkInterfaces", () => {
         // may be null
         expect(typeof nI.cidr).toBe("string");
 
+      if (nI.family === "IPv4") {
+        expect(isIPv4(nI.address)).toBeTrue();
+        expect(isIPv4(nI.netmask)).toBeTrue();
+      }
       if (nI.family === "IPv6") {
         expect(nI.scopeid).toBeNumber();
         expect(nI.scope_id).toBeUndefined();
+        // The address may carry a zone suffix (e.g. fe80::1%5) for link-local
+        // entries; strip it before validating with net.isIPv6().
+        expect(isIPv6(nI.address.split("%")[0])).toBeTrue();
+        expect(isIPv6(nI.netmask)).toBeTrue();
+        if (nI.cidr) {
+          const [addr, suffix] = nI.cidr.split("/");
+          expect(isIPv6(addr.split("%")[0])).toBeTrue();
+          expect(Number(suffix)).toBeWithin(0, 129);
+        }
       }
     }
   }
+});
+
+it("networkInterfaces IPv6 loopback", () => {
+  // Every supported platform has an IPv6 loopback entry (::1) on its loopback
+  // interface; its address/netmask/cidr must be the actual address, not a
+  // placeholder like "<addr family=...>".
+  const entries = Object.values(os.networkInterfaces())
+    .flat()
+    .filter(i => i.internal && i.family === "IPv6" && i.address === "::1");
+  expect(entries.length).toBeGreaterThan(0);
+  expect(entries[0]).toEqual({
+    address: "::1",
+    cidr: "::1/128",
+    netmask: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+    family: "IPv6",
+    mac: expect.stringMatching(/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/),
+    internal: true,
+    scopeid: 0,
+  });
 });
 
 it("machine", () => {

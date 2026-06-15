@@ -8681,26 +8681,43 @@ pub mod net {
     }
     impl fmt::Display for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            // Minimal: print family for now; full impl in `bun_dns::address_to_string`.
-            match self.as_in4() {
-                Some(v4) => {
-                    // `sin_addr` is `in_addr { s_addr: u32 }` on POSIX/ws2_32 but
-                    // `[u8; 4]` in `bun_libuv_sys::sockaddr_in`; reinterpret as
-                    // raw octets so both shapes resolve.
-                    // SAFETY: `sin_addr` is 4 bytes of POD on every target.
-                    let octets: [u8; 4] =
-                        unsafe { *core::ptr::addr_of!(v4.sin_addr).cast::<[u8; 4]>() };
-                    write!(
-                        f,
-                        "{}.{}.{}.{}:{}",
-                        octets[0],
-                        octets[1],
-                        octets[2],
-                        octets[3],
-                        u16::from_be(v4.sin_port)
-                    )
-                }
-                None => write!(f, "<addr family={}>", self.family()),
+            if let Some(v4) = self.as_in4() {
+                // `sin_addr` is `in_addr { s_addr: u32 }` on POSIX/ws2_32 but
+                // `[u8; 4]` in `bun_libuv_sys::sockaddr_in`; reinterpret as
+                // raw octets so both shapes resolve.
+                // SAFETY: `sin_addr` is 4 bytes of POD on every target.
+                let octets: [u8; 4] =
+                    unsafe { *core::ptr::addr_of!(v4.sin_addr).cast::<[u8; 4]>() };
+                write!(
+                    f,
+                    "{}.{}.{}.{}:{}",
+                    octets[0],
+                    octets[1],
+                    octets[2],
+                    octets[3],
+                    u16::from_be(v4.sin_port)
+                )
+            } else if let Some(v6) = self.as_in6() {
+                // `sin6_addr` is `in6_addr { s6_addr: [u8; 16] }` on every
+                // target; reinterpret as raw octets to stay independent of the
+                // wrapper struct name.
+                // SAFETY: `sin6_addr` is 16 bytes of POD on every target.
+                let octets: [u8; 16] =
+                    unsafe { *core::ptr::addr_of!(v6.sin6_addr).cast::<[u8; 16]>() };
+                // `SocketAddrV6`'s Display emits `[addr]:port` (with `%scope`
+                // when nonzero), matching Zig's `std.net.Ip6Address.format` —
+                // the shape `bun_core::fmt::format_ip` expects to strip.
+                fmt::Display::fmt(
+                    &std::net::SocketAddrV6::new(
+                        std::net::Ipv6Addr::from(octets),
+                        u16::from_be(v6.sin6_port),
+                        u32::from_be(v6.sin6_flowinfo),
+                        v6.sin6_scope_id,
+                    ),
+                    f,
+                )
+            } else {
+                write!(f, "<addr family={}>", self.family())
             }
         }
     }

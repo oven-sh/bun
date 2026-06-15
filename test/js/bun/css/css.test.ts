@@ -7236,14 +7236,8 @@ describe("css tests", () => {
 
     // Angles compare by degrees, not by unit: adjacent rules whose
     // declarations differ only in angle unit merge their selectors.
-    minify_test(
-      ".a{transform:rotateZ(180deg)}.b{transform:rotateZ(0.5turn)}",
-      ".a,.b{transform:rotate(180deg)}",
-    );
-    minify_test(
-      ".a{transform:skew(90deg)}.b{transform:skew(100grad)}",
-      ".a,.b{transform:skew(90deg)}",
-    );
+    minify_test(".a{transform:rotateZ(180deg)}.b{transform:rotateZ(0.5turn)}", ".a,.b{transform:rotate(180deg)}");
+    minify_test(".a{transform:skew(90deg)}.b{transform:skew(100grad)}", ".a,.b{transform:skew(90deg)}");
     minify_test(".a{rotate:180deg}.b{rotate:0.5turn}", ".a,.b{rotate:180deg}");
     minify_test(
       ".a{background:linear-gradient(90deg,red,blue)}.b{background:linear-gradient(100grad,red,blue)}",
@@ -7253,10 +7247,7 @@ describe("css tests", () => {
       ".a{background:conic-gradient(from 90deg,red,blue)}.b{background:conic-gradient(from 0.25turn,red,blue)}",
       ".a,.b{background:conic-gradient(from 90deg,red,#00f)}",
     );
-    minify_test(
-      ".a{font-style:oblique 45deg}.b{font-style:oblique 50grad}",
-      ".a,.b{font-style:oblique 45deg}",
-    );
+    minify_test(".a{font-style:oblique 45deg}.b{font-style:oblique 50grad}", ".a,.b{font-style:oblique 45deg}");
     // Same unit, different value: still distinct.
     minify_test(
       ".a{transform:rotateZ(180deg)}.b{transform:rotateZ(90deg)}",

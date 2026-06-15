@@ -817,6 +817,41 @@ describe("@types/bun integration test", () => {
       ],
     });
   });
+
+  describe("@types/node version compatibility", () => {
+    // https://github.com/oven-sh/bun/issues/32340
+    // bun-types must not reference @types/node export names that only exist in a
+    // specific major. node:util spells the encodeInto result shape as
+    // `EncodeIntoResult` in @types/node <=24 and `TextEncoderEncodeIntoResult` in
+    // >=25, so referencing either name leaves the other major with a dangling
+    // type. The rest of the suite pins @types/node to `latest` via the fixture's
+    // `resolutions`, so only a run against an older major catches the regression.
+    test("node:util references in bun-types resolve on @types/node@24", async () => {
+      const fixtureDir = join(TEMP_DIR, `fixture-node24-${fixtureCounter++}`);
+      await cp(BASE_FIXTURE_DIR, fixtureDir, { recursive: true });
+
+      const pkgPath = join(fixtureDir, "package.json");
+      const pkg = JSON.parse(readFileSync(pkgPath).toString());
+      pkg.dependencies = { ...pkg.dependencies, "@types/node": "24" };
+      pkg.resolutions = { ...pkg.resolutions, "@types/node": "24" };
+      await Bun.write(pkgPath, JSON.stringify(pkg, null, 2));
+
+      await $`cd ${fixtureDir} && bun install`.quiet();
+
+      // Guard against the resolution silently failing, which would make the
+      // assertion below vacuous (the bug only reproduces on @types/node <=24).
+      const installedNodeTypes = JSON.parse(
+        readFileSync(join(fixtureDir, "node_modules", "@types", "node", "package.json")).toString(),
+      );
+      expect(installedNodeTypes.version.split(".")[0]).toBe("24");
+
+      const { diagnostics } = await diagnose(fixtureDir);
+      const unresolvedNodeUtil = diagnostics.filter(
+        d => d.code === 2694 && d.message.includes("TextEncoderEncodeIntoResult"),
+      );
+      expect(unresolvedNodeUtil).toEqual([]);
+    });
+  });
 });
 
 const expectedEmptyInterfacesWhenNoDOM = new Set(["ThisType"]);

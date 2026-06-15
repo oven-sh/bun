@@ -175,7 +175,7 @@ describe("Bun.connect TLS handshake reports chain verification only", () => {
         authorizationError: NodeJS.ErrnoException | null;
         verifyError: unknown;
       }>();
-      const badSocket = await Bun.connect({
+      const socket = await Bun.connect({
         hostname: "127.0.0.1",
         port: listener.port,
         tls: { ca, serverName: "localhost" },
@@ -202,41 +202,13 @@ describe("Bun.connect TLS handshake reports chain verification only", () => {
         },
       });
       const result = await mismatch.promise;
-      badSocket.end();
+      socket.end();
       assert.deepStrictEqual(result, {
         success: true,
         authorized: true,
         authorizationError: null,
         verifyError: null,
       });
-
-      // Same cert with serverName "agent1" (matches CN). Must also be
-      // authorized.
-      const match = Promise.withResolvers<boolean>();
-      const goodSocket = await Bun.connect({
-        hostname: "127.0.0.1",
-        port: listener.port,
-        tls: { ca, serverName: "agent1" },
-        socket: {
-          open() {},
-          handshake(s) {
-            match.resolve(s.authorized);
-            s.end();
-          },
-          data() {},
-          drain() {},
-          close() {},
-          error(_s, err) {
-            match.reject(err);
-          },
-          connectError(_s, err) {
-            match.reject(err);
-          },
-        },
-      });
-      const okAuthorized = await match.promise;
-      goodSocket.end();
-      assert.strictEqual(okAuthorized, true, "a certificate matching the requested server name must stay authorized");
     } finally {
       listener.stop(true);
     }

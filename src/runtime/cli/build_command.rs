@@ -980,7 +980,11 @@ impl BuildCommand {
                 // no longer breaks embedded module graph resolution.
                 #[cfg(target_env = "ohos")]
                 {
-                    let outfile_path = if root_path.is_empty() || root_path == b"." {
+                    // Use the outfile directly if it is absolute; otherwise
+                    // prepend root_path to get the filesystem path for signing.
+                    let outfile_path = if outfile.starts_with(b"/") {
+                        outfile.to_vec()
+                    } else if root_path.is_empty() || root_path == b"." {
                         outfile.to_vec()
                     } else {
                         let mut full = root_path.to_vec();

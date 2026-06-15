@@ -12,7 +12,9 @@ import { fetch } from "../src/fetch";
 import { chmod, copy, exists, join, write, writeJson } from "../src/fs";
 import { getRelease, getSemver } from "../src/github";
 import type { Platform } from "../src/platform";
-import { platforms } from "../src/platform";
+import { platforms, standalonePlatforms } from "../src/platform";
+
+const allPlatforms = [...platforms, ...standalonePlatforms];
 import { spawn } from "../src/spawn";
 
 const module = "bun";
@@ -41,14 +43,14 @@ process.exit(0); // HACK
 
 async function build(): Promise<void> {
   await buildRootModule();
-  for (const platform of platforms) {
+  for (const platform of allPlatforms) {
     if (action !== "publish" && (platform.os !== process.platform || platform.arch !== process.arch)) continue;
     await buildModule(release, platform);
   }
 }
 
 async function publish(dryRun?: boolean): Promise<void> {
-  const modules = platforms
+  const modules = allPlatforms
     .filter(({ os, arch }) => action === "publish" || (os === process.platform && arch === process.arch))
     .map(({ bin }) => `${owner}/${bin}`);
   modules.push(module);
@@ -149,7 +151,11 @@ async function buildModule(
     error(`No asset found: ${bin}`);
     return;
   }
-  const bun = await extractFromZip(asset.browser_download_url, `${bin}/bun`);
+  // The release zip layout is `<bin>/<basename>` where `<basename>` is
+  // `bun` or `bun-standalone` (Windows adds `.exe`). `extractFromZip` matches
+  // by prefix, so the suffix-less form covers both.
+  const exeBase = bin.startsWith("bun-standalone-") ? "bun-standalone" : "bun";
+  const bun = await extractFromZip(asset.browser_download_url, `${bin}/${exeBase}`);
   const cwd = join("npm", module);
   mkdirSync(dirname(join(cwd, exe)), { recursive: true });
   write(join(cwd, exe), await bun.async("arraybuffer"));

@@ -133,6 +133,20 @@ export const platforms: Platform[] = [
   },
 ];
 
+/**
+ * `@oven/bun-standalone-*` — the reduced-footprint runtime that
+ * `bun build --compile` downloads and embeds. Same matrix as the full
+ * binary minus Android/FreeBSD (see `shouldBuildStandalone` in
+ * `.buildkite/ci.mjs`). The tarball ships `bin/bun-standalone[.exe]`.
+ */
+export const standalonePlatforms: Platform[] = platforms
+  .filter(p => p.abi !== "android" && p.os !== "freebsd")
+  .map(p => ({
+    ...p,
+    bin: p.bin.replace(/^bun-/, "bun-standalone-"),
+    exe: p.exe.replace(/\bbun(\.exe)?$/, "bun-standalone$1"),
+  }));
+
 export const supportedPlatforms: Platform[] = platforms
   .filter(
     platform =>

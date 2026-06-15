@@ -238,6 +238,36 @@ function create_release() {
     bun-windows-aarch64-profile.zip
   )
 
+  # Reduced-footprint --compile runtime. Same triplets minus android/freebsd
+  # (see shouldBuildStandalone in .buildkite/ci.mjs). buildkite-agent artifact
+  # download without --step searches the whole build, so these are picked up
+  # from the *-build-bun-standalone steps.
+  local standalone_artifacts=(
+    bun-standalone-darwin-aarch64.zip
+    bun-standalone-darwin-aarch64-profile.zip
+    bun-standalone-darwin-x64.zip
+    bun-standalone-darwin-x64-profile.zip
+    bun-standalone-linux-aarch64.zip
+    bun-standalone-linux-aarch64-profile.zip
+    bun-standalone-linux-x64.zip
+    bun-standalone-linux-x64-profile.zip
+    bun-standalone-linux-x64-baseline.zip
+    bun-standalone-linux-x64-baseline-profile.zip
+    bun-standalone-linux-aarch64-musl.zip
+    bun-standalone-linux-aarch64-musl-profile.zip
+    bun-standalone-linux-x64-musl.zip
+    bun-standalone-linux-x64-musl-profile.zip
+    bun-standalone-linux-x64-musl-baseline.zip
+    bun-standalone-linux-x64-musl-baseline-profile.zip
+    bun-standalone-windows-x64.zip
+    bun-standalone-windows-x64-profile.zip
+    bun-standalone-windows-x64-baseline.zip
+    bun-standalone-windows-x64-baseline-profile.zip
+    bun-standalone-windows-aarch64.zip
+    bun-standalone-windows-aarch64-profile.zip
+  )
+  artifacts+=("${standalone_artifacts[@]}")
+
   function upload_artifact() {
     local artifact="$1"
     download_buildkite_artifact "$artifact"

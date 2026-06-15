@@ -998,7 +998,14 @@ function getWindowsSignStep(windowsPlatforms, options) {
  * @returns {Step}
  */
 function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {}) {
-  const targets = releasePlatforms.map(p => ({ triplet: getTargetTriplet(p) }));
+  const standalone = releasePlatforms.filter(shouldBuildStandalone);
+  const targets = [
+    ...releasePlatforms.map(p => ({ triplet: getTargetTriplet(p) })),
+    // packageAndUpload sets `binary-size:bun-standalone-<triplet>` from the
+    // standalone link step; track those alongside the full binary so size
+    // regressions in either variant trip the threshold.
+    ...standalone.map(p => ({ triplet: getTargetTriplet(p).replace(/^bun-/, "bun-standalone-") })),
+  ];
   const args = [`--targets '${JSON.stringify(targets)}'`, `--threshold-mb ${BINARY_SIZE_THRESHOLD_MB}`];
   if (recordOnly) args.push("--no-fail");
   if (!options.canary) args.push("--release");
@@ -1011,7 +1018,10 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
       options,
       { instanceType: "c8g.large" },
     ),
-    depends_on: releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+    depends_on: [
+      ...releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+      ...standalone.map(p => `${getTargetKey(p)}-build-bun-standalone`),
+    ],
     allow_dependency_failure: true,
     soft_fail: !!options.skipSizeCheck,
     retry: {
@@ -1040,6 +1050,8 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
   const depends_on = signed
     ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
     : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
+  // upload-release.sh also publishes the bun-standalone artifacts.
+  depends_on.push(...buildPlatforms.filter(shouldBuildStandalone).map(p => `${getTargetKey(p)}-build-bun-standalone`));
 
   return {
     key: "release",

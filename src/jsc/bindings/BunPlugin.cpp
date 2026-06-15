@@ -979,10 +979,8 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     Zig::GlobalObject* global = static_cast<Zig::GlobalObject*>(globalObject);
-    global->onLoadPlugins.fileNamespace.clear();
-    global->onResolvePlugins.fileNamespace.clear();
-    global->onLoadPlugins.groups.clear();
-    global->onResolvePlugins.namespaces.clear();
+    global->onLoadPlugins.clear();
+    global->onResolvePlugins.clear();
 
     delete global->onLoadPlugins.virtualModules;
     global->onLoadPlugins.virtualModules = nullptr;

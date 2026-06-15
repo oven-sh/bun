@@ -722,3 +722,63 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   expect(stdout.trim() || stderr).toBe("entry ran:dep");
   expect(exitCode).toBe(0);
 });
+
+// Spawned in a subprocess because clearAll() would wipe the plugins the rest of this file relies on.
+describe.concurrent("Bun.plugin.clearAll()", () => {
+  async function run(src: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+  }
+
+  it("re-registering a namespaced onLoad plugin after clearAll() works", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      function register() {
+        Bun.plugin({
+          name: "p",
+          setup(b) {
+            b.onResolve({ filter: /.*/, namespace: "myns" }, ({ path }) => ({ path, namespace: "myns" }));
+            b.onLoad({ filter: /.*/, namespace: "myns" }, () => ({ contents: "export default 1;", loader: "js" }));
+          },
+        });
+      }
+      for (let i = 0; i < 50; i++) {
+        register();
+        Bun.plugin.clearAll();
+      }
+      register();
+      const m = await import("myns:hello");
+      console.log("result=" + m.default);
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "result=1", stderr, exitCode: 0 });
+  });
+
+  it("re-registering a namespaced onResolve plugin after clearAll() drops the old callback", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      Bun.plugin({
+        name: "old",
+        setup(b) {
+          b.onResolve({ filter: /.*/, namespace: "myns" }, () => {
+            throw new Error("stale onResolve callback ran");
+          });
+        },
+      });
+      Bun.plugin.clearAll();
+      Bun.plugin({
+        name: "new",
+        setup(b) {
+          b.onResolve({ filter: /.*/, namespace: "myns" }, ({ path }) => ({ path, namespace: "myns" }));
+          b.onLoad({ filter: /.*/, namespace: "myns" }, () => ({ contents: "export default 2;", loader: "js" }));
+        },
+      });
+      const m = await import("myns:hello");
+      console.log("result=" + m.default);
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "result=2", stderr, exitCode: 0 });
+  });
+});

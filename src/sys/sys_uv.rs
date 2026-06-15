@@ -553,11 +553,11 @@ pub fn lstat(path: &ZStr) -> Result<Stat> {
 }
 
 pub fn close(fd: Fd) -> Option<Error> {
-    fd.close_allowing_bad_file_descriptor(None)
+    fd.close_allowing_bad_file_descriptor(Some(bun_core::return_address()))
 }
 
 pub fn close_allowing_stdout_and_stderr(fd: Fd) -> Option<Error> {
-    fd.close_allowing_standard_io(None)
+    fd.close_allowing_standard_io(Some(bun_core::return_address()))
 }
 
 /// Maximum number of iovec buffers that can be passed to uv_fs_read/uv_fs_write.

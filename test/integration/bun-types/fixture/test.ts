@@ -77,6 +77,17 @@ describe("bun:test", () => {
     expect(null).toBeNull();
     expect(undefined).toBeUndefined();
     expect(undefined).not.toBeDefined();
+
+    // https://github.com/oven-sh/bun/issues/32334
+    // Jest return-matcher aliases must type-check alongside their long forms.
+    const returnMock = mock(() => 42);
+    returnMock();
+    expect(returnMock).toReturn();
+    expect(returnMock).toHaveReturned();
+    expect(returnMock).lastReturnedWith(42);
+    expect(returnMock).toHaveLastReturnedWith(42);
+    expect(returnMock).nthReturnedWith(1, 42);
+    expect(returnMock).toHaveNthReturnedWith(1, 42);
   });
 });
 

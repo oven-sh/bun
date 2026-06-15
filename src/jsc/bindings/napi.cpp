@@ -2070,14 +2070,23 @@ extern "C" napi_status napi_get_all_property_names(
         JSArray* filteredKeys = JSArray::create(JSC::getVM(globalObject), globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 0);
         for (unsigned i = 0; i < exportKeys->getArrayLength(); i++) {
             JSValue key = exportKeys->get(globalObject, i);
+            NAPI_RETURN_IF_EXCEPTION(env);
             auto propKey = key.toPropertyKey(globalObject);
+            NAPI_RETURN_IF_EXCEPTION(env);
             PropertyDescriptor desc;
 
             JSObject* owner = object;
             if (key_mode == napi_key_include_prototypes) {
                 // Climb up the prototype chain to find inherited properties
-                while (!owner->getOwnPropertyDescriptor(globalObject, propKey, desc)) {
-                    JSObject* proto = owner->getPrototype(globalObject).getObject();
+                while (true) {
+                    bool found = owner->getOwnPropertyDescriptor(globalObject, propKey, desc);
+                    NAPI_RETURN_IF_EXCEPTION(env);
+                    if (found) {
+                        break;
+                    }
+                    JSValue protoValue = owner->getPrototype(globalObject);
+                    NAPI_RETURN_IF_EXCEPTION(env);
+                    JSObject* proto = protoValue.getObject();
                     if (!proto) {
                         break;
                     }
@@ -2085,6 +2094,7 @@ extern "C" napi_status napi_get_all_property_names(
                 }
             } else {
                 owner->getOwnPropertyDescriptor(globalObject, propKey, desc);
+                NAPI_RETURN_IF_EXCEPTION(env);
             }
 
             // V8 never applies ONLY_WRITABLE/ONLY_CONFIGURABLE to Proxy keys
@@ -2115,6 +2125,7 @@ extern "C" napi_status napi_get_all_property_names(
 
             if (include) {
                 filteredKeys->push(globalObject, key);
+                NAPI_RETURN_IF_EXCEPTION(env);
             }
         }
         exportKeys = filteredKeys;

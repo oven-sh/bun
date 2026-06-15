@@ -22,6 +22,28 @@ pub struct CompileTarget {
     pub baseline: bool,
     pub version: Version,
     pub libc: Libc,
+    pub runtime: CompileRuntime,
+}
+
+/// Which Bun binary to embed as the runtime in `--compile` output.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
+pub enum CompileRuntime {
+    /// The slimmed-down `bun-standalone` runtime (no bundler/installer/shell).
+    #[default]
+    Standalone,
+    /// The full `bun` binary.
+    Full,
+}
+
+impl CompileRuntime {
+    /// Prefix inserted after `bun-` in npm package names and cache keys.
+    pub(crate) const fn npm_prefix(self) -> &'static str {
+        match self {
+            CompileRuntime::Standalone => "standalone-",
+            CompileRuntime::Full => "",
+        }
+    }
 }
 
 impl Default for CompileTarget {
@@ -44,6 +66,9 @@ impl Default for CompileTarget {
             } else {
                 Libc::Default
             },
+            // The running process is always the full `bun` binary; `is_default()`
+            // only short-circuits to self_exe_path when the requested runtime is Full.
+            runtime: CompileRuntime::Full,
         }
     }
 }
@@ -105,6 +130,7 @@ impl CompileTarget {
             && self.baseline == other.baseline
             && self.version.eql(other.version)
             && self.libc == other.libc
+            && self.runtime == other.runtime
     }
 
     pub fn is_default(&self) -> bool {
@@ -137,6 +163,7 @@ impl CompileTarget {
         let os = self.os.npm_name().as_bytes();
         let arch = self.arch.npm_name();
         let libc = self.libc.npm_name();
+        let runtime = self.runtime.npm_prefix().as_bytes();
         let baseline: &[u8] = if self.baseline { b"-baseline" } else { b"" };
 
         let total = buf.len();
@@ -145,12 +172,14 @@ impl CompileTarget {
         let res = (|| -> std::io::Result<()> {
             cursor.write_all(registry_url)?;
             cursor.write_all(b"/@oven/bun-")?;
+            cursor.write_all(runtime)?;
             cursor.write_all(os)?;
             cursor.write_all(b"-")?;
             cursor.write_all(arch.as_bytes())?;
             cursor.write_all(libc.as_bytes())?;
             cursor.write_all(baseline)?;
             cursor.write_all(b"/-/bun-")?;
+            cursor.write_all(runtime)?;
             cursor.write_all(os)?;
             cursor.write_all(b"-")?;
             cursor.write_all(arch.as_bytes())?;
@@ -460,7 +489,8 @@ impl fmt::Display for CompileTarget {
         // This doesn't match up 100% with npm, but that's okay.
         write!(
             f,
-            "bun-{}-{}{}{}-v{}.{}.{}",
+            "bun-{}{}-{}{}{}-v{}.{}.{}",
+            self.runtime.npm_prefix(),
             self.os.npm_name(),
             self.arch.npm_name(),
             self.libc,

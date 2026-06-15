@@ -76,11 +76,29 @@ pub(crate) fn bun_get_use_system_ca(
     Ok(JSValue::js_boolean(v))
 }
 
+#[cfg(not(bun_standalone))]
 mod css {
     pub use bun_css_jsc::css_internals::{
         _test, attr_test, minify_error_test_with_options, minify_test, minify_test_with_options,
         prefix_test, prefix_test_with_options, test_with_options,
     };
+}
+#[cfg(bun_standalone)]
+mod css {
+    use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+    macro_rules! stub {
+        ($($name:ident),* $(,)?) => {$(
+            pub fn $name(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+                Err(global.throw_type_error(format_args!(
+                    "CSS internals are not available in standalone executables",
+                )))
+            }
+        )*};
+    }
+    stub!(
+        _test, attr_test, minify_error_test_with_options, minify_test,
+        minify_test_with_options, prefix_test, prefix_test_with_options, test_with_options,
+    );
 }
 pub use css::_test as css_jsc_css_internals__test;
 pub use css::attr_test as css_jsc_css_internals_attr_test;

@@ -1,3 +1,5 @@
+#![cfg_attr(bun_standalone, allow(dead_code, unused_imports))]
+
 use core::ffi::{c_int, c_void};
 
 use crate::webcore::Response;
@@ -65,8 +67,18 @@ bun_jsc::jsc_host_abi! {
         bake_ssr_has_jsx: *mut c_int,
         js_this: JSValue,
     ) -> *mut c_void {
+        #[cfg(bun_standalone)]
+        {
+            let _ = (call_frame, bake_ssr_has_jsx, js_this);
+            let _ = global_object.throw(format_args!(
+                "Bake is not available in standalone executables"
+            ));
+            return core::ptr::null_mut();
+        }
         // SAFETY: caller (C++) guarantees `bake_ssr_has_jsx` is a valid, exclusive out-pointer for the call.
+        #[cfg(not(bun_standalone))]
         let bake_ssr_has_jsx = unsafe { &mut *bake_ssr_has_jsx };
+        #[cfg(not(bun_standalone))]
         match constructor(global_object, call_frame, bake_ssr_has_jsx, js_this) {
             Ok(response) => response.cast::<c_void>(),
             Err(JsError::Thrown) => core::ptr::null_mut(),
@@ -116,7 +128,17 @@ bun_jsc::jsc_host_abi! {
         global_object: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JSValue {
-        bun_jsc::to_js_host_call(global_object, || construct_redirect(global_object, call_frame))
+        bun_jsc::to_js_host_call(global_object, || {
+            #[cfg(bun_standalone)]
+            {
+                let _ = call_frame;
+                return Err(global_object.throw(format_args!(
+                    "Bake is not available in standalone executables"
+                )));
+            }
+            #[cfg(not(bun_standalone))]
+            construct_redirect(global_object, call_frame)
+        })
     }
 }
 
@@ -152,7 +174,17 @@ bun_jsc::jsc_host_abi! {
         global_object: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JSValue {
-        bun_jsc::to_js_host_call(global_object, || construct_render(global_object, call_frame))
+        bun_jsc::to_js_host_call(global_object, || {
+            #[cfg(bun_standalone)]
+            {
+                let _ = call_frame;
+                return Err(global_object.throw(format_args!(
+                    "Bake is not available in standalone executables"
+                )));
+            }
+            #[cfg(not(bun_standalone))]
+            construct_render(global_object, call_frame)
+        })
     }
 }
 

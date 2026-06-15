@@ -1338,6 +1338,13 @@ unsafe extern "C" {
     ) -> *mut JSPromise;
 }
 
+#[cfg(bun_standalone)]
+#[unsafe(no_mangle)]
+pub(super) extern "C" fn BakeToWindowsPath(_input: BunString) -> BunString {
+    BunString::dead()
+}
+
+#[cfg(not(bun_standalone))]
 #[unsafe(no_mangle)]
 pub(super) extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
     #[cfg(unix)]
@@ -1355,6 +1362,17 @@ pub(super) extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
     }
 }
 
+#[cfg(bun_standalone)]
+#[unsafe(no_mangle)]
+pub(super) extern "C" fn BakeProdResolve(
+    _global: &JSGlobalObject,
+    _a_str: BunString,
+    _specifier_str: BunString,
+) -> BunString {
+    BunString::dead()
+}
+
+#[cfg(not(bun_standalone))]
 #[unsafe(no_mangle)]
 pub(super) extern "C" fn BakeProdResolve(
     global: &JSGlobalObject,
@@ -1635,6 +1653,13 @@ impl Drop for PerThread {
 }
 
 /// Given a key, returns the source code to load.
+#[cfg(bun_standalone)]
+#[unsafe(no_mangle)]
+pub(super) extern "C" fn BakeProdLoad(_pt: *mut PerThread, _key: BunString) -> BunString {
+    BunString::dead()
+}
+
+#[cfg(not(bun_standalone))]
 #[unsafe(no_mangle)]
 pub(super) extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
     // SAFETY: `pt` is the non-null pointer previously attached via
@@ -1653,6 +1678,13 @@ pub(super) extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> Bun
     BunString::dead()
 }
 
+#[cfg(bun_standalone)]
+#[unsafe(no_mangle)]
+pub(super) extern "C" fn BakeProdSourceMap(_pt: *mut PerThread, _key: BunString) -> BunString {
+    BunString::dead()
+}
+
+#[cfg(not(bun_standalone))]
 #[unsafe(no_mangle)]
 pub(super) extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunString {
     // SAFETY: `pt` is the non-null pointer previously attached via

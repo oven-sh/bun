@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import {
   accessSync,
   appendFileSync,
+  chmodSync,
   existsSync,
   constants as fs,
   linkSync,
@@ -104,6 +105,11 @@ const { values: options, positionals: filters } = parseArgs({
       default: "bun",
     },
     ["step"]: {
+      type: "string",
+      default: undefined,
+    },
+    /** BuildKite step to download the bun-standalone binary from (soft-fail). */
+    ["standalone-step"]: {
       type: "string",
       default: undefined,
     },
@@ -430,6 +436,18 @@ async function runTests() {
     execPath = getExecPath(options["exec-path"]);
   }
   !isQuiet && console.log("Bun:", execPath);
+
+  if (options["standalone-step"]) {
+    const standalonePath = await getStandaloneExecPathFromBuildKite(options["standalone-step"], options["build-id"]);
+    if (standalonePath) {
+      // Exported via process.env so spawnBun's `...process.env` spread carries
+      // it into every test's env. test/cli/standalone-binary.test.ts reads this.
+      process.env.BUN_STANDALONE_EXE = standalonePath;
+      !isQuiet && console.log("Bun (standalone):", standalonePath);
+    } else {
+      !isQuiet && console.log("Bun (standalone): <not available>");
+    }
+  }
 
   const expectations = getTestExpectations();
   const modifiers = getTestModifiers(execPath);
@@ -2111,6 +2129,65 @@ async function getExecPathFromBuildKite(target, buildId) {
 
   console.warn(`Found ${releaseFiles.length} files in ${releasePath}:`, releaseFiles);
   throw new Error(`Could not find executable from BuildKite: ${releasePath}`);
+}
+
+/**
+ * Best-effort download of the bun-standalone artifact from a sibling build
+ * step. Unlike getExecPathFromBuildKite this never throws — a missing or
+ * failed standalone build must not block the regular test run.
+ *
+ * @param {string} stepKey
+ * @param {string} [buildId]
+ * @returns {Promise<string | undefined>}
+ */
+async function getStandaloneExecPathFromBuildKite(stepKey, buildId) {
+  const releasePath = join(cwd, "release-standalone");
+  mkdirSync(releasePath, { recursive: true });
+
+  const args = ["artifact", "download", "**", releasePath, "--step", stepKey];
+  if (buildId) {
+    args.push("--build", buildId);
+  }
+
+  const { error } = await spawnSafe({
+    command: "buildkite-agent",
+    args,
+    timeout: 120000,
+  });
+  if (error) {
+    console.warn(`bun-standalone artifact download from '${stepKey}' failed (${error}); tests will skip.`);
+    return undefined;
+  }
+
+  const zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
+    .filter(filename => /^bun-standalone.*\.zip$/i.test(filename))
+    .map(filename => join(releasePath, filename))
+    // Prefer the stripped binary over -profile for test speed.
+    .sort((a, b) => a.includes("profile") - b.includes("profile"))
+    .at(0);
+
+  if (!zipPath) {
+    console.warn(`No bun-standalone*.zip found in artifacts from '${stepKey}'.`);
+    return undefined;
+  }
+
+  try {
+    await unzip(zipPath, releasePath);
+  } catch (cause) {
+    console.warn(`Failed to extract ${zipPath}:`, cause);
+    return undefined;
+  }
+
+  for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
+    const exe = join(releasePath, entry);
+    if (/bun-standalone(?:-[a-z]+)?(?:\.exe)?$/i.test(entry) && statSync(exe).isFile()) {
+      if (!isWindows) chmodSync(exe, 0o755);
+      return exe;
+    }
+  }
+
+  console.warn(`Could not find bun-standalone executable in ${releasePath}`);
+  return undefined;
 }
 
 /**

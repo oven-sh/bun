@@ -2254,6 +2254,7 @@ pub fn init(
     Ok((unsafe { &mut *manager_ptr }, original_cwd_clone))
 }
 
+#[cfg(not(bun_standalone))]
 pub(crate) fn init_with_runtime(
     log: &mut bun_ast::Log,
     // Used read-only (`Options::load` only ever reads `config.*`).
@@ -2270,6 +2271,7 @@ pub(crate) fn init_with_runtime(
     get()
 }
 
+#[cfg(not(bun_standalone))]
 pub(crate) fn init_with_runtime_once(
     log: &mut bun_ast::Log,
     bun_install: Option<&Api::BunInstall>,

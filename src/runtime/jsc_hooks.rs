@@ -400,13 +400,19 @@ unsafe fn init_runtime_state(
                     // from CLI args to the resolver so symlinked node_modules
                     // entries resolve via their link path (peer deps stay reachable).
                     t.resolver.opts.preserve_symlinks = preserve_symlinks;
-                    t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
-                        context: core::ptr::NonNull::new(ptr::addr_of_mut!((*vm).modules).cast()),
-                        handler: Some(bun_jsc::async_module::Queue::on_wake_handler),
-                        on_dependency_error: Some(
-                            bun_jsc::async_module::Queue::on_dependency_error,
-                        ),
-                    };
+                    #[cfg(not(bun_standalone))]
+                    {
+                        t.resolver.on_wake_package_manager =
+                            bun_resolver::install_types::WakeHandler {
+                                context: core::ptr::NonNull::new(
+                                    ptr::addr_of_mut!((*vm).modules).cast(),
+                                ),
+                                handler: Some(bun_jsc::async_module::Queue::on_wake_handler),
+                                on_dependency_error: Some(
+                                    bun_jsc::async_module::Queue::on_dependency_error,
+                                ),
+                            };
+                    }
                     // Branch on `opts.graph` here — with a module graph,
                     // auto_jsx=true would
                     // `read_dir_info(cwd)` and cache its tsconfig.json BEFORE
@@ -2191,6 +2197,7 @@ fn transpile_source_code_inner(
             // inline chunk, not the arena, so the pending-imports path must
             // consume this scope via `take_state()` and ship the box with the
             // arena.
+            #[cfg_attr(bun_standalone, allow(unused_variables))]
             let ast_alloc_scope = bun_alloc::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
             // ── Watcher fd / package_json lookup ────────────────────────────
             let mut fd: Option<bun_sys::Fd> = None;
@@ -2857,7 +2864,10 @@ fn transpile_source_code_inner(
                     )?;
                 }
 
-                // Pending imports → AsyncModule queue.
+                // Pending imports → AsyncModule queue (auto-install on demand).
+                // `bun-standalone` has no package manager; the resolver never
+                // populates `pending_imports`, so the install queue is unreachable.
+                #[cfg(not(bun_standalone))]
                 if parse_result.pending_imports.len() > 0 {
                     // SAFETY: per fn contract — `extra` is live for the call.
                     let promise_ptr = unsafe { &*extra }.promise_ptr;

@@ -125,7 +125,7 @@ function download_buildkite_artifact() {
   # (build-bun unsigned, windows-sign signed). Pin to the sign step to
   # guarantee we get the signed one.
   local step_args=()
-  if [[ -n "$WINDOWS_ARTIFACT_STEP" && "$name" == bun-windows-* ]]; then
+  if [[ -n "$WINDOWS_ARTIFACT_STEP" && ( "$name" == bun-windows-* || "$name" == bun-standalone-windows-* ) ]]; then
     step_args=(--step "$WINDOWS_ARTIFACT_STEP")
   fi
   run_command buildkite-agent artifact download "$name" "$dir" "${step_args[@]}"
@@ -283,6 +283,15 @@ function create_release() {
 
   for artifact in "${artifacts[@]}"; do
     upload_artifact "$artifact"
+  done
+
+  # bun-standalone-* zips ship alongside the regular zips. Derived from the
+  # main artifact list so a new platform can't be forgotten here. Best-effort:
+  # a missing standalone artifact warns but doesn't abort the release
+  # (download_buildkite_artifact's `exit 1` only kills the subshell).
+  for artifact in "${artifacts[@]}"; do
+    local standalone="${artifact/bun-/bun-standalone-}"
+    ( upload_artifact "$standalone" ) || echo "warn: skipping missing standalone artifact: $standalone"
   done
 
   update_github_release "$tag"

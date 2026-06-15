@@ -57,6 +57,7 @@ pub mod generated_jssink; // include!()s ${BUN_CODEGEN_DIR}/generated_jssink.rs
 
 pub mod dns_jsc;
 pub mod image;
+#[cfg_attr(bun_standalone, allow(dead_code))]
 pub mod test_runner;
 pub mod valkey_jsc;
 

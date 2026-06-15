@@ -863,6 +863,11 @@ function getTestBunStep(platform, options, testOptions = {}) {
   const { buildId, testFiles } = testOptions;
 
   const args = [`--step=${getTargetKey(platform)}-build-bun`];
+  // bun-standalone is built by a sibling step; runner.node.mjs downloads it
+  // best-effort and exports BUN_STANDALONE_EXE for test/cli/standalone-binary.test.ts.
+  if (shouldBuildStandalone(platform)) {
+    args.push(`--standalone-step=${getTargetKey(platform)}-build-bun-standalone`);
+  }
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }
@@ -877,6 +882,11 @@ function getTestBunStep(platform, options, testOptions = {}) {
   const depends = [];
   if (!buildId) {
     depends.push(`${getTargetKey(platform)}-build-bun`);
+    if (shouldBuildStandalone(platform)) {
+      // Soft dependency: wait for the standalone build so the artifact exists,
+      // but don't block tests if that step failed.
+      depends.push({ step: `${getTargetKey(platform)}-build-bun-standalone`, allow_failure: true });
+    }
   }
 
   return {
@@ -964,6 +974,12 @@ function getWindowsSignStep(windowsPlatforms, options) {
     const stepKey = `${getTargetKey(platform)}-build-bun`;
     artifacts.push(`${triplet}-profile.zip`, `${triplet}.zip`);
     buildSteps.push(stepKey, stepKey);
+    if (shouldBuildStandalone(platform)) {
+      const standaloneTriplet = triplet.replace(/^bun-/, "bun-standalone-");
+      const standaloneStepKey = `${getTargetKey(platform)}-build-bun-standalone`;
+      artifacts.push(`${standaloneTriplet}-profile.zip`, `${standaloneTriplet}.zip`);
+      buildSteps.push(standaloneStepKey, standaloneStepKey);
+    }
   }
 
   // Signing runs on a real Windows x64 machine (smctl; doesn't work on
@@ -972,7 +988,10 @@ function getWindowsSignStep(windowsPlatforms, options) {
   return {
     key: "windows-sign",
     label: `${getBuildkiteEmoji("windows")} sign`,
-    depends_on: windowsPlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+    depends_on: windowsPlatforms.flatMap(p => [
+      `${getTargetKey(p)}-build-bun`,
+      ...(shouldBuildStandalone(p) ? [`${getTargetKey(p)}-build-bun-standalone`] : []),
+    ]),
     agents: getEc2Agent({ os: "windows", arch: "x64", release: "2019" }, options, {
       instanceType: getAzureVmSize("windows", "x64", "test"),
     }),
@@ -1047,11 +1066,13 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
 
   // When signing ran, depend on windows-sign instead of the raw Windows builds
   // so we wait for signed artifacts before releasing.
+  const buildKeys = p => [
+    `${getTargetKey(p)}-build-bun`,
+    ...(shouldBuildStandalone(p) ? [`${getTargetKey(p)}-build-bun-standalone`] : []),
+  ];
   const depends_on = signed
-    ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
-    : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
-  // upload-release.sh also publishes the bun-standalone artifacts.
-  depends_on.push(...buildPlatforms.filter(shouldBuildStandalone).map(p => `${getTargetKey(p)}-build-bun-standalone`));
+    ? [...buildPlatforms.filter(p => p.os !== "windows").flatMap(buildKeys), "windows-sign"]
+    : buildPlatforms.flatMap(buildKeys);
 
   return {
     key: "release",

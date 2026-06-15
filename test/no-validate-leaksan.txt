@@ -60,6 +60,7 @@ test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js
 test/js/node/test/parallel/test-worker-workerdata-sharedarraybuffer.js
 test/js/node/test/parallel/test-worker.js
 test/js/node/test/parallel/test-worker.mjs
+test/js/node/worker_threads/nested-worker-unref.test.ts
 test/js/node/worker_threads/worker_destruction.test.ts
 test/js/web/broadcastchannel/broadcast-channel.test.ts
 test/js/web/broadcastchannel/broadcast-channel-worker-gc.test.ts

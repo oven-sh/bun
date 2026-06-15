@@ -102,11 +102,7 @@ describe("node_api_create_external_string_* finalizer holds Ref<NapiEnv>", () =>
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       const expectedContent =
         fn === "createLatin1" ? "external-latin1-string-xxxxxxxx" : "external-utf16-string-xxxxxxxxx";

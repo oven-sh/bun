@@ -2243,6 +2243,9 @@ static napi_value
 test_node_api_create_external_string_copied(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
+  // The finalizer owns cleanup regardless of `copied`: when copied=true the
+  // finalizer has already run synchronously; when copied=false it runs when
+  // the string is collected.
   {
     char *buf = static_cast<char *>(malloc(6));
     memcpy(buf, "hello", 6);
@@ -2252,9 +2255,6 @@ test_node_api_create_external_string_copied(const Napi::CallbackInfo &info) {
                            env, buf, 5, free_external_utf16, nullptr, &out,
                            &copied));
     printf("latin1 copied=%s\n", copied ? "true" : "false");
-    if (copied) {
-      free(buf);
-    }
   }
 
   {
@@ -2267,9 +2267,6 @@ test_node_api_create_external_string_copied(const Napi::CallbackInfo &info) {
                            env, buf, 5, free_external_utf16, nullptr, &out,
                            &copied));
     printf("utf16 copied=%s\n", copied ? "true" : "false");
-    if (copied) {
-      free(buf);
-    }
   }
 
   return ok(env);

@@ -589,6 +589,7 @@ impl Builtin {
                     match shell_openat(cwd_fd, path, redirect.to_flags(), perm) {
                         Err(e) => {
                             let sys = e.to_shell_system_error();
+                            scopeguard::defer! { sys.deref(); }
                             return Some(Self::cmd_write_failing_error(
                                 interp,
                                 cmd,
@@ -619,6 +620,7 @@ impl Builtin {
                     match result {
                         Err(e) => {
                             let sys = e.to_shell_system_error();
+                            scopeguard::defer! { sys.deref(); }
                             return Some(Self::cmd_write_failing_error(
                                 interp,
                                 cmd,
@@ -639,6 +641,7 @@ impl Builtin {
                                 ) {
                                     Err(e) => {
                                         let sys = e.to_shell_system_error();
+                                        scopeguard::defer! { sys.deref(); }
                                         return Some(Self::cmd_write_failing_error(
                                             interp,
                                             cmd,

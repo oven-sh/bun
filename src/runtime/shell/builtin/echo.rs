@@ -110,11 +110,15 @@ impl Echo {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(
-            interp,
-            cmd,
-            err.map(|e| e.errno as crate::shell::ExitCode).unwrap_or(0),
-        )
+        let exit = match err {
+            Some(e) => {
+                let code = e.errno as crate::shell::ExitCode;
+                e.deref();
+                code
+            }
+            None => 0,
+        };
+        Builtin::done(interp, cmd, exit)
     }
 }
 

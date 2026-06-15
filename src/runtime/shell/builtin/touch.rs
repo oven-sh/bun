@@ -132,6 +132,9 @@ impl Touch {
         written: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
+        if let Some(err) = e {
+            err.deref();
+        }
         if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
             return Builtin::done(interp, cmd, 1);
         }
@@ -143,7 +146,7 @@ impl Touch {
         if let Some(task) = pending {
             // SAFETY: `task` was heap-allocated in `OutputTask::new` and
             // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Touch>::on_io_writer_chunk(task, interp, written, e) };
+            return unsafe { OutputTask::<Touch>::on_io_writer_chunk(task, interp, written, None) };
         }
         Self::next(interp, cmd)
     }

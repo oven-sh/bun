@@ -14,8 +14,11 @@ impl False {
         _interp: &Interpreter,
         _cmd: NodeId,
         _: usize,
-        _: Option<bun_sys::SystemError>,
+        err: Option<bun_sys::SystemError>,
     ) -> Yield {
+        if let Some(e) = err {
+            e.deref();
+        }
         Yield::done()
     }
 }

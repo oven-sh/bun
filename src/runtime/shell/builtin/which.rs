@@ -181,7 +181,9 @@ impl Which {
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
         if let Some(err) = e {
-            return Builtin::done(interp, cmd, err.errno as crate::shell::ExitCode);
+            let exit = err.errno as crate::shell::ExitCode;
+            err.deref();
+            return Builtin::done(interp, cmd, exit);
         }
         match Self::state_mut(interp, cmd).state {
             State::OneArg => Builtin::done(interp, cmd, 1),

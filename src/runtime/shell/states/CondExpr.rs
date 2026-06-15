@@ -185,6 +185,7 @@ impl CondExpr {
         if let Some(e) = err {
             // Recover the positive errno (`to_shell_system_error` negated it).
             let exit_code: ExitCode = e.errno.unsigned_abs() as ExitCode;
+            e.deref();
             return interp.child_done(parent, this, exit_code);
         }
         if matches!(

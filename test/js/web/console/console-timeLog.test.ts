@@ -3,7 +3,7 @@ import { expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
-it("console.timeEnd with empty label emits exactly one trailing newline", async () => {
+it.concurrent("console.timeEnd with empty label emits exactly one trailing newline", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", `console.time(""); console.timeEnd("");`],
     env: bunEnv,
@@ -16,7 +16,7 @@ it("console.timeEnd with empty label emits exactly one trailing newline", async 
   expect(exitCode).toBe(0);
 });
 
-it("console.timeEnd with non-empty label emits exactly one trailing newline", async () => {
+it.concurrent("console.timeEnd with non-empty label emits exactly one trailing newline", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", `console.time("abc"); console.timeEnd("abc");`],
     env: bunEnv,

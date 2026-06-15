@@ -2238,19 +2238,16 @@ impl RunCommand {
                     }
 
                     SpawnStatus::Signaled(signal) => {
-                        // The print is gated on a named signal; the re-raise is
-                        // NOT — it forwards the raw byte unconditionally so the
-                        // parent observes the real termination signal (incl. RT
-                        // 32-64).
+                        // The re-raise forwards the raw byte unconditionally so
+                        // the parent observes the real termination signal (incl.
+                        // RT 32-64).
                         if let Some(sc) = signal_code {
                             if sc != bun_sys::SignalCode::SIGINT && !silent {
-                                if let Some(sig_name) = sc.name() {
-                                    pretty_errorln!(
-                                        "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to signal <b>{}<r>",
-                                        bstr::BStr::new(Self::basename_or_bun(executable)),
-                                        sig_name,
-                                    );
-                                }
+                                pretty_errorln!(
+                                    "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to signal <b>{}<r>",
+                                    bstr::BStr::new(Self::basename_or_bun(executable)),
+                                    sc.fmt(Output::enable_ansi_colors_stderr()),
+                                );
                             }
                         }
 
@@ -2268,13 +2265,11 @@ impl RunCommand {
                         // A process can be both signaled and exited.
                         if let Some(sc) = signal_code {
                             if !silent {
-                                if let Some(sig_name) = sc.name() {
-                                    pretty_errorln!(
-                                        "<r><red>error<r>: \"<b>{}<r>\" exited with signal <b>{}<r>",
-                                        bstr::BStr::new(Self::basename_or_bun(executable)),
-                                        sig_name,
-                                    );
-                                }
+                                pretty_errorln!(
+                                    "<r><red>error<r>: \"<b>{}<r>\" exited with signal <b>{}<r>",
+                                    bstr::BStr::new(Self::basename_or_bun(executable)),
+                                    sc.fmt(Output::enable_ansi_colors_stderr()),
+                                );
                             }
 
                             if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN

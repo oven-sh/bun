@@ -241,44 +241,6 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
-  describe("napi_create_string_latin1", () => {
-    it("does not leak the WTFStringImpl", async () => {
-      const fixture = /* js */ `
-        const nativeTests = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
-        const size = 64 * 1024;
-        for (let i = 0; i < 100; i++) {
-          const s = nativeTests.create_latin1_string(size);
-          if (s.length !== size) throw new Error("wrong length: " + s.length);
-        }
-        Bun.gc(true);
-        const before = process.memoryUsage.rss();
-        for (let i = 0; i < 2000; i++) {
-          const s = nativeTests.create_latin1_string(size);
-          if (s.length !== size) throw new Error("wrong length: " + s.length);
-        }
-        Bun.gc(true);
-        const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
-        console.error("RSS growth: " + growthMB.toFixed(1) + " MB");
-        process.exit(growthMB > Number(process.env.THRESHOLD_MB) ? 1 : 0);
-      `;
-      // 2000 iterations * 64 KiB = 128 MB if every WTFStringImpl leaks.
-      // ASAN's quarantine inflates RSS; widen the threshold there.
-      const thresholdMB = isASAN ? 80 : 40;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "--smol", "-e", fixture],
-        env: { ...bunEnv, THRESHOLD_MB: String(thresholdMB) },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: "",
-        stderr: expect.stringContaining("RSS growth:"),
-        exitCode: 0,
-      });
-    });
-  });
-
   it("#1288", async () => {
     const result = await checkSameOutput("self", []);
     expect(result).toBe("hello world!");
@@ -891,6 +853,46 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     },
     25_000,
   );
+});
+
+// Kept outside describe.concurrent("napi") so RSS measurement isn't skewed by
+// the other tests' subprocesses and doesn't add load to the --compile tests.
+describe("napi_create_string_latin1", () => {
+  it("does not leak the WTFStringImpl", async () => {
+    const fixture = /* js */ `
+      const nativeTests = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
+      const size = 256 * 1024;
+      for (let i = 0; i < 20; i++) {
+        const s = nativeTests.create_latin1_string(size);
+        if (s.length !== size) throw new Error("wrong length: " + s.length);
+      }
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 300; i++) {
+        const s = nativeTests.create_latin1_string(size);
+        if (s.length !== size) throw new Error("wrong length: " + s.length);
+      }
+      Bun.gc(true);
+      const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+      console.error("RSS growth: " + growthMB.toFixed(1) + " MB");
+      process.exit(growthMB > Number(process.env.THRESHOLD_MB) ? 1 : 0);
+    `;
+    // 300 iterations * 256 KiB = 75 MB if every WTFStringImpl leaks.
+    // ASAN's quarantine inflates RSS; widen the threshold there.
+    const thresholdMB = isASAN ? 48 : 24;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", fixture],
+      env: { ...bunEnv, THRESHOLD_MB: String(thresholdMB) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("RSS growth:"),
+      exitCode: 0,
+    });
+  });
 });
 
 async function checkSameOutput(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {

@@ -119,3 +119,50 @@ test(
   },
   timeout,
 );
+
+// Regression: ErrorCodeCache::createError caught an exception thrown during
+// ErrorInstance::create and returned uncheckedDowncast<JSObject>(value). A
+// TerminationException's value is the JSString "JavaScript execution
+// terminated.", so the cast tripped reportZappedCellAndCrash in debug
+// builds. Triggered by a worker running the completion of a thread-pool job
+// (Bun.secrets rejection → Secrets::Error::toJS → createError) after the
+// parent called terminate() and the VM termination trap was armed.
+test(
+  "creating a coded error while a TerminationException is pending does not crash",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // Bun.secrets.get rejects on the worker thread with a coded error
+        // built via ErrorCodeCache::createError. Queue enough jobs that
+        // some completions land after the termination trap is set.
+        const body = \`
+          for (let i = 0; i < 200; i++) {
+            Bun.secrets.get({ service: "bun-test-worker-termination-" + i, name: "x" }).catch(() => {});
+          }
+          self.postMessage(0);
+        \`;
+        for (let round = 0; round < ${slow ? 3 : 6}; round++) {
+          const w = new Worker("data:application/javascript," + encodeURIComponent(body));
+          await new Promise((resolve, reject) => {
+            w.onmessage = () => resolve();
+            w.onerror = e => reject(e.error ?? e.message ?? e);
+          });
+          w.terminate();
+          await new Promise(r => w.addEventListener("close", r, { once: true }));
+        }
+        console.log("OK");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);

@@ -160,8 +160,10 @@ describe("Bun.CSRF", () => {
     );
   });
 
-  test("expiresIn and maxAge accept NaN as the default", () => {
-    // NaN is treated as the default (0 = no expiry), matching node's integer validators.
+  test("expiresIn and maxAge accept NaN as 0 (no expiry)", () => {
+    // NaN falls through to the integer validator's fallback (0 = no expiry),
+    // matching node's integer validators. Note: this differs from omitting the
+    // option entirely, which defaults to 24h.
     const token = CSRF.generate(secret, { expiresIn: NaN });
     expect(typeof token).toBe("string");
     expect(token.length).toBeGreaterThan(0);
@@ -190,6 +192,28 @@ describe("Bun.CSRF", () => {
     expect(() => CSRF.generate(secret, { sessionId: 123 })).toThrow();
     // @ts-expect-error - testing invalid input
     expect(() => CSRF.verify(token, { secret, sessionId: 123 })).toThrow();
+
+    // expiresIn / maxAge validation
+    expect(() => CSRF.generate(secret, { expiresIn: -1 })).toThrow(
+      expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+    );
+    expect(() => CSRF.generate(secret, { expiresIn: 1.5 })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    // @ts-expect-error - testing invalid input
+    expect(() => CSRF.generate(secret, { expiresIn: "foo" })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(() => CSRF.verify(token, { secret, maxAge: -1 })).toThrow(
+      expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+    );
+    expect(() => CSRF.verify(token, { secret, maxAge: 1.5 })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    // @ts-expect-error - testing invalid input
+    expect(() => CSRF.verify(token, { secret, maxAge: "foo" })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
   });
 
   test("handle bad decoding", () => {

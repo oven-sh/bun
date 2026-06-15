@@ -392,6 +392,57 @@ for (let algorithmValue of algorithms) {
   });
 }
 
+test("verify accepts argon2 PHC strings with m/t/p in any order", async () => {
+  // PHC string format permits parameters in any order; hashes emitted by
+  // e.g. PHP's password_hash or some Go wrappers are not always in the
+  // canonical `m,t,p` order that rust-argon2's decoder requires.
+  const hashed = password.hashSync("password", {
+    algorithm: "argon2id",
+    memoryCost: 16,
+    timeCost: 2,
+  });
+  expect(hashed).toContain("$m=16,t=2,p=1$");
+
+  const reorder = (order: readonly ["m" | "t" | "p", "m" | "t" | "p", "m" | "t" | "p"]) => {
+    const parts = { m: "m=16", t: "t=2", p: "p=1" };
+    return hashed.replace("m=16,t=2,p=1", order.map(k => parts[k]).join(","));
+  };
+
+  // All 6 permutations verify for the correct password and reject the wrong
+  // one, via both the sync and async entry points.
+  for (const order of [
+    ["m", "t", "p"],
+    ["m", "p", "t"],
+    ["t", "m", "p"],
+    ["t", "p", "m"],
+    ["p", "m", "t"],
+    ["p", "t", "m"],
+  ] as const) {
+    const permuted = reorder(order);
+    expect(password.verifySync("password", permuted)).toBeTrue();
+    expect(await password.verify("password", permuted)).toBeTrue();
+    expect(password.verifySync("wrong", permuted)).toBeFalse();
+  }
+
+  // Reordering composes with a missing `v=` segment (both normalisations
+  // happen in the same pre-scan).
+  const noVersion = reorder(["t", "m", "p"]).replace("$v=19$", "$");
+  expect(noVersion).not.toContain("v=");
+  expect(password.verifySync("password", noVersion)).toBeTrue();
+  expect(password.verifySync("wrong", noVersion)).toBeFalse();
+
+  // The DoS limit check still applies to a reordered params segment.
+  const reorderedHugeTime = hashed.replace("m=16,t=2,p=1", "t=100000,m=16,p=1");
+  expect(() => password.verifySync("password", reorderedHugeTime)).toThrow("WeakParameters");
+
+  // Malformed / duplicate / unknown params are still rejected rather than
+  // being silently dropped by the reorder pass.
+  for (const bad of ["m=16,t=2", "m=16,t=2,p=1,p=1", "m=16,t=2,x=1"]) {
+    const tampered = hashed.replace("m=16,t=2,p=1", bad);
+    expect(() => password.verifySync("password", tampered)).toThrow("InvalidEncoding");
+  }
+});
+
 test("verify rejects encoded argon2 hashes with cost parameters above the supported maximums", async () => {
   // Hash with small, fast parameters so this test stays cheap on debug builds.
   const hashed = password.hashSync("correct horse", {

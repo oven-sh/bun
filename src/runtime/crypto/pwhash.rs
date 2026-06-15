@@ -181,71 +181,100 @@ pub mod argon2 {
         // failure.
         let encoded = super::phc_ascii_str(encoded_hash)?;
 
-        // Only version 0x13 is accepted: an explicit `v=` segment that isn't
-        // `19` is `InvalidEncoding`, and a missing `v=` segment still hashes
-        // with 0x13.
-        // rust-argon2's `verify_encoded` instead accepts `v=16` (computing
-        // with Version10) and defaults a missing segment to Version10, so
-        // pre-scan and normalise here before delegating.
+        // Encoded shape is `$<alg>$[v=N$]m=..,t=..,p=..$<salt>$<hash>`.
+        // rust-argon2's `decode_string` is stricter than Zig's phc_format:
+        //   * an explicit `v=` other than 19 is accepted as Version10 (we
+        //     reject it), and a missing `v=` segment defaults to Version10
+        //     (we want 0x13);
+        //   * `m=`/`t=`/`p=` must appear in exactly that positional order,
+        //     whereas phc_format deserialises key=value pairs by name in
+        //     any order — hashes emitted by other ecosystems (PHP, Go) do
+        //     not all use canonical order.
+        // Pre-scan and normalise here before delegating. Anything that
+        // doesn't fit the expected shape is passed through unchanged for
+        // rust-argon2 to reject.
         let normalised: std::borrow::Cow<'_, str> = 'norm: {
-            // Encoded shape is `$<alg>$[v=N$]m=..,t=..,p=..$<salt>$<hash>`.
-            // Locate the segment immediately after the alg-id.
             let Some(after_dollar) = encoded.strip_prefix('$') else {
                 // Malformed; let rust-argon2 reject it.
                 break 'norm std::borrow::Cow::Borrowed(encoded);
             };
-            let Some(sep) = after_dollar.find('$') else {
+            let Some(alg_sep) = after_dollar.find('$') else {
                 break 'norm std::borrow::Cow::Borrowed(encoded);
             };
-            // Absolute index of the '$' terminating the alg-id.
-            let alg_end = 1 + sep;
-            let rest = &encoded[alg_end + 1..];
-            if let Some(v) = rest.strip_prefix("v=") {
-                let end = v.find('$').unwrap_or(v.len());
+            let alg = &after_dollar[..alg_sep];
+            let mut rest = &after_dollar[alg_sep + 1..];
+
+            // Optional `v=N` segment.
+            let had_version = if let Some(v) = rest.strip_prefix("v=") {
+                let Some(end) = v.find('$') else {
+                    break 'norm std::borrow::Cow::Borrowed(encoded);
+                };
                 if &v[..end] != "19" {
                     return Err(crate::Error::InvalidEncoding);
                 }
+                rest = &v[end + 1..];
+                true
+            } else {
+                false
+            };
+
+            // `<params>$<salt>$<hash>` — `tail` keeps its leading '$'.
+            let Some(params_end) = rest.find('$') else {
+                break 'norm std::borrow::Cow::Borrowed(encoded);
+            };
+            let params = &rest[..params_end];
+            let tail = &rest[params_end..];
+
+            // Parse m/t/p in any order, applying the verify-time DoS limits.
+            let mut m_pair: Option<&str> = None;
+            let mut t_pair: Option<&str> = None;
+            let mut p_pair: Option<&str> = None;
+            let mut canonical = true;
+            for (idx, pair) in params.split(',').enumerate() {
+                let Some((key, value)) = pair.split_once('=') else {
+                    break 'norm std::borrow::Cow::Borrowed(encoded);
+                };
+                let Ok(value) = value.parse::<u32>() else {
+                    break 'norm std::borrow::Cow::Borrowed(encoded);
+                };
+                let (slot, limit, expected_idx) = match key {
+                    "m" => (&mut m_pair, MAX_VERIFY_MEMORY_COST, 0),
+                    "t" => (&mut t_pair, MAX_VERIFY_TIME_COST, 1),
+                    "p" => (&mut p_pair, MAX_VERIFY_PARALLELISM, 2),
+                    _ => break 'norm std::borrow::Cow::Borrowed(encoded),
+                };
+                if slot.is_some() {
+                    break 'norm std::borrow::Cow::Borrowed(encoded);
+                }
+                if value > limit {
+                    return Err(crate::Error::WeakParameters);
+                }
+                if idx != expected_idx {
+                    canonical = false;
+                }
+                *slot = Some(pair);
+            }
+
+            let (Some(m), Some(t), Some(p)) = (m_pair, t_pair, p_pair) else {
+                break 'norm std::borrow::Cow::Borrowed(encoded);
+            };
+
+            if had_version && canonical {
                 std::borrow::Cow::Borrowed(encoded)
             } else {
-                // No `v=` segment — splice in `v=19$` so rust-argon2 hashes
-                // with Version13.
                 let mut s = String::with_capacity(encoded.len() + 5);
-                s.push_str(&encoded[..=alg_end]);
-                s.push_str("v=19$");
-                s.push_str(rest);
+                s.push('$');
+                s.push_str(alg);
+                s.push_str("$v=19$");
+                s.push_str(m);
+                s.push(',');
+                s.push_str(t);
+                s.push(',');
+                s.push_str(p);
+                s.push_str(tail);
                 std::borrow::Cow::Owned(s)
             }
         };
-
-        if let Some(after_dollar) = normalised.strip_prefix('$') {
-            if let Some(sep) = after_dollar.find('$') {
-                let mut rest = &after_dollar[sep + 1..];
-                if let Some(after_version) = rest.strip_prefix("v=") {
-                    rest = match after_version.find('$') {
-                        Some(end) => &after_version[end + 1..],
-                        None => "",
-                    };
-                }
-                let params = &rest[..rest.find('$').unwrap_or(rest.len())];
-                for pair in params.split(',') {
-                    let Some((key, value)) = pair.split_once('=') else {
-                        continue;
-                    };
-                    let Ok(value) = value.parse::<u32>() else {
-                        continue;
-                    };
-                    let limit = match key {
-                        "m" => MAX_VERIFY_MEMORY_COST,
-                        "t" => MAX_VERIFY_TIME_COST,
-                        "p" => MAX_VERIFY_PARALLELISM,
-                        _ => continue,
-                    };
-                    if value > limit {
-                        return Err(crate::Error::WeakParameters);
-                    }
-                }
-            }
-        }
 
         match vendor::verify_encoded(&normalised, password) {
             Ok(true) => Ok(()),

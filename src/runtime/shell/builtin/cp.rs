@@ -250,7 +250,10 @@ impl Cp {
             match next {
                 Some((t, true)) => {
                     // SAFETY: paired with `heap::alloc` in `create()`.
-                    drop(unsafe { bun_core::heap::take(t) });
+                    let mut task = unsafe { bun_core::heap::take(t) };
+                    if let Some(e) = task.err.take() {
+                        e.deinit();
+                    }
                 }
                 Some((t, false)) => return Self::print_shell_cp_task(interp, cmd, t),
                 None => break,

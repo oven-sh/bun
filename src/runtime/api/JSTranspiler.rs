@@ -903,6 +903,9 @@ impl<'a> TransformTask<'a> {
 // released explicitly or the `JSTranspiler` never reaches refcount 0.
 impl<'a> Drop for TransformTask<'a> {
     fn drop(&mut self) {
+        // `BunString` is `Copy` (no Drop); release the +1 WTFStringImpl from
+        // `clone_utf8` in `run()`. No-op after `transfer_to_js` (tag = Dead).
+        self.output_code.deref();
         // Release the +1 taken in `TransformTask::create`.
         bun_ptr::RefPtr::deref(&self.js_instance);
     }

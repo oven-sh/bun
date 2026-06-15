@@ -2037,7 +2037,7 @@ class Http2Stream extends Duplex {
 
     if (headers == undefined) {
       headers = {};
-    } else if (!$isObject(headers)) {
+    } else if (!$isObject(headers) || $isArray(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
       headers = { ...headers };
@@ -2571,7 +2571,7 @@ class ServerHttp2Stream extends Http2Stream {
 
     if (headers == undefined) {
       headers = {};
-    } else if (!$isObject(headers)) {
+    } else if (!$isObject(headers) || $isArray(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
       headers = { ...headers };

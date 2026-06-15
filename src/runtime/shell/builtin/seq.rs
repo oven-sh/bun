@@ -318,6 +318,11 @@ fn parse_hex_float(s: &[u8]) -> Option<f64> {
         }
         exp = bun_core::fmt::parse_int::<i32>(exp_bytes, 10).ok()?;
     }
+    if mantissa == 0 {
+        // Short-circuit so a huge exponent (`0x0p1024`) doesn't reach
+        // `0.0 * inf = NaN` below.
+        return Some(0.0);
+    }
     let exp = exp
         .checked_sub(frac_digits.checked_mul(4)?)?
         .checked_add(dropped_int_bits)?;

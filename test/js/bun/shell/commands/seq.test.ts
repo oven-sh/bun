@@ -117,6 +117,12 @@ describe("seq", async () => {
     .stderr("")
     .runAsTest("underscore digit separator in hex");
 
+  TestBuilder.command`seq 0x0p1024 0x0p1024`
+    .exitCode(0)
+    .stdout("0\n")
+    .stderr("")
+    .runAsTest("hex zero with out-of-range exponent");
+
   TestBuilder.command`seq 0x`.exitCode(1).stdout("").stderr("seq: invalid argument\n").runAsTest("bare 0x is invalid");
 
   TestBuilder.command`seq 0xg`
@@ -124,6 +130,12 @@ describe("seq", async () => {
     .stdout("")
     .stderr("seq: invalid argument\n")
     .runAsTest("non-hex digit after 0x is invalid");
+
+  TestBuilder.command`seq 0x0p`
+    .exitCode(1)
+    .stdout("")
+    .stderr("seq: invalid argument\n")
+    .runAsTest("hex p with no exponent is invalid");
 
   TestBuilder.command`seq _1`
     .exitCode(1)

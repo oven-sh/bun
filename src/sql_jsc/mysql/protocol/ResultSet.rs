@@ -1,6 +1,6 @@
 use core::ptr;
 
-use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue};
 use crate::mysql::my_sql_value::DateTime;
 use bun_core::String as BunString;
 use bun_core::parse_int;
@@ -44,25 +44,16 @@ impl<'a> Row<'a> {
         // Passed by ref because CachedStructure is non-Copy (owns Strong + Box).
         cached_structure: Option<&CachedStructure>,
     ) -> crate::jsc::JsResult<JSValue> {
-        let mut names: *mut ExternColumnIdentifier = ptr::null_mut();
-        let mut names_count: u32 = 0;
-        if let Some(c) = cached_structure {
-            if let Some(f) = c.fields.as_deref() {
-                names = f.as_ptr().cast_mut();
-                names_count = f.len() as u32;
-            }
-        }
-
-        SQLDataCell::construct_object_from_data_cell(
+        let count = self.values.len() as u32;
+        SQLDataCell::to_js_object(
             global_object,
             array,
             structure,
-            self.values.as_mut_ptr(),
-            self.values.len() as u32,
+            self.values.as_mut(),
+            count,
             flags,
             result_mode as u8,
-            names,
-            names_count,
+            cached_structure,
         )
     }
 

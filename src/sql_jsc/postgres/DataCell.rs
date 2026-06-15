@@ -1241,7 +1241,7 @@ impl<'a> Putter<'a> {
         bun_core::scoped_log!(Postgres, "index: {}, oid: {}", index, oid);
         let cell: &mut SQLDataCell = &mut self.list[index as usize];
         if IS_RAW {
-            *cell = SQLDataCell::raw(optional_bytes.as_deref());
+            *cell = SQLDataCell::raw(optional_bytes);
         } else {
             let tag = if (types::short::MAX as u32) < oid {
                 types::Tag::text

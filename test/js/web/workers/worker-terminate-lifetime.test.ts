@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS } from "harness";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.
@@ -127,7 +127,12 @@ test(
 // builds. Triggered by a worker running the completion of a thread-pool job
 // (Bun.secrets rejection → Secrets::Error::toJS → createError) after the
 // parent called terminate() and the VM termination trap was armed.
-test(
+//
+// Skipped on macOS: there Bun.secrets.get resolves with null (NotFound)
+// instead of rejecting so the createError path is not reached, and keychain
+// latency would expose the separate work-pool → freed-VM race tracked in
+// #32071 which this PR does not address.
+test.skipIf(isMacOS)(
   "creating a coded error while a TerminationException is pending does not crash",
   async () => {
     await using proc = Bun.spawn({

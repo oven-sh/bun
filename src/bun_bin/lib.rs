@@ -209,10 +209,7 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
         // SAFETY: BUN__GITHUB_BASELINE_URL is a NUL-terminated static; the C
         // side only reads it to print the suggested download URL.
         unsafe {
-            bun_warn_avx_missing(
-                bun_runtime::cli::upgrade_command::UpgradeCommand::BUN__GITHUB_BASELINE_URL
-                    .as_ptr(),
-            );
+            bun_warn_avx_missing(bun_runtime::cli::shared::BUN__GITHUB_BASELINE_URL.as_ptr());
         }
     }
 

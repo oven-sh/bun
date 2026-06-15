@@ -59,6 +59,43 @@ describe.skipIf(!standaloneExe || !existsSync(standaloneExe))("bun-standalone", 
     expect(exitCode).toBe(0);
   });
 
+  test("Bun.build / Bun.color throw with an actionable error", async () => {
+    for (const expr of [`Bun.build({entrypoints:["x.js"]})`, `Bun.color("red")`]) {
+      await using proc = Bun.spawn({
+        cmd: [
+          exe,
+          "-e",
+          `try { await ${expr}; process.exit(2) } catch (e) { console.error(e.message); process.exit(e instanceof TypeError ? 0 : 1) }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(normalizeBunSnapshot(stderr)).toContain("not available in standalone executables");
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test("Bun.serve / fetch / runtime APIs work", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        exe,
+        "-e",
+        `const s = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+         const r = await fetch(s.url);
+         console.log(await r.text(), s.port > 0);
+         s.stop();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stdout)).toBe("ok true");
+    expect(exitCode).toBe(0);
+  });
+
   test("STANDALONE_BUILD const is true", async () => {
     await using proc = Bun.spawn({
       cmd: [exe, "-e", "process.stdout.write(String(process.isBun))"],

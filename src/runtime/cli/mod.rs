@@ -4,13 +4,14 @@
 //! against lower-tier crates. `Command::start()` (full dispatch) and
 //! per-command exec bodies live in the sibling `*_command.rs` modules.
 
-// Under `bun_standalone` the toolkit dispatch arms are compiled out (see the
-// `cfg(bun_standalone)` match in `Command::start`), which orphans most
-// `*_command` module contents. The modules stay declared so the few items the
-// runtime still reaches (`upgrade_command::FileSystemTmpdirExt`,
-// `upgrade_command::Bun__githubURL`, codegen js2native thunks) keep linking;
-// the rest is dropped by `--gc-sections`. The non-standalone build still
-// enforces `dead_code = "deny"`.
+// Under `bun_standalone` the toolkit `*_command` modules are `cfg`-gated out
+// entirely (see the `#[cfg(not(bun_standalone))]` blocks below), so their
+// calls into `bun_install` / `bun_css` / `bundle_v2` are not compiled and
+// those crates can dead-strip from the link. The few runtime-reachable items
+// that originally lived in toolkit modules (`FileSystemTmpdirExt`,
+// `Bun__githubURL`, release-name consts) now live in `cli::shared`; a tiny
+// `upgrade_command` stub is provided for the codegen js2native thunk. The
+// non-standalone build still enforces `dead_code = "deny"`.
 #![cfg_attr(bun_standalone, allow(dead_code, unused_macros, unused_imports))]
 
 use core::cell::Cell;
@@ -219,16 +220,22 @@ pub(crate) mod ci_info_generated {
     }
 }
 
+// ─── always-compiled shared items (runtime-reachable) ────────────────────────
+pub mod shared;
+
+#[cfg(not(bun_standalone))]
 #[path = "add_completions.rs"]
 pub mod add_completions;
 #[path = "colon_list_type.rs"]
 pub mod colon_list_type;
 #[path = "discord_command.rs"]
 pub mod discord_command;
+#[cfg(not(bun_standalone))]
 #[path = "list-of-yarn-commands.rs"]
 pub mod list_of_yarn_commands;
 #[path = "shell_completions.rs"]
 pub mod shell_completions;
+#[cfg(not(bun_standalone))]
 #[path = "which_npm_client.rs"]
 pub mod which_npm_client;
 
@@ -269,10 +276,13 @@ pub mod open {
 // `create_context_data`), so its help/print-only paths are handled inline in
 // `Command::start()` below. `install_completions_command.rs` is fully wired
 // via `exec_install_completions` (its `exec()` takes no Context).
+#[cfg(not(bun_standalone))]
 #[path = "init_command.rs"]
 pub mod init_command;
+#[cfg(not(bun_standalone))]
 #[path = "install_completions_command.rs"]
 pub mod install_completions_command;
+#[cfg(not(bun_standalone))]
 #[path = "package_manager_command.rs"]
 pub mod package_manager_command;
 
@@ -334,65 +344,119 @@ pub mod run_command;
 // Heavy bodies inside re-gate on whatever
 // lower-tier crate surface they still need; the dispatch arm just calls
 // `<Mod>Command::exec(ctx)`.
+#[cfg(not(bun_standalone))]
 #[path = "build_command.rs"]
 pub mod build_command;
+#[cfg(not(bun_standalone))]
 #[path = "bunx_command.rs"]
 pub mod bunx_command;
+#[cfg(not(bun_standalone))]
 #[path = "create_command.rs"]
 pub mod create_command;
 #[path = "exec_command.rs"]
 pub mod exec_command;
+#[cfg(not(bun_standalone))]
 #[path = "fuzzilli_command.rs"]
 pub mod fuzzilli_command;
+#[cfg(not(bun_standalone))]
 #[path = "install_command.rs"]
 pub mod install_command;
 #[path = "repl_command.rs"]
 pub mod repl_command;
+#[cfg(not(bun_standalone))]
 #[path = "upgrade_command.rs"]
 pub mod upgrade_command;
+/// `cfg(bun_standalone)` stub: only what `generated_js2native.rs` references.
+#[cfg(bun_standalone)]
+pub mod upgrade_command {
+    pub mod upgrade_js_bindings {
+        use bun_jsc::{JSGlobalObject, JSValue};
+        pub fn generate(global: &JSGlobalObject) -> JSValue {
+            let _ = global.throw(format_args!(
+                "bun upgrade is not available in standalone executables"
+            ));
+            JSValue::ZERO
+        }
+    }
+}
 // MOVE_UP: `--analyze` branch + `Cli.log_` access of
 // `bun_install::update_package_json_and_install{,_catch_error}` — see file header.
+#[cfg(not(bun_standalone))]
 #[path = "add_command.rs"]
 pub mod add_command;
+#[cfg(not(bun_standalone))]
 #[path = "audit_command.rs"]
 pub mod audit_command;
 #[path = "filter_arg.rs"]
 pub mod filter_arg;
 #[path = "filter_run.rs"]
 pub mod filter_run;
+#[cfg(not(bun_standalone))]
 #[path = "link_command.rs"]
 pub mod link_command;
+#[cfg(not(bun_standalone))]
 #[path = "outdated_command.rs"]
 pub mod outdated_command;
+#[cfg(not(bun_standalone))]
 #[path = "pack_command.rs"]
 pub mod pack_command;
+/// `cfg(bun_standalone)` stub: only what `generated_js2native.rs` references.
+#[cfg(bun_standalone)]
+pub mod pack_command {
+    pub mod bindings {
+        use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+        pub(crate) fn js_read_tarball(
+            global: &JSGlobalObject,
+            _call_frame: &CallFrame,
+        ) -> JsResult<JSValue> {
+            Err(global.throw(format_args!(
+                "bun pm pack is not available in standalone executables"
+            )))
+        }
+    }
+}
+#[cfg(not(bun_standalone))]
 #[path = "patch_command.rs"]
 pub mod patch_command;
+#[cfg(not(bun_standalone))]
 #[path = "patch_commit_command.rs"]
 pub mod patch_commit_command;
+#[cfg(not(bun_standalone))]
 #[path = "pm_pkg_command.rs"]
 pub mod pm_pkg_command;
+#[cfg(not(bun_standalone))]
 #[path = "pm_trusted_command.rs"]
 pub mod pm_trusted_command;
+#[cfg(not(bun_standalone))]
 pub mod pm_update_package_json;
+#[cfg(not(bun_standalone))]
 #[path = "pm_version_command.rs"]
 pub mod pm_version_command;
+#[cfg(not(bun_standalone))]
 #[path = "pm_view_command.rs"]
 pub mod pm_view_command;
+#[cfg(not(bun_standalone))]
 #[path = "pm_why_command.rs"]
 pub mod pm_why_command;
+#[cfg(not(bun_standalone))]
 #[path = "publish_command.rs"]
 pub mod publish_command;
+#[cfg(not(bun_standalone))]
 #[path = "remove_command.rs"]
 pub mod remove_command;
+#[cfg(not(bun_standalone))]
 #[path = "scan_command.rs"]
 pub mod scan_command;
+#[cfg(not(bun_standalone))]
 #[path = "unlink_command.rs"]
 pub mod unlink_command;
+#[cfg(not(bun_standalone))]
 #[path = "update_command.rs"]
 pub mod update_command;
+#[cfg(not(bun_standalone))]
 #[path = "update_interactive_command.rs"]
 pub mod update_interactive_command;
+#[cfg(not(bun_standalone))]
 #[path = "why_command.rs"]
 pub mod why_command;
 pub use filter_run as FilterRun;
@@ -2242,21 +2306,27 @@ Execute a shell script directly from Bun.
                 pretty!("<b>Usage<r>: <b><green>bun getcompletes<r>");
                 Output::flush();
             }
+            #[cfg(not(bun_standalone))]
             Tag::PatchCommand => {
                 pm_print_help(PmSubcommand::Patch);
             }
+            #[cfg(not(bun_standalone))]
             Tag::PatchCommitCommand => {
                 pm_print_help(PmSubcommand::PatchCommit);
             }
+            #[cfg(not(bun_standalone))]
             Tag::OutdatedCommand => {
                 pm_print_help(PmSubcommand::Outdated);
             }
+            #[cfg(not(bun_standalone))]
             Tag::UpdateInteractiveCommand => {
                 pm_print_help(PmSubcommand::Update);
             }
+            #[cfg(not(bun_standalone))]
             Tag::PublishCommand => {
                 pm_print_help(PmSubcommand::Publish);
             }
+            #[cfg(not(bun_standalone))]
             Tag::AuditCommand => {
                 pm_print_help(PmSubcommand::Audit);
             }
@@ -2361,9 +2431,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>
         }
     }
 
+    #[cfg(not(bun_standalone))]
     use bun_install::package_manager_real::Subcommand as PmSubcommand;
 
     /// Forward to `bun_install::PackageManager::CommandLineArguments::print_help`.
+    #[cfg(not(bun_standalone))]
     #[inline]
     fn pm_print_help(subcommand: PmSubcommand) {
         bun_install::package_manager_real::CommandLineArguments::print_help(subcommand);

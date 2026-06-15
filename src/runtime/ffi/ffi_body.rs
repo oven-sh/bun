@@ -2601,7 +2601,7 @@ impl CompilerRT {
         // `bun_resolver::fs::FileSystem` (the inline canonical surface) doesn't
         // yet expose an inherent `tmpdir()`; reuse the crate-local
         // `FileSystemTmpdirExt` shim already in service for `jsc_hooks`.
-        use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
+        use crate::cli::shared::FileSystemTmpdirExt as _;
         let Ok(tmpdir) = Fs::FileSystem::instance().tmpdir() else {
             return;
         };

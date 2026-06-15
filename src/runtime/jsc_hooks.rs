@@ -48,7 +48,7 @@ use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
 
-use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
+use crate::cli::shared::FileSystemTmpdirExt as _;
 use crate::timer;
 use crate::webcore::blob::BlobExt as _;
 

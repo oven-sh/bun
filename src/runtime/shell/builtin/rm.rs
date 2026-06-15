@@ -1515,7 +1515,17 @@ impl DirTask {
             let mut do_post_run = true;
             if !tm.error_signal().load(Ordering::SeqCst) {
                 match tm.remove_entry_dir_after_children(this) {
-                    Err(e) => tm.handle_err(e),
+                    Err(e) => {
+                        // Record the error but do NOT raise `error_signal`:
+                        // the signal is shared across every argument of this
+                        // `rm` invocation, and a failure removing one
+                        // now-empty directory must not abort the concurrent
+                        // removal of the remaining arguments.
+                        let mut slot = tm.err.lock();
+                        if slot.is_none() {
+                            *slot = Some(e);
+                        }
+                    }
                     Ok(deleted) => {
                         if !deleted {
                             do_post_run = false;

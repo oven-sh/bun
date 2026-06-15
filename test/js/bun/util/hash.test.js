@@ -232,6 +232,66 @@ describe("xxHash32 / xxHash64 reference vectors", () => {
   });
 });
 
+// JSC__JSValue__toUInt64NoTruncate previously routed doubles through
+// tryConvertToInt52, which rejects |x| >= 2^51 and fell through to `return 0`.
+// A Number seed >= 2^51 therefore silently became seed 0, colliding with the
+// unseeded hash and diverging from the BigInt path for the same value.
+describe("Bun.hash seed as Number matches the same seed as BigInt", () => {
+  // Seeds that are exactly representable as both double and u64, spanning the
+  // int32 boundary, the old 2^51 cutoff, MAX_SAFE_INTEGER, and powers of two
+  // up to just below 2^64.
+  const seeds = [
+    0,
+    1,
+    42,
+    0x7fffffff, // int32 max
+    0x80000000, // int32 max + 1 (first double-only positive)
+    0xffffffff,
+    2 ** 51 - 1, // last value the old int52 path accepted
+    2 ** 51, // first value the old path silently zeroed
+    2 ** 51 + 2,
+    2 ** 52,
+    Number.MAX_SAFE_INTEGER, // 2^53 - 1
+    2 ** 53,
+    2 ** 60,
+    2 ** 63,
+    2 ** 64 - 2048, // largest double strictly below 2^64
+  ];
+  // Hashers whose seed is a u64 read via toUInt64NoTruncate.
+  const hashers = {
+    wyhash: Bun.hash.wyhash,
+    xxHash64: Bun.hash.xxHash64,
+    cityHash64: Bun.hash.cityHash64,
+    murmur64v2: Bun.hash.murmur64v2,
+    rapidhash: Bun.hash.rapidhash,
+  };
+  const input = new TextEncoder().encode("hello world");
+
+  it.each(Object.entries(hashers))("%s", (_name, hash) => {
+    const zero = hash(input, 0);
+    for (const seed of seeds) {
+      const fromNumber = hash(input, seed);
+      const fromBigInt = hash(input, BigInt(seed));
+      expect({ seed, fromNumber }).toEqual({ seed, fromNumber: fromBigInt });
+      if (seed !== 0) {
+        expect({ seed, fromNumber }).not.toEqual({ seed, fromNumber: zero });
+      }
+    }
+  });
+
+  it("out-of-range Number seeds (negative / non-finite / >= 2^64) fall back to 0", () => {
+    const zero = Bun.hash.wyhash(input, 0);
+    // `| 0` keeps the value on the Int32 fast path; the array literal below
+    // (containing NaN/Infinity) is stored as a double array, so its -1 entry
+    // is a double. Both representations of -1 must take the same branch.
+    expect(Bun.hash.wyhash(input, -1 | 0)).toBe(zero);
+    expect(Bun.hash.wyhash(input, -0x7fffffff | 0)).toBe(zero);
+    for (const seed of [-1, -1e10, -(2 ** 51), NaN, Infinity, -Infinity, 2 ** 64, 2 ** 65]) {
+      expect({ seed, hash: Bun.hash.wyhash(input, seed) }).toEqual({ seed, hash: zero });
+    }
+  });
+});
+
 it("does not crash when changing Int32Array constructor with Bun.hash.xxHash32 as species", () => {
   const arr = new Int32Array();
   function foo(a4) {

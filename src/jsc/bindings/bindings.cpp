@@ -4326,18 +4326,18 @@ uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue val)
     }
 
     if (value.isInt32()) {
-        return static_cast<uint64_t>(value.asInt32());
+        int32_t i = value.asInt32();
+        return i < 0 ? 0 : static_cast<uint64_t>(i);
     }
     ASSERT(value.isDouble());
 
-    int64_t result = JSC::tryConvertToInt52(value.asDouble());
-    if (result != JSC::JSValue::notInt52) {
-        if (result < 0)
-            return 0;
-
-        return static_cast<uint64_t>(result);
-    }
-    return 0;
+    // Accept finite non-negative values below 2^64. The negated compound
+    // condition folds NaN (both comparisons false) and ±Inf into the reject
+    // branch without a separate isfinite() check.
+    double d = value.asDouble();
+    if (!(d >= 0.0 && d < 18446744073709551616.0))
+        return 0;
+    return truncateDoubleToUint64(d);
 }
 
 JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObject, const ZigString* arg1,

@@ -463,6 +463,18 @@ describe("bunshell", () => {
     TestBuilder.command`$(exit 0) && echo hi`.stdout("hi\n").runAsTest("empty command subst");
     TestBuilder.command`$(exit 1) && echo hi`.exitCode(1).runAsTest("empty command subst 2");
     TestBuilder.command`FOO="" $FOO`.runAsTest("empty var");
+    TestBuilder.command`"" arg`
+      .exitCode(1)
+      .stderr("bun: command not found: \n")
+      .runAsTest("empty string literal as argv[0]");
+    TestBuilder.command`${""} arg`
+      .exitCode(1)
+      .stderr("bun: command not found: \n")
+      .runAsTest("empty JS string as argv[0]");
+    TestBuilder.command`"" && echo hi`
+      .exitCode(1)
+      .stderr("bun: command not found: \n")
+      .runAsTest("empty string argv[0] short-circuits &&");
   });
 
   describe("tilde_expansion", () => {

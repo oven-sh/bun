@@ -503,7 +503,7 @@ describe.each(["string", "object"])("fetch({proxy}) %s form does not leak the pr
 // that was passed to Response::init as url_string.clone() (inherent clone()
 // does dupe_ref(), so +2). Response::init adopts one ref; the local +1 was
 // never released, leaking one StringImpl ≈ "file://<path>".length per call.
-test("fetch(file://...) does not leak the response url WTFStringImpl", async () => {
+test.concurrent("fetch(file://...) does not leak the response url WTFStringImpl", async () => {
   // The leaked impl is "file://<resolved abs path>", and fetch_impl decodes
   // url.path into a stack PathBuffer that is 1024 bytes on macOS/BSD, 4096 on
   // Linux, ~98 KiB on Windows. Use a ~900-byte path so decode_into succeeds on
@@ -511,11 +511,14 @@ test("fetch(file://...) does not leak the response url WTFStringImpl", async () 
   // for the small per-call leak to show in RSS.
   const script = /* js */ `
     const pad = Buffer.alloc(900, "a").toString();
+    // Windows strips the leading "/" then asserts is_absolute_windows() in
+    // PosixToWinNormalizer under debug_assertions, which needs a drive letter.
+    const prefix = process.platform === "win32" ? "file:///C:/" : "file:///";
     async function hit(i) {
       // Fresh path per iteration so each leaked ref pins a distinct impl.
       // The file does not exist; the Response is created (with url_string set)
       // and the lazy Blob body is never read, so no fs I/O happens.
-      await fetch("file:///" + i + pad);
+      await fetch(prefix + i + pad);
     }
     for (let i = 0; i < 200; i++) { try { await hit(-i); } catch {} }
     Bun.gc(true);

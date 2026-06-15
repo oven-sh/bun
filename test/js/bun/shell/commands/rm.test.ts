@@ -243,10 +243,8 @@ function packagejson() {
 // `a/sub/ss` layout forces the failure into `delete_after_waiting_for_children`:
 // the grandchild `ss` is removed, then `rmdirat("a/sub")` hits EACCES because
 // `a` is read-only. The sibling `b` tree must still be fully removed.
-test.if(isPosix)(
-  "rm -rf: failure removing one directory does not abort sibling arguments",
-  async () => {
-    const fixture = `
+test.if(isPosix)("rm -rf: failure removing one directory does not abort sibling arguments", async () => {
+  const fixture = `
       const { $ } = require("bun");
       const fs = require("fs");
       const path = require("path");
@@ -277,44 +275,41 @@ test.if(isPosix)(
       fs.rmSync(r, { recursive: true, force: true });
     `;
 
-    using dir = tempDir("rm-sibling", {});
-    chmodSync(String(dir), 0o777);
+  using dir = tempDir("rm-sibling", {});
+  chmodSync(String(dir), 0o777);
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, RM_SIBLING_BASE: String(dir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let result;
     try {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", fixture],
-        env: { ...bunEnv, RM_SIBLING_BASE: String(dir) },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
-      let result;
-      try {
-        result = JSON.parse(stdout.trim());
-      } catch {
-        result = { parseError: true };
-      }
-      // `a/sub/ss` is removed; `a/sub` survives because `a` is read-only.
-      // `b` must be fully removed regardless.
-      expect({ result, stderr, exitCode }).toEqual({
-        result: {
-          bRemaining: -1,
-          subExists: true,
-          ssExists: false,
-          exitCode: 1,
-        },
-        stderr: "",
-        exitCode: 0,
-      });
-    } finally {
-      try { chmodSync(path.join(String(dir), "work", "a"), 0o755); } catch {}
-      rmSync(path.join(String(dir), "work"), { recursive: true, force: true });
+      result = JSON.parse(stdout.trim());
+    } catch {
+      result = { parseError: true };
     }
-  },
-);
+    // `a/sub/ss` is removed; `a/sub` survives because `a` is read-only.
+    // `b` must be fully removed regardless.
+    expect({ result, stderr, exitCode }).toEqual({
+      result: {
+        bRemaining: -1,
+        subExists: true,
+        ssExists: false,
+        exitCode: 1,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  } finally {
+    try {
+      chmodSync(path.join(String(dir), "work", "a"), 0o755);
+    } catch {}
+    rmSync(path.join(String(dir), "work"), { recursive: true, force: true });
+  }
+});
 
 // Recursive `rm -rf` classifies each entry as a directory from readdir, then
 // later re-opens it by path on a worker thread. If that path is replaced by a

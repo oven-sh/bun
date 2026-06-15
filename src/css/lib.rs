@@ -435,43 +435,10 @@ pub enum Token {
 
 impl core::fmt::Display for Token {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Minimal rendering for error messages. Full CSS serialization
-        // lives in `css_parser.rs` via `serializer::*`.
-        use bstr::BStr;
-        match self {
-            Token::Ident(v)
-            | Token::Function(v)
-            | Token::AtKeyword(v)
-            | Token::UnrestrictedHash(v)
-            | Token::IdHash(v)
-            | Token::QuotedString(v)
-            | Token::BadString(v)
-            | Token::UnquotedUrl(v)
-            | Token::BadUrl(v)
-            | Token::Whitespace(v)
-            | Token::Comment(v) => {
-                write!(f, "{}", BStr::new(v))
-            }
-            Token::Delim(c) => write!(f, "{}", char::from_u32(*c).unwrap_or('\u{FFFD}')),
-            Token::Number(n) => write!(f, "{}", n.value),
-            Token::Percentage { unit_value, .. } => write!(f, "{}%", *unit_value * 100.0),
-            Token::Dimension(d) => write!(f, "{}{}", d.num.value, BStr::new(d.unit)),
-            Token::Cdo => f.write_str("<!--"),
-            Token::Cdc => f.write_str("-->"),
-            Token::IncludeMatch => f.write_str("~="),
-            Token::DashMatch => f.write_str("|="),
-            Token::PrefixMatch => f.write_str("^="),
-            Token::SuffixMatch => f.write_str("$="),
-            Token::SubstringMatch => f.write_str("*="),
-            Token::Colon => f.write_str(":"),
-            Token::Semicolon => f.write_str(";"),
-            Token::Comma => f.write_str(","),
-            Token::OpenSquare => f.write_str("["),
-            Token::CloseSquare => f.write_str("]"),
-            Token::OpenParen => f.write_str("("),
-            Token::CloseParen => f.write_str(")"),
-            Token::OpenCurly => f.write_str("{"),
-            Token::CloseCurly => f.write_str("}"),
-        }
+        // Render the full CSS token shape so `Unexpected token: …` diagnostics
+        // show `#foo`, `@foo`, `url(a b)`, `"…"`, `foo(` instead of the bare
+        // inner slice. Matches `Token.format` in css_parser.zig.
+        let mut w = bun_io::FmtAdapter::new(f);
+        self.to_css_generic(&mut w).map_err(|_| core::fmt::Error)
     }
 }

@@ -5768,11 +5768,15 @@ impl Token {
                 writer.write_all(b"@")?;
                 serializer::serialize_identifier(v, writer)
             }
-            Token::UnrestrictedHash(v) | Token::IdHash(v) => {
+            Token::UnrestrictedHash(v) => {
                 writer.write_all(b"#")?;
                 serializer::serialize_name(v, writer)
             }
-            Token::QuotedString(x) => serializer::serialize_name(x, writer),
+            Token::IdHash(v) => {
+                writer.write_all(b"#")?;
+                serializer::serialize_identifier(v, writer)
+            }
+            Token::QuotedString(x) => serializer::serialize_string(x, writer),
             Token::UnquotedUrl(x) => {
                 writer.write_all(b"url(")?;
                 serializer::serialize_unquoted_url(x, writer)?;
@@ -5939,9 +5943,8 @@ impl Token {
     }
 }
 
-// `impl Display for Token` lives at crate root (lib.rs) — minimal rendering
-// for error messages only. The CSS-serialization-correct form is
-// `Token::to_css_generic` above.
+// `impl Display for Token` lives at crate root (lib.rs) and delegates to
+// `Token::to_css_generic` above so error messages render the full token shape.
 
 /// Byte-writer trait for `serializer` and `to_css_generic`.
 /// Aliased to the canonical `bun_io::Write`; the associated

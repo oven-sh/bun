@@ -102,11 +102,15 @@ describe("node_api_create_external_string_* finalizer holds Ref<NapiEnv>", () =>
 
     const expectedContent =
       fn === "createLatin1" ? "external-latin1-string-xxxxxxxx" : "external-utf16-string-xxxxxxxxx";
-    expect(stderr).toBe("");
+    // Every external string created in the worker must have had its finalizer
+    // invoked by the time the worker's VM is torn down. The combined-object
+    // assertion surfaces all three values in one diff when the child crashes
+    // or ASAN writes to stderr.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expect.stringContaining("finalized=64"),
+      stderr: "",
+      exitCode: 0,
+    });
     expect(stdout).toContain("worker: created 64 sample=" + expectedContent);
-    // Every external string created in the worker must have had its
-    // finalizer invoked by the time the worker's VM is torn down.
-    expect(stdout).toContain("finalized=64");
-    expect(exitCode).toBe(0);
   });
 });

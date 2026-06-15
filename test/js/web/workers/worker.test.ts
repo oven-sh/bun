@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
+import { pathToFileURL } from "url";
 import wt from "worker_threads";
 
 describe("web worker", () => {
@@ -294,6 +295,41 @@ describe("web worker", () => {
       expect(err.type).toBe("error");
       expect(err.message).toBe("5");
       expect(err.error).toBe(null);
+    });
+
+    test("module worker from a data: URL populates message/filename/lineno/colno", async () => {
+      const url = new URL("data:,throw new Error('foo')", import.meta.url).href;
+      const worker = new Worker(url, { type: "module" });
+      try {
+        const [err] = await once(worker, "error");
+        expect(err.type).toBe("error");
+        // The message is a plain description, not the formatted console log.
+        expect(err.message).toBe("Error: foo");
+        expect(err.filename).toBe("data:,throw new Error('foo')");
+        expect(err.lineno).toBe(1);
+        expect(err.colno).toBe(11);
+        expect(err.error).toBe(null);
+      } finally {
+        worker.terminate();
+      }
+    });
+
+    test("module worker from a file populates message/filename/lineno/colno", async () => {
+      using dir = tempDir("worker-error-event", {
+        "bad-worker.mjs": "\n\nthrow new Error('boom from file worker');\n",
+      });
+      const workerPath = path.join(String(dir), "bad-worker.mjs");
+      const worker = new Worker(pathToFileURL(workerPath).href, { type: "module" });
+      try {
+        const [err] = await once(worker, "error");
+        expect(err.message).toBe("Error: boom from file worker");
+        expect(err.filename).toBe(workerPath);
+        expect(err.lineno).toBe(3);
+        expect(err.colno).toBe(11);
+        expect(err.error).toBe(null);
+      } finally {
+        worker.terminate();
+      }
     });
   });
 });

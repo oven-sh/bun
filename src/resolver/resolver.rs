@@ -4210,7 +4210,11 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        assert!(
+        // Debug-only: a non-absolute path here is a caller bug, but it is
+        // user-reachable in release (e.g. `options.paths` before the
+        // absolutization above landed), and falling through yields a
+        // recoverable MODULE_NOT_FOUND rather than anything unsafe.
+        debug_assert!(
             bun_paths::is_absolute(input_path),
             "cannot resolve DirInfo for non-absolute path: {}",
             bstr::BStr::new(input_path)

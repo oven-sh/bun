@@ -239,6 +239,15 @@ test("require.resolve does not crash when options.paths contains a non-absolute 
     require.resolve("this-pkg-does-not-exist-zzz", { paths: ["this_dir_does_not_exist", "./nope"] });
   }).toThrow();
 
+  // createRequire().resolve goes through the same resolver path.
+  let caught;
+  try {
+    Module.createRequire(join(realpathSync(tmpdir()), "x.js")).resolve("foo", { paths: ["./rel"] });
+  } catch (e) {
+    caught = e.code;
+  }
+  expect(caught).toBe("MODULE_NOT_FOUND");
+
   // A Windows-style drive path is not absolute on POSIX (it is a relative
   // segment there), so it must be anchored at cwd rather than tripping the
   // resolver's absolute-path assertion.

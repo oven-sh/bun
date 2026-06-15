@@ -347,4 +347,93 @@ describe("WebSocket", () => {
       server?.stop(true);
     }
   });
+
+  test("many fragmented binary messages reassemble without truncation", async () => {
+    // The receive buffer is a ring. Clearing it between messages must rewind
+    // head to 0; if head only advances, a later message can wrap the ring
+    // and readable_slice(0) would hand dispatch only the first contiguous
+    // segment. The client pre-allocates 2048 bytes, so two 1000-byte
+    // fragmented messages advance head to 2000, and a third message split as
+    // 48 + 52 bytes writes across the wrap boundary.
+    let server: TCPSocketListener | undefined;
+    let client: WebSocket | undefined;
+    let handshakeBuffer = new Uint8Array(0);
+    let handshakeComplete = false;
+
+    const fill = (n: number, base: number) => {
+      const b = new Uint8Array(n);
+      for (let i = 0; i < n; i++) b[i] = (base + i) & 0xff;
+      return b;
+    };
+
+    const expected: Uint8Array[] = [
+      new Uint8Array([...fill(500, 0), ...fill(500, 1)]),
+      new Uint8Array([...fill(500, 2), ...fill(500, 3)]),
+      new Uint8Array([...fill(48, 4), ...fill(52, 5)]),
+    ];
+
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<Uint8Array[]>();
+
+      server = Bun.listen({
+        socket: {
+          data(socket, data) {
+            if (handshakeComplete) return;
+
+            const result = doHandshake(socket, handshakeBuffer, new Uint8Array(data));
+            handshakeBuffer = result.buffer;
+            if (!result.done) return;
+
+            handshakeComplete = true;
+
+            const frames = [
+              makeBinaryFrame(fill(500, 0), { fin: false, opcode: 0x2 }),
+              makeBinaryFrame(fill(500, 1), { fin: true, opcode: 0x0 }),
+              makeBinaryFrame(fill(500, 2), { fin: false, opcode: 0x2 }),
+              makeBinaryFrame(fill(500, 3), { fin: true, opcode: 0x0 }),
+              makeBinaryFrame(fill(48, 4), { fin: false, opcode: 0x2 }),
+              makeBinaryFrame(fill(52, 5), { fin: true, opcode: 0x0 }),
+            ];
+            const total = frames.reduce((n, f) => n + f.length, 0);
+            const all = new Uint8Array(total);
+            let off = 0;
+            for (const f of frames) {
+              all.set(f, off);
+              off += f.length;
+            }
+            socket.write(all);
+            socket.flush();
+          },
+          error(_socket, err) {
+            reject(err);
+          },
+        },
+        hostname,
+        port: 0,
+      });
+
+      client = new WebSocket(`ws://${server.hostname}:${server.port}`);
+      const ws = client;
+      ws.binaryType = "arraybuffer";
+
+      const received: Uint8Array[] = [];
+      ws.addEventListener("error", () => reject(new Error("WebSocket error")));
+      ws.addEventListener("close", ev => {
+        reject(new Error(`WebSocket closed unexpectedly: code=${ev.code} reason=${ev.reason}`));
+      });
+      ws.addEventListener("message", ev => {
+        received.push(new Uint8Array(ev.data as ArrayBuffer));
+        if (received.length === expected.length) resolve(received);
+      });
+
+      const got = await promise;
+      expect(got.map(b => b.length)).toEqual(expected.map(b => b.length));
+      for (let i = 0; i < expected.length; i++) {
+        expect(got[i]).toEqual(expected[i]);
+      }
+    } finally {
+      client?.close();
+      server?.stop(true);
+    }
+  });
 });

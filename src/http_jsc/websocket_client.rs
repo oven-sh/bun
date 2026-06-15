@@ -355,11 +355,16 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn clear_receive_buffers(&mut self, free: bool) {
-        // LinearFifo's
-        // fields are private so discard everything readable
-        // (empty, head realigned to 0).
+        // LinearFifo's fields are private. `discard` only advances
+        // `head` (it does not rewind it), so pair it with
+        // `reset_head_if_empty` to match the Zig `head = 0; count = 0`
+        // semantics. Without the rewind, `head` would walk forward across
+        // messages and eventually wrap the ring, and `readable_slice(0)`
+        // (used to dispatch buffered messages) returns only the first
+        // contiguous segment.
         self.receive_buffer
             .discard(self.receive_buffer.readable_length());
+        self.receive_buffer.reset_head_if_empty();
 
         if free {
             self.receive_buffer = LinearFifo::<u8, DynamicBuffer<u8>>::init();

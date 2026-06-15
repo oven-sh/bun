@@ -173,8 +173,7 @@ test.skipIf(!isWindows)(
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("readfile microtask ran after worker shutdown");
-    expect(stderr).not.toContain("bad exit");
+    expect(stderr).toBe("");
     expect(stdout).toBe("");
     expect(exitCode).toBe(0);
   },

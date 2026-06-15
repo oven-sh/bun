@@ -117,3 +117,11 @@ show_crash_trace = ["bun_bundler/show_crash_trace"]
 error_return_tracing = []
 # Mirrors Zig `bun.FeatureFlags.bake_debugging_features` — DevServer dump flags.
 bake_debugging_features = []
+# Reduced-footprint `bun-standalone` binary: compile out CLI subcommands
+# (install/build/test/pm/…) and the JS APIs that back them. Stubbed entry
+# points print an error pointing at the full bun binary. Dead code is then
+# stripped by `--gc-sections` + addrsig at link time. Always paired with the
+# global `--cfg=bun_standalone` RUSTFLAG (scripts/build/rust.ts) — gate on
+# `cfg(bun_standalone)`, not `cfg(feature = "standalone")`, so the same
+# predicate works in crates outside the feature chain.
+standalone = []

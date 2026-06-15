@@ -26,6 +26,7 @@ pub mod webcore;
 pub mod bake;
 pub mod cli;
 pub mod shell;
+pub mod standalone_build;
 // `Run::boot` / `Run::boot_standalone`. Mounted here
 // (not as a separate crate) because every dependency it has is already a dep of
 // `bun_runtime`, and the CLI dispatch in `cli/` needs to call it directly. The

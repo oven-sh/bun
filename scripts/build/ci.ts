@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 // @ts-ignore — utils.mjs has JSDoc types but no .d.ts
 import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
-import type { Config } from "./config.ts";
+import { bunStrippedName, type Config } from "./config.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 
@@ -347,7 +347,7 @@ function upload(paths: string[], cwd: string): void {
  * cmake's bunTriplet — any drift breaks test-step downloads.
  */
 function computeBunTriplet(cfg: Config): string {
-  let t = `bun-${cfg.os}-${cfg.arch}`;
+  let t = `${bunStrippedName(cfg)}-${cfg.os}-${cfg.arch}`;
   if (cfg.abi === "musl") t += "-musl";
   if (cfg.abi === "android") t += "-android";
   if (cfg.baseline) t += "-baseline";
@@ -400,7 +400,11 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // cmake's bunPath: string(REPLACE bun ${bunTriplet} bunPath ${bun})
   // where ${bun} is the target name (bun-profile, bun-asan, ...).
   // Result: bun-linux-x64-profile, bun-linux-x64-asan, etc.
-  const bunPath = exeName.replace(/^bun/, bunTriplet);
+  // Replace the *base* name (bun / bun-standalone), not just /^bun/, so
+  // `bun-standalone-profile` → `bun-standalone-linux-x64-profile` rather than
+  // `bun-standalone-linux-x64-standalone-profile`.
+  const baseName = bunStrippedName(cfg);
+  const bunPath = bunTriplet + exeName.slice(baseName.length);
   const files: string[] = [basename(exe), "features.json"];
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
@@ -493,25 +497,30 @@ export async function downloadArtifacts(cfg: Config): Promise<void> {
     });
   }
 
-  // step key is `<target>-build-bun`; siblings are `<target>-build-{cpp,rust}`.
-  const m = stepKey.match(/^(.+)-build-bun$/);
+  // step key is `<target>-build-bun[-standalone]`; siblings are
+  // `<target>-build-cpp` (always — the C++ archive is shared) and
+  // `<target>-build-rust[-standalone]` (the rust .a is variant-specific).
+  const m = stepKey.match(/^(.+)-build-bun(-standalone)?$/);
   if (m === null) {
     throw new BuildError(`Unexpected BUILDKITE_STEP_KEY: ${stepKey}`, {
-      hint: "Expected format: <target>-build-bun",
+      hint: "Expected format: <target>-build-bun[-standalone]",
     });
   }
   const targetKey = m[1]!;
+  const variantSuffix = m[2] ?? "";
+  if ((variantSuffix === "-standalone") !== cfg.standalone) {
+    throw new BuildError(`BUILDKITE_STEP_KEY variant (${stepKey}) disagrees with --standalone=${cfg.standalone}`);
+  }
 
   // Both downloads at once (buildkite-agent already parallelizes within a
   // step's artifact set; this overlaps the two STEPS). Gunzip after BOTH
   // complete — the rust .a is gzipped too on posix, and the .gz scan is a
   // recursive walk so we want every artifact on disk first.
-  const dl = (suffix: "cpp" | "rust") => {
-    const step = `${targetKey}-build-${suffix}`;
+  const dl = (step: string) => {
     console.log(`Downloading artifacts from ${step}...`);
     return runAsync(["buildkite-agent", "artifact", "download", "*", ".", "--step", step], cfg.buildDir);
   };
-  await Promise.all([dl("cpp"), dl("rust")]);
+  await Promise.all([dl(`${targetKey}-build-cpp`), dl(`${targetKey}-build-rust${variantSuffix}`)]);
 
   // Recursive: rust artifact lands under rust-target/<triple>/<profile>/.
   const gzFiles: string[] = [];

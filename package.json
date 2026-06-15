@@ -50,6 +50,8 @@
     "build:asan": "bun scripts/build.ts --profile=release-asan --build-dir=build/release-asan",
     "build:logs": "bun scripts/build.ts --profile=release --logs=on --build-dir=build/release-logs",
     "build:smol": "bun scripts/build.ts --profile=release --build-type=MinSizeRel --build-dir=build/release-smol",
+    "build:standalone": "bun scripts/build.ts --profile=release --standalone=on --build-dir=build/release-standalone",
+    "build:standalone:debug": "bun scripts/build.ts --profile=debug --standalone=on --build-dir=build/debug-standalone",
     "build:local": "bun scripts/build.ts --profile=debug-local --build-dir=build/debug-local",
     "build:release:local": "bun scripts/build.ts --profile=release-local --build-dir=build/release-local",
     "run:linux": "docker run --rm  -v \"$PWD:/root/bun/\" -w /root/bun ghcr.io/oven-sh/bun-development-docker-image",

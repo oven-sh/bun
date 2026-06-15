@@ -525,13 +525,15 @@ function getTestAgent(platform, options) {
  * @param {Target} target
  * @param {PipelineOptions} options
  * @param {"cpp-only" | "rust-only" | "link-only"} mode
+ * @param {{standalone?: boolean}} [extra]
  * @returns {string}
  */
-function getBuildArgs(target, options, mode) {
+function getBuildArgs(target, options, mode, extra = {}) {
   const { os, arch, abi, baseline, profile, crossCompile } = target;
   const { canary } = options;
 
   const args = [`--profile=ci-${mode}`];
+  if (extra.standalone) args.push("--standalone=on");
 
   // rust-only cross-compiles (linux host → linux/freebsd targets); os/arch/abi
   // must all be explicit — host detection (detectLinuxAbi checks
@@ -570,9 +572,10 @@ function getBuildArgs(target, options, mode) {
  * @param {Target} target
  * @param {PipelineOptions} options
  * @param {"cpp-only" | "rust-only" | "link-only"} mode
+ * @param {{standalone?: boolean}} [extra]
  * @returns {string}
  */
-function getBuildCommand(target, options, mode) {
+function getBuildCommand(target, options, mode, extra) {
   // Windows code signing is handled by a dedicated 'windows-sign' step after
   // all Windows builds complete — see getWindowsSignStep(). smctl is x64-only,
   // so signing on the build agent wouldn't work for ARM64 anyway.
@@ -582,7 +585,7 @@ function getBuildCommand(target, options, mode) {
   // is wrong. PATH on the agent has node via bootstrap.sh.
   // --experimental-strip-types for Node 24's .ts support (unflagged in
   // 25+; drop once CI bumps past the ABI-141 blocker).
-  return `node --experimental-strip-types scripts/build.ts ${getBuildArgs(target, options, mode)}`;
+  return `node --experimental-strip-types scripts/build.ts ${getBuildArgs(target, options, mode, extra)}`;
 }
 
 /**
@@ -657,6 +660,63 @@ function getLinkBunStep(platform, options) {
     // build-rust steps (derived from BUILDKITE_STEP_KEY) before ninja runs.
     command: getBuildCommand(platform, options, "link-only"),
   };
+}
+
+/**
+ * Second cargo build for the reduced-footprint `bun-standalone` runtime
+ * (`--features standalone`). Same agent fan-out as build-rust.
+ *
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getBuildRustStandaloneStep(platform, options) {
+  return {
+    key: `${getTargetKey(platform)}-build-rust-standalone`,
+    retry: getRetry(),
+    label: `${getTargetLabel(platform)} - build-rust-standalone`,
+    agents: getRustAgent(platform, options),
+    cancel_on_build_failing: isMergeQueue(),
+    command: getBuildCommand(platform, options, "rust-only", { standalone: true }),
+    timeout_in_minutes: 35,
+  };
+}
+
+/**
+ * Second link for `bun-standalone`. Reuses the same `build-cpp` archive
+ * (the C++ side is identical); only the Rust staticlib differs.
+ *
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getLinkBunStandaloneStep(platform, options) {
+  return {
+    key: `${getTargetKey(platform)}-build-bun-standalone`,
+    label: `${getTargetLabel(platform)} - build-bun-standalone`,
+    depends_on: [`${getTargetKey(platform)}-build-cpp`, `${getTargetKey(platform)}-build-rust-standalone`],
+    agents: getLinkBunAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    env: {
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+    },
+    command: getBuildCommand(platform, options, "link-only", { standalone: true }),
+  };
+}
+
+/**
+ * Whether to build `bun-standalone` for this platform. Only the plain
+ * release lanes that ship to users for `bun build --compile` — not asan,
+ * and not Android/FreeBSD until --compile supports those targets.
+ *
+ * @param {Platform} platform
+ */
+function shouldBuildStandalone(platform) {
+  if ((platform.profile ?? "release") !== "release") return false;
+  if (platform.abi === "android") return false;
+  if (platform.os === "freebsd") return false;
+  return true;
 }
 
 /**
@@ -1468,6 +1528,10 @@ async function getPipeline(options = {}) {
         steps.push(getBuildCppStep(target, options));
         steps.push(getBuildRustStep(target, options));
         steps.push(getLinkBunStep(target, options));
+        if (shouldBuildStandalone(target)) {
+          steps.push(getBuildRustStandaloneStep(target, options));
+          steps.push(getLinkBunStandaloneStep(target, options));
+        }
 
         if (needsBaselineVerification(target)) {
           steps.push(getVerifyBaselineStep(target, options));

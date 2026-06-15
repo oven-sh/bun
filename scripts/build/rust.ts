@@ -164,9 +164,16 @@ function findRustup(cfg: Config): string | undefined {
 // Paths
 // ───────────────────────────────────────────────────────────────────────────
 
-/** `<buildDir>/rust-target` — sibling of `obj/`, `pch/`. */
+/**
+ * `<buildDir>/rust-target[-standalone]` — sibling of `obj/`, `pch/`.
+ *
+ * The standalone variant gets its own target dir: cargo's output path doesn't
+ * encode features, so sharing one dir would have the two `cargo build`
+ * invocations overwrite each other's `libbun_rust.a` (and thrash incremental
+ * fingerprints for every crate that sees the `standalone` feature).
+ */
 function rustTargetDir(cfg: Config): string {
-  return resolve(cfg.buildDir, "rust-target");
+  return resolve(cfg.buildDir, cfg.standalone ? "rust-target-standalone" : "rust-target");
 }
 
 /**
@@ -377,6 +384,12 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     "--profile",
     profile.name,
   ];
+  if (cfg.standalone) {
+    // Propagates to `bun_runtime/standalone`; see src/bun_bin/Cargo.toml.
+    // Paired with `--cfg=bun_standalone` in rustflags below so crates outside
+    // the feature chain (bun_core, bun_standalone_graph) can branch on it too.
+    args.push("--features", "standalone");
+  }
   if (tier3 || cfg.release || cfg.asan) {
     // Build std/core/alloc from source instead of linking the rustup prebuilt.
     //
@@ -488,6 +501,15 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   rustflags.push("--check-cfg=cfg(bun_codegen_embed)");
   if (!cfg.debug) {
     rustflags.push("--cfg=bun_codegen_embed");
+  }
+  // `bun_standalone`: reduced-footprint --compile runtime. Carried as a global
+  // cfg (not just the cargo feature) so any crate can `#[cfg(bun_standalone)]`
+  // without threading a feature through the workspace graph. The feature on
+  // `bun_bin` is still passed (above) so `cfg(feature = "standalone")` works
+  // for the crates that declare it.
+  rustflags.push("--check-cfg=cfg(bun_standalone)");
+  if (cfg.standalone) {
+    rustflags.push("--cfg=bun_standalone");
   }
   // Drop `#[track_caller]` source-location capture in release. Every
   // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a
@@ -888,7 +910,7 @@ export function rustLtoLinkInputs(n: Ninja, cfg: Config, rustObjects: string[]):
     { hint: "Install the pinned rust toolchain (rustup show active-toolchain), or build with --lto=off" },
   );
   const llvmBin = join(cfg.rustSysroot, "lib", "rustlib", cfg.host.rustTriple, "bin");
-  const out = resolve(cfg.buildDir, "bun_rust.lto.o");
+  const out = resolve(cfg.buildDir, cfg.standalone ? "bun_rust_standalone.lto.o" : "bun_rust.lto.o");
   n.build({
     outputs: [out],
     rule: "rust_lto_fix",

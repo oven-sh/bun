@@ -67,5 +67,5 @@ describe("Bun.plugin namespace validation", () => {
       signalCode: null,
       stderr: expect.any(String),
     });
-  }, 60_000);
+  });
 });

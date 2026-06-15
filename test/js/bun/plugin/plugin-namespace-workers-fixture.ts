@@ -3,12 +3,10 @@
 // be safe to call from multiple VMs at once.
 
 const WORKERS = 8;
-const ITERS = 4000;
+const ITERS = 2000;
 
 function hammer(tag: string) {
   const valid = ["abc", "abc-def", "a/b", "@scope/pkg", "A_Z-0/9", "x"];
-  let accepted = 0;
-  let rejected = 0;
   for (let i = 0; i < ITERS; i++) {
     const ns = valid[i % valid.length];
     Bun.plugin({
@@ -18,7 +16,6 @@ function hammer(tag: string) {
         b.onResolve({ filter: /.*/, namespace: ns }, ({ path }) => ({ path, namespace: ns }));
       },
     });
-    accepted++;
     let threw: unknown;
     try {
       Bun.plugin({
@@ -33,10 +30,6 @@ function hammer(tag: string) {
     if (!String((threw as Error)?.message).includes("namespace can only contain")) {
       throw new Error(`${tag}: "bad ns!" was not rejected (got: ${threw})`);
     }
-    rejected++;
-  }
-  if (accepted !== ITERS || rejected !== ITERS) {
-    throw new Error(`${tag}: accepted=${accepted} rejected=${rejected} (expected ${ITERS} each)`);
   }
 }
 

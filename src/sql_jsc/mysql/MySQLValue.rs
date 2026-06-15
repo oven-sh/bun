@@ -1,9 +1,9 @@
-//! `Value` union + JSC bridges for MySQL type encoding. Kept separate so the
-//! protocol layer keeps the pure `CharacterSet`/`FieldType` enums without
-//! `JSValue` references.
+//! `Value` union + JSC bridges for MySQL type encoding. Split from
+//! `sql/mysql/MySQLTypes.zig` so the protocol layer keeps the pure
+//! `CharacterSet`/`FieldType` enums without `JSValue` references.
 
 use crate::jsc::{
-    IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsError, JsResult,
+    ErrorCode, IntegerRange, JSGlobalObject, JSType, JSValue, JsError, JsResult,
     MarkedArgumentBuffer, StringJsc as _, js_error_to_mysql,
 };
 use bun_core::zig_string::Slice as ZigStringSlice;
@@ -47,11 +47,14 @@ pub(crate) fn field_type_from_js(
                 return Ok(FieldType::MYSQL_TYPE_LONGLONG);
             }
             return Err(global_object
-                .err_out_of_range(format_args!(
-                    "The value is out of range. It must be >= {} and <= {}.",
-                    i64::MIN,
-                    u64::MAX
-                ))
+                .err(
+                    ErrorCode::OUT_OF_RANGE,
+                    format_args!(
+                        "The value is out of range. It must be >= {} and <= {}.",
+                        i64::MIN,
+                        u64::MAX
+                    ),
+                )
                 .throw());
         }
 
@@ -180,7 +183,40 @@ impl Drop for Bytes {
     }
 }
 
-// No explicit Drop for Value: the enum payloads (ZigStringSlice, Bytes, Data) all impl Drop.
+// Value's Zig `deinit` only forwarded to payload deinit; Rust auto-drops enum
+// payloads (ZigStringSlice, Bytes, Data all impl Drop), so no explicit Drop.
+
+/// The integer branches of `Value::from_js` validate against the full range of
+/// the target type, so the bounds are derived from `T` rather than repeated at
+/// every call site.
+fn int_range<T: bun_core::Integer>(field_name: &'static [u8]) -> IntegerRange {
+    IntegerRange {
+        min: T::MIN_I128,
+        max: T::MAX_I128,
+        field_name,
+        ..Default::default()
+    }
+}
+
+fn validate_int<T: bun_core::Integer>(
+    global_object: &JSGlobalObject,
+    value: JSValue,
+    field_name: &'static [u8],
+) -> Result<T, any_mysql_error::Error> {
+    global_object
+        .validate_integer_range::<T>(value, T::ZERO, int_range::<T>(field_name))
+        .map_err(js_error_to_mysql)
+}
+
+fn validate_bigint<T: bun_core::Integer>(
+    global_object: &JSGlobalObject,
+    value: JSValue,
+    field_name: &'static [u8],
+) -> Result<T, any_mysql_error::Error> {
+    global_object
+        .validate_big_int_range::<T>(value, T::ZERO, int_range::<T>(field_name))
+        .map_err(js_error_to_mysql)
+}
 
 impl Value {
     pub fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
@@ -231,10 +267,10 @@ impl Value {
                 pos = d.to_binary(field_type, &mut buffer) as usize;
             }
             Value::StringData(data) | Value::BytesData(data) => {
-                // `bun_sql::shared::Data` is not
-                // `Clone`, so return a `Temporary` aliasing the
-                // same bytes. INVARIANT: `to_data` callers must keep `self`
-                // alive until the returned `Data` is consumed.
+                // TODO(port): Zig returned `data` by value (copy of Data union);
+                // `bun_sql::shared::Data` is not `Clone` in the Rust port, so
+                // return a `Temporary` aliasing the same bytes. `to_data` callers
+                // must keep `self` alive until the returned `Data` is consumed.
                 let s = data.slice();
                 return Ok(if s.is_empty() {
                     Data::Empty
@@ -277,99 +313,24 @@ impl Value {
             FieldType::MYSQL_TYPE_TINY => Ok(Value::Bool(value.to_boolean())),
             FieldType::MYSQL_TYPE_SHORT => {
                 if unsigned {
-                    return Ok(Value::Ushort(
-                        global_object
-                            .validate_integer_range::<u16>(
-                                value,
-                                0,
-                                IntegerRange {
-                                    min: u16::MIN as i128,
-                                    max: u16::MAX as i128,
-                                    field_name: b"u16",
-                                    ..Default::default()
-                                },
-                            )
-                            .map_err(js_error_to_mysql)?,
-                    ));
+                    Ok(Value::Ushort(validate_int(global_object, value, b"u16")?))
+                } else {
+                    Ok(Value::Short(validate_int(global_object, value, b"i16")?))
                 }
-                Ok(Value::Short(
-                    global_object
-                        .validate_integer_range::<i16>(
-                            value,
-                            0,
-                            IntegerRange {
-                                min: i16::MIN as i128,
-                                max: i16::MAX as i128,
-                                field_name: b"i16",
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(js_error_to_mysql)?,
-                ))
             }
             FieldType::MYSQL_TYPE_LONG => {
                 if unsigned {
-                    return Ok(Value::Uint(
-                        global_object
-                            .validate_integer_range::<u32>(
-                                value,
-                                0,
-                                IntegerRange {
-                                    min: u32::MIN as i128,
-                                    max: u32::MAX as i128,
-                                    field_name: b"u32",
-                                    ..Default::default()
-                                },
-                            )
-                            .map_err(js_error_to_mysql)?,
-                    ));
+                    Ok(Value::Uint(validate_int(global_object, value, b"u32")?))
+                } else {
+                    Ok(Value::Int(validate_int(global_object, value, b"i32")?))
                 }
-                Ok(Value::Int(
-                    global_object
-                        .validate_integer_range::<i32>(
-                            value,
-                            0,
-                            IntegerRange {
-                                min: i32::MIN as i128,
-                                max: i32::MAX as i128,
-                                field_name: b"i32",
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(js_error_to_mysql)?,
-                ))
             }
             FieldType::MYSQL_TYPE_LONGLONG => {
                 if unsigned {
-                    return Ok(Value::Ulong(
-                        global_object
-                            .validate_big_int_range::<u64>(
-                                value,
-                                0,
-                                IntegerRange {
-                                    min: 0,
-                                    max: u64::MAX as i128,
-                                    field_name: b"u64",
-                                    ..Default::default()
-                                },
-                            )
-                            .map_err(js_error_to_mysql)?,
-                    ));
+                    Ok(Value::Ulong(validate_bigint(global_object, value, b"u64")?))
+                } else {
+                    Ok(Value::Long(validate_bigint(global_object, value, b"i64")?))
                 }
-                Ok(Value::Long(
-                    global_object
-                        .validate_big_int_range::<i64>(
-                            value,
-                            0,
-                            IntegerRange {
-                                min: i64::MIN as i128,
-                                max: i64::MAX as i128,
-                                field_name: b"i64",
-                                ..Default::default()
-                            },
-                        )
-                        .map_err(js_error_to_mysql)?,
-                ))
             }
 
             FieldType::MYSQL_TYPE_FLOAT => Ok(Value::Float(
@@ -492,6 +453,7 @@ pub struct DateTime {
 
 impl DateTime {
     pub fn from_data(data: &Data) -> Result<DateTime, bun_core::Error> {
+        // TODO(port): narrow error set
         Ok(Self::from_binary(data.slice()))
     }
 
@@ -555,6 +517,7 @@ impl DateTime {
                 }
             }
             _ => panic!("Invalid datetime length: {}", val.len()),
+            // TODO(port): Zig used bun.Output.panic; confirm bun_core panic helper
         }
     }
 
@@ -679,6 +642,7 @@ impl DateTime {
     }
 
     pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
+        // TODO(port): Zig calls toJSTimestamp() with no args here but the fn takes globalObject and is fallible; preserved bug
         JSValue::from_date_number(
             global_object,
             self.to_js_timestamp(global_object).unwrap_or(f64::NAN),
@@ -705,6 +669,7 @@ impl DateTime {
         value: JSValue,
         global_object: &JSGlobalObject,
     ) -> Result<DateTime, any_mysql_error::Error> {
+        // TODO(port): narrow error set
         if value.is_date() {
             // this is actually ms not seconds
             let total_ms = value.get_unix_timestamp();
@@ -756,6 +721,7 @@ impl Time {
         value: JSValue,
         global_object: &JSGlobalObject,
     ) -> Result<Time, any_mysql_error::Error> {
+        // TODO(port): narrow error set
         if value.is_date() {
             let total_ms = value.get_unix_timestamp();
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
@@ -791,6 +757,7 @@ impl Time {
     }
 
     pub fn from_data(data: &Data) -> Result<Time, bun_core::Error> {
+        // TODO(port): narrow error set
         Ok(Self::from_binary(data.slice()))
     }
 
@@ -899,6 +866,7 @@ fn gregorian_date(days: i32) -> Date {
     }
 }
 
+// TODO(port): move to sql_jsc_sys (or bun_jsc_sys)
 unsafe extern "C" {
     /// By-value `JSValue`; C++ side null-checks and reads its own heap state.
     /// No caller-side preconditions → `safe fn`.
@@ -913,3 +881,5 @@ unsafe extern "C" {
         out_len: &mut usize,
     ) -> i32;
 }
+
+// ported from: src/sql_jsc/mysql/MySQLValue.zig

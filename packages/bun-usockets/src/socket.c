@@ -551,15 +551,7 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
      * so far, the app has to track this and call close as needed */
     if (!us_socket_is_closed(s) && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN) {
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
-        /* After SHUT_WR the only way this socket terminates is recv()==0 or a
-         * recv() error, so READABLE must be armed even if the socket was paused
-         * (which had cleared it). epoll could limp by on EPOLLHUP for the
-         * paused case, but kqueue has no equivalent once EV_EOF is no longer
-         * mapped — without READABLE the socket would never wake. Pause is
-         * meaningless after FIN anyway: we can't write, and the on_data path
-         * for a SHUT_DOWN socket discards what it reads. */
-        s->flags.is_paused = 0;
-        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);
+        us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
     }
 }
@@ -667,9 +659,6 @@ void us_socket_pause(struct us_socket_t *s) {
     if (s->flags.is_paused) return;
     // closed cannot be paused because it is already closed
     if (us_socket_is_closed(s)) return;
-    /* See us_internal_socket_raw_shutdown: dropping READABLE on a shut-down
-     * socket would leave it unable to observe the peer's FIN. */
-    if (us_socket_is_shut_down(s)) return;
     // we are readable and writable so we can just pause readable side
     us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_WRITABLE);
     s->flags.is_paused = 1;

@@ -1332,6 +1332,7 @@ describe("deno_task", () => {
         const r = await Bun.$({ raw: ["echo a | " + cats] }).nothrow().quiet();
         console.log(JSON.stringify({
           exitCode: r.exitCode,
+          stdout: r.stdout.toString(),
           stderr: r.stderr.toString(),
         }));
       `;
@@ -1343,7 +1344,7 @@ describe("deno_task", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-        stdout: JSON.stringify({ exitCode: 1, stderr: "bun: Too many open files\n" }),
+        stdout: JSON.stringify({ exitCode: 1, stdout: "", stderr: "bun: Too many open files\n" }),
         stderr: "",
         exitCode: 0,
       });

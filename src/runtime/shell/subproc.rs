@@ -4,7 +4,7 @@ use std::sync::Arc;
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
-    self as bun_process, Process, Rusage, SignalCodeExt, SpawnOptions, Status,
+    self as bun_process, Process, Rusage, SpawnOptions, Status,
 };
 #[cfg(windows)]
 use crate::api::bun::process::{WindowsOptions, WindowsStdioResult};
@@ -914,8 +914,8 @@ impl ShellSubprocess {
             }
 
             if matches!(status, Status::Signaled(_)) {
-                if let Some(code) = status.signal_code() {
-                    break 'brk Some(code.to_exit_code().unwrap());
+                if let Some(code) = status.signal_code().and_then(|c| c.to_exit_code()) {
+                    break 'brk Some(code);
                 }
             }
 

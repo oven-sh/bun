@@ -1015,14 +1015,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     signal_code.fmt(Output::enable_ansi_colors_stderr()),
                 );
 
-                // `Status::signal_code()` range-checks 1..=31 (`bun_core::SignalCode` is
-                // exhaustive); RT signals (>31) fall back to SIGTERM so the diverging
-                // `raise_ignoring_panic_handler` path is preserved.
-                Global::raise_ignoring_panic_handler(
-                    Status::Signaled(signal)
-                        .signal_code()
-                        .unwrap_or(bun_core::SignalCode::SIGTERM),
-                );
+                Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(signal));
             }
             Status::Err(err) => {
                 if self.optional {

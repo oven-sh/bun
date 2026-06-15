@@ -694,7 +694,7 @@ fn is_panic_status(status: &SpawnStatus) -> bool {
     let Some(sig) = status.signal_code() else {
         return false;
     };
-    use bun_core::SignalCode;
+    use bun_sys::SignalCode;
     matches!(
         sig,
         SignalCode::SIGILL

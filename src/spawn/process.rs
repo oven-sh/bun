@@ -165,7 +165,7 @@ impl Process {
         matches!(self.status, Status::Exited(_) | Status::Signaled(_))
     }
 
-    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
+    pub fn signal_code(&self) -> Option<bun_sys::SignalCode> {
         self.status.signal_code()
     }
 
@@ -713,10 +713,8 @@ pub enum Status {
     Running,
     Exited(Exited),
     /// Raw signal byte — any `u8` (incl. Linux RT signals 32..=64) is a valid
-    /// payload. `bun_core::SignalCode` is exhaustive 1..=31,
-    /// so storing it here would force lossy `Signaled→Exited` rewrites for RT
-    /// signals — observable as `{exitCode:0, signal:null}` in JS. Carry the raw
-    /// byte and range-check in `signal_code()` instead.
+    /// payload. `signal_code()` wraps it in the open `bun_sys::SignalCode`
+    /// newtype so JS observes the numeric value for signals without a name.
     Signaled(u8),
     Err(bun_sys::Error),
 }
@@ -777,36 +775,17 @@ impl Status {
                 signal: signal.unwrap_or(0),
             }));
         } else if let Some(sig) = signal {
-            // Any byte is valid. Carry the raw byte; `signal_code()` range-checks.
             return Some(Status::Signaled(sig));
         }
 
         None
     }
 
-    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
-        let raw = match self {
-            Status::Signaled(sig) => *sig,
-            Status::Exited(exit) => exit.signal,
-            _ => return None,
-        };
-        bun_core::SignalCode::from_raw(raw)
-    }
-}
-
-/// Local shim — `bun_core::SignalCode` does not yet expose this.
-/// Shell-convention: 128 + signal number for signals 1..=31, else `None`.
-pub trait SignalCodeExt {
-    fn to_exit_code(self) -> Option<u8>;
-}
-impl SignalCodeExt for bun_core::SignalCode {
-    #[inline]
-    fn to_exit_code(self) -> Option<u8> {
-        let n = self as u8;
-        if (1..=31).contains(&n) {
-            Some(128u8.wrapping_add(n))
-        } else {
-            None
+    pub fn signal_code(&self) -> Option<bun_sys::SignalCode> {
+        match self {
+            Status::Signaled(sig) => Some(bun_sys::SignalCode(*sig)),
+            Status::Exited(exit) if exit.signal > 0 => Some(bun_sys::SignalCode(exit.signal)),
+            _ => None,
         }
     }
 }

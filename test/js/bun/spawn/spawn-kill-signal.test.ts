@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { shellExe } from "harness";
+import { isLinux, shellExe } from "harness";
 import { constants } from "os";
 
 const inputs = {
@@ -81,5 +81,37 @@ describe("subprocess.kill", () => {
       expect(proc.exitCode).toBe(null);
       expect(proc.signalCode).toBe("SIGTERM");
     });
+  });
+});
+
+// Linux real-time signals (SIGRTMIN..SIGRTMAX, 32..64) have no name in the
+// SignalCode table; Bun.spawn must still surface the raw numeric signal in
+// both the `signalCode` getter and the third `onExit` argument rather than
+// dropping it to null.
+test.skipIf(!isLinux)("signalCode returns numeric value for real-time signals", async () => {
+  const { promise: exitPromise, resolve: onExitResolve } = Promise.withResolvers<any>();
+  await using proc = Bun.spawn({
+    cmd: ["sleep", "30"],
+    stdio: ["ignore", "ignore", "ignore"],
+    onExit(_subprocess, exitCode, signalCode) {
+      onExitResolve({ exitCode, signalCode });
+    },
+  });
+
+  // SIGRTMIN is >= 32 on every Linux libc; pick a value comfortably inside the
+  // RT range on both glibc (SIGRTMIN=34) and musl (SIGRTMIN=35).
+  const rtSignal = 40;
+  process.kill(proc.pid, rtSignal);
+  await proc.exited;
+  const onExitArgs = await exitPromise;
+
+  expect({
+    signalCode: proc.signalCode,
+    exitCode: proc.exitCode,
+    onExit: onExitArgs,
+  }).toEqual({
+    signalCode: rtSignal,
+    exitCode: null,
+    onExit: { exitCode: null, signalCode: rtSignal },
   });
 });

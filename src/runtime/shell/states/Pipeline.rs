@@ -323,10 +323,7 @@ impl Pipeline {
             // detects the in-flight enqueue via `WaitingWriteErr` and only
             // transitions to `Done{1}` without driving; steer the outer frame
             // to completion here instead.
-            if matches!(
-                interp.as_pipeline(this).state,
-                PipelineState::Done { .. }
-            ) {
+            if matches!(interp.as_pipeline(this).state, PipelineState::Done { .. }) {
                 return Yield::Next(this);
             }
             // Armed for async completion: `on_io_writer_chunk` may now drive.

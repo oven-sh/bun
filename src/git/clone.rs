@@ -72,10 +72,16 @@ pub fn clone(url: &str, dest: &[u8], opts: &CloneOptions) -> Result<Oid> {
     if jobs == 1 {
         // Single-connection path: one full pack, identical to `git clone`.
         let buf = fetch_pack(&remote, &wants, &[], None, opts.quiet)?;
-        log(opts, format_args!("\nReceived {} bytes in {:.2}s", buf.len(), s(t0)));
+        log(
+            opts,
+            format_args!("\nReceived {} bytes in {:.2}s", buf.len(), s(t0)),
+        );
         let t1 = Timer::start().unwrap();
         odb.push(PackIndex::build(buf, &mut Default::default())?);
-        log(opts, format_args!("Indexed {} objects in {:.2}s", odb.packs()[0].len(), s(t1)));
+        log(
+            opts,
+            format_args!("Indexed {} objects in {:.2}s", odb.packs()[0].len(), s(t1)),
+        );
     } else {
         // ── Phase A: skeleton (commits + trees + tags) ────────────────────
         // Partition history at semver-sorted tags so the skeleton downloads
@@ -128,10 +134,10 @@ pub fn clone(url: &str, dest: &[u8], opts: &CloneOptions) -> Result<Oid> {
         let mut wave1_sent = false;
 
         let index_one = |buf: Vec<u8>,
-                             all: &mut crate::pack::OidMap<u32>,
-                             odb: &mut Odb,
-                             total_objs: &mut usize,
-                             skel_bytes: &mut usize|
+                         all: &mut crate::pack::OidMap<u32>,
+                         odb: &mut Odb,
+                         total_objs: &mut usize,
+                         skel_bytes: &mut usize|
          -> Result<()> {
             *skel_bytes += buf.len();
             let mut sink = crate::pack::BlobSink {
@@ -163,7 +169,13 @@ pub fn clone(url: &str, dest: &[u8], opts: &CloneOptions) -> Result<Oid> {
                 let buckets = bucket_blobs(&all, jobs, None);
                 blob_wg.add(buckets.len());
                 dispatch_blob_fetches(
-                    &remote, &git_dir, buckets, opts.quiet, &blob_wg, &blob_out, &blob_bytes,
+                    &remote,
+                    &git_dir,
+                    buckets,
+                    opts.quiet,
+                    &blob_wg,
+                    &blob_out,
+                    &blob_bytes,
                 );
                 wave1_sent = true;
                 // Wave-2: index this batch into a *fresh* map, then dispatch
@@ -175,7 +187,13 @@ pub fn clone(url: &str, dest: &[u8], opts: &CloneOptions) -> Result<Oid> {
                 let buckets = bucket_blobs(&tail, jobs, Some(&all));
                 blob_wg.add(buckets.len());
                 dispatch_blob_fetches(
-                    &remote, &git_dir, buckets, opts.quiet, &blob_wg, &blob_out, &blob_bytes,
+                    &remote,
+                    &git_dir,
+                    buckets,
+                    opts.quiet,
+                    &blob_wg,
+                    &blob_out,
+                    &blob_bytes,
                 );
                 break;
             }
@@ -188,7 +206,13 @@ pub fn clone(url: &str, dest: &[u8], opts: &CloneOptions) -> Result<Oid> {
             let buckets = bucket_blobs(&all, jobs, None);
             blob_wg.add(buckets.len());
             dispatch_blob_fetches(
-                &remote, &git_dir, buckets, opts.quiet, &blob_wg, &blob_out, &blob_bytes,
+                &remote,
+                &git_dir,
+                buckets,
+                opts.quiet,
+                &blob_wg,
+                &blob_out,
+                &blob_bytes,
             );
         }
         let t2 = Timer::start().unwrap();
@@ -201,7 +225,11 @@ pub fn clone(url: &str, dest: &[u8], opts: &CloneOptions) -> Result<Oid> {
                 n_slices,
                 s(t0),
                 jobs,
-                if wave1_sent { " (wave-1 fired pre-index)" } else { "" }
+                if wave1_sent {
+                    " (wave-1 fired pre-index)"
+                } else {
+                    ""
+                }
             ),
         );
         // Skeleton packs to disk while blobs download.
@@ -439,8 +467,8 @@ fn write_pack_and_idx(git_dir: &[u8], p: &PackIndex) -> Result<()> {
 /// Standalone index-pack: read `pack_path`, write `<pack_path%.pack>.idx`.
 /// Same work `git index-pack` does — used for apples-to-apples benchmarking.
 pub fn index_pack_file(pack_path: &[u8]) -> Result<Oid> {
-    let pack =
-        bun_sys::File::openat(bun_core::Fd::cwd(), pack_path, bun_sys::O::RDONLY, 0)?.read_to_end()?;
+    let pack = bun_sys::File::openat(bun_core::Fd::cwd(), pack_path, bun_sys::O::RDONLY, 0)?
+        .read_to_end()?;
     let mut tm = crate::pack::Timings::default();
     let t = Timer::start().unwrap();
     let idx = PackIndex::build(pack, &mut tm)?;

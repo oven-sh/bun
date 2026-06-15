@@ -579,7 +579,6 @@ mod ssh {
     }
 }
 
-
 fn build_headers(content_type: Option<&str>) -> http::HeaderBuilder {
     let mut hb = http::HeaderBuilder::default();
     hb.count(GIT_PROTOCOL.0, GIT_PROTOCOL.1);
@@ -643,7 +642,10 @@ mod tests {
             "ssh://git@github.com:22/owner/repo.git",
             "git@github.com:owner/repo.git",
         ] {
-            assert!(matches!(Remote::parse(url), Ok(Remote::Ssh { .. })), "{url}");
+            assert!(
+                matches!(Remote::parse(url), Ok(Remote::Ssh { .. })),
+                "{url}"
+            );
         }
     }
 }

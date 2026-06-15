@@ -112,4 +112,3 @@ impl Odb {
         Err(Error::Pack(format!("object {oid} not in any pack")))
     }
 }
-

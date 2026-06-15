@@ -122,7 +122,6 @@ fn check_ref_format(raw: &[u8]) -> Result<&str> {
     Ok(s)
 }
 
-
 #[cold]
 fn unsupported(first: &[u8]) -> Error {
     Error::Protocol(format!(
@@ -314,16 +313,11 @@ impl<P: FnMut(&[u8]) -> Result<()>> SidebandDemux<P> {
                                     // Band 2 is human progress text; runs on
                                     // the HTTP thread, so go straight to the
                                     // raw fd rather than the buffered Output.
-                                    let _ = bun_sys::write(
-                                        bun_core::Fd::stderr(),
-                                        data,
-                                    );
+                                    let _ = bun_sys::write(bun_core::Fd::stderr(), data);
                                 }
                             }
                             3 => {
-                                return Err(Error::Remote(
-                                    bstr::BStr::new(data).to_string(),
-                                ));
+                                return Err(Error::Remote(bstr::BStr::new(data).to_string()));
                             }
                             n => {
                                 return Err(Error::Protocol(format!("invalid side-band {n}")));

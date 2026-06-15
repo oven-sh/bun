@@ -59,7 +59,8 @@ pub(crate) fn checkout(odb: &Odb, tree: Oid, root: &[u8]) -> Result<Vec<IndexEnt
             crate::pack::with_inflate(|inf| {
                 let mut buf = Vec::new();
                 let mut conv = Vec::new();
-                if let Err(e) = write_blob(ctx.odb, &ctx.jobs[i as usize], inf, &mut buf, &mut conv) {
+                if let Err(e) = write_blob(ctx.odb, &ctx.jobs[i as usize], inf, &mut buf, &mut conv)
+                {
                     *ctx.err.lock() = Some(e);
                 }
             });
@@ -139,7 +140,12 @@ fn walk(
                         oid,
                         path: path[root_len + 1..].to_vec(),
                     });
-                    out.push(BlobJob { path, oid, mode, eol });
+                    out.push(BlobJob {
+                        path,
+                        oid,
+                        mode,
+                        eol,
+                    });
                 }
             }
         }
@@ -315,7 +321,11 @@ struct Rule {
 fn find_gitattributes(tree: &[u8]) -> Result<Option<Oid>> {
     for entry in TreeIter::new(tree) {
         let TreeEntry { mode, name, oid } = entry?;
-        if name == b".gitattributes" && mode != MODE_DIR && mode != MODE_GITLINK && mode != MODE_LINK {
+        if name == b".gitattributes"
+            && mode != MODE_DIR
+            && mode != MODE_GITLINK
+            && mode != MODE_LINK
+        {
             return Ok(Some(oid));
         }
     }

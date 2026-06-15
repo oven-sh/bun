@@ -303,7 +303,9 @@ impl PackIndex {
         serial: bool,
     ) -> Result<Self> {
         if pack.len() < 12 + TRAILER {
-            return Err(Error::Pack("truncated (shorter than header+trailer)".into()));
+            return Err(Error::Pack(
+                "truncated (shorter than header+trailer)".into(),
+            ));
         }
         if pack[..4] != SIGNATURE {
             return Err(Error::Pack("bad signature (not 'PACK')".into()));
@@ -470,9 +472,7 @@ impl PackIndex {
                 oid_to_idx.insert(e.oid.get(), i as u32);
             }
             if !pending_ref.is_empty() {
-                return Err(Error::Pack(
-                    "REF_DELTA in blob pack (serial path)".into(),
-                ));
+                return Err(Error::Pack("REF_DELTA in blob pack (serial path)".into()));
             }
             return Ok(PackIndex {
                 pack,
@@ -537,10 +537,7 @@ impl PackIndex {
             mut err, mut sinks, ..
         } = ctx;
         if blob_sink.want {
-            blob_sink
-                .seen
-                .ensure_total_capacity(nobjects)
-                .expect("OOM");
+            blob_sink.seen.ensure_total_capacity(nobjects).expect("OOM");
             for s in core::mem::take(sinks.get_mut()) {
                 s.merge_into(&mut blob_sink.seen);
             }
@@ -635,7 +632,6 @@ impl PackIndex {
     pub(crate) fn pack_bytes(&self) -> &[u8] {
         &self.pack
     }
-
 
     /// Look up an object by id and inflate it. Delta chains are walked to the
     /// root. `inflate` is caller-owned so a hot loop (checkout) reuses it.
@@ -818,9 +814,10 @@ fn resolve_subtree(
     let Base::None(kind) = root_e.base else {
         unreachable!("resolve_subtree called on a delta root")
     };
-    root_e
-        .crc32
-        .set(crc32_of(0, &pack[root_e.offset as usize..root_e.next_offset as usize]));
+    root_e.crc32.set(crc32_of(
+        0,
+        &pack[root_e.offset as usize..root_e.next_offset as usize],
+    ));
     let mut base = Vec::new();
     inflate.inflate_into(
         &pack[root_e.data_offset as usize..end],
@@ -845,9 +842,10 @@ fn resolve_subtree(
             continue;
         };
         let child = &entries[child_idx as usize];
-        child
-            .crc32
-            .set(crc32_of(0, &pack[child.offset as usize..child.next_offset as usize]));
+        child.crc32.set(crc32_of(
+            0,
+            &pack[child.offset as usize..child.next_offset as usize],
+        ));
         inflate.inflate_into(
             &pack[child.data_offset as usize..end],
             child.inflated_size as usize,

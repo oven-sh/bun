@@ -65,7 +65,11 @@ fn emit_entry(buf: &mut Vec<u8>, e: &IndexEntry, st: Option<&bun_sys::PosixStat>
     // gitformat-index(5): only 0755 and 0644 are valid for regular files.
     let mode = match e.mode {
         m if m & 0o170000 == 0o100000 => {
-            if m & 0o100 != 0 { 0o100755 } else { 0o100644 }
+            if m & 0o100 != 0 {
+                0o100755
+            } else {
+                0o100644
+            }
         }
         m => m,
     };

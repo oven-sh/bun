@@ -4,7 +4,7 @@
 // pack indexing, and checkout are all exercised against bytes a real git
 // server produced — without touching the network.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";

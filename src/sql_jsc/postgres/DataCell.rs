@@ -1,4 +1,4 @@
-use core::mem::size_of;
+use core::mem::{MaybeUninit, size_of};
 
 use crate::jsc::{JSGlobalObject, JSValue};
 use bun_core::String as BunString;
@@ -44,8 +44,8 @@ fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
 
 fn unescape_postgres_string<'a>(
     input: &[u8],
-    buffer: &'a mut [u8],
-) -> Result<&'a mut [u8], bun_core::Error> {
+    buffer: &'a mut [MaybeUninit<u8>],
+) -> Result<&'a [u8], bun_core::Error> {
     let mut out_index: usize = 0;
     let mut i: usize = 0;
 
@@ -54,21 +54,21 @@ fn unescape_postgres_string<'a>(
             return Err(err!("BufferTooSmall"));
         }
 
-        if input[i] == b'\\' && i + 1 < input.len() {
+        let byte: u8 = if input[i] == b'\\' && i + 1 < input.len() {
             i += 1;
             match input[i] {
                 // Common escapes
-                b'b' => buffer[out_index] = 0x08,   // Backspace
-                b'f' => buffer[out_index] = 0x0C,   // Form feed
-                b'n' => buffer[out_index] = b'\n',  // Line feed
-                b'r' => buffer[out_index] = b'\r',  // Carriage return
-                b't' => buffer[out_index] = b'\t',  // Tab
-                b'"' => buffer[out_index] = b'"',   // Double quote
-                b'\\' => buffer[out_index] = b'\\', // Backslash
-                b'\'' => buffer[out_index] = b'\'', // Single quote
+                b'b' => 0x08,   // Backspace
+                b'f' => 0x0C,   // Form feed
+                b'n' => b'\n',  // Line feed
+                b'r' => b'\r',  // Carriage return
+                b't' => b'\t',  // Tab
+                b'"' => b'"',   // Double quote
+                b'\\' => b'\\', // Backslash
+                b'\'' => b'\'', // Single quote
 
                 // JSON allows forward slash escaping
-                b'/' => buffer[out_index] = b'/',
+                b'/' => b'/',
 
                 // PostgreSQL hex escapes (used for unicode too)
                 b'x' => {
@@ -77,20 +77,24 @@ fn unescape_postgres_string<'a>(
                     }
                     let hex_value = bun_core::fmt::parse_int::<u8>(&input[i + 1..i + 3], 16)
                         .map_err(|_| err!("InvalidEscapeSequence"))?;
-                    buffer[out_index] = hex_value;
                     i += 2;
+                    hex_value
                 }
 
                 _ => return Err(err!("UnknownEscapeSequence")),
             }
         } else {
-            buffer[out_index] = input[i];
-        }
+            input[i]
+        };
+        buffer[out_index].write(byte);
         out_index += 1;
         i += 1;
     }
 
-    Ok(&mut buffer[0..out_index])
+    // SAFETY: every element in `buffer[0..out_index]` was initialized by the
+    // `.write()` above (one write per increment of `out_index`), and
+    // `out_index <= buffer.len()` via the bounds check at the top of the loop.
+    Ok(unsafe { core::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), out_index) })
 }
 
 fn try_slice(slice: &[u8], count: usize) -> &[u8] {
@@ -149,7 +153,10 @@ fn parse_array(
     });
     let mut array = array;
 
-    let mut stack_buffer = [0u8; 16 * 1024];
+    // Zig: `var stack_buffer: [16*1024]u8 = undefined;` — unescape_postgres_string
+    // writes before any read, so skip the 16 KiB memset per call (and per
+    // recursive sub-array).
+    let mut stack_buffer = [MaybeUninit::<u8>::uninit(); 16 * 1024];
 
     let mut slice = &bytes[1..];
     let mut reached_end = false;
@@ -235,9 +242,9 @@ fn parse_array(
                 types::Tag::json_array | types::Tag::jsonb_array => {
                     let str_bytes = &slice[1..current_idx];
                     let needs_dynamic_buffer = str_bytes.len() > stack_buffer.len();
-                    let mut dyn_buffer: Vec<u8>;
-                    let buffer: &mut [u8] = if needs_dynamic_buffer {
-                        dyn_buffer = vec![0u8; str_bytes.len()];
+                    let mut dyn_buffer: Box<[MaybeUninit<u8>]>;
+                    let buffer: &mut [MaybeUninit<u8>] = if needs_dynamic_buffer {
+                        dyn_buffer = Box::new_uninit_slice(str_bytes.len());
                         &mut dyn_buffer[..]
                     } else {
                         &mut stack_buffer[0..str_bytes.len()]
@@ -276,9 +283,9 @@ fn parse_array(
                 continue;
             }
             let needs_dynamic_buffer = str_bytes.len() > stack_buffer.len();
-            let mut dyn_buffer: Vec<u8>;
-            let buffer: &mut [u8] = if needs_dynamic_buffer {
-                dyn_buffer = vec![0u8; str_bytes.len()];
+            let mut dyn_buffer: Box<[MaybeUninit<u8>]>;
+            let buffer: &mut [MaybeUninit<u8>] = if needs_dynamic_buffer {
+                dyn_buffer = Box::new_uninit_slice(str_bytes.len());
                 &mut dyn_buffer[..]
             } else {
                 &mut stack_buffer[0..str_bytes.len()]

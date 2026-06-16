@@ -1244,7 +1244,7 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
   expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
 });
 
-describe("process.emitWarning default output", () => {
+describe.concurrent("process.emitWarning default output", () => {
   // https://github.com/oven-sh/bun/issues/9867
   it("includes detail on its own line", async () => {
     await using proc = Bun.spawn({
@@ -1340,6 +1340,56 @@ describe("process.emitWarning default output", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
     expect(stderr.trim()).toMatch(/^\(bun:\d+\) Error: tostring test$/);
+    expect(exitCode).toBe(0);
+  });
+
+  it("includes stack when process.traceProcessWarnings is truthy", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        process.traceProcessWarnings = true;
+        process.emitWarning("trace me", { code: "TRC", detail: "extra" });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    const lines = stderr.trim().split("\n");
+    expect(lines.length).toBeGreaterThanOrEqual(3);
+    expect(lines[0]).toMatch(/^\(bun:\d+\) \[TRC\] Warning: trace me$/);
+    expect(lines.at(-1)).toBe("extra");
+    // at least one stack frame between the header and the detail line
+    expect(lines.slice(1, -1).some(l => /^\s+at /.test(l))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  it("includes stack for DeprecationWarning when process.traceDeprecation is truthy", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        process.traceDeprecation = true;
+        process.emitWarning("dep", "DeprecationWarning");
+        process.emitWarning("other", "OtherWarning");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    const lines = stderr.trim().split("\n");
+    expect(lines[0]).toMatch(/^\(bun:\d+\) DeprecationWarning: dep$/);
+    expect(lines.some(l => /^\s+at /.test(l))).toBe(true);
+    // traceDeprecation only affects DeprecationWarning
+    expect(lines.at(-1)).toMatch(/^\(bun:\d+\) OtherWarning: other$/);
     expect(exitCode).toBe(0);
   });
 });

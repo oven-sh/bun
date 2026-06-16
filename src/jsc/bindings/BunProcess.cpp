@@ -1610,9 +1610,38 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalG
                 builder.append("] "_s);
             }
 
+            JSValue traceProcessWarnings = process->getIfPropertyExists(globalObject, Identifier::fromString(vm, "traceProcessWarnings"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            bool trace = traceProcessWarnings && traceProcessWarnings.toBoolean(globalObject);
+            if (!trace) {
+                JSValue warningName = warning->getIfPropertyExists(globalObject, vm.propertyNames->name);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (warningName && warningName.isString()) {
+                    auto warningNameStr = warningName.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (warningNameStr == "DeprecationWarning"_s) {
+                        JSValue traceDeprecation = process->getIfPropertyExists(globalObject, Identifier::fromString(vm, "traceDeprecation"_s));
+                        RETURN_IF_EXCEPTION(scope, {});
+                        trace = traceDeprecation && traceDeprecation.toBoolean(globalObject);
+                    }
+                }
+            }
+
+            String stackStr;
+            if (trace) {
+                JSValue stack = warning->getIfPropertyExists(globalObject, vm.propertyNames->stack);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (stack && stack.toBoolean(globalObject)) {
+                    stackStr = stack.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+            }
+
             JSValue toStringFn = warning->get(globalObject, vm.propertyNames->toString);
             RETURN_IF_EXCEPTION(scope, {});
-            if (toStringFn.isCallable()) {
+            if (!stackStr.isNull()) {
+                builder.append(stackStr);
+            } else if (toStringFn.isCallable()) {
                 JSC::MarkedArgumentBuffer noArgs;
                 auto callData = JSC::getCallData(toStringFn);
                 JSValue result = JSC::call(globalObject, toStringFn, callData, warning, noArgs);

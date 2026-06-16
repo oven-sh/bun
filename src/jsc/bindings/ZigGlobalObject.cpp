@@ -1520,6 +1520,39 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer,
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(arrayBuffer))));
 }
 
+// Implements the spec's TransferArrayBuffer: detaches the supplied ArrayBuffer
+// and returns a new ArrayBuffer that takes ownership of the same data block
+// (zero-copy move). Used by the byte stream internals so that BYOB reads and
+// enqueues detach the caller-supplied buffer as required by the Streams spec.
+JSC_DECLARE_HOST_FUNCTION(functionTransferArrayBuffer);
+JSC_DEFINE_HOST_FUNCTION(functionTransferArrayBuffer,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSArrayBuffer* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(callFrame->argument(0));
+    if (!jsBuffer || jsBuffer->impl()->sharingMode() != JSC::ArrayBufferSharingMode::Default) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "Receiver must be an ArrayBuffer"_s);
+        return {};
+    }
+
+    auto* impl = jsBuffer->impl();
+    if (impl->isDetached()) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "Cannot transfer a detached ArrayBuffer"_s);
+        return {};
+    }
+
+    JSC::ArrayBufferContents contents;
+    if (!impl->transferTo(vm, contents)) [[unlikely]] {
+        JSC::throwRangeError(globalObject, scope, "ArrayBuffer transfer failed"_s);
+        return {};
+    }
+
+    auto newBuffer = JSC::ArrayBuffer::create(WTF::move(contents));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(newBuffer))));
+}
+
 static inline JSC::EncodedJSValue jsFunctionAddEventListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, Zig::GlobalObject* castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -2954,6 +2987,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.overridableRequirePrivateName(), commonJSOverridableRequireCodeGenerator(vm), 0);
 
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectNativeFunction(vm, this, builtinNames.transferArrayBufferPrivateName(), 1, functionTransferArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.resolveSyncPrivateName(), 1, functionImportMeta__resolveSyncPrivate, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.createInternalModuleByIdPrivateName(), 1, InternalModuleRegistry::jsCreateInternalModuleById, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 

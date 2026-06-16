@@ -386,6 +386,7 @@ declare function $createEmptyReadableStream(): TODO;
 declare function $createFIFO(): TODO;
 declare function $createNativeReadableStream(): TODO;
 declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
+declare function $transferArrayBuffer(buffer: ArrayBuffer): ArrayBuffer;
 declare function $createWritableStreamFromInternal(...args: any[]): TODO;
 declare function $data(): TODO;
 declare function $dataView(): TODO;

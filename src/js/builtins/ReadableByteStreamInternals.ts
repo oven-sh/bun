@@ -280,11 +280,9 @@ export function readableByteStreamControllerCallPullIfNeeded(controller) {
 }
 
 export function transferBufferToCurrentRealm(buffer) {
-  // FIXME: Determine what should be done here exactly (what is already existing in current
-  // codebase and what has to be added). According to spec, Transfer operation should be
-  // performed in order to transfer buffer to current realm. For the moment, simply return
-  // received buffer.
-  return buffer;
+  // Spec operation TransferArrayBuffer: detach the buffer and return a new one
+  // that owns the same bytes. $transferArrayBuffer is a non-overridable native.
+  return $transferArrayBuffer(buffer);
 }
 
 export function readableStreamReaderKind(reader) {
@@ -300,6 +298,11 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
   $assert(!$getByIdDirectPrivate(controller, "closeRequested"));
   $assert($getByIdDirectPrivate(stream, "state") === $streamReadable);
 
+  // Spec (ReadableByteStreamControllerEnqueue): the chunk's buffer is transferred
+  // (detached) below. Read its geometry first, since detaching zeroes it.
+  const byteOffset = chunk.byteOffset;
+  const byteLength = chunk.byteLength;
+
   switch (
     $getByIdDirectPrivate(stream, "reader") ? $readableStreamReaderKind($getByIdDirectPrivate(stream, "reader")) : 0
   ) {
@@ -309,13 +312,12 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
         $readableByteStreamControllerEnqueueChunk(
           controller,
           $transferBufferToCurrentRealm(chunk.buffer),
-          chunk.byteOffset,
-          chunk.byteLength,
+          byteOffset,
+          byteLength,
         );
       else {
         $assert(!$getByIdDirectPrivate(controller, "queue").content.size());
-        const transferredView =
-          chunk.constructor === Uint8Array ? chunk : new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+        const transferredView = new Uint8Array($transferBufferToCurrentRealm(chunk.buffer), byteOffset, byteLength);
         $readableStreamFulfillReadRequest(stream, transferredView, false);
       }
       break;
@@ -326,8 +328,8 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
       $readableByteStreamControllerEnqueueChunk(
         controller,
         $transferBufferToCurrentRealm(chunk.buffer),
-        chunk.byteOffset,
-        chunk.byteLength,
+        byteOffset,
+        byteLength,
       );
       $readableByteStreamControllerProcessPullDescriptors(controller);
       break;
@@ -345,8 +347,8 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
       $readableByteStreamControllerEnqueueChunk(
         controller,
         $transferBufferToCurrentRealm(chunk.buffer),
-        chunk.byteOffset,
-        chunk.byteLength,
+        byteOffset,
+        byteLength,
       );
       break;
     }
@@ -373,8 +375,11 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
 
   if (firstDescriptor!.byteLength < view.byteLength) throw $ERR_INVALID_ARG_VALUE("view", view);
 
-  firstDescriptor!.buffer = view.buffer;
-  $readableByteStreamControllerRespondInternal(controller, view.byteLength);
+  // Spec: transfer the supplied view's buffer (detaching it). Capture byteLength
+  // first, since detaching zeroes it.
+  const viewByteLength = view.byteLength;
+  firstDescriptor!.buffer = $transferBufferToCurrentRealm(view.buffer);
+  $readableByteStreamControllerRespondInternal(controller, viewByteLength);
 }
 
 export function readableByteStreamControllerRespond(controller, bytesWritten) {
@@ -422,7 +427,6 @@ export function readableByteStreamControllerRespondInReadableState(controller, b
     $readableByteStreamControllerEnqueueChunk(controller, remainder, 0, remainder.byteLength);
   }
 
-  pullIntoDescriptor.buffer = $transferBufferToCurrentRealm(pullIntoDescriptor.buffer);
   pullIntoDescriptor.bytesFilled -= remainderSize;
   $readableByteStreamControllerCommitDescriptor(
     $getByIdDirectPrivate(controller, "controlledReadableStream"),
@@ -432,7 +436,6 @@ export function readableByteStreamControllerRespondInReadableState(controller, b
 }
 
 export function readableByteStreamControllerRespondInClosedState(controller, firstDescriptor) {
-  firstDescriptor.buffer = $transferBufferToCurrentRealm(firstDescriptor.buffer);
   $assert(firstDescriptor.bytesFilled === 0);
 
   if ($readableStreamHasBYOBReader($getByIdDirectPrivate(controller, "controlledReadableStream"))) {
@@ -610,10 +613,16 @@ export function readableByteStreamControllerPullInto(controller, view) {
   // name has already been met before.
   const ctor = view.constructor;
 
+  // Spec (ReadableByteStreamControllerPullInto): transfer the view's buffer up
+  // front so every path below uses the detached buffer and the caller's view is
+  // always detached. Read the geometry first, since detaching zeroes it.
+  const byteOffset = view.byteOffset;
+  const byteLength = view.byteLength;
+
   const pullIntoDescriptor: PullIntoDescriptor = {
-    buffer: view.buffer,
-    byteOffset: view.byteOffset,
-    byteLength: view.byteLength,
+    buffer: $transferBufferToCurrentRealm(view.buffer),
+    byteOffset,
+    byteLength,
     bytesFilled: 0,
     elementSize,
     ctor,
@@ -622,7 +631,6 @@ export function readableByteStreamControllerPullInto(controller, view) {
 
   var pending = $getByIdDirectPrivate(controller, "pendingPullIntos");
   if (pending?.isNotEmpty()) {
-    pullIntoDescriptor.buffer = $transferBufferToCurrentRealm(pullIntoDescriptor.buffer);
     pending.push(pullIntoDescriptor);
     return $readableStreamAddReadIntoRequest(stream);
   }
@@ -645,7 +653,6 @@ export function readableByteStreamControllerPullInto(controller, view) {
     }
   }
 
-  pullIntoDescriptor.buffer = $transferBufferToCurrentRealm(pullIntoDescriptor.buffer);
   $getByIdDirectPrivate(controller, "pendingPullIntos").push(pullIntoDescriptor);
   const promise = $readableStreamAddReadIntoRequest(stream);
   $readableByteStreamControllerCallPullIfNeeded(controller);

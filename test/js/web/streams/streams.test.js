@@ -1290,3 +1290,144 @@ it("reader.cancel() settles a pending BYOB read with done: true (whatwg Readable
   expect(result.done).toBe(true);
   expect(result.value).toBeUndefined();
 });
+
+// Per the WHATWG Streams spec, a byte stream transfers (detaches) the
+// caller-supplied ArrayBuffer when it is handed to the controller.
+// https://github.com/oven-sh/bun/issues/32402
+describe("ReadableStream byte source detaches supplied ArrayBuffers", () => {
+  it("BYOB read() detaches the supplied view and its buffer", async () => {
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        controller.byobRequest.view[0] = 42;
+        controller.byobRequest.respond(1);
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const view = new Uint8Array(1);
+    const originalBuffer = view.buffer;
+
+    const { done, value } = await reader.read(view);
+
+    // The supplied view and its backing buffer are detached.
+    expect(view.byteLength).toBe(0);
+    expect(originalBuffer.byteLength).toBe(0);
+    expect(() => new Uint8Array(originalBuffer)).toThrow(TypeError);
+
+    // The resolved value is a fresh view over the transferred buffer and
+    // carries the byte the source wrote.
+    expect(done).toBe(false);
+    expect(value).toBeInstanceOf(Uint8Array);
+    expect(value.byteLength).toBe(1);
+    expect(value[0]).toBe(42);
+    expect(value.buffer).not.toBe(originalBuffer);
+    expect(value.buffer.byteLength).toBe(1);
+  });
+
+  it("BYOB read() satisfied synchronously from the queue detaches the view", async () => {
+    let controller;
+    const stream = new ReadableStream({
+      type: "bytes",
+      start(c) {
+        controller = c;
+      },
+    });
+    controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+
+    const reader = stream.getReader({ mode: "byob" });
+    const view = new Uint8Array(4);
+    const originalBuffer = view.buffer;
+
+    const { value } = await reader.read(view);
+
+    expect(view.byteLength).toBe(0);
+    expect(originalBuffer.byteLength).toBe(0);
+    expect(Array.from(value)).toEqual([1, 2, 3, 4]);
+    expect(value.buffer).not.toBe(originalBuffer);
+  });
+
+  it("BYOB read() on a closed stream detaches the view", async () => {
+    const stream = new ReadableStream({
+      type: "bytes",
+      start(controller) {
+        controller.close();
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const view = new Uint8Array(4);
+    const originalBuffer = view.buffer;
+
+    const { done, value } = await reader.read(view);
+
+    expect(done).toBe(true);
+    expect(originalBuffer.byteLength).toBe(0);
+    expect(value).toBeInstanceOf(Uint8Array);
+    expect(value.byteLength).toBe(0);
+  });
+
+  it("byobRequest.respondWithNewView() detaches both the read view and the new view", async () => {
+    let newViewBuffer;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        const newView = new Uint8Array(controller.byobRequest.view.byteLength);
+        newView[0] = 7;
+        newViewBuffer = newView.buffer;
+        controller.byobRequest.respondWithNewView(newView);
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const view = new Uint8Array(4);
+    const originalBuffer = view.buffer;
+
+    const { value } = await reader.read(view);
+
+    expect(originalBuffer.byteLength).toBe(0);
+    expect(newViewBuffer.byteLength).toBe(0);
+    expect(Array.from(value)).toEqual([7, 0, 0, 0]);
+    expect(value.buffer).not.toBe(originalBuffer);
+    expect(value.buffer).not.toBe(newViewBuffer);
+  });
+
+  it("controller.enqueue() detaches the enqueued chunk's buffer", async () => {
+    let controller;
+    const stream = new ReadableStream({
+      type: "bytes",
+      start(c) {
+        controller = c;
+      },
+    });
+    const chunk = new Uint8Array([9, 8, 7]);
+    const chunkBuffer = chunk.buffer;
+    controller.enqueue(chunk);
+    controller.close();
+
+    expect(chunk.byteLength).toBe(0);
+    expect(chunkBuffer.byteLength).toBe(0);
+
+    const bytes = await readableStreamToBytes(stream);
+    expect(Array.from(bytes)).toEqual([9, 8, 7]);
+  });
+
+  it("enqueue() with a waiting default reader detaches the chunk and delivers its bytes", async () => {
+    let controller;
+    const stream = new ReadableStream({
+      type: "bytes",
+      start(c) {
+        controller = c;
+      },
+    });
+    const reader = stream.getReader();
+    const readPromise = reader.read();
+
+    const chunk = new Uint8Array([5, 6, 7]);
+    const chunkBuffer = chunk.buffer;
+    controller.enqueue(chunk);
+
+    expect(chunkBuffer.byteLength).toBe(0);
+
+    const { value } = await readPromise;
+    expect(value).toBeInstanceOf(Uint8Array);
+    expect(Array.from(value)).toEqual([5, 6, 7]);
+  });
+});

@@ -1243,3 +1243,103 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
   const got = JSON.parse(child.stdout.toString().trim());
   expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
 });
+
+describe("process.emitWarning default output", () => {
+  // https://github.com/oven-sh/bun/issues/9867
+  it("includes detail on its own line", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.emitWarning("Warning!", { code: "CODE", detail: "Should do this..." });`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    const lines = stderr.trim().split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^\(bun:\d+\) \[CODE\] Warning: Warning!$/);
+    expect(lines[1]).toBe("Should do this...");
+    expect(exitCode).toBe(0);
+  });
+
+  it("formats as (bun:<pid>) [<code>] <name>: <message>", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        process.emitWarning("msg only");
+        process.emitWarning("msg with type", "MyType");
+        process.emitWarning("msg with type and code", "MyType", "MY_CODE");
+        process.emitWarning("msg with options", { type: "MyType2", code: "C2", detail: "D2" });
+        const e = new Error("err with fields");
+        e.name = "CustomName";
+        e.code = "ECODE";
+        e.detail = "EDetail";
+        process.emitWarning(e);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    const normalized = stderr
+      .trim()
+      .split("\n")
+      .map(line => line.replace(/^\(bun:\d+\) /, "(bun:<pid>) "));
+    expect(normalized).toEqual([
+      "(bun:<pid>) Warning: msg only",
+      "(bun:<pid>) MyType: msg with type",
+      "(bun:<pid>) [MY_CODE] MyType: msg with type and code",
+      "(bun:<pid>) [C2] MyType2: msg with options",
+      "D2",
+      "(bun:<pid>) [ECODE] CustomName: err with fields",
+      "EDetail",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("omits detail when it is not a string", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const e = new Error("msg");
+        e.detail = 123;
+        process.emitWarning(e);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr.trim()).toMatch(/^\(bun:\d+\) Error: msg$/);
+    expect(exitCode).toBe(0);
+  });
+
+  it("falls back to Error.prototype.toString when toString is not a function", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const e = new Error("tostring test");
+        e.toString = 1;
+        process.emitWarning(e);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr.trim()).toMatch(/^\(bun:\d+\) Error: tostring test$/);
+    expect(exitCode).toBe(0);
+  });
+});

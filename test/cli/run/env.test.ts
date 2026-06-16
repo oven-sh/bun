@@ -260,11 +260,15 @@ test(".env nested default substitution resolves (#32411)", () => {
       "NE_INNER=innerval",
       "NE_USEINNER=${NE_UC:-${NE_INNER:-fallback}}",
       "NE_TRIPLE=${NE_TA:-${NE_TB:-${NE_TC:-z}}}",
+      // A bare `{` in a default is literal: the first `}` closes the
+      // substitution (matches bash), but balanced braces are preserved.
+      "NE_BRACE=${NE_BU:-{}",
+      "NE_URL=${NE_UU:-http://x/{id}}",
     ].join("\n"),
-    "index.ts": `console.log([process.env.NE_DEEP, process.env.NE_USEINNER, process.env.NE_TRIPLE].join("|"));`,
+    "index.ts": `console.log([process.env.NE_DEEP, process.env.NE_USEINNER, process.env.NE_TRIPLE, process.env.NE_BRACE, process.env.NE_URL].join("|"));`,
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
-  expect(stdout).toBe("deep|innerval|z");
+  expect(stdout).toBe("deep|innerval|z|{|http://x/{id}");
 });
 
 test(".env escaped $ inside a default resolves (#32411)", () => {

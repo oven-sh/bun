@@ -1597,4 +1597,111 @@ describe("ReadableStream byte source detaches supplied ArrayBuffers", () => {
       "Cannot transfer a SharedArrayBuffer",
     );
   });
+
+  it("enqueue() while a BYOB pull-into is pending detaches the vended view", async () => {
+    let vendoredView;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        vendoredView = controller.byobRequest.view;
+        controller.enqueue(new Uint8Array([42]));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const { value } = await reader.read(new Uint8Array(1));
+
+    // The source enqueued instead of responding; the pending descriptor's buffer
+    // (which byobRequest.view was vended over) must still be detached.
+    expect(vendoredView.byteLength).toBe(0);
+    expect(value.buffer).not.toBe(vendoredView.buffer);
+    expect(value[0]).toBe(42);
+  });
+
+  it("respondWithNewView() exceeding the remaining space throws without detaching", async () => {
+    let threw;
+    let newBuffer;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        // Partial fill: elementSize 4, bytesFilled becomes 2.
+        controller.byobRequest.respond(2);
+        newBuffer = new ArrayBuffer(16);
+        // byteOffset 6 matches byteOffset(4) + bytesFilled(2); byteLength 7 makes
+        // bytesFilled(2) + 7 exceed the descriptor's byteLength (8).
+        try {
+          controller.byobRequest.respondWithNewView(new Uint8Array(newBuffer, 6, 7));
+        } catch (e) {
+          threw = e;
+        }
+        controller.error(new Error("stop"));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    await reader.read(new Uint32Array(new ArrayBuffer(16), 4, 2)).then(
+      () => {},
+      () => {},
+    );
+
+    expect(threw).toBeInstanceOf(TypeError);
+    expect(newBuffer.byteLength).toBe(16);
+  });
+
+  it("respond() with a non-zero value on a closed stream throws without detaching", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    let threw;
+    let byteLengthAfter;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        const byobRequest = controller.byobRequest;
+        const vendoredView = byobRequest.view;
+        controller.close();
+        try {
+          byobRequest.respond(5);
+        } catch (e) {
+          threw = e;
+        }
+        byteLengthAfter = vendoredView.byteLength;
+        resolve();
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    reader.read(new Uint8Array(4)).then(
+      () => {},
+      () => {},
+    );
+    await promise;
+
+    expect(threw).toBeInstanceOf(TypeError);
+    expect(byteLengthAfter).toBe(4);
+  });
+
+  it("respondWithNewView() with a non-zero view on a closed stream throws without detaching", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    let threw;
+    let newBuffer;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        const byobRequest = controller.byobRequest;
+        controller.close();
+        newBuffer = new ArrayBuffer(4);
+        try {
+          byobRequest.respondWithNewView(new Uint8Array(newBuffer));
+        } catch (e) {
+          threw = e;
+        }
+        resolve();
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    reader.read(new Uint8Array(4)).then(
+      () => {},
+      () => {},
+    );
+    await promise;
+
+    expect(threw).toBeInstanceOf(TypeError);
+    expect(newBuffer.byteLength).toBe(4);
+  });
 });

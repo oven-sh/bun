@@ -105,6 +105,16 @@ describe("FormData", () => {
     const body2 = await new Response(formData2).text();
     expect(body2).toContain('Content-Disposition: form-data; name="a"; filename="blob"\r\n');
     expect(body2).toContain('Content-Disposition: form-data; name="b"; filename="override.bin"\r\n');
+
+    // Wrapping a File retrieved from FormData in `new File([f], name)` uses
+    // the constructor's name argument, not the inherited one.
+    const renamed = new File([override], "renamed.txt");
+    expect(renamed.name).toBe("renamed.txt");
+    const formData3 = new FormData();
+    formData3.set("r", renamed);
+    expect((formData3.get("r") as File).name).toBe("renamed.txt");
+    const body3 = await new Response(formData3).text();
+    expect(body3).toContain('Content-Disposition: form-data; name="r"; filename="renamed.txt"\r\n');
   });
 
   // https://github.com/oven-sh/bun/issues/14725

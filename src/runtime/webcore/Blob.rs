@@ -5642,6 +5642,11 @@ pub fn jsdom_file_construct_(
         let name_value_str = OwnedString::new(BunString::from_js(args[1], global_this)?);
 
         blob = Blob::get::<false, true>(global_this, args[0])?;
+        // `get::<_, true>` on a single-Blob sequence returns `dupe()`, which
+        // copies the source blob's per-Blob `name`; override it so
+        // `get_name_string` / `Blob__getFileNameString` reflect this
+        // constructor's argument rather than the inherited value.
+        blob.name.set(name_value_str.dupe_ref());
         if let Some(store_) = blob.store.get() {
             match store_.data_mut() {
                 store::Data::Bytes(bytes) => {
@@ -5651,9 +5656,7 @@ pub fn jsdom_file_construct_(
                     // assignment drops (frees) the previous `Box<[u8]>`.
                     bytes.stored_name = name_value_str.to_owned_slice().into_boxed_slice();
                 }
-                store::Data::S3(_) | store::Data::File(_) => {
-                    blob.name.set(name_value_str.dupe_ref());
-                }
+                store::Data::S3(_) | store::Data::File(_) => {}
             }
         } else if !name_value_str.is_empty() {
             // not store but we have a name so we need a store

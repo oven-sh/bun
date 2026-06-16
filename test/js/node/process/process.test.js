@@ -190,6 +190,45 @@ it.skipIf(!isLinux)("process.chdir() does not crash when the cwd grows past PATH
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/32409
+// Linux-only: getcwd() returns up to MAX_PATH_BYTES - 1 (4095) bytes, and the
+// cached cwd must not write the trailing slash one byte past its fixed buffer
+// when the cwd lands exactly on that boundary.
+it.skipIf(!isLinux)("process.chdir() does not crash when the cwd is exactly PATH_MAX - 1", async () => {
+  using dir = tempDir("process-chdir-edge", {
+    "index.js": `
+      const fs = require("node:fs");
+      const TARGET = 4095; // MAX_PATH_BYTES - 1 on Linux: the longest cwd getcwd() returns
+      const big = "d".repeat(250);
+      // Grow the cwd with short relative chdirs (each getcwd succeeds) until one
+      // more <=255-byte segment can land it exactly on TARGET.
+      while (process.cwd().length + 1 + 255 < TARGET) {
+        fs.mkdirSync(big);
+        process.chdir(big);
+      }
+      const finalSeg = "d".repeat(TARGET - process.cwd().length - 1);
+      fs.mkdirSync(finalSeg);
+      // cwd is now exactly TARGET bytes; the unguarded trailing-slash write used
+      // to index one past top_level_dir_buf here and crash the process.
+      process.chdir(finalSeg);
+      console.log(process.cwd().length === TARGET ? "OK" : "LEN:" + process.cwd().length);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
 it("process.hrtime()", async () => {
   const start = process.hrtime();
   const end = process.hrtime(start);

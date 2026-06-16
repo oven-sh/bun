@@ -484,8 +484,11 @@ mod _impl {
                     unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
 
                 let len = fs.top_level_dir.len();
-                // Ensure the path ends with a slash
-                if fs.top_level_dir_buf[len - 1] != SEP {
+                // Ensure the path ends with a slash, when there is room for the
+                // separator and NUL. `getcwd` can return up to MAX_PATH_BYTES - 1
+                // bytes, so a cwd already at the limit is left without the
+                // trailing slash rather than writing past `top_level_dir_buf`.
+                if len + 2 <= fs.top_level_dir_buf.len() && fs.top_level_dir_buf[len - 1] != SEP {
                     fs.top_level_dir_buf[len] = SEP;
                     fs.top_level_dir_buf[len + 1] = 0;
                     // SAFETY: see above.

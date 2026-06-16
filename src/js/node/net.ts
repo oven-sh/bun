@@ -635,10 +635,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       // Node: the callback selected a protocol the client did not offer -
       // refuse the connection and report ERR_TLS_ALPN_CALLBACK_INVALID_RESULT
       // through 'tlsClientError'.
-      const err = new TypeError(
+      const err = $ERR_TLS_ALPN_CALLBACK_INVALID_RESULT(
         `ALPN callback returned a value (${result}) that did not match any of the client's offered protocols (${ArrayPrototypeJoin.$call(protocols, ", ")})`,
-      ) as TypeError & { code?: string };
-      err.code = "ERR_TLS_ALPN_CALLBACK_INVALID_RESULT";
+      );
       if (self) self[kALPNError] = err;
       return undefined;
     }
@@ -787,10 +786,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
         server?.emit("tlsClientError", verifyError, self);
-        // Node only enforces client-cert verification (and the resulting destroy)
-        // when the server actually requested a cert; a server without requestCert
-        // leaves `authorized` false but keeps the connection open.
-        if (self._rejectUnauthorized && self._requestCert) {
+        if (self._rejectUnauthorized) {
           // if we reject we still need to emit secure
           self.emit("secure", self);
           // No error argument: the socket has no 'error' listener yet, so destroy(err)
@@ -798,7 +794,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
           self.destroy();
           return;
         }
-      } else if (self._requestCert) {
+      } else {
         self.authorized = true;
       }
     }
@@ -2740,7 +2736,7 @@ function internalConnectMultiple(context, canceled?) {
     startPerf(context, kPerfHooksNetConnectContext, {
       type: "net",
       name: "connect",
-      detail: { host: address, port, addressType },
+      detail: { host: address, port },
     });
   }
 

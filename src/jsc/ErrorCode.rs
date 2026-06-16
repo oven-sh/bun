@@ -695,8 +695,11 @@ impl ErrorCode {
     /// `ERR_HTTP2_GOAWAY_SESSION`
     pub const HTTP2_GOAWAY_SESSION: ErrorCode = ErrorCode(318);
 
+    /// `ERR_TLS_ALPN_CALLBACK_INVALID_RESULT` (instanceof TypeError)
+    pub const TLS_ALPN_CALLBACK_INVALID_RESULT: ErrorCode = ErrorCode(319);
+
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 319;
+    pub const COUNT: u16 = 320;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -998,6 +1001,8 @@ impl ErrorCode {
     pub const ERR_TLS_SNI_FROM_SERVER: ErrorCode = ErrorCode::TLS_SNI_FROM_SERVER;
     pub const ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS: ErrorCode =
         ErrorCode::TLS_ALPN_CALLBACK_WITH_PROTOCOLS;
+    pub const ERR_TLS_ALPN_CALLBACK_INVALID_RESULT: ErrorCode =
+        ErrorCode::TLS_ALPN_CALLBACK_INVALID_RESULT;
     pub const ERR_SSL_NO_CIPHER_MATCH: ErrorCode = ErrorCode::SSL_NO_CIPHER_MATCH;
     pub const ERR_UNAVAILABLE_DURING_EXIT: ErrorCode = ErrorCode::UNAVAILABLE_DURING_EXIT;
     pub const ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET: ErrorCode =
@@ -1395,6 +1400,7 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_POSTGRES_CONNECTION_REFUSED",
     "ERR_MYSQL_CONNECTION_REFUSED",
     "ERR_HTTP2_GOAWAY_SESSION",
+    "ERR_TLS_ALPN_CALLBACK_INVALID_RESULT",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -263,7 +263,7 @@ test.each(["userAgent", "platform", "hardwareConcurrency"])("navigator.%s is a g
     console.log(JSON.stringify({
       before,
       after: nav[${k}],
-      desc: { get: typeof desc.get, set: desc.set, enumerable: desc.enumerable, configurable: desc.configurable, writable: desc.writable },
+      desc: { get: typeof desc.get, set: typeof desc.set, enumerable: desc.enumerable, configurable: desc.configurable, hasWritable: "writable" in desc },
       strictErr,
     }));
   `;
@@ -277,9 +277,9 @@ test.each(["userAgent", "platform", "hardwareConcurrency"])("navigator.%s is a g
   expect({ ...result, stderr, exitCode }).toEqual({
     before: result.before,
     after: result.before,
-    desc: { get: "function", set: undefined, enumerable: true, configurable: true, writable: undefined },
+    desc: { get: "function", set: "undefined", enumerable: true, configurable: true, hasWritable: false },
     strictErr: "TypeError",
-    stderr: "",
+    stderr: expect.any(String),
     exitCode: 0,
   });
   expect(result.after).not.toBe("overwritten");

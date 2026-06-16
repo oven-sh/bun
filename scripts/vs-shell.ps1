@@ -15,7 +15,10 @@ if($env:VSINSTALLDIR -eq $null) {
     throw "Command not found: vswhere (did you install Visual Studio?)"
   }
 
-  $vsDir = (& $vswhere -prerelease -latest -property installationPath)
+  # -products * includes Build Tools (product id Microsoft.VisualStudio.Product.BuildTools);
+  # without it vswhere only returns Community/Professional/Enterprise and a Build Tools-only
+  # machine reports no install. See https://github.com/oven-sh/bun/issues/32374
+  $vsDir = (& $vswhere -prerelease -latest -products * -property installationPath)
   if ($vsDir -eq $null) {
     # Check common VS installation paths
     $searchPaths = @(

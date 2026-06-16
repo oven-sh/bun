@@ -31,13 +31,22 @@ test("process.on('exit') runs in worker after an uncaught error in a timer", asy
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const line = stdout.trim();
-  expect(line).not.toBe("");
-  const { msgs, code } = JSON.parse(line) as { msgs: string[]; code: number };
+  let parsed: { msgs: string[]; code: number };
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    parsed = { msgs: [], code: -1 };
+  }
   // The exit handler's postMessage must reach the parent; message ordering
   // relative to the error event is not guaranteed across threads, so sort.
-  expect(msgs.toSorted()).toEqual(["error:boom", "exit:1", "ready"]);
-  expect(code).toBe(1);
-  expect(exitCode).toBe(0);
+  // stderr carries the worker's uncaught-error trace and is expected to be
+  // non-empty; it is surfaced here so a failure diff is self-diagnosing.
+  expect({ msgs: parsed.msgs.toSorted(), code: parsed.code, exitCode, stderr }).toEqual({
+    msgs: ["error:boom", "exit:1", "ready"],
+    code: 1,
+    exitCode: 0,
+    stderr: expect.any(String),
+  });
 });

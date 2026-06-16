@@ -9,6 +9,7 @@
 use core::cell::UnsafeCell;
 
 use crate::webcore::jsc::{self, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::ComptimeStringMapExt as _;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum CompressEncoding {
@@ -18,6 +19,15 @@ pub enum CompressEncoding {
     Zstd,
 }
 
+bun_core::comptime_string_map! {
+    static COMPRESS_ENCODING_MAP: CompressEncoding = {
+        b"gzip" => CompressEncoding::Gzip,
+        b"deflate" => CompressEncoding::Deflate,
+        b"br" => CompressEncoding::Brotli,
+        b"zstd" => CompressEncoding::Zstd,
+    };
+}
+
 impl CompressEncoding {
     pub fn header_value(self) -> &'static [u8] {
         match self {
@@ -25,16 +35,6 @@ impl CompressEncoding {
             CompressEncoding::Deflate => b"deflate",
             CompressEncoding::Brotli => b"br",
             CompressEncoding::Zstd => b"zstd",
-        }
-    }
-
-    fn from_str(s: &[u8]) -> Option<Self> {
-        match s {
-            b"gzip" => Some(CompressEncoding::Gzip),
-            b"deflate" => Some(CompressEncoding::Deflate),
-            b"br" => Some(CompressEncoding::Brotli),
-            b"zstd" => Some(CompressEncoding::Zstd),
-            _ => None,
         }
     }
 }
@@ -63,9 +63,7 @@ impl CompressOption {
             });
         }
         if value.is_string() {
-            let s = bun_core::OwnedString::new(value.to_bun_string(global)?);
-            let bytes = s.to_utf8();
-            return match CompressEncoding::from_str(bytes.slice()) {
+            return match COMPRESS_ENCODING_MAP.from_js(global, value)? {
                 Some(encoding) => Ok(Some(CompressOption {
                     encoding,
                     level: None,
@@ -78,9 +76,7 @@ impl CompressOption {
         if value.is_object() {
             let encoding = match value.get(global, "encoding")? {
                 Some(enc) if enc.is_string() => {
-                    let s = bun_core::OwnedString::new(enc.to_bun_string(global)?);
-                    let bytes = s.to_utf8();
-                    match CompressEncoding::from_str(bytes.slice()) {
+                    match COMPRESS_ENCODING_MAP.from_js(global, enc)? {
                         Some(e) => e,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(

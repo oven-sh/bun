@@ -32,6 +32,80 @@ test("support eval in worker", async () => {
   await worker.terminate();
 });
 
+// A nested uncaught exception inside a worker (while the first is still being
+// reported to the parent) used to abort the whole process with
+// `panic: Uncaught exception while handling uncaught exception` because the
+// re-entry guard assumed `process_exit` never returns, which is only true on
+// the main thread. On a worker it returns after arming termination, so the
+// guard must return instead of panicking.
+describe.concurrent("uncaught exceptions in worker don't abort the process", () => {
+  async function run(workerBody: string) {
+    const script = /* js */ `
+      const { Worker } = require("node:worker_threads");
+      new Worker(${JSON.stringify(workerBody)}, { eval: true })
+        .on("error", () => {})
+        .on("exit", c => console.log("worker-exit:" + c));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("queueMicrotask throws while a setTimeout throw is being handled", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `setTimeout(() => { queueMicrotask(() => { throw 1 }); throw 2 }, 0)`,
+    );
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "worker-exit:1\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  test("two throwing queueMicrotask callbacks", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `queueMicrotask(() => { throw 1 }); queueMicrotask(() => { throw 2 })`,
+    );
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "worker-exit:1\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  test("worker beforeExit handler throws", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `process.on("beforeExit", () => { throw 99 })`,
+    );
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "worker-exit:1\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/28648
+  test("worker uncaughtException handler throws", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `process.on("uncaughtException", () => { throw new Error("nested") }); throw new Error("oopsie")`,
+    );
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "worker-exit:1\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+});
+
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");

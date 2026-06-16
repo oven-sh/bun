@@ -1394,6 +1394,20 @@ impl VirtualMachine {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         if self.is_handling_uncaught_exception {
             self.run_error_handler(err, None);
+            if self.worker.is_some() {
+                // Worker: `process_exit` only sets flags and RETURNS, and its
+                // `notify_need_termination` → `JSC__VM__notifyNeedTermination`
+                // drops the JSLock and drains microtasks — one of the paths
+                // that re-enters here. Dispatch the error to the parent and
+                // arm termination via `on_unhandled_rejection` (on the first
+                // call this swaps itself for the quiet handler, so a second
+                // re-entry reaching here only bumps a counter), then let the
+                // stack unwind to `spin()` which reaches `shutdown()`.
+                self.unhandled_error_counter += 1;
+                self.exit_handler.exit_code = 1;
+                (self.on_unhandled_rejection)(self, global_object, err);
+                return true;
+            }
             // SAFETY: `global_object` is the live VM global; `process_exit` is
             // `bun_runtime::node::process::exit` (main-thread `noreturn`).
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
@@ -1417,6 +1431,12 @@ impl VirtualMachine {
                 self.is_handling_uncaught_exception = false;
                 // SAFETY: see above.
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+                if self.worker.is_some() {
+                    // Worker: `process_exit` armed termination and RETURNED
+                    // (main thread diverges). Return handled; `spin()`
+                    // observes the terminate flag and reaches `shutdown()`.
+                    return true;
+                }
                 panic!("made it past process.exit()");
             }
             // TODO maybe we want a separate code path for uncaught exceptions
@@ -1427,10 +1447,9 @@ impl VirtualMachine {
         // Note: this reset must cover BOTH the FFI call and the
         // `onUnhandledRejection` callback above. The flag must stay raised
         // while that callback runs so a re-entrant `uncaught_exception` from
-        // a user handler trips the recursion guard and hard-exits with code 7
-        // instead of recursing. Neither the FFI call nor the fn-pointer
-        // callback unwind past this frame (re-entry hits `process_exit` →
-        // `panic!`, which never returns), so a linear reset here suffices.
+        // a user handler trips the recursion guard above (main thread:
+        // hard-exit code 7; worker: return handled). Neither call unwinds
+        // past this frame, so a linear reset here suffices.
         self.is_handling_uncaught_exception = false;
         handled
     }

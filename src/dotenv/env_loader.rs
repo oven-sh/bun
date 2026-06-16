@@ -1196,15 +1196,15 @@ impl<'a> Parser<'a> {
         let mut i = 0;
         while i < n {
             let c = value[i];
-            // `\$` escapes the dollar sign: drop the backslash and emit `$`
-            // literally without expanding it. A `$` in the final byte cannot
-            // start a substitution, so it is left untouched.
-            if c == b'\\' && i + 1 < n && value[i + 1] == b'$' && i + 1 != n - 1 {
+            // `\$` escapes the dollar sign: drop the backslash and emit a
+            // literal `$` without expanding it.
+            if c == b'\\' && i + 1 < n && value[i + 1] == b'$' {
                 found = true;
                 self.value_buffer.push(b'$');
                 i += 2;
                 continue;
             }
+            // A trailing `$` has no name to expand, so leave it literal.
             if c == b'$' && i != n - 1 {
                 found = true;
                 let braced = value[i + 1] == b'{';

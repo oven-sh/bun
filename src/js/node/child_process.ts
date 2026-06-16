@@ -1188,40 +1188,13 @@ class ChildProcess extends EventEmitter {
       case 0: {
         switch (io) {
           case "pipe": {
-            const stdin = handle?.stdin;
-
-            if (!stdin) {
-              // This can happen if the process was already killed.
-              const Writable = require("internal/streams/writable");
-              const stream = new Writable({
-                write(chunk, encoding, callback) {
-                  // Gracefully handle writes - stream acts as if it's ended
-                  if (callback) callback();
-                  return false;
-                },
-              });
-              // Mark as destroyed to indicate it's not usable
-              stream.destroy();
-              return stream;
-            }
-            const result = require("internal/fs/streams").writableFromFileSink(stdin);
-            result.readable = false;
-            return result;
+            // This can be undefined if the process was already killed.
+            return createStdinStream(handle?.stdin);
           }
           case "inherit":
             return null;
           case "destroyed": {
-            const Writable = require("internal/streams/writable");
-            const stream = new Writable({
-              write(chunk, encoding, callback) {
-                // Gracefully handle writes - stream acts as if it's ended
-                if (callback) callback();
-                return false;
-              },
-            });
-            // Mark as destroyed to indicate it's not usable
-            stream.destroy();
-            return stream;
+            return createStdinStream(undefined);
           }
           case "undefined":
             return undefined;
@@ -1746,6 +1719,96 @@ function fdToStdioName(fd: number) {
     default:
       return null;
   }
+}
+
+// In Node.js, all three stdio pipe streams are `net.Socket` instances (which extend
+// `stream.Duplex`). Packages such as python-shell call Readable methods like
+// `setEncoding()` on `child.stdin`, so stdin must expose the full Duplex surface even
+// though its readable side is ended. Node passes `readable: false` when creating the
+// stdin socket.
+const kStdinSink = Symbol("kStdinSink");
+
+function stdinStreamWrite(this: any, chunk: any, encoding: any, cb: any) {
+  const sink = this[kStdinSink];
+  try {
+    // The underlying FileSink treats string input as UTF-8. For other
+    // encodings, convert to a Buffer first so the bytes are preserved.
+    if (
+      typeof chunk === "string" &&
+      encoding !== undefined &&
+      encoding !== "utf8" &&
+      encoding !== "utf-8" &&
+      encoding !== "buffer"
+    ) {
+      chunk = Buffer.from(chunk, encoding);
+    }
+    const result = sink.write(chunk);
+    if ($isPromise(result)) {
+      result.then(() => cb(), cb);
+      return false;
+    }
+    cb();
+    return true;
+  } catch (err) {
+    cb(err);
+    return false;
+  }
+}
+
+function stdinStreamWritev(this: any, chunks: any, cb: any) {
+  const buffers = new Array(chunks.length);
+  for (let i = 0; i < chunks.length; i++) {
+    const { chunk, encoding } = chunks[i];
+    buffers[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+  }
+  stdinStreamWrite.$call(this, Buffer.concat(buffers), "buffer", cb);
+}
+
+function stdinStreamDestroy(this: any, err: any, cb: any) {
+  const sink = this[kStdinSink];
+  if (sink) {
+    this[kStdinSink] = undefined;
+    try {
+      const result = sink.end(err);
+      if ($isPromise(result)) {
+        result.then(
+          () => cb(err),
+          (e: any) => cb(e || err),
+        );
+        return;
+      }
+    } catch (e) {
+      cb(e || err);
+      return;
+    }
+  }
+  cb(err);
+}
+
+let StdinStream;
+function createStdinStream(sink: any) {
+  if (StdinStream === undefined) {
+    const Duplex = require("internal/streams/duplex");
+    StdinStream = class Socket extends Duplex {
+      constructor() {
+        super({
+          readable: false,
+          decodeStrings: false,
+          autoDestroy: true,
+        });
+      }
+    };
+    StdinStream.prototype._write = stdinStreamWrite;
+    StdinStream.prototype._writev = stdinStreamWritev;
+    StdinStream.prototype._destroy = stdinStreamDestroy;
+  }
+  const stream = new StdinStream();
+  if (sink) {
+    stream[kStdinSink] = sink;
+  } else {
+    stream.destroy();
+  }
+  return stream;
 }
 
 function getBunStdioFromOptions(stdio) {

@@ -183,6 +183,59 @@ describe("fetch compress option", () => {
     expect(json.rawLength).toBeLessThan(big.length);
   });
 
+  // gzip bound on 600 KiB of random bytes is > 512 KiB so compress_into spills
+  // straight to the per-request Vec instead of borrowing the shared buffer.
+  test.concurrent("incompressible body larger than the shared buffer (spill path)", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const raw = Buffer.from(await req.arrayBuffer());
+        return Response.json({
+          encoding: req.headers.get("content-encoding"),
+          contentLength: req.headers.get("content-length"),
+          rawLength: raw.length,
+          sha: new Bun.CryptoHasher("sha1").update(gunzipSync(raw)).digest("hex"),
+        });
+      },
+    });
+    const big = crypto.getRandomValues(Buffer.alloc(600 * 1024));
+    const res = await fetch(server.url, {
+      method: "POST",
+      body: big,
+      compress: "gzip",
+    });
+    const json = await res.json();
+    expect(json.encoding).toBe("gzip");
+    expect(Number(json.contentLength)).toBe(json.rawLength);
+    expect(json.sha).toBe(new Bun.CryptoHasher("sha1").update(big).digest("hex"));
+  });
+
+  // 307 preserves method+body; the HTTP-thread compression must re-run on the
+  // second hop from the original uncompressed slice (state.original_request_body
+  // is never re-seated to the compressed bytes).
+  test.concurrent("307 redirect re-sends compressed body", async () => {
+    let target: URL;
+    using dest = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const raw = Buffer.from(await req.arrayBuffer());
+        return Response.json({
+          encoding: req.headers.get("content-encoding"),
+          decoded: gunzipSync(raw).toString(),
+        });
+      },
+    });
+    target = dest.url;
+    using src = Bun.serve({
+      port: 0,
+      fetch: () => new Response(null, { status: 307, headers: { Location: String(target) } }),
+    });
+    const res = await fetch(src.url, { method: "POST", body: payload, compress: "gzip" });
+    const json = await res.json();
+    expect(json.encoding).toBe("gzip");
+    expect(json.decoded).toBe(payload);
+  });
+
   test("invalid encoding string throws", () => {
     expect(() =>
       fetch("http://127.0.0.1:1/", {

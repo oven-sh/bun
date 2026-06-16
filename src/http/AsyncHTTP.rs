@@ -215,6 +215,7 @@ fn make_client<'a>(
         unix_socket_path: ZigStringSlice::EMPTY,
         compress: None,
         compressed_request_body: Vec::new(),
+        compressed_body_len: 0,
     }
 }
 

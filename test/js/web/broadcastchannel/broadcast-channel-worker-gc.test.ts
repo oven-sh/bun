@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 
 // Debug/ASAN builds are much slower at spawning workers.
 const timeout = isDebug || isASAN ? 60_000 : 10_000;
@@ -265,7 +265,15 @@ test(
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, BUN_JSC_numberOfGCMarkers: "8", Malloc: "1" },
+      env: {
+        ...bunEnv,
+        BUN_JSC_numberOfGCMarkers: "8",
+        // Route bmalloc/libpas to the system allocator so ASAN can see a UAF
+        // on JSVMClientData instead of it being masked by the pool. Not set
+        // on Windows: bmalloc's SystemHeap is unimplemented there and would
+        // RELEASE_BASSERT, and Windows builds have no ASAN lane anyway.
+        ...(isWindows ? {} : { Malloc: "1" }),
+      },
       stderr: "pipe",
       stdout: "pipe",
     });

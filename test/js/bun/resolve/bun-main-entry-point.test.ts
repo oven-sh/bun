@@ -47,7 +47,7 @@ async function runAsNobody(scriptPath: string) {
   return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 }
 
-test.skipIf(!canDropPrivs)("runs an entry point in a searchable-but-not-listable directory", async () => {
+test.skipIf(!canDropPrivs).concurrent("runs an entry point in a searchable-but-not-listable directory", async () => {
   using dir = tempDir("bun-main-nolist", {
     "sub/entry.js": `console.log("RAN_OK");`,
   });
@@ -64,7 +64,7 @@ test.skipIf(!canDropPrivs)("runs an entry point in a searchable-but-not-listable
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(!canDropPrivs)("control: runs an entry point in a listable directory as nobody", async () => {
+test.skipIf(!canDropPrivs).concurrent("control: runs an entry point in a listable directory as nobody", async () => {
   // Same privilege drop, but the directory is listable. This isolates the
   // assertion above: if this control fails, the failure is in the test setup
   // (setpriv/permissions), not in entry-point resolution.

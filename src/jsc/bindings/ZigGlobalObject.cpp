@@ -3481,11 +3481,27 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     auto moduleName = moduleNameValue->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
+
+    auto sourceURL = sourceOrigin.url();
+    String sourceOriginStringHolder;
+    int64_t referrerAsyncOrder = -1;
+    if (sourceURL.isEmpty()) {
+        sourceOriginStringHolder = String("."_s);
+    } else if (sourceURL.protocolIsFile()) {
+        sourceOriginStringHolder = sourceURL.fileSystemPath();
+        referrerAsyncOrder = globalObject->moduleLoader()->asyncEvaluationOrderForKey(JSC::Identifier::fromString(vm, sourceOriginStringHolder));
+    } else if (sourceURL.protocol() == "builtin"_s) {
+        ASSERT(sourceURL.string().startsWith("builtin://"_s));
+        sourceOriginStringHolder = sourceURL.string().substringSharingImpl(10 /* builtin:// */);
+    } else {
+        sourceOriginStringHolder = sourceURL.path().toString();
+    }
+
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
-        if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceOrigin.url().protocolIsFile() ? sourceOrigin.url().fileSystemPath() : String())) {
+        if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceURL.protocolIsFile() ? sourceOriginStringHolder : String())) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
 
-            auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr);
+            auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr, /* deferred */ false, referrerAsyncOrder);
             if (scope.exception()) [[unlikely]] {
                 return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
             }
@@ -3497,7 +3513,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         ErrorableString resolved;
         memset(&resolved, 0, sizeof(resolved));
 
-        auto sourceURL = sourceOrigin.url();
         BunString moduleNameZ;
         String moduleStringHolder;
         if (moduleName->startsWith("file://"_s)) {
@@ -3513,19 +3528,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         }
 
         BunString queryString = { BunStringTag::Empty, nullptr };
-        String sourceOriginStringHolder;
-
-        if (sourceURL.isEmpty()) {
-            sourceOriginStringHolder = String("."_s);
-        } else if (sourceURL.protocolIsFile()) {
-            sourceOriginStringHolder = sourceURL.fileSystemPath();
-        } else if (sourceURL.protocol() == "builtin"_s) {
-            ASSERT(sourceURL.string().startsWith("builtin://"_s));
-            sourceOriginStringHolder = sourceURL.string().substringSharingImpl(10 /* builtin:// */);
-        } else {
-            sourceOriginStringHolder = sourceURL.path().toString();
-        }
-
         auto sourceOriginZ = Bun::toStringRef(sourceOriginStringHolder);
 
         Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ, &queryString);
@@ -3559,7 +3561,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     // ScriptFetchParameters before calling this hook, so `parameters` is
     // already the parsed RefPtr (or null). Just forward it.
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
-        JSC::Identifier(), WTF::move(parameters), nullptr);
+        JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }

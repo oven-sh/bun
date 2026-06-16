@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { isWindows, tempDir } from "harness";
+import { join } from "node:path";
 import { brotliDecompressSync, gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
 
 const payload = JSON.stringify({
@@ -192,13 +194,31 @@ describe("fetch compress option", () => {
     ).toThrow(/'compress' must be/);
   });
 
-  test("invalid level throws", () => {
+  test.each([99, NaN, 5.5, Infinity])("invalid level %p throws", level => {
     expect(() =>
       fetch("http://127.0.0.1:1/", {
         method: "POST",
         body: "x",
-        compress: { encoding: "gzip", level: 99 },
+        compress: { encoding: "gzip", level },
       }),
     ).toThrow(/'compress.level'/);
+  });
+
+  // A Bun.file() body large enough to qualify for the sendfile fast path
+  // (≥32 KiB, plain http, no proxy, non-Windows) must still be compressed
+  // when compress is explicitly set — the sendfile heuristic must not win.
+  test.skipIf(isWindows)("Bun.file() body large enough for sendfile is still compressed", async () => {
+    using server = makeServer();
+    const big = Buffer.alloc(64 * 1024, "abcdefghij").toString();
+    using dir = tempDir("fetch-compress-sendfile", { "body.txt": big });
+    const res = await fetch(server.url, {
+      method: "POST",
+      body: Bun.file(join(String(dir), "body.txt")),
+      compress: "gzip",
+    });
+    const json = await res.json();
+    expect(json.encoding).toBe("gzip");
+    expect(json.decoded).toBe(big);
+    expect(json.rawLength).toBeLessThan(big.length);
   });
 });

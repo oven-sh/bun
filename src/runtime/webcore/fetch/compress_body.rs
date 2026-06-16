@@ -98,11 +98,17 @@ impl CompressOption {
                     if !lvl.is_number() {
                         return Err(global.throw_invalid_argument_type_value(
                             b"compress.level",
-                            b"number",
+                            b"integer",
                             lvl,
                         ));
                     }
-                    let n = lvl.to_int32();
+                    let raw = lvl.as_number();
+                    if raw.is_nan() || raw.fract() != 0.0 {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "fetch: 'compress.level' must be an integer"
+                        )));
+                    }
+                    let n = raw as i32;
                     let (min, max) = match encoding {
                         CompressEncoding::Gzip | CompressEncoding::Deflate => (0, 12),
                         CompressEncoding::Brotli => (

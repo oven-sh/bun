@@ -166,6 +166,9 @@ extern "C" SYSV_ABI JSC::EncodedJSValue BUN__createJSDOMFileUnsafely(JSC::JSGlob
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
+    // Ensure File.prototype.constructor is wired even when this path (e.g.
+    // structuredClone in a fresh Worker) runs before globalThis.File is accessed.
+    globalObject->JSDOMFileConstructor();
     auto* structure = globalObject->JSDOMFileStructure();
     return JSC::JSValue::encode(WebCore::JSBlob::create(vm, globalObject, structure, ptr));
 }

@@ -2008,6 +2008,9 @@ impl BlobExt for Blob {
         let blob = self.dupe();
         blob.offset.set(offset);
         blob.size.set(len);
+        // Per the File API spec, slice() always returns a plain Blob even when
+        // the receiver is a File.
+        blob.is_jsdom_file.set(false);
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified

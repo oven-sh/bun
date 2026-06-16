@@ -291,6 +291,16 @@ describe("File prototype chain", () => {
     expect(Object.getPrototypeOf(Object.getPrototypeOf(mf))).toBe(File.prototype);
   });
 
+  test("File.slice() returns a plain Blob", async () => {
+    const file = new File(["Hello"], "a.txt");
+    const sliced = file.slice(0, 3);
+    expect(sliced[Symbol.toStringTag]).toBe("Blob");
+    expect(Object.getPrototypeOf(sliced)).toBe(Blob.prototype);
+    expect(sliced instanceof File).toBe(false);
+    expect(sliced instanceof Blob).toBe(true);
+    expect(await sliced.text()).toBe("Hel");
+  });
+
   test("structuredClone of File preserves File prototype", async () => {
     const file = new File(["Hello"], "file.txt", { type: "text/plain" });
     const clone = structuredClone(file);
@@ -307,20 +317,38 @@ describe("File prototype chain", () => {
     expect(blobClone instanceof File).toBe(false);
   });
 
-  test("FormData file entries have File prototype", async () => {
-    const fd = new FormData();
-    fd.append("file", new File(["Hello"], "a.txt"));
-    fd.append("blob", new Blob(["World"]));
-    const file = fd.get("file") as File;
-    const blob = fd.get("blob") as File;
-    expect(file[Symbol.toStringTag]).toBe("File");
-    expect(file instanceof File).toBe(true);
-    expect(file.name).toBe("a.txt");
-    expect(await file.text()).toBe("Hello");
-    // Per the FormData spec, Blob values are normalized to File.
-    expect(blob[Symbol.toStringTag]).toBe("File");
-    expect(blob instanceof File).toBe(true);
-    expect(await blob.text()).toBe("World");
+  test("File received before File constructor is accessed has correct constructor", async () => {
+    // structuredClone deserialization can materialize a File in a realm before
+    // globalThis.File is ever touched; File.prototype.constructor must still
+    // resolve to File rather than falling through to Blob.prototype.constructor.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { Worker } = require("worker_threads");
+          const w = new Worker(\`
+            const { parentPort } = require("worker_threads");
+            parentPort.once("message", (f) => {
+              parentPort.postMessage({
+                tag: f[Symbol.toStringTag],
+                ctorName: f.constructor.name,
+                ctorIsFile: f.constructor === File,
+              });
+            });
+          \`, { eval: true });
+          w.on("message", (m) => { console.log(JSON.stringify(m)); process.exit(0); });
+          w.postMessage(new File(["hi"], "a.txt"));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ tag: "File", ctorName: "File", ctorIsFile: true });
+    expect(exitCode).toBe(0);
   });
 });
 

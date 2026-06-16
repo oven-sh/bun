@@ -2969,6 +2969,21 @@ class Foo {
       minify: { syntax: true },
     });
 
+    it("minify.syntax does not drop a referenced const when no define/tsx is configured", () => {
+      // Standalone JS transpiler with no `define`, no `loader: tsx` — the
+      // configuration where the identifier-visit fast path is eligible.
+      const t = new Bun.Transpiler({ loader: "js", minify: { syntax: true } });
+      const out = t.transformSync("function f(){const x=5;return x}\n");
+      // Either the const is kept, or it's inlined as `return 5` — but never
+      // `return x` with the declaration gone.
+      expect(out).not.toMatch(/return x[;\s]/);
+      expect(out.includes("const x") || out.includes("return 5")).toBe(true);
+
+      // `inline: true` alone (no minify) must still inline.
+      const ti = new Bun.Transpiler({ loader: "js", inline: true });
+      expect(ti.transformSync("function f(){const x=5;return x}\n")).toContain("return 5");
+    });
+
     const parsed = (code, trim = true, autoExport = false, transpiler_ = transpiler) => {
       if (autoExport) {
         code = "export default (" + code + ")";

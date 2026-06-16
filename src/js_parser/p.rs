@@ -3038,6 +3038,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn prepare_for_visit_pass(&mut self) -> Result<(), bun_core::Error> {
         self.skip_identifier_visit = !TYPESCRIPT
             && !self.track_symbol_usage
+            // The dead-const removal and single-use substitution at the bottom
+            // of `visit_stmts`, and `handle_identifier`'s const-value inlining,
+            // require accurate per-symbol `use_count_estimate` — which the fast
+            // path does not maintain.
+            && !self.options.features.minify_syntax
+            && !self.options.features.inlining
             && self.is_import_item.is_empty()
             && self.define.identifiers.count() == 0
             && !self.has_with_scope

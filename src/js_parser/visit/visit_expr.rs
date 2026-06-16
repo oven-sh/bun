@@ -40,7 +40,44 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.visit_expr_in_out(e, ExprIn::default())
     }
 
+    #[inline(always)]
     pub fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
+        use js_ast::ExprTag as Tag;
+        // Leaves whose visitor is a no-op — skip the recursive frame.
+        // Only when `assign_target == None`: a leaf in assign-target position
+        // still needs the `is_valid_assignment_target` diagnostic in the body.
+        // `EIdentifier` is included under `skip_identifier_visit` for short
+        // names: minified identifiers are 1–3 bytes, so the length filter
+        // alone rejects almost everything before `e_identifier`'s own
+        // module/exports/require/__dirname/__filename carve-out would.
+        if in_.assign_target == js_ast::AssignTarget::None {
+            match e.data.tag() {
+                Tag::EString
+                | Tag::ENumber
+                | Tag::EBoolean
+                | Tag::ENull
+                | Tag::EUndefined
+                | Tag::EBigInt
+                | Tag::ERegExp
+                | Tag::EMissing
+                | Tag::ENewTarget => return,
+                Tag::EIdentifier if self.skip_identifier_visit => {
+                    let r = e
+                        .data
+                        .e_identifier()
+                        .expect("infallible: variant checked")
+                        .ref_;
+                    if r.is_source_contents_slice() && !matches!(r.inner_index(), 6 | 7 | 9 | 10) {
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.visit_expr_in_out_body(e, in_)
+    }
+
+    fn visit_expr_in_out_body(&mut self, e: &mut Expr, in_: ExprIn) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(e.loc);
             return;
@@ -175,7 +212,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // correctly via `NoOpRenamer`; the scope-chain `find_symbol` walk
             // and everything downstream of it (define substitution,
             // `EImportIdentifier` conversion, const-reassign diagnostics) are
-            // dead for printed output under this gate. The one observable
+            // dead for printed output under this gate. The strict-mode
+            // reserved-word diagnostic above `find_symbol` is also dropped —
+            // the engine rejects it at runtime regardless. The one observable
             // effect that must survive is the use_count_estimate bump for
             // `module` / `exports` / `require` / `__dirname` / `__filename`,
             // which `to_ast` reads to derive `exports_kind` and the
@@ -1927,6 +1966,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // https://github.com/tc39/ecma262/issues/2062.
                 if e_.optional_chain.is_none()
                     && target_was_identifier_before_visit
+                    // Under `skip_identifier_visit` the target's ref is still a
+                    // parse-time `SourceContentsSlice` (length, not symbol
+                    // index). `contains_direct_eval` has no consumers under
+                    // that gate, so skip the check rather than resolve.
+                    && !ident.ref_.is_source_contents_slice()
                     && p.symbols[ident.ref_.inner_index() as usize]
                         .original_name
                         .slice()

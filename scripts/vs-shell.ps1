@@ -15,10 +15,12 @@ if($env:VSINSTALLDIR -eq $null) {
     throw "Command not found: vswhere (did you install Visual Studio?)"
   }
 
-  # -products * includes Build Tools (product id Microsoft.VisualStudio.Product.BuildTools);
-  # without it vswhere only returns Community/Professional/Enterprise and a Build Tools-only
-  # machine reports no install. See https://github.com/oven-sh/bun/issues/32374
-  $vsDir = (& $vswhere -prerelease -latest -products * -property installationPath)
+  # vswhere defaults to the Community/Professional/Enterprise SKUs, so a Build Tools-only
+  # machine reports no install. -products * adds Build Tools (and every other SKU); -requires
+  # narrows back to installs that actually carry the MSVC toolchain, so a non-compiler SKU
+  # (TestAgent, TeamExplorer, ...) can't win -latest. See https://github.com/oven-sh/bun/issues/32374
+  $vcComponent = if ($script:IsARM64) { "Microsoft.VisualStudio.Component.VC.Tools.ARM64" } else { "Microsoft.VisualStudio.Component.VC.Tools.x86.x64" }
+  $vsDir = (& $vswhere -prerelease -latest -products * -requires $vcComponent -property installationPath)
   if ($vsDir -eq $null) {
     # Check common VS installation paths
     $searchPaths = @(

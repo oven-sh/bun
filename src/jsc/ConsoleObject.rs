@@ -6003,12 +6003,12 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
     };
     let Some(value) = prev else { return };
     // get the duration in microseconds, then display it in milliseconds
-    Output::print_elapsed(
+    Output::print_elapsed_stdout(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
     );
     match len {
-        0 => Output::print_errorln(format_args!("")),
-        _ => Output::print_errorln(format_args!(" {}", bstr::BStr::new(slice))),
+        0 => Output::println(format_args!("")),
+        _ => Output::println(format_args!(" {}", bstr::BStr::new(slice))),
     }
 
     Output::flush();
@@ -6035,12 +6035,12 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
         return;
     };
     // get the duration in microseconds, then display it in milliseconds
-    Output::print_elapsed(
+    Output::print_elapsed_stdout(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
     );
     match len {
         0 => {}
-        _ => Output::print_error(format_args!(" {}", bstr::BStr::new(slice))),
+        _ => Output::print(format_args!(" {}", bstr::BStr::new(slice))),
     }
     Output::flush();
 
@@ -6058,14 +6058,14 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
     // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
     // across the `fmt.format(...)` calls below, which can re-enter JS.
-    let mut writer = unsafe { (*console).error_writer() };
+    let mut writer = unsafe { (*console).writer() };
     // SAFETY: caller passes a valid (args, args_len) pair.
     for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
         let Ok(tag) = formatter::Tag::get(arg, global) else {
             return;
         };
         let _ = bun_io::Write::write_all(&mut writer, b" ");
-        if Output::enable_ansi_colors_stderr() {
+        if Output::enable_ansi_colors_stdout() {
             let _ = fmt.format::<true>(tag, &mut writer, arg, global);
         } else {
             let _ = fmt.format::<false>(tag, &mut writer, arg, global);

@@ -4380,6 +4380,12 @@ pub extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
+    // Mirror `get_name_string`: per-Blob `name` (set by `Blob__setAsFile` for
+    // entries retrieved from FormData) takes precedence over the store's
+    // `stored_name` / file path.
+    if this.name.get().tag() != bun_core::Tag::Dead {
+        return this.name.get();
+    }
     if let Some(filename) = this.get_file_name() {
         return BunString::from_bytes(filename);
     }

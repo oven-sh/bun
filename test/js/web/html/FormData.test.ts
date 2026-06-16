@@ -93,6 +93,18 @@ describe("FormData", () => {
     expect(body).toContain('Content-Disposition: form-data; name="via-append"; filename="blob"\r\n');
     expect(body).toContain('Content-Disposition: form-data; name="file"; filename="explicit.txt"\r\n');
     expect(body).toContain('Content-Disposition: form-data; name="override"; filename="override.bin"\r\n');
+
+    // Re-appending a File retrieved from FormData without a filename argument
+    // keeps the File's existing name (spec "create an entry" step 3 only
+    // applies the "blob" default when the value is not already a File).
+    const formData2 = new FormData();
+    formData2.set("a", viaSet);
+    formData2.set("b", override);
+    expect((formData2.get("a") as File).name).toBe("blob");
+    expect((formData2.get("b") as File).name).toBe("override.bin");
+    const body2 = await new Response(formData2).text();
+    expect(body2).toContain('Content-Disposition: form-data; name="a"; filename="blob"\r\n');
+    expect(body2).toContain('Content-Disposition: form-data; name="b"; filename="override.bin"\r\n');
   });
 
   // https://github.com/oven-sh/bun/issues/14725

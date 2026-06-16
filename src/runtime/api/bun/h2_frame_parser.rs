@@ -1262,6 +1262,12 @@ pub struct H2FrameParser {
     out_standing_pings: Cell<u64>,
     max_send_header_block_length: Cell<u32>,
     last_stream_id: Cell<u32>,
+    /// Highest PEER-initiated stream id processed (odd ids for a server, even for a
+    /// client). This — not `last_stream_id` — is what an auto-filled GOAWAY must carry:
+    /// RFC 9113 §6.8 last_stream_id refers to streams the RECEIVER initiated, and
+    /// nghttp2 servers reject a GOAWAY naming a client-initiated id with a connection
+    /// PROTOCOL_ERROR (node's last_proc_stream_id semantics).
+    last_peer_stream_id: Cell<u32>,
     // Stream id whose header block is awaiting CONTINUATION frames
     // (RFC 9113 §4.3); 0 when none.
     expecting_continuation: Cell<u32>,
@@ -4496,6 +4502,12 @@ impl H2FrameParser {
         if stream_identifier > self.last_stream_id.get() {
             self.last_stream_id.set(stream_identifier);
         }
+        let peer_parity: u32 = if self.is_server.get() { 1 } else { 0 };
+        if stream_identifier % 2 == peer_parity
+            && stream_identifier > self.last_peer_stream_id.get()
+        {
+            self.last_peer_stream_id.set(stream_identifier);
+        }
 
         // new stream open
         let local_window_size = if self.outstanding_settings.get() > 0 {
@@ -5134,7 +5146,7 @@ impl H2FrameParser {
         }
         let error_code = error_code_arg.to_int32();
 
-        let mut last_stream_id = this.last_stream_id.get();
+        let mut last_stream_id = this.last_peer_stream_id.get();
         if args_list.len >= 2 {
             let last_stream_arg = args_list.ptr[1];
             if !last_stream_arg.is_empty_or_undefined_or_null() {
@@ -5144,12 +5156,15 @@ impl H2FrameParser {
                     );
                 }
                 let id = last_stream_arg.to_int32();
-                if id < 0 && id as u32 > MAX_STREAM_ID {
-                    return Err(global_object.throw(format_args!(
-                        "Expected lastStreamId to be a number between 1 and 2147483647"
-                    )));
+                // Like Node's native goaway, a lastStreamId <= 0 means "use the
+                // actual last processed stream id" — Node's JS layer defaults the
+                // argument to 0 and relies on this correction (validateNumber
+                // imposes no range, so negative values reach this path too), and
+                // sending a literal 0 would tell the peer no streams were
+                // processed.
+                if id > 0 {
+                    last_stream_id = id as u32;
                 }
-                last_stream_id = u32::try_from(id).expect("int cast");
             }
             if args_list.len >= 3 {
                 let opaque_data_arg = args_list.ptr[2];
@@ -7279,12 +7294,34 @@ impl H2FrameParser {
 
         if end_stream {
             stream.end_after_headers = true;
-            stream.state = StreamState::HALF_CLOSED_LOCAL;
 
             if wait_for_trailers {
+                stream.state = StreamState::HALF_CLOSED_LOCAL;
                 this.dispatch(JSH2FrameParser::Gc::onWantTrailers, stream.get_identifier());
                 return Ok(JSValue::js_number(stream_id as f64));
             }
+
+            // A HEADERS frame carrying END_STREAM half-closes our side; when
+            // the peer already half-closed (a server responding after the
+            // request body finished) the stream is now fully closed. Mirror
+            // send_data / send_trailers: transition the state forward and
+            // dispatch onStreamEnd — without this a headers-only END_STREAM
+            // response regressed the state to HALF_CLOSED_LOCAL and never
+            // told JS, leaking the stream (and the session's connection
+            // count) until socket close.
+            let identifier = stream.get_identifier();
+            identifier.ensure_still_alive();
+            if stream.state == StreamState::HALF_CLOSED_REMOTE {
+                stream.state = StreamState::CLOSED;
+                stream.free_resources::<false>(this);
+            } else {
+                stream.state = StreamState::HALF_CLOSED_LOCAL;
+            }
+            this.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamEnd,
+                identifier,
+                JSValue::js_number(stream.state as u8 as f64),
+            );
         } else {
             stream.wait_for_trailers = wait_for_trailers;
         }
@@ -7496,6 +7533,7 @@ impl H2FrameParser {
             out_standing_pings: Cell::new(0),
             max_send_header_block_length: Cell::new(0),
             last_stream_id: Cell::new(0),
+            last_peer_stream_id: Cell::new(0),
             expecting_continuation: Cell::new(0),
             is_server: Cell::new(false),
             preface_received_len: Cell::new(0),

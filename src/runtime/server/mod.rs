@@ -104,9 +104,6 @@ pub use request_context::RequestContext as NewRequestContext;
 pub mod any_request_context;
 pub use any_request_context::AnyRequestContext;
 
-#[path = "InspectorBunFrontendDevServerAgent.rs"]
-pub mod inspector_bun_frontend_dev_server_agent;
-
 // `server_body.rs` holds the large method bodies (`on_request`, `on_upgrade`,
 // route setup, …) split out to keep this module declaration file readable.
 

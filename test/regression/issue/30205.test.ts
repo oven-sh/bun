@@ -19,14 +19,14 @@
 
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 const napiAppDir = join(import.meta.dir, "..", "..", "napi", "napi-app");
 const addon = join(napiAppDir, "build", "Debug", "isolate_finalizer_addon.node");
 
-describe("#30205", () => {
+describe.skipIf(!canBuildNodeAddons())("#30205", () => {
   beforeAll(() => {
     if (existsSync(addon)) return;
     // Same one-shot build pattern as test/napi/napi.test.ts; the addon is

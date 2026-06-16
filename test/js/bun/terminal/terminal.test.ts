@@ -100,6 +100,20 @@ describe("Bun.Terminal", () => {
       expect(() => new Bun.Terminal(1n as any)).toThrow();
       expect(() => new Bun.Terminal(Symbol() as any)).toThrow();
     });
+
+    test("throws ERR_INVALID_ARG_TYPE with 'property' wording when name is not a string", () => {
+      let caught: any;
+      try {
+        new Bun.Terminal({ name: 12345 as any });
+      } catch (e) {
+        caught = e;
+      }
+      expect({ code: caught?.code, name: caught?.name, message: caught?.message }).toEqual({
+        code: "ERR_INVALID_ARG_TYPE",
+        name: "TypeError",
+        message: 'The "name" property must be of type string, got number',
+      });
+    });
   });
 
   describe("write", () => {
@@ -366,6 +380,23 @@ describe("Bun.Terminal", () => {
 
       // Still 0
       expect(terminal.inputFlags).toBe(0);
+    });
+
+    test.skipIf(isWindows)("NaN clamps to tcflag_t max, same as Infinity", async () => {
+      // Assigning NaN must clamp to the same value as Infinity (tcflag_t::MAX),
+      // matching the reference `@max(0, @min(num, max))` semantics. The kernel
+      // may mask some bits per field, so compare NaN against Infinity rather
+      // than a hard-coded constant.
+      await using terminal = new Bun.Terminal({ cols: 80, rows: 24 });
+
+      for (const prop of ["inputFlags", "outputFlags", "localFlags", "controlFlags"] as const) {
+        terminal[prop] = Infinity;
+        const fromInfinity = terminal[prop];
+        terminal[prop] = NaN;
+        const fromNaN = terminal[prop];
+        expect({ prop, fromNaN }).toEqual({ prop, fromNaN: fromInfinity });
+        expect(fromNaN).toBeGreaterThan(0);
+      }
     });
   });
 

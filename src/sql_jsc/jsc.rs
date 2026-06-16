@@ -153,7 +153,6 @@ pub(crate) fn create_bun_socket_error_to_js(
 /// the SQL bindings need a slightly different signature).
 pub(crate) trait JSGlobalObjectSqlExt {
     fn err_out_of_range<'a>(&'a self, args: core::fmt::Arguments<'a>) -> ErrorBuilder<'a>;
-    fn throw_invalid_arguments_fmt(&self, args: core::fmt::Arguments<'_>) -> JsResult<JSValue>;
     /// `globalObject.bunVM()` — `bun_jsc::JSGlobalObject::bun_vm()` returns
     /// `&mut VirtualMachine`; this `&`-receiver form is for SQL callsites that
     /// only need shared access.
@@ -165,10 +164,6 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
     #[inline]
     fn err_out_of_range<'a>(&'a self, args: core::fmt::Arguments<'a>) -> ErrorBuilder<'a> {
         self.err(ErrorCode::OUT_OF_RANGE, args)
-    }
-    #[inline]
-    fn throw_invalid_arguments_fmt(&self, args: core::fmt::Arguments<'_>) -> JsResult<JSValue> {
-        Err(self.throw(args))
     }
     #[inline]
     fn sql_vm(&self) -> &VirtualMachine {
@@ -667,24 +662,15 @@ pub(crate) struct JSFunction {
 /// (`extern "sysv64"` on win-x64, `extern "C"` elsewhere). Re-exported from
 /// `bun_jsc` so the cfg-split lives in one place.
 pub use bun_jsc::host_fn::JsHostFn as JSHostFn;
-pub type JSHostFnZig = fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
 
 pub(crate) trait IntoJSHostFn<Marker>: Sized {
     fn into_js_host_fn(self) -> JSHostFn;
 }
 #[doc(hidden)]
-pub(crate) struct HostFnRaw;
-#[doc(hidden)]
 pub(crate) struct HostFnResult;
 #[doc(hidden)]
 pub(crate) struct HostFnPlain;
 
-impl IntoJSHostFn<HostFnRaw> for JSHostFn {
-    #[inline]
-    fn into_js_host_fn(self) -> JSHostFn {
-        self
-    }
-}
 // `jsc_host_abi!` can't express a generic `where` clause, so cfg-split the
 // thunk body manually (sysv64 on win-x64, C elsewhere — matches `JSHostFn`).
 // The where-clause is bracketed to avoid `tt`-muncher ambiguity against `{`.
@@ -817,9 +803,8 @@ macro_rules! put_host_functions {
 }
 
 impl JSFunction {
-    /// Accepts either a raw [`JSHostFn`] (C-ABI) or a safe Rust
-    /// `fn(&JSGlobalObject, &CallFrame) -> JSValue` / `-> JsResult<JSValue>`
-    /// via [`IntoJSHostFn`].
+    /// Accepts a safe Rust `fn(&JSGlobalObject, &CallFrame) -> JSValue` /
+    /// `-> JsResult<JSValue>` via [`IntoJSHostFn`].
     pub(crate) fn create<M, F: IntoJSHostFn<M>>(
         global: &JSGlobalObject,
         name: &str,

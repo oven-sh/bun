@@ -14,8 +14,6 @@ impl Default for CommandComplete {
 }
 
 impl CommandComplete {
-    // Intentionally `&mut self` (not `-> Result<Self, E>`) to fit the
-    // `DecoderWrap` decode contract — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         &mut self,
         mut reader: NewReader<Container>,

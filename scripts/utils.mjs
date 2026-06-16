@@ -3032,14 +3032,12 @@ export function getLoggedInUserCountOrDetails() {
       // job — waiting for it would hang the runner forever.
       .filter(line => /\([^)]+\)\s*$/.test(line))
       .map(line => {
-        // who output format: username terminal date/time (ip)
-        const [username, terminal, datetime, ip] = line.split(/\s+/);
-        return {
-          username,
-          terminal,
-          datetime,
-          ip: (ip || "").replace(/[()]/g, ""), // Remove parentheses from IP
-        };
+        // `who` output: `username terminal date time (host)`. The date/time
+        // field has spaces, so a plain split() can't slice it cleanly — take
+        // the first two tokens and pull the host from the trailing `(...)`.
+        const [username, terminal] = line.split(/\s+/);
+        const ip = line.match(/\(([^)]+)\)\s*$/)?.[1] || "";
+        return { username, terminal, ip };
       });
 
     if (users.length === 0) {
@@ -3049,7 +3047,7 @@ export function getLoggedInUserCountOrDetails() {
     let message = `${users.length} currently logged in users:`;
 
     for (const user of users) {
-      message += `\n- ${user.username} on ${user.terminal} since ${user.datetime}${user.ip ? ` from ${user.ip}` : ""}`;
+      message += `\n- ${user.username} on ${user.terminal}${user.ip ? ` from ${user.ip}` : ""}`;
     }
 
     return message;

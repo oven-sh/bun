@@ -6501,6 +6501,25 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         }
     }
 
+    // Stream transfer steps below irreversibly detach each stream, but
+    // transferArrayBuffers() runs afterward and can still fail (a serialization
+    // getter may have detached an ArrayBuffer from the same transfer list). When
+    // streams are involved, re-validate the ArrayBuffers up front, mirroring
+    // transferTo()'s failure conditions, so no stream is left half-detached.
+    if (!readableStreams.isEmpty()) {
+        for (auto& arrayBuffer : arrayBuffers) {
+            if (!arrayBuffer || arrayBuffer->isDetached() || arrayBuffer->isShared()) {
+                releaseSerializedBlockListRefs();
+                return Exception { DataCloneError };
+            }
+            if (arrayBuffer->isLocked()) {
+                releaseSerializedBlockListRefs();
+                throwVMTypeError(&lexicalGlobalObject, scope, errorMessageForTransfer(arrayBuffer));
+                RELEASE_AND_RETURN(scope, Exception { ExistingExceptionError });
+            }
+        }
+    }
+
     // rs-transfer steps run after the message value is serialized. Each transferred
     // ReadableStream is detached into a cross-realm transform backed by a fresh
     // MessagePort pair; the remote port is appended to messagePorts so it is

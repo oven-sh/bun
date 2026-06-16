@@ -322,8 +322,11 @@ describe("ReadableStream transfer", () => {
       },
       rs,
     };
-    expect(() => port1.postMessage(message, [rs])).toThrow(expect.objectContaining({ name: "DataCloneError" }));
-    port1.close();
-    port2.close();
+    try {
+      expect(() => port1.postMessage(message, [rs])).toThrow(expect.objectContaining({ name: "DataCloneError" }));
+    } finally {
+      port1.close();
+      port2.close();
+    }
   });
 });

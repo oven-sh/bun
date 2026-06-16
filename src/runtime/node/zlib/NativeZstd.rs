@@ -514,24 +514,29 @@ mod _impl {
         }
 
         pub fn close(&mut self) {
-            let _ = match self.mode {
-                // SAFETY: state is a valid CCtx/DCtx for this mode.
-                NodeMode::ZSTD_COMPRESS => unsafe {
-                    c::ZSTD_CCtx_reset(
-                        self.state_ptr().cast(),
-                        c::ZSTD_reset_session_and_parameters,
-                    )
-                },
-                // SAFETY: state is a valid DCtx set by init() for this mode.
-                NodeMode::ZSTD_DECOMPRESS => unsafe {
-                    c::ZSTD_DCtx_reset(
-                        self.state_ptr().cast(),
-                        c::ZSTD_reset_session_and_parameters,
-                    )
-                },
-                _ => unreachable!(),
-            };
-            self.deinit_state();
+            // Idempotent: a second close() (or close() before init()) sees
+            // `state == None` and must not reach the reset/free calls below,
+            // whose match has no arm for `mode == NONE`.
+            if self.state.is_some() {
+                let _ = match self.mode {
+                    // SAFETY: state is a valid CCtx/DCtx for this mode.
+                    NodeMode::ZSTD_COMPRESS => unsafe {
+                        c::ZSTD_CCtx_reset(
+                            self.state_ptr().cast(),
+                            c::ZSTD_reset_session_and_parameters,
+                        )
+                    },
+                    // SAFETY: state is a valid DCtx set by init() for this mode.
+                    NodeMode::ZSTD_DECOMPRESS => unsafe {
+                        c::ZSTD_DCtx_reset(
+                            self.state_ptr().cast(),
+                            c::ZSTD_reset_session_and_parameters,
+                        )
+                    },
+                    _ => unreachable!(),
+                };
+                self.deinit_state();
+            }
             self.mode = NodeMode::NONE;
         }
 

@@ -521,7 +521,12 @@ mod _impl {
         }
 
         pub fn close(&mut self) {
-            self.deinit_state();
+            // Idempotent: a second close() (or close() before init()) sees
+            // `state == None` and must not reach deinit_state(), whose match
+            // has no arm for `mode == NONE`.
+            if self.state.is_some() {
+                self.deinit_state();
+            }
             self.mode = bun_zlib::NodeMode::NONE;
         }
 

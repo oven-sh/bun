@@ -153,7 +153,8 @@ it.skipIf(!isLinux)("process.chdir() does not throw when the cwd was deleted", a
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "RECOVERED", exitCode: 0 });
+  expect(stdout.trim()).toBe("RECOVERED");
+  expect(exitCode).toBe(0);
 });
 
 it("process.hrtime()", async () => {

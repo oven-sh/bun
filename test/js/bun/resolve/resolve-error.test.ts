@@ -111,15 +111,16 @@ describe("ResolveMessage", () => {
   });
 });
 
-// https://github.com/oven-sh/bun/issues/32398 (and #29076)
+// https://github.com/oven-sh/bun/issues/32398 (and #32399, #29076)
 //
 // Bun has no URL-fetching module loader. The resolver marks `http(s)://` /
 // `//protocol-relative` specifiers external (so `Bun.resolveSync` and
 // `import.meta.resolve` echo them back, like Node), but the runtime loader
 // then handed back a synthetic `{ __esModule, default: "<url>" }` namespace,
-// so `import * as x from "https://cdn.pika.dev/..."; x.isNumber` was silently
-// `undefined` instead of failing. Importing a URL now fails at load time with
-// a clean module-not-found error. No network is touched.
+// so `import * as x from "https://cdn.pika.dev/..."; x.isNumber` (and the
+// `import x from "https://cdn.skypack.dev/..."; x.tag` default-import variant)
+// was silently `undefined` instead of failing. Importing a URL now fails at
+// load time with a clean module-not-found error. No network is touched.
 //
 // The `@3.0.1-beta.2` tail is load-bearing: it has no recognized file
 // extension, so pre-fix the loader took the `.file` path and produced the stub
@@ -146,12 +147,17 @@ describe.concurrent("URL imports at runtime are rejected, not stubbed", () => {
     expect(err.message).toContain("vtils@3.0.1-beta.2");
   });
 
-  it("namespace import of a URL errors at load time (no { default: <url> } stub)", async () => {
+  // Static imports of a URL fail at load time, for both namespace (#32398) and
+  // default (#32399) bindings, rather than binding to a bogus stub. Pre-fix the
+  // program ran and printed the undefined member access; post-fix it never runs.
+  it.each([
+    // #32398: `import * as x from "<url>"; x.isNumber` was undefined.
+    { label: "namespace (#32398)", src: `import * as x from %URL%;\nconsole.log("member=" + typeof x.isNumber);` },
+    // #32399: `import X from "<url>"; X.tag(...)` threw "X.tag is not a function".
+    { label: "default (#32399)", src: `import x from %URL%;\nconsole.log("member=" + typeof x.tag);` },
+  ])("static $label import of a URL errors at load time", async ({ src }) => {
     using dir = tempDir("issue-32398", {
-      "entry.mjs": `
-        import * as vtils from ${JSON.stringify(url)};
-        console.log("isNumber=" + typeof vtils.isNumber);
-      `,
+      "entry.mjs": src.replace("%URL%", JSON.stringify(url)),
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "entry.mjs"],
@@ -161,7 +167,7 @@ describe.concurrent("URL imports at runtime are rejected, not stubbed", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Pre-fix: prints "isNumber=undefined" and exits 0 (the bogus stub).
+    // Pre-fix: prints "member=undefined" and exits 0 (the bogus stub).
     // Post-fix: the import fails at load time, so the program never runs.
     expect(stdout).toBe("");
     expect(stderr).toContain("vtils@3.0.1-beta.2");

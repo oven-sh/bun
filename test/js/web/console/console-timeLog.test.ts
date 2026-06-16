@@ -61,7 +61,7 @@ it.concurrent("console.timeLog writes to stdout, not stderr", async () => {
   expect(exitCode).toBe(0);
 });
 
-it("should log to console correctly", async () => {
+it.concurrent("should log to console correctly", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), join(import.meta.dir, "console-timeLog.js")],
     stdin: null,

@@ -13,7 +13,7 @@
 // works when SA_ONSTACK is set on the handler (e.g. Go cgo's initsig) instead
 // of spinning forever. Swap back to the merged commit hash once #235 lands.
 // See oven-sh/bun#31158.
-export const WEBKIT_VERSION = "autobuild-preview-pr-235-71e0011d";
+export const WEBKIT_VERSION = "autobuild-preview-pr-235-66e7173c";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

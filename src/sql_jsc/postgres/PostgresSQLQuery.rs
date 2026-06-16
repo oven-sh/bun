@@ -501,6 +501,26 @@ impl PostgresSQLQuery {
         let writer = connection.writer();
         // We need a strong reference to the query so that it doesn't get GC'd
         this.ref_();
+        // Shared cleanup for every error-return path below: drop any statement
+        // ref this query took plus the speculative `ref_()` above.
+        let release_query_ref = || {
+            this.release_statement();
+            // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
+            unsafe { Self::deref(this_ptr) };
+        };
+        // Shared error tail: throw `err` as a postgres error unless an exception
+        // is already pending.
+        let throw_write_error = |msg: &[u8], err: AnyPostgresError| -> JsError {
+            if !global_object.has_exception() {
+                return global_object.throw_value(postgres_error_to_js(
+                    global_object,
+                    Some(msg),
+                    err,
+                ));
+            }
+            JsError::Thrown
+        };
+
         if this.flags.get().simple {
             bun_core::scoped_log!(Postgres, "executeQuery");
 
@@ -520,20 +540,8 @@ impl PostgresSQLQuery {
             let can_execute = !connection.has_query_running();
             if can_execute {
                 if let Err(err) = PostgresRequest::execute_query(query_str.slice(), writer) {
-                    // fail to run do cleanup — sole owner just created above
-                    // (rc=1); `release_statement` decrements → 0 frees.
-                    this.release_statement();
-                    // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                    unsafe { Self::deref(this_ptr) };
-
-                    if !global_object.has_exception() {
-                        return Err(global_object.throw_value(postgres_error_to_js(
-                            global_object,
-                            Some(b"failed to execute query"),
-                            err,
-                        )));
-                    }
-                    return Err(JsError::Thrown);
+                    release_query_ref();
+                    return Err(throw_write_error(b"failed to execute query", err));
                 }
                 {
                     let mut f = connection.flags.get();
@@ -552,12 +560,7 @@ impl PostgresSQLQuery {
                 .with_mut(|q| q.write_item(this_ptr))
                 .is_err()
             {
-                // fail to run do cleanup — sole owner just created above
-                // (rc=1); `release_statement` decrements → 0 frees.
-                this.release_statement();
-                // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                unsafe { Self::deref(this_ptr) };
-
+                release_query_ref();
                 return Err(global_object.throw_out_of_memory());
             }
 
@@ -630,6 +633,7 @@ impl PostgresSQLQuery {
                     Ok(v) => v,
                     Err(err) => {
                         drop(signature);
+                        release_query_ref();
                         return Err(
                             global_object.throw_error(err.into(), "failed to allocate statement")
                         );
@@ -670,21 +674,11 @@ impl PostgresSQLQuery {
                                     columns_value,
                                     writer,
                                 ) {
-                                    // fail to run do cleanup — drop the ref we took above.
-                                    this.release_statement();
-                                    // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                                    unsafe { Self::deref(this_ptr) };
-
-                                    if !global_object.has_exception() {
-                                        return Err(global_object.throw_value(
-                                            postgres_error_to_js(
-                                                global_object,
-                                                Some(b"failed to bind and execute query"),
-                                                err,
-                                            ),
-                                        ));
-                                    }
-                                    return Err(JsError::Thrown);
+                                    release_query_ref();
+                                    return Err(throw_write_error(
+                                        b"failed to bind and execute query",
+                                        err,
+                                    ));
                                 }
                                 {
                                     let mut f = connection.flags.get();
@@ -726,17 +720,8 @@ impl PostgresSQLQuery {
                                 .with_mut(|m| m.remove(&signature_hash));
                         }
                         drop(signature);
-                        this.release_statement();
-                        // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                        unsafe { Self::deref(this_ptr) };
-                        if !global_object.has_exception() {
-                            return Err(global_object.throw_value(postgres_error_to_js(
-                                global_object,
-                                Some(b"failed to prepare and query"),
-                                err,
-                            )));
-                        }
-                        return Err(JsError::Thrown);
+                        release_query_ref();
+                        return Err(throw_write_error(b"failed to prepare and query", err));
                     }
                     {
                         let mut f = connection.flags.get();
@@ -767,17 +752,8 @@ impl PostgresSQLQuery {
                                 .with_mut(|m| m.remove(&signature_hash));
                         }
                         drop(signature);
-                        this.release_statement();
-                        // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                        unsafe { Self::deref(this_ptr) };
-                        if !global_object.has_exception() {
-                            return Err(global_object.throw_value(postgres_error_to_js(
-                                global_object,
-                                Some(b"failed to write query"),
-                                err,
-                            )));
-                        }
-                        return Err(JsError::Thrown);
+                        release_query_ref();
+                        return Err(throw_write_error(b"failed to write query", err));
                     }
                     if let Err(err) = writer.write(&protocol::SYNC) {
                         if connection_entry_value.is_some() {
@@ -786,14 +762,8 @@ impl PostgresSQLQuery {
                                 .with_mut(|m| m.remove(&signature_hash));
                         }
                         drop(signature);
-                        if !global_object.has_exception() {
-                            return Err(global_object.throw_value(postgres_error_to_js(
-                                global_object,
-                                Some(b"failed to flush"),
-                                err,
-                            )));
-                        }
-                        return Err(JsError::Thrown);
+                        release_query_ref();
+                        return Err(throw_write_error(b"failed to flush", err));
                     }
                     {
                         let mut f = connection.flags.get();
@@ -854,6 +824,7 @@ impl PostgresSQLQuery {
             .with_mut(|q| q.write_item(this_ptr))
             .is_err()
         {
+            release_query_ref();
             return Err(global_object.throw_out_of_memory());
         }
         this.this_value.with_mut(|r| r.upgrade(global_object));

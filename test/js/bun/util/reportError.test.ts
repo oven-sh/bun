@@ -175,6 +175,17 @@ describe.concurrent("custom Error.stack string", () => {
     expect(Bun.inspect(e)).toBe(CUSTOM_STACK + "\n");
   });
 
+  test("a custom stack keeps other own properties like .code", () => {
+    // Node prints the custom stack followed by the remaining own properties,
+    // so `.code` must still appear even though the stack is rendered verbatim.
+    const e = new Error("boom");
+    e.code = "ERR_SOMETHING";
+    e.stack = "boom\ncustom info";
+    const out = Bun.inspect(e);
+    expect(out).toContain("custom info");
+    expect(out).toContain("ERR_SOMETHING");
+  });
+
   test("a custom stack in V8 frame format is still shown", async () => {
     // When the custom string does parse as frames, that info must survive too.
     const v8Stack = "Error: boom\n    at myFrame (/fake/path.js:99:7)";

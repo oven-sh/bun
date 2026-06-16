@@ -245,7 +245,7 @@ test("navigator", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/21585
-test.each(["userAgent", "platform", "hardwareConcurrency"])("navigator.%s is a getter-only accessor", async key => {
+test.concurrent.each(["userAgent", "platform", "hardwareConcurrency"])("navigator.%s is a getter-only accessor", async key => {
   // Spawn a fresh process so we don't mutate the test runner's own navigator object.
   const k = JSON.stringify(key);
   const src = `

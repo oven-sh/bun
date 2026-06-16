@@ -265,7 +265,7 @@ impl<'a> Snapshots<'a> {
             &arena,
         )?;
 
-        let parse_result = parser.parse()?;
+        let parse_result = parser.parse().map_err(|failure| failure.err)?;
         let mut ast = match parse_result {
             bun_js_parser::Result::Ast(ast) => ast,
             _ => return Err(bun_core::err!("ParseError")),

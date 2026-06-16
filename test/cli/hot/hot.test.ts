@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -765,4 +765,31 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+it(
+  "--hot process that exits right after the watcher starts shuts down cleanly",
+  async () => {
+    // Exiting right after start exercises the narrow window between watcher
+    // thread spawn and the watch loop running (#30644); a racy teardown
+    // shows up as a crash or bad exit code.
+    using dir = tempDir("hot-immediate-exit", {
+      "exit.js": `console.log("ready");\nprocess.exit(0);\n`,
+    });
+    for (let i = 0; i < 5; i++) {
+      await using proc = spawn({
+        cmd: [bunExe(), "--hot", "run", "exit.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("ready\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }
+  },
+  timeout,
 );

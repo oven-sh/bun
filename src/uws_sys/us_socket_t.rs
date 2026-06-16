@@ -212,17 +212,25 @@ impl us_socket_t {
     }
 
     /// Move this socket to a new group/kind, optionally resizing its ext.
-    /// Returns the (possibly relocated) socket; `self` is invalid after.
-    // TODO: take `self` by value — it is consumed/invalidated; the returned ptr may be a different allocation
-    pub fn adopt(
-        &mut self,
+    /// Returns the (possibly relocated) socket. Raw pointer (not `&mut self`)
+    /// because the C side may reallocate.
+    ///
+    /// # Safety
+    /// `this` must be a live socket and is consumed: `this` and any derived
+    /// pointer (e.g. into ext) are invalid after the call; re-bind to the
+    /// returned pointer. For an already closed/shut-down socket the C side
+    /// returns the OLD pointer un-resized and un-restamped — repointing ext
+    /// then is type confusion. Do not adopt sockets that may be shut down.
+    pub unsafe fn adopt(
+        this: *mut us_socket_t,
         g: &mut SocketGroup,
         k: SocketKind,
         old_ext: i32,
         new_ext: i32,
     ) -> Option<NonNull<us_socket_t>> {
-        // SAFETY: self and g are live; C may realloc and return a different us_socket_t*
-        unsafe { NonNull::new(c::us_socket_adopt(self, g, k as u8, old_ext, new_ext)) }
+        // SAFETY: caller contract — `this` and `g` are live; C may realloc and
+        // return a different us_socket_t*
+        unsafe { NonNull::new(c::us_socket_adopt(this, g, k as u8, old_ext, new_ext)) }
     }
 
     /// `adopt` + attach a fresh `SSL*` from `ssl_ctx` (refcounted by the C
@@ -230,9 +238,15 @@ impl us_socket_t {
     /// caller must repoint `ext` first (so any dispatch lands in the new
     /// owner) and then call `start_tls_handshake`. Replaces
     /// `us_socket_upgrade_to_tls` / `wrapTLS`.
-    // TODO: take `self` by value — it is consumed/invalidated; the returned ptr may be a different allocation
-    pub fn adopt_tls(
-        &mut self,
+    ///
+    /// # Safety
+    /// Same contract as [`Self::adopt`]: `this` is consumed; re-bind to the
+    /// returned pointer (re-derive any `ext` pointers before
+    /// `start_tls_handshake`). `NULL` is returned only for already-closed
+    /// sockets; a half-shut-down socket yields the OLD allocation un-resized
+    /// (see [`Self::adopt`]). Do not call on sockets that may be shut down.
+    pub unsafe fn adopt_tls(
+        this: *mut us_socket_t,
         g: &mut SocketGroup,
         k: SocketKind,
         ssl_ctx: &mut SslCtx,
@@ -240,11 +254,12 @@ impl us_socket_t {
         old_ext: i32,
         new_ext: i32,
     ) -> Option<NonNull<us_socket_t>> {
-        // SAFETY: self/g/ssl_ctx are live; sni is null or a valid C string; C may
-        // realloc and return a different us_socket_t*
+        // SAFETY: caller contract — `this`/`g`/`ssl_ctx` are live; sni is null
+        // or a valid C string; C may realloc and return a different
+        // us_socket_t*
         unsafe {
             NonNull::new(c::us_socket_adopt_tls(
-                self,
+                this,
                 g,
                 k as u8,
                 ssl_ctx,

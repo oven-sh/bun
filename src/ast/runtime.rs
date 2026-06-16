@@ -73,6 +73,15 @@ impl core::ops::DerefMut for ReplaceableExportMap {
 }
 
 impl ReplaceableExportMap {
+    /// Shared empty map. Used as the target of the [`bun_ptr::BackRef`]
+    /// in `Runtime::Features::replace_exports` when no export remapping is
+    /// configured.
+    #[inline]
+    pub fn empty() -> &'static ReplaceableExportMap {
+        static EMPTY: std::sync::LazyLock<ReplaceableExportMap> =
+            std::sync::LazyLock::new(ReplaceableExportMap::default);
+        &EMPTY
+    }
     #[inline]
     pub fn count(&self) -> usize {
         self.entries.count()

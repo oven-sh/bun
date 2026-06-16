@@ -1476,6 +1476,31 @@ export default class {
       expect(output.includes("localVarToReplace")).toBe(true);
       expect(output.includes("localVarToRemove")).toBe(false);
     });
+
+    it("async transform() applies exports.eliminate across concurrent calls with a large map", async () => {
+      // The configured eliminate list is borrowed by each off-thread
+      // TransformTask rather than deep-cloned per call; stress that with a
+      // large map and overlapping tasks to confirm the borrow stays valid
+      // and the output is stable.
+      const eliminate = ["keepMeOut"];
+      for (let i = 0; i < 2000; i++) eliminate.push("unused" + i);
+      const t = new Bun.Transpiler({ loader: "ts", exports: { eliminate } });
+
+      const expected = t.transformSync(
+        "export const survivor = 1;\nexport const keepMeOut = 2;\n",
+      );
+      expect(expected).toContain("survivor");
+      expect(expected).not.toContain("keepMeOut");
+
+      const results = await Promise.all(
+        Array.from({ length: 64 }, () =>
+          t.transform("export const survivor = 1;\nexport const keepMeOut = 2;\n"),
+        ),
+      );
+      for (const out of results) {
+        expect(out).toBe(expected);
+      }
+    });
   });
 
   const bunTranspiler = new Bun.Transpiler({

@@ -74,6 +74,11 @@ pub struct Config {
     pub macros_buf: Box<[u8]>,
     pub log: bun_ast::Log,
     pub runtime: Runtime::Features,
+    /// Owned storage for `exports: { replace, eliminate }`. Borrowed per call
+    /// by each `ParseOptions` / `Features.replace_exports` instead of cloned.
+    /// Kept outside `runtime` so `Features` can stay lifetime-free with a
+    /// `BackRef` field.
+    pub replace_exports: bun_ast::runtime::ReplaceableExportMap,
     pub tree_shaking: bool,
     pub trim_unused_imports: Option<bool>,
     pub inlining: bool,
@@ -100,6 +105,7 @@ impl Default for Config {
                 top_level_await: true,
                 ..Default::default()
             },
+            replace_exports: bun_ast::runtime::ReplaceableExportMap::default(),
             tree_shaking: false,
             trim_unused_imports: None,
             inlining: false,
@@ -560,7 +566,7 @@ impl Config {
                     // Exception cleanup is covered by RAII: a pending exception
                     // always surfaces as `Err(JsError::Thrown)` through `?`, and
                     // `replacements` is a local (moved into
-                    // `self.runtime.replace_exports` only on success), so the
+                    // `self.replace_exports` only on success), so the
                     // early return drops it — freeing the `Box<[u8]>` keys and
                     // clearing the map.
 
@@ -629,7 +635,7 @@ impl Config {
             }
 
             tree_shaking = Some(tree_shaking.unwrap_or_else(|| replacements.count() > 0));
-            self.runtime.replace_exports = replacements;
+            self.replace_exports = replacements;
         }
 
         if let Some(log_level) = object.get_truthy(global, "logLevel")? {
@@ -670,11 +676,13 @@ pub(crate) struct TransformTask<'a> {
     pub js_instance: bun_ptr::IntrusiveRc<JSTranspiler>,
     pub log: bun_ast::Log,
     pub err: Option<Error>,
-    pub macro_map: MacroMap,
     pub tsconfig: Option<&'a TSConfigJSON>,
     pub loader: Loader,
     pub global: &'a JSGlobalObject,
-    pub replace_exports: bun_ast::runtime::ReplaceableExportMap,
+    /// Borrowed from `js_instance.config.replace_exports`; the `IntrusiveRc`
+    /// above keeps the backing storage live for the task's lifetime and the
+    /// parser reads it immutably.
+    pub replace_exports: &'a bun_ast::runtime::ReplaceableExportMap,
 }
 
 pub(crate) type AsyncTransformTask<'a> =
@@ -715,14 +723,11 @@ impl<'a> TransformTask<'a> {
             output_code: BunString::empty(),
             transpiler: transpiler_copy,
             global,
-            macro_map: clone_macro_map(&config.macro_map),
             tsconfig: config.tsconfig.as_deref(),
             log,
             err: None,
             loader,
-            replace_exports: bun_ast::runtime::ReplaceableExportMap {
-                entries: config.runtime.replace_exports.entries.clone().expect("OOM"),
-            },
+            replace_exports: &config.replace_exports,
             // SAFETY: `transpiler` is the live `m_ctx` payload; `init_ref` bumps the
             // `Cell<u32>`-backed count. `as_ctx_ptr`
             // yields `*mut Self` from `&Self` — signature-only; the only mutation
@@ -791,14 +796,17 @@ impl<'a> TransformTask<'a> {
 
         let parse_options = ParseOptions {
             arena: arena_ref,
-            macro_remappings: clone_macro_map(&self.macro_map),
+            // `Transpiler::parse` never reads this field; macro remapping is
+            // resolved via `MacroContext.remap`, a `BackRef` into
+            // `transpiler.options.macro_remap` set once at construction.
+            macro_remappings: MacroMap::default(),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: self.loader,
             jsx,
             path: source.path,
             virtual_source: Some(source),
-            replace_exports: self.replace_exports.entries.clone().expect("OOM"),
+            replace_exports: self.replace_exports,
             experimental_decorators: self.tsconfig.is_some_and(|ts| ts.experimental_decorators),
             emit_decorator_metadata: self.tsconfig.is_some_and(|ts| ts.emit_decorator_metadata),
             macro_js_ctx: MacroJSCtx::ZERO,
@@ -1280,14 +1288,17 @@ impl JSTranspiler {
 
         let parse_options = ParseOptions {
             arena,
-            macro_remappings: clone_macro_map(&config.macro_map),
+            // `Transpiler::parse` never reads this field; macro remapping is
+            // resolved via `MacroContext.remap`, a `BackRef` into
+            // `transpiler.options.macro_remap` set once at construction.
+            macro_remappings: MacroMap::default(),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: loader.unwrap_or(config.default_loader),
             jsx,
             path: source.path,
             virtual_source: Some(source),
-            replace_exports: config.runtime.replace_exports.entries.clone().expect("OOM"),
+            replace_exports: &config.replace_exports,
             macro_js_ctx,
             experimental_decorators: config
                 .tsconfig

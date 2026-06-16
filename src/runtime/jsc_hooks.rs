@@ -2447,7 +2447,7 @@ fn transpile_source_code_inner(
                     remove_cjs_module_wrapper: is_main
                         && unsafe { &*jsc_vm }.module_loader.eval_source.is_some(),
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
-                    replace_exports: Default::default(),
+                    replace_exports: bun_ast::runtime::ReplaceableExportMap::empty(),
                 };
 
                 // Both the file-only and transpiled arms hit the same

@@ -839,7 +839,7 @@ impl TranspilerJob {
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,
             virtual_source: None,
-            replace_exports: Default::default(),
+            replace_exports: bun_ast::runtime::ReplaceableExportMap::empty(),
             dont_bundle_twice: true,
             allow_commonjs: true,
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,

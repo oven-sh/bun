@@ -968,7 +968,7 @@ pub struct ParseOptions<'a, 'b> {
     pub macro_remappings: MacroRemap,
     pub macro_js_ctx: MacroJSCtx,
     pub virtual_source: Option<&'b bun_ast::Source>,
-    pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
+    pub replace_exports: &'b bun_ast::runtime::ReplaceableExportMap,
     pub inject_jest_globals: bool,
     pub set_breakpoint_on_first_line: bool,
     pub emit_decorator_metadata: bool,
@@ -1663,12 +1663,9 @@ impl<'a> Transpiler<'a> {
                 opts.features.top_level_await = true;
 
                 opts.features.is_macro_runtime = target == crate::options_impl::Target::BunMacro;
-                // `bun_ast::runtime::ReplaceableExport` IS
-                // `js_ast::Runtime::ReplaceableExport`, so the inner
-                // `StringArrayHashMap` moves directly into the newtype.
-                opts.features.replace_exports = bun_ast::runtime::ReplaceableExportMap {
-                    entries: this_parse.replace_exports,
-                };
+                // The parser borrows the caller's map (kept alive for the
+                // whole parse); `BackRef` keeps `Features` lifetime-free.
+                opts.features.replace_exports = bun_ptr::BackRef::new(this_parse.replace_exports);
 
                 if self.macro_context.is_none() {
                     let ctx = js_ast::Macro::MacroContext::init(self);
@@ -3013,7 +3010,7 @@ impl<'a> Transpiler<'a> {
                     emit_decorator_metadata,
                     experimental_decorators,
                     virtual_source: None,
-                    replace_exports: Default::default(),
+                    replace_exports: bun_ast::runtime::ReplaceableExportMap::empty(),
                     inject_jest_globals: false,
                     set_breakpoint_on_first_line: false,
                     remove_cjs_module_wrapper: false,

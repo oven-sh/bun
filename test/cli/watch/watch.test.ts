@@ -175,3 +175,39 @@ it.skipIf(isWindows)("bun test --watch exits on SIGINT after the handler cleans 
   expect(proc.signalCode).toBe(null);
   expect(exitCode).toBe(0);
 });
+
+// Same class, but for a SIGINT delivered *during* the test run (before the
+// watcher loop is entered): the handler runs and the loop drains first, so the
+// loop must not park on the keep-alive timer when it is finally entered.
+// Sending the signal from inside a test makes the timing deterministic.
+it.skipIf(isWindows)("bun test --watch exits on a SIGINT delivered during the run", async () => {
+  using dir = tempDir("test-watch-sigint-midrun", {
+    "setup.ts": `process.on("SIGINT", () => { console.log("GOT_SIGINT"); });`,
+    "sigint.test.ts": `
+      import { test } from "bun:test";
+      test("sends SIGINT to itself mid-run", () => {
+        process.kill(process.pid, "SIGINT");
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--watch", "--preload", "./setup.ts", "./sigint.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  // On the buggy build the leading keep-alive call parks here: the signal was
+  // already handled and the loop already drained, so nothing wakes it. A clean
+  // exit is code 0 with no signalCode.
+  const exitCode = await proc.exited;
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
+  expect(proc.signalCode).toBe(null);
+  expect(exitCode).toBe(0);
+});

@@ -2963,8 +2963,6 @@ impl TestCommand {
     }
 
     fn run_event_loop_for_watch(vm: &mut VirtualMachine) {
-        vm.event_loop_ref().tick_possibly_forever();
-
         loop {
             while vm.is_event_loop_alive() {
                 vm.tick();
@@ -2974,7 +2972,9 @@ impl TestCommand {
             // A termination signal (SIGINT/SIGTERM/SIGHUP/SIGQUIT) was routed to
             // a user handler (e.g. from a preload) and the event loop has since
             // drained. Exit through the normal post-watch path instead of
-            // blocking in the watcher keep-alive again.
+            // blocking in the watcher keep-alive again. The guard precedes the
+            // only blocking call so a signal delivered mid-run (before this
+            // function is entered) can't park on the keep-alive timer.
             if vm.termination_signal_requested() && !vm.is_event_loop_alive() {
                 return;
             }

@@ -1513,9 +1513,28 @@ fn on_unhandled_rejection(
     // promise-rejection path in `spin()` (line ~1044) gets there even sooner:
     // `uncaught_exception` returns `handled == false`, so `spin()` calls
     // `return self.shutdown()` directly — same observable ordering.
+    //
+    // Order matters: `set_execution_forbidden()` must precede
+    // `notify_need_termination()`. The latter's C++ shim
+    // (`JSC__VM__notifyNeedTermination`) drops and re-acquires the API lock;
+    // since `thread_main` holds the only ref, that unlock reaches
+    // `JSLock::willReleaseLock` → `VM::drainMicrotasks` BEFORE the trap is
+    // fired. Without the forbidden flag, microtasks queued ahead of the
+    // uncaught error — `Promise.resolve().then(...)` / `queueMicrotask(...)`
+    // — run there and can `postMessage` to the parent after
+    // `WebWorker__dispatchError` has already posted the error event. The
+    // same flag also covers the later `EventLoop::exit()` drain as the
+    // timer/callback frame unwinds. Node and the Zig reference both drop
+    // those microtasks (Zig's `shutdown()` is `noreturn` and destroys the VM
+    // with the queue still in it). Workers set `forbidExecutionOnTermination`
+    // at creation (`ZigGlobalObject.cpp`), so this is the same terminal state
+    // `throwTerminationException()` would reach — applied synchronously
+    // before the first drain point instead of at the next trap checkpoint.
+    //
     // `vm.jsc_vm` is the worker's live `JSC::VM*` (we just used it via
     // `global_object`); `notify_need_termination` is documented thread-safe
     // (VMTraps).
+    vm.jsc_vm().set_execution_forbidden(true);
     vm.jsc_vm().notify_need_termination();
 }
 

@@ -421,6 +421,44 @@ describe("error event", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \{.*\}/s);
   });
+
+  test.each([
+    ["Promise.resolve().then", "Promise.resolve().then(() => parentPort.postMessage('LEAKED-PARTIAL-RESULT'));"],
+    ["queueMicrotask", "queueMicrotask(() => parentPort.postMessage('LEAKED-PARTIAL-RESULT'));"],
+  ])("microtasks queued before an uncaught throw do not run (%s)", async (_name, queueStmt) => {
+    // A callback queues a microtask and then throws. The worker has logically
+    // failed at the throw; the parent must observe only the error event, not a
+    // message from a microtask that was queued-but-not-yet-run at failure time.
+    // Matches Node.js. Run in a subprocess so the parent's event loop is
+    // independent of the test runner.
+    const fixture = /* js */ `
+      const { Worker } = require("node:worker_threads");
+      const w = new Worker(
+        \`const { parentPort } = require("node:worker_threads");
+         setTimeout(() => {
+           ${queueStmt}
+           throw new Error("validation-failed");
+         }, 1);\`,
+        { eval: true },
+      );
+      const got = [];
+      w.on("message", m => got.push("MSG:" + m));
+      w.on("error", e => got.push("ERR:" + e.message));
+      w.on("exit", () => console.log(JSON.stringify(got)));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify(["ERR:validation-failed"]),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("getHeapSnapshot", () => {

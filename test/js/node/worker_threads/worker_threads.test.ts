@@ -3,6 +3,7 @@ import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
+import v8 from "node:v8";
 import wt, {
   BroadcastChannel,
   getEnvironmentData,
@@ -539,10 +540,40 @@ describe("markAsUncloneable", () => {
     expectDataCloneError(() => structuredClone({ a: 1, wrapper: { nested: inner } }));
   });
 
-  test("catches a marked array at the root", () => {
+  // In Node.js, V8's ValueSerializer handles Array/Map/Set/Date/RegExp and
+  // primitive-wrapper objects before ever consulting the delegate that reads
+  // the uncloneable marker, so marking them is effectively a no-op.
+  test("marked Array / Map / Set / Date / RegExp / wrapper objects still clone", () => {
     const arr: unknown[] = [1, 2, 3];
     markAsUncloneable(arr);
-    expectDataCloneError(() => structuredClone(arr));
+    expect(structuredClone(arr)).toEqual([1, 2, 3]);
+    expect(structuredClone({ x: arr })).toEqual({ x: [1, 2, 3] });
+
+    const m = new Map([["k", "v"]]);
+    markAsUncloneable(m);
+    expect(structuredClone(m)).toEqual(new Map([["k", "v"]]));
+
+    const s = new Set([1, 2]);
+    markAsUncloneable(s);
+    expect(structuredClone(s)).toEqual(new Set([1, 2]));
+
+    const d = new Date(12345);
+    markAsUncloneable(d);
+    expect(structuredClone(d).getTime()).toBe(12345);
+
+    const r = /abc/g;
+    markAsUncloneable(r);
+    expect(structuredClone(r).source).toBe("abc");
+
+    const bo = new Boolean(true);
+    markAsUncloneable(bo);
+    expect(structuredClone(bo).valueOf()).toBe(true);
+  });
+
+  test("catches a marked Error instance", () => {
+    const err = new Error("boom");
+    markAsUncloneable(err);
+    expectDataCloneError(() => structuredClone(err));
   });
 
   test("catches a marked object inside a Map value", () => {
@@ -655,6 +686,15 @@ describe("markAsUncloneable", () => {
     const cloned = structuredClone(obj);
     expect(cloned).toEqual(obj);
     expect(cloned).not.toBe(obj);
+  });
+
+  // In Node.js, v8.serialize uses a separate ValueSerializer delegate that
+  // never reads the uncloneable marker, so it succeeds on marked objects.
+  test("node:v8.serialize ignores the marker", () => {
+    const obj = { a: 1 };
+    markAsUncloneable(obj);
+    const buf = v8.serialize(obj);
+    expect(v8.deserialize(buf)).toEqual({ a: 1 });
   });
 
   test("works on frozen / sealed / non-extensible objects", () => {

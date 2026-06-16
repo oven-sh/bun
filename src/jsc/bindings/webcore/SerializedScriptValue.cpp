@@ -1594,16 +1594,6 @@ private:
         VM& vm = m_lexicalGlobalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        // node:worker_threads.markAsUncloneable: refuse to clone an object tagged
-        // with the private-name marker. Checked before the isArray/isMap/isSet
-        // dispatch so marked containers are rejected too.
-        if (value.isObject()) {
-            if (asObject(value)->getDirect(vm, WebCore::builtinNames(vm).isUncloneablePrivateName())) {
-                code = SerializationReturnCode::DataCloneError;
-                return true;
-            }
-        }
-
         if (isArray(value))
             return false;
 
@@ -1692,6 +1682,19 @@ private:
                 write(RegExpTag);
                 write(regExp->regExp()->pattern());
                 write(String::fromLatin1(JSC::Yarr::flagsString(regExp->regExp()->flags()).data()));
+                return true;
+            }
+            // node:worker_threads.markAsUncloneable: reject objects tagged with the
+            // private-name marker. Placed after the Array/Date/Boolean/String/Number/
+            // BigInt/RegExp dispatch and with Map/Set excluded, matching Node.js where
+            // V8's ValueSerializer handles those instance types without consulting the
+            // delegate that reads the marker. Gated on the messaging path so
+            // node:v8.serialize (SerializationForStorage::Yes) ignores the marker, as
+            // Node's v8.serialize does.
+            if (m_forStorage == SerializationForStorage::No
+                && !obj->inherits<JSMap>() && !obj->inherits<JSSet>()
+                && obj->getDirect(vm, WebCore::builtinNames(vm).isUncloneablePrivateName())) {
+                code = SerializationReturnCode::DataCloneError;
                 return true;
             }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {

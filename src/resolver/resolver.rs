@@ -4419,7 +4419,10 @@ impl<'a> Resolver<'a> {
             // avoids an O(entries) `readdir` (and works even when the directory
             // is not listable). Only the leaf qualifies — ancestor directories
             // are still read normally to locate enclosing config files.
-            let lazy_leaf = self.entry_point_hint && queue_slice_len == 0;
+            // `!care_about_bin_folder`: `bun run` needs this directory's open fd
+            // to probe `node_modules/.bin`, so fall back to a full read there.
+            let lazy_leaf =
+                self.entry_point_hint && !self.care_about_bin_folder && queue_slice_len == 0;
 
             let open_dir: FD = if lazy_leaf {
                 FD::INVALID
@@ -5738,12 +5741,16 @@ impl<'a> Resolver<'a> {
         // `/nix/store`) otherwise pays an O(entries) `readdir`. Only a regular
         // file takes the shortcut; anything else falls through to the normal
         // directory read (which also handles extensionless paths, symlinks, and
-        // directories). See `Resolver::entry_point_hint`.
-        if self.entry_point_hint {
+        // directories). Skipped when `care_about_bin_folder` is set: that mode
+        // (`bun run`) needs the directory's open fd to probe `node_modules/.bin`,
+        // which the lazy path does not retain. See `Resolver::entry_point_hint`.
+        if self.entry_point_hint && !self.care_about_bin_folder {
             let base = bun_paths::basename(path);
+            // `store_fd = false`: a metadata-only probe, so `kind` closes any fd
+            // it opens to follow a symlink instead of caching one this fast path
+            // would drop.
             // SAFETY: `rfs` points at the process-global RealFS singleton.
-            if let Ok(cache) = unsafe { &mut *rfs }.kind(dir_path, base, FD::INVALID, self.store_fd)
-            {
+            if let Ok(cache) = unsafe { &mut *rfs }.kind(dir_path, base, FD::INVALID, false) {
                 if cache.kind == Fs::file_system::EntryKind::File {
                     let abs_path: &'static [u8] = self
                         .fs_ref()
@@ -6117,9 +6124,12 @@ impl<'a> Resolver<'a> {
                         unsafe { lookup.entry().kind(rfs_ptr, self.store_fd) }
                     })
                 } else {
+                    // `store_fd = false`: a metadata-only probe for an incomplete
+                    // entry whose markers are never cached, so `kind` closes any
+                    // symlink fd it opens instead of leaking one.
                     // SAFETY: `rfs_ptr` points at the process-global RealFS singleton.
                     unsafe { &mut *rfs_ptr }
-                        .kind(path, $name, FD::INVALID, self.store_fd)
+                        .kind(path, $name, FD::INVALID, false)
                         .ok()
                         .map(|cache| cache.kind)
                 }

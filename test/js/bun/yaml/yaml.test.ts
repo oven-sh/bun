@@ -4473,7 +4473,7 @@ test("merging the same large anchor many times completes quickly", () => {
   expect(elapsed).toBeLessThan(isDebug || isASAN ? 15_000 : 4_000);
 }, 30_000);
 
-test("limits how many properties merge keys can materialize from a small document", () => {
+test("merge keys across many mappings are bounded only by the alias-expansion budget", () => {
   // A normal merge-key document still resolves.
   const small = YAML.parse("base: &base\n  x: 1\n  y: 2\nchild:\n  <<: *base\n  z: 3\n") as {
     base: Record<string, number>;
@@ -4481,26 +4481,36 @@ test("limits how many properties merge keys can materialize from a small documen
   };
   expect(small.child).toEqual({ x: 1, y: 2, z: 3 });
 
-  // One anchor with `keyCount` properties merged into `mergeCount` separate
-  // mappings would materialize keyCount * mergeCount (~1.2 million) property
-  // entries from a ~30 KB document. The parser caps the total number of
-  // properties materialized through merge keys and reports an error instead
-  // of allocating memory proportional to the product.
-  const keyCount = 2048;
-  const mergeCount = 600;
+  // One 64-key anchor merged into 16,500 separate mappings materializes just
+  // over a million properties from a ~380 KB document. Every `*base` reference
+  // is already charged against the alias-expansion budget (16M nodes), so the
+  // parser must accept this document rather than imposing a separate
+  // per-stream cap on merged properties.
+  const keyCount = 64;
+  const mergeCount = 16_500;
 
-  const lines: string[] = ["a: &a"];
+  const lines: string[] = ["base: &base"];
   for (let i = 0; i < keyCount; i++) {
     lines.push(`  k${i}: ${i}`);
   }
+  lines.push("out:");
   for (let i = 0; i < mergeCount; i++) {
-    lines.push(`m${i}:`);
-    lines.push("  <<: *a");
+    lines.push(`  m${i}:`);
+    lines.push("    <<: *base");
   }
   const input = lines.join("\n");
 
-  expect(() => YAML.parse(input)).toThrow();
-}, 30_000);
+  const parsed = YAML.parse(input) as {
+    base: Record<string, number>;
+    out: Record<string, Record<string, number>>;
+  };
+
+  expect(Object.keys(parsed.base)).toHaveLength(keyCount);
+  expect(Object.keys(parsed.out)).toHaveLength(mergeCount);
+  expect(parsed.out.m0).toEqual(parsed.base);
+  expect(parsed.out[`m${mergeCount - 1}`]).toEqual(parsed.base);
+  expect(parsed.out.m0[`k${keyCount - 1}`]).toBe(keyCount - 1);
+}, 120_000);
 
 test("bounds alias expansion for parsed and imported YAML documents", async () => {
   // A document with a few levels of anchors, where each level is a sequence of

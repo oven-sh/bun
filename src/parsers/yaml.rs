@@ -2354,7 +2354,6 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub stack_check: StackCheck,
 
-    pub merge_props_budget: usize,
     pub alias_expansion_budget: usize,
 }
 
@@ -2390,7 +2389,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             tag_handles: StringHashMap::default(),
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
-            merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
         }
     }
@@ -2781,7 +2779,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         Expr::init(E::Null {}, self.token.start.loc())
                     };
                     let mut props = MappingProps::init();
-                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
+                    props.append_maybe_merge(key, value)?;
                     Expr::init(
                         E::Object {
                             properties: props.move_list(),
@@ -2914,7 +2912,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         current_mapping_indent: Some(self.token.indent),
                         ..Default::default()
                     })?;
-                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
+                    props.append_maybe_merge(key, value)?;
                 }
 
                 // [140] ns-s-flow-map-entries: after an entry, only `,` or `}`.
@@ -3104,7 +3102,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     _ => Expr::init(E::Null {}, mapping_value_start.loc()),
                 };
 
-                props.append_maybe_merge(first_key, value, &mut self.merge_props_budget)?;
+                props.append_maybe_merge(first_key, value)?;
             }
 
             if self.context.get() == Context::FlowIn {
@@ -3236,7 +3234,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     };
 
-                    props.append_maybe_merge(key, value, &mut self.merge_props_budget)?;
+                    props.append_maybe_merge(key, value)?;
                 }
 
                 Ok(Expr::init(
@@ -3270,8 +3268,6 @@ pub struct MappingProps {
 }
 
 impl MappingProps {
-    pub const MAX_MERGED_PROPERTIES: usize = 1024 * 1024;
-
     pub fn init() -> Self {
         Self {
             list: bun_alloc::AstAlloc::vec(),
@@ -3285,12 +3281,8 @@ impl MappingProps {
         Ok(())
     }
 
-    pub fn merge(
-        &mut self,
-        merge_props: &[G::Property],
-        budget: &mut usize,
-    ) -> Result<(), AllocError> {
-        self.list.reserve(merge_props.len().min(*budget));
+    pub fn merge(&mut self, merge_props: &[G::Property]) -> Result<(), AllocError> {
+        self.list.reserve(merge_props.len());
 
         while self.merge_indexed < self.list.len() {
             let idx = self.merge_indexed;
@@ -3314,7 +3306,6 @@ impl MappingProps {
                     }
                 }
             }
-            *budget = budget.checked_sub(1).ok_or(AllocError)?;
             // `G::Property` is not `Clone`; reconstruct from its `Copy` fields.
             self.list.push(G::Property {
                 key: merge_prop.key,
@@ -3333,12 +3324,7 @@ impl MappingProps {
         Ok(())
     }
 
-    pub fn append_maybe_merge(
-        &mut self,
-        key: Expr,
-        value: Expr,
-        budget: &mut usize,
-    ) -> Result<(), AllocError> {
+    pub fn append_maybe_merge(&mut self, key: Expr, value: Expr) -> Result<(), AllocError> {
         let is_merge_key = match &key.data {
             ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
             _ => false,
@@ -3354,14 +3340,14 @@ impl MappingProps {
         }
 
         match &value.data {
-            ast::ExprData::EObject(value_obj) => self.merge(value_obj.properties.slice(), budget),
+            ast::ExprData::EObject(value_obj) => self.merge(value_obj.properties.slice()),
             ast::ExprData::EArray(value_arr) => {
                 for item in value_arr.items.slice() {
                     let item_obj = match &item.data {
                         ast::ExprData::EObject(obj) => obj,
                         _ => continue,
                     };
-                    self.merge(item_obj.properties.slice(), budget)?;
+                    self.merge(item_obj.properties.slice())?;
                 }
                 Ok(())
             }

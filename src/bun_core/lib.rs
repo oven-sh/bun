@@ -1876,7 +1876,7 @@ pub(crate) mod strings_impl {
         copy_utf16_into_utf8_with_utf8_len(buf, utf16, utf8_len)
     }
 
-    pub fn copy_utf16_into_utf8_with_utf8_len(
+    fn copy_utf16_into_utf8_with_utf8_len(
         buf: &mut [u8],
         utf16: &[u16],
         utf8_len: usize,

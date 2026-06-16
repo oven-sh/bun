@@ -203,11 +203,7 @@ it.skipIf(isWindows)("bun test --watch exits on a SIGINT delivered during the ru
   // already handled and the loop already drained, so nothing wakes it. A clean
   // exit is code 0 with no signalCode. Drain both pipes alongside `exited` so a
   // full pipe can't stall the child.
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   if (exitCode !== 0) {
     expect(stderr).toBe("");

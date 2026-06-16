@@ -7,7 +7,7 @@
 // -lto variants built with ThinLTO (per-module summaries for cross-language
 // importing), and the Windows ICU data table filtered + per-item zstd
 // compressed (lazily decompressed via bun_icu_decompress.cpp).
-export const WEBKIT_VERSION = "autobuild-9cb85a0716065c461bea14a0de9fe7139e5323aa";
+export const WEBKIT_VERSION = "9cb85a0716065c461bea14a0de9fe7139e5323aa";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

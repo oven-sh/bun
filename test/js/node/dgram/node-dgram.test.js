@@ -178,9 +178,7 @@ describe("Socket.prototype.bindSync", () => {
     const sock = dgram.createSocket("udp4");
     try {
       sock.bindSync({ port: 0 });
-      expect(() => sock.bindSync({ port: 0 })).toThrow(
-        expect.objectContaining({ code: "ERR_SOCKET_ALREADY_BOUND" }),
-      );
+      expect(() => sock.bindSync({ port: 0 })).toThrow(expect.objectContaining({ code: "ERR_SOCKET_ALREADY_BOUND" }));
     } finally {
       sock.close();
     }

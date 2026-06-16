@@ -624,7 +624,11 @@ impl UDPSocket {
                     dest: BunString::empty(),
                 };
                 let error_value = sys_err.to_error_instance(global_this);
-                error_value.put(global_this, b"syscall", BunString::static_("bind").to_js(global_this)?);
+                error_value.put(
+                    global_this,
+                    b"syscall",
+                    BunString::static_("bind").to_js(global_this)?,
+                );
                 error_value.put(global_this, b"address", config.hostname.to_js(global_this)?);
                 error_value.put(global_this, b"port", JSValue::js_number(config.port as f64));
 

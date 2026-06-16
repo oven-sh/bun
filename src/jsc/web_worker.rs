@@ -1372,7 +1372,19 @@ impl WebWorker {
             // SAFETY: vm_ptr non-null; jsc_vm is a valid JSC::VM*;
             // notify_need_termination is documented thread-safe (VMTraps).
             // Cast through the real opaque `crate::VM`.
-            unsafe { (*(*vm_ptr).jsc_vm.cast_const()).notify_need_termination() };
+            // `set_execution_forbidden()` must precede
+            // `notify_need_termination()` — see the note in
+            // `on_unhandled_rejection` below for the lock-drop drain it
+            // races. `process.on('exit')` handlers have already run by the
+            // time we get here (`Process_functionExit` → `dispatchOnExit`
+            // → `reallyExit` → this fn), so forbidding execution does not
+            // suppress them; it only stops queued microtasks from firing
+            // after the worker has committed to exiting.
+            unsafe {
+                let jsc_vm = &*(*vm_ptr).jsc_vm.cast_const();
+                jsc_vm.set_execution_forbidden(true);
+                jsc_vm.notify_need_termination();
+            };
         }
     }
 

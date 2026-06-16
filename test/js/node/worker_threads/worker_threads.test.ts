@@ -423,21 +423,50 @@ describe("error event", () => {
   });
 
   test.each([
-    ["Promise.resolve().then", "Promise.resolve().then(() => parentPort.postMessage('LEAKED-PARTIAL-RESULT'));"],
-    ["queueMicrotask", "queueMicrotask(() => parentPort.postMessage('LEAKED-PARTIAL-RESULT'));"],
-  ])("microtasks queued before an uncaught throw do not run (%s)", async (_name, queueStmt) => {
-    // A callback queues a microtask and then throws. The worker has logically
-    // failed at the throw; the parent must observe only the error event, not a
-    // message from a microtask that was queued-but-not-yet-run at failure time.
-    // Matches Node.js. Run in a subprocess so the parent's event loop is
-    // independent of the test runner.
+    [
+      "uncaught throw, Promise.resolve().then",
+      "Promise.resolve().then(() => parentPort.postMessage('LEAKED'));",
+      'throw new Error("validation-failed");',
+      "",
+      ["ERR:validation-failed"],
+    ],
+    [
+      "uncaught throw, queueMicrotask",
+      "queueMicrotask(() => parentPort.postMessage('LEAKED'));",
+      'throw new Error("validation-failed");',
+      "",
+      ["ERR:validation-failed"],
+    ],
+    [
+      "process.exit, Promise.resolve().then",
+      "Promise.resolve().then(() => parentPort.postMessage('LEAKED'));",
+      "process.exit(1);",
+      'process.on("exit", code => parentPort.postMessage("ONEXIT:" + code));',
+      ["MSG:ONEXIT:1"],
+    ],
+    [
+      "process.exit, queueMicrotask",
+      "queueMicrotask(() => parentPort.postMessage('LEAKED'));",
+      "process.exit(1);",
+      'process.on("exit", code => parentPort.postMessage("ONEXIT:" + code));',
+      ["MSG:ONEXIT:1"],
+    ],
+  ])("microtasks queued before %s do not run", async (_name, queueStmt, stopStmt, setupStmt, expected) => {
+    // A callback queues a microtask and then throws or calls process.exit.
+    // The worker has logically stopped at that point; the parent must not
+    // observe a message from a microtask that was queued-but-not-yet-run at
+    // stop time. On the process.exit path, process.on('exit') still fires
+    // (it runs synchronously inside process.exit before termination is
+    // armed). Matches Node.js. Run in a subprocess so the parent's event
+    // loop is independent of the test runner.
     const fixture = /* js */ `
       const { Worker } = require("node:worker_threads");
       const w = new Worker(
         \`const { parentPort } = require("node:worker_threads");
+         ${setupStmt}
          setTimeout(() => {
            ${queueStmt}
-           throw new Error("validation-failed");
+           ${stopStmt}
          }, 1);\`,
         { eval: true },
       );
@@ -454,7 +483,7 @@ describe("error event", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr }).toEqual({
-      stdout: JSON.stringify(["ERR:validation-failed"]),
+      stdout: JSON.stringify(expected),
       stderr: "",
     });
     expect(exitCode).toBe(0);

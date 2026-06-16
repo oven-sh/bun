@@ -2243,14 +2243,7 @@ impl BlobExt for Blob {
     }
 
     fn set_last_modified(&self, global_this: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        let number = value.to_number(global_this)?;
-        if let Some(store) = self.store.get() {
-            if matches!(store.data, store::Data::File(_)) {
-                store.data_mut().as_file_mut().last_modified = number as jsc::JSTimeType;
-                return Ok(());
-            }
-        }
-        self.last_modified.set(number);
+        self.last_modified.set(value.to_number(global_this)?);
         Ok(())
     }
 

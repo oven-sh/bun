@@ -1430,10 +1430,7 @@ pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'
     PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf_z::<P>(cwd, tl_buf_mut(b), parts))
 }
 
-/// Size of the thread-local buffer used by [`join`] / [`join_z`]. Callers that
-/// want to keep the zero-alloc fast path but fall back to their own buffer
-/// when the concatenation would not fit can gate on this.
-pub const JOIN_BUF_LEN: usize = 4096;
+const JOIN_BUF_LEN: usize = 4096;
 
 thread_local! {
     pub(crate) static JOIN_BUF: UnsafeCell<[u8; JOIN_BUF_LEN]> =
@@ -1446,6 +1443,43 @@ pub fn join<P: PlatformT>(parts: &[&[u8]]) -> &'static [u8] {
 
 pub fn join_z<P: PlatformT>(parts: &[&[u8]]) -> &'static ZStr {
     JOIN_BUF.with(|b| join_z_buf::<P>(tl_buf_mut(b), parts))
+}
+
+#[inline]
+fn join_needed(parts: &[&[u8]]) -> usize {
+    parts.iter().map(|p| p.len() + 1).sum::<usize>() + 1
+}
+
+/// [`join_z_buf`] into `buf` when the result fits, otherwise into `spill`
+/// (grown as needed). `spill` is untouched in the common case.
+pub fn join_z_buf_spill<'a, P: PlatformT>(
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    parts: &[&[u8]],
+) -> &'a ZStr {
+    let needed = join_needed(parts);
+    let out: &mut [u8] = if needed <= buf.len() {
+        buf
+    } else {
+        if spill.len() < needed {
+            spill.resize(needed, 0);
+        }
+        &mut spill[..]
+    };
+    join_z_buf::<P>(out, parts)
+}
+
+/// [`join`] (thread-local buffer) when the result fits, otherwise into
+/// `spill` (grown as needed). `spill` is untouched in the common case.
+pub fn join_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8] {
+    let needed = join_needed(parts);
+    if needed <= JOIN_BUF_LEN {
+        return join::<P>(parts);
+    }
+    if spill.len() < needed {
+        spill.resize(needed, 0);
+    }
+    join_string_buf::<P>(&mut spill[..], parts)
 }
 
 pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {

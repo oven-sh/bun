@@ -64,6 +64,10 @@ test.skipIf(!canDropPrivs).concurrent("runs an entry point in a searchable-but-n
 
   const [stdout, _stderr, exitCode] = await runAsNobody(join(root, "sub", "entry.js"));
   expect(stdout).toBe("RAN_OK\n");
+  // Surface the child's stderr on failure (module-not-found, a setpriv/perms
+  // error, a resolver panic) so the diff shows the cause. No-op on success,
+  // where a `nobody` child may emit benign host-specific warnings we ignore.
+  if (exitCode !== 0) expect(_stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -81,6 +85,10 @@ test.skipIf(!canDropPrivs).concurrent("control: runs an entry point in a listabl
 
   const [stdout, _stderr, exitCode] = await runAsNobody(join(root, "sub", "entry.js"));
   expect(stdout).toBe("RAN_OK\n");
+  // Surface the child's stderr on failure (module-not-found, a setpriv/perms
+  // error, a resolver panic) so the diff shows the cause. No-op on success,
+  // where a `nobody` child may emit benign host-specific warnings we ignore.
+  if (exitCode !== 0) expect(_stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 

@@ -220,17 +220,35 @@ impl HeapRequestBodyBuffer {
     }
 }
 
+/// Scratch buffer for serializing the initial HTTP/1.1 request (headers +
+/// as much of the body as fits) before the first socket write.
+///
+/// Both variants write directly into fixed storage (zero heap allocations on
+/// the common path). On overflow the written bytes spill to a `Vec<u8>`,
+/// mirroring Zig's `StackFallbackAllocator` semantics.
+///
+/// The `Stack` variant's array is inline in the enum, so this type is ~32 KB
+/// and lives in the caller's frame (`send_initial_request_payload`, which is
+/// `#[inline(never)]`). Do not box or return this by value from a non-inline
+/// function.
+#[allow(clippy::large_enum_variant)]
 pub enum RequestBodyBuffer {
-    // Option<> so Drop can `.take()` the Box and hand it to `put()` (which consumes by value).
-    Heap(Option<Box<HeapRequestBodyBuffer>>),
-    // Inline stack buffer with a heap fallback.
-    Stack(Box<[u8; REQUEST_BODY_SEND_STACK_BUFFER_SIZE]>),
+    Heap {
+        // Option<> so Drop can `.take()` the Box and hand it to `put()` (which consumes by value).
+        pooled: Option<Box<HeapRequestBodyBuffer>>,
+        spill: Vec<u8>,
+    },
+    Stack {
+        buffer: [core::mem::MaybeUninit<u8>; REQUEST_BODY_SEND_STACK_BUFFER_SIZE],
+        cursor: usize,
+        spill: Vec<u8>,
+    },
 }
 
 impl Drop for RequestBodyBuffer {
     fn drop(&mut self) {
-        if let Self::Heap(heap) = self {
-            if let Some(h) = heap.take() {
+        if let Self::Heap { pooled, .. } = self {
+            if let Some(h) = pooled.take() {
                 h.put();
             }
         }
@@ -238,20 +256,112 @@ impl Drop for RequestBodyBuffer {
 }
 
 impl RequestBodyBuffer {
-    pub(crate) fn allocated_slice(&mut self) -> &mut [u8] {
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.written().len()
+    }
+
+    #[inline]
+    pub(crate) fn capacity(&self) -> usize {
         match self {
-            Self::Heap(heap) => &mut heap.as_mut().unwrap().buffer,
-            Self::Stack(stack) => &mut stack[..],
+            Self::Heap { pooled, spill } => {
+                if spill.is_empty() {
+                    pooled.as_ref().unwrap().buffer.len()
+                } else {
+                    spill.capacity()
+                }
+            }
+            Self::Stack { spill, .. } => {
+                if spill.is_empty() {
+                    REQUEST_BODY_SEND_STACK_BUFFER_SIZE
+                } else {
+                    spill.capacity()
+                }
+            }
         }
     }
 
-    pub(crate) fn to_array_list(&mut self) -> Vec<u8> {
-        // A `Vec` cannot adopt a foreign allocator+buffer, so this
-        // allocates a fresh Vec of the same capacity.
-        // Callers that can should write into allocated_slice() directly instead.
-        let mut arraylist = Vec::with_capacity(self.allocated_slice().len());
-        arraylist.clear();
-        arraylist
+    /// Bytes written so far, as a contiguous slice.
+    #[inline]
+    pub(crate) fn written(&self) -> &[u8] {
+        match self {
+            Self::Heap { pooled, spill } => {
+                if spill.is_empty() {
+                    let heap = pooled.as_ref().unwrap();
+                    &heap.buffer[..heap.cursor]
+                } else {
+                    spill.as_slice()
+                }
+            }
+            Self::Stack {
+                buffer,
+                cursor,
+                spill,
+            } => {
+                if spill.is_empty() {
+                    // SAFETY: `buffer[..cursor]` was fully initialized by
+                    // `extend_from_slice`; `MaybeUninit<u8>` is layout-identical to `u8`.
+                    unsafe { core::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), *cursor) }
+                } else {
+                    spill.as_slice()
+                }
+            }
+        }
+    }
+
+    pub(crate) fn extend_from_slice(&mut self, src: &[u8]) {
+        match self {
+            Self::Heap { pooled, spill } => {
+                if !spill.is_empty() {
+                    spill.extend_from_slice(src);
+                    return;
+                }
+                let heap = pooled.as_mut().unwrap();
+                if let Some(dst) = heap.buffer.get_mut(heap.cursor..heap.cursor + src.len()) {
+                    dst.copy_from_slice(src);
+                    heap.cursor += src.len();
+                } else {
+                    Self::spill_into(spill, &heap.buffer[..heap.cursor], src);
+                }
+            }
+            Self::Stack {
+                buffer,
+                cursor,
+                spill,
+            } => {
+                if !spill.is_empty() {
+                    spill.extend_from_slice(src);
+                    return;
+                }
+                if let Some(dst) = buffer.get_mut(*cursor..*cursor + src.len()) {
+                    // SAFETY: non-overlapping (`src` borrows immutably, `dst` mutably);
+                    // `dst.len() == src.len()` by slice bounds; writing `u8` into
+                    // `MaybeUninit<u8>` is always valid.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            src.as_ptr(),
+                            dst.as_mut_ptr().cast::<u8>(),
+                            src.len(),
+                        );
+                    }
+                    *cursor += src.len();
+                } else {
+                    // SAFETY: `buffer[..cursor]` was fully initialized by prior writes.
+                    let prev = unsafe {
+                        core::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), *cursor)
+                    };
+                    Self::spill_into(spill, prev, src);
+                }
+            }
+        }
+    }
+
+    #[cold]
+    fn spill_into(spill: &mut Vec<u8>, prev: &[u8], src: &[u8]) {
+        debug_assert!(spill.is_empty());
+        spill.reserve(prev.len() + src.len());
+        spill.extend_from_slice(prev);
+        spill.extend_from_slice(src);
     }
 }
 
@@ -417,18 +527,30 @@ impl HttpThread {
     #[inline]
     pub fn get_request_body_send_buffer(&mut self, estimated_size: usize) -> RequestBodyBuffer {
         if estimated_size >= REQUEST_BODY_SEND_STACK_BUFFER_SIZE {
-            if self.lazy_request_body_buffer.is_none() {
+            let pooled = Some(self.lazy_request_body_buffer.take().unwrap_or_else(|| {
                 bun_core::scoped_log!(
                     HTTPThread_log,
                     "Allocating HeapRequestBodyBuffer due to {} bytes request body",
                     estimated_size
                 );
-                return RequestBodyBuffer::Heap(Some(HeapRequestBodyBuffer::init()));
-            }
-
-            return RequestBodyBuffer::Heap(self.lazy_request_body_buffer.take());
+                HeapRequestBodyBuffer::init()
+            }));
+            return RequestBodyBuffer::Heap {
+                pooled,
+                spill: Vec::new(),
+            };
         }
-        RequestBodyBuffer::Stack(Box::new([0u8; REQUEST_BODY_SEND_STACK_BUFFER_SIZE]))
+        RequestBodyBuffer::Stack {
+            // SAFETY: an array of `MaybeUninit<u8>` needs no initialization.
+            buffer: unsafe {
+                core::mem::MaybeUninit::<
+                    [core::mem::MaybeUninit<u8>; REQUEST_BODY_SEND_STACK_BUFFER_SIZE],
+                >::uninit()
+                .assume_init()
+            },
+            cursor: 0,
+            spill: Vec::new(),
+        }
     }
 
     pub fn deflater(&mut self) -> &mut LibdeflateState {

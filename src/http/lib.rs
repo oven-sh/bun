@@ -1045,7 +1045,7 @@ struct InitialRequestPayloadResult {
 ///
 /// NOTE: this precedence is the *opposite* of the WebSocket upgrade client's
 /// CONNECT builder, which is intentional — do not unify.
-fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
+fn write_proxy_auth_and_headers(writer: &mut http_thread::RequestBodyBuffer, client: &HTTPClient) {
     // Check if user provided Proxy-Authorization in custom headers
     let user_provided_proxy_auth = client
         .proxy_headers
@@ -1076,7 +1076,10 @@ fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
     }
 }
 
-fn write_proxy_connect(writer: &mut Vec<u8>, client: &HTTPClient) -> Result<(), bun_core::Error> {
+fn write_proxy_connect(
+    writer: &mut http_thread::RequestBodyBuffer,
+    client: &HTTPClient,
+) -> Result<(), bun_core::Error> {
     let port: &[u8] = if client.url.get_port().is_some() {
         client.url.port
     } else if client.url.is_https() {
@@ -1104,7 +1107,7 @@ fn write_proxy_connect(writer: &mut Vec<u8>, client: &HTTPClient) -> Result<(), 
 }
 
 fn write_proxy_request(
-    writer: &mut Vec<u8>,
+    writer: &mut http_thread::RequestBodyBuffer,
     request: &picohttp::Request<'_>,
     client: &HTTPClient,
 ) -> Result<(), bun_core::Error> {
@@ -1138,7 +1141,7 @@ fn write_proxy_request(
 }
 
 fn write_request(
-    writer: &mut Vec<u8>,
+    writer: &mut http_thread::RequestBodyBuffer,
     request: &picohttp::Request<'_>,
 ) -> Result<(), bun_core::Error> {
     writer.extend_from_slice(request.method);
@@ -2591,12 +2594,10 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         socket: HttpSocket<IS_SSL>,
     ) -> Result<InitialRequestPayloadResult, bun_core::Error> {
-        let mut request_body_buffer = self.get_request_body_send_buffer();
-        // request_body_buffer drops at scope exit (was `defer .deinit()`)
-        let mut temporary_send_buffer = request_body_buffer.to_array_list();
-        // temporary_send_buffer drops at scope exit
+        let mut temporary_send_buffer = self.get_request_body_send_buffer();
+        // temporary_send_buffer drops at scope exit (was `defer .deinit()`)
 
-        let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
+        let writer = &mut temporary_send_buffer;
 
         let request = self.build_request(self.state.original_request_body.len());
 
@@ -2627,7 +2628,7 @@ impl<'a> HTTPClient<'a> {
             temporary_send_buffer.extend_from_slice(&self.request_body()[0..wrote]);
         }
 
-        let to_send = &temporary_send_buffer[self.state.request_sent_len..];
+        let to_send = &temporary_send_buffer.written()[self.state.request_sent_len..];
         if cfg!(debug_assertions) {
             debug_assert!(!socket.is_shutdown());
             debug_assert!(!socket.is_closed());
@@ -2996,7 +2997,7 @@ impl<'a> HTTPClient<'a> {
                     // `proxy_tunnel::raw_as_mut` INVARIANT).
                     let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
                     self.set_timeout(&socket);
-                    let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
+                    let mut temporary_send_buffer = self.get_request_body_send_buffer();
                     let writer = &mut temporary_send_buffer;
 
                     let request = self.build_request(self.request_body().len());
@@ -3015,7 +3016,7 @@ impl<'a> HTTPClient<'a> {
                         temporary_send_buffer.extend_from_slice(&self.request_body()[0..wrote]);
                     }
 
-                    let to_send = &temporary_send_buffer[self.state.request_sent_len..];
+                    let to_send = &temporary_send_buffer.written()[self.state.request_sent_len..];
                     if cfg!(debug_assertions) {
                         debug_assert!(!socket.is_shutdown());
                         debug_assert!(!socket.is_closed());

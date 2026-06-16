@@ -708,6 +708,65 @@ describe("fetch", () => {
     expect(await response2.text()).toBe("0");
   });
 
+  describe("request body send buffer", () => {
+    // Exercises the HTTP/1.1 client's initial send buffer: the 32 KB
+    // stack-inline path for small requests, the 512 KB pooled path for large
+    // ones, and pool recycling across back-to-back requests.
+    function echoServer() {
+      return Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const body = await req.arrayBuffer();
+          return new Response(Bun.hash(body).toString(16), {
+            headers: {
+              "x-body-length": String(body.byteLength),
+              "x-echo": req.headers.get("x-echo") ?? "",
+            },
+          });
+        },
+      });
+    }
+
+    // Below 16 KB (stack), at 20 KB (heap pool, fits in one write), and well
+    // past 512 KB (heap pool, body spills past the first write).
+    it.concurrent.each([200, 8 * 1024, 20 * 1024, 600 * 1024])(
+      "round-trips %d-byte POST body over http/1.1",
+      async size => {
+        using echo = echoServer();
+        const body = Buffer.alloc(size, (size & 0xff) + 1);
+        const expected = Bun.hash(body).toString(16);
+        // Repeat to exercise HeapRequestBodyBuffer pool reuse.
+        for (let i = 0; i < 4; i++) {
+          const res = await fetch(echo.url, {
+            method: "POST",
+            body,
+            headers: { "x-echo": `iter-${i}` },
+          });
+          expect({
+            hash: await res.text(),
+            length: res.headers.get("x-body-length"),
+            echo: res.headers.get("x-echo"),
+            status: res.status,
+          }).toEqual({ hash: expected, length: String(size), echo: `iter-${i}`, status: 200 });
+        }
+      },
+    );
+
+    it.concurrent("round-trips with many small request headers", async () => {
+      using echo = echoServer();
+      const headers: Record<string, string> = {};
+      for (let i = 0; i < 40; i++) headers[`x-h${i}`] = Buffer.alloc(50, 0x61 + (i % 26)).toString();
+      headers["x-echo"] = "many";
+      const body = Buffer.alloc(500, "q");
+      const res = await fetch(echo.url, { method: "POST", body, headers });
+      expect({
+        hash: await res.text(),
+        length: res.headers.get("x-body-length"),
+        echo: res.headers.get("x-echo"),
+      }).toEqual({ hash: Bun.hash(body).toString(16), length: "500", echo: "many" });
+    });
+  });
+
   it.concurrent("should work with ipv6 localhost", async () => {
     using server = Bun.serve({
       port: 0,

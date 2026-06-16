@@ -134,28 +134,38 @@ impl CompressionStreamTransformer {
             engine: JsCell::new(engine),
             context_size,
         });
-        let err = transformer.engine.with_mut(|engine| match engine {
-            Engine::Zlib(ctx) => {
-                // node:zlib defaults (zlib.ts): level Z_DEFAULT_COMPRESSION,
-                // windowBits 15, memLevel 8, strategy Z_DEFAULT_STRATEGY —
-                // CompressionStream exposes no options, so output bytes match
-                // the previous node:zlib-backed implementation.
-                ctx.init(-1, 15, 8, 0, None);
-                if ctx.mode == NodeMode::NONE {
-                    Error::init(
-                        c"Failed to initialize zlib stream".as_ptr(),
-                        -1,
-                        c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
-                    )
-                } else {
-                    Error::OK
+        let err = transformer.engine.with_mut(|engine| {
+            let err = match engine {
+                Engine::Zlib(ctx) => {
+                    // node:zlib defaults (zlib.ts): level Z_DEFAULT_COMPRESSION,
+                    // windowBits 15, memLevel 8, strategy Z_DEFAULT_STRATEGY —
+                    // CompressionStream exposes no options, so output bytes
+                    // match the previous node:zlib-backed implementation.
+                    ctx.init(-1, 15, 8, 0, None);
+                    if ctx.mode == NodeMode::NONE {
+                        Error::init(
+                            c"Failed to initialize zlib stream".as_ptr(),
+                            -1,
+                            c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
+                        )
+                    } else {
+                        Error::OK
+                    }
                 }
+                Engine::Brotli(ctx) => ctx.init(),
+                // ZSTD_CONTENTSIZE_UNKNOWN — same as node:zlib with no
+                // pledgedSrcSize option.
+                Engine::Zstd(ctx) => ctx.init(u64::MAX),
+                Engine::Closed => unreachable!("just constructed"),
+            };
+            if err.is_error() {
+                // An init-failed brotli/zstd context has `state: None`, and
+                // their `close()` doesn't tolerate that (brotli unwraps,
+                // zstd calls reset on null). Transition to Closed so the
+                // Drop this error-return is about to trigger is a no-op.
+                *engine = Engine::Closed;
             }
-            Engine::Brotli(ctx) => ctx.init(),
-            // ZSTD_CONTENTSIZE_UNKNOWN — same as node:zlib with no
-            // pledgedSrcSize option.
-            Engine::Zstd(ctx) => ctx.init(u64::MAX),
-            Engine::Closed => unreachable!("just constructed"),
+            err
         });
         if err.is_error() {
             return Err(throw_engine_error(global, err));

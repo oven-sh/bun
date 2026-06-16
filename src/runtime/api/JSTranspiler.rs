@@ -1017,10 +1017,14 @@ impl JSTranspiler {
 
         // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
         let vm = VirtualMachine::get().as_mut();
+        // `config.transform` is only consumed here; nothing reads it off the stored
+        // `Config` afterwards. Move it out (the Zig source passes it by value, which
+        // is a shallow struct copy) so the define/external/drop string vectors aren't
+        // deep-cloned and then kept for the Transpiler's lifetime in both places.
         let transpiler = match Transpiler::Transpiler::init(
             arena_ref,
             &raw mut config.log,
-            config.transform.clone(),
+            core::mem::take(&mut config.transform),
             Some(vm.transpiler.env),
         ) {
             Ok(t) => t,

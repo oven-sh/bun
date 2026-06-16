@@ -766,6 +766,14 @@ function Socket(options?) {
         const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
+        // After a named-pipe TLS upgrade, route ciphertext to the TLS feeder
+        // rather than the user's onread.callback (same re-emission concern as
+        // SocketHandlers2.data above; #32242).
+        const feeder = self[kupgradeDuplexFeeder];
+        if (feeder !== undefined) {
+          feeder(buffer);
+          return;
+        }
         try {
           onread.callback(buffer.length, buffer);
         } catch (e) {

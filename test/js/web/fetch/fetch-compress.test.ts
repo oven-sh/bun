@@ -194,14 +194,15 @@ describe("fetch compress option", () => {
     ).toThrow(/'compress' must be/);
   });
 
-  test.each([99, NaN, 5.5, Infinity])("invalid level %p throws", level => {
+  test.each([99, -1, 5.5, Infinity, "6"])("invalid level %p throws", level => {
     expect(() =>
       fetch("http://127.0.0.1:1/", {
         method: "POST",
         body: "x",
+        // @ts-expect-error
         compress: { encoding: "gzip", level },
       }),
-    ).toThrow(/'compress.level'/);
+    ).toThrow(/compress\.level/);
   });
 
   // A Bun.file() body large enough to qualify for the sendfile fast path

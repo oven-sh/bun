@@ -95,37 +95,27 @@ impl CompressOption {
             };
             let level = match value.get(global, "level")? {
                 Some(lvl) if !lvl.is_undefined_or_null() => {
-                    if !lvl.is_number() {
-                        return Err(global.throw_invalid_argument_type_value(
-                            b"compress.level",
-                            b"integer",
-                            lvl,
-                        ));
-                    }
-                    let raw = lvl.as_number();
-                    if raw.is_nan() || raw.fract() != 0.0 {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "fetch: 'compress.level' must be an integer"
-                        )));
-                    }
-                    let n = raw as i32;
-                    let (min, max) = match encoding {
-                        CompressEncoding::Gzip | CompressEncoding::Deflate => (0, 12),
+                    let (min, max, default) = match encoding {
+                        CompressEncoding::Gzip | CompressEncoding::Deflate => {
+                            (0, 12, DEFAULT_DEFLATE_LEVEL)
+                        }
                         CompressEncoding::Brotli => (
                             bun_brotli::c::BROTLI_MIN_QUALITY,
                             bun_brotli::c::BROTLI_MAX_QUALITY,
+                            DEFAULT_BROTLI_QUALITY,
                         ),
-                        CompressEncoding::Zstd => (1, 22),
+                        CompressEncoding::Zstd => (1, 22, DEFAULT_ZSTD_LEVEL),
                     };
-                    if n < min || n > max {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "fetch: 'compress.level' for \"{}\" must be between {} and {}",
-                            bstr::BStr::new(encoding.header_value()),
-                            min,
-                            max,
-                        )));
-                    }
-                    Some(n)
+                    Some(global.validate_integer_range::<i32>(
+                        lvl,
+                        default,
+                        bun_jsc::IntegerRange {
+                            min: i128::from(min),
+                            max: i128::from(max),
+                            field_name: b"compress.level",
+                            always_allow_zero: false,
+                        },
+                    )?)
                 }
                 _ => None,
             };
@@ -147,6 +137,7 @@ impl CompressOption {
 /// `compress: true` / `compress: "gzip"` path never allocates a fresh handle.
 const DEFAULT_DEFLATE_LEVEL: i32 = 6;
 const DEFAULT_BROTLI_QUALITY: i32 = 6;
+const DEFAULT_ZSTD_LEVEL: i32 = 3;
 
 const SHARED_BUFFER_SIZE: usize = 512 * 1024;
 

@@ -1468,8 +1468,8 @@ unsafe fn parse_worker_exec_argv_allow_addons(
     let argv: Vec<&[u8]> = owned.iter().map(|s| s.as_bytes()).collect();
 
     let mut iter = bun_clap::args::SliceIterator::init(&argv);
-    let args = bun_clap::parse_ex::<bun_clap::Help, _>(
-        crate::cli::arguments::RUN_PARAMS,
+    let args = bun_clap::ComptimeClap::<bun_clap::Help>::parse_with_table(
+        crate::cli::arguments::RUN_TABLE,
         &mut iter,
         bun_clap::ParseOptions {
             diagnostic: None,

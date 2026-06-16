@@ -4025,6 +4025,34 @@ unsafe fn transpile_file(
     // SAFETY: per fn contract — `referrer` is valid for the call.
     let referrer_slice = unsafe { &*referrer }.to_utf8();
 
+    // Bun has no URL-fetching module loader. The resolver marks `http(s)://`
+    // and `//protocol-relative` specifiers external (so `Bun.resolveSync` /
+    // `import.meta.resolve` echo them back, matching Node), but actually
+    // importing one can't work: the file loader handed back a bogus
+    // `{ __esModule, default: "<url>" }` namespace (every named export
+    // `undefined`) and `.js` URLs ENOENT'd reading the URL as a path. Surface a
+    // clean module-not-found error instead. See #32398 / #29076.
+    {
+        let spec = _specifier.slice();
+        if spec.starts_with(b"http://") || spec.starts_with(b"https://") || spec.starts_with(b"//")
+        {
+            let js = global_ref
+                .err(
+                    bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND,
+                    format_args!(
+                        "Cannot find module '{}'. Bun does not support importing from URLs.",
+                        bstr::BStr::new(spec),
+                    ),
+                )
+                .to_js();
+            // SAFETY: per fn contract — `ret` is a valid out-param.
+            unsafe {
+                *ret = ErrorableResolvedSource::err(bun_core::err!("JSErrorObject"), js);
+            }
+            return ptr::null_mut();
+        }
+    }
+
     // `type_attribute` may be null (no `with { type }`).
     // SAFETY: per fn contract — null or a live `bun.String*`.
     let type_attribute_str: Option<&[u8]> =

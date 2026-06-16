@@ -54,7 +54,10 @@ test("new Bun.Transpiler() does not retain a second deep copy of TransformOption
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
+  // Don't assert stderr is exactly empty: debug/ASAN builds may emit benign
+  // allocator diagnostics. Include it in the combined object so a crashed
+  // child shows context instead of a bare JSON.parse error.
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout, stderr, exitCode: 0 });
   const { delta } = JSON.parse(stdout.trim());
   const ratio = Number((delta / payload).toFixed(2));
   // With the redundant `.clone()` the constructor retains one extra full copy
@@ -63,5 +66,4 @@ test("new Bun.Transpiler() does not retain a second deep copy of TransformOption
   // biases the headroom toward the passing side so 16 KB page platforms
   // (macOS aarch64) and Windows RSS accounting don't flake.
   expect(ratio).toBeLessThan(5.8);
-  expect(exitCode).toBe(0);
 });

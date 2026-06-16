@@ -776,6 +776,16 @@ pub(crate) fn to_bytes(
 
         let dest_path = bun_core::strings::remove_leading_dot_slash(&output_file.dest_path);
 
+        // Windows: store the key with `/`. The template printer emits native
+        // `\` into `dest_path`, but `find_assume_standalone_path` normalizes
+        // lookups to `/`, so a `\` key would miss (ENOENT). Zig normalized this
+        // in place in `Chunk.zig`; the Rust port only normalizes a scratch copy.
+        #[cfg(windows)]
+        let mut dest_path_buf = PathBuffer::uninit();
+        #[cfg(windows)]
+        let dest_path: &[u8] =
+            path::resolve_path::platform_to_posix_buf::<u8>(dest_path, &mut dest_path_buf);
+
         let bytecode: StringPointer = 'brk: {
             if output_file.bytecode_index != u32::MAX {
                 // Bytecode alignment for JSC bytecode cache deserialization.

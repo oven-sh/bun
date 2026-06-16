@@ -245,10 +245,12 @@ test("navigator", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/21585
-test.concurrent.each(["userAgent", "platform", "hardwareConcurrency"])("navigator.%s is a getter-only accessor", async key => {
-  // Spawn a fresh process so we don't mutate the test runner's own navigator object.
-  const k = JSON.stringify(key);
-  const src = `
+test.concurrent.each(["userAgent", "platform", "hardwareConcurrency"])(
+  "navigator.%s is a getter-only accessor",
+  async key => {
+    // Spawn a fresh process so we don't mutate the test runner's own navigator object.
+    const k = JSON.stringify(key);
+    const src = `
     const nav = globalThis.navigator;
     const before = nav[${k}];
     const desc = Object.getOwnPropertyDescriptor(nav, ${k});
@@ -267,23 +269,24 @@ test.concurrent.each(["userAgent", "platform", "hardwareConcurrency"])("navigato
       strictErr,
     }));
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const result = JSON.parse(stdout);
-  expect({ ...result, stderr, exitCode }).toEqual({
-    before: result.before,
-    after: result.before,
-    desc: { get: "function", set: "undefined", enumerable: true, configurable: true, hasWritable: false },
-    strictErr: "TypeError",
-    stderr: expect.any(String),
-    exitCode: 0,
-  });
-  expect(result.after).not.toBe("overwritten");
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = JSON.parse(stdout);
+    expect({ ...result, stderr, exitCode }).toEqual({
+      before: result.before,
+      after: result.before,
+      desc: { get: "function", set: "undefined", enumerable: true, configurable: true, hasWritable: false },
+      strictErr: "TypeError",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+    expect(result.after).not.toBe("overwritten");
+  },
+);
 
 test("confirm (yes) unix newline", async () => {
   const proc = spawn({

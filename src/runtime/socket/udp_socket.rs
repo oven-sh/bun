@@ -610,13 +610,18 @@ impl UDPSocket {
                 let code: &'static str = SystemErrno::init(err as i64)
                     .map(Into::into)
                     .unwrap_or("UNKNOWN");
+                let message = if config.port > 0 {
+                    BunString::create_format(format_args!(
+                        "bind {} {}:{}",
+                        code, config.hostname, config.port
+                    ))
+                } else {
+                    BunString::create_format(format_args!("bind {} {}", code, config.hostname))
+                };
                 let sys_err = SystemError {
                     errno: err,
                     code: BunString::static_(code),
-                    message: BunString::create_format(format_args!(
-                        "bind {} {}",
-                        code, config.hostname
-                    )),
+                    message,
                     path: BunString::empty(),
                     syscall: BunString::empty(),
                     hostname: BunString::empty(),
@@ -630,7 +635,12 @@ impl UDPSocket {
                     BunString::static_("bind").to_js(global_this)?,
                 );
                 error_value.put(global_this, b"address", config.hostname.to_js(global_this)?);
-                error_value.put(global_this, b"port", JSValue::js_number(config.port as f64));
+                // Node's ExceptionWithHostPort only sets `port` when it's > 0;
+                // test-dgram-error-message-address.js asserts `e.port === undefined`
+                // for a port-0 bind failure.
+                if config.port > 0 {
+                    error_value.put(global_this, b"port", JSValue::js_number(config.port as f64));
+                }
 
                 return Err(global_this.throw_value(error_value));
             }

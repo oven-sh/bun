@@ -139,7 +139,13 @@ describe("Socket.prototype.bindSync", () => {
     try {
       const addr = first.bindSync({ address: "127.0.0.1", port: 0 });
       expect(() => second.bindSync({ address: "127.0.0.1", port: addr.port })).toThrow(
-        expect.objectContaining({ code: "EADDRINUSE", syscall: "bind" }),
+        expect.objectContaining({
+          code: "EADDRINUSE",
+          syscall: "bind",
+          address: "127.0.0.1",
+          port: addr.port,
+          message: `bind EADDRINUSE 127.0.0.1:${addr.port}`,
+        }),
       );
     } finally {
       first.close();

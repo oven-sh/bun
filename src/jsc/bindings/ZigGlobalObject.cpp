@@ -3489,7 +3489,11 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         sourceOriginStringHolder = String("."_s);
     } else if (sourceURL.protocolIsFile()) {
         sourceOriginStringHolder = sourceURL.fileSystemPath();
-        referrerAsyncOrder = globalObject->moduleLoader()->asyncEvaluationOrderForKey(JSC::Identifier::fromString(vm, sourceOriginStringHolder));
+        auto query = sourceURL.queryWithLeadingQuestionMark();
+        auto referrerKey = query.isEmpty()
+            ? JSC::Identifier::fromString(vm, sourceOriginStringHolder)
+            : JSC::Identifier::fromString(vm, makeString(sourceOriginStringHolder, query));
+        referrerAsyncOrder = globalObject->moduleLoader()->asyncEvaluationOrderForKey(referrerKey);
     } else if (sourceURL.protocol() == "builtin"_s) {
         ASSERT(sourceURL.string().startsWith("builtin://"_s));
         sourceOriginStringHolder = sourceURL.string().substringSharingImpl(10 /* builtin:// */);

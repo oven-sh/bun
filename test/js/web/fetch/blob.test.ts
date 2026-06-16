@@ -244,6 +244,86 @@ describe("new File() lastModified option", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/14102
+describe("File prototype chain", () => {
+  test("File has its own prototype distinct from Blob.prototype", () => {
+    expect(File.prototype).not.toBe(Blob.prototype);
+    expect(Object.getPrototypeOf(File.prototype)).toBe(Blob.prototype);
+    expect(Object.getPrototypeOf(File)).toBe(Blob);
+    expect(File.prototype.constructor).toBe(File);
+  });
+
+  test("File Symbol.toStringTag is 'File'", () => {
+    const file = new File(["Hello"], "file.txt", { type: "text/plain" });
+    expect(file[Symbol.toStringTag]).toBe("File");
+    expect(Object.prototype.toString.call(file)).toBe("[object File]");
+    expect(Object.getOwnPropertyDescriptor(File.prototype, Symbol.toStringTag)).toEqual({
+      value: "File",
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
+  test("Blob Symbol.toStringTag is still 'Blob'", () => {
+    const blob = new Blob(["Hello"]);
+    expect(blob[Symbol.toStringTag]).toBe("Blob");
+    expect(Object.prototype.toString.call(blob)).toBe("[object Blob]");
+  });
+
+  test("File inherits Blob methods via prototype chain", async () => {
+    const file = new File(["Hello"], "file.txt", { type: "text/plain" });
+    expect(file instanceof File).toBe(true);
+    expect(file instanceof Blob).toBe(true);
+    expect(new Blob([]) instanceof File).toBe(false);
+    expect(await file.text()).toBe("Hello");
+    expect(file.name).toBe("file.txt");
+    expect(File.prototype.text).toBe(Blob.prototype.text);
+  });
+
+  test("subclass of File has correct prototype chain", () => {
+    class MyFile extends File {}
+    const mf = new MyFile(["x"], "a.txt");
+    expect(mf[Symbol.toStringTag]).toBe("File");
+    expect(mf instanceof MyFile).toBe(true);
+    expect(mf instanceof File).toBe(true);
+    expect(mf instanceof Blob).toBe(true);
+    expect(Object.getPrototypeOf(Object.getPrototypeOf(mf))).toBe(File.prototype);
+  });
+
+  test("structuredClone of File preserves File prototype", async () => {
+    const file = new File(["Hello"], "file.txt", { type: "text/plain" });
+    const clone = structuredClone(file);
+    expect(clone[Symbol.toStringTag]).toBe("File");
+    expect(Object.prototype.toString.call(clone)).toBe("[object File]");
+    expect(clone instanceof File).toBe(true);
+    expect(clone instanceof Blob).toBe(true);
+    expect(clone.name).toBe("file.txt");
+    expect(await clone.text()).toBe("Hello");
+
+    const blob = new Blob(["Hello"]);
+    const blobClone = structuredClone(blob);
+    expect(blobClone[Symbol.toStringTag]).toBe("Blob");
+    expect(blobClone instanceof File).toBe(false);
+  });
+
+  test("FormData file entries have File prototype", async () => {
+    const fd = new FormData();
+    fd.append("file", new File(["Hello"], "a.txt"));
+    fd.append("blob", new Blob(["World"]));
+    const file = fd.get("file") as File;
+    const blob = fd.get("blob") as File;
+    expect(file[Symbol.toStringTag]).toBe("File");
+    expect(file instanceof File).toBe(true);
+    expect(file.name).toBe("a.txt");
+    expect(await file.text()).toBe("Hello");
+    // Per the FormData spec, Blob values are normalized to File.
+    expect(blob[Symbol.toStringTag]).toBe("File");
+    expect(blob instanceof File).toBe(true);
+    expect(await blob.text()).toBe("World");
+  });
+});
+
 test("new Blob('123') is NOT supported", async () => {
   expect(() => new Blob("123")).toThrow();
 });

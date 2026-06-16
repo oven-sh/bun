@@ -2098,6 +2098,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::createJSS3FileStructure(init.vm, init.owner));
         });
 
+    m_JSDOMFileStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createJSDOMFileStructure(init.vm, init.owner));
+        });
+
     m_S3ErrorStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::createS3ErrorStructure(init.vm, init.owner));

@@ -1,4 +1,5 @@
 #include "root.h"
+#include "ZigGlobalObject.h"
 #include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/InternalFunction.h>
@@ -10,8 +11,50 @@ using namespace JSC;
 extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
 extern "C" SYSV_ABI bool JSDOMFile__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
 
-// TODO: make this inehrit from JSBlob instead of InternalFunction
-// That will let us remove this hack for [Symbol.hasInstance] and fix the prototype chain.
+class JSDOMFilePrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    static JSDOMFilePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSDOMFilePrototype* prototype = new (NotNull, JSC::allocateCell<JSDOMFilePrototype>(vm)) JSDOMFilePrototype(vm, structure);
+        prototype->finishCreation(vm);
+        return prototype;
+    }
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        structure->setMayBePrototype(true);
+        return structure;
+    }
+
+    DECLARE_INFO;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDOMFilePrototype, Base);
+        return &vm.plainObjectSpace();
+    }
+
+private:
+    JSDOMFilePrototype(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
+        ASSERT(inherits(info()));
+        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    }
+};
+
+const JSC::ClassInfo JSDOMFilePrototype::s_info = { "File"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMFilePrototype) };
+
 class JSDOMFile : public JSC::InternalFunction {
     using Base = JSC::InternalFunction;
 
@@ -43,12 +86,14 @@ public:
     static JSDOMFile* create(JSC::VM& vm, JSGlobalObject* globalObject)
     {
         auto* zigGlobal = defaultGlobalObject(globalObject);
-        auto structure = createStructure(vm, globalObject, zigGlobal->functionPrototype());
+        auto* structure = createStructure(vm, globalObject, zigGlobal->JSBlobConstructor());
         auto* object = new (NotNull, JSC::allocateCell<JSDOMFile>(vm)) JSDOMFile(vm, structure);
         object->finishCreation(vm);
 
-        // This is not quite right. But we'll fix it if someone files an issue about it.
-        object->putDirect(vm, vm.propertyNames->prototype, zigGlobal->JSBlobPrototype(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+        auto* fileStructure = zigGlobal->JSDOMFileStructure();
+        auto* prototype = fileStructure->storedPrototypeObject();
+        object->putDirect(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+        prototype->putDirect(vm, vm.propertyNames->constructor, object, JSC::PropertyAttribute::DontEnum | 0);
 
         return object;
     }
@@ -69,7 +114,7 @@ public:
         auto& vm = JSC::getVM(globalObject);
         JSObject* newTarget = asObject(callFrame->newTarget());
         auto* constructor = globalObject->JSDOMFileConstructor();
-        Structure* structure = globalObject->JSBlobStructure();
+        Structure* structure = globalObject->JSDOMFileStructure();
         if (constructor != newTarget) {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -77,7 +122,7 @@ public:
                 // ShadowRealm functions belong to a different global object.
                 getFunctionRealm(lexicalGlobalObject, newTarget));
             RETURN_IF_EXCEPTION(scope, {});
-            structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, functionGlobalObject->JSBlobStructure());
+            structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, functionGlobalObject->JSDOMFileStructure());
             RETURN_IF_EXCEPTION(scope, {});
         }
 
@@ -106,6 +151,23 @@ namespace Bun {
 JSC::JSObject* createJSDOMFileConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     return JSDOMFile::create(vm, globalObject);
+}
+
+JSC::Structure* createJSDOMFileStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    auto* blobPrototype = zigGlobal->JSBlobPrototype();
+    auto* prototypeStructure = JSDOMFilePrototype::createStructure(vm, globalObject, blobPrototype);
+    auto* prototype = JSDOMFilePrototype::create(vm, globalObject, prototypeStructure);
+    return WebCore::JSBlob::createStructure(vm, globalObject, prototype);
+}
+
+extern "C" SYSV_ABI JSC::EncodedJSValue BUN__createJSDOMFileUnsafely(JSC::JSGlobalObject* lexicalGlobalObject, void* ptr)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto* structure = globalObject->JSDOMFileStructure();
+    return JSC::JSValue::encode(WebCore::JSBlob::create(vm, globalObject, structure, ptr));
 }
 
 }

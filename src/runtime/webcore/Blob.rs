@@ -3707,6 +3707,10 @@ impl BlobExt for Blob {
             return crate::webcore::s3_file::to_js_unchecked(global_object, this);
         }
 
+        if self.is_jsdom_file.get() {
+            return BUN__createJSDOMFileUnsafely(global_object, this.cast::<core::ffi::c_void>());
+        }
+
         js::to_js_unchecked(global_object, this)
     }
 
@@ -7055,6 +7059,17 @@ bun_jsc::jsc_host_abi! {
         let Some(blob) = value.as_class_ref::<Blob>() else { return false };
         blob.is_jsdom_file.get()
     }
+}
+
+// C++ side defines `SYSV_ABI EncodedJSValue` (JSDOMFile.cpp).
+bun_jsc::jsc_abi_extern! {
+    // `&JSGlobalObject` discharges the only deref'd-param precondition; `blob`
+    // is stored opaquely as `void* m_ctx` (sole caller is `BlobExt::to_js`,
+    // whose signature carries the ownership-transfer contract).
+    safe fn BUN__createJSDOMFileUnsafely(
+        global: &JSGlobalObject,
+        blob: *mut core::ffi::c_void,
+    ) -> JSValue;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

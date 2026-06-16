@@ -47,7 +47,7 @@ mod darwin_spawn_np {
 #[cfg(unix)]
 use self::posix_compat::{Errno, errno};
 #[cfg(target_os = "macos")]
-use self::posix_compat::{errno_from_posix_spawn, mode_t, unexpected_errno};
+use self::posix_compat::{errno_from_posix_spawn, mode_t};
 use self::posix_compat::{fd_t, pid_t, to_posix_path};
 
 #[allow(non_camel_case_types)]
@@ -82,13 +82,7 @@ mod posix_compat {
     impl Errno {
         pub(super) const SUCCESS: Errno = Errno(0);
         #[cfg(target_os = "macos")]
-        pub(super) const NOMEM: Errno = Errno(libc::ENOMEM);
-        #[cfg(target_os = "macos")]
         pub(super) const INVAL: Errno = Errno(libc::EINVAL);
-        #[cfg(target_os = "macos")]
-        pub(super) const BADF: Errno = Errno(libc::EBADF);
-        #[cfg(target_os = "macos")]
-        pub(super) const NAMETOOLONG: Errno = Errno(libc::ENAMETOOLONG);
         pub(super) const INTR: Errno = Errno(libc::EINTR);
     }
     /// Decode a syscall return: with libc, `rc == -1 ⇒ read __errno`,
@@ -115,12 +109,6 @@ mod posix_compat {
     /// Copy a path into a NUL-terminated buffer.
     pub(super) fn to_posix_path(path: &[u8]) -> Result<CString, Error> {
         CString::new(path).map_err(|_| err!("Unexpected"))
-    }
-
-    /// Returns an "Unexpected" error for an errno we don't handle.
-    #[cfg(target_os = "macos")]
-    pub(super) fn unexpected_errno(_e: Errno) -> Error {
-        err!("Unexpected")
     }
 }
 
@@ -300,23 +288,19 @@ pub mod posix_spawn {
         pub status: u32,
     }
 
-    /// Map a `posix_spawn*` errno to `Result<(), Error>`. Shared across all
-    /// `posix_spawnattr_*` / `posix_spawn_file_actions_*` wrappers — they only
-    /// differ in which errnos are *documented* impossible for a given call.
-    /// Those were previously per-site `unreachable!()`; here they become error
-    /// returns, which widens the contract without changing observable behaviour
-    /// for any errno the libc calls actually produce. `INVAL` stays a panic: it
+    /// Map a `posix_spawn*` errno to `sys::Result<()>`, preserving the errno
+    /// so callers can surface it (Darwin's file-action registration returns
+    /// EBADF for any fd >= OPEN_MAX, which must fail the spawn the way node
+    /// does). Shared across all `posix_spawnattr_*` /
+    /// `posix_spawn_file_actions_*` wrappers. `INVAL` stays a panic: it
     /// indicates a corrupted attr/actions object, i.e. a Bun bug.
     #[cfg(target_os = "macos")]
     #[inline]
-    fn spawn_errno(e: Errno) -> Result<(), Error> {
+    fn spawn_errno(e: Errno) -> sys::Result<()> {
         match e {
             Errno::SUCCESS => Ok(()),
-            Errno::NOMEM => Err(err!("SystemResources")),
-            Errno::BADF => Err(err!("InvalidFileDescriptor")),
-            Errno::NAMETOOLONG => Err(err!("NameTooLong")),
             Errno::INVAL => unreachable!(), // attr/actions object is invalid
-            e => Err(unexpected_errno(e)),
+            e => Err(sys::Error::from_code_int(e.0, SYSCALL_POSIX_SPAWN)),
         }
     }
 
@@ -336,7 +320,7 @@ pub mod posix_spawn {
 
     #[cfg(target_os = "macos")]
     impl PosixSpawnAttr {
-        pub fn init() -> Result<PosixSpawnAttr, Error> {
+        pub fn init() -> sys::Result<PosixSpawnAttr> {
             let mut attr = core::mem::MaybeUninit::<system::posix_spawnattr_t>::uninit();
             // SAFETY: posix_spawnattr_init writes into attr on SUCCESS
             spawn_errno(errno_from_posix_spawn(unsafe {
@@ -350,7 +334,7 @@ pub mod posix_spawn {
             })
         }
 
-        pub fn set(&mut self, flags: u16) -> Result<(), Error> {
+        pub fn set(&mut self, flags: u16) -> sys::Result<()> {
             // `as` between same-width signed/unsigned is a bitcast.
             let flags_s: c_short = flags as c_short;
             // SAFETY: self.attr is a live posix_spawnattr_t
@@ -359,10 +343,12 @@ pub mod posix_spawn {
             }))
         }
 
-        pub fn reset_signals(&mut self) -> Result<(), Error> {
+        pub fn reset_signals(&mut self) -> sys::Result<()> {
             // SAFETY: self.attr is a live posix_spawnattr_t
             if unsafe { posix_spawnattr_reset_signals(&raw mut self.attr) } != 0 {
-                return Err(err!("SystemResources"));
+                // posix_spawnattr_setsigdefault/setsigmask only fail on an
+                // invalid attr; the C shim collapses the errno to 0/1.
+                return Err(sys::Error::from_code(sys::E::EINVAL, SYSCALL_POSIX_SPAWN));
             }
             Ok(())
         }
@@ -389,7 +375,7 @@ pub mod posix_spawn {
 
     #[cfg(target_os = "macos")]
     impl PosixSpawnActions {
-        pub(crate) fn init() -> Result<PosixSpawnActions, Error> {
+        pub(crate) fn init() -> sys::Result<PosixSpawnActions> {
             let mut actions =
                 core::mem::MaybeUninit::<system::posix_spawn_file_actions_t>::uninit();
             // SAFETY: posix_spawn_file_actions_init writes into actions on SUCCESS
@@ -408,7 +394,7 @@ pub mod posix_spawn {
             path: &CStr,
             flags: u32,
             mode: mode_t,
-        ) -> Result<(), Error> {
+        ) -> sys::Result<()> {
             let flags_c: c_int = flags as c_int;
             // SAFETY: self.actions is live; path is NUL-terminated
             spawn_errno(errno_from_posix_spawn(unsafe {
@@ -422,14 +408,14 @@ pub mod posix_spawn {
             }))
         }
 
-        pub(crate) fn close(&mut self, fd: Fd) -> Result<(), Error> {
+        pub(crate) fn close(&mut self, fd: Fd) -> sys::Result<()> {
             // SAFETY: self.actions is live
             spawn_errno(errno_from_posix_spawn(unsafe {
                 system::posix_spawn_file_actions_addclose(&raw mut self.actions, fd.native())
             }))
         }
 
-        pub(crate) fn dup2(&mut self, fd: Fd, newfd: Fd) -> Result<(), Error> {
+        pub(crate) fn dup2(&mut self, fd: Fd, newfd: Fd) -> sys::Result<()> {
             if fd == newfd {
                 return self.inherit(fd);
             }
@@ -444,7 +430,7 @@ pub mod posix_spawn {
             }))
         }
 
-        pub(crate) fn inherit(&mut self, fd: Fd) -> Result<(), Error> {
+        pub(crate) fn inherit(&mut self, fd: Fd) -> sys::Result<()> {
             // SAFETY: self.actions is live
             spawn_errno(errno_from_posix_spawn(unsafe {
                 super::darwin_spawn_np::posix_spawn_file_actions_addinherit_np(
@@ -454,13 +440,8 @@ pub mod posix_spawn {
             }))
         }
 
-        pub(crate) fn chdir(&mut self, path: &[u8]) -> Result<(), Error> {
-            let posix_path = to_posix_path(path)?;
-            self.chdir_z(&posix_path)
-        }
-
         // deliberately not pub
-        fn chdir_z(&mut self, path: &CStr) -> Result<(), Error> {
+        fn chdir_z(&mut self, path: &CStr) -> sys::Result<()> {
             // SAFETY: self.actions is live; path is NUL-terminated
             spawn_errno(errno_from_posix_spawn(unsafe {
                 super::darwin_spawn_np::posix_spawn_file_actions_addchdir_np(
@@ -550,6 +531,70 @@ pub mod posix_spawn {
         })
     }
 
+    /// Convert portable `bun_spawn` actions/attrs into libc `posix_spawn`
+    /// objects for the system posix_spawn path. Registration failures must
+    /// fail the spawn: Darwin rejects file actions on fds >= OPEN_MAX (10240)
+    /// with EBADF, and with POSIX_SPAWN_CLOEXEC_DEFAULT set, a silently
+    /// dropped dup2 leaves the child's stdio closed, so the child looks like
+    /// a successful run that produced no output.
+    #[cfg(target_os = "macos")]
+    fn convert_spawn_objects(
+        actions: Option<&Actions>,
+        attr: Option<&Attr>,
+    ) -> sys::Result<(PosixSpawnActions, PosixSpawnAttr)> {
+        let mut posix_actions = PosixSpawnActions::init()?;
+        let mut posix_attr = PosixSpawnAttr::init()?;
+
+        // Pass through all flags from the BunSpawn.Attr
+        if let Some(a) = attr {
+            let mut flags = a.flags;
+            if a.new_process_group {
+                flags |= system::POSIX_SPAWN_SETPGROUP as u16;
+                // pgroup defaults to 0 in a freshly-init'd attr, i.e. child's own pid.
+            }
+            if flags != 0 {
+                posix_attr.set(flags)?;
+            }
+            if a.reset_signals {
+                posix_attr.reset_signals()?;
+            }
+        }
+
+        if let Some(act) = actions {
+            for action in &act.actions {
+                match action.kind {
+                    bun_spawn::FileActionType::Close => {
+                        posix_actions.close(Fd::from_native(action.fds[0]))?;
+                    }
+                    bun_spawn::FileActionType::Dup2 => {
+                        posix_actions.dup2(
+                            Fd::from_native(action.fds[0]),
+                            Fd::from_native(action.fds[1]),
+                        )?;
+                    }
+                    bun_spawn::FileActionType::Open => {
+                        // SAFETY: `.Open` actions always have a non-null path
+                        // backed by a CString in `act.paths` (see `open_z`).
+                        let p = unsafe { bun_core::ffi::cstr(action.path) };
+                        posix_actions.open_z(
+                            Fd::from_native(action.fds[0]),
+                            p,
+                            u32::try_from(action.flags).expect("int cast"),
+                            mode_t::try_from(action.mode).unwrap(),
+                        )?;
+                    }
+                    bun_spawn::FileActionType::None => {}
+                }
+            }
+
+            if let Some(chdir_path) = act.chdir_buf.as_deref() {
+                posix_actions.chdir_z(chdir_path)?;
+            }
+        }
+
+        Ok((posix_actions, posix_attr))
+    }
+
     #[cfg(unix)]
     pub(crate) fn spawn_z(
         path: &CStr,
@@ -600,117 +645,13 @@ pub mod posix_spawn {
         }
 
         // macOS without PTY: use system posix_spawn
-        // Need to convert BunSpawn.Actions to PosixSpawnActions for system posix_spawn
         #[cfg(target_os = "macos")]
         {
-            let mut posix_actions = match PosixSpawnActions::init() {
-                Ok(a) => a,
-                Err(_) => {
-                    return sys::Result::Err(sys::Error {
-                        errno: Errno::NOMEM.0 as sys::ErrorInt,
-                        syscall: SYSCALL_POSIX_SPAWN,
-                        ..Default::default()
-                    });
-                }
+            let (posix_actions, posix_attr) = match convert_spawn_objects(actions, attr) {
+                Ok(converted) => converted,
+                Err(e) => return sys::Result::Err(e.with_path(path.to_bytes())),
             };
-            // Drop handles posix_actions.deinit()
-
-            let mut posix_attr = match PosixSpawnAttr::init() {
-                Ok(a) => a,
-                Err(_) => {
-                    return sys::Result::Err(sys::Error {
-                        errno: Errno::NOMEM.0 as sys::ErrorInt,
-                        syscall: SYSCALL_POSIX_SPAWN,
-                        ..Default::default()
-                    });
-                }
-            };
-            // Drop handles posix_attr.deinit()
-
-            // Pass through all flags from the BunSpawn.Attr
-            if let Some(a) = attr {
-                let mut flags = a.flags;
-                if a.new_process_group {
-                    flags |= system::POSIX_SPAWN_SETPGROUP as u16;
-                    // pgroup defaults to 0 in a freshly-init'd attr, i.e. child's own pid.
-                }
-                if flags != 0 {
-                    let _ = posix_attr.set(flags);
-                }
-                if a.reset_signals {
-                    let _ = posix_attr.reset_signals();
-                }
-            }
-
-            // Convert actions
-            if let Some(act) = actions {
-                for action in &act.actions {
-                    match action.kind {
-                        bun_spawn::FileActionType::Close => {
-                            if let Err(e) = posix_actions.close(Fd::from_native(action.fds[0])) {
-                                if cfg!(debug_assertions) {
-                                    sys::syslog!(
-                                        "posix_spawn_file_actions_addclose({}) failed: {}",
-                                        action.fds[0],
-                                        e.name()
-                                    );
-                                }
-                            }
-                        }
-                        bun_spawn::FileActionType::Dup2 => {
-                            if let Err(e) = posix_actions.dup2(
-                                Fd::from_native(action.fds[0]),
-                                Fd::from_native(action.fds[1]),
-                            ) {
-                                if cfg!(debug_assertions) {
-                                    sys::syslog!(
-                                        "posix_spawn_file_actions_adddup2({}, {}) failed: {}",
-                                        action.fds[0],
-                                        action.fds[1],
-                                        e.name()
-                                    );
-                                }
-                            }
-                        }
-                        bun_spawn::FileActionType::Open => {
-                            // SAFETY: `.Open` actions always have a non-null path
-                            // backed by a CString in `act.paths` (see `open_z`).
-                            let p = unsafe { bun_core::ffi::cstr(action.path) };
-                            if let Err(e) = posix_actions.open_z(
-                                Fd::from_native(action.fds[0]),
-                                p,
-                                u32::try_from(action.flags).expect("int cast"),
-                                mode_t::try_from(action.mode).unwrap(),
-                            ) {
-                                if cfg!(debug_assertions) {
-                                    sys::syslog!(
-                                        "posix_spawn_file_actions_addopen({}, {}, {}, {}) failed: {}",
-                                        action.fds[0],
-                                        bstr::BStr::new(p.to_bytes()),
-                                        action.flags,
-                                        action.mode,
-                                        e.name()
-                                    );
-                                }
-                            }
-                        }
-                        bun_spawn::FileActionType::None => {}
-                    }
-                }
-
-                // Handle chdir
-                if let Some(chdir_path) = act.chdir_buf.as_deref() {
-                    if let Err(e) = posix_actions.chdir(chdir_path.to_bytes()) {
-                        if cfg!(debug_assertions) {
-                            sys::syslog!(
-                                "posix_spawn_file_actions_addchdir({}) failed: {}",
-                                bstr::BStr::new(chdir_path.to_bytes()),
-                                e.name()
-                            );
-                        }
-                    }
-                }
-            }
+            // Drop handles posix_actions.deinit() / posix_attr.deinit()
 
             let mut pid: pid_t = 0;
             // SAFETY: all pointers valid; argv/envp NULL-terminated. Darwin's

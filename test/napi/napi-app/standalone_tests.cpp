@@ -1169,6 +1169,7 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
 
   clear();
 
+  napi_ref object_ref;
   status = napi_wrap(
       env, object, nullptr,
       +[](napi_env env, void *data, void *finalize_hint) {
@@ -1176,10 +1177,23 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
         printf("napi_throw status: %d\n", napi_throw(env, ok(env)));
         puts("finalizer end");
       },
-      nullptr, nullptr);
+      nullptr, &object_ref);
 
   if (status != napi_ok) {
     printf("napi_wrap failed: %d\n", status);
+    return nullptr;
+  }
+
+  // Pin the wrapped object for the rest of the process. Under Node >= 26 a
+  // finalizer that calls napi_throw aborts if it runs from GC (it would need
+  // node_api_post_finalizer), but running it at env teardown is allowed and
+  // prints napi_cannot_run_js. Keeping the object strongly referenced makes
+  // the finalizer timing deterministic on both runtimes.
+  uint32_t refcount;
+  status = napi_reference_ref(env, object_ref, &refcount);
+
+  if (status != napi_ok) {
+    printf("napi_reference_ref failed: %d\n", status);
     return nullptr;
   }
 

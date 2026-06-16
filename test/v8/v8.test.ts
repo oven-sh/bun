@@ -1,7 +1,18 @@
 import { spawn } from "bun";
 import { jscDescribe } from "bun:jsc";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isBroken, isMusl, isWindows, nodeExe, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  canBuildNodeAddons,
+  isASAN,
+  isBroken,
+  isMusl,
+  isWindows,
+  nodeExeMatchingAbi,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
 import { basename, join } from "path";
@@ -21,7 +32,7 @@ enum BuildMode {
 delete bunEnv.CC;
 delete bunEnv.CXX;
 
-// Node.js 24.3.0 requires C++20
+// Node.js 26.3.0 requires C++20
 bunEnv.CXXFLAGS ??= "";
 if (process.platform == "darwin") {
   bunEnv.CXXFLAGS += " -std=gnu++20";
@@ -77,7 +88,14 @@ async function build(
             "-j",
             "max",
           ]
-        : [bunExe(), "run", "node-gyp", "rebuild", "--release", "-j", "max"], // for node.js we don't bother with debug mode
+        : // for node.js we don't bother with debug mode. Run node-gyp under bun
+          // (--bun) here too: a clang-cl-built Node carries thin-LTO flags in
+          // process.config.target_defaults that node-gyp copies into
+          // config.gypi and MSVC's link.exe chokes on (/opt:lldltojobs) — gyp
+          // -D defines can't override target_defaults. Bun reports the same
+          // ABI (147) with clean target_defaults, so the module loads in
+          // node 26 all the same.
+          [bunExe(), "--bun", "run", "node-gyp", "rebuild", "--release", "-j", "max"],
     cwd: tmpDir,
     env: bunEnv,
     stdin: "inherit",
@@ -104,7 +122,7 @@ async function build(
   console.log(err);
 }
 
-describe.todoIf(isBroken && isMusl)("node:v8", () => {
+describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () => {
   beforeAll(async () => {
     // set up clean directories for our 4 builds
     directories.bunRelease = tmpdirSync();
@@ -121,7 +139,11 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     await build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug);
     await build(srcDir, directories.node, Runtime.node, BuildMode.release);
     await build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release);
-  });
+
+    // Resolve (and possibly download) the ABI-matching node here, under the
+    // generous hook timeout, instead of inside the first test that needs it.
+    await nodeExeMatchingAbi();
+  }, 600_000);
 
   describe("module lifecycle", () => {
     it("can call a basic native function", async () => {
@@ -305,6 +327,14 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     it("keeps handles alive in the outer scope", async () => {
       await checkSameOutput("test_v8_escapable_handle_scope");
     });
+
+    it("escaped handles survive in-scope inline handle creation", async () => {
+      await checkSameOutput("test_v8_escapable_handle_scope_inline_grants");
+    });
+
+    it("inline handles survive a nested call's scope push/pop", async () => {
+      await checkSameOutput("test_v8_locals_survive_nested_call");
+    });
   });
 
   describe("MaybeLocal", () => {
@@ -368,7 +398,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
       : buildMode == BuildMode.debug
         ? directories.bunDebug
         : directories.bunRelease;
-  const exe = runtime == Runtime.node ? (nodeExe() ?? "node") : bunExe();
+  const exe = runtime == Runtime.node ? await nodeExeMatchingAbi() : bunExe();
 
   const cmd = [
     exe,
@@ -389,7 +419,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
     stdio: ["inherit", "pipe", "pipe"],
   });
   const [exitCode, out, err] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
-  const crashMsg = `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`;
+  const crashMsg = `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode (exit code ${exitCode}${exitCode && exitCode > 256 ? ` / 0x${exitCode.toString(16)}` : ""})`;
   if (exitCode !== 0) {
     throw new Error(`${crashMsg}: ${err}\n${out}`.trim());
   }
@@ -397,13 +427,15 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
   return out.trim();
 }
 
-describe.todoIf(isBroken && isMusl)("String::Utf8Length bounds", () => {
+describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("String::Utf8Length bounds", () => {
   it(
-    "saturates at INT32_MAX for strings whose UTF-8 size exceeds it",
+    "reports sizes beyond INT32_MAX without wrapping",
     async () => {
-      // Build a tiny standalone V8-API addon that just reports String::Utf8Length of its
+      // Build a tiny standalone V8-API addon that just reports String::Utf8LengthV2 of its
       // argument, then feed it a Latin-1 string whose UTF-8 expansion is larger than INT32_MAX.
-      // The reported length must stay positive and saturate at INT32_MAX instead of wrapping.
+      // Utf8LengthV2 returns size_t, so the reported length must be the exact byte count
+      // instead of wrapping to a negative or small value (the legacy int-returning Utf8Length
+      // saturated at INT32_MAX here).
       using dir = tempDir("v8-utf8-length", {
         "package.json": JSON.stringify({
           name: "v8-utf8-length-test",
@@ -434,7 +466,7 @@ namespace utf8len_test {
 void string_utf8_length(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<String> s = info[0].As<String>();
-  printf("Utf8Length = %d\\n", s->Utf8Length(isolate));
+  printf("Utf8Length = %zu\\n", s->Utf8LengthV2(isolate));
   fflush(stdout);
 }
 
@@ -471,7 +503,20 @@ addon.string_utf8_length("\\u00ff".repeat(2 ** 30 + 1));
 
       {
         const build = spawn({
-          cmd: [bunExe(), "--bun", "run", "node-gyp", "rebuild", "--release", "-j", "max"],
+          cmd: [
+            bunExe(),
+            "--bun",
+            "run",
+            "node-gyp",
+            "rebuild",
+            "--release",
+            "-j",
+            "max",
+            "--",
+            "-Denable_lto=false",
+            "-Denable_thin_lto=false",
+            "-Dlto_jobs=",
+          ],
           cwd,
           env: bunEnv,
           stdin: "inherit",
@@ -507,9 +552,10 @@ addon.string_utf8_length("\\u00ff".repeat(2 ** 30 + 1));
         .trim()
         .split(/\r?\n/)
         .filter(Boolean);
-      // The small string reports its exact UTF-8 size; the oversized string saturates at
-      // INT32_MAX (2147483647) instead of wrapping to a negative or small value.
-      expect(lines, `stderr:\n${err}`).toEqual(["Utf8Length = 6", "Utf8Length = 2147483647"]);
+      // Both strings report their exact UTF-8 size: Utf8LengthV2 returns size_t, so the
+      // oversized string's 2**31 + 2 bytes are reported exactly instead of wrapping or
+      // saturating at INT32_MAX like the legacy Utf8Length did.
+      expect(lines, `stderr:\n${err}`).toEqual(["Utf8Length = 6", "Utf8Length = 2147483650"]);
       expect(exitCode).toBe(0);
     },
     10 * 60 * 1000,

@@ -292,7 +292,7 @@ pub trait TargetExt: Copy {
             Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
             Target::Bun => DEFAULT_MAIN_FIELDS_BUN,
             Target::BunMacro => DEFAULT_MAIN_FIELDS_BUN,
-            Target::BakeServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
+            Target::ServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
         })
     }
 
@@ -301,7 +301,7 @@ pub trait TargetExt: Copy {
             Target::Node => &[b"node" as &[u8]][..],
             Target::Browser => &[b"browser" as &[u8], b"module"][..],
             Target::Bun => &[b"bun" as &[u8], b"node"][..],
-            Target::BakeServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
+            Target::ServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
             Target::BunMacro => &[b"macro" as &[u8], b"bun", b"node"][..],
         })
     }
@@ -311,7 +311,7 @@ impl TargetExt for Target {
     fn bake_graph(self) -> crate::bake_types::Graph {
         match self {
             Target::Browser => crate::bake_types::Graph::Client,
-            Target::BakeServerComponentsSsr => crate::bake_types::Graph::Ssr,
+            Target::ServerComponentsSsr => crate::bake_types::Graph::Ssr,
             Target::BunMacro | Target::Bun | Target::Node => crate::bake_types::Graph::Server,
         }
     }

@@ -53,50 +53,33 @@ describe.concurrent("uncaught exceptions in worker don't abort the process", () 
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
 
+  const expected = {
+    stdout: "worker-exit:1\n",
+    stderr: expect.any(String),
+    exitCode: 0,
+    signalCode: null,
+  };
+
   test("queueMicrotask throws while a setTimeout throw is being handled", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      `setTimeout(() => { queueMicrotask(() => { throw 1 }); throw 2 }, 0)`,
-    );
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "worker-exit:1\n",
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
+    expect(await run(`setTimeout(() => { queueMicrotask(() => { throw 1 }); throw 2 }, 0)`)).toEqual(expected);
   });
 
   test("two throwing queueMicrotask callbacks", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      `queueMicrotask(() => { throw 1 }); queueMicrotask(() => { throw 2 })`,
-    );
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "worker-exit:1\n",
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
+    expect(await run(`queueMicrotask(() => { throw 1 }); queueMicrotask(() => { throw 2 })`)).toEqual(expected);
   });
 
   test("worker beforeExit handler throws", async () => {
-    const { stdout, stderr, exitCode } = await run(`process.on("beforeExit", () => { throw 99 })`);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "worker-exit:1\n",
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
+    expect(await run(`process.on("beforeExit", () => { throw 99 })`)).toEqual(expected);
   });
 
   // https://github.com/oven-sh/bun/issues/28648
   test("worker uncaughtException handler throws", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      `process.on("uncaughtException", () => { throw new Error("nested") }); throw new Error("oopsie")`,
-    );
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "worker-exit:1\n",
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
+    expect(
+      await run(`process.on("uncaughtException", () => { throw new Error("nested") }); throw new Error("oopsie")`),
+    ).toEqual(expected);
   });
 });
 

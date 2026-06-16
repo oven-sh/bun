@@ -1451,16 +1451,7 @@ unsafe fn apply_standalone_runtime_flags(
 /// `RunCommand` param table and return `!args.flag("--no-addons")`, or `None`
 /// on parse error.
 ///
-/// Note: the Rust `bun_clap::parse_ex` port currently constrains
-/// `ArgIter<'static>` (parsed values are stored by reference), which would
-/// force leaking the per-call UTF-8 copies of `exec_argv`. Spec only ever
-/// reads the single `--no-addons` flag from the result (per the in-tree
-/// `// TODO: currently this only checks for --no-addons`), so this body scans
-/// the converted argv directly with the same `stop_after_positional_at = 1`
-/// short-circuit — consulting `RUN_PARAMS` so a value token following a
-/// value-taking flag (`-r x`, `--title x`, …) is consumed rather than treated
-/// as the first positional. Full clap routing can return when `ComptimeClap`
-/// grows a borrowed-lifetime variant.
+/// Currently only honours `--no-addons`.
 ///
 /// # Safety
 /// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
@@ -1468,76 +1459,27 @@ unsafe fn apply_standalone_runtime_flags(
 unsafe fn parse_worker_exec_argv_allow_addons(
     exec_argv: &[bun_core::WTFStringImpl],
 ) -> Option<bool> {
-    use crate::cli::arguments::RUN_PARAMS;
-    use bun_clap::Values;
+    let owned: Vec<_> = exec_argv
+        .iter()
+        .filter(|a| !a.is_null())
+        // SAFETY: per fn contract — each `arg` is a live `WTFStringImpl*`.
+        .map(|&a| unsafe { &*a }.to_owned_slice_z())
+        .collect();
+    let argv: Vec<&[u8]> = owned.iter().map(|s| s.as_bytes()).collect();
 
-    fn find_short(c: u8) -> Option<&'static bun_clap::Param<bun_clap::Help>> {
-        RUN_PARAMS.iter().find(|p| p.names.short == Some(c))
-    }
+    let mut iter = bun_clap::args::SliceIterator::init(&argv);
+    let args = bun_clap::parse_ex::<bun_clap::Help, _>(
+        crate::cli::arguments::RUN_PARAMS,
+        &mut iter,
+        bun_clap::ParseOptions {
+            diagnostic: None,
+            stop_after_positional_at: 1,
+        },
+    )
+    .ok()?;
 
-    // Does `bytes` name a `RUN_PARAMS` flag whose value is supplied by the
-    // *next* token? `--long=val` and `OneOptional` params never pull from the
-    // iterator. A bare `--long` / `-s` pulls when its `takes_value` is
-    // `One`/`Many`. A chained-short cluster (`-br`) pulls when every prefix
-    // char is a `None` short and the last char is a `One`/`Many` short with
-    // nothing after it — `StreamingClap::chainging` calls `iter.next()` in
-    // exactly that case.
-    fn flag_consumes_next_token(bytes: &[u8]) -> bool {
-        if let Some(long) = bytes.strip_prefix(b"--") {
-            let param = RUN_PARAMS.iter().find(|p| p.names.matches_long(long));
-            return matches!(
-                param.map(|p| p.takes_value),
-                Some(Values::One | Values::Many)
-            );
-        }
-        if let Some(shorts) = bytes.strip_prefix(b"-") {
-            for (i, &c) in shorts.iter().enumerate() {
-                let Some(param) = find_short(c) else {
-                    return false;
-                };
-                match param.takes_value {
-                    Values::None => continue,
-                    // `StreamingClap::chainging` stops chaining at a
-                    // `OneOptional` short without pulling from the iterator;
-                    // remaining cluster chars are dropped.
-                    Values::OneOptional => return false,
-                    // `One`/`Many`: pulls from the iterator only when this is
-                    // the last char; otherwise the rest of the cluster (or
-                    // the text after `=`) is the inline value.
-                    Values::One | Values::Many => return i + 1 == shorts.len(),
-                }
-            }
-        }
-        false
-    }
-
-    let mut no_addons = false;
-    let mut prev_wants_value = false;
-    for &arg in exec_argv {
-        if arg.is_null() {
-            continue;
-        }
-        // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
-        let owned = unsafe { &*arg }.to_owned_slice_z();
-        let bytes = owned.as_bytes();
-        // The previous `One`/`Many` flag consumes this token as its value via
-        // raw `iter.next()` — regardless of a leading `-` or a literal `--`.
-        if core::mem::take(&mut prev_wants_value) {
-            continue;
-        }
-        // `stop_after_positional_at = 1` — first positional ends parsing.
-        // `StreamingClap::parse_next_arg` treats bare `-` and `--` as
-        // positionals.
-        if bytes.first() != Some(&b'-') || bytes == b"-" || bytes == b"--" {
-            break;
-        }
-        if bytes == b"--no-addons" {
-            no_addons = true;
-        }
-        prev_wants_value = flag_consumes_next_token(bytes);
-    }
-    // Override `allow_addons` unconditionally on successful parse.
-    Some(!no_addons)
+    // override the existing even if it was set
+    Some(!args.flag(b"--no-addons"))
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —

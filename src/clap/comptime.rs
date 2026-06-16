@@ -504,13 +504,14 @@ pub fn convert_params<Id>(params: &[Param<Id>]) -> (Vec<Param<usize>>, usize, us
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Deprecated: Use `parse_ex` instead
-pub struct ComptimeClap<Id> {
-    // Inner `&'static [u8]` slices borrow argv (process-lifetime).
-    pub single_options: Box<[Option<&'static [u8]>]>,
-    pub multi_options: Box<[Box<[&'static [u8]]>]>,
+pub struct ComptimeClap<'a, Id> {
+    // Inner `&'a [u8]` slices borrow argv. `'a` is `'static` for `OsIterator`
+    // (process argv); a borrowed `SliceIterator` gets its own lifetime.
+    pub single_options: Box<[Option<&'a [u8]>]>,
+    pub multi_options: Box<[Box<[&'a [u8]]>]>,
     pub flags: Box<[bool]>,
-    pub pos: Box<[&'static [u8]]>,
-    pub passthrough_positionals: Box<[&'static [u8]]>,
+    pub pos: Box<[&'a [u8]]>,
+    pub passthrough_positionals: Box<[&'a [u8]]>,
 
     // The converted params are
     // carried as a `&'static` table — either rodata (`comptime_table!`) or
@@ -520,9 +521,9 @@ pub struct ComptimeClap<Id> {
     _id: PhantomData<Id>,
 }
 
-impl<Id> ComptimeClap<Id> {
-    /// `iter` must yield `&'static [u8]` (process-lifetime args, e.g. `OsIterator`)
-    /// because parsed values are stored by reference.
+impl<'a, Id> ComptimeClap<'a, Id> {
+    /// Parsed values are stored by reference into the `&'a [u8]` slices
+    /// yielded by `iter`; `'a` is `'static` for `OsIterator` (process argv).
     ///
     /// `params` must be `'static` (every in-tree table is a `static`/`const`
     /// item); the converted form is interned once per unique slice.
@@ -540,7 +541,7 @@ impl<Id> ComptimeClap<Id> {
         opt: ParseOptions<'_>,
     ) -> Result<Self, bun_core::Error>
     where
-        I: ArgIter<'static>,
+        I: ArgIter<'a>,
     {
         Self::parse_with_table(ConvertedTable::for_params(params), iter, opt)
     }
@@ -553,15 +554,15 @@ impl<Id> ComptimeClap<Id> {
         opt: ParseOptions<'_>,
     ) -> Result<Self, bun_core::Error>
     where
-        I: ArgIter<'static>,
+        I: ArgIter<'a>,
     {
         // `opt.allocator` dropped — global mimalloc.
-        let mut multis: Vec<Vec<&'static [u8]>> = (0..table.n_multi).map(|_| Vec::new()).collect();
+        let mut multis: Vec<Vec<&'a [u8]>> = (0..table.n_multi).map(|_| Vec::new()).collect();
 
-        let mut pos: Vec<&'static [u8]> = Vec::new();
-        let mut passthrough_positionals: Vec<&'static [u8]> = Vec::new();
+        let mut pos: Vec<&'a [u8]> = Vec::new();
+        let mut passthrough_positionals: Vec<&'a [u8]> = Vec::new();
 
-        let mut single_options: Box<[Option<&'static [u8]>]> =
+        let mut single_options: Box<[Option<&'a [u8]>]> =
             vec![None; table.n_single].into_boxed_slice();
         let mut flags: Box<[bool]> = vec![false; table.n_flags].into_boxed_slice();
 
@@ -637,7 +638,7 @@ impl<Id> ComptimeClap<Id> {
     }
 
     #[inline]
-    pub fn option(&self, name: &[u8]) -> Option<&'static [u8]> {
+    pub fn option(&self, name: &[u8]) -> Option<&'a [u8]> {
         let param = self.table.find(name);
         debug_assert!(
             param.takes_value != Values::None,
@@ -653,7 +654,7 @@ impl<Id> ComptimeClap<Id> {
     }
 
     #[inline]
-    pub fn options(&self, name: &[u8]) -> &[&'static [u8]] {
+    pub fn options(&self, name: &[u8]) -> &[&'a [u8]] {
         let param = self.table.find(name);
         debug_assert!(
             param.takes_value != Values::None,
@@ -675,19 +676,19 @@ impl<Id> ComptimeClap<Id> {
         self.flags[self.table.converted[converted_idx].id]
     }
     #[inline]
-    pub fn option_at(&self, converted_idx: usize) -> Option<&'static [u8]> {
+    pub fn option_at(&self, converted_idx: usize) -> Option<&'a [u8]> {
         self.single_options[self.table.converted[converted_idx].id]
     }
     #[inline]
-    pub fn options_at(&self, converted_idx: usize) -> &[&'static [u8]] {
+    pub fn options_at(&self, converted_idx: usize) -> &[&'a [u8]] {
         &self.multi_options[self.table.converted[converted_idx].id]
     }
 
-    pub fn positionals(&self) -> &[&'static [u8]] {
+    pub fn positionals(&self) -> &[&'a [u8]] {
         &self.pos
     }
 
-    pub fn remaining(&self) -> &[&'static [u8]] {
+    pub fn remaining(&self) -> &[&'a [u8]] {
         &self.passthrough_positionals
     }
 

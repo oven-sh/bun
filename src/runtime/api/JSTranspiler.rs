@@ -47,9 +47,14 @@ pub struct JSTranspiler {
     pub scan_pass_result: JsCell<ScanPassResult>,
     pub buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
     pub log_level: bun_ast::Level,
-    // Arena bulk-frees the config strings. Boxed so its
-    // address is stable across the move into `Box<JSTranspiler>` —
-    // `transpiler.arena` holds a `&'static Arena` pointing into it.
+    // Resting-state arena handle for the inner `Transpiler` between host-fn
+    // calls (every parse swaps in a fresh per-call `Arena::new()` via
+    // `TranspilerStateGuard`). Wraps `mi_heap_main()` via
+    // `Arena::borrowing_default()` so no per-instance mi_heap is created;
+    // Drop is a no-op. Boxed so its address is stable across the move into
+    // `Box<JSTranspiler>` since `transpiler.arena` holds a `&'static Arena`
+    // pointing into it. Config strings (`exports.replace`) are owned by
+    // `Config.replace_exports_bufs` instead so they drop with the instance.
     pub arena: Box<Arena>,
     // Intrusive refcount field for `bun_ptr::IntrusiveRc<JSTranspiler>`:
     // single-thread intrusive `bun.ptr.RefCount` because `*JSTranspiler`
@@ -74,6 +79,12 @@ pub struct Config {
     pub macros_buf: Box<[u8]>,
     pub log: bun_ast::Log,
     pub runtime: Runtime::Features,
+    // Owned backing storage for `runtime.replace_exports` string-valued
+    // entries (`E::EString.data` borrows a `Box` in this vec via an erased
+    // `'static`). Declared after `runtime` so the borrowing `Expr`s drop
+    // first. Takes the place of the per-instance bump arena the reference
+    // implementation uses for `config.fromJS`.
+    pub replace_exports_bufs: Vec<Box<[u8]>>,
     pub tree_shaking: bool,
     pub trim_unused_imports: Option<bool>,
     pub inlining: bool,
@@ -100,6 +111,7 @@ impl Default for Config {
                 top_level_await: true,
                 ..Default::default()
             },
+            replace_exports_bufs: Vec::new(),
             tree_shaking: false,
             trim_unused_imports: None,
             inlining: false,
@@ -159,12 +171,7 @@ const PROP_ITER_OPTS: JSPropertyIteratorOptions = JSPropertyIteratorOptions {
 impl Config {
     // NOTE: out-param constructor kept as `&mut self` because `self` is a pre-initialized
     // field on `JSTranspiler` (in-place mutation), not a fresh value to return.
-    pub fn from_js(
-        &mut self,
-        global: &JSGlobalObject,
-        object: JSValue,
-        arena: &Arena,
-    ) -> JsResult<()> {
+    pub fn from_js(&mut self, global: &JSGlobalObject, object: JSValue) -> JsResult<()> {
         if object.is_undefined_or_null() {
             return Ok(());
         }
@@ -584,7 +591,9 @@ impl Config {
                         // `V: Default` upstream and `ReplaceableExport` has no Default. Compute
                         // the value first, then `put` (which upserts without needing a default
                         // slot).
-                        if let Some(expr) = export_replacement_value(value, global, arena)? {
+                        if let Some(expr) =
+                            export_replacement_value(value, global, &mut self.replace_exports_bufs)?
+                        {
                             replacements
                                 .put(&key, bun_ast::runtime::ReplaceableExport::Replace(expr))
                                 .map_err(|_| bun_jsc::JsError::OutOfMemory)?;
@@ -593,9 +602,11 @@ impl Config {
 
                         if value.is_object() && value.get_length(global)? == 2 {
                             let replacement_value = value.get_index(global, 1)?;
-                            if let Some(to_replace) =
-                                export_replacement_value(replacement_value, global, arena)?
-                            {
+                            if let Some(to_replace) = export_replacement_value(
+                                replacement_value,
+                                global,
+                                &mut self.replace_exports_bufs,
+                            )? {
                                 let replacement_key = value.get_index(global, 0)?;
                                 let slice =
                                     OwnedString::new(replacement_key.to_bun_string(global)?);
@@ -911,7 +922,7 @@ impl<'a> Drop for TransformTask<'a> {
 fn export_replacement_value(
     value: JSValue,
     global: &JSGlobalObject,
-    arena: &Arena,
+    bufs: &mut Vec<Box<[u8]>>,
 ) -> JsResult<Option<bun_ast::Expr>> {
     if value.is_boolean() {
         return Ok(Some(Expr {
@@ -949,11 +960,13 @@ fn export_replacement_value(
         let zig_str = value.get_zig_string(global)?;
         let mut buf = Vec::new();
         write!(&mut buf, "{}", zig_str).expect("unreachable");
-        // Bump-allocate so the bytes
-        // live as long as the JSTranspiler arena that owns the resulting Expr;
-        // `E::EString::init` erases the borrow to `'static` per the AST
-        // crate's `Str` convention (see ast/E.rs).
-        let data = arena.alloc_slice_copy(&buf);
+        // Stash the bytes in a `Box` owned by `Config` so they are freed when
+        // the `JSTranspiler` drops. `E::EString::init` erases the borrow to
+        // `'static` per the AST crate's `Str` convention (see ast/E.rs); the
+        // `Box` heap allocation is address-stable across moves of `Config`
+        // and across reallocation of the outer `Vec`.
+        bufs.push(buf.into_boxed_slice());
+        let data: &[u8] = bufs.last().expect("just pushed");
         return Ok(Some(Expr::init(
             bun_ast::E::EString::init(data),
             bun_ast::Loc::EMPTY,
@@ -1011,7 +1024,7 @@ impl JSTranspiler {
         } else {
             JSValue::UNDEFINED
         };
-        config.from_js(global, config_arg, arena_ref)?;
+        config.from_js(global, config_arg)?;
 
         if global.has_exception() {
             return Err(bun_jsc::JsError::Thrown);

@@ -134,7 +134,7 @@ where
                             && !param.allowed_values.is_empty()
                         {
                             if let Some(&peek) = self.iter.remain().first() {
-                                if param.allowed_values.iter().any(|&v| v == peek) {
+                                if param.allowed_values.contains(&peek) {
                                     self.iter.next();
                                     return Ok(Some(Arg {
                                         param,

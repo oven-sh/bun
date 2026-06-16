@@ -92,9 +92,5 @@ pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Compr
         };
         return Ok(Some(CompressOption { encoding, level }));
     }
-    Err(global.throw_invalid_argument_type_value(
-        b"compress",
-        b"boolean, string, or object",
-        value,
-    ))
+    Err(global.throw_invalid_argument_type_value(b"compress", b"boolean, string, or object", value))
 }

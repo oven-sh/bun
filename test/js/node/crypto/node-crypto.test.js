@@ -357,6 +357,12 @@ describe("createHash", () => {
     });
   });
 
+  it("Bun.CryptoHasher HMAC accepts mixed-case algorithm", () => {
+    const expected = new Bun.CryptoHasher("sha256", "key").update("data").digest("hex");
+    expect(new Bun.CryptoHasher("SHA-256", "key").update("data").digest("hex")).toBe(expected);
+    expect(new Bun.CryptoHasher("SHA256", "key").update("data").digest("hex")).toBe(expected);
+  });
+
   it("update & digest", () => {
     const hash = crypto.createHash("sha256");
     hash.update("some data to hash");

@@ -329,4 +329,36 @@ describe("ReadableStream transfer", () => {
       port2.close();
     }
   });
+
+  test("cancel() with a non-cloneable reason rejects on the transferred stream", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const rs = new ReadableStream({
+      start(c) {
+        c.enqueue("x");
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    port2.onmessage = async (e: MessageEvent) => {
+      try {
+        // A function is not structured-cloneable, so relaying the cancel reason
+        // over the port throws; cancel() must reject rather than resolve.
+        let rejected = false;
+        try {
+          await e.data.cancel(() => {});
+        } catch {
+          rejected = true;
+        }
+        resolve(rejected);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    port2.start();
+
+    port1.postMessage(rs, [rs]);
+    expect(await promise).toBe(true);
+    port1.close();
+    port2.close();
+  });
 });

@@ -2479,10 +2479,15 @@ export function structuredCloneReceiveReadableStream(port) {
       port.postMessage({ type: "pull", value: undefined });
     },
     $cancel: reason => {
+      // PackAndPostMessageHandlingError: mirror abortAlgorithm. A non-cloneable
+      // reason makes postMessage throw; close the port and reject so the
+      // caller's cancel() rejects rather than resolving.
       try {
         port.postMessage({ type: "error", value: reason });
       } catch (e) {
         $crossRealmTransformSendError(port, e);
+        port.close();
+        return Promise.$reject(e);
       }
       port.close();
     },

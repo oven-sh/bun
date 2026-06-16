@@ -124,6 +124,26 @@ where
                             return Err(self.err(arg, None, Some(name), ArgError::DoesntTakeValue));
                         }
 
+                        // `--flag value` for OneOptional: only consume the next
+                        // token when it exactly matches one of the declared
+                        // allowed values. This keeps `--inspect main.ts` from
+                        // eating the script path while letting closed-set
+                        // flags like `--sourcemap external` work without `=`.
+                        if param.takes_value == clap::Values::OneOptional
+                            && maybe_value.is_none()
+                            && !param.allowed_values.is_empty()
+                        {
+                            if let Some(&peek) = self.iter.remain().first() {
+                                if param.allowed_values.iter().any(|&v| v == peek) {
+                                    self.iter.next();
+                                    return Ok(Some(Arg {
+                                        param,
+                                        value: Some(peek),
+                                    }));
+                                }
+                            }
+                        }
+
                         return Ok(Some(Arg {
                             param,
                             value: maybe_value,
@@ -759,6 +779,113 @@ mod tests {
                 Arg {
                     param: positional,
                     value: Some(b"-a"),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn one_optional_allowed_values() {
+        let params: [clap::Param<u8>; 3] = [
+            clap::Param {
+                id: 0,
+                names: clap::Names::long(b"sourcemap"),
+                takes_value: clap::Values::OneOptional,
+                allowed_values: &[b"linked", b"inline", b"external", b"none"],
+            },
+            clap::Param {
+                id: 1,
+                names: clap::Names::long(b"inspect"),
+                takes_value: clap::Values::OneOptional,
+                ..Default::default()
+            },
+            clap::Param {
+                id: 2,
+                takes_value: clap::Values::One,
+                ..Default::default()
+            },
+        ];
+
+        let sourcemap = &params[0];
+        let inspect = &params[1];
+        let positional = &params[2];
+
+        // space-separated value matching allowed_values is consumed
+        test_no_err(
+            &params,
+            &[b"--sourcemap", b"external", b"entry.js"],
+            &[
+                Arg {
+                    param: sourcemap,
+                    value: Some(b"external"),
+                },
+                Arg {
+                    param: positional,
+                    value: Some(b"entry.js"),
+                },
+            ],
+        );
+
+        // `=`-separated form is unchanged
+        test_no_err(
+            &params,
+            &[b"--sourcemap=inline", b"entry.js"],
+            &[
+                Arg {
+                    param: sourcemap,
+                    value: Some(b"inline"),
+                },
+                Arg {
+                    param: positional,
+                    value: Some(b"entry.js"),
+                },
+            ],
+        );
+
+        // next token not in allowed_values -> left as positional, flag value is None
+        test_no_err(
+            &params,
+            &[b"--sourcemap", b"entry.js"],
+            &[
+                Arg {
+                    param: sourcemap,
+                    value: None,
+                },
+                Arg {
+                    param: positional,
+                    value: Some(b"entry.js"),
+                },
+            ],
+        );
+
+        // OneOptional without allowed_values never consumes the next token
+        test_no_err(
+            &params,
+            &[b"--inspect", b"entry.js"],
+            &[
+                Arg {
+                    param: inspect,
+                    value: None,
+                },
+                Arg {
+                    param: positional,
+                    value: Some(b"entry.js"),
+                },
+            ],
+        );
+
+        // trailing flag with nothing after it
+        test_no_err(
+            &params,
+            &[b"entry.js", b"--sourcemap"],
+            &[
+                Arg {
+                    param: positional,
+                    value: Some(b"entry.js"),
+                },
+                Arg {
+                    param: sourcemap,
+                    value: None,
                 },
             ],
         );

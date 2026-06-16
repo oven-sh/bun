@@ -398,6 +398,7 @@ fn emit_param(krate: &Path, p: &Param) -> TokenStream2 {
                 long_aliases: #aliases,
             },
             takes_value: #takes_value,
+            allowed_values: &[],
         }
     }
 }

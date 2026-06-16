@@ -99,6 +99,7 @@ pub const fn convert_params_array<Id, const N: usize>(params: &[Param<Id>]) -> [
             long_aliases: &[],
         },
         takes_value: Values::None,
+        allowed_values: &[],
     };
     let mut out = [DUMMY; N];
     let mut flags = 0usize;
@@ -128,6 +129,7 @@ pub const fn convert_params_array<Id, const N: usize>(params: &[Param<Id>]) -> [
             id: index,
             names: p.names,
             takes_value: p.takes_value,
+            allowed_values: p.allowed_values,
         };
         i += 1;
     }
@@ -371,6 +373,7 @@ impl ConvertedTable {
                 id: index,
                 names: p.names,
                 takes_value: p.takes_value,
+                allowed_values: p.allowed_values,
             });
         }
         let converted: &'static [Param<usize>] = Box::leak(converted.into_boxed_slice());
@@ -494,6 +497,7 @@ pub fn convert_params<Id>(params: &[Param<Id>]) -> (Vec<Param<usize>>, usize, us
             id: index,
             names: param.names,
             takes_value: param.takes_value,
+            allowed_values: param.allowed_values,
         });
     }
     (converted, flags, single, multi)

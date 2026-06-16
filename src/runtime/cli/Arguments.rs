@@ -438,7 +438,8 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!(
             "--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'"
-        ),
+        )
+        .with_allowed_values(&[b"linked", b"inline", b"external", b"none"]),
         parse_param!(
             "--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs"
         ),

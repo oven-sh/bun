@@ -154,6 +154,7 @@ pub const fn __param_slices_concat<const N: usize>(parts: &[&[Param<Help>]]) -> 
             long_aliases: &[],
         },
         takes_value: Values::None,
+        allowed_values: &[],
     };
     let mut out = [DUMMY; N];
     let mut idx = 0;
@@ -261,6 +262,12 @@ pub enum Values {
     None,
     One,
     Many,
+    /// Value is optional. Without [`Param::allowed_values`] the value must be
+    /// attached with `=` (`--flag=value`); a space-separated token is left for
+    /// the positional handler so `--inspect main.ts` does not eat `main.ts`.
+    /// With [`Param::allowed_values`] set, the next token is consumed as the
+    /// value when (and only when) it exactly matches one of those entries, so
+    /// `--sourcemap external` and `--sourcemap=external` behave identically.
     OneOptional,
 }
 
@@ -290,6 +297,23 @@ pub struct Param<Id> {
     pub id: Id,
     pub names: Names,
     pub takes_value: Values,
+    /// Closed set of recognized values for a [`Values::OneOptional`] param.
+    /// When non-empty and the flag is written without `=`, the parser peeks
+    /// the following argv token and consumes it as the value if it matches
+    /// one of these entries. Empty (the default) preserves the old behavior
+    /// where only `--flag=value` supplies a value.
+    pub allowed_values: &'static [&'static [u8]],
+}
+
+impl<Id> Param<Id> {
+    /// Attach a closed set of recognized values to a [`Values::OneOptional`]
+    /// param so the space-separated form (`--flag value`) is accepted when
+    /// `value` is one of `values`. `const fn` so it composes with
+    /// `parse_param!` inside static tables.
+    pub const fn with_allowed_values(mut self, values: &'static [&'static [u8]]) -> Self {
+        self.allowed_values = values;
+        self
+    }
 }
 
 impl<Id: Default> Default for Param<Id> {
@@ -298,6 +322,7 @@ impl<Id: Default> Default for Param<Id> {
             id: Id::default(),
             names: Names::default(),
             takes_value: Values::None,
+            allowed_values: &[],
         }
     }
 }
@@ -982,6 +1007,7 @@ mod tests {
                     ..Default::default()
                 },
                 takes_value: Values::One,
+                ..Default::default()
             },
             parse_param!("-s, --long <value> Help text"),
         );
@@ -999,6 +1025,7 @@ mod tests {
                     ..Default::default()
                 },
                 takes_value: Values::Many,
+                ..Default::default()
             },
             parse_param!("-s, --long <value>... Help text"),
         );
@@ -1015,6 +1042,7 @@ mod tests {
                     ..Default::default()
                 },
                 takes_value: Values::One,
+                ..Default::default()
             },
             parse_param!("--long <value> Help text"),
         );
@@ -1031,6 +1059,7 @@ mod tests {
                     ..Default::default()
                 },
                 takes_value: Values::One,
+                ..Default::default()
             },
             parse_param!("-s <value> Help text"),
         );
@@ -1093,6 +1122,7 @@ mod tests {
                     ..Default::default()
                 },
                 takes_value: Values::One,
+                ..Default::default()
             },
             parse_param!("--long <A | B> Help text"),
         );
@@ -1106,6 +1136,7 @@ mod tests {
                 },
                 names: Names::default(),
                 takes_value: Values::One,
+                ..Default::default()
             },
             parse_param!("<A> Help text"),
         );
@@ -1119,6 +1150,7 @@ mod tests {
                 },
                 names: Names::default(),
                 takes_value: Values::Many,
+                ..Default::default()
             },
             parse_param!("<A>... Help text"),
         );

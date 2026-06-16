@@ -20,17 +20,10 @@ test("new Bun.Transpiler() does not create a per-instance mimalloc heap", () => 
   }
 
   const after = heapStats({ dump: true }).mimallocDump.heaps.length;
-  const delta = after - before;
 
   // Allow a small slack for unrelated lazy heap creation, but nowhere near
   // one heap per instance.
-  expect({ before, after, delta, instances: instances.length }).toEqual({
-    before: expect.any(Number),
-    after: expect.any(Number),
-    delta: expect.any(Number),
-    instances: N,
-  });
-  expect(delta).toBeLessThan(N / 4);
+  expect(after - before).toBeLessThan(N / 4);
 
   // Keep `instances` live across the measurement and verify they still work.
   expect(instances[0].transformSync("export const x: number = 1;")).toContain("const x = 1");

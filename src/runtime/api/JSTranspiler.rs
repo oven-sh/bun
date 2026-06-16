@@ -1002,12 +1002,17 @@ impl JSTranspiler {
         };
         // `borrowing_default()` wraps `mi_heap_main()` so the inner `Transpiler`
         // allocates from the process-global heap, matching
-        // `Transpiler.Transpiler.init(bun.default_allocator, ...)`. Every parse
-        // (`scan` / `transformSync` / `scanImports` / async `transform`) swaps in
-        // a fresh per-call `Arena::new()` via `TranspilerStateGuard`, so this
-        // arena is only the resting-state handle and `configure_defines`' bump.
-        // An owned `mi_heap_new()` here would pin a dedicated mimalloc heap per
-        // `new Bun.Transpiler()` for the instance's lifetime.
+        // `Transpiler.Transpiler.init(bun.default_allocator, ...)` and the VM
+        // transpiler in `jsc_hooks.rs`. Every parse (`scan` / `transformSync` /
+        // `scanImports` / async `transform`) swaps in a fresh per-call
+        // `Arena::new()` via `TranspilerStateGuard`, so this arena is only the
+        // resting-state handle. `configure_defines` bump-allocates user-supplied
+        // `define:` values here (defines.rs slow path), which then live for the
+        // process lifetime; that is the reference behavior (Zig routes
+        // `configureDefines` through `bun.default_allocator` and never frees the
+        // inner transpiler) and the auto-injected defaults hit the fast path
+        // that never touches this arena. An owned `mi_heap_new()` here would
+        // instead pin a dedicated mimalloc heap per `new Bun.Transpiler()`.
         let arena = Box::new(Arena::borrowing_default());
         // SAFETY: `arena` is heap-allocated and moved (as a Box) into `Box<JSTranspiler>` below;
         // its address is stable for the lifetime of the JSTranspiler. `Transpiler<'static>` forces

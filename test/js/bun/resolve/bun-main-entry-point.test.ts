@@ -33,7 +33,9 @@ const canDropPrivs =
 async function runAsNobody(scriptPath: string) {
   await using proc = Bun.spawn({
     cmd: ["setpriv", `--reuid=${NOBODY}`, `--regid=${NOBODY}`, "--clear-groups", bunExe(), scriptPath],
-    // HOME points at a world-writable dir so `nobody` can reach any cache/config.
+    // HOME and cwd point at a world-traversable dir so `nobody` can reach any
+    // cache/config and isn't blocked by a non-traversable test checkout dir.
+    cwd: "/tmp",
     env: { ...bunEnv, HOME: "/tmp" },
     stdout: "pipe",
     stderr: "pipe",
@@ -80,12 +82,12 @@ test.skipIf(!canDropPrivs)("control: runs an entry point in a listable directory
 });
 
 // A symlinked entry point must resolve its relative imports from the real
-// target directory, not the symlink's directory. Bun canonicalizes the entry
-// path before resolving it, so the stat fast path must see through the symlink;
-// if it instead kept the symlink path, "./dep.js" would be looked up next to
-// the link (where it does not exist) and the run would fail. This is the
-// shape of a `node_modules/.bin/<tool>` symlink whose script does relative
-// requires.
+// target directory, not the symlink's directory. `bun <file>` canonicalizes the
+// entry (via the opened fd) before resolving, so the resolver operates on the
+// realpath and "./dep.js" is found next to the real file. Separately, the entry
+// fast path falls through for any symlink it is handed directly (e.g. a
+// `node_modules/.bin/<tool>` symlink run by `bun run`), so the normal path
+// records the realpath there too.
 test.skipIf(isWindows).concurrent("resolves a symlinked entry point relative to its real directory", async () => {
   using dir = tempDir("bun-main-symlink", {
     "real/main.js": `import { dep } from "./dep.js";\nconsole.log("SYM_OK", dep);`,

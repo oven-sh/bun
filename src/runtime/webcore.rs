@@ -13,6 +13,8 @@ pub mod bake_response;
 pub mod byte_blob_loader;
 #[path = "webcore/ByteStream.rs"]
 pub mod byte_stream;
+#[path = "webcore/CompressionStreamTransformer.rs"]
+pub mod compression_stream_transformer;
 #[path = "webcore/CookieMap.rs"]
 pub mod cookie_map;
 #[path = "webcore/Crypto.rs"]

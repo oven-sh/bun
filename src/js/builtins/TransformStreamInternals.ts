@@ -474,3 +474,107 @@ export function transformStreamDefaultSourceCancelAlgorithm(stream, reason) {
 
   return promiseCapability.promise;
 }
+
+export function createCompressionTransform(mode) {
+  const { Buffer } = require("node:buffer");
+  const { isArrayBuffer, isSharedArrayBuffer } = require("node:util/types");
+
+  const handle = new $CompressionStreamTransformer(mode);
+  const chunkSize = 16384; // node:zlib Z_DEFAULT_CHUNK — the native output granularity
+  let closed = false;
+
+  function close() {
+    if (!closed) {
+      closed = true;
+      handle.close();
+    }
+  }
+
+  // The consume/produce loop lives in the native transformer; this wrapper
+  // only normalizes chunk types, wraps engine errors, and enqueues the
+  // returned output chunks (each an exact-size Uint8Array, ≤ chunkSize).
+  // Accepted chunk types follow node v26 (the Compression Streams spec):
+  // any BufferSource (ArrayBuffer or a view over one) is accepted;
+  // SharedArrayBuffer and SAB-backed views reject with
+  // ERR_INVALID_ARG_TYPE, null with its dedicated streams error. Strings
+  // are still accepted for compatibility with node's zlib Transform write
+  // path.
+  function drive(chunk, isFinish, controller) {
+    if (typeof chunk === "string") chunk = Buffer.from(chunk);
+    else if (ArrayBuffer.$isView(chunk)) {
+      if (isSharedArrayBuffer(chunk.buffer))
+        throw $ERR_INVALID_ARG_TYPE("chunk", ["ArrayBuffer", "Buffer", "TypedArray", "DataView"], chunk);
+      // A view over a detached buffer reports byteLength 0 but must reject
+      // like node (whose Buffer.from copy throws on detached buffers).
+      if (chunk.buffer.detached) throw $makeTypeError("Cannot perform Construct on a detached ArrayBuffer");
+    } else if (isArrayBuffer(chunk)) {
+      chunk = new Uint8Array(chunk);
+    } else if (chunk === null) throw $ERR_STREAM_NULL_VALUES();
+    else throw $ERR_INVALID_ARG_TYPE("chunk", ["ArrayBuffer", "Buffer", "TypedArray", "DataView"], chunk);
+
+    let outputs;
+    try {
+      outputs = handle.transform(chunk, isFinish);
+    } catch (error) {
+      // node surfaces engine failures as a TypeError carrying the error
+      // code (its webstreams adapter wraps them); match the class and
+      // code but keep the engine's message, which the adapter dropped.
+      const wrapped = $makeTypeError(error.message);
+      wrapped.code = error.code;
+      wrapped.errno = error.errno;
+      wrapped.cause = error;
+      throw wrapped;
+    }
+    for (let i = 0; i < outputs.length; i++) $transformStreamDefaultControllerEnqueue(controller, outputs[i]);
+  }
+
+  const emptyChunk = new Uint8Array(0);
+
+  return new TransformStream(
+    {
+      // Any failure (bad chunk type, engine error, enqueue on a torn-down
+      // readable) errors the stream and the transformer is never invoked
+      // again, so release the native handle on the way out.
+      transform(chunk, controller) {
+        try {
+          drive(chunk, false, controller);
+        } catch (e) {
+          close();
+          throw e;
+        }
+      },
+      flush(controller) {
+        try {
+          drive(emptyChunk, true, controller);
+        } catch (e) {
+          close();
+          throw e;
+        }
+        close();
+      },
+      // reader.cancel() / writer.abort() skip flush() — this is the
+      // teardown path that releases the native handle for them.
+      cancel() {
+        close();
+      },
+    },
+    undefined,
+    // The readable side buffers output before signalling backpressure; a
+    // gated write only proceeds once a reader drains the queue. Two
+    // constraints pick the budget:
+    //
+    // - With the spec-default strategy (highWaterMark 0, initial
+    //   backpressure), the first write would stall until a reader attaches.
+    //   The Node-adapter implementation this replaces resolved writes while
+    //   ~16KB of *input* was buffered — so a decompression write whose
+    //   output expands far past its input (and every write after it) still
+    //   resolved with no reader attached, and code in the wild awaits
+    //   writes before reading. A budget of one chunkSize of *output* would
+    //   deadlock the write that follows any >16KB expansion.
+    // - An unbounded queue would break producer throttling in piped flows.
+    //
+    // 64 chunkSizes (1MiB) of output covers the old input-side acceptance
+    // for typical expansion ratios while keeping piped flows bounded.
+    { highWaterMark: 64 * chunkSize, size: chunk => chunk.byteLength },
+  );
+}

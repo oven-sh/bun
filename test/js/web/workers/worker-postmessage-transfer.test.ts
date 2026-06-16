@@ -98,3 +98,157 @@ describe("self.postMessage transfer list", () => {
     }
   });
 });
+
+// Transferable streams: a ReadableStream listed in the transfer list is detached
+// into a cross-realm transform and reconstructed on the receiving side, so data
+// written to the source is readable through the transferred stream.
+// https://github.com/oven-sh/bun/issues/32397
+describe("ReadableStream transfer", () => {
+  test("carries data across a MessageChannel and detaches the source", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const rs = new ReadableStream({
+      start(c) {
+        c.enqueue("a");
+        c.enqueue("b");
+        c.enqueue("c");
+        c.close();
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<unknown[]>();
+    port2.onmessage = async (e: MessageEvent) => {
+      try {
+        const stream = e.data;
+        expect(stream).toBeInstanceOf(ReadableStream);
+        const chunks: unknown[] = [];
+        for await (const chunk of stream) chunks.push(chunk);
+        resolve(chunks);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    port2.start();
+
+    port1.postMessage(rs, [rs]);
+    // The source stream is locked/detached immediately after transfer.
+    expect(rs.locked).toBe(true);
+
+    expect(await promise).toEqual(["a", "b", "c"]);
+    port1.close();
+    port2.close();
+  });
+
+  test("preserves order and backpressure across many chunks", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const N = 1000;
+    const rs = new ReadableStream({
+      start(c) {
+        for (let i = 0; i < N; i++) c.enqueue(i);
+        c.close();
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<number[]>();
+    port2.onmessage = async (e: MessageEvent) => {
+      try {
+        const received: number[] = [];
+        for await (const chunk of e.data) received.push(chunk as number);
+        resolve(received);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    port2.start();
+
+    port1.postMessage(rs, [rs]);
+    const received = await promise;
+    expect(received).toHaveLength(N);
+    expect(received).toEqual(Array.from({ length: N }, (_, i) => i));
+    port1.close();
+    port2.close();
+  });
+
+  test("propagates a source error to the receiving stream", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const rs = new ReadableStream({
+      start(c) {
+        c.error(new Error("boom"));
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    port2.onmessage = async (e: MessageEvent) => {
+      try {
+        for await (const _ of e.data);
+        reject(new Error("expected the transferred stream to error"));
+      } catch (err: any) {
+        resolve(String(err?.message ?? err));
+      }
+    };
+    port2.start();
+
+    port1.postMessage(rs, [rs]);
+    expect(await promise).toBe("boom");
+    port1.close();
+    port2.close();
+  });
+
+  test("throws DataCloneError when the stream is locked", () => {
+    const rs = new ReadableStream();
+    rs.getReader();
+    const { port1, port2 } = new MessageChannel();
+    expect(() => port1.postMessage(rs, [rs])).toThrow(
+      expect.objectContaining({ name: "DataCloneError" }),
+    );
+    port1.close();
+    port2.close();
+  });
+
+  test("throws DataCloneError when transferring a stream that is not cloneable without transfer", () => {
+    const rs = new ReadableStream();
+    const { port1, port2 } = new MessageChannel();
+    expect(() => port1.postMessage(rs)).toThrow(expect.objectContaining({ name: "DataCloneError" }));
+    port1.close();
+    port2.close();
+  });
+
+  test("transfers to a Worker and carries data across threads", async () => {
+    const url = URL.createObjectURL(
+      new Blob([
+        `
+          self.onmessage = async e => {
+            try {
+              const chunks = [];
+              for await (const chunk of e.data.stream) chunks.push(chunk);
+              self.postMessage({ chunks });
+            } catch (err) {
+              self.postMessage({ error: String(err) });
+            }
+          };
+        `,
+      ]),
+    );
+    const worker = new Worker(url);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<any>();
+      worker.onerror = e => reject(e.error ?? e.message ?? e);
+      worker.onmessage = e => resolve(e.data);
+
+      const rs = new ReadableStream({
+        start(c) {
+          c.enqueue("x");
+          c.enqueue("y");
+          c.enqueue("z");
+          c.close();
+        },
+      });
+      worker.postMessage({ stream: rs }, [rs]);
+      expect(rs.locked).toBe(true);
+
+      expect(await promise).toEqual({ chunks: ["x", "y", "z"] });
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(url);
+    }
+  });
+});

@@ -2458,3 +2458,131 @@ export function readableStreamDefineLazyIterators(prototype) {
   $Object.$defineProperty(prototype, "values", { value: createValues });
   return prototype;
 }
+
+// Transferable streams: https://streams.spec.whatwg.org/#transferable-streams
+// The following helpers implement the cross-realm transform used by structured
+// clone to transfer a ReadableStream across a MessagePort. They mirror the
+// abstract operations SetUpCrossRealmTransformReadable/Writable from the spec.
+
+// https://streams.spec.whatwg.org/#abstract-opdef-crossrealmtransformsenderror
+export function crossRealmTransformSendError(port, error) {
+  try {
+    port.postMessage({ type: "error", value: error });
+  } catch {}
+}
+
+// Receives a ReadableStream that was transferred into `port` and returns a new
+// ReadableStream backed by it (SetUpCrossRealmTransformReadable).
+export function structuredCloneReceiveReadableStream(port) {
+  const source = {
+    $pull: () => {
+      port.postMessage({ type: "pull", value: undefined });
+    },
+    $cancel: reason => {
+      try {
+        port.postMessage({ type: "error", value: reason });
+      } catch (e) {
+        $crossRealmTransformSendError(port, e);
+      }
+      port.close();
+    },
+  };
+  const readable = new $ReadableStream(source, { $highWaterMark: 0 });
+  const controller = readable.$readableStreamController;
+
+  port.onmessage = event => {
+    const data = event.data;
+    const type = data.type;
+    if (type === "chunk") {
+      $readableStreamDefaultControllerEnqueue(controller, data.value);
+    } else if (type === "close") {
+      $readableStreamDefaultControllerClose(controller);
+      port.close();
+    } else if (type === "error") {
+      $readableStreamDefaultControllerError(controller, data.value);
+      port.close();
+    }
+  };
+  port.onmessageerror = () => {
+    const error = new TypeError("Failed to deserialize transferred stream chunk");
+    $crossRealmTransformSendError(port, error);
+    $readableStreamDefaultControllerError(controller, error);
+    port.close();
+  };
+  port.start();
+  return readable;
+}
+
+// Transfers `readable` by piping it into a cross-realm writable whose sink posts
+// chunks to `port` (SetUpCrossRealmTransformWritable + rs-transfer steps).
+export function structuredCloneTransferReadableStream(readable, port) {
+  let backpressure = $newPromiseCapability(Promise);
+
+  const writeAlgorithm = chunk => {
+    if (backpressure === undefined) {
+      backpressure = $newPromiseCapability(Promise);
+      backpressure.resolve.$call();
+    }
+    return backpressure.promise.$then(() => {
+      backpressure = $newPromiseCapability(Promise);
+      try {
+        port.postMessage({ type: "chunk", value: chunk });
+      } catch (e) {
+        $crossRealmTransformSendError(port, e);
+        port.close();
+        throw e;
+      }
+    });
+  };
+  const closeAlgorithm = () => {
+    port.postMessage({ type: "close", value: undefined });
+    port.close();
+    return Promise.$resolve();
+  };
+  const abortAlgorithm = reason => {
+    port.postMessage({ type: "error", value: reason });
+    port.close();
+    return Promise.$resolve();
+  };
+
+  const internalWritable = {};
+  $initializeWritableStreamSlots(internalWritable, {});
+  const controller = new WritableStreamDefaultController();
+  $setUpWritableStreamDefaultController(
+    internalWritable,
+    controller,
+    () => {},
+    writeAlgorithm,
+    closeAlgorithm,
+    abortAlgorithm,
+    1,
+    () => 1,
+  );
+
+  const resolveBackpressure = () => {
+    if (backpressure !== undefined) {
+      backpressure.resolve.$call();
+      backpressure = undefined;
+    }
+  };
+  port.onmessage = event => {
+    const data = event.data;
+    const type = data.type;
+    if (type === "pull") {
+      resolveBackpressure();
+    } else if (type === "error") {
+      $writableStreamDefaultControllerErrorIfNeeded(controller, data.value);
+      resolveBackpressure();
+    }
+  };
+  port.onmessageerror = () => {
+    const error = new TypeError("Failed to deserialize transferred stream chunk");
+    $crossRealmTransformSendError(port, error);
+    $writableStreamDefaultControllerErrorIfNeeded(controller, error);
+    port.close();
+  };
+  port.start();
+
+  const promise = $readableStreamPipeToWritableStream(readable, internalWritable, false, false, false, undefined);
+  $markPromiseAsHandled(promise);
+}

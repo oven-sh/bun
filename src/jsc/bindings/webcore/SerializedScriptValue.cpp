@@ -56,6 +56,9 @@
 // #include "JSImageBitmap.h"
 // #include "JSImageData.h"
 #include "JSMessagePort.h"
+#include "JSReadableStream.h"
+#include "ReadableStream.h"
+#include "MessageChannel.h"
 // #include "JSNavigator.h"
 // #include "JSRTCCertificate.h"
 // #include "JSRTCDataChannel.h"
@@ -64,6 +67,7 @@
 #include "ScriptExecutionContext.h"
 // #include "WebCodecsEncodedVideoChunk.h"
 #include "WebCoreJSClientData.h"
+#include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/BooleanObject.h>
@@ -245,6 +249,7 @@ enum SerializationTag {
 #endif
     ResizableArrayBufferTag = 54,
     ErrorInstanceTag = 55,
+    ReadableStreamTag = 56,
 
     Bun__BlobTag = 254,
     // bun types start at 254 and decrease with each addition
@@ -762,6 +767,66 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
 
 using DeserializationResult = std::pair<JSC::JSValue, SerializationReturnCode>;
 
+// Transferable streams support. These bridge the structured clone layer to the
+// cross-realm transform builtins in ReadableStreamInternals.ts.
+static JSC::JSValue invokeStreamTransferBuiltin(JSC::JSGlobalObject& globalObject, const JSC::Identifier& identifier, const JSC::MarkedArgumentBuffer& arguments)
+{
+    JSC::VM& vm = globalObject.vm();
+    JSC::JSLockHolder lock(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto function = globalObject.get(&globalObject, identifier);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!function.isCallable())
+        return {};
+    auto callData = JSC::getCallData(function);
+    auto result = JSC::call(&globalObject, function, callData, JSC::jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
+}
+
+// rs-transfer steps: create an entangled MessagePort pair, pipe the stream into
+// a cross-realm writable backed by one port, and return the other port so it can
+// be serialized alongside the message's transferred ports.
+static RefPtr<MessagePort> runReadableStreamTransferSteps(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* readableStream)
+{
+    auto* context = executionContext(&lexicalGlobalObject);
+    if (!context)
+        return nullptr;
+    auto* globalObject = uncheckedDowncast<JSDOMGlobalObject>(&lexicalGlobalObject);
+
+    Ref channel = MessageChannel::create(*context);
+    Ref<MessagePort> port1 = channel->port1();
+    Ref<MessagePort> port2 = channel->port2();
+
+    auto& vm = lexicalGlobalObject.vm();
+    auto* clientData = static_cast<JSVMClientData*>(vm.clientData);
+    auto& name = clientData->builtinFunctions().readableStreamInternalsBuiltins().structuredCloneTransferReadableStreamPrivateName();
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(readableStream);
+    arguments.append(toJS(&lexicalGlobalObject, globalObject, port1.get()));
+    ASSERT(!arguments.hasOverflowed());
+    invokeStreamTransferBuiltin(lexicalGlobalObject, name, arguments);
+
+    return port2.ptr();
+}
+
+// rs-transfer-receiving steps: wrap a received MessagePort in a new ReadableStream
+// backed by a cross-realm transform readable.
+static JSC::JSValue runReadableStreamTransferReceivingSteps(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSGlobalObject* globalObject, MessagePort* port)
+{
+    if (!port)
+        return {};
+    auto& vm = lexicalGlobalObject.vm();
+    auto* clientData = static_cast<JSVMClientData*>(vm.clientData);
+    auto& name = clientData->builtinFunctions().readableStreamInternalsBuiltins().structuredCloneReceiveReadableStreamPrivateName();
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(toJS(&lexicalGlobalObject, uncheckedDowncast<JSDOMGlobalObject>(globalObject), port));
+    ASSERT(!arguments.hasOverflowed());
+    return invokeStreamTransferBuiltin(lexicalGlobalObject, name, arguments);
+}
+
 class CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
 
@@ -888,7 +953,7 @@ public:
     //         return serializer.serialize(value);
     //     }
 
-    static SerializationReturnCode serialize(JSGlobalObject* lexicalGlobalObject, JSValue value, Vector<RefPtr<MessagePort>>& messagePorts, Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers,
+    static SerializationReturnCode serialize(JSGlobalObject* lexicalGlobalObject, JSValue value, Vector<RefPtr<MessagePort>>& messagePorts, const Vector<JSC::JSObject*>& readableStreams, Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         const Vector<RefPtr<OffscreenCanvas>>& offscreenCanvases,
 #endif
@@ -907,7 +972,7 @@ public:
         Vector<void*>& serializedBlockListRefs,
         SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
     {
-        CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
+        CloneSerializer serializer(lexicalGlobalObject, messagePorts, readableStreams, arrayBuffers,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
             offscreenCanvases,
 #endif
@@ -994,7 +1059,7 @@ private:
     // #endif
     //     }
 
-    CloneSerializer(JSGlobalObject* lexicalGlobalObject, Vector<RefPtr<MessagePort>>& messagePorts, Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers,
+    CloneSerializer(JSGlobalObject* lexicalGlobalObject, Vector<RefPtr<MessagePort>>& messagePorts, const Vector<JSC::JSObject*>& readableStreams, Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         const Vector<RefPtr<OffscreenCanvas>>& offscreenCanvases,
 #endif
@@ -1028,6 +1093,7 @@ private:
     {
         write(CurrentVersion);
         fillTransferMap(messagePorts, m_transferredMessagePorts);
+        fillTransferMapFromObjects(readableStreams, m_transferredReadableStreams);
         fillTransferMap(arrayBuffers, m_transferredArrayBuffers);
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         fillTransferMap(offscreenCanvases, m_transferredOffscreenCanvases);
@@ -1059,6 +1125,15 @@ private:
         for (size_t i = 0; i < input.size(); i++) {
             JSC::JSValue value = toJS(m_lexicalGlobalObject, globalObject, input[i].get());
             JSC::JSObject* obj = value.getObject();
+            if (obj && !result.contains(obj))
+                result.add(obj, i);
+        }
+    }
+
+    void fillTransferMapFromObjects(const Vector<JSC::JSObject*>& input, ObjectPool& result)
+    {
+        for (size_t i = 0; i < input.size(); i++) {
+            JSC::JSObject* obj = input[i];
             if (obj && !result.contains(obj))
                 result.add(obj, i);
         }
@@ -1751,6 +1826,17 @@ private:
                 code = SerializationReturnCode::ValidationError;
                 return true;
             }
+            if (obj->inherits<JSReadableStream>()) {
+                auto index = m_transferredReadableStreams.find(obj);
+                if (index != m_transferredReadableStreams.end()) {
+                    write(ReadableStreamTag);
+                    write(static_cast<uint32_t>(m_transferredMessagePorts.size() + index->value));
+                    return true;
+                }
+                // A ReadableStream can be transferred but not cloned.
+                code = SerializationReturnCode::DataCloneError;
+                return true;
+            }
             if (auto* arrayBuffer = toPossiblySharedArrayBuffer(vm, obj)) {
                 if (arrayBuffer->isDetached()) {
                     code = SerializationReturnCode::ValidationError;
@@ -1849,7 +1935,8 @@ private:
                 //                     dummyMemoryHandles,
                 // #endif
                 //                     dummyBlobHandles, serializedKey, SerializationContext::Default, dummySharedBuffers, m_forStorage);
-                CloneSerializer rawKeySerializer(m_lexicalGlobalObject, dummyMessagePorts, dummyArrayBuffers,
+                Vector<JSC::JSObject*> dummyReadableStreams;
+                CloneSerializer rawKeySerializer(m_lexicalGlobalObject, dummyMessagePorts, dummyReadableStreams, dummyArrayBuffers,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
                     {},
 #endif
@@ -2579,6 +2666,7 @@ private:
     // Vector<URLKeepingBlobAlive>& m_blobHandles;
     ObjectPool m_objectPool;
     ObjectPool m_transferredMessagePorts;
+    ObjectPool m_transferredReadableStreams;
     ObjectPool m_transferredArrayBuffers;
     ObjectPool m_transferredImageBitmaps;
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
@@ -5055,6 +5143,20 @@ private:
             }
             return getJSValue(m_messagePorts[index].get());
         }
+        case ReadableStreamTag: {
+            uint32_t index;
+            bool indexSuccessfullyRead = read(index);
+            if (!indexSuccessfullyRead || index >= m_messagePorts.size()) {
+                fail();
+                return JSValue();
+            }
+            JSValue result = runReadableStreamTransferReceivingSteps(*m_lexicalGlobalObject, m_globalObject, m_messagePorts[index].get());
+            if (!result) {
+                fail();
+                return JSValue();
+            }
+            return result;
+        }
 #if ENABLE(WEBASSEMBLY)
         case WasmModuleTag: {
             if (m_version >= 12) {
@@ -6216,6 +6318,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #if ENABLE(WEB_CODECS)
     Vector<Ref<WebCodecsVideoFrame>> transferredVideoFrames;
 #endif
+    Vector<JSC::JSObject*> readableStreams;
     HashSet<JSC::JSObject*> uniqueTransferables;
     for (auto& transferable : transferList) {
         if (!uniqueTransferables.add(transferable.get()).isNewEntry) {
@@ -6243,6 +6346,12 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             if (port->isDetached())
                 return Exception { DataCloneError, "MessagePort in transfer list is already detached"_s };
             messagePorts.append(WTF::move(port));
+            continue;
+        }
+        if (auto* readableStream = dynamicDowncast<JSReadableStream>(transferable.get())) {
+            if (ReadableStream::isLocked(&lexicalGlobalObject, readableStream))
+                return Exception { DataCloneError, "ReadableStream is locked and cannot be transferred"_s };
+            readableStreams.append(readableStream);
             continue;
         }
 
@@ -6320,7 +6429,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     //         wasmMemoryHandles,
     // #endif
     //         blobHandles, buffer, context, *sharedBuffers, forStorage);
-    auto code = CloneSerializer::serialize(&lexicalGlobalObject, value, messagePorts, arrayBuffers,
+    auto code = CloneSerializer::serialize(&lexicalGlobalObject, value, messagePorts, readableStreams, arrayBuffers,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         offscreenCanvases,
 #endif
@@ -6355,6 +6464,24 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     if (scope.exception() || code != SerializationReturnCode::SuccessfullyCompleted) [[unlikely]] {
         releaseSerializedBlockListRefs();
         RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(code));
+    }
+
+    // rs-transfer steps run after the message value is serialized. Each transferred
+    // ReadableStream is detached into a cross-realm transform backed by a fresh
+    // MessagePort pair; the remote port is appended to messagePorts so it is
+    // disentangled and delivered alongside the message, matching the index the
+    // serializer wrote (messagePorts.size() at dump time + the stream's index).
+    for (auto* readableStream : readableStreams) {
+        auto port = runReadableStreamTransferSteps(lexicalGlobalObject, readableStream);
+        if (scope.exception()) [[unlikely]] {
+            releaseSerializedBlockListRefs();
+            RELEASE_AND_RETURN(scope, Exception { ExistingExceptionError });
+        }
+        if (!port) {
+            releaseSerializedBlockListRefs();
+            return Exception { DataCloneError, "Failed to transfer ReadableStream"_s };
+        }
+        messagePorts.append(WTF::move(port));
     }
 
     auto arrayBufferContentsArray = transferArrayBuffers(vm, arrayBuffers);

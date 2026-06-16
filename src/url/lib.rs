@@ -494,18 +494,13 @@ impl<'a> URL<'a> {
         !self.hostname.is_empty() && !self.pathname.is_empty()
     }
 
-    /// Write-only 2 KB scratch for [`Self::join_normalize`] and its callers.
-    /// Every byte that is read was written by the path concatenation or
-    /// by [`resolve_path::normalize_string_buf`] first, so leaving the array
-    /// uninitialised is sound and avoids a 2 KB `memset` per call (`join_alloc`
-    /// / `join_write` hit this twice → 4 KB of zero-fill per emitted URL).
-    /// Same shape/contract as [`bun_core::PathBuffer::uninit`].
     #[inline]
-    #[allow(invalid_value, clippy::uninit_assumed_init)]
+    #[allow(
+        invalid_value,
+        clippy::uninit_assumed_init,
+        clippy::undocumented_unsafe_blocks
+    )]
     fn join_buf_uninit() -> [u8; 2048] {
-        // SAFETY: `[u8; 2048]`; every bit pattern is a valid `u8`. Callers
-        // treat this as a write-only scratch buffer and track the written
-        // length out-of-band — no byte is read before being written.
         unsafe { core::mem::MaybeUninit::uninit().assume_init() }
     }
 

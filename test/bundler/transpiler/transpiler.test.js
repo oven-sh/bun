@@ -1497,6 +1497,46 @@ export default class {
         expect(out).toBe(expected);
       }
     });
+
+    it("transform() per-call cost does not scale with exports.eliminate size", async () => {
+      // Regression: the Rust port deep-cloned the configured replace_exports
+      // map on every transform() call (twice in the async path), so per-call
+      // latency grew linearly with the eliminate-list length. The source we
+      // transform has a single export, so the parser does one O(1) map
+      // lookup regardless of map size; any remaining scaling is clone
+      // overhead.
+      const src = "export const a = 1;\n";
+      const ITERS = 80;
+      async function measure(elimCount) {
+        const opts = { loader: "ts" };
+        if (elimCount > 0) {
+          opts.exports = { eliminate: Array.from({ length: elimCount }, (_, i) => "e" + i) };
+        }
+        const t = new Bun.Transpiler(opts);
+        expect(await t.transform(src)).toBe(t.transformSync(src));
+        for (let i = 0; i < 10; i++) await t.transform(src);
+        let best = Infinity;
+        for (let run = 0; run < 3; run++) {
+          const start = Bun.nanoseconds();
+          for (let i = 0; i < ITERS; i++) await t.transform(src);
+          best = Math.min(best, Bun.nanoseconds() - start);
+        }
+        return best;
+      }
+      const base = await measure(0);
+      const big = await measure(4000);
+      const ratio = big / base;
+      // Without the fix the ratio is >7x in debug+ASAN and >9x in release;
+      // with it the ratio sits around 1.0x-1.2x. 3x leaves wide margins on
+      // both sides.
+      if (ratio >= 3) {
+        throw new Error(
+          `transform() with 4000-entry exports.eliminate is ${ratio.toFixed(2)}x slower than ` +
+            `with an empty map (base=${(base / ITERS / 1e3).toFixed(1)}us/call, ` +
+            `big=${(big / ITERS / 1e3).toFixed(1)}us/call); expected <3x`,
+        );
+      }
+    });
   });
 
   const bunTranspiler = new Bun.Transpiler({

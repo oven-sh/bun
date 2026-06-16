@@ -2216,35 +2216,7 @@ fn transpile_source_code_inner(
             let is_node_override = specifier.starts_with(node_fallbacks::IMPORT_PATH);
 
             // SAFETY: per fn contract.
-            let (macro_mode, has_any_macro_remappings) =
-                unsafe { ((*jsc_vm).macro_mode, (*jsc_vm).has_any_macro_remappings) };
-            let macro_remappings = if macro_mode || !has_any_macro_remappings || is_node_override {
-                bun_resolver::package_json::MacroMap::default()
-            } else {
-                // Note: `MacroMap`'s value type
-                // (`StringArrayHashMap<Box<[u8]>>`) has only the fallible
-                // `clone() -> Result<_, AllocError>` (no trait `Clone`), so
-                // the outer map can't be `clone()`d generically. Re-key
-                // shallowly here matching `bun_bundler::transpiler` and treat
-                // the inner OOM as a process-fatal alloc failure.
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread
-                // VM and `init_runtime_state` has already `ptr::write`n a
-                // real `Transpiler` into `vm.transpiler` (the `options.jsx` /
-                // `options.loaders` reads below depend on the same invariant).
-                let src = unsafe { &(*jsc_vm).transpiler.options.macro_remap };
-                if src.is_empty() {
-                    // Hot path: a module with no `--define`/`with { type: "macro" }`
-                    // remappings skips the per-entry re-key + per-value fallible
-                    // `clone()` entirely.
-                    bun_resolver::package_json::MacroMap::default()
-                } else {
-                    let mut m = bun_resolver::package_json::MacroMap::default();
-                    for (k, v) in src.iter() {
-                        m.insert(k, bun_core::handle_oom(v.clone()));
-                    }
-                    m
-                }
-            };
+            let macro_mode = unsafe { (*jsc_vm).macro_mode };
 
             let mut should_close_input_file_fd = fd.is_none();
 
@@ -2412,7 +2384,6 @@ fn transpile_source_code_inner(
                     // fresh `&mut` (see Note on `_fd_guard`).
                     file_fd_ptr: Some(unsafe { &mut *input_file_fd_ptr }),
                     file_hash: Some(hash),
-                    macro_remappings,
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     jsx: unsafe { &*jsc_vm }.transpiler.options.jsx.clone(),
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.

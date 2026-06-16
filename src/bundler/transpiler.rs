@@ -820,7 +820,6 @@ use crate::bun_node_fallbacks as NodeFallbackModules;
 use crate::entry_points as EntryPoints;
 use bun_ast::RuntimeTranspilerCache;
 use bun_core::strings;
-use bun_resolver::package_json::MacroMap as MacroRemap;
 use bun_sys::Fd as FD;
 
 /// How a parsed source was found to be pre-bundled (plain source vs. cached
@@ -965,7 +964,6 @@ pub struct ParseOptions<'a, 'b> {
     /// `BundleOptions.jsx` — the file-backed `options_impl::jsx::Pragma`, NOT
     /// the lib.rs shim. Callers pass `transpiler.options.jsx.clone()`.
     pub jsx: crate::options_impl::jsx::Pragma,
-    pub macro_remappings: MacroRemap,
     pub macro_js_ctx: MacroJSCtx,
     pub virtual_source: Option<&'b bun_ast::Source>,
     pub replace_exports: &'b bun_ast::runtime::ReplaceableExportMap,
@@ -1565,7 +1563,6 @@ impl<'a> Transpiler<'a> {
 
                 let mut jsx = this_parse.jsx;
                 jsx.parse = loader.is_jsx();
-                let _ = &this_parse.macro_remappings;
 
                 // `ParserOptions::init` is hard-typed
                 // `-> Options<'static>` and `Options<'a>` is *invariant* in
@@ -2982,19 +2979,6 @@ impl<'a> Transpiler<'a> {
                 let dirname_fd = resolve_result.dirname_fd;
                 let emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata();
                 let experimental_decorators = resolve_result.flags.experimental_decorators();
-                // `MacroRemap` (StringArrayHashMap of StringArrayHashMap) has
-                // no nested `Clone` impl (the inner clone is fallible).
-                // Rebuild the outer map, deep-cloning
-                // each inner map (fallible), matching the build-command
-                // conversion.
-                let macro_remappings = {
-                    let mut m = MacroRemap::default();
-                    for (k, v) in self.options.macro_remap.iter() {
-                        let inner = v.clone().map_err(|_| bun_core::err!("OutOfMemory"))?;
-                        m.insert(k, inner);
-                    }
-                    m
-                };
 
                 let parse_opts = ParseOptions {
                     arena: self.arena,
@@ -3004,7 +2988,6 @@ impl<'a> Transpiler<'a> {
                     file_descriptor: None,
                     file_hash: None,
                     file_fd_ptr: None,
-                    macro_remappings,
                     macro_js_ctx: default_macro_js_value(),
                     jsx,
                     emit_decorator_metadata,

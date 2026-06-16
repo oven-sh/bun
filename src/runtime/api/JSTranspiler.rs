@@ -796,10 +796,6 @@ impl<'a> TransformTask<'a> {
 
         let parse_options = ParseOptions {
             arena: arena_ref,
-            // `Transpiler::parse` never reads this field; macro remapping is
-            // resolved via `MacroContext.remap`, a `BackRef` into
-            // `transpiler.options.macro_remap` set once at construction.
-            macro_remappings: MacroMap::default(),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: self.loader,
@@ -1288,10 +1284,6 @@ impl JSTranspiler {
 
         let parse_options = ParseOptions {
             arena,
-            // `Transpiler::parse` never reads this field; macro remapping is
-            // resolved via `MacroContext.remap`, a `BackRef` into
-            // `transpiler.options.macro_remap` set once at construction.
-            macro_remappings: MacroMap::default(),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: loader.unwrap_or(config.default_loader),

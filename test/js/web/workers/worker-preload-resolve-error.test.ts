@@ -23,11 +23,13 @@ test("Worker preload: unresolvable module surfaces the resolve error, not 'undef
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect({ stdout, stderr, exitCode }).toMatchObject({
+    stdout: expect.stringContaining('"isError":true'),
+    exitCode: 0,
+  });
   const out = JSON.parse(stdout.trim());
-  expect(out.isError).toBe(true);
   expect(out.message).not.toBe("undefined");
   expect(out.message).toContain("this-preload-does-not-exist");
-  expect(exitCode).toBe(0);
 });

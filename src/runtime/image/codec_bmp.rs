@@ -191,5 +191,3 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
         icc_profile: None,
     })
 }
-
-// ported from: src/runtime/image/codec_bmp.zig

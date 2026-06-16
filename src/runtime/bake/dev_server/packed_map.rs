@@ -1,10 +1,10 @@
 //! `DevServer.PackedMap` — compact source-map slice (VLQ mappings + escaped
 //! source contents) shared between `IncrementalGraph` files and
-//! `SourceMapStore` entries. Spec: src/runtime/bake/DevServer/PackedMap.zig.
+//! `SourceMapStore` entries.
 
 use std::rc::Rc;
 
-/// Line count newtype (Zig: `bun.GenericIndex(u32, u8)`).
+/// Line count newtype.
 pub(crate) type LineCount = bun_core::GenericIndex<u32, u8>;
 
 /// `PackedMap.end_state` — only the two fields the bundler needs to thread
@@ -62,9 +62,8 @@ impl PackedMap {
 /// should never allocate an object. There is still relevant state for these
 /// files to encode, so a tagged union is used.
 ///
-/// PORT NOTE: Zig `bun.MultiArrayList(Shared)` SoA split buys nothing for a
-/// 2-word payload and `MultiArrayElement` cannot be derived for an enum, so
-/// callers store `Vec<Shared>`.
+/// An SoA split buys nothing for a 2-word payload (and `MultiArrayElement`
+/// cannot be derived for an enum), so callers store `Vec<Shared>`.
 #[derive(Default)]
 pub enum Shared {
     Some(Rc<PackedMap>),
@@ -86,8 +85,8 @@ impl Shared {
         match core::mem::replace(self, Shared::None) {
             Shared::Some(p) => Some(p),
             other => {
-                // PORT NOTE: reshaped for borrowck — Zig only writes `.none`
-                // on the `.some` arm, so restore the original on miss.
+                // Only the `Some` arm consumes the value, so restore the
+                // original on miss.
                 *self = other;
                 None
             }

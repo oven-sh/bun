@@ -36,8 +36,19 @@ pub fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
-    let exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
-    // PORT NOTE: reshaped for borrowck — take `parts` as a raw pointer *before* the
+    let mut exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
+    // The dev server's module format represents lazy-export modules (JSON,
+    // TOML, CSS modules, ...) as CommonJS modules evaluated by the HMR
+    // runtime, so always generate the `module.exports = ...` form below.
+    // The ESM form would synthesize `export` parts that
+    // `print_dev_server_module` cannot represent.
+    if this.options.output_format == crate::options::OutputFormat::InternalBakeDev
+        && exports_kind != bun_ast::ExportsKind::Cjs
+    {
+        exports_kind = bun_ast::ExportsKind::Cjs;
+        this.graph.ast.items_exports_kind_mut()[source_index as usize] = exports_kind;
+    }
+    // Take `parts` as a raw pointer *before* the
     // long-lived immutable `items_css()` borrow below; re-borrowed again later as needed.
     let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
     // SAFETY: parse_graph backref; raw deref because `all_sources` is held
@@ -100,7 +111,6 @@ pub fn generate_code_for_lazy_export(
 
             struct Visitor<'a> {
                 inner_visited: &'a mut BitSet,
-                // Zig: `std.AutoArrayHashMap(Ref, void)` → `ArrayHashMap` per collections map.
                 composes_visited: &'a mut ArrayHashMap<Ref, ()>,
                 parts: &'a mut Vec<E::TemplatePart>,
                 all_import_records: &'a [bun_ast::import_record::List<'a>],
@@ -111,7 +121,6 @@ pub fn generate_code_for_lazy_export(
                 source_index: IndexInt,
                 log: &'a mut Log,
                 loc: Loc,
-                // PERF(port): was `std.mem.Allocator` (arena) — bundler is an AST crate; thread `&'bump Bump`.
                 arena: &'a Arena,
             }
 
@@ -132,7 +141,6 @@ pub fn generate_code_for_lazy_export(
                     }
 
                     self.visit_composes(ast, ref_, idx);
-                    // PERF(port): was assume-OOM `catch |err| bun.handleOom(err)`; Vec::push aborts on OOM.
                     self.parts.push(E::TemplatePart {
                         value: Expr::init(
                             E::NameOfSymbol {
@@ -170,7 +178,6 @@ pub fn generate_code_for_lazy_export(
                         .unwrap()
                         .loc;
 
-                    // PORT NOTE: was `catch |err| bun.handleOom(err)` — crash on OOM.
                     self.log.add_range_error_fmt_with_note(
                         Some(&self.all_sources[idx as usize]),
                         bun_ast::Range { loc: compose_loc, ..Default::default() },
@@ -306,9 +313,8 @@ pub fn generate_code_for_lazy_export(
                 }
             }
 
-            // PORT NOTE: Zig left `parts: undefined` and rebound per-iteration; Rust
-            // forbids uninit refs, so the Visitor is constructed inside the loop with
-            // a fresh `parts` borrow each time (reshaped for borrowck).
+            // The Visitor is constructed inside the loop with a fresh `parts`
+            // borrow each time (reshaped for borrowck).
             let all_symbols = this.graph.ast.items_symbols();
             // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
             // link pass; detach via raw-pointer round-trip so it doesn't hold a `&self`
@@ -319,7 +325,6 @@ pub fn generate_code_for_lazy_export(
                 let ref_ = entry.ref_;
                 debug_assert!(ref_.inner_index() < symbols.len() as u32);
 
-                // PERF(port): was arena-backed ArrayList (no deinit; `.items` moved into E.Template).
                 let mut template_parts: Vec<E::TemplatePart> = Vec::new();
                 let mut value = Expr::init(
                     E::NameOfSymbol {
@@ -355,8 +360,7 @@ pub fn generate_code_for_lazy_export(
                         tail_loc: stmt.loc,
                         tail: E::TemplateContents::Cooked(E::String::init(b"")),
                     });
-                    // PORT NOTE: Zig used an arena-backed ArrayList and moved `.items`
-                    // into `E.Template`; mirror that by moving into the linker arena
+                    // Move the parts into the linker arena
                     // (freed when the linker arena drops).
                     let parts_slice =
                         bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter(template_parts));
@@ -430,16 +434,14 @@ pub fn generate_code_for_lazy_export(
         _ => {
             // Otherwise, generate ES6 export statements. These are added as additional
             // parts so they can be tree shaken individually.
-            // PORT NOTE: Zig `part.stmts.len = 0` truncates the slice.
             part.stmts = bun_ast::StoreSlice::EMPTY;
 
             if let ExprData::EObject(e_object) = &expr.data {
                 for property in e_object.properties.slice() {
                     let _: &G::Property = property;
-                    // PORT NOTE: `Expr`/`ExprData`/`StoreRef<_>` are `Copy`. Copy `key` out so
+                    // `Expr`/`ExprData`/`StoreRef<_>` are `Copy`. Copy `key` out so
                     // `key_str: StoreRef<E::EString>` is a mutable local — `slice()` resolves
-                    // the rope in-place via `DerefMut` into the arena slot (matches Zig's
-                    // `property.key.?.data.e_string.slice(...)` which takes `*String`).
+                    // the rope in-place via `DerefMut` into the arena slot.
                     let Some(key) = property.key else { continue };
                     let ExprData::EString(mut key_str) = key.data else {
                         continue;
@@ -476,7 +478,6 @@ pub fn generate_code_for_lazy_export(
                     // happened yet). So we need to wait until after tree shaking happens.
                     let generated =
                         this.generate_named_export_in_file(source_index, module_ref, name, name)?;
-                    // PERF(port): was `this.arena().alloc(Stmt, 1)` (arena).
                     let new_stmts: &mut [Stmt] =
                         alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
                             S::Local {
@@ -493,7 +494,7 @@ pub fn generate_code_for_lazy_export(
                             },
                             key.loc,
                         )));
-                    // PORT NOTE: `parts.ptr[generated[1]]` — re-borrow `parts` here for borrowck.
+                    // Re-borrow `parts` here for borrowck.
                     let parts =
                         this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                     parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
@@ -501,7 +502,6 @@ pub fn generate_code_for_lazy_export(
             }
 
             {
-                // PERF(port): was `std.fmt.allocPrint` into arena; building into Vec<u8> then arena-dupe.
                 let mut name_buf: Vec<u8> = Vec::new();
                 write!(
                     &mut name_buf,
@@ -542,5 +542,3 @@ pub fn generate_code_for_lazy_export(
 pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
-
-// ported from: src/bundler/linker_context/generateCodeForLazyExport.zig

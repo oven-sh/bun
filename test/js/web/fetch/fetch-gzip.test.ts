@@ -1,8 +1,9 @@
 import { Socket } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { gcTick } from "harness";
+import { bunEnv, bunExe, gcTick } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import { createServer as createNetServer } from "node:net";
 import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
 import path from "path";
 
@@ -197,7 +198,9 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
   let pending,
     pendingChunks = [];
   const server = Bun.listen({
-    hostname: "localhost",
+    // Explicit IPv4 loopback: "localhost" may bind only ::1 while fetch()
+    // resolves it to 127.0.0.1, giving ConnectionRefused on some hosts.
+    hostname: "127.0.0.1",
     port: 0,
     socket: {
       drain(socket) {
@@ -292,4 +295,91 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
   socketToClose.end();
   server.stop();
   done();
+});
+
+// A buffered (non-streaming) fetch() must be able to decompress a response
+// body larger than 1 GiB. The HTTP client's Decompressor runs unbounded, the
+// same as the original Zig implementation; only available memory limits it.
+// Run in a subprocess so the ~1 GiB output buffer does not linger in the test
+// process.
+it("fetch() with a buffered gzip response whose decompressed size exceeds 1 GiB works", async () => {
+  const fixture = /* js */ `
+      import { createGzip } from "node:zlib";
+
+      const CHUNK = Buffer.alloc(1024 * 1024);
+      const N = 1025; // 1 GiB + 1 MiB
+      const chunks = [];
+      await new Promise((resolve, reject) => {
+        const gz = createGzip();
+        gz.on("data", c => chunks.push(c));
+        gz.on("end", resolve);
+        gz.on("error", reject);
+        let i = 0;
+        const pump = () => {
+          while (i < N) {
+            i++;
+            if (!gz.write(CHUNK)) return void gz.once("drain", pump);
+          }
+          gz.end();
+        };
+        pump();
+      });
+      const body = Buffer.concat(chunks);
+
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch() {
+          return new Response(body, {
+            headers: {
+              "Content-Encoding": "gzip",
+              "Content-Length": String(body.length),
+            },
+          });
+        },
+      });
+      try {
+        const res = await fetch(\`http://127.0.0.1:\${server.port}/\`);
+        const buf = await res.arrayBuffer();
+        console.log("OK", buf.byteLength);
+      } finally {
+        server.stop(true);
+      }
+    `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: `OK ${1025 * 1024 * 1024}`,
+    stderr: expect.not.stringContaining("error"),
+    exitCode: 0,
+  });
+}, 60_000);
+
+describe("empty compressed responses", () => {
+  // A response that declares Content-Encoding but sends zero body bytes must
+  // resolve as an empty body, like Node — not fail with ZlibError.
+  // https://github.com/oven-sh/bun/issues/23149
+  for (const [name, write] of Object.entries({
+    "chunked": `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n`,
+    "content-length-0": `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 0\r\n\r\n`,
+  })) {
+    it(`empty gzip body via ${name} resolves as empty`, async () => {
+      // end() rather than write(): FIN the connection after the response so
+      // nothing is left parked in the keep-alive pool when the server closes.
+      const raw = createNetServer(socket => void socket.end(write));
+      await new Promise<void>(resolve => raw.listen(0, () => resolve()));
+      const port = (raw.address() as { port: number }).port;
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/`);
+        expect(await res.text()).toBe("");
+      } finally {
+        raw.close();
+      }
+    });
+  }
 });

@@ -2,13 +2,13 @@ use core::ffi::c_void;
 use core::fmt;
 use core::sync::atomic::AtomicU32;
 
-use crate::Ordinal; // TODO(port): bun_core::Ordinal — local shim
+use crate::Ordinal;
 
 use crate::mapping;
 use crate::vlq::VLQ;
 use crate::{
-    BakeSourceProvider, DevServerSourceProvider, InternalSourceMap, Mapping, ParseUrl,
-    ParseUrlResultHint, SourceMapLoadHint, SourceProviderMap,
+    InternalSourceMap, Mapping, ParseUrl, ParseUrlResultHint, SourceMapLoadHint, SourceProvider,
+    SourceProviderMap,
 };
 
 /// ParsedSourceMap can be acquired by different threads via the thread-safe
@@ -33,8 +33,8 @@ pub struct ParsedSourceMap {
     /// maps `source_index` to the correct filename.
     pub external_source_names: Vec<Box<[u8]>>,
     /// In order to load source contents from a source-map after the fact,
-    /// a handle to the underlying source provider is stored. Within this pointer,
-    /// a flag is stored if it is known to be an inline or external source map.
+    /// a handle to the underlying source provider is stored, along with a
+    /// load hint recording whether the map is known to be inline or external.
     ///
     /// Source contents are large, we don't preserve them in memory. This has
     /// the downside of repeatedly re-decoding sourcemaps if multiple errors
@@ -47,7 +47,7 @@ pub struct ParsedSourceMap {
 
 impl Drop for ParsedSourceMap {
     fn drop(&mut self) {
-        // Spec ParsedSourceMap.zig:105 `deinit`: when the mappings are backed
+        // When the mappings are backed
         // by an `InternalSourceMap` blob the blob is *owned* (allocated by
         // `SavedSourceMap::put_mappings`) unless this is the
         // standalone-module-graph case where the bytes live in the embedded
@@ -79,27 +79,56 @@ impl Default for ParsedSourceMap {
     }
 }
 
-#[repr(u8)] // Zig: enum(u2) — Rust has no u2; packed into SourceContentPtr by shift below
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum SourceProviderKind {
-    Zig = 0,
-    Bake = 1,
-    DevServer = 2,
+/// Type-erased `get_source_map` dispatch for a provider handle stored in a
+/// [`SourceContentPtr`]: one monomorphization of [`erased_get_source_map`]
+/// per [`SourceProvider`] impl. The handle round-trips as a plain pointer
+/// without this module naming any concrete provider type.
+type ErasedGetSourceMap = unsafe fn(
+    provider: *mut c_void,
+    source_filename: &[u8],
+    load_hint: SourceMapLoadHint,
+    result: ParseUrlResultHint,
+) -> Option<ParseUrl>;
+
+/// # Safety
+/// `provider` must be the pointer packed by
+/// [`SourceContentPtr::from_source_provider`] for the same `P`, still live.
+unsafe fn erased_get_source_map<P: SourceProvider>(
+    provider: *mut c_void,
+    source_filename: &[u8],
+    load_hint: SourceMapLoadHint,
+    result: ParseUrlResultHint,
+) -> Option<ParseUrl> {
+    // SAFETY: caller contract — `provider` originates from
+    // `SourceContentPtr::from_source_provider::<P>`, so it is a live
+    // `*const P` for the duration of this call.
+    let provider = unsafe { &*provider.cast::<P>() };
+    crate::get_source_map_impl(provider, source_filename, load_hint, result)
 }
 
-pub enum AnySourceProvider {
-    Zig(*mut SourceProviderMap),
-    Bake(*mut BakeSourceProvider),
-    DevServer(*mut DevServerSourceProvider),
+/// An erased source provider: the raw FFI handle plus the `get_source_map`
+/// dispatch monomorphized for its concrete type. Recovered from a
+/// [`SourceContentPtr`], or stored whole (boxed) where the pair must travel
+/// together (`bun_jsc::SavedSourceMap`'s provider entries).
+#[derive(Clone, Copy)]
+pub struct AnySourceProvider {
+    ptr: *mut c_void,
+    get_source_map: ErasedGetSourceMap,
 }
 
 impl AnySourceProvider {
-    pub fn ptr(&self) -> *mut c_void {
-        match self {
-            AnySourceProvider::Zig(p) => (*p).cast::<c_void>(),
-            AnySourceProvider::Bake(p) => (*p).cast::<c_void>(),
-            AnySourceProvider::DevServer(p) => (*p).cast::<c_void>(),
+    /// Erases a provider handle. Like [`SourceContentPtr::from_source_provider`],
+    /// `p` must stay live for as long as the returned value (or any copy of
+    /// it) is dispatched through.
+    pub fn new<P: SourceProvider>(p: *const P) -> AnySourceProvider {
+        AnySourceProvider {
+            ptr: p.cast_mut().cast::<c_void>(),
+            get_source_map: erased_get_source_map::<P>,
         }
+    }
+
+    pub fn ptr(&self) -> *mut c_void {
+        self.ptr
     }
 
     pub fn get_source_map(
@@ -108,144 +137,83 @@ impl AnySourceProvider {
         load_hint: SourceMapLoadHint,
         result: ParseUrlResultHint,
     ) -> Option<ParseUrl> {
-        match self {
-            // SAFETY: pointers originate from SourceContentPtr::from_*_provider and are
-            // FFI handles whose lifetime is tied to the JSC SourceProvider; valid while
-            // the ParsedSourceMap is reachable.
-            AnySourceProvider::Zig(p) => unsafe {
-                (**p).get_source_map(source_filename, load_hint, result)
-            },
-            // SAFETY: pointer originates from SourceContentPtr::from_bake_provider; the
-            // BakeSourceProvider FFI handle outlives any ParsedSourceMap that stores it,
-            // so it is valid for the duration of this call.
-            AnySourceProvider::Bake(p) => unsafe {
-                (**p).get_source_map(source_filename, load_hint, result)
-            },
-            // SAFETY: pointer originates from SourceContentPtr::from_dev_server_provider; the
-            // DevServerSourceProvider FFI handle outlives any ParsedSourceMap that stores it,
-            // so it is valid for the duration of this call.
-            AnySourceProvider::DevServer(p) => unsafe {
-                (**p).get_source_map(source_filename, load_hint, result)
-            },
-        }
+        // SAFETY: `ptr` and `get_source_map` were packed together by
+        // `SourceContentPtr::from_source_provider`; the provider FFI handle
+        // outlives any `ParsedSourceMap` that stores it, so it is valid for
+        // the duration of this call.
+        unsafe { (self.get_source_map)(self.ptr, source_filename, load_hint, result) }
     }
 }
 
-/// Zig: `packed struct(u64) { load_hint: SourceMapLoadHint, kind: SourceProviderKind, data: u60 }`
-/// Field order is low-bit-first: bits 0..2 = load_hint, bits 2..4 = kind, bits 4..64 = data.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct SourceContentPtr(u64);
+/// A provider handle (stored as a raw address in `data`), the erased
+/// `get_source_map` dispatch for its concrete type, and a load hint.
+#[derive(Copy, Clone)]
+pub struct SourceContentPtr {
+    data: u64,
+    load_hint: SourceMapLoadHint,
+    get_source_map: Option<ErasedGetSourceMap>,
+}
 
 impl SourceContentPtr {
-    const LOAD_HINT_SHIFT: u32 = 0;
-    const LOAD_HINT_MASK: u64 = 0b11;
-    const KIND_SHIFT: u32 = 2;
-    const KIND_MASK: u64 = 0b11;
-    const DATA_SHIFT: u32 = 4;
-    const DATA_MASK: u64 = (1u64 << 60) - 1;
-
-    pub const NONE: SourceContentPtr = SourceContentPtr(0);
-
-    const fn new(load_hint: SourceMapLoadHint, kind: SourceProviderKind, data: u64) -> Self {
-        Self(
-            ((load_hint as u64) & Self::LOAD_HINT_MASK) << Self::LOAD_HINT_SHIFT
-                | ((kind as u64) & Self::KIND_MASK) << Self::KIND_SHIFT
-                | (data & Self::DATA_MASK) << Self::DATA_SHIFT,
-        )
-    }
+    pub const NONE: SourceContentPtr = SourceContentPtr {
+        data: 0,
+        load_hint: SourceMapLoadHint::None,
+        get_source_map: None,
+    };
 
     #[inline]
     pub fn load_hint(self) -> SourceMapLoadHint {
-        // Only ever written via `new()`/`set_load_hint()` from a valid
-        // discriminant; the 2-bit field never holds 0b11.
-        match ((self.0 >> Self::LOAD_HINT_SHIFT) & Self::LOAD_HINT_MASK) as u8 {
-            1 => SourceMapLoadHint::IsInlineMap,
-            2 => SourceMapLoadHint::IsExternalMap,
-            v => {
-                debug_assert_eq!(v, 0);
-                SourceMapLoadHint::None
-            }
-        }
+        self.load_hint
     }
 
     #[inline]
     pub fn set_load_hint(&mut self, hint: SourceMapLoadHint) {
-        self.0 = (self.0 & !(Self::LOAD_HINT_MASK << Self::LOAD_HINT_SHIFT))
-            | ((hint as u64) & Self::LOAD_HINT_MASK) << Self::LOAD_HINT_SHIFT;
-    }
-
-    #[inline]
-    fn kind(self) -> SourceProviderKind {
-        // Only ever written via `new()` from a valid discriminant.
-        match ((self.0 >> Self::KIND_SHIFT) & Self::KIND_MASK) as u8 {
-            0 => SourceProviderKind::Zig,
-            1 => SourceProviderKind::Bake,
-            v => {
-                debug_assert_eq!(v, 2);
-                SourceProviderKind::DevServer
-            }
-        }
+        self.load_hint = hint;
     }
 
     #[inline]
     pub fn data(self) -> u64 {
-        (self.0 >> Self::DATA_SHIFT) & Self::DATA_MASK
+        self.data
     }
 
+    /// Pack a provider handle. [`Self::provider`] recovers it together with
+    /// the `get_source_map` dispatch for `P`.
+    pub fn from_source_provider<P: SourceProvider>(p: *const P) -> SourceContentPtr {
+        SourceContentPtr {
+            data: u64::try_from(p as usize).expect("int cast"),
+            load_hint: SourceMapLoadHint::None,
+            get_source_map: Some(erased_get_source_map::<P>),
+        }
+    }
+
+    /// `SourceProviderMap` packing helper. Also used by the standalone module
+    /// graph, which stores a `*mut SerializedSourceMap::Loaded` here (guarded
+    /// by [`ParsedSourceMap::is_standalone_module_graph`], so the provider
+    /// dispatch is never invoked for it).
     pub fn from_provider(p: *const SourceProviderMap) -> SourceContentPtr {
-        Self::new(
-            SourceMapLoadHint::None,
-            SourceProviderKind::Zig,
-            u64::try_from(p as usize).expect("int cast"),
-        )
-    }
-
-    pub fn from_bake_provider(p: *mut BakeSourceProvider) -> SourceContentPtr {
-        Self::new(
-            SourceMapLoadHint::None,
-            SourceProviderKind::Bake,
-            u64::try_from(p as usize).expect("int cast"),
-        )
-    }
-
-    pub fn from_dev_server_provider(p: *const DevServerSourceProvider) -> SourceContentPtr {
-        Self::new(
-            SourceMapLoadHint::None,
-            SourceProviderKind::DevServer,
-            u64::try_from(p as usize).expect("int cast"),
-        )
+        Self::from_source_provider(p)
     }
 
     pub fn provider(self) -> Option<AnySourceProvider> {
-        // Zig returns `?AnySourceProvider` but every match arm yields a value; the
-        // optionality is implicit (data == 0 ⇒ null pointer). Preserve that here.
-        let data = self.data() as usize;
-        match self.kind() {
-            SourceProviderKind::Zig => Some(AnySourceProvider::Zig(data as *mut SourceProviderMap)),
-            SourceProviderKind::Bake => {
-                Some(AnySourceProvider::Bake(data as *mut BakeSourceProvider))
-            }
-            SourceProviderKind::DevServer => Some(AnySourceProvider::DevServer(
-                data as *mut DevServerSourceProvider,
-            )),
-        }
+        Some(AnySourceProvider {
+            ptr: self.data as usize as *mut c_void,
+            get_source_map: self.get_source_map?,
+        })
     }
 }
 
 impl ParsedSourceMap {
-    /// Thread-safe ref-count helpers (Zig: `ThreadSafeRefCount.ref/deref`).
+    /// Thread-safe ref-count helpers.
     ///
-    /// PORT NOTE: Zig uses an *intrusive* count (`bun.new` + embedded
-    /// `ref_count`, freed via `bun.destroy`). The Rust port allocates every
-    /// table-stored `ParsedSourceMap` via `Arc::into_raw` (see
+    /// Every
+    /// table-stored `ParsedSourceMap` is allocated via `Arc::into_raw` (see
     /// `SavedSourceMap::get_with_content` and `ParseUrl.map:
     /// Option<Arc<ParsedSourceMap>>`), so the strong count lives in the `Arc`
     /// header *before* the data pointer. Reconstituting that pointer with
     /// `heap::take` would free an interior offset and trips
     /// `mi_validate_block_from_ptr` (mimalloc free.c:123). Route through
     /// `Arc::{increment,decrement}_strong_count` instead — same observable
-    /// `ref()`/`deref()` semantics as the Zig spec, with the allocator that
+    /// `ref()`/`deref()` semantics, with the allocator that
     /// actually owns the bytes. The embedded `ref_count` field is kept for
     /// layout/ABI parity but is NOT the live counter.
     ///
@@ -275,9 +243,6 @@ impl ParsedSourceMap {
     /// `mapping::List`. Ownership of the blob transfers to the returned value
     /// (freed in `Drop`) unless the caller subsequently sets
     /// [`Self::is_standalone_module_graph`].
-    ///
-    /// Mirrors Zig `SourceMap.ParsedSourceMap{ .internal = ism, .input_line_count
-    /// = ism.inputLineCount() }` struct-init at the standalone-graph load site.
     pub fn from_internal(internal: InternalSourceMap) -> Self {
         Self {
             ref_count: AtomicU32::new(1),
@@ -375,15 +340,6 @@ impl ParsedSourceMap {
     }
 }
 
-// PORT NOTE: Zig `deinit` conditionally skipped freeing `internal` when
-// `is_standalone_module_graph` (the blob borrows bytes from the standalone
-// module graph section). The current `InternalSourceMap` stub has no Drop, so
-// the conditional is a no-op. When `InternalSourceMap.rs` is un-gated, retype
-// the field to `Option<core::mem::ManuallyDrop<InternalSourceMap>>` and drop
-// it explicitly only when `!is_standalone_module_graph` — do NOT use
-// `mem::forget` (PORTING.md §Forbidden).
-// `mappings` and `external_source_names` are dropped automatically.
-
 pub struct VlqsFmt<'a>(&'a ParsedSourceMap);
 
 impl<'a> fmt::Display for VlqsFmt<'a> {
@@ -392,5 +348,3 @@ impl<'a> fmt::Display for VlqsFmt<'a> {
         self.0.write_vlqs(&mut adapter).map_err(|_| fmt::Error)
     }
 }
-
-// ported from: src/sourcemap/ParsedSourceMap.zig

@@ -1,5 +1,3 @@
-//! Port of `src/runtime/socket/socket.zig`.
-//!
 //! TCP/TLS socket JS bindings (`Bun.connect` / `Bun.listen` socket wrappers).
 
 use core::cell::Cell;
@@ -9,7 +7,7 @@ use core::ptr::{self, NonNull};
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
 use bun_ptr::IntrusiveRc;
-// PORT NOTE: do NOT `use bun_boringssl_sys::SSL` here — it shadows the
+// do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
 // resolve `<SSL>` as a type arg (E0747). Use the qualified path instead.
 use bun_boringssl_sys::SSL_CTX;
@@ -127,9 +125,7 @@ extern "C" fn select_alpn_callback(
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Generic socket wrapper. `SSL = false` → `TCPSocket`, `SSL = true` → `TLSSocket`.
-///
-/// In Zig this is `fn NewSocket(comptime ssl: bool) type { return struct {...} }`.
-// PORT NOTE: `#[bun_jsc::JsClass]` cannot be applied here — the proc-macro
+// `#[bun_jsc::JsClass]` cannot be applied here — the proc-macro
 // emits monomorphic `impl JsClass for NewSocket` (no generics) and a single
 // set of `${Name}__fromJS`/`__create` externs, but this type maps to TWO
 // codegen classes (`JSTCPSocket` / `JSTLSSocket`). The codegen accessors are
@@ -153,8 +149,6 @@ pub struct NewSocket<const SSL: bool> {
 
     pub flags: Cell<Flags>,
     pub ref_count: bun_ptr::RefCount<Self>, // intrusive — see `bun_ptr::IntrusiveRc<Self>`
-    // Zig: `handlers: ?*Handlers` — a freely-aliased mutable raw pointer.
-    //
     // OWNERSHIP: in **server** mode this points at `&mut listener.handlers`
     // (the embedded `Listener.handlers` field — Listener.rs:34) so
     // `container_of`-style offset arithmetic in `get_listener` and
@@ -190,16 +184,16 @@ pub struct NewSocket<const SSL: bool> {
     /// expects at index 0). The encrypted half holds a ref on the raw half
     /// here so a single `onClose` can retire both — no `Handlers.clone()`,
     /// no second context.
-    // PORT NOTE: LIFETIMES.tsv says `Option<Rc<Self>>`, but `*Self` is stored in
+    // LIFETIMES.tsv says `Option<Rc<Self>>`, but `*Self` is stored in
     // a uws ext slot (FFI) and is intrusively refcounted — PORTING.md mandates
     // IntrusiveRc, never Rc, when *T crosses FFI.
     pub twin: JsCell<Option<IntrusiveRc<Self>>>,
 }
 
-/// Associated `Socket` handler type (Zig: `pub const Socket = uws.NewSocketHandler(ssl)`).
+/// Associated `Socket` handler type.
 pub(super) type SocketHandler<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
-// Intrusive refcount mixin (Zig: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`).
+// Intrusive refcount mixin.
 impl<const SSL: bool> bun_ptr::RefCounted for NewSocket<SSL> {
     type DestructorCtx = ();
     unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
@@ -214,11 +208,6 @@ impl<const SSL: bool> bun_ptr::RefCounted for NewSocket<SSL> {
 }
 
 impl<const SSL: bool> NewSocket<SSL> {
-    // TODO(port): `pub const js = if (!ssl) jsc.Codegen.JSTCPSocket else jsc.Codegen.JSTLSSocket`
-    // — codegen module accessor. `#[bun_jsc::JsClass]` derive provides
-    // `to_js`/`from_js`/`from_js_direct`. `dataSetCached`/`dataGetCached` are
-    // emitted as `Self::data_set_cached` / `Self::data_get_cached`.
-
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
 
     /// Read-modify-write the packed `Cell<Flags>` through `&self`.
@@ -239,7 +228,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Intrusive refcount API (Zig: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`).
+    // Intrusive refcount API.
     pub fn ref_(&self) {
         // SAFETY: `self` is live; `RefCount::ref_` only reads/writes the
         // embedded `ref_count` Cell (interior-mutable), so `&self`→`*mut`
@@ -258,7 +247,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         unsafe { bun_ptr::RefCount::<Self>::deref(self.as_ctx_ptr()) };
     }
 
-    // ── codegen accessors (Zig: `pub const js = if (!ssl) jsc.Codegen.JSTCPSocket else jsc.Codegen.JSTLSSocket`) ──
+    // ── codegen accessors ──
     // `#[bun_jsc::JsClass]` can't express the per-monomorphisation symbol
     // dispatch, so these hand-roll the `if (ssl) js_TLSSocket else js_TCPSocket`
     // split and route through the codegen'd safe wrappers.
@@ -326,7 +315,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !matches!(self.native_callback.get(), NativeCallbacks::None) {
             return false;
         }
-        // Zig `h2.ref()` — IntrusiveRc holds the +1 by construction (caller
+        // IntrusiveRc holds the +1 by construction (caller
         // passes ownership of the handle), so no explicit inc here.
         self.native_callback.set(callback);
         true
@@ -347,11 +336,9 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Connect to `self.connection` (must be `Some`). Reads the field directly
     /// rather than taking it by-ref so the single caller in `connect_finish`
-    /// doesn't need a disjoint borrow (the Zig original satisfied this via an
-    /// aliased pointer read).
+    /// doesn't need a disjoint borrow.
     pub fn do_connect(&self) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        // Zig: `this.ref(); defer this.deref();` — keep `self` alive across the
+        // Keep `self` alive across the
         // re-entrant connect path. `ScopedRef` stores a raw `*mut Self` (no
         // borrow held across the body) and derefs on Drop.
         // SAFETY: `self` is live until guard drop; all writes go through
@@ -389,7 +376,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         use super::listener::UnixOrHost;
         match self.connection.get() {
             Some(UnixOrHost::Host { host, port }) => {
-                // PERF(port): was stack-fallback alloc — profile if hot.
                 // getaddrinfo doesn't accept bracketed IPv6.
                 let raw: &[u8] = host;
                 let clean = if raw.len() > 1 && raw[0] == b'[' && raw[raw.len() - 1] == b']' {
@@ -429,7 +415,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                 );
             }
             Some(UnixOrHost::Unix(u)) => {
-                // PERF(port): was stack-fallback alloc — profile if hot.
                 let s = group.connect_unix(
                     kind,
                     ssl_ctx,
@@ -447,9 +432,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             Some(UnixOrHost::Fd(f)) => {
                 // `LIBUS_SOCKET_DESCRIPTOR` is `c_int` on POSIX, `SOCKET`
                 // (`usize`) on Windows; `Fd::native()` is `c_int` / HANDLE
-                // (`*mut c_void`) respectively. The Zig spec passes
-                // `f.native()` verbatim (Zig's descriptor type *is*
-                // `*anyopaque`); cast to bridge the Rust-side `usize` alias.
+                // (`*mut c_void`) respectively; cast to bridge the Rust-side `usize` alias.
                 let s = group.from_fd(
                     kind,
                     ssl_ctx,
@@ -474,7 +457,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — that macro's free-fn shim
+    // no `#[bun_jsc::host_fn]` here — that macro's free-fn shim
     // emits a bare `constructor(...)` call which doesn't resolve inside an
     // `impl<const SSL: bool>` block. The codegen `JsClass` derive owns the
     // constructor link name, so the placeholder shim isn't needed.
@@ -591,7 +574,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         let scope = Handlers::enter_ref(handlers);
-        // TODO(port): errdefer — `scope.exit()` returns true when handlers freed
         let global = handlers.global_object;
         let this_value = self.get_this_value(&global);
         let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
@@ -600,7 +582,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    /// PORT NOTE (noalias re-entrancy): takes `this: *mut Self`, NOT
+    /// Noalias re-entrancy: takes `this: *mut Self`, NOT
     /// `&mut self`. `callback.call(...)` re-enters JS which can call
     /// `socket.write()`/`socket.end()`/`socket.reload()` on this same wrapper
     /// via the JS object's `m_ptr`, re-deriving a `&mut NewSocket` and mutating
@@ -636,7 +618,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
         this.ref_();
-        // PORT NOTE: reshaped for borrowck — explicit deref at end instead of `defer`.
+        // reshaped for borrowck — explicit deref at end instead of a scope guard.
         this.internal_flush();
         log!(
             "onWritable buffered_data_for_node_net {}",
@@ -705,7 +687,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    /// Zig `getHandlers(this) *Handlers` — returns the raw, freely-aliased
+    /// Returns the raw, freely-aliased
     /// pointer. **Do not** materialise a long-lived `&mut Handlers` from this
     /// across any `callback.call(...)` / `resolve_promise` / `reject_promise`
     /// boundary: JS may synchronously reenter `socket.reload()` which
@@ -755,14 +737,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         // Ensure the socket is still alive for any defer's we have
         this.ref_();
-        // PORT NOTE: Zig's first `defer this.deref()` is declared here, before
-        // clear_and_free/unrefOnNextTick — keep it as its own guard so the
+        // Declared before clear_and_free/unrefOnNextTick — its own guard so the
         // ref_() above is balanced even if those calls unwind.
         let _outer_deref = scopeguard::guard(this.as_ctx_ptr(), |p| {
             // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
             unsafe { (*p).deref() };
         });
-        // PORT NOTE: reshaped for borrowck — explicit cleanup at end of fn.
+        // reshaped for borrowck — explicit cleanup at end of fn.
         this.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
 
@@ -774,11 +755,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.poll_ref
             .with_mut(|p| p.unref_on_next_tick(js_loop_ctx()));
 
-        // TODO(port): errdefer — `defer markInactive()` + `defer if (needs_deref) deref()`
-        // moved to a guard so all early-returns run them. The outer
-        // `_outer_deref` above owns the final `deref()`; LIFO drop order
-        // (cleanup → _outer_deref) mirrors Zig's three defers exactly.
-        //
         // The deferred `mark_inactive()` is gated on the `Handlers` pointer
         // captured before the user callback runs: `onConnectError` can
         // synchronously re-enter `connect()` and — via `do_connect()`'s
@@ -793,7 +769,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             |(p, nd, h)| {
                 // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
                 unsafe {
-                    // Zig defer order (reverse-declaration): needs_deref → markInactive.
+                    // Order: needs_deref → markInactive.
                     if nd {
                         (*p).deref();
                     }
@@ -867,10 +843,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         // that way if we need to call the error handler, we can
         let captured_handlers = handlers.as_ptr();
         let scope = Handlers::enter_ref(handlers);
-        // PORT NOTE: `let _ = guard` would drop *immediately* (end of
+        // `let _ = guard` would drop *immediately* (end of
         // statement, not end of scope) and run `scope.exit()` before the
         // user's onConnectError callback. Bind to a named `_`-prefixed
-        // local so it lives to end of scope like Zig's `defer`.
+        // local so it lives to end of scope.
         let _scope_guard = scopeguard::guard(
             (this.as_ctx_ptr(), scope, captured_handlers),
             |(p, sc, h)| {
@@ -949,7 +925,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         // `_scope_guard` (declared after `cleanup`) drops first → scope.exit();
-        // then `cleanup` → needs_deref/markInactive/deref. Matches Zig defer LIFO.
+        // then `cleanup` → needs_deref/markInactive/deref.
         Ok(())
     }
 
@@ -1083,7 +1059,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         // Ensure the socket remains alive until this is finished
         this.ref_();
-        // PORT NOTE: reshaped for borrowck — explicit deref at end.
+        // reshaped for borrowck — explicit deref at end.
 
         // update the internal socket instance to the one that was just connected
         // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
@@ -1397,7 +1373,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     Ok(v) => v,
                     Err(e) => {
                         // `Scope` has no Drop — balance event_loop().enter() and
-                        // active_connections before propagating (Zig: `defer if (scope.exit()) ...`).
+                        // active_connections before propagating.
                         if scope.exit() {
                             this.handlers.set(None);
                         }
@@ -1461,7 +1437,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // letting `IntrusiveRc::drop` release a *second* time.
             unsafe { Self::on_close(raw, socket, err, reason).ok() };
         }
-        // PORT NOTE: reshaped for borrowck — `defer this.deref()` + `defer markInactive()`.
+        // reshaped for borrowck — deref + markInactive run explicitly at the end.
         // Capture the `Handlers` pointer that was paired with the
         // `IS_ACTIVE` flag *before* the user's close callback runs. The
         // callback may synchronously re-enter `Bun.connect({ socket: this })`
@@ -1642,7 +1618,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return JSValue::UNDEFINED;
         }
 
-        // Zig: `@fieldParentPtr("handlers", handlers)`. Server-mode
+        // Server-mode
         // `this.handlers` is set to `&mut listener.handlers` (the embedded
         // `Listener.handlers` field — Listener.rs:34 / Listener.rs on_create),
         // so subtracting the field offset recovers the parent `Listener*`.
@@ -1803,8 +1779,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(JSValue::UNDEFINED);
         };
         // `format_ip` expects `addr:port` / `[addr]:port` shape (it strips
-        // `:port` and brackets), so pass a `SocketAddr` like Zig's
-        // `std.net.Address.initIp{4,6}(.., 0)` — bare `IpAddr` corrupts IPv6.
+        // `:port` and brackets), so pass a `SocketAddr` — bare `IpAddr` corrupts IPv6.
         let address: std::net::SocketAddr = match address_bytes.len() {
             4 => std::net::SocketAddrV4::new(
                 std::net::Ipv4Addr::from(<[u8; 4]>::try_from(address_bytes).unwrap()),
@@ -1957,7 +1932,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let args = callframe.arguments_undef::<2>();
         this.ref_();
-        // PORT NOTE: reshaped for borrowck — explicit deref at end.
+        // reshaped for borrowck — explicit deref at end.
         let result = match this.write_or_end_buffered::<true>(global, args.ptr[0], args.ptr[1]) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
@@ -1988,7 +1963,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             return self.write_or_end::<IS_END>(global, &mut values, true);
         }
 
-        // PERF(port): was stack-fallback alloc — profile if hot.
         let allow_string_object = true;
         let buffer: StringOrBuffer = if data_value.is_undefined() {
             StringOrBuffer::EMPTY
@@ -2091,11 +2065,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                         }
 
                         if !remaining_in_input_data.is_empty() {
-                            // Zig parity: result intentionally discarded
+                            // Result intentionally discarded
                             let _ = self
                                 .buffered_data_for_node_net
                                 .with_mut(|b| b.append_slice(remaining_in_input_data));
-                            // PERF(port): was assume_capacity — profile if hot.
                         }
 
                         break 'brk rc;
@@ -2104,7 +2077,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
 
             // slower-path: clone the data, do one write.
-            // Zig parity: result intentionally discarded
+            // Result intentionally discarded
             let _ = self
                 .buffered_data_for_node_net
                 .with_mut(|b| b.append_slice(buffer.slice()));
@@ -2174,7 +2147,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Fail;
         }
 
-        // PERF(port): was stack-fallback alloc — profile if hot.
         let buffer: BlobOrStringOrBuffer = if args[0].is_undefined() {
             BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
         } else {
@@ -2206,8 +2178,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Fail;
         }
 
-        // PORT NOTE: was `comptime if (is_end) "end" else "write"` in Zig; Rust
-        // can't reference an outer `const` generic in a nested `const` item
+        // Rust can't reference an outer `const` generic in a nested `const` item
         // (E0401), so precompute the full label per branch.
         let label: &'static str = if IS_END { "Socket.end" } else { "Socket.write" };
 
@@ -2332,7 +2303,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             if !remaining.is_empty() {
                 let _ = self
                     .buffered_data_for_node_net
-                    .with_mut(|b| b.append_slice(remaining)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    .with_mut(|b| b.append_slice(remaining)); // OOM/capacity: fire-and-forget
             }
         }
 
@@ -2511,7 +2482,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         this.ref_();
-        // PORT NOTE: reshaped for borrowck — explicit deref at end.
+        // reshaped for borrowck — explicit deref at end.
 
         let result = match this.write_or_end::<true>(global, args.mut_(), false) {
             WriteResult::Fail => JSValue::ZERO,
@@ -2574,7 +2545,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         }
         this_ref.detach_native_callback();
-        // PORT NOTE: Zig `JSRef.deinit()` → reset to empty (Strong drops on assign).
+        // Reset to empty (Strong drops on assign).
         this_ref.this_value.set(JsRef::empty());
 
         this_ref
@@ -2646,7 +2617,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             .get(global, "socket")?
             .ok_or_else(|| global.throw(format_args!("Expected \"socket\" option")))?;
 
-        // In Zig `this_handlers.* = handlers` overwrites the pointee so the
+        // Overwrite the pointee so the
         // listener + all sockets observe the new callbacks. `this.handlers` is
         // a raw `*mut Handlers` (server: `&mut listener.handlers`; client:
         // `heap::alloc`), so writing through it has valid provenance.
@@ -2674,7 +2645,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // allocation is live; raw-pointer-only access; see `get_handlers` contract.
         unsafe {
             let active_connections = (*p).active_connections.get();
-            core::ptr::drop_in_place(p); // Zig: this_handlers.deinit()
+            core::ptr::drop_in_place(p);
             core::ptr::write(p, handlers);
             (*p).mode = prev_mode;
             (*p).active_connections.set(active_connections);
@@ -2685,10 +2656,9 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_fd(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        // Zig: `return this.socket.fd().toJSWithoutMakingLibUVOwned();`
         // On Windows the fd is a system-kind SOCKET handle; routing it through
         // `.uv()` panics for anything but stdio. The sys_jsc helper branches on
-        // kind exactly like fd_jsc.zig (system→u64, uv→i32, posix→i32).
+        // kind (system→u64, uv→i32, posix→i32).
         use bun_sys_jsc::FdJsc as _;
         this.socket.get().fd().to_js_without_making_lib_uv_owned()
     }
@@ -2723,9 +2693,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // adopt; the old `isDetached()/isNamedPipe()` guard let those
         // through and the `.connected` payload read below would then be
         // illegal-union-access on a `.connecting` socket.
-        // PORT NOTE: Zig `InternalSocket.get()` returns `?*us_socket_t` (Some
-        // only for `.connected`); inline the match here since the Rust
-        // `bun_uws::InternalSocket` lacks `get()`.
         let uws::InternalSocket::Connected(raw_socket) = this.socket.get().socket else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "upgradeTLS requires an established socket"
@@ -2756,11 +2723,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         // 9 .protect()'d JS callbacks live in `handlers`; every error/throw
         // from here until they're moved into `tls.handlers` would leak them.
-        // The flag flips once ownership transfers so the errdefer is a no-op
+        // The flag flips once ownership transfers so the guard is a no-op
         // on success.
         let mut handlers_guard = scopeguard::guard(Some(handlers), |h| {
-            // PORT NOTE: Zig `handlers.deinit()` → `Drop for Handlers`
-            // (unprotect + Strong drop). Explicit drop for clarity.
+            // `Drop for Handlers` (unprotect + Strong drop). Explicit drop for clarity.
             drop(h);
         });
 
@@ -2770,8 +2736,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `tls:` options. Either way `owned_ctx` holds one ref we drop in
         // deinit; SSL_new() takes its own.
         //
-        // Zig: `errdefer if (owned_ctx) |c| SSL_CTX_free(c)` — by-name
-        // capture. The local lives INSIDE the guard so all reads/writes go
+        // The local lives INSIDE the guard so all reads/writes go
         // through `*owned_ctx` (DerefMut); capturing `&mut owned_ctx as *mut _`
         // and then writing the local by name would pop the guard's pointer
         // tag under Stacked Borrows and make the closure deref UB on a
@@ -2840,7 +2805,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Per-VM weak cache: `tls:true` and `{servername}`-only hit
             // the same CTX as `Bun.connect`; an inline CA dedupes across
             // every upgradeTLS that names it.
-            // PORT NOTE: `bun_jsc::rare_data::RareData::ssl_ctx_cache()` returns
+            // `bun_jsc::rare_data::RareData::ssl_ctx_cache()` returns
             // the high-tier opaque ZST stub (cycle-break); the concrete
             // `SSLContextCache` lives on this thread's `RuntimeState`.
             let cache = {
@@ -2883,13 +2848,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         let handlers_taken = handlers_guard.take().unwrap();
         scopeguard::ScopeGuard::into_inner(handlers_guard);
         let vm = handlers_taken.vm;
-        // Zig: `bun.default_allocator.create(Handlers)` — client-mode
+        // Client-mode
         // `Handlers` is a standalone heap allocation that
         // `Handlers::mark_inactive` later frees via `heap::take`.
         let handlers_ptr = bun_core::heap::into_raw_nn(Box::new(handlers_taken));
 
         // Ownership of the +1 `SSL_CTX` ref transfers into `tls.owned_ssl_ctx`
-        // below; defuse the errdefer so a later `?` doesn't double-free.
+        // below; defuse the guard so a later `?` doesn't double-free.
         let owned_ctx_taken = scopeguard::ScopeGuard::into_inner(owned_ctx);
 
         let cfg = ssl_opts.as_ref();
@@ -2949,14 +2914,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
                 // tls.deinit drops the owned_ctx ref. Null the handlers field
                 // first so `TLSSocket::deinit` doesn't double-destroy the
-                // `Handlers` we're about to free explicitly (Zig sequences
-                // `tls.deref()` then `handlers_ptr.deinit(); destroy(handlers_ptr)`).
+                // `Handlers` we're about to free explicitly.
                 // SAFETY: sole owner of the fresh allocation.
                 unsafe {
                     (*tls_ptr).handlers.set(None);
                     (*tls_ptr).deref();
                 }
-                // Zig: `handlers_ptr.deinit(); allocator.destroy(handlers_ptr)`.
                 // `Handlers` has a `Drop` impl that runs `deinit` (unprotect).
                 // SAFETY: `handlers_ptr` is the `heap::alloc` allocation
                 // created above; sole owner here.
@@ -2995,7 +2958,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // active_connections=1 it holds is transferring to `raw`.
             this.this_value.with_mut(|r| r.downgrade());
         }
-        // Zig `defer this.deref()` — must run on EVERY exit past this point,
+        // Must run on EVERY exit past this point,
         // including the `?` early-returns from `create_empty_array`/`put_index`
         // below, or we leak one ref on the retired TCP wrapper.
         let _this_deref = scopeguard::guard(this.as_ctx_ptr(), |p| {
@@ -3101,12 +3064,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // TLS-only accessor methods. In Zig these are `pub const X = if (ssl) ...
-    // else fallback`. Rust cannot const-select inherent methods on a const
+    // TLS-only accessor methods. Rust cannot const-select inherent methods on a const
     // generic bool, so these are all forwarding methods that branch on `SSL`
     // at runtime (monomorphised away).
     //
-    // PORT NOTE: rustc does not unify `NewSocket<SSL>` with `NewSocket<true>`
+    // rustc does not unify `NewSocket<SSL>` with `NewSocket<true>`
     // inside an `if SSL { .. }` block. The cast is sound because both
     // monomorphisations have identical layout and the branch only runs when
     // `SSL == true` (so `Self` *is* `TLSSocket`).
@@ -3441,7 +3403,7 @@ bitflags::bitflags! {
 
 impl Default for Flags {
     fn default() -> Self {
-        // Zig default: `owned_protos: bool = true`, all others false.
+        // Default: `owned_protos` true, all others false.
         Flags::OWNED_PROTOS
     }
 }
@@ -3493,7 +3455,6 @@ pub(super) struct DuplexUpgradeContext {
     /// on success, freed in `deinit` if Close races ahead of StartTLS.
     pub owned_ctx: Option<*mut SSL_CTX>,
     pub is_open: bool,
-    // Zig private field `#mode`.
     mode: SocketMode,
 }
 
@@ -3608,7 +3569,7 @@ impl DuplexUpgradeContext {
         let socket = self.duplex_socket();
 
         if let Some(tls) = self.tls.take() {
-            // `tls.onClose` consumes the +1 we hold (its `defer this.deref()`
+            // `tls.onClose` consumes the +1 we hold (its scope-exit deref
             // is the ext-slot/owner pin). Null our pointer first so the
             // `deinitInNextTick` → `deinit` path doesn't deref it a second
             // time — that's the over-deref behind the cross-file
@@ -3744,7 +3705,7 @@ impl DuplexUpgradeContext {
             // `heap::take` free below — no protector spans the dealloc.
             let this_ref = unsafe { &mut *this };
             if let Some(tls) = this_ref.tls.take() {
-                // Zig `tls.deref()` — release the owner's +1.
+                // Release the owner's +1.
                 tls.deref();
             }
             // Close raced ahead of StartTLS — drop the unconsumed config.
@@ -3754,7 +3715,7 @@ impl DuplexUpgradeContext {
                 unsafe { boringssl_sys::SSL_CTX_free(ctx) };
             }
         }
-        // PORT NOTE: Zig `self.upgrade.deinit()` — `UpgradedDuplex` cleanup
+        // `UpgradedDuplex` cleanup
         // runs via `Drop` when `heap::take(this)` frees the containing
         // struct below; an explicit call here would double-free.
         // SAFETY: heap-allocated in `js_upgrade_duplex_to_tls`; this is the
@@ -3802,7 +3763,6 @@ pub fn js_upgrade_duplex_to_tls(
     // controls lifecycle (markInactive expects a Listener parent when .server).
     // The TLS direction (client vs server) is controlled by DuplexUpgradeContext.mode.
     let handlers = Handlers::from_js(global, socket_obj, false)?;
-    // PORT NOTE: Zig `handlers.deinit()` → `Drop for Handlers`.
     let mut handlers_guard = scopeguard::guard(Some(handlers), |h| {
         drop(h);
     });
@@ -3812,7 +3772,6 @@ pub fn js_upgrade_duplex_to_tls(
     // duplex/named-pipe path shares one `SSL_CTX_new` with everyone else.
     // node:net wraps `[buntls]`'s return as `opts.tls.secureContext`; userland
     // may also pass it top-level. Same lookup as `upgradeTLS` above.
-    // Zig: `errdefer if (owned_ctx) |c| SSL_CTX_free(c)` — by-name capture.
     // The local lives INSIDE the guard so all reads/writes go through
     // `*owned_ctx` (DerefMut); capturing `&mut owned_ctx as *mut _` and then
     // writing the local by name would invalidate the guard's pointer tag
@@ -3879,7 +3838,7 @@ pub fn js_upgrade_duplex_to_tls(
     } else {
         crate::socket::SocketMode::Client
     };
-    // Zig: `bun.default_allocator.create(Handlers)` — client-mode `Handlers`
+    // Client-mode `Handlers`
     // is a standalone heap allocation that `Handlers::mark_inactive` later
     // frees via `heap::take`.
     let handlers_ptr = bun_core::heap::into_raw_nn(Box::new(handlers_taken));
@@ -3910,7 +3869,7 @@ pub fn js_upgrade_duplex_to_tls(
     TLSSocket::data_set_cached(tls_js_value, global, default_data);
 
     // Ownership of the +1 `SSL_CTX` ref transfers into
-    // `DuplexUpgradeContext.owned_ctx` below; defuse the errdefer.
+    // `DuplexUpgradeContext.owned_ctx` below; defuse the guard.
     let owned_ctx_taken = scopeguard::ScopeGuard::into_inner(owned_ctx);
 
     // `DuplexUpgradeContext` is self-referential: `task.ctx` and
@@ -3920,7 +3879,7 @@ pub fn js_upgrade_duplex_to_tls(
     // (`=` would Drop the placeholder; `zeroed()` is an invalid value).
     // Allocate uninit, leak to a raw pointer for the stable address, then
     // field-write everything in place — `upgrade` last, once the address is
-    // known. Mirrors Zig `bun.new(...)` then `.upgrade = .from(...)`.
+    // known.
     let duplex_context: *mut DuplexUpgradeContext = bun_core::heap::into_raw(Box::new(
         core::mem::MaybeUninit::<DuplexUpgradeContext>::uninit(),
     ))
@@ -3930,9 +3889,8 @@ pub fn js_upgrade_duplex_to_tls(
     unsafe {
         ptr::addr_of_mut!((*duplex_context).tls).write(Some(IntrusiveRc::from_raw(tls)));
         ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
-        // Zig: `jsc.AnyTask.New(DuplexUpgradeContext, runEvent).init(ctx)`.
-        // Rust's `AnyTask::New` can't take a comptime callback (see AnyTask.rs
-        // PORT NOTE), so hand-write the `*mut c_void → run_event` shim.
+        // `AnyTask::New` can't take the callback as a type parameter (see the
+        // notes in AnyTask.rs), so hand-write the `*mut c_void → run_event` shim.
         ptr::addr_of_mut!((*duplex_context).task).write(AnyTask {
             ctx: NonNull::new(duplex_context.cast::<c_void>()),
             callback: |p| {
@@ -4008,7 +3966,7 @@ pub fn js_upgrade_duplex_to_tls(
     if dc.ssl_config.is_none() {
         drop(ssl_opts.take());
     }
-    // Disarm the errdefer — either moved into duplexContext or just
+    // Disarm the guard — either moved into duplexContext or just
     // freed above; both the move-target and the deinit case must not see it
     // freed again on a later throw.
     let _ = ssl_opts;
@@ -4124,8 +4082,7 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
 
     #[cfg(unix)]
     {
-        // TODO(port): Zig used `bun.sys.setsockopt`; not yet surfaced in
-        // `bun_sys`, so call libc directly with the same `Maybe` shape.
+        // `bun_sys` exposes no public wrapper, so call libc directly.
         let setsockopt = |level: libc::c_int, opt: libc::c_int| -> Option<sys::Error> {
             let val: libc::c_int = buffer_size;
             // SAFETY: libc FFI; `val` lives for the call.
@@ -4169,5 +4126,3 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
 
     Ok(JSValue::UNDEFINED)
 }
-
-// ported from: src/runtime/socket/socket.zig

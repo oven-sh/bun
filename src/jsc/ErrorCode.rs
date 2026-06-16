@@ -1,7 +1,6 @@
 //! Node-compat error codes — generated from `src/jsc/bindings/ErrorCode.ts`.
 //!
-//! Mirrors `build/*/codegen/ErrorCode.zig` (`pub const Error = enum(u16)`) and
-//! C++ `Bun::ErrorCode` in `ErrorCode+List.h`. Discriminants MUST stay
+//! Mirrors C++ `Bun::ErrorCode` in `ErrorCode+List.h`. Discriminants MUST stay
 //! index-aligned with the C++ `errors[]` table so `Bun__createErrorWithCode`
 //! picks the correct ctor / name / code triple.
 //!
@@ -45,10 +44,9 @@ impl GlobalObjectRef for crate::JSGlobalObject {
 
 type ErrorCodeInt = u16;
 
-/// `@import("ErrorCode").Error` — `enum(u16)` in Zig codegen, `Bun::ErrorCode`
-/// in C++. Modelled as a newtype-over-`u16` so the same type can also carry
-/// the legacy `anyerror`-derived sentinels (`PARSER_ERROR` / `JS_ERROR_OBJECT`)
-/// from `src/jsc/ErrorCode.zig` without an exhaustive-match obligation.
+/// `Bun::ErrorCode` in C++. Modelled as a newtype-over-`u16` so the same type
+/// can also carry the legacy sentinels (`PARSER_ERROR` / `JS_ERROR_OBJECT`)
+/// without an exhaustive-match obligation.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct ErrorCode(pub ErrorCodeInt);
@@ -681,14 +679,25 @@ impl ErrorCode {
     pub const SECRETS_AUTH_FAILED: ErrorCode = ErrorCode(310);
     /// `ERR_SECRETS_INTERACTION_REQUIRED` (instanceof Error)
     pub const SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode(311);
+    /// `ERR_POSTGRES_CONNECTION_FAILED` (instanceof Error)
+    pub const POSTGRES_CONNECTION_FAILED: ErrorCode = ErrorCode(312);
+    /// `ERR_MYSQL_CONNECTION_FAILED` (instanceof Error)
+    pub const MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode(313);
+    /// `ERR_POSTGRES_CONNECTION_REFUSED` (instanceof Error)
+    pub const POSTGRES_CONNECTION_REFUSED: ErrorCode = ErrorCode(314);
+    /// `ERR_MYSQL_CONNECTION_REFUSED` (instanceof Error)
+    pub const MYSQL_CONNECTION_REFUSED: ErrorCode = ErrorCode(315);
+
+    /// `ERR_HTTP2_GOAWAY_SESSION`
+    pub const HTTP2_GOAWAY_SESSION: ErrorCode = ErrorCode(316);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 312;
+    pub const COUNT: u16 = 317;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // `ERR_`-prefixed aliases — some callers spell the full Node code string,
-// some use the Zig-style stripped name. Both resolve to the same discriminant.
+// some use the stripped name. Both resolve to the same discriminant.
 // ──────────────────────────────────────────────────────────────────────────
 impl ErrorCode {
     pub const ERR_ACCESS_DENIED: ErrorCode = ErrorCode::ACCESS_DENIED;
@@ -870,6 +879,8 @@ impl ErrorCode {
     pub const ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2: ErrorCode =
         ErrorCode::POSTGRES_AUTHENTICATION_FAILED_PBKDF2;
     pub const ERR_POSTGRES_CONNECTION_CLOSED: ErrorCode = ErrorCode::POSTGRES_CONNECTION_CLOSED;
+    pub const ERR_POSTGRES_CONNECTION_FAILED: ErrorCode = ErrorCode::POSTGRES_CONNECTION_FAILED;
+    pub const ERR_POSTGRES_CONNECTION_REFUSED: ErrorCode = ErrorCode::POSTGRES_CONNECTION_REFUSED;
     pub const ERR_POSTGRES_CONNECTION_TIMEOUT: ErrorCode = ErrorCode::POSTGRES_CONNECTION_TIMEOUT;
     pub const ERR_POSTGRES_EXPECTED_REQUEST: ErrorCode = ErrorCode::POSTGRES_EXPECTED_REQUEST;
     pub const ERR_POSTGRES_EXPECTED_STATEMENT: ErrorCode = ErrorCode::POSTGRES_EXPECTED_STATEMENT;
@@ -925,6 +936,8 @@ impl ErrorCode {
         ErrorCode::POSTGRES_UNSUPPORTED_NUMERIC_FORMAT;
     pub const ERR_PROXY_INVALID_CONFIG: ErrorCode = ErrorCode::PROXY_INVALID_CONFIG;
     pub const ERR_MYSQL_CONNECTION_CLOSED: ErrorCode = ErrorCode::MYSQL_CONNECTION_CLOSED;
+    pub const ERR_MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode::MYSQL_CONNECTION_FAILED;
+    pub const ERR_MYSQL_CONNECTION_REFUSED: ErrorCode = ErrorCode::MYSQL_CONNECTION_REFUSED;
     pub const ERR_MYSQL_CONNECTION_TIMEOUT: ErrorCode = ErrorCode::MYSQL_CONNECTION_TIMEOUT;
     pub const ERR_MYSQL_IDLE_TIMEOUT: ErrorCode = ErrorCode::MYSQL_IDLE_TIMEOUT;
     pub const ERR_MYSQL_LIFETIME_TIMEOUT: ErrorCode = ErrorCode::MYSQL_LIFETIME_TIMEOUT;
@@ -1038,11 +1051,11 @@ impl ErrorCode {
         ErrorCode::SECRETS_INTERACTION_NOT_ALLOWED;
     pub const ERR_SECRETS_AUTH_FAILED: ErrorCode = ErrorCode::SECRETS_AUTH_FAILED;
     pub const ERR_SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode::SECRETS_INTERACTION_REQUIRED;
+    pub const ERR_HTTP2_GOAWAY_SESSION: ErrorCode = ErrorCode::HTTP2_GOAWAY_SESSION;
 
     // NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
-    // do NOT live here. They belong to the unrelated Zig enum
-    // `jsc.Node.ErrorCode` (src/runtime/node/nodejs_error_code.zig →
-    // `bun_runtime::node::nodejs_error_code::ErrorCode`), not to the
+    // do NOT live here. They belong to the unrelated enum
+    // `bun_runtime::node::nodejs_error_code::ErrorCode`, not to the
     // ErrorCode.ts-derived table this type mirrors. Adding them here with
     // out-of-range discriminants (≥ Self::COUNT) is a memory-safety bug: the
     // C++ side does `errors[static_cast<size_t>(code)]` against a fixed
@@ -1368,27 +1381,27 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_SECRETS_INTERACTION_NOT_ALLOWED",
     "ERR_SECRETS_AUTH_FAILED",
     "ERR_SECRETS_INTERACTION_REQUIRED",
+    "ERR_POSTGRES_CONNECTION_FAILED",
+    "ERR_MYSQL_CONNECTION_FAILED",
+    "ERR_POSTGRES_CONNECTION_REFUSED",
+    "ERR_MYSQL_CONNECTION_REFUSED",
+    "ERR_HTTP2_GOAWAY_SESSION",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────
-// Legacy anyerror-wrapper sentinels (src/jsc/ErrorCode.zig).
+// Legacy anyerror-wrapper sentinels.
 // ──────────────────────────────────────────────────────────────────────────
 impl ErrorCode {
-    // TODO(port): bun_core::Error::as_u16 — bun_core::Error is currently the
-    // wide errno-carrying struct, not the NonZeroU16 anyerror code. Use errno as a
-    // stand-in until the interning table lands.
     pub const PARSER_ERROR: ErrorCodeInt = 0xFFFE;
     pub const JS_ERROR_OBJECT: ErrorCodeInt = 0xFFFD;
 
     #[inline]
     pub fn from(code: bun_core::Error) -> ErrorCode {
-        // Zig: @as(ErrorCode, @enumFromInt(@intFromError(code)))
         ErrorCode(code.as_u16() as ErrorCodeInt)
     }
 
     #[inline]
     pub fn to_error(self) -> bun_core::Error {
-        // Zig: @errorFromInt(@intFromEnum(self))
         bun_core::Error::from_errno(self.0 as i32)
     }
 }
@@ -1408,8 +1421,7 @@ impl ErrorCode {
             .unwrap_or("ERR_UNKNOWN")
     }
 
-    /// `Error.fmt(this, globalThis, fmt, args)` (codegen ErrorCode.zig) —
-    /// formats `args` into a `bun.String`, hands it to
+    /// Formats `args` into a `bun.String`, hands it to
     /// `Bun__createErrorWithCode`, and returns the constructed Error JSValue.
     /// The C++ side picks the ctor / `.name` / `.code` from `errors[self.0]`.
     pub fn fmt<G: GlobalObjectRef + ?Sized>(self, global: &G, args: Arguments<'_>) -> JSValue {
@@ -1417,7 +1429,7 @@ impl ErrorCode {
         // `G` is one of the two `#[repr(C)]` opaque ZST `JSGlobalObject`
         // handles (see `GlobalObjectRef` doc); `opaque_ref` is the safe
         // ZST-handle deref proof (panics on null). C++ clones the impl into a
-        // JSString; Zig wrapper does `defer message.deref()`, mirrored below.
+        // JSString; `message` is deref'd below after the call.
         let global = JSGlobalObject::opaque_ref(global.as_global_ptr().cast::<JSGlobalObject>());
         let v = Bun__createErrorWithCode(global, self, &mut message);
         message.deref();
@@ -1457,7 +1469,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// Runtime equivalent of Zig's comptime `ErrorBuilder(code, fmt, Args)`.
+/// Pending error (code + format args).
 /// Returned from `JSGlobalObject::err(code, args)` so callers can choose
 /// `.throw()` / `.to_js()` / `.reject()` at the use site.
 pub struct ErrorBuilder<'a, G: GlobalObjectRef + ?Sized = JSGlobalObject> {
@@ -1499,18 +1511,14 @@ impl<'a, G: GlobalObjectRef + ?Sized> ErrorBuilder<'a, G> {
     }
 }
 
-// Zig: comptime { @export(&ErrorCode.ParserError, .{ .name = "Zig_ErrorCodeParserError" }); ... }
-//
-// Gated off: in Zig these are `@intFromEnum(ErrorCode.from(error.ParserError))`
-// — i.e. derived from the anyerror integer so that the value C++ compares
-// against (`extern "C" ZigErrorCode Zig_ErrorCodeParserError;`,
-// headers-handwritten.h) is exactly what `from()` produces. The Rust `from()`
-// above currently maps via `code.errno`, which never yields the hard-coded
-// 0xFFFE/0xFFFD placeholders, so exporting them would make C++ parser-error
-// detection silently never match. Until `bun_core::Error` gains the
-// NonZeroU16 anyerror interning (`err!("ParserError").as_u16()`) and these
-// constants can be derived from the same source as `from()`, keep the Zig-side
-// `@export` authoritative and do not let C++ link against bogus Rust statics.
+// C++ compares parser-error sentinels against these exported statics
+// (`extern "C" ZigErrorCode Zig_ErrorCodeParserError;`, headers-handwritten.h).
+// CAUTION: `from()` above currently maps via `code.errno`, which never yields
+// the hard-coded 0xFFFE/0xFFFD placeholder values, so a code produced by
+// `from()` will never compare equal to these constants. Until
+// `bun_core::Error` gains NonZeroU16 anyerror interning
+// (`err!("ParserError").as_u16()`) so these constants can be derived from the
+// same source as `from()`, that mismatch stands.
 
 #[unsafe(no_mangle)]
 pub(crate) static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;

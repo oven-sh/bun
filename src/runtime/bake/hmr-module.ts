@@ -68,7 +68,7 @@ interface CJSModule {
   require: (id: Id) => unknown;
 }
 
-/** Implementation details must remain in sync with js_parser.zig and bundle_v2.zig */
+/** Implementation details must remain in sync with the parser (src/js_parser) and bundler (src/bundler/bundle_v2.rs) */
 export class HMRModule {
   /** Key in `registry` */
   id: Id;
@@ -298,7 +298,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.cjs = {
         id,
         exports: {},
-        require: mod.require.bind(this),
+        require: mod.require.bind(mod),
       };
       mod.exports = null;
     }
@@ -398,7 +398,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.cjs = {
         id,
         exports: {},
-        require: mod.require.bind(this),
+        require: mod.require.bind(mod),
       };
       mod.exports = null;
     }

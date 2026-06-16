@@ -243,7 +243,7 @@ declare function $newZigFunction<T = (...args: any) => any>(
   argCount: number,
 ): T;
 /**
- * Retrieves a handle to a function defined in Zig or C++, defined in a
+ * Retrieves a handle to a function defined in native code, defined in a
  * `.bind.ts` file. For more information on how to define bindgen functions, see
  * [bindgen's documentation](https://bun.com/docs/project/bindgen).
  * @param filename - The basename of the `.bind.ts` file.

@@ -1,3 +1,4 @@
+use super::any_mysql_error::Error as AnyMySQLError;
 use super::new_reader::{NewReader, ReaderContext};
 
 #[derive(Default)]
@@ -7,19 +8,17 @@ pub struct StmtPrepareOKPacket {
     pub num_columns: u16,
     pub num_params: u16,
     pub warning_count: u16,
-    // TODO(port): Zig type is u24; Rust has no native u24. Value is bounded to 24 bits.
     pub packet_length: u32,
 }
 
 impl StmtPrepareOKPacket {
-    // TODO(port): narrow error set
     pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyMySQLError> {
         self.status = reader.int::<u8>()?;
         if self.status != 0 {
-            return Err(bun_core::err!("InvalidPrepareOKPacket"));
+            return Err(AnyMySQLError::InvalidPrepareOKPacket);
         }
 
         self.statement_id = reader.int::<u32>()?;
@@ -32,13 +31,10 @@ impl StmtPrepareOKPacket {
         Ok(())
     }
 
-    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
     pub fn decode<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyMySQLError> {
         self.decode_internal(reader)
     }
 }
-
-// ported from: src/sql/mysql/protocol/StmtPrepareOKPacket.zig

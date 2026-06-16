@@ -22,8 +22,7 @@ use bun_core::{BoundedArray, Fd};
 /// Remote socket address as returned by uWS. The IP text is copied into
 /// inline storage at construction.
 ///
-/// Canonical definition moved down from `bun_uws`
-/// (Zig: `uws.SocketAddress = struct { ip: []const u8, port: i32, is_ipv6: bool }`).
+/// Canonical definition moved down from `bun_uws`.
 /// Higher tiers (`bun_uws`, `bun_runtime`) re-export this as
 /// `pub use bun_uws_sys::SocketAddress;`.
 pub struct SocketAddress {
@@ -71,8 +70,7 @@ bun_opaque::opaque_ffi! {
 
 /// Opaque handle for `uws::Response<SSL>`.
 ///
-/// In Zig this is `pub fn NewResponse(ssl_flag: i32) type { return opaque { ... } }`.
-/// Rust models the comptime `ssl_flag` as a `const SSL: bool` parameter on an opaque
+/// The SSL flag is modeled as a `const SSL: bool` parameter on an opaque
 /// extern type (Nomicon pattern).
 #[repr(C)]
 pub struct Response<const SSL: bool> {
@@ -352,8 +350,7 @@ impl<const SSL: bool> Response<SSL> {
 
     /// Register an on-writable callback.
     ///
-    /// Zig takes `comptime handler` and bakes it into the trampoline at
-    /// monomorphization time. Rust models this by requiring `H` to be a
+    /// `H` must be a
     /// zero-sized type (function item or capture-less closure): the trampoline
     /// is monomorphized over `H` and conjures the ZST inside, so the user
     /// handler is baked in with no runtime storage.
@@ -520,17 +517,13 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_end_stream(Self::ssl_flag(), self.as_raw(), close_connection)
     }
 
-    /// Run `handler` while the response is corked. Zig signature took
-    /// `comptime handler: anytype, args_tuple: ArgsTuple(@TypeOf(handler))`;
-    /// in Rust callers pass a closure capturing what would have been the args tuple.
-    // PORT NOTE: reshaped — `(handler, args_tuple)` collapsed to `FnOnce()`.
+    /// Run `handler` while the response is corked.
     pub fn corked<F: FnOnce()>(&mut self, f: F) {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr op explicitly.
         extern "C" fn handle<F: FnOnce()>(user_data: *mut c_void) {
             // SAFETY: user_data points at a stack `ManuallyDrop<F>` valid for this synchronous call.
             let f = unsafe { core::ptr::read(user_data.cast::<F>()) };
-            // PERF(port): was @call(.always_inline)
             f();
         }
         let mut f = core::mem::ManuallyDrop::new(f);
@@ -552,7 +545,6 @@ impl<const SSL: bool> Response<SSL> {
         extern "C" fn handle<U>(user_data: *mut c_void) {
             // SAFETY: user_data points at a stack Ctx<U> valid for this synchronous call.
             let ctx = unsafe { &*user_data.cast::<Ctx<U>>() };
-            // PERF(port): was @call(.always_inline)
             (ctx.0)(ctx.1);
         }
         let mut ctx: Ctx<U> = (handler, optional_data);
@@ -609,8 +601,7 @@ pub enum AnyResponse {
 }
 
 // Helper: dispatch to the underlying response, calling the same-named method on each
-// variant. The Zig `switch (this) { inline else => |resp| resp.method(args...) }`
-// monomorphizes per variant; we write the three arms out by hand.
+// variant. The three arms are written out by hand.
 //
 // The per-variant `*mut → &mut` deref is internalized via `OpaqueHandle`
 // (S019): each variant payload is a ZST opaque, so the deref is sound by
@@ -635,9 +626,8 @@ macro_rules! any_dispatch {
 }
 
 /// Stamp the per-variant ZST adapter triplet and register it via the matching
-/// `Response<SSL>` / `H3Response` `$method`. Mirrors Zig's hand-rolled
-/// `wrapper` structs in `Response.zig` (`onData`/`onWritable`/`onTimeout`/
-/// `onAborted`): each arm is a generic fn *item* monomorphized over `<U, H>`,
+/// `Response<SSL>` / `H3Response` `$method`.
+/// Each arm is a generic fn *item* monomorphized over `<U, H>`,
 /// so it is itself a ZST satisfying both the `Response<SSL>` bound
 /// (`Fn(*mut U, …)`) and the `H3Response` bound (`Fn(&mut U, …)`). The H3 arm
 /// bridges its `&mut U` to the body's uniform `*mut U` via `ptr::from_mut`.
@@ -757,8 +747,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.state())
     }
 
-    // Zig: `pub inline fn init(response: anytype) AnyResponse` switching on @TypeOf.
-    // Rust models this as `From` impls below; keep `init` as a thin alias for diff parity.
+    // Thin alias for the `From` impls below.
     #[inline]
     pub fn init<T>(response: T) -> AnyResponse
     where
@@ -825,7 +814,6 @@ impl AnyResponse {
     pub fn force_close(self) {
         match self {
             AnyResponse::SSL(ptr) => {
-                // TODO(port): crate::us_socket_t::close signature / CloseCode::Failure
                 // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
                 us_socket_t::opaque_mut(TLSResponse::as_handle(ptr).downcast_socket())
                     .close(crate::us_socket::CloseCode::failure);
@@ -976,7 +964,7 @@ impl From<*mut H3Response> for AnyResponse {
 pub(crate) type H3Response = crate::h3::Response;
 
 bitflags::bitflags! {
-    /// Non-exhaustive bitset (`enum(u8) { ..., _ }` in Zig) — values may carry
+    /// Non-exhaustive bitset — values may carry
     /// unnamed bit combinations.
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1187,5 +1175,3 @@ pub mod c {
         );
     }
 }
-
-// ported from: src/uws_sys/Response.zig

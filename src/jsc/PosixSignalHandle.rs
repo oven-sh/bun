@@ -98,8 +98,6 @@ impl PosixSignalHandle {
     #[allow(dead_code)]
     pub(crate) fn drain(&self, event_loop: &mut EventLoop) {
         while let Some(signal) = self.dequeue() {
-            // PORT NOTE: Zig stamps the discriminant via `Task.init(&stack_marker)` then
-            // overwrites the packed `_ptr` bitfield with `setUintptr(signal)`. The Rust
             // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
             // directly — `bun_runtime::dispatch::run_task` unpacks `task.ptr as usize as u8`.
             let task = Task::new(
@@ -143,7 +141,6 @@ impl Taskable for PosixSignalTask {
     const TAG: bun_event_loop::TaskTag = task_tag::PosixSignalTask;
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn Bun__onSignalForJS(number: i32, global_object: &JSGlobalObject);
 }
@@ -174,5 +171,3 @@ pub(crate) extern "C" fn Bun__ensureSignalHandler() {
         }
     }
 }
-
-// ported from: src/jsc/PosixSignalHandle.zig

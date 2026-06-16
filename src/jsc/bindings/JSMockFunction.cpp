@@ -1431,13 +1431,13 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseRealTimers, (JSC::JSGlobalObject * globalO
     return JSValue::encode(callframe->thisValue());
 }
 
-// Helper function for Zig to set the overriden Date.now() time
+// Helper function for native code to set the overriden Date.now() time
 extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__setOverridenDateNow(JSC::JSGlobalObject* globalObject, double time_ms)
 {
     globalObject->overridenDateNow = time_ms;
 }
 
-// Helper function for Zig to get the current Unix epoch time in milliseconds
+// Helper function for native code to get the current Unix epoch time in milliseconds
 extern "C" [[ZIG_EXPORT(nothrow)]] double JSMock__getCurrentUnixTimeMs()
 {
     return WTF::WallTime::now().secondsSinceEpoch().milliseconds();

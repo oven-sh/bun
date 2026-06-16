@@ -338,7 +338,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const _socket = new SClass({}) as NetSocket | TLSSocket;
     _socket.isServer = true;
     _socket._requestCert = requestCert;
-    _socket._rejectUnauthorized = rejectUnauthorized;
+    // The raw options object only has rejectUnauthorized when the user passed it explicitly;
+    // fall back to the server's normalized value (defaults to true for tls.Server).
+    _socket._rejectUnauthorized = rejectUnauthorized ?? self._rejectUnauthorized;
 
     _socket[kAttach](this.localPort, socket);
 
@@ -412,7 +414,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     self.servername = socket.getServername();
     const server = self.server!;
     self.alpnProtocol = socket.alpnProtocol;
-    if (self._requestCert || self._rejectUnauthorized) {
+    // The native verifier reports a non-OK code when there is no peer certificate,
+    // which is the normal case for plain TLS servers.
+    if (self._requestCert) {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
@@ -420,7 +424,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         if (self._rejectUnauthorized) {
           // if we reject we still need to emit secure
           self.emit("secure", self);
-          self.destroy(verifyError);
+          // No error argument: the socket has no 'error' listener yet, so destroy(err)
+          // would surface as an uncaught exception.
+          self.destroy();
           return;
         }
       } else if (self._requestCert) {
@@ -2410,7 +2416,7 @@ Server.prototype[kRealListen] = function (
 
   if (contexts) {
     for (const [name, context] of contexts) {
-      // tls.ts stores the InternalSecureContext wrapper; the Zig side wants
+      // tls.ts stores the InternalSecureContext wrapper; the native side wants
       // the native SSL_CTX wrapper at `.context`.
       addServerName(this._handle, name, context.context ?? context);
     }

@@ -1,3 +1,4 @@
+use super::any_mysql_error::Error as AnyMySQLError;
 use super::new_reader::{NewReader, ReaderContext};
 use crate::shared::Data;
 
@@ -21,16 +22,13 @@ impl Default for ErrorPacket {
     }
 }
 
-// Zig `deinit` only freed `error_message`; `Data: Drop` handles that automatically.
-
 pub struct MySQLErrorOptions {
-    // TODO(port): verify lifetime — Zig `[]const u8` field with no deinit; assuming static literal
+    // Every constructor (error_packet_jsc.rs, any_mysql_error_jsc.rs) passes a
+    // `b"ERR_..."` literal, so `'static` holds.
     pub code: &'static [u8],
     pub errno: Option<u16>,
     pub sql_state: Option<[u8; 5]>,
 }
-
-// No `impl Default` — Zig `code: []const u8` has no default, so `.{}` is invalid there too.
 
 // `createMySQLError` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.
 
@@ -38,11 +36,10 @@ impl ErrorPacket {
     pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<(), AnyMySQLError> {
         self.header = reader.int::<u8>()?;
         if self.header != 0xff {
-            return Err(bun_core::err!("InvalidErrorPacket"));
+            return Err(AnyMySQLError::InvalidErrorPacket);
         }
 
         self.error_code = reader.int::<u16>()?;
@@ -63,22 +60,19 @@ impl ErrorPacket {
             reader.skip(-1);
         }
 
-        // Read the error message (rest of packet)
-        // PORT NOTE: reshaped for borrowck — capture peek().len() before mut call
+        // Read the error message (rest of packet).
+        // Reshaped for borrowck — capture peek().len() before the mut call.
         let remaining = reader.peek().len();
         self.error_message = reader.read(remaining)?;
         Ok(())
     }
 }
 
-// Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
 pub fn decode<Context: ReaderContext>(
     this: &mut ErrorPacket,
     reader: NewReader<Context>,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), AnyMySQLError> {
     this.decode_internal(reader)
 }
 
 // `toJS` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.
-
-// ported from: src/sql/mysql/protocol/ErrorPacket.zig

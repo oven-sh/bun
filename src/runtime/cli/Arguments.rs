@@ -1,12 +1,9 @@
-//! Port of `src/runtime/cli/Arguments.zig`.
-//!
 //! `parse()` runs `clap::parse()` against the per-tag table, handles
 //! `--help`/`-v`/`--revision`, and populates the full `api::TransformOptions`
 //! / `Context` from every recognised flag. All param tables — leaf and
 //! concatenated — are const `&'static [ParamType]` via the
 //! `bun_clap::parse_param!` proc-macro (compile-time spec parsing) plus a
-//! const-fn slice concat (`bun_clap::concat_params!`), matching Zig's comptime
-//! `clap.parseParam(...) ++ ...`.
+//! const-fn slice concat (`bun_clap::concat_params!`).
 
 use bun_options_types::LoaderExt as _;
 
@@ -48,11 +45,8 @@ pub(crate) fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Err
 /// Resolve `filename` against `cwd`, open it, read its full contents, close it,
 /// and return the buffer.
 ///
-/// PORT NOTE: the Zig original (`std.fs.path.resolve` + `std.posix.toPosixPath`
-/// + `bun.openFileZ` + `readToEndAlloc`) is itself non-idiomatic for the Bun
-/// codebase. Reimplemented on top of `bun_paths::resolve_path` +
-/// `bun_sys::File::read_from`, which is the cross-platform path the rest of the
-/// runtime uses.
+/// Built on `bun_paths::resolve_path` + `bun_sys::File::read_from`, which is
+/// the cross-platform path the rest of the runtime uses.
 pub fn read_file(cwd: &[u8], filename: &[u8]) -> Result<Vec<u8>, bun_core::Error> {
     let mut buf = PathBuffer::uninit();
     let outpath = resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut *buf, &[filename]);
@@ -81,8 +75,7 @@ pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> Result<api::JsxRuntime, bun_core:
 pub(crate) type ParamType = clap::Param<clap::Help>;
 
 // ─── param tables ────────────────────────────────────────────────────────────
-// Zig built these at comptime via `clap.parseParam("...") catch unreachable`
-// concatenated with `++`. `bun_clap::parse_param!` expands to a const
+// `bun_clap::parse_param!` expands to a const
 // `Param<Help>` literal, and `concat_params!` is a const-fn slice concat, so
 // every table — leaf and combined — lands in rodata with zero runtime init.
 //
@@ -90,7 +83,6 @@ pub(crate) type ParamType = clap::Param<clap::Help>;
 // both `concat_params!` and `comptime_table!`. The single rodata copy of each
 // is the `static __CONV` / `static __TABLE` inside `comptime_table!` below.
 
-// Zig: `if (Environment.show_crash_trace) debug_params else [_]ParamType{}`.
 // `SHOW_CRASH_TRACE` is a `const bool`, so the dead branch is eliminated.
 macro_rules! maybe_debug_params {
     () => {
@@ -102,10 +94,8 @@ macro_rules! maybe_debug_params {
     };
 }
 
-// PORT NOTE: `builtin.have_error_return_tracing` is a Zig-only concept. Rust
-// has no error-return tracing, but `bun_crash_handler::VERBOSE_ERROR_TRACE`
-// still gates extra crash diagnostics. Expose the flag in crash-trace builds
-// (debug/test/asan), which is the closest analogue.
+// `bun_crash_handler::VERBOSE_ERROR_TRACE` gates extra crash diagnostics.
+// Expose the flag in crash-trace builds (debug/test/asan).
 const VERBOSE_ERROR_TRACE_PARAMS: &[ParamType] = &[parse_param!(
     "--verbose-error-trace             Dump error return traces"
 )];
@@ -374,7 +364,6 @@ pub(crate) const RUN_PARAMS: &[ParamType] = concat_params!(
     BASE_PARAMS_
 );
 
-// Zig: `if (FeatureFlags.bake_debugging_features) [_]ParamType{...} else [_]ParamType{}`.
 const BAKE_DEBUG_PARAMS: &[ParamType] = &[
     parse_param!(
         "--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically"
@@ -620,13 +609,11 @@ pub(crate) const TEST_PARAMS: &[ParamType] = concat_params!(
     BASE_PARAMS_
 );
 
-/// Fallback table for `Command::tag_params` (Zig: `base_params_ ++
-/// runtime_params_ ++ transpiler_params_`).
+/// Fallback table for `Command::tag_params`.
 pub(crate) const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
     concat_params!(BASE_PARAMS_, RUNTIME_PARAMS_, TRANSPILER_PARAMS_);
 
 // ─── pre-converted tables (rodata) ───────────────────────────────────────────
-// Zig built these at comptime as part of the `ComptimeClap(Id, params)` type.
 // `comptime_table!` converts `*_PARAMS` → `[Param<usize>; N]` + category counts
 // + short-index entirely at const-eval, so `parse_with_table` does zero runtime
 // conversion / allocation / sorting / locking. perf: `ConvertedTable::build` +
@@ -712,13 +699,9 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
-/// PORT NOTE: `comptime cmd: Command.Tag` demoted to runtime arg (no
-/// `ConstParamTy` on `Tag`). The Zig original monomorphised over `cmd` so each
-/// subcommand got a dedicated param-table reference and dead-code-eliminated the
-/// other arms; here `command::tag_params(cmd)` does the runtime lookup, and the
-/// per-`cmd` blocks below are guarded by `if matches!(cmd, …)` instead of
-/// `if comptime cmd == …`.
-// PERF(port): was comptime monomorphization.
+/// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
+/// param table, and the per-`cmd` blocks below are guarded by
+/// `if matches!(cmd, …)`.
 pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions, bun_core::Error> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
@@ -758,16 +741,14 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
     }
 
-    // PORT NOTE: Zig gated on `builtin.have_error_return_tracing`; see
-    // `maybe_verbose_error_trace!` above for the Rust mapping.
+    // See `maybe_verbose_error_trace!` above.
     if bun_core::env::SHOW_CRASH_TRACE && args.flag(b"--verbose-error-trace") {
         bun_crash_handler::VERBOSE_ERROR_TRACE.store(true, core::sync::atomic::Ordering::Relaxed);
     }
 
     // ── --cwd ────────────────────────────────────────────────────────────────
-    // PORT NOTE: Zig stored a `[:0]u8` (NUL-terminated, owned). The Rust
-    // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`
-    // (sentinel dropped per schema.rs), so we dupe into a plain `Box<[u8]>`.
+    // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
+    // so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
         let mut outbuf = PathBuffer::uninit();
         let cwd_len = bun_sys::getcwd(&mut *outbuf)?;
@@ -950,7 +931,6 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 if !ctx.preloads.is_empty() {
                     all.append(&mut ctx.preloads);
                 }
-                // PERF(port): was appendSliceAssumeCapacity
                 for p in preloads {
                     all.push(Box::<[u8]>::from(*p));
                 }
@@ -1276,7 +1256,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         if let Some(title) = args.option(b"--title") {
             // Static is `Mutex<Option<Box<[u8]>>>` so `process.title = "..."`
             // can drop the previous value; box the argv-borrowed slice up
-            // front (Zig: `CLI.Bun__Node__ProcessTitle = title;`).
+            // front.
             *cli::Bun__Node__ProcessTitle.lock() = Some(title.into());
         }
         if args.flag(b"--zero-fill-buffers") {
@@ -1315,9 +1295,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 core::sync::atomic::Ordering::Relaxed,
             );
         } else {
-            // Spec Arguments.zig: `Bun__Node__UseSystemCA = (Bun__Node__CAStore == .system)`
-            // is written unconditionally; preserve that always-write semantics
-            // even when no CA flag/env was supplied (default `.bundled` ⇒ false).
+            // `Bun__Node__UseSystemCA` is written unconditionally,
+            // even when no CA flag/env was supplied (default bundled ⇒ false).
             Bun__Node__UseSystemCA.store(false, core::sync::atomic::Ordering::Relaxed);
         }
     }
@@ -2405,11 +2384,10 @@ fn parse_build_command_options(
             Global::crash();
         }
 
-        // when using --compile, only `external` works, as we do not
-        // look at the source map comment. so after we validate the
-        // user's choice was in the list, we secretly override it
-        if ctx.bundler_options.compile {
-            opts.source_map = Some(api::SourceMap::External);
-        }
+        // When using --compile, only `external` sourcemaps work, as the
+        // runtime does not look at the source map comment. That override
+        // happens in build_command.rs once it's known whether --compile
+        // produces an executable or a standalone HTML file (browsers do read
+        // the comment, so standalone HTML keeps the user's choice).
     }
 }

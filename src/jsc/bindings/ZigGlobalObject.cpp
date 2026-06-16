@@ -1615,6 +1615,33 @@ JSC_DEFINE_CUSTOM_SETTER(setterSubtleCrypto,
     return true;
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetUserAgent, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    return JSValue::encode(JSC::jsString(vm, WTF::String::fromUTF8(Bun__userAgent)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetPlatform, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+// https://developer.mozilla.org/en-US/docs/Web/API/Navigator/platform
+// https://github.com/oven-sh/bun/issues/4588
+#if OS(DARWIN)
+    return JSValue::encode(JSC::jsString(vm, String("MacIntel"_s)));
+#elif OS(WINDOWS)
+    return JSValue::encode(JSC::jsString(vm, String("Win32"_s)));
+#elif OS(LINUX)
+    return JSValue::encode(JSC::jsString(vm, String("Linux x86_64"_s)));
+#else
+    return JSValue::encode(JSC::jsEmptyString(vm));
+#endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetHardwareConcurrency, (JSC::JSGlobalObject*, JSC::CallFrame*))
+{
+    return JSValue::encode(JSC::jsNumber(WTF::numberOfProcessorCores()));
+}
+
 JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeDOMExceptionForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(createWritableStreamFromInternal);
@@ -2203,28 +2230,44 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_navigatorObject.initLater(
         [](const Initializer<JSObject>& init) {
-            int cpuCount = WTF::numberOfProcessorCores();
+            JSC::JSGlobalObject* globalObject = init.owner;
+            unsigned accessorAttributes = PropertyAttribute::Accessor | 0;
 
-            auto str = WTF::String::fromUTF8(Bun__userAgent);
-            JSC::Identifier userAgentIdentifier = JSC::Identifier::fromString(init.vm, "userAgent"_s);
-            JSC::Identifier hardwareConcurrencyIdentifier = JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s);
+            JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
 
-            JSC::JSObject* obj = JSC::constructEmptyObject(init.owner, init.owner->objectPrototype(), 4);
-            obj->putDirect(init.vm, userAgentIdentifier, JSC::jsString(init.vm, str));
+            obj->putDirectAccessor(
+                globalObject,
+                JSC::Identifier::fromString(init.vm, "userAgent"_s),
+                JSC::GetterSetter::create(
+                    init.vm,
+                    globalObject,
+                    JSC::JSFunction::create(init.vm, globalObject, 0, "get userAgent"_s, functionNavigatorGetUserAgent, ImplementationVisibility::Public),
+                    nullptr),
+                accessorAttributes);
+
+            obj->putDirectAccessor(
+                globalObject,
+                JSC::Identifier::fromString(init.vm, "platform"_s),
+                JSC::GetterSetter::create(
+                    init.vm,
+                    globalObject,
+                    JSC::JSFunction::create(init.vm, globalObject, 0, "get platform"_s, functionNavigatorGetPlatform, ImplementationVisibility::Public),
+                    nullptr),
+                accessorAttributes);
+
+            obj->putDirectAccessor(
+                globalObject,
+                JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s),
+                JSC::GetterSetter::create(
+                    init.vm,
+                    globalObject,
+                    JSC::JSFunction::create(init.vm, globalObject, 0, "get hardwareConcurrency"_s, functionNavigatorGetHardwareConcurrency, ImplementationVisibility::Public),
+                    nullptr),
+                accessorAttributes);
+
             obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
                 jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
 
-// https://developer.mozilla.org/en-US/docs/Web/API/Navigator/platform
-// https://github.com/oven-sh/bun/issues/4588
-#if OS(DARWIN)
-            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, String("MacIntel"_s)));
-#elif OS(WINDOWS)
-            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, String("Win32"_s)));
-#elif OS(LINUX)
-            obj->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "platform"_s), JSC::jsString(init.vm, String("Linux x86_64"_s)));
-#endif
-
-            obj->putDirect(init.vm, hardwareConcurrencyIdentifier, JSC::jsNumber(cpuCount));
             init.set(obj);
         });
 

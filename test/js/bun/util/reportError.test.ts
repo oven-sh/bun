@@ -127,7 +127,7 @@ test("native error printer handles lone surrogates in message and stack frame na
 // When user code assigns a custom string to `error.stack`, the error-printing
 // paths (uncaught exception, console.log/console.error, Bun.inspect) must use
 // that string verbatim instead of regenerating a trace, matching Node.
-describe("custom Error.stack string", () => {
+describe.concurrent("custom Error.stack string", () => {
   const CUSTOM_STACK = "oh no\nSome very useful information about the origin of the error";
   // The second line is never present in Bun's regenerated output, so its
   // presence proves the custom value was used; "error: oh no" / "  at " are

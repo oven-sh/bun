@@ -5766,6 +5766,12 @@ impl VirtualMachine {
         let name = exception.name;
         let message = exception.message;
 
+        // When the user assigned a custom `error.stack` string that did not
+        // parse into stack frames, C++ stored it in `stack_string` and left the
+        // frames and source lines empty. Render that string verbatim in place of
+        // the synthesized name/message + trace, matching Node.
+        let has_custom_stack = !exception.stack_string.is_empty();
+
         let is_error_instance = error_instance != JSValue::ZERO
             && error_instance.is_cell()
             && error_instance.js_type() == JSType::ErrorInstance;
@@ -5818,7 +5824,8 @@ impl VirtualMachine {
         };
 
         let mut did_print_name = false;
-        if let Some(source) = source_lines.next() {
+        let next_source = if has_custom_stack { None } else { source_lines.next() };
+        if let Some(source) = next_source {
             'brk: {
                 if source.text.slice().is_empty() {
                     break 'brk;
@@ -5931,15 +5938,25 @@ impl VirtualMachine {
         }
 
         if !did_print_name {
-            Self::print_error_name_and_message(
-                name,
-                message,
-                !exception.browser_url.is_empty(),
-                code,
-                writer,
-                allow_ansi_color,
-                formatter.error_display_level,
-            )?;
+            if has_custom_stack {
+                // User-assigned Error.stack string: print it verbatim (Node parity).
+                let owned = exception.stack_string.to_utf8();
+                let bytes = owned.slice();
+                writer.write_all(bytes)?;
+                if !bytes.ends_with(b"\n") {
+                    writer.write_all(b"\n")?;
+                }
+            } else {
+                Self::print_error_name_and_message(
+                    name,
+                    message,
+                    !exception.browser_url.is_empty(),
+                    code,
+                    writer,
+                    allow_ansi_color,
+                    formatter.error_display_level,
+                )?;
+            }
         }
 
         // This is usually unsafe to do, but we are protecting them each time first.

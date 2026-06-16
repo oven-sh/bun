@@ -46,6 +46,11 @@ pub struct ZigException {
 
     pub fd: i32,
 
+    /// When the user assigns a custom string to `error.stack` that does not
+    /// parse into V8-style stack frames, C++ stores that raw string here so the
+    /// printer renders it verbatim instead of regenerating a trace (Node parity).
+    pub stack_string: String,
+
     pub browser_url: String,
 }
 
@@ -63,6 +68,7 @@ impl ZigException {
 
         self.name.deref();
         self.message.deref();
+        self.stack_string.deref();
 
         for line in self.stack.source_lines_mut() {
             line.deref();
@@ -200,6 +206,7 @@ impl Holder {
                 path: String::EMPTY,
                 remapped: false,
                 fd: -1,
+                stack_string: String::EMPTY,
                 browser_url: String::EMPTY,
             });
             self.loaded = true;

@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
@@ -121,4 +121,88 @@ test("native error printer handles lone surrogates in message and stack frame na
   // Printer must not have crashed: normal uncaught-error exit (1), no signal.
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
+});
+
+// https://github.com/oven-sh/bun/issues/32390
+// When user code assigns a custom string to `error.stack`, the error-printing
+// paths (uncaught exception, console.log/console.error, Bun.inspect) must use
+// that string verbatim instead of regenerating a trace, matching Node.
+describe("custom Error.stack string", () => {
+  const CUSTOM_STACK = "oh no\nSome very useful information about the origin of the error";
+  // The second line is never present in Bun's regenerated output, so its
+  // presence proves the custom value was used; "error: oh no" / "  at " are
+  // only emitted by the regenerated trace the bug produced.
+  const UNIQUE_LINE = "Some very useful information about the origin of the error";
+
+  test("uncaught exception prints the user-assigned stack string", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const e = new Error("oh no"); e.stack = ${JSON.stringify(CUSTOM_STACK)}; throw e;`],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(UNIQUE_LINE);
+    expect(stderr).not.toContain("error: oh no");
+    expect(stderr).not.toContain("  at ");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("console.log and console.error use the user-assigned stack string", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const e = new Error("oh no"); e.stack = ${JSON.stringify(CUSTOM_STACK)}; console.log(e); console.error(e);`,
+      ],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain(UNIQUE_LINE);
+    expect(stderr).toContain(UNIQUE_LINE);
+    expect(stdout).not.toContain("error: oh no");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.inspect renders a user-assigned stack string verbatim", () => {
+    const e = new Error("oh no");
+    e.stack = CUSTOM_STACK;
+    expect(Bun.inspect(e)).toBe(CUSTOM_STACK + "\n");
+  });
+
+  test("a custom stack in V8 frame format is still shown", async () => {
+    // When the custom string does parse as frames, that info must survive too.
+    const v8Stack = "Error: boom\n    at myFrame (/fake/path.js:99:7)";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const e = new Error("boom"); e.stack = ${JSON.stringify(v8Stack)}; throw e;`],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("myFrame");
+    expect(stderr).toContain("/fake/path.js:99:7");
+    expect(exitCode).toBe(1);
+  });
+
+  test("an error without a custom stack still shows the generated trace", async () => {
+    // Guards against the custom-stack path leaking into normal errors.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `throw new Error("plain error");`],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("error: plain error");
+    expect(stderr).toContain(" at ");
+    expect(exitCode).toBe(1);
+  });
 });

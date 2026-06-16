@@ -629,6 +629,16 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
                     if (except.stack.frames_len > 0) {
                         getFromSourceURL = false;
                         except.remapped = true;
+                    } else {
+                        // A non-empty `stack` string that yields no V8-style
+                        // frames is a user-assigned custom value (Bun's own
+                        // computed stack always parses into frames). Preserve it
+                        // verbatim so the printer renders it as-is, matching
+                        // Node, instead of falling back to the stored source
+                        // position. Leaving `frames_len`/source lines empty makes
+                        // the printer's frame and source-preview sections no-ops.
+                        except.stack_string = Bun::toStringRef(stack);
+                        getFromSourceURL = false;
                     }
                 }
             }

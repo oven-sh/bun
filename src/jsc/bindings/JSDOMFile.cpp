@@ -10,6 +10,7 @@ using namespace JSC;
 
 extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
 extern "C" SYSV_ABI bool JSDOMFile__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
+extern "C" SYSV_ABI size_t Blob__estimatedSize(void* ptr);
 
 class JSDOMFilePrototype final : public JSC::JSNonFinalObject {
 public:
@@ -132,8 +133,9 @@ public:
             return JSValue::encode(JSC::jsUndefined());
         }
 
-        return JSValue::encode(
-            WebCore::JSBlob::create(vm, globalObject, structure, ptr));
+        auto* instance = WebCore::JSBlob::create(vm, globalObject, structure, ptr);
+        vm.heap.reportExtraMemoryAllocated(instance, Blob__estimatedSize(ptr));
+        return JSValue::encode(instance);
     }
 
     static JSC_HOST_CALL_ATTRIBUTES EncodedJSValue call(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -170,7 +172,9 @@ extern "C" SYSV_ABI JSC::EncodedJSValue BUN__createJSDOMFileUnsafely(JSC::JSGlob
     // structuredClone in a fresh Worker) runs before globalThis.File is accessed.
     globalObject->JSDOMFileConstructor();
     auto* structure = globalObject->JSDOMFileStructure();
-    return JSC::JSValue::encode(WebCore::JSBlob::create(vm, globalObject, structure, ptr));
+    auto* instance = WebCore::JSBlob::create(vm, globalObject, structure, ptr);
+    vm.heap.reportExtraMemoryAllocated(instance, Blob__estimatedSize(ptr));
+    return JSC::JSValue::encode(instance);
 }
 
 }

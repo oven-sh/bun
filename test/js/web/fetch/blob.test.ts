@@ -301,6 +301,21 @@ describe("File prototype chain", () => {
     expect(await sliced.text()).toBe("Hel");
   });
 
+  test("Response(file).blob() and Request(..., {body: file}).blob() return plain Blobs", async () => {
+    const file = new File(["Hello"], "a.txt");
+    const res = await new Response(file).blob();
+    expect(res[Symbol.toStringTag]).toBe("Blob");
+    expect(Object.getPrototypeOf(res)).toBe(Blob.prototype);
+    expect(res instanceof File).toBe(false);
+    expect(await res.text()).toBe("Hello");
+
+    const req = await new Request("http://x", { method: "POST", body: file }).blob();
+    expect(req[Symbol.toStringTag]).toBe("Blob");
+    expect(Object.getPrototypeOf(req)).toBe(Blob.prototype);
+    expect(req instanceof File).toBe(false);
+    expect(await req.text()).toBe("Hello");
+  });
+
   test("structuredClone of File preserves File prototype", async () => {
     const file = new File(["Hello"], "file.txt", { type: "text/plain" });
     const clone = structuredClone(file);

@@ -249,13 +249,20 @@ describe("Socket.prototype.bindSync", () => {
     }
   });
 
-  it.skipIf(!isIPv6())("honors the ipv6Only flag", () => {
-    const sock = dgram.createSocket({ type: "udp6", ipv6Only: true });
+  // With IPV6_V6ONLY set, the v6 socket does not claim the v4 port, so a
+  // separate udp4 bind on the same port succeeds. Skipped on Windows where
+  // UDP port reuse semantics differ.
+  it.skipIf(!isIPv6() || isWindows)("honors the ipv6Only flag", () => {
+    const v6 = dgram.createSocket({ type: "udp6", ipv6Only: true });
+    const v4 = dgram.createSocket("udp4");
     try {
-      const addr = sock.bindSync({ address: "::", port: 0 });
-      expect(addr.family).toBe("IPv6");
+      const addr6 = v6.bindSync({ address: "::", port: 0 });
+      expect(addr6.family).toBe("IPv6");
+      const addr4 = v4.bindSync({ address: "127.0.0.1", port: addr6.port });
+      expect(addr4.port).toBe(addr6.port);
     } finally {
-      sock.close();
+      v6.close();
+      v4.close();
     }
   });
 });

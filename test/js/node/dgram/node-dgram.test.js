@@ -61,28 +61,35 @@ describe("Socket.prototype.bindSync", () => {
   it("binds synchronously and returns the resolved address", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
     const sock = dgram.createSocket("udp4");
-    const addr = sock.bindSync({ address: "127.0.0.1", port: 0 });
+    try {
+      const addr = sock.bindSync({ address: "127.0.0.1", port: 0 });
 
-    expect(addr.address).toBe("127.0.0.1");
-    expect(addr.family).toBe("IPv4");
-    expect(typeof addr.port).toBe("number");
-    expect(addr.port).toBeGreaterThan(0);
+      expect(addr.address).toBe("127.0.0.1");
+      expect(addr.family).toBe("IPv4");
+      expect(typeof addr.port).toBe("number");
+      expect(addr.port).toBeGreaterThan(0);
 
-    // address() is valid synchronously and matches the returned address.
-    expect(sock.address()).toEqual(addr);
+      // address() is valid synchronously and matches the returned address.
+      expect(sock.address()).toEqual(addr);
 
-    // The 'listening' event still fires on the next tick.
-    sock.on("error", reject);
-    sock.on("listening", () => sock.close(resolve));
-    await promise;
+      // The 'listening' event still fires on the next tick.
+      sock.on("error", reject);
+      sock.on("listening", resolve);
+      await promise;
+    } finally {
+      sock.close();
+    }
   });
 
   it("closing synchronously after bindSync() suppresses the deferred 'listening'", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
     const sock = dgram.createSocket("udp4");
-    sock.bindSync({ port: 0 });
-    sock.on("listening", () => reject(new Error("'listening' should not fire after close()")));
-    sock.close(resolve);
+    try {
+      sock.bindSync({ port: 0 });
+      sock.on("listening", () => reject(new Error("'listening' should not fire after close()")));
+    } finally {
+      sock.close(resolve);
+    }
     await promise;
   });
 
@@ -101,23 +108,23 @@ describe("Socket.prototype.bindSync", () => {
     const { promise, resolve, reject } = Promise.withResolvers();
     const receiver = dgram.createSocket("udp4");
     const sender = dgram.createSocket("udp4");
-    receiver.on("error", reject);
-    sender.on("error", reject);
-
-    const addr = receiver.bindSync({ address: "127.0.0.1", port: 0 });
-
-    receiver.on("message", msg => {
-      try {
-        expect(msg.toString()).toBe("hello");
-        resolve();
-      } catch (e) {
-        reject(e);
-      }
-    });
-
-    sender.send("hello", addr.port, "127.0.0.1");
-
     try {
+      receiver.on("error", reject);
+      sender.on("error", reject);
+
+      const addr = receiver.bindSync({ address: "127.0.0.1", port: 0 });
+
+      receiver.on("message", msg => {
+        try {
+          expect(msg.toString()).toBe("hello");
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+
+      sender.send("hello", addr.port, "127.0.0.1");
+
       await promise;
     } finally {
       receiver.close();
@@ -128,10 +135,9 @@ describe("Socket.prototype.bindSync", () => {
   // Windows binds the same UDP port twice without error for non-SO_EXCLUSIVEADDRUSE sockets.
   it.skipIf(isWindows)("throws synchronously on EADDRINUSE", () => {
     const first = dgram.createSocket("udp4");
-    const addr = first.bindSync({ address: "127.0.0.1", port: 0 });
-
     const second = dgram.createSocket("udp4");
     try {
+      const addr = first.bindSync({ address: "127.0.0.1", port: 0 });
       expect(() => second.bindSync({ address: "127.0.0.1", port: addr.port })).toThrow(
         expect.objectContaining({ code: "EADDRINUSE", syscall: "bind" }),
       );
@@ -209,27 +215,27 @@ describe("Socket.prototype.bindSync", () => {
     const { promise, resolve, reject } = Promise.withResolvers();
     const receiver = dgram.createSocket("udp6");
     const sender = dgram.createSocket("udp6");
-    receiver.on("error", reject);
-    sender.on("error", reject);
-
-    const addr = receiver.bindSync({ address: "::1", port: 0 });
-    expect(addr.address).toBe("::1");
-    expect(addr.family).toBe("IPv6");
-    expect(addr.port).toBeGreaterThan(0);
-    expect(receiver.address()).toEqual(addr);
-
-    receiver.on("message", msg => {
-      try {
-        expect(msg.toString()).toBe("hello");
-        resolve();
-      } catch (e) {
-        reject(e);
-      }
-    });
-
-    sender.send("hello", addr.port, "::1");
-
     try {
+      receiver.on("error", reject);
+      sender.on("error", reject);
+
+      const addr = receiver.bindSync({ address: "::1", port: 0 });
+      expect(addr.address).toBe("::1");
+      expect(addr.family).toBe("IPv6");
+      expect(addr.port).toBeGreaterThan(0);
+      expect(receiver.address()).toEqual(addr);
+
+      receiver.on("message", msg => {
+        try {
+          expect(msg.toString()).toBe("hello");
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+
+      sender.send("hello", addr.port, "::1");
+
       await promise;
     } finally {
       receiver.close();

@@ -1785,6 +1785,12 @@ function stdinStreamDestroy(this: any, err: any, cb: any) {
   cb(err);
 }
 
+function stdinStreamDestroySoon(this: any) {
+  if (this.writable) this.end();
+  if (this.writableFinished) this.destroy();
+  else this.once("finish", this.destroy);
+}
+
 let StdinStream;
 function createStdinStream(sink: any) {
   if (StdinStream === undefined) {
@@ -1801,6 +1807,7 @@ function createStdinStream(sink: any) {
     StdinStream.prototype._write = stdinStreamWrite;
     StdinStream.prototype._writev = stdinStreamWritev;
     StdinStream.prototype._destroy = stdinStreamDestroy;
+    StdinStream.prototype.destroySoon = stdinStreamDestroySoon;
   }
   const stream = new StdinStream();
   if (sink) {

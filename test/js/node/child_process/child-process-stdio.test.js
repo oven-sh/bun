@@ -183,6 +183,7 @@ describe("ChildProcess stdio streams", () => {
         "typeof stdin.resume": typeof child.stdin.resume,
         "typeof stdin.write": typeof child.stdin.write,
         "typeof stdin.end": typeof child.stdin.end,
+        "typeof stdin.destroySoon": typeof child.stdin.destroySoon,
         "stdin instanceof Duplex": child.stdin instanceof Duplex,
         "stdin instanceof Readable": child.stdin instanceof Readable,
         "stdin instanceof Writable": child.stdin instanceof Writable,
@@ -194,6 +195,7 @@ describe("ChildProcess stdio streams", () => {
         "typeof stdin.resume": "function",
         "typeof stdin.write": "function",
         "typeof stdin.end": "function",
+        "typeof stdin.destroySoon": "function",
         "stdin instanceof Duplex": true,
         "stdin instanceof Readable": true,
         "stdin instanceof Writable": true,
@@ -204,6 +206,27 @@ describe("ChildProcess stdio streams", () => {
       child.stdin.end();
       await once(child, "exit");
     }
+  });
+
+  it("child.stdin.destroySoon flushes pending writes then closes", async () => {
+    const child = spawn(bunExe(), [CHILD_PROCESS_FILE, "STDIN", "FLOWING"], {
+      env: bunEnv,
+      stdio: "pipe",
+    });
+
+    let data = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", chunk => {
+      data += chunk;
+    });
+
+    child.stdin.write("abc\n");
+    child.stdin.destroySoon();
+
+    const [code] = await once(child, "close");
+    expect(data).toBe("data: abc\n");
+    expect(child.stdin.destroyed).toBe(true);
+    expect(code).toBe(0);
   });
 
   // https://github.com/oven-sh/bun/issues/11011

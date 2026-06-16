@@ -3564,7 +3564,7 @@ static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    promise->rejectAsHandled(vm, globalObject, value);
+    promise->rejectAsHandled(vm, value);
     return promise;
 }
 
@@ -3572,7 +3572,7 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    promise->fulfill(vm, globalObject, value);
+    promise->fulfill(vm, value);
     return promise;
 }
 
@@ -3749,7 +3749,7 @@ static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject,
         globalObject, JSC::JSValue::encode(source), compiler.ptr()));
 
     if (scope.exception()) [[unlikely]] {
-        promise->rejectWithCaughtException(globalObject, scope);
+        promise->rejectWithCaughtException(vm, scope);
         return;
     }
 
@@ -3757,7 +3757,7 @@ static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject,
     if (readableStreamMaybe.isNull()) {
         compiler->finalize(globalObject);
         if (scope.exception()) [[unlikely]]
-            promise->rejectWithCaughtException(globalObject, scope);
+            promise->rejectWithCaughtException(vm, scope);
         return;
     }
 
@@ -3769,7 +3769,7 @@ static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject,
     arguments.append(readableStreamMaybe);
     JSC::call(globalObject, builtin, callData, wrapper, arguments);
     if (scope.exception()) [[unlikely]]
-        promise->rejectWithCaughtException(globalObject, scope);
+        promise->rejectWithCaughtException(vm, scope);
 }
 
 void GlobalObject::compileStreaming(JSGlobalObject* globalObject, JSC::JSPromise* promise, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)

@@ -394,6 +394,7 @@ test/js/node/fs/abort-signal-leak-read-write-file.test.ts
 test/js/node/process/process.test.js
 test/js/web/websocket/websocket.test.js
 test/js/web/workers/worker.test.ts
+test/js/web/workers/worker-preload-resolve-error.test.ts
 test/regression/issue/11664.test.ts
 
 # ASSERTION FAILED: m_cellState == CellState::DefinitelyWhite

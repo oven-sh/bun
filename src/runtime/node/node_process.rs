@@ -437,22 +437,37 @@ mod _impl {
         let top_level_dir: &[u8] = fs.top_level_dir;
         match Syscall::chdir(slice) {
             bun_sys::Result::Ok(()) => {
-                // When we update the cwd from JS, we have to update the bundler's version as well
-                // However, this might be called many times in a row, so we use a pre-allocated buffer
-                // that way we don't have to worry about garbage collector
-                let into_cwd_len = match Syscall::getcwd(&mut buf[..]) {
-                    bun_sys::Result::Ok(r) => r,
-                    bun_sys::Result::Err(err) => {
-                        // roll back to the previous top_level_dir
-                        let mut rollback = PathBuffer::uninit();
-                        let _ = Syscall::chdir(bun_paths::resolve_path::z(
-                            fs.top_level_dir,
-                            &mut rollback,
-                        ));
-                        return Err(global_object.throw_value(err.to_js(global_object)));
+                // The chdir succeeded, so the process cwd changed; refresh the
+                // cached cwd used by the resolver/bundler. A separate scratch
+                // buffer keeps `slice` (borrowed from `buf`) valid for the
+                // fallback below.
+                //
+                // `getcwd` can fail with ENOENT when the new cwd has already
+                // been unlinked, e.g. `chdir("..")` into a directory that was
+                // `rm -rf`'d. The chdir itself still succeeded, and Node does
+                // not treat a failed cwd lookup as a chdir failure, so fall
+                // back to the logical path (old cwd joined with the target)
+                // rather than rolling the chdir back and throwing.
+                let mut cwd_scratch = bun_paths::path_buffer_pool::get();
+                let into_cwd_len = match Syscall::getcwd(&mut cwd_scratch[..]) {
+                    bun_sys::Result::Ok(r) => {
+                        fs.top_level_dir_buf[..r].copy_from_slice(&cwd_scratch[..r]);
+                        r
+                    }
+                    bun_sys::Result::Err(_) => {
+                        let mut resolve_scratch = bun_paths::path_buffer_pool::get();
+                        let resolved = bun_paths::resolve_path::join_abs_string_buf::<
+                            bun_paths::platform::Auto,
+                        >(
+                            top_level_dir,
+                            &mut resolve_scratch[..],
+                            &[slice.as_bytes()],
+                        );
+                        let len = resolved.len();
+                        fs.top_level_dir_buf[..len].copy_from_slice(resolved);
+                        len
                     }
                 };
-                fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
                 fs.top_level_dir_buf[into_cwd_len] = 0;
                 // SAFETY: `top_level_dir_buf` is a process-lifetime field of
                 // the FileSystem singleton, so the detached borrow never

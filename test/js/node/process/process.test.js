@@ -119,6 +119,40 @@ it("process.chdir() on root dir", () => {
   }
 });
 
+// https://github.com/oven-sh/bun/issues/32409
+it.skipIf(isWindows)("process.chdir() does not throw when the cwd was deleted", async () => {
+  using dir = tempDir("process-chdir-deleted", {
+    "index.js": `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const base = process.cwd();
+      fs.mkdirSync(path.join(base, "parent", "child"), { recursive: true });
+      process.chdir(path.join(base, "parent", "child"));
+      // Delete the directory tree we are currently inside of.
+      fs.rmSync(path.join(base, "parent"), { recursive: true, force: true });
+      // chdir("..") must not throw even though getcwd() now fails for the
+      // unlinked directory: the chdir syscall itself still succeeds and Node
+      // returns normally here.
+      process.chdir("..");
+      // Recovering to a live absolute directory still works.
+      process.chdir(base);
+      console.log(process.cwd() === base ? "RECOVERED" : "WRONG:" + process.cwd());
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "RECOVERED", exitCode: 0 });
+});
+
 it("process.hrtime()", async () => {
   const start = process.hrtime();
   const end = process.hrtime(start);

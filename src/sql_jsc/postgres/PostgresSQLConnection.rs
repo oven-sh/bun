@@ -7,8 +7,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::jsc::EventLoopTimer;
 use crate::jsc::webcore::AutoFlusher;
 use crate::jsc::{
-    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue,
-    JsResult, VirtualMachine, VirtualMachineSqlExt as _,
+    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult, VirtualMachine,
+    VirtualMachineSqlExt as _,
 };
 use bun_boringssl as BoringSSL;
 use bun_collections::{HashMap, IdentityContext, OffsetByteList, StringMap};
@@ -1156,10 +1156,10 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         if !entry.is_empty() && entry.contains(&0) {
             drop(options_buf);
             // tls_config / secure released by the errdefer above.
-            return global_object.throw_invalid_arguments_fmt(format_args!(
+            return Err(global_object.throw_invalid_arguments(format_args!(
                 "{} must not contain null bytes",
                 bstr::BStr::new(name)
-            ));
+            )));
         }
     }
 

@@ -6623,6 +6623,8 @@ impl NodeFS {
 
         let mut iterator = DirIterator::WrappedIterator::init(fd);
         let mut dirent_path_prev = BunString::EMPTY;
+        let mut spill: Vec<u8> = Vec::new();
+        let mut dirent_spill: Vec<u8> = Vec::new();
 
         loop {
             let current = match iterator.next() {
@@ -6647,23 +6649,19 @@ impl NodeFS {
 
             // The root subtask's basename *is* root_path; the caller passes
             // `is_root` explicitly.
-            if !is_root
-                && basename.as_bytes().len() + 1 + utf8_name.len() + 1 >= paths::MAX_PATH_BYTES
-            {
-                continue;
-            }
             let name_to_copy: &[u8] = if is_root {
                 utf8_name
             } else {
-                paths::resolve_path::join_z_buf::<paths::platform::Auto>(
+                paths::resolve_path::join_z_buf_spill::<paths::platform::Auto>(
                     &mut buf[..],
+                    &mut spill,
                     &[basename.as_bytes(), utf8_name],
                 )
                 .as_bytes()
             };
             // SAFETY: both branches yield NUL-terminated storage — `utf8_name` is a
             // slice over the iterator's NUL-terminated dirent name, and
-            // `join_z_buf` writes a sentinel.
+            // `join_z_buf_spill` writes a sentinel.
             let name_to_copy_z =
                 unsafe { ZStr::from_raw(name_to_copy.as_ptr(), name_to_copy.len()) };
 
@@ -6707,10 +6705,10 @@ impl NodeFS {
             }
 
             if T::IS_DIRENT {
-                let joined = paths::resolve_path::join::<paths::platform::Auto>(&[
-                    root_basename,
-                    name_to_copy,
-                ]);
+                let joined = paths::resolve_path::join_spill::<paths::platform::Auto>(
+                    &mut dirent_spill,
+                    &[root_basename, name_to_copy],
+                );
                 let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
                 if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
                     dirent_path_prev.deref();
@@ -6759,6 +6757,9 @@ impl NodeFS {
         let root_fd: &mut FD = *_close_root;
         // The close guard captures `&mut root_fd`, so all reads below go
         // through the same place.
+
+        let mut spill: Vec<u8> = Vec::new();
+        let mut dirent_spill: Vec<u8> = Vec::new();
 
         while let Some(item) = stack.pop_front() {
             let is_root = first_is_root && item.is_empty();
@@ -6831,17 +6832,12 @@ impl NodeFS {
                 };
                 let utf8_name = current.name.slice();
 
-                // name_to_copy: bare name at root, else `basename/utf8_name` joined into `buf`.
-                if !is_root
-                    && basename_bytes.len() + 1 + utf8_name.len() + 1 >= paths::MAX_PATH_BYTES
-                {
-                    continue;
-                }
                 let name_to_copy: &[u8] = if is_root {
                     utf8_name
                 } else {
-                    paths::resolve_path::join_z_buf::<paths::platform::Auto>(
+                    paths::resolve_path::join_z_buf_spill::<paths::platform::Auto>(
                         &mut buf[..],
+                        &mut spill,
                         &[basename_bytes, utf8_name],
                     )
                     .as_bytes()
@@ -6888,10 +6884,10 @@ impl NodeFS {
                 }
 
                 if T::IS_DIRENT {
-                    let joined = paths::resolve_path::join::<paths::platform::Auto>(&[
-                        root_basename.as_bytes(),
-                        name_to_copy,
-                    ]);
+                    let joined = paths::resolve_path::join_spill::<paths::platform::Auto>(
+                        &mut dirent_spill,
+                        &[root_basename.as_bytes(), name_to_copy],
+                    );
                     let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
                     if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
                         dirent_path_prev.deref();

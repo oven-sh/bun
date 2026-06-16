@@ -12804,16 +12804,21 @@ describe("shared createInstance validation (no server)", () => {
     expect(err?.code).toBe("ERR_BORINGSSL");
   });
 
-  test.concurrent("rejects tls that is neither a boolean nor an object", async () => {
-    // A truthy non-boolean/non-object upgrades sslMode to `require` in JS and
-    // reaches the native parser as-is.
-    await using sql = new SQL({ ...base, username: "u", tls: 1 as any });
-    const err: any = await sql`select 1`.then(
-      () => null,
-      e => e,
-    );
-    expect(err?.message).toBe("tls must be a boolean or an object");
-  });
+  test.concurrent.each(["postgres", "mysql"] as const)(
+    "%s: rejects tls that is neither a boolean nor an object",
+    async adapter => {
+      // A truthy non-boolean/non-object upgrades sslMode to `require` in JS and
+      // reaches the native parser as-is. The constructor throws synchronously,
+      // and createPooledConnectionHandle defers onClose via process.nextTick so
+      // the pending query rejects cleanly instead of hanging (see #32145).
+      await using sql = new SQL({ ...base, adapter, username: "u", tls: 1 as any });
+      const err: any = await sql`select 1`.then(
+        () => null,
+        e => e,
+      );
+      expect(err?.message).toBe("tls must be a boolean or an object");
+    },
+  );
 
   test.concurrent("rejects simple queries with parameters", async () => {
     await using sql = new SQL({ ...base, username: "u" });

@@ -1773,6 +1773,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         RETURN_IF_EXCEPTION(scope, {});
         auto message = makeString("Invalid address family: "_s, str0, " "_s, str1, ":"_s, str2);
         auto err = createError(globalObject, ErrorCode::ERR_INVALID_ADDRESS_FAMILY, message);
+        RETURN_IF_EXCEPTION(scope, {});
         err->putDirect(vm, builtinNames(vm).hostPublicName(), arg1, 0);
         err->putDirect(vm, builtinNames(vm).portPublicName(), arg2, 0);
         return JSC::JSValue::encode(err);
@@ -2113,6 +2114,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto arg2 = callFrame->argument(3);
         auto message = makeString("Hostname/IP does not match certificate's altnames: "_s, str0);
         auto err = createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_INVALID, message);
+        RETURN_IF_EXCEPTION(scope, {});
         err->putDirect(vm, Identifier::fromString(vm, "reason"_s), arg0);
         err->putDirect(vm, Identifier::fromString(vm, "host"_s), arg1);
         err->putDirect(vm, Identifier::fromString(vm, "cert"_s), arg2);
@@ -2202,6 +2204,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto arg1 = callFrame->argument(2);
         // Don't include URL in message. (See https://github.com/nodejs/node/pull/38614)
         auto err = createError(globalObject, ErrorCode::ERR_INVALID_URL, "Invalid URL"_s);
+        RETURN_IF_EXCEPTION(scope, {});
         err->putDirect(vm, vm.propertyNames->input, arg0);
         if (!arg1.isUndefinedOrNull()) err->putDirect(vm, Identifier::fromString(vm, "base"_s), arg1);
         return JSC::JSValue::encode(err);
@@ -2382,6 +2385,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
 
     case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
         auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
+        RETURN_IF_EXCEPTION(scope, {});
         err->putDirect(vm, Identifier::fromString(vm, "reason"_s), jsString(vm, WTF::String("no cipher match"_s)));
         err->putDirect(vm, Identifier::fromString(vm, "library"_s), jsString(vm, WTF::String("SSL routines"_s)));
         return JSC::JSValue::encode(err);

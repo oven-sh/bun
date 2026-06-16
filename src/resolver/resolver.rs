@@ -614,18 +614,7 @@ pub struct Resolver<'a> {
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 
-    /// The canonicalized absolute path of the process entry point (`bun
-    /// <script>`), set only while that single specifier is being resolved. When
-    /// the path currently being resolved equals this exact value, `load_as_file`
-    /// resolves it with one `stat` and `dir_info_cached_miss` skips enumerating
-    /// its parent directory, so startup no longer scales with the number of
-    /// sibling entries (e.g. a script under `/nix/store`). Scoping to the exact
-    /// path (rather than a plain flag) keeps nested resolutions during the entry
-    /// resolve — a directory entry's `index`/`main`, a browser-field remap — on
-    /// the normal directory-listing path, where on-disk case is preserved. Reset
-    /// to `None` immediately after the entry resolve, so ordinary imports are
-    /// unaffected.
-    pub entry_point_hint: Option<&'static [u8]>,
+    pub entry_point_hint: Option<Box<[u8]>>,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -4416,20 +4405,9 @@ impl<'a> Resolver<'a> {
             // defer top_parent = queue_top.result — done at end of loop body
             queue_slice_len -= 1;
 
-            // Entry-point fast path: when building the `DirInfo` for the entry
-            // point's own directory (the leaf, processed last), skip opening and
-            // reading it. `load_as_file` already resolved the entry file by a
-            // single `stat`; the directory's package.json/tsconfig/node_modules
-            // markers are resolved the same way in `dir_info_uncached`. This
-            // avoids an O(entries) `readdir` (and works even when the directory
-            // is not listable). Gated on this leaf being the hinted entry's own
-            // parent directory, so `DirInfo`s built for other directories during
-            // the entry resolve are still read in full. `!care_about_bin_folder`:
-            // `bun run` needs this directory's open fd to probe
-            // `node_modules/.bin`, so fall back to a full read there.
             let lazy_leaf = queue_slice_len == 0
                 && !self.care_about_bin_folder
-                && self.entry_point_hint.is_some_and(|hint| {
+                && self.entry_point_hint.as_deref().is_some_and(|hint| {
                     strings::eql(
                         strings::without_trailing_slash_windows_path(queue_top_unsafe_path),
                         strings::without_trailing_slash_windows_path(Dirname::dirname(hint)),
@@ -4622,10 +4600,6 @@ impl<'a> Resolver<'a> {
                 );
 
                 if lazy_leaf {
-                    // Entry-point fast path: don't enumerate this directory.
-                    // Mark the entry incomplete so any later consumer that needs
-                    // the full listing re-reads it; `dir_info_uncached` resolves
-                    // this directory's config markers by direct `stat` below.
                     new_entry.complete = false;
                 } else {
                     // Pre-size `data` so the per-entry inserts below skip the
@@ -5745,31 +5719,10 @@ impl<'a> Resolver<'a> {
 
         let dir_path = strings::without_trailing_slash_windows_path(Dirname::dirname(path));
 
-        // Entry-point fast path: the process entry point is a canonicalized
-        // absolute path, so its exact basename is the correct on-disk name.
-        // Resolve it with a single `stat` of `dir_path/base` instead of reading
-        // the entire parent directory — startup under a huge directory (e.g.
-        // `/nix/store`) otherwise pays an O(entries) `readdir`. Gated on an exact
-        // match with the hinted entry path so nested resolutions during the entry
-        // resolve (a directory entry's `index`/`main`, a browser-field remap)
-        // stay on the normal directory-listing path, where on-disk case is
-        // preserved. Only a regular file takes the shortcut; anything else falls
-        // through to the normal directory read (which also handles extensionless
-        // paths, symlinks, and directories). Skipped when `care_about_bin_folder`
-        // is set: that mode (`bun run`) needs the directory's open fd to probe
-        // `node_modules/.bin`, which the lazy path does not retain. See
-        // `Resolver::entry_point_hint`.
-        if self.entry_point_hint == Some(path) && !self.care_about_bin_folder {
+        if self.entry_point_hint.as_deref() == Some(path) && !self.care_about_bin_folder {
             let base = bun_paths::basename(path);
-            // `store_fd = false`: a metadata-only probe, so `kind` closes any fd
-            // it opens to follow a symlink instead of caching one this fast path
-            // would drop.
             // SAFETY: `rfs` points at the process-global RealFS singleton.
             if let Ok(cache) = unsafe { &mut *rfs }.kind(dir_path, base, FD::INVALID, false) {
-                // A non-empty `symlink` means `kind` followed a symlink; those
-                // fall through to the normal path so the realpath is recorded
-                // and relative imports resolve from the real target directory
-                // (e.g. a `node_modules/.bin/<tool>` symlink).
                 if cache.kind == Fs::file_system::EntryKind::File && cache.symlink.is_empty() {
                     let abs_path: &'static [u8] = self
                         .fs_ref()
@@ -6127,14 +6080,7 @@ impl<'a> Resolver<'a> {
             };
         }
 
-        // When the cached listing is incomplete (the entry-point fast path
-        // created this entry without a `readdir`), the config markers below are
-        // resolved by direct `stat` rather than a map lookup that would miss
-        // them. See `DirEntry::complete` and `dir_info_cached_miss`'s lazy leaf.
         let entries_complete = entries!().complete;
-        // Resolves the `EntryKind` of config marker `$name` (a lowercase,
-        // `'static` name) in this directory — via the cached listing when
-        // complete, or a direct `stat` when incomplete.
         macro_rules! marker_kind {
             ($name:expr) => {
                 if entries_complete {
@@ -6143,9 +6089,6 @@ impl<'a> Resolver<'a> {
                         unsafe { lookup.entry().kind(rfs_ptr, self.store_fd) }
                     })
                 } else {
-                    // `store_fd = false`: a metadata-only probe for an incomplete
-                    // entry whose markers are never cached, so `kind` closes any
-                    // symlink fd it opens instead of leaking one.
                     // SAFETY: `rfs_ptr` points at the process-global RealFS singleton.
                     unsafe { &mut *rfs_ptr }
                         .kind(path, $name, FD::INVALID, false)
@@ -6196,14 +6139,6 @@ impl<'a> Resolver<'a> {
 
         if self.care_about_bin_folder {
             'append_bin_dir: {
-                // The `.bin`/`node_modules` discovery below reads the cached
-                // listing directly, so it must see a complete entry. Incomplete
-                // entries are only created by the entry-point lazy leaf (gated
-                // on `!care_about_bin_folder`), so a `care_about_bin_folder`
-                // resolver never marks one itself and can only observe one via
-                // the process-global entries cache. Guard the listing probe so
-                // such a reused entry falls through instead of reading a partial
-                // listing that would miss the real `.bin`.
                 if info.has_node_modules() && entries_complete {
                     if entries!().has_comptime_query(b"node_modules") {
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK below

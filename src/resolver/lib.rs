@@ -1254,11 +1254,6 @@ pub mod fs {
                         // scrutinee directly so no second `&mut *cached_ptr` is materialized
                         // while the first is on the borrow stack (Stacked Borrows hygiene).
                         match unsafe { &mut *cached_ptr } {
-                            // Re-read on a stale generation OR when the cached
-                            // entry is incomplete: the entry-point fast path
-                            // stores the leaf directory without a `readdir`
-                            // (`DirEntry::complete == false`), so a lookup
-                            // against it would miss files that are present.
                             EntriesOption::Entries(e)
                                 if e.generation < generation || !e.complete =>
                             {
@@ -1615,10 +1610,6 @@ pub mod fs {
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
-                // Re-read on a stale generation OR when the cached entry is
-                // incomplete (the entry-point fast path stored the leaf
-                // directory without a `readdir`, so a `.get()` against it may
-                // miss a file that is present). See `DirEntry::complete`.
                 if existing.generation < generation || !existing.complete {
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.

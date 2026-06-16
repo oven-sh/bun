@@ -16,24 +16,11 @@ function stripAsanWarning(stderr: string): string[] {
   return stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
 }
 
-// Resolving the process entry point (`bun <script>`) must not require reading
-// the script's parent directory: it should stat the single known file instead.
-// Reading the directory makes startup scale with the sibling count, which is
-// slow under huge immutable trees such as /nix/store (issue #32389), and it
-// fails outright when the directory is searchable but not listable (mode 0711)
-// even though the file itself is readable, a case Node handles fine.
-//
-// As root, directory read permissions are bypassed, so the directory read is
-// only observable after dropping DAC privileges. These tests run the child as
-// `nobody` via `setpriv`, which requires being root on Linux.
 const NOBODY = "65534";
 const canDropPrivs =
   isLinux && typeof process.getuid === "function" && process.getuid() === 0 && Bun.which("setpriv") != null;
 
 async function runAsNobody(scriptPath: string) {
-  // A private, world-accessible HOME/cwd so `nobody` can reach its own
-  // cache/config without depending on (or touching) host-global /tmp state,
-  // and isn't blocked by a non-traversable test checkout dir.
   using childHome = tempDir("bun-main-nobody-home", {});
   chmodSync(String(childHome), 0o777);
   await using proc = Bun.spawn({
@@ -43,10 +30,6 @@ async function runAsNobody(scriptPath: string) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  // stderr is drained (so the child can't block on a full pipe) but not
-  // asserted: a `nobody` child with a redirected HOME can emit benign,
-  // host-specific warnings, and these tests' contract is the stdout + exit code
-  // that prove the entry point resolved and ran.
   return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 }
 
@@ -55,26 +38,18 @@ test.skipIf(!canDropPrivs).concurrent("runs an entry point in a searchable-but-n
     "sub/entry.js": `console.log("RAN_OK");`,
   });
   const root = String(dir);
-  // mkdtemp creates the tempdir 0700; `nobody` needs to traverse into it.
   chmodSync(root, 0o755);
-  // 0711: `nobody` can traverse `sub` and open entry.js by name, but cannot
-  // readdir it. Resolving the entry point must therefore avoid readdir.
+  // 0711: nobody can traverse sub and open entry.js by name, but not readdir it.
   chmodSync(join(root, "sub"), 0o711);
   chmodSync(join(root, "sub", "entry.js"), 0o644);
 
   const [stdout, _stderr, exitCode] = await runAsNobody(join(root, "sub", "entry.js"));
   expect(stdout).toBe("RAN_OK\n");
-  // Surface the child's stderr on failure (module-not-found, a setpriv/perms
-  // error, a resolver panic) so the diff shows the cause. No-op on success,
-  // where a `nobody` child may emit benign host-specific warnings we ignore.
   if (exitCode !== 0) expect(_stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
 test.skipIf(!canDropPrivs).concurrent("control: runs an entry point in a listable directory as nobody", async () => {
-  // Same privilege drop, but the directory is listable. This isolates the
-  // assertion above: if this control fails, the failure is in the test setup
-  // (setpriv/permissions), not in entry-point resolution.
   using dir = tempDir("bun-main-list", {
     "sub/entry.js": `console.log("RAN_OK");`,
   });
@@ -85,20 +60,10 @@ test.skipIf(!canDropPrivs).concurrent("control: runs an entry point in a listabl
 
   const [stdout, _stderr, exitCode] = await runAsNobody(join(root, "sub", "entry.js"));
   expect(stdout).toBe("RAN_OK\n");
-  // Surface the child's stderr on failure (module-not-found, a setpriv/perms
-  // error, a resolver panic) so the diff shows the cause. No-op on success,
-  // where a `nobody` child may emit benign host-specific warnings we ignore.
   if (exitCode !== 0) expect(_stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
-// A symlinked entry point must resolve its relative imports from the real
-// target directory, not the symlink's directory. `bun <file>` canonicalizes the
-// entry (via the opened fd) before resolving, so the resolver operates on the
-// realpath and "./dep.js" is found next to the real file. Separately, the entry
-// fast path falls through for any symlink it is handed directly (e.g. a
-// `node_modules/.bin/<tool>` symlink run by `bun run`), so the normal path
-// records the realpath there too.
 test.skipIf(isWindows).concurrent("resolves a symlinked entry point relative to its real directory", async () => {
   using dir = tempDir("bun-main-symlink", {
     "real/main.js": `import { dep } from "./dep.js";\nconsole.log("SYM_OK", dep);`,
@@ -121,13 +86,6 @@ test.skipIf(isWindows).concurrent("resolves a symlinked entry point relative to 
   });
 });
 
-// Skipping the entry point's parent-directory readdir caches that directory as
-// an incomplete listing. A later resolve that imports the same directory (here
-// a sibling module does `require("../pkg")`, as node-api tests do with
-// `require("../../common")`) must re-read it so `index.js` is found. If the
-// incomplete cache entry is handed out as-is, the directory import fails with
-// "Cannot find module". package.json is present so the directory is resolved as
-// a package (exercising the load_as_directory -> index fallback path).
 test.concurrent("imports the entry point's own directory (incomplete-cache upgrade)", async () => {
   using dir = tempDir("bun-main-dirimport", {
     "pkg/package.json": `{"type":"commonjs"}`,

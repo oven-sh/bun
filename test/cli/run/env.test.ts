@@ -239,6 +239,34 @@ test(".env value expansion", () => {
   expect(stdout).toBe("foo|foo bar|foo foo bar moo");
 });
 
+test(".env nested default substitution does not crash (#32411)", () => {
+  const dir = tempDirWithFiles("dotenv-nested-default", {
+    ".env": `FOO="\${FOO:-\${BAR:-baz}}"\n`,
+    "index.ts": `console.log("hello");`,
+  });
+  const result = Bun.spawnSync([bunExe(), `${dir}/index.ts`], {
+    cwd: dir,
+    env: { ...bunEnv, NODE_ENV: undefined },
+  });
+  expect(result.stdout.toString("utf8").trim()).toBe("hello");
+  expect(result.signalCode).toBeFalsy();
+  expect(result.exitCode).toBe(0);
+});
+
+test(".env nested default substitution resolves (#32411)", () => {
+  const dir = tempDirWithFiles("dotenv-nested-default-resolve", {
+    ".env": [
+      "NE_DEEP=${NE_UA:-${NE_UB:-deep}}",
+      "NE_INNER=innerval",
+      "NE_USEINNER=${NE_UC:-${NE_INNER:-fallback}}",
+      "NE_TRIPLE=${NE_TA:-${NE_TB:-${NE_TC:-z}}}",
+    ].join("\n"),
+    "index.ts": `console.log([process.env.NE_DEEP, process.env.NE_USEINNER, process.env.NE_TRIPLE].join("|"));`,
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("deep|innerval|z");
+});
+
 test(".env comments", () => {
   const dir = tempDirWithFiles("dotenv-comments", {
     ".env": "#FOZ\nFOO = foo#FAIL\nBAR='bar' #BAZ",

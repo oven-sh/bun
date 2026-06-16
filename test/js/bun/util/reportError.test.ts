@@ -205,4 +205,25 @@ describe("custom Error.stack string", () => {
     expect(stderr).toContain(" at ");
     expect(exitCode).toBe(1);
   });
+
+  test("stackTraceLimit = 0 keeps the generated format and .code", async () => {
+    // With Error.stackTraceLimit = 0, `.stack` is undefined (not a string), so
+    // the custom-stack path must not trigger; the error keeps its normal
+    // rendering and the .code annotation is still printed.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Error.stackTraceLimit = 0; const e = new Error("boom"); e.code = "ERR_SOMETHING"; console.log(e);`,
+      ],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("boom");
+    expect(stdout).toContain("ERR_SOMETHING");
+    expect(exitCode).toBe(0);
+  });
 });

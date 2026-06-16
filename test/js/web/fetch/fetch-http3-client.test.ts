@@ -1,4 +1,4 @@
-import { gzipSync, type Server } from "bun";
+import { gunzipSync, gzipSync, type Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 
@@ -242,7 +242,6 @@ describe("fetch protocol: http3", () => {
     ["small (shared-buffer fast path)", 32 * 1024],
     ["large (zlib-streaming spill path)", 600 * 1024],
   ])("compress: gzip request body — %s", async (_, size) => {
-    const { gunzipSync } = await import("node:zlib");
     const payload = Buffer.alloc(size, "abcdefghij");
     const res = await fetch(`${base}/raw-echo`, {
       ...h3,
@@ -254,7 +253,7 @@ describe("fetch protocol: http3", () => {
     expect(res.headers.get("x-recv-encoding")).toBe("gzip");
     expect(Number(res.headers.get("x-recv-len"))).toBeLessThan(size);
     expect(res.headers.get("x-recv-content-length")).toBe(String(raw.length));
-    expect(gunzipSync(raw).equals(payload)).toBe(true);
+    expect(Buffer.from(gunzipSync(raw)).equals(payload)).toBe(true);
   });
 
   test.each([200, 204, 404, 500])("status %d", async code => {

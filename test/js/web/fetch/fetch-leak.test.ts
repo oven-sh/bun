@@ -240,8 +240,9 @@ test("fetch() compress option does not leak bodies or compressor state", async (
   //  - all four encodings
   //  - the custom-level path (allocates a temporary libdeflate compressor that
   //    must be freed each call)
-  //  - a small body (thread-local 512 KiB shared-buffer fast path)
-  //  - a ~700 KiB body (slow-path Vec allocation + multi-write send)
+  //  - a small body (HTTP-thread LibdeflateState shared_buffer fast path)
+  //  - a ~700 KiB body (zlib-streaming slow path → per-request Vec, freed in
+  //    on_async_http_callback_raw)
   using server = Bun.serve({
     port: 0,
     idleTimeout: 0,
@@ -277,7 +278,8 @@ test("fetch() compress option does not leak bodies or compressor state", async (
       await Promise.all(promises);
     }
 
-    // Warm up: thread-local CompressorState is allocated once here and stays.
+    // Warm up: HTTP-thread LibdeflateState (lazy compressor + 512 KiB
+    // shared_buffer) is allocated once here and stays for the process.
     for (let i = 0; i < 10; i++) await round();
     Bun.gc(true);
     const baseline = process.memoryUsage.rss();

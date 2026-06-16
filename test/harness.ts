@@ -1635,6 +1635,10 @@ export function libcPathForDlopen() {
         case "glibc":
           return "libc.so.6";
         case "musl":
+          if (isOhos) {
+            // OHOS: libc is statically linked; use the shim from LD_LIBRARY_PATH.
+            return "libc.so";
+          }
           return "/usr/lib/libc.so";
       }
     case "darwin":

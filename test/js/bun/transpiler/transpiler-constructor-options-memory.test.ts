@@ -59,8 +59,9 @@ test("new Bun.Transpiler() does not retain a second deep copy of TransformOption
   const ratio = Number((delta / payload).toFixed(2));
   // With the redundant `.clone()` the constructor retains one extra full copy
   // of the define map, pushing the ratio to >= 6.0x (release) / >= 6.5x
-  // (debug+ASAN). Without it the ratio sits at ~5.0-5.1x on both builds.
-  // Threshold at 5.6x leaves ~9 MB of headroom on each side.
-  expect(ratio).toBeLessThan(5.6);
+  // (debug+ASAN). Without it the ratio sits at ~5.0-5.1x on Linux. 5.8x
+  // biases the headroom toward the passing side so 16 KB page platforms
+  // (macOS aarch64) and Windows RSS accounting don't flake.
+  expect(ratio).toBeLessThan(5.8);
   expect(exitCode).toBe(0);
 });

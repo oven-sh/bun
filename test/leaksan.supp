@@ -78,7 +78,6 @@ leak:JSC::intlSegmenterAvailableLocales
 leak:URL__getHref
 leak:runtime.dns_jsc.dns.Resolver.globalLookupService
 leak:jsHTTPParser_execute
-leak:Resolver__nodeModulePathsJSValue
 leak:URL__host
 leak:runtime.node.node_os.version
 leak:runtime.node.node_os.release

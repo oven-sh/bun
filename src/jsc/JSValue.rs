@@ -1210,7 +1210,7 @@ impl JSValue {
         match self.get(global, property)? {
             Some(v) if !v.is_undefined_or_null() => {
                 if !v.is_string() {
-                    return Err(global.throw_invalid_argument_type_value(property, b"string", v));
+                    return Err(global.throw_invalid_property_type(property, "string", v));
                 }
                 Ok(Some(v.to_slice(global)?))
             }

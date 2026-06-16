@@ -6007,7 +6007,7 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
     );
     match len {
-        0 => Output::print_errorln(format_args!("\n")),
+        0 => Output::print_errorln(format_args!("")),
         _ => Output::print_errorln(format_args!(" {}", bstr::BStr::new(slice))),
     }
 

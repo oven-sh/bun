@@ -92,19 +92,19 @@ NapiClass* NapiClass::create(VM& vm, napi_env env, WTF::String name,
         NapiClass_ConstructorFunction<false>,
         ImplementationVisibility::Public,
         // for constructor call
-        NapiClass_ConstructorFunction<true>, name);
+        NapiClass_ConstructorFunction<true>, 0, name);
     Structure* structure = env->globalObject()->NapiClassStructure();
     NapiClass* napiClass = new (NotNull, allocateCell<NapiClass>(vm)) NapiClass(vm, executable, env, structure, data);
-    napiClass->finishCreation(vm, executable, name, constructor, data, property_count, properties);
+    napiClass->finishCreation(vm, name, constructor, data, property_count, properties);
     return napiClass;
 }
 
-void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, const String& name, napi_callback constructor,
+void NapiClass::finishCreation(VM& vm, const String& name, napi_callback constructor,
     void* data,
     size_t property_count,
     const napi_property_descriptor* properties)
 {
-    Base::finishCreation(vm, executable, 0, name);
+    Base::finishCreation(vm);
     ASSERT(inherits(info()));
     this->m_constructor = constructor;
     auto globalObject = static_cast<Bun::GlobalObject*>(this->globalObject());

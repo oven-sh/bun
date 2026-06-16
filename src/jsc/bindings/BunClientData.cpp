@@ -125,11 +125,4 @@ void JSVMClientData::create(VM* vm, void* bunVM)
     clientData->builtinFunctions().exportNames();
 }
 
-WebCore::HTTPHeaderIdentifiers& JSVMClientData::httpHeaderIdentifiers()
-{
-    if (!m_httpHeaderIdentifiers)
-        m_httpHeaderIdentifiers.emplace();
-    return *m_httpHeaderIdentifiers;
-}
-
 } // namespace WebCore

@@ -111,7 +111,12 @@ public:
 
     JSC::GCClient::IsoSubspace& domBuiltinConstructorSpace() { return m_domBuiltinConstructorSpace; }
 
-    WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers();
+    // Constructed eagerly so the concurrent GC marker
+    // (Bun::GlobalObject::visitChildrenImpl) never races the mutator on a
+    // lazy std::optional::emplace(). The ctor only calls
+    // LazyProperty::initLater ~90 times (stores a tagged function pointer),
+    // so there is no startup cost worth deferring.
+    WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers() { return m_httpHeaderIdentifiers; }
 
     template<typename Func> void forEachOutputConstraintSpace(const Func& func)
     {
@@ -163,7 +168,7 @@ private:
     std::unique_ptr<ExtendedDOMClientIsoSubspaces> m_clientSubspaces;
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
 
-    std::optional<WebCore::HTTPHeaderIdentifiers> m_httpHeaderIdentifiers;
+    WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
     WeakHashSet<JSVMClientDataClient> m_clients;
 };
 

@@ -73,14 +73,14 @@ static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
     auto scope = DECLARE_THROW_SCOPE(vm);
     scope.throwException(globalObject, value);
-    return promise->rejectWithCaughtException(globalObject, scope);
+    return promise->rejectWithCaughtException(vm, scope);
 }
 
 static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    promise->fulfill(vm, globalObject, value);
+    promise->fulfill(vm, value);
     return promise;
 }
 
@@ -469,7 +469,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(JSC::JSValue::decode(encodedPromiseValue));
 
     if (!res->success) {
-        RELEASE_AND_RETURN(scope, promise->reject(vm, globalObject, JSValue::decode(res->result.err.value)));
+        RELEASE_AND_RETURN(scope, promise->reject(vm, JSValue::decode(res->result.err.value)));
     }
 
     auto* specifierValue = Bun::toJS(globalObject, *specifier);
@@ -501,7 +501,7 @@ extern "C" void Bun__onFulfillAsyncModule(
             auto* exception = scope.exception();
             if (!vm.isTerminationException(exception)) {
                 (void)scope.tryClearException();
-                promise->reject(vm, globalObject, exception);
+                promise->reject(vm, exception);
                 scope.assertNoExceptionExceptTermination();
             }
         }
@@ -1246,7 +1246,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
         throwException(globalObject, scope, result);
     }
     if (scope.exception()) [[unlikely]] {
-        auto retValue = JSValue::encode(promise->rejectWithCaughtException(globalObject, scope));
+        auto retValue = JSValue::encode(promise->rejectWithCaughtException(vm, scope));
         pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
         return retValue;
     }
@@ -1266,7 +1266,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObjec
     JSC::JSPromise* promise = pendingModule->internalPromise();
 
     pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
-    promise->reject(vm, globalObject, reason);
+    promise->reject(vm, reason);
 
     return JSValue::encode(reason);
 }

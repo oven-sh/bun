@@ -1,6 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
+import { mkdirSync } from "node:fs";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
@@ -219,6 +220,47 @@ it.skipIf(!isLinux)("process.chdir() does not crash when the cwd is exactly PATH
     cmd: [bunExe(), "index.js"],
     env: bunEnv,
     cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/32409
+// Linux-only: when the very first process.chdir() overflows getcwd (the process
+// started in a near-PATH_MAX cwd), the fallback keeps the cached cwd. That cwd
+// still points into the resolver's DirnameStore, not top_level_dir_buf, so the
+// fallback must copy it in rather than re-slice the uninitialized buffer.
+it.skipIf(!isLinux)("process.chdir() keeps the cached cwd on the first overflow", async () => {
+  using dir = tempDir("process-chdir-first", {
+    "fixture.mjs": `
+      const fs = require("node:fs");
+      const startup = process.cwd();
+      const seg = "d".repeat(200);
+      fs.mkdirSync(seg);
+      // First chdir pushes the cwd past PATH_MAX; getcwd now fails with ERANGE
+      // and the logical path does not fit, so the cached cwd is kept.
+      process.chdir(seg);
+      console.log(process.cwd() === startup ? "OK" : "MISMATCH:" + process.cwd().length);
+    `,
+  });
+
+  // Build a startup cwd of ~4000 bytes (just under PATH_MAX) so the fixture's
+  // first chdir overflows and hits the getcwd-failure fallback immediately.
+  const big = "d".repeat(200);
+  let deep = String(dir);
+  while (deep.length + 1 + 200 < 3950) deep = join(deep, big);
+  deep = join(deep, "d".repeat(4000 - deep.length - 1));
+  mkdirSync(deep, { recursive: true });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(String(dir), "fixture.mjs")],
+    env: bunEnv,
+    cwd: deep,
     stdout: "pipe",
     stderr: "pipe",
   });

@@ -472,7 +472,19 @@ mod _impl {
                                 fs.top_level_dir_buf[..len].copy_from_slice(resolved);
                                 len
                             }
-                            _ => top_level_dir.len(),
+                            _ => {
+                                // Keep the previously cached cwd. Before the
+                                // first chdir `top_level_dir` points into the
+                                // resolver's DirnameStore, not `top_level_dir_buf`,
+                                // so copy it in before the buffer is re-sliced
+                                // below. Skip the copy when it already aliases the
+                                // buffer, since `copy_from_slice` forbids overlap.
+                                let len = top_level_dir.len();
+                                if top_level_dir.as_ptr() != fs.top_level_dir_buf.as_ptr() {
+                                    fs.top_level_dir_buf[..len].copy_from_slice(top_level_dir);
+                                }
+                                len
+                            }
                         }
                     }
                 };

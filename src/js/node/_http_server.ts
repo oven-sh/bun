@@ -600,7 +600,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         socket[kRequest] = http_req;
-        const is_upgrade = http_req.headers.upgrade;
+        // Like Node.js, only treat this as an upgrade when there is an
+        // 'upgrade' listener; otherwise the request falls through to the
+        // regular 'request' event.
+        const is_upgrade = !!http_req.headers.upgrade && server.listenerCount("upgrade") > 0;
         if (!is_upgrade) {
           if (canUseInternalAssignSocket) {
             // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
@@ -911,10 +914,26 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   #onClose() {
     this[kHandle] = null;
 
+    // Node.js's `socketOnClose` → `abortIncoming()` only destroys requests
+    // that are still in `state.incoming` — i.e. requests whose response has
+    // not yet finished (`resOnFinish` does `incoming.shift()`). Our
+    // equivalent of "still in the queue" is `_httpMessage` being non-null:
+    // `detachSocket()` (called from `res.end()` / on `"finish"`) clears it.
+    // Do NOT fall back to `this[kRequest]` here — that slot is never cleared,
+    // so falling back would abort the request on every keep-alive close even
+    // after a fully successful response, which races `req._dump()`'s
+    // nextTick and can surface as a spurious `"aborted"` (seen as flakes in
+    // the express `res.sendFile` suite where supertest closes the socket
+    // right after reading the body).
+    //
+    // Gate on `!req.destroyed` rather than `!req.complete`: a body-less GET
+    // flips `complete` before the response is written, so an aborted
+    // connection would otherwise never reach `req.destroy()` →
+    // `emit("close")` (test-http-should-emit-close-when-connection-is-aborted).
     const message = this._httpMessage;
     const req = message?.req;
 
-    if (req && !req.complete && !req[kHandle]?.upgraded) {
+    if (req && !req.destroyed && !req[kHandle]?.upgraded) {
       // At this point the socket is already destroyed; let's avoid UAF
       req[kHandle] = undefined;
       if (req.listenerCount("error") > 0) {
@@ -1508,8 +1527,6 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   if (callback) {
     process.nextTick(callback);
   }
-  this.emit("drain");
-
   return true;
 };
 
@@ -1803,8 +1820,6 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
 }
 
 // ServerResponse.prototype._final = ServerResponse_finalDeprecated;
-
-ServerResponse.prototype.writeHeader = ServerResponse.prototype.writeHead;
 
 OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
 OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;

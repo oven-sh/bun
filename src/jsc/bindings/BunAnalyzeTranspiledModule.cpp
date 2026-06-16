@@ -93,30 +93,35 @@ extern "C" void JSC_JSModuleRecord__addStarExport(JSModuleRecord* moduleRecord, 
 {
     moduleRecord->addStarExportEntry(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName));
 }
-extern "C" void JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName)
+static inline AbstractModuleRecord::ModulePhase toModulePhase(bool phaseDefer)
+{
+    return phaseDefer ? AbstractModuleRecord::ModulePhase::Defer : AbstractModuleRecord::ModulePhase::Evaluation;
+}
+
+extern "C" void JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName, bool phaseDefer)
 {
     RefPtr<ScriptFetchParameters> attributes = RefPtr<ScriptFetchParameters> {};
-    moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes));
+    moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes), toModulePhase(phaseDefer));
 }
-extern "C" void JSC_JSModuleRecord__addRequestedModuleJavaScript(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName)
+extern "C" void JSC_JSModuleRecord__addRequestedModuleJavaScript(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName, bool phaseDefer)
 {
     Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(ScriptFetchParameters::Type::JavaScript);
-    moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes));
+    moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes), toModulePhase(phaseDefer));
 }
-extern "C" void JSC_JSModuleRecord__addRequestedModuleWebAssembly(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName)
+extern "C" void JSC_JSModuleRecord__addRequestedModuleWebAssembly(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName, bool phaseDefer)
 {
     Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(ScriptFetchParameters::Type::WebAssembly);
-    moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes));
+    moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes), toModulePhase(phaseDefer));
 }
-extern "C" void JSC_JSModuleRecord__addRequestedModuleJSON(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName)
+extern "C" void JSC_JSModuleRecord__addRequestedModuleJSON(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName, bool phaseDefer)
 {
     Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(ScriptFetchParameters::Type::JSON);
-    moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes));
+    moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes), toModulePhase(phaseDefer));
 }
-extern "C" void JSC_JSModuleRecord__addRequestedModuleHostDefined(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName, uint32_t hostDefinedImportType)
+extern "C" void JSC_JSModuleRecord__addRequestedModuleHostDefined(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName, uint32_t hostDefinedImportType, bool phaseDefer)
 {
     Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(getFromIdentifierArray(moduleRecord->vm(), identifierArray, hostDefinedImportType).string());
-    moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes));
+    moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes), toModulePhase(phaseDefer));
 }
 
 extern "C" void JSC_JSModuleRecord__addImportEntrySingle(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName)
@@ -146,6 +151,16 @@ extern "C" void JSC_JSModuleRecord__addImportEntryNamespace(JSModuleRecord* modu
         .localName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, localName),
     });
 }
+extern "C" void JSC_JSModuleRecord__addImportEntryNamespaceDefer(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t importName, uint32_t localName, uint32_t moduleName)
+{
+    moduleRecord->addImportEntry(JSModuleRecord::ImportEntry {
+        .type = JSModuleRecord::ImportEntryType::Namespace,
+        .phase = AbstractModuleRecord::ModulePhase::Defer,
+        .moduleRequest = getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName),
+        .importName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, importName),
+        .localName = getFromIdentifierArray(moduleRecord->vm(), identifierArray, localName),
+    });
+}
 
 static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue = nullptr);
 extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise)
@@ -154,7 +169,7 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto rejectWithError = [&](JSValue error) {
-        promise->reject(vm, globalObject, error);
+        promise->reject(vm, error);
         return promise;
     };
 
@@ -193,7 +208,7 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto rejectWithError = [&](JSValue error) {
-        promise->reject(vm, globalObject, error);
+        promise->reject(vm, error);
         return promise;
     };
 
@@ -206,7 +221,7 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
     ASSERT(moduleProgramNode);
 
     ModuleAnalyzer moduleAnalyzer(globalObject, moduleKey, sourceCode, moduleProgramNode->varDeclarations(), moduleProgramNode->lexicalVariables(), moduleProgramNode->features());
-    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(globalObject, scope)));
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
 
     auto result = moduleAnalyzer.analyze(*moduleProgramNode);
     if (!result) {
@@ -273,9 +288,12 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
         for (const auto& request : moduleRecord->requestedModules()) {
             WTF::StringPrintStream line;
             if (request.m_attributes == nullptr)
-                line.print("      module(", request.m_specifier, ")\n");
+                line.print("      module(", request.m_specifier, ")");
             else
-                line.print("      module(", request.m_specifier, "),attributes(", (uint8_t)request.m_attributes->type(), ", ", request.m_attributes->hostDefinedImportType(), ")\n");
+                line.print("      module(", request.m_specifier, "),attributes(", (uint8_t)request.m_attributes->type(), ", ", request.m_attributes->hostDefinedImportType(), ")");
+            if (request.m_phase == AbstractModuleRecord::ModulePhase::Defer)
+                line.print(",phase(defer)");
+            line.print("\n");
             sortedDeps.append(line.toString());
         }
         std::sort(sortedDeps.begin(), sortedDeps.end(), [](const String& a, const String& b) {
@@ -291,7 +309,10 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
         for (const auto& pair : moduleRecord->importEntries()) {
             WTF::StringPrintStream line;
             auto& importEntry = pair.value;
-            line.print("      import(", importEntry.importName, "), local(", importEntry.localName, "), module(", importEntry.moduleRequest, ")\n");
+            line.print("      import(", importEntry.importName, "), local(", importEntry.localName, "), module(", importEntry.moduleRequest, ")");
+            if (importEntry.phase == AbstractModuleRecord::ModulePhase::Defer)
+                line.print(", phase(defer)");
+            line.print("\n");
             sortedImports.append(line.toString());
         }
         std::sort(sortedImports.begin(), sortedImports.end(), [](const String& a, const String& b) {

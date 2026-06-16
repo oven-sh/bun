@@ -1573,7 +1573,7 @@ test "Github API Route Loader" {
     var ctx = MockRequestContextType{
         .url = try URLPath.parse("/hi"),
     };
-    const fixtures = @import("../test_runner/harness/fixtures.zig");
+    const fixtures = @import("../runtime/test_runner/harness/fixtures.zig");
     var router = try Test.make("routes-github-api", fixtures.github_api_routes_list);
 
     {
@@ -1682,7 +1682,7 @@ test "Sample Route Loader" {
     var ctx = MockRequestContextType{
         .url = try URLPath.parse("/hi"),
     };
-    const fixtures = @import("../test_runner/harness/fixtures.zig");
+    const fixtures = @import("../runtime/test_runner/harness/fixtures.zig");
     var router = try Test.make("routes-sample", fixtures.sample_route_list);
 
     {

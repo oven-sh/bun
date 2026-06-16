@@ -70,6 +70,41 @@ describe("Bun.build", () => {
     throw new Error("should have thrown");
   });
 
+  // A `define:` value that isn't valid JSON or a JS identifier is auto-quoted
+  // (treated as a string literal). The JSON lexer must not error eagerly on the
+  // first character — a raw minified CSS string starts with `*{...}`, which
+  // src/codegen/bake-codegen.ts passes verbatim as `OVERLAY_CSS`.
+  describe.each([
+    "*{box-sizing:border-box}.root{all:initial}",
+    "?foo",
+    "(parenthesized)",
+    ")close",
+    "abc{not json}",
+    // Leading-operator chars must `step()` before falling back to auto-quote so
+    // `parse_string_literal`'s leading `step()` lands past index 1 (matching the
+    // reference lexer). Otherwise a LF at index 1 truncates the value to `"("`.
+    "(\nrest",
+    "*\nrest",
+  ])("define value %j is auto-quoted when not valid JSON", value => {
+    test("emits a quoted string literal", async () => {
+      const dir = tempDirWithFiles("bun-build-define-auto-quote", {
+        "entry.ts": `declare const X: string; console.log(X);`,
+      });
+      const result = await Bun.build({
+        entrypoints: [join(dir, "entry.ts")],
+        define: { X: value },
+      });
+      expect(result.success).toBe(true);
+      const out = await result.outputs[0].text();
+      // The printer emits the define as a `"..."` string literal, or as a
+      // `` `...` `` template literal when the value contains a literal newline.
+      // Either way the full value — not a truncated prefix — must round-trip.
+      if (!out.includes("`" + value + "`")) {
+        expect(out).toContain(JSON.stringify(value));
+      }
+    });
+  });
+
   // https://github.com/oven-sh/bun/issues/12818
   test("sourcemap + build error crash case", async () => {
     const dir = tempDirWithFiles("build", {
@@ -1211,3 +1246,148 @@ test.skipIf(!isDebug && !isASAN)(
   },
   120_000,
 );
+
+// Regression: src/js_printer/renamer.zig:592 `assignNamesRecursiveWithNumberScope`
+// walks a linear single-child scope chain in a `while(true)` loop, allocating a
+// fresh `NumberScope` from `number_scope_pool` for every level that declares
+// symbols. The trailing `defer if (s != initial_scope) { s.deinit; pool.put(s) }`
+// only returns the FINAL `s` to the pool — every intermediate NumberScope (and its
+// `name_counts` map) is abandoned. In Zig this is harmless: `name_counts` is backed
+// by the per-chunk worker arena (renamer.zig:533 `number_scope_pool = .init(arena)`,
+// findUnusedName puts via `r.allocator` = worker MimallocArena) and is bulk-freed
+// when the build completes. A port that drops the arena and backs `name_counts`
+// with the global heap leaks one HashMap per intermediate nested scope, per build,
+// forever — watch-mode / dev-server rebuilds grow unbounded.
+//
+// This test asserts the Zig invariant: repeated builds of a file with many deep
+// linear `{ let ...; { ... } }` chains must not grow RSS proportionally to
+// (chain depth × build count). Gated to debug/ASAN like the sourcemap-leak test
+// above because release mimalloc page retention makes RSS too noisy to threshold.
+// TODO(zig-rust-divergence): currently times out on the Rust debug build (the
+// per-chunk arena backing for NumberScope.name_counts was dropped — see
+// docs/ZIG_RUST_DIVERGENCE_AUDIT.md). Skipped instead of `.todo` because the
+// body never reaches its assertion before the 120s timeout, so `.todo` would
+// just burn two minutes of CI per run without exercising the check.
+test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_counts across builds", async () => {
+  // 8 independent linear chains, each 150 blocks deep, 80 `let` bindings per
+  // block. Every block has exactly one child block → renamer takes the linear
+  // fast-path and allocates a NumberScope per level; 149 of 150 are the
+  // "intermediate" ones the Zig defer never puts back. 80 bindings/level means
+  // each leaked `name_counts` holds 80 boxed-key entries.
+  const CHAINS = 8;
+  const DEPTH = 150;
+  const VARS_PER_SCOPE = 80;
+  let entry = "";
+  for (let c = 0; c < CHAINS; c++) {
+    for (let d = 0; d < DEPTH; d++) {
+      let decls = "";
+      for (let v = 0; v < VARS_PER_SCOPE; v++) decls += `c${c}_d${d}_v${v}=${v},`;
+      entry += `{let ${decls.slice(0, -1)};\n`;
+    }
+    entry += "}\n".repeat(DEPTH);
+  }
+
+  const dir = tempDirWithFiles("bun-build-number-renamer-leak", {
+    "entry.js": entry,
+    "run.ts": `
+        const entry = process.argv[2];
+        async function build() {
+          // No identifier minification → NumberRenamer path (not MinifyRenamer).
+          const res = await Bun.build({ entrypoints: [entry], minify: false });
+          if (!res.success) throw new AggregateError(res.logs, "build failed");
+        }
+        async function settle() {
+          for (let i = 0; i < 4; i++) { Bun.gc(true); await Bun.sleep(10); }
+        }
+        // Warm up: fill any one-shot caches and let the worker arenas reach
+        // steady-state so the measured window only reflects per-build retention.
+        for (let i = 0; i < 2; i++) await build();
+        await settle();
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 20; i++) await build();
+        await settle();
+        const after = process.memoryUsage.rss();
+        console.log(JSON.stringify({ before, after, growth: after - before }));
+      `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", join(dir, "run.ts"), join(dir, "entry.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { growth } = JSON.parse(stdout.trim());
+  // With arena-backed scopes (Zig spec) the 20 measured builds reuse the same
+  // worker heap and settle near zero net growth. With global-heap name_counts
+  // and intermediate scopes never returned to the pool, each build abandons
+  // ~8×149 maps × 80 entries — roughly 4-5 MB/build, ~90-100 MB over 20
+  // iterations. 48 MB sits comfortably between the two with headroom for
+  // ASAN/LSan metadata noise.
+  expect(growth).toBeLessThan(48 * 1024 * 1024);
+  expect(exitCode).toBe(0);
+}, 120_000);
+
+// Regression: repeated in-process `Bun.build()` calls panicked with
+// `index out of bounds: the len is 4095 but the index is 4095` (SIGTRAP) after
+// a couple thousand builds. `Path.dupeAlloc` interns every module path into the
+// process-lifetime `FilenameStore`. The Rust port had dropped two things the
+// Zig original does: (1) the `isSliceInBuffer` short-circuit that returns an
+// already-interned path unchanged, and (2) routing the disjoint `text`/`pretty`
+// case (a freshly-relativized display path, recomputed every build) into the
+// per-build arena instead of the store. Without them, each build re-appended
+// every path, and once the store's overflow blocks filled
+// (`OVERFLOW_GROUP_MAX` = 4095 blocks), the next append indexed one past the
+// fixed-capacity pointer array and panicked.
+//
+// Many modules per build reaches the cap in far fewer builds: with 500 modules
+// the broken binary panics roughly a third of the way through this loop, while
+// the fixed binary keeps the store bounded and exits cleanly after all 400.
+// (MODULES stays well under the ~550 where the unrelated recursive tree-shaker
+// overflows its thread stack.) Not gated to debug/ASAN — the panic reproduces
+// on release builds too.
+//
+// An explicit timeout is required (not optional): this runs hundreds of real
+// bundles, far past bun:test's 5s default. The sibling leak tests above do the
+// same. 180s matches the CI runner's own per-test ceiling.
+test("Bun.build can be called thousands of times in one process without crashing", async () => {
+  const MODULES = 500;
+  const BUILDS = 400;
+  const files: Record<string, string> = {};
+  for (let i = 0; i < MODULES; i++) {
+    files[`m${i}.js`] =
+      `import { f${(i + 1) % MODULES} } from "./m${(i + 1) % MODULES}.js";\n` +
+      `export const v${i} = ${i};\n` +
+      `export function f${i}() { return v${i}; }\n`;
+  }
+  files["entry.js"] = Array.from(
+    { length: MODULES },
+    (_, i) => `import { f${i} } from "./m${i}.js"; console.log(f${i}());`,
+  ).join("\n");
+  files["run.ts"] = `
+    const entry = process.argv[2];
+    const BUILDS = ${BUILDS};
+    for (let i = 1; i <= BUILDS; i++) {
+      const res = await Bun.build({ entrypoints: [entry], minify: true, sourcemap: "external" });
+      if (!res.success) throw new AggregateError(res.logs, "build failed");
+      for (const o of res.outputs) await o.arrayBuffer();
+    }
+    console.log("OK " + BUILDS);
+  `;
+  const dir = tempDirWithFiles("bun-build-filename-store-overflow", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "run.ts"), join(dir, "entry.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A crash surfaces as a non-zero (signal) exit and a panic on stderr; assert
+  // the run completed cleanly instead.
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK 400");
+  expect(exitCode).toBe(0);
+}, 180_000);

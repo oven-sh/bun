@@ -1,0 +1,32 @@
+[package]
+name = "bun_core"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bytemuck = "1"
+itoa.workspace = true
+bun_opaque.workspace = true
+strum.workspace = true
+bstr.workspace = true
+const_format.workspace = true
+libc.workspace = true
+bun_alloc.workspace = true
+bun_hash.workspace = true
+bun_dispatch.workspace = true
+bun_simdutf_sys.workspace = true
+bun_core_macros.workspace = true
+bun_output_tags.workspace = true
+# merged from bun_string:
+bun_highway.workspace = true
+bun_wyhash.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_windows_sys.workspace = true

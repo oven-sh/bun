@@ -1144,7 +1144,7 @@ const string = []const u8;
 const Npm = @import("../npm.zig");
 const Options = @import("./PackageManagerOptions.zig");
 const std = @import("std");
-const PackageManagerCommand = @import("../../cli/package_manager_command.zig").PackageManagerCommand;
+const PackageManagerCommand = @import("../../runtime/cli/package_manager_command.zig").PackageManagerCommand;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -7,6 +7,7 @@
 #include "_libusockets.h"
 #include "BunClientData.h"
 #include "EventLoopTask.h"
+#include <wtf/Threading.h>
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
@@ -37,6 +38,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject*
     : m_vm(vm)
     , m_globalObject(globalObject)
     , m_identifier(initialIdentifier())
+    , m_contextThreadUID(Thread::currentSingleton().uid())
 {
     relaxAdoptionRequirement();
     addToContextsMap();
@@ -46,6 +48,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject*
     : m_vm(vm)
     , m_globalObject(globalObject)
     , m_identifier(identifier == std::numeric_limits<int32_t>::max() ? ++lastUniqueIdentifier : identifier)
+    , m_contextThreadUID(Thread::currentSingleton().uid())
 {
     relaxAdoptionRequirement();
     addToContextsMap();
@@ -116,6 +119,28 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
     return true;
 }
 
+// Identical to the overload above, except `betweenLookupAndEnqueue()` runs
+// after the target context is found-live but before the task is enqueued (i.e.
+// before the target thread can observe / run / destroy it). The map lock is
+// held across the callback. Used by `Worker::dispatchExit` so the worker
+// thread can release its create-time ref while the lambda's captured `Ref`
+// is still owned by the worker-thread stack — once enqueued, the parent could
+// run and destroy it before the calling frame resumes, making any later
+// `deref()` on the worker thread potentially the last (~Worker on the wrong
+// thread, EventListenerMap thread-UID assert).
+bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, NOESCAPE const WTF::Function<void()>& betweenLookupAndEnqueue, Function<void(ScriptExecutionContext&)>&& task)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    auto* context = allScriptExecutionContextsMap().get(identifier);
+
+    if (!context)
+        return false;
+
+    betweenLookupAndEnqueue();
+    context->postTaskConcurrently(WTF::move(task));
+    return true;
+}
+
 void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObserver& observer)
 {
 #if ASSERT_ENABLED
@@ -137,12 +162,9 @@ bool ScriptExecutionContext::isJSExecutionForbidden()
     return !m_vm || m_vm->executionForbidden();
 }
 
-extern "C" void* Bun__getVM();
-
 bool ScriptExecutionContext::isContextThread()
 {
-    auto clientData = WebCore::clientData(vm());
-    return clientData && clientData->bunVM == Bun__getVM();
+    return m_contextThreadUID == Thread::currentSingleton().uid();
 }
 
 bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
@@ -242,7 +264,7 @@ void ScriptExecutionContext::postTask(EventLoopTask* task)
     static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
 }
 
-// Zig bindings
+// Native bindings
 extern "C" ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC::JSGlobalObject* globalObject)
 {
     return defaultGlobalObject(globalObject)->scriptExecutionContext()->identifier();

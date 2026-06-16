@@ -3811,8 +3811,8 @@ comptime {
 const string = []const u8;
 
 const std = @import("std");
-const CLI = @import("../cli/cli.zig").Command;
-const JestPrettyFormat = @import("../test_runner/pretty_format.zig").JestPrettyFormat;
+const CLI = @import("../runtime/cli/cli.zig").Command;
+const JestPrettyFormat = @import("../runtime/test_runner/pretty_format.zig").JestPrettyFormat;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

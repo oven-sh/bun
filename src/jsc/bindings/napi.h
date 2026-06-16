@@ -324,7 +324,7 @@ public:
                 fprintf(stderr, "Use `node_api_post_finalizer` from inside of the finalizer to work around this issue.\n");
                 fprintf(stderr, "It schedules the call as a new task in the event loop.\n");
                 fflush(stderr);
-                NAPI_ABORT("napi_reference_unref");
+                NAPI_ABORT("A Node-API function that may affect GC state was called from a finalizer during garbage collection");
             }
         }
     }
@@ -828,7 +828,7 @@ private:
     {
     }
 
-    void finishCreation(VM&, NativeExecutable*, const String& name, napi_callback constructor,
+    void finishCreation(VM&, const String& name, napi_callback constructor,
         void* data,
         size_t property_count,
         const napi_property_descriptor* properties);

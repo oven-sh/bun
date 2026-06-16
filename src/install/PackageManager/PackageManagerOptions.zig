@@ -726,8 +726,9 @@ pub const Enable = packed struct(u16) {
     /// Isolated linker only: materialize package entries once into a shared
     /// `<cache>/links/` directory and symlink `node_modules/.bun/<pkg>` into
     /// it, instead of clonefiling every package into every project on every
-    /// install. Set BUN_INSTALL_GLOBAL_STORE=0 to disable.
-    global_virtual_store: bool = true,
+    /// install. Off by default; set BUN_INSTALL_GLOBAL_STORE=1 or
+    /// `install.globalStore = true` in bunfig to enable.
+    global_virtual_store: bool = false,
     _: u6 = 0,
 };
 

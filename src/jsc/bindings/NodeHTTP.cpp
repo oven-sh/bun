@@ -21,6 +21,7 @@
 #include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <wtf/text/MakeString.h>
 #include "JSSocketAddressDTO.h"
 #include "node/JSNodeHTTPServerSocket.h"
 #include "node/JSNodeHTTPServerSocketPrototype.h"
@@ -110,6 +111,63 @@ static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject
     return JSValue::encode(tuple);
 }
 
+enum class RequestHeaderKind : uint8_t {
+    Joinable,
+    Singleton,
+    Cookie,
+    SetCookie,
+};
+
+static RequestHeaderKind requestHeaderKind(WebCore::HTTPHeaderName name)
+{
+    switch (name) {
+    case WebCore::HTTPHeaderName::SetCookie:
+        return RequestHeaderKind::SetCookie;
+    case WebCore::HTTPHeaderName::Cookie:
+        return RequestHeaderKind::Cookie;
+    case WebCore::HTTPHeaderName::Age:
+    case WebCore::HTTPHeaderName::Authorization:
+    case WebCore::HTTPHeaderName::ContentLength:
+    case WebCore::HTTPHeaderName::ContentType:
+    case WebCore::HTTPHeaderName::ETag:
+    case WebCore::HTTPHeaderName::Expires:
+    case WebCore::HTTPHeaderName::Host:
+    case WebCore::HTTPHeaderName::IfModifiedSince:
+    case WebCore::HTTPHeaderName::IfUnmodifiedSince:
+    case WebCore::HTTPHeaderName::LastModified:
+    case WebCore::HTTPHeaderName::Location:
+    case WebCore::HTTPHeaderName::ProxyAuthorization:
+    case WebCore::HTTPHeaderName::Referer:
+    case WebCore::HTTPHeaderName::UserAgent:
+        return RequestHeaderKind::Singleton;
+    default:
+        return RequestHeaderKind::Joinable;
+    }
+}
+
+static RequestHeaderKind requestHeaderKind(const WTF::String& lowercasedName)
+{
+    if (lowercasedName == "from"_s || lowercasedName == "max-forwards"_s || lowercasedName == "retry-after"_s || lowercasedName == "server"_s)
+        return RequestHeaderKind::Singleton;
+    return RequestHeaderKind::Joinable;
+}
+
+// Builds the value for a duplicated, non-singleton request header: the
+// existing value, the kind's separator, and the new value as one flat
+// string — never a rope.
+static JSString* joinedRequestHeaderValue(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSString* existing, RequestHeaderKind kind, const WTF::String& value)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto existingValue = existing->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    String merged = tryMakeString(existingValue.data, kind == RequestHeaderKind::Cookie ? "; "_s : ", "_s, value);
+    if (merged.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    return jsString(vm, merged);
+}
+
 static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -128,18 +186,20 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         args.append(methodString);
     }
 
-    size_t size = 0;
-    for (auto it = request->begin(); it != request->end(); ++it) {
-        size++;
-    }
-
-    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(size, static_cast<size_t>(JSFinalObject::maxInlineCapacity)));
+    // Skip the extra O(headers) counting pass that used to size the inline
+    // capacity hint. Using a constant capacity keeps every request's headers
+    // object on a single cached structure (structureCache keys on prototype +
+    // inline capacity), so the putDirect transitions below stay on the fast
+    // path request-to-request instead of churning a fresh structure for every
+    // distinct header count. The default inline capacity covers the typical
+    // request without over-allocating; rarer header-heavy requests spill to a
+    // butterfly, same as any other object.
+    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), JSFinalObject::defaultInlineCapacity);
     RETURN_IF_EXCEPTION(scope, void());
     JSC::JSArray* setCookiesHeaderArray = nullptr;
     JSC::JSString* setCookiesHeaderString = nullptr;
     MarkedArgumentBuffer arrayValues;
-
-    args.append(headersObject);
+    HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
 
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
@@ -153,20 +213,28 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
 
         JSString* jsValue = jsString(vm, value);
 
-        HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
         Identifier nameIdentifier;
         JSString* nameString = nullptr;
+        WTF::String lowercasedName;
+        // `findHTTPHeaderName` only writes `name` when it returns true, so the
+        // SetCookie check must be gated on a successful lookup rather than on the
+        // (otherwise indeterminate) `name` value. set-cookie is always a known
+        // header name, so an unrecognized header is never set-cookie.
+        bool knownHeader = WebCore::findHTTPHeaderName(nameView, name);
+        bool isSetCookie = false;
 
-        if (WebCore::findHTTPHeaderName(nameView, name)) {
+        if (knownHeader) {
             nameString = identifiers.stringFor(globalObject, name);
             nameIdentifier = identifiers.identifierFor(vm, name);
+            isSetCookie = name == WebCore::HTTPHeaderName::SetCookie;
         } else {
             WTF::String wtfString = nameView.toString();
             nameString = jsString(vm, wtfString);
-            nameIdentifier = Identifier::fromString(vm, wtfString.convertToASCIILowercase());
+            lowercasedName = wtfString.convertToASCIILowercase();
+            nameIdentifier = Identifier::fromString(vm, lowercasedName);
         }
 
-        if (name == WebCore::HTTPHeaderName::SetCookie) {
+        if (isSetCookie) {
             if (!setCookiesHeaderArray) {
                 setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
                 RETURN_IF_EXCEPTION(scope, );
@@ -180,13 +248,45 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
             RETURN_IF_EXCEPTION(scope, void());
 
         } else {
-            headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, jsValue);
+            if (std::optional<uint32_t> index = parseIndex(nameIdentifier)) [[unlikely]] {
+                // Index-shaped names store through the indexed path. A numeric
+                // name is never a known header name, so duplicates comma-join.
+                JSValue existing = headersObject->getDirectIndex(globalObject, index.value());
+                RETURN_IF_EXCEPTION(scope, void());
+                JSValue valueToPut = jsValue;
+                if (existing) [[unlikely]] {
+                    valueToPut = joinedRequestHeaderValue(globalObject, vm, asString(existing), RequestHeaderKind::Joinable, value);
+                    RETURN_IF_EXCEPTION(scope, void());
+                }
+                headersObject->putDirectIndex(globalObject, index.value(), valueToPut);
+            } else {
+                // Locate the property the same way putDirect's replace path
+                // would, before storing anything: on a duplicate the first
+                // value is still intact at the returned offset.
+                PropertyOffset offset = headersObject->getDirectOffset(vm, nameIdentifier);
+                if (offset != invalidOffset) [[unlikely]] {
+                    // Duplicate header name, Node's rules: singleton headers
+                    // keep the first value (nothing to store), Cookie joins
+                    // with "; ", everything else joins with ", ".
+                    RequestHeaderKind kind = knownHeader ? requestHeaderKind(name) : requestHeaderKind(lowercasedName);
+                    if (kind != RequestHeaderKind::Singleton) {
+                        JSString* merged = joinedRequestHeaderValue(globalObject, vm, asString(headersObject->getDirect(offset)), kind, value);
+                        RETURN_IF_EXCEPTION(scope, void());
+                        headersObject->structure()->didReplaceProperty(offset);
+                        headersObject->putDirectOffset(vm, offset, merged);
+                    }
+                } else {
+                    headersObject->putDirect(vm, nameIdentifier, jsValue, 0);
+                }
+            }
             RETURN_IF_EXCEPTION(scope, void());
             arrayValues.append(nameString);
             arrayValues.append(jsValue);
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
+
+    args.append(headersObject);
 
     JSC::JSArray* array;
     {
@@ -338,10 +438,13 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         HTTPHeaderName name;
         WTF::String nameString;
         WTF::String lowercasedNameString;
+        bool knownHeader = WebCore::findHTTPHeaderName(nameView, name);
+        bool isSetCookie = false;
 
-        if (WebCore::findHTTPHeaderName(nameView, name)) {
+        if (knownHeader) {
             nameString = WTF::httpHeaderNameStringImpl(name);
             lowercasedNameString = nameString;
+            isSetCookie = name == WebCore::HTTPHeaderName::SetCookie;
         } else {
             nameString = nameView.toString();
             lowercasedNameString = nameString.convertToASCIILowercase();
@@ -349,7 +452,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
 
         JSString* jsValue = jsString(vm, value);
 
-        if (name == WebCore::HTTPHeaderName::SetCookie) {
+        if (isSetCookie) {
             if (!setCookiesHeaderArray) {
                 setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
@@ -363,7 +466,39 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
             RETURN_IF_EXCEPTION(scope, {});
 
         } else {
-            headersObject->putDirect(vm, Identifier::fromString(vm, lowercasedNameString), jsValue, 0);
+            Identifier nameIdentifier = Identifier::fromString(vm, lowercasedNameString);
+            if (std::optional<uint32_t> index = parseIndex(nameIdentifier)) [[unlikely]] {
+                // Index-shaped names store through the indexed path. A numeric
+                // name is never a known header name, so duplicates comma-join.
+                JSValue existing = headersObject->getDirectIndex(globalObject, index.value());
+                RETURN_IF_EXCEPTION(scope, {});
+                JSValue valueToPut = jsValue;
+                if (existing) [[unlikely]] {
+                    valueToPut = joinedRequestHeaderValue(globalObject, vm, asString(existing), RequestHeaderKind::Joinable, value);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+                headersObject->putDirectIndex(globalObject, index.value(), valueToPut);
+            } else {
+                // Locate the property the same way putDirect's replace path
+                // would, before storing anything: on a duplicate the first
+                // value is still intact at the returned offset.
+                PropertyOffset offset = headersObject->getDirectOffset(vm, nameIdentifier);
+                if (offset != invalidOffset) [[unlikely]] {
+                    // Duplicate header name, Node's rules: singleton headers
+                    // keep the first value (nothing to store), Cookie joins
+                    // with "; ", everything else joins with ", ".
+                    RequestHeaderKind kind = knownHeader ? requestHeaderKind(name) : requestHeaderKind(lowercasedNameString);
+                    if (kind != RequestHeaderKind::Singleton) {
+                        JSString* merged = joinedRequestHeaderValue(globalObject, vm, asString(headersObject->getDirect(offset)), kind, value);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        headersObject->structure()->didReplaceProperty(offset);
+                        headersObject->putDirectOffset(vm, offset, merged);
+                    }
+                } else {
+                    headersObject->putDirect(vm, nameIdentifier, jsValue, 0);
+                }
+            }
+            RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(globalObject, i++, jsString(vm, nameString));
             array->putDirectIndex(globalObject, i++, jsValue);
             RETURN_IF_EXCEPTION(scope, {});
@@ -887,8 +1022,29 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
             RETURN_IF_EXCEPTION(scope, {});
             const auto name = nameString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            if (WTF::equalIgnoringASCIICase(name, "set-cookie"_s)) {
-                RELEASE_AND_RETURN(scope, fetchHeadersGetSetCookie(globalObject, vm, impl));
+
+            // Resolve the name to its known header enum once. A known name then
+            // takes the HTTPHeaderName fast path (HTTPHeaderMap::get) and skips
+            // the isValidHTTPToken scan plus the second findHTTPHeaderName
+            // lookup that FetchHeaders::get(StringView) would otherwise perform.
+            WebCore::HTTPHeaderName headerName;
+            if (WebCore::findHTTPHeaderName(name, headerName)) {
+                if (headerName == WebCore::HTTPHeaderName::SetCookie) {
+                    // Node's getHeader returns undefined for an absent header;
+                    // Headers.getSetCookie()'s empty array is only correct once
+                    // at least one Set-Cookie value exists.
+                    if (impl->getSetCookieHeaders().isEmpty()) {
+                        return JSValue::encode(jsUndefined());
+                    }
+                    RELEASE_AND_RETURN(scope, fetchHeadersGetSetCookie(globalObject, vm, impl));
+                }
+
+                String value = impl->fastGet(headerName);
+                if (value.isEmpty()) {
+                    return JSValue::encode(jsUndefined());
+                }
+
+                return JSC::JSValue::encode(jsString(vm, value));
             }
 
             WebCore::ExceptionOr<String> res = impl->get(name);
@@ -929,6 +1085,20 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
             if (valueValue.isUndefined())
                 return JSValue::encode(jsUndefined());
 
+            // Resolve the header name to its known enum once. Known names then
+            // take the HTTPHeaderName overload of FetchHeaders::set, which skips
+            // the isValidHTTPToken scan (an enum name is a valid token by
+            // construction) and the second findHTTPHeaderName lookup that
+            // HTTPHeaderMap::set(const String&, ...) would otherwise perform.
+            WebCore::HTTPHeaderName headerName;
+            const bool isKnownHeaderName = WebCore::findHTTPHeaderName(StringView(name), headerName);
+            const auto setHeader = [&](const String& value) {
+                if (isKnownHeaderName)
+                    impl->set(headerName, value);
+                else
+                    impl->set(name, value);
+            };
+
             // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
             // Fall through to the single-value path in that case.
             if (auto* array = dynamicDowncast<JSArray>(valueValue)) {
@@ -938,7 +1108,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                     RETURN_IF_EXCEPTION(scope, {});
                     auto value = item.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
-                    impl->set(name, value);
+                    setHeader(value);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 for (unsigned i = 1; i < length; ++i) {
@@ -955,7 +1125,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
 
             auto value = valueValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            impl->set(name, value);
+            setHeader(value);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(jsUndefined());
         }

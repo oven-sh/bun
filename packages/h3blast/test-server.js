@@ -30,8 +30,8 @@ spawnSync(
 
 const server = Bun.serve({
   port: Number(process.argv[2] ?? process.env.PORT ?? 3443),
-  h3: true,
-  h1: false,
+  http3: true,
+  http1: false,
   tls: { cert: readFileSync(certPath, "utf8"), key: readFileSync(keyPath, "utf8") },
   fetch() {
     return new Response("Hello, World!");

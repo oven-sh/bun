@@ -22,13 +22,13 @@ pub fn main() void {
     _bun.crash_handler.init();
 
     if (Environment.isPosix) {
-        var act: std.posix.Sigaction = .{
+        var act: _bun.sys.Sigaction = .{
             .handler = .{ .handler = std.posix.SIG.IGN },
-            .mask = std.posix.sigemptyset(),
+            .mask = _bun.sys.sigemptyset(),
             .flags = 0,
         };
-        std.posix.sigaction(std.posix.SIG.PIPE, &act, null);
-        std.posix.sigaction(std.posix.SIG.XFSZ, &act, null);
+        _bun.sys.sigaction(std.posix.SIG.PIPE, &act, null);
+        _bun.sys.sigaction(std.posix.SIG.XFSZ, &act, null);
     }
 
     if (Environment.isDebug) {

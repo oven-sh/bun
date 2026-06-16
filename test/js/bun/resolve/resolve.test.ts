@@ -1,6 +1,6 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { chmodSync, chownSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 import { join, resolve, sep } from "path";
 
@@ -589,6 +589,64 @@ describe("wildcard exports with @ in matched subpath", () => {
   });
 });
 
+// A package.json `imports` entry whose value is a bare package specifier
+// (e.g. `"#res": "@myproject/resolver"`) is handed back to package-resolve
+// for a second pass. Per the Node.js packages spec these are URL-like
+// specifiers and must always use forward slashes. On Windows, the join that
+// feeds the second pass was going through `platform::Auto` which normalizes
+// `/` to `\`, turning `@myproject/resolver` into `@myproject\resolver` —
+// the scoped-package match fails and Bun falls back to the legacy `main`
+// field instead of `exports`. Linux/macOS aren't affected because `Auto`
+// is already `Posix` there; this test is therefore Windows-only.
+// https://github.com/oven-sh/bun/issues/30839
+describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", () => {
+  it("resolves via the target's exports, not its main", async () => {
+    using dir = tempDir("resolver-imports-scoped-pkg", {
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+      "packages/resolver/package.json": JSON.stringify({
+        name: "@myproject/resolver",
+        type: "module",
+        main: "./index.cjs",
+        exports: { ".": "./index.mjs" },
+      }),
+      "packages/resolver/index.mjs": "export const type = 'esm (from exports)';",
+      "packages/resolver/index.cjs": "module.exports = { type: 'cjs (from main)' };",
+      "packages/app/package.json": JSON.stringify({
+        name: "app",
+        type: "module",
+        dependencies: { "@myproject/resolver": "workspace:*" },
+        imports: { "#res": "@myproject/resolver" },
+      }),
+      "packages/app/test.mjs": `import { type } from "#res";\nconsole.log(type);`,
+    });
+    const root = String(dir);
+
+    // Wire up @myproject/resolver into app/node_modules so the second pass
+    // through the resolver (the one this fix repairs) can find it — without
+    // invoking `bun install`. `"junction"` is the Windows-appropriate symlink
+    // kind for directories.
+    mkdirSync(join(root, "packages/app/node_modules/@myproject"), { recursive: true });
+    symlinkSync(
+      join(root, "packages/resolver"),
+      join(root, "packages/app/node_modules/@myproject/resolver"),
+      "junction",
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.mjs"],
+      env: bunEnv,
+      cwd: join(root, "packages/app"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("esm (from exports)\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // dirInfoCachedMaybeLog reads the rfs.entries cache without checking the union
 // tag. If readDirectory() previously failed with a non-ENOENT error (e.g.
 // EACCES), a `.err` variant is stored there; re-resolving the directory after
@@ -682,6 +740,75 @@ describe("wildcard exports with @ in matched subpath", () => {
       } catch {}
     }
   });
+
+  // The runtime auto-installer's one-time init reads the top-level directory
+  // (the cwd). When that read fails — cwd on a dead network drive, permissions
+  // revoked, directory deleted — the whole process used to die with
+  // "panic: Failed to initialize package manager" instead of surfacing a
+  // resolution error the caller can catch.
+  //
+  // The cwd must be unlistable from process start (the startup dir walk
+  // otherwise caches its entries, and the cached listing satisfies the
+  // package-manager init even if the directory disappears later), and the
+  // script must live in a readable directory so the resolver reaches the
+  // auto-install path at all.
+  it.skipIf(!canTriggerEACCES)("auto-install init failure from an unreadable cwd is a catchable error", async () => {
+    using dir = tempDir("autoinstall-unreadable-cwd", {
+      // Dynamic specifier so the transpiler can't resolve it at build time;
+      // the resolve must happen at runtime, through the auto-install path.
+      "app/main.js": `
+        console.log("start");
+        const spec = ["left", "pad"].join("-");
+        try {
+          const r = import.meta.resolveSync(spec);
+          console.log("resolved:", r);
+        } catch (e) {
+          console.log("caught:", String(e && e.message));
+        }
+        console.log("end");
+      `,
+      "work/.keep": "",
+    });
+    const root = String(dir);
+    const work = join(root, "work");
+
+    let cmd: string[];
+    if (canUseRunuser) {
+      // Let `nobody` traverse and read everything except the cwd.
+      for (const p of [root, join(root, "app"), join(root, "app", "main.js")]) {
+        chmodSync(p, 0o777);
+      }
+      cmd = ["runuser", "-u", "nobody", "--", bunExe(), join(root, "app", "main.js")];
+    } else {
+      cmd = [bunExe(), join(root, "app", "main.js")];
+    }
+    // Execute-only: the spawn can chdir into it, but listing it fails.
+    chmodSync(work, 0o111);
+
+    try {
+      await using proc = Bun.spawn({
+        cmd,
+        env: bunEnv,
+        cwd: work,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: expect.stringMatching(
+          /^start\ncaught: Cannot read directory "[^"]+": E[A-Z]+ while resolving "left-pad"\nend\n$/,
+        ),
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      // Ensure tempDir cleanup can delete work/.keep.
+      try {
+        chmodSync(work, 0o755);
+      } catch {}
+    }
+  });
 }
 
 describe("resolving external URL specifiers with non-ASCII characters", () => {
@@ -720,4 +847,48 @@ describe("resolving external URL specifiers with non-ASCII characters", () => {
     expect(stdout).toContain("caught");
     expect(exitCode).toBe(0);
   });
+});
+
+// Stress the resolver's directory-info cache: resolve through hundreds of
+// distinct package directories (each `put` hands back a slot pointer into the
+// shared dir-cache that must stay valid while the cache keeps growing) plus a
+// deep directory chain (the cache-miss walk stashes a parent slot pointer
+// across subsequent cache insertions). A stale/corrupted slot pointer shows up
+// as wrong resolution results or a crash, not a clean error.
+it("resolves through many directories without corrupting the dir cache", async () => {
+  const files: Record<string, string> = {};
+  const N = 200;
+  let imports = "";
+  for (let i = 0; i < N; i++) {
+    files[`node_modules/pkg-${i}/package.json`] = JSON.stringify({
+      name: `pkg-${i}`,
+      main: "./lib/index.js",
+    });
+    files[`node_modules/pkg-${i}/lib/index.js`] = `module.exports = ${i};`;
+    imports += `total += require("pkg-${i}");\n`;
+  }
+
+  // Deep chain: resolving the leaf populates one cache entry per path
+  // component in a single cache-miss walk, and requiring packages *from* the
+  // leaf walks every parent directory back up through the now-cached entries.
+  // Depth 30 keeps the absolute path well under Windows' 260-char MAX_PATH
+  // even with a long CI temp-dir prefix; the cache-miss walk is exercised the
+  // same at this depth.
+  let deep = "deep";
+  for (let d = 0; d < 30; d++) deep += `/d${d}`;
+  files[`${deep}/leaf.js`] = `module.exports = require("pkg-3") + require("pkg-77");`;
+  files["index.js"] = `let total = 0;\n${imports}console.log(total);\nconsole.log(require("./${deep}/leaf.js"));`;
+
+  const dir = tempDirWithFiles("dir-cache-stress", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`${(N * (N - 1)) / 2}\n${3 + 77}\n`);
+  expect(exitCode).toBe(0);
 });

@@ -64,6 +64,25 @@ pub const Method = enum(u8) {
         return with_request_body.contains(this);
     }
 
+    /// Per RFC 7231 §4.2.2, idempotent methods are safe to retry on
+    /// keep-alive connection resets. POST and PATCH are NOT idempotent
+    /// and must not be silently retried.
+    const idempotent: Set = brk: {
+        var values = Set.initEmpty();
+        values.insert(.GET);
+        values.insert(.HEAD);
+        values.insert(.PUT);
+        values.insert(.DELETE);
+        values.insert(.OPTIONS);
+        values.insert(.TRACE);
+        values.insert(.QUERY);
+        break :brk values;
+    };
+
+    pub fn isIdempotent(this: Method) bool {
+        return idempotent.contains(this);
+    }
+
     pub fn find(str: []const u8) ?Method {
         return Map.get(str);
     }

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 34
+# Version: 37
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -780,7 +780,7 @@ install_common_software() {
 }
 
 nodejs_version_exact() {
-	print "24.3.0"
+	print "26.3.0"
 }
 
 nodejs_version() {
@@ -819,7 +819,11 @@ install_nodejs() {
 
 	case "$abi" in
 	musl)
-		nodejs_mirror="https://bun-nodejs-release.s3.us-west-1.amazonaws.com"
+		# nodejs.org doesn't publish musl binaries; the unofficial-builds
+		# project (nodejs/unofficial-builds) ships both x64-musl and
+		# arm64-musl for current releases. (The old private S3 mirror at
+		# bun-nodejs-release predates arm64-musl being available there.)
+		nodejs_mirror="https://unofficial-builds.nodejs.org/download/release"
 		nodejs_foldername="node-v$nodejs_version-$nodejs_platform-$nodejs_arch-musl"
 		;;
 	*)
@@ -1128,6 +1132,7 @@ install_build_essentials() {
 		linux)
 			install_packages \
 				make \
+				nasm \
 				python3 \
 				libtool \
 				ruby \
@@ -1142,6 +1147,7 @@ install_build_essentials() {
 	install_rust
 	install_android_ndk
 	install_freebsd_sysroot
+	install_windows_sysroot
 	install_ccache
 	install_docker
 }
@@ -1312,6 +1318,15 @@ install_rust() {
 		# x86_64-unknown-freebsd is Tier 2 (prebuilt std). aarch64 is Tier 3
 		# (no prebuilt) — lolhtml.ts uses -Zbuild-std for that.
 		execute_as_user "$rustup" target add x86_64-unknown-freebsd
+		# macOS cross-compile lanes build libbun_rust.a for darwin on the
+		# shared Linux rust box (Tier 2, prebuilt std). The ninja rule
+		# self-heals with `rustup target add` if these are missing, but
+		# preinstalling keeps that step off the network.
+		execute_as_user "$rustup" target add aarch64-apple-darwin
+		execute_as_user "$rustup" target add x86_64-apple-darwin
+		# Windows cross-compile targets (--os=windows from a linux host).
+		execute_as_user "$rustup" target add x86_64-pc-windows-msvc
+		execute_as_user "$rustup" target add aarch64-pc-windows-msvc
 		# rust-src for -Zbuild-std (Tier 3 targets without prebuilt std).
 		execute_as_user "$rustup" component add rust-src
 		;;
@@ -1393,6 +1408,75 @@ install_freebsd_sysroot() {
 	done
 	# No FREEBSD_SYSROOT export — detectFreebsdSysroot() picks the
 	# arch-appropriate /opt/freebsd-sysroot{,-arm64} by well-known path.
+}
+
+xwin_version() {
+	# Keep in sync with XWIN_VERSION in scripts/build/winsysroot.ts and
+	# .buildkite/Dockerfile.
+	print "0.9.0"
+}
+
+install_windows_sysroot() {
+	case "$os" in
+	linux) ;;
+	*) return ;;
+	esac
+
+	# MSVC CRT/STL + Windows SDK splat for --os=windows cross-compiles,
+	# laid out like a Visual Studio install so clang-cl/lld-link's
+	# /winsysroot flag works (see scripts/build/config.ts `winsysroot`).
+	# Fetched with xwin, which downloads the components from Microsoft's CDN;
+	# --accept-license accepts the Microsoft Software License Terms for the
+	# Build Tools/SDK on behalf of this machine (same terms the Windows CI
+	# images accept when installing VS Build Tools). Machines that skip this
+	# step still work: configure fetches the same splat at build time when
+	# none is present (scripts/build/winsysroot.ts).
+	sysroot="/opt/winsysroot"
+	# Same sentinel scripts/build/winsysroot.ts isCompleteWindowsSysroot()
+	# uses: the SDK lib tree plus a kernel32 import lib plus the ATL headers
+	# (--include-atl), so a half-splatted or pre-ATL sysroot isn't treated as
+	# complete. xwin writes the SDK dirs/files lowercase; a copied VS install
+	# is title-case — accept both.
+	if ls "$sysroot/Windows Kits/10/"[Ll]ib/*/um/x64/kernel32.[Ll]ib >/dev/null 2>&1 &&
+		ls "$sysroot"/VC/Tools/MSVC/*/include/atlstr.h >/dev/null 2>&1; then
+		return
+	fi
+
+	xwin_ver="$(xwin_version)"
+	case "$arch" in
+	aarch64) xwin_triple="aarch64-unknown-linux-musl" ;;
+	*) xwin_triple="x86_64-unknown-linux-musl" ;;
+	esac
+	xwin_tar=$(download_file "https://github.com/Jake-Shadle/xwin/releases/download/${xwin_ver}/xwin-${xwin_ver}-${xwin_triple}.tar.gz")
+	xwin_dir="$(dirname "$xwin_tar")/xwin-extract"
+	execute mkdir -p "$xwin_dir"
+	execute tar -xzf "$xwin_tar" -C "$xwin_dir" --strip-components=1
+
+	execute_sudo rm -rf "$sysroot"
+	execute_sudo mkdir -p "$sysroot"
+	# The cache must live on the same filesystem as the output: splat moves
+	# unpacked files with rename(2), which fails with EXDEV (cross-device
+	# link) when the download dir is on tmpfs and /opt is not.
+	xwin_cache="$sysroot.cache"
+	execute_sudo rm -rf "$xwin_cache"
+	execute_sudo mkdir -p "$xwin_cache"
+	# Both target arches in one splat; --include-debug-libs so /MTd (debug
+	# CRT) links work; --include-atl for <atlstr.h> (rescle.cpp);
+	# winsysroot-style + MS arch notation so clang-cl and lld-link resolve it
+	# with a single /winsysroot flag; symlinks stay ON (default) to fix
+	# include/lib casing on a case-sensitive filesystem.
+	# stdout is dropped: xwin draws progress bars there even without a TTY,
+	# which floods the image-build log. Errors stay on stderr.
+	execute_sudo "$xwin_dir/xwin" --accept-license --arch x86_64,aarch64 --sdk-version 10.0.26100 --crt-version 14.44.17.14 --include-atl --cache-dir "$xwin_cache" \
+		splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs \
+		--output "$sysroot" >/dev/null
+	# clang-cl/lld-link compose SDK paths as "Include"/"Lib" (title case);
+	# the winsysroot-style splat writes lowercase — alias both spellings.
+	execute_sudo ln -s include "$sysroot/Windows Kits/10/Include"
+	execute_sudo ln -s lib "$sysroot/Windows Kits/10/Lib"
+	execute_sudo rm -rf "$xwin_dir" "$xwin_cache"
+	# No WINDOWS_SYSROOT export — detectWindowsSysroot() picks up
+	# /opt/winsysroot by well-known path.
 }
 
 install_docker() {
@@ -1693,6 +1777,17 @@ install_chromium() {
 			install_packages libasound2t64
 		else
 			install_packages libasound2
+		fi
+
+		# Install Chrome itself on x64 (no arm64 build exists): with a system
+		# browser present, puppeteer-based tests skip their per-run ~300MB
+		# Chrome for Testing download entirely (see
+		# test/harness.ts getPuppeteerInstallEnv).
+		if [ "$arch" = "x64" ]; then
+			chrome_deb=$(download_file "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb")
+			# Best-effort: execute_sudo aborts the whole script on failure, so the
+			# fallback chain must run inside a single sudo'd shell.
+			execute_sudo sh -c "apt-get install -y '$chrome_deb' || dpkg -i '$chrome_deb' || true"
 		fi
 		;;
 	dnf | yum)

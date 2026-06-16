@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 test("Request with streaming body can be cloned", async () => {
   const stream = new ReadableStream({
@@ -517,4 +518,53 @@ test("ReadableStream with mixed content (starting with ArrayBuffer) can be conve
   expect(text).toContain("Hello, 世界!");
   expect(text).toContain("🌍");
   expect(text).toContain("Здравствуй, мир!");
+});
+
+test("Blob type from a consumed Response keeps the original content-type after clones with different content-types are consumed", async () => {
+  // The Response and its clones share one underlying body store. Consuming a clone
+  // with a different Content-Type must not change (or invalidate) the type of a Blob
+  // that was already returned from a previous .blob() call on a sibling.
+  const script = `
+    const originalType = "application/x-original-type-0000000000000001";
+    const replacementType = "application/x-replaced-type-0000000000000002";
+    const churnType = "application/x-scribble-type-0000000000000003";
+
+    const r1 = new Response(new Blob(["x"]), { headers: { "content-type": originalType } });
+    const clones = [];
+    for (let i = 0; i < 8; i++) clones.push(r1.clone());
+
+    // Consume the original first; its Blob's type should remain originalType.
+    const b1 = await r1.blob();
+
+    // Consume every clone (same shared store) with a different, same-length content-type.
+    const cloneTypes = [];
+    for (const clone of clones) {
+      clone.headers.set("content-type", replacementType);
+      cloneTypes.push((await clone.blob()).type);
+    }
+
+    // Consume a batch of unrelated bodies whose content-type has the same length,
+    // recycling any recently released same-sized native allocations.
+    const churned = [];
+    for (let i = 0; i < 64; i++) {
+      const r = new Response(new Blob(["y"]), { headers: { "content-type": churnType } });
+      churned.push(await r.blob());
+    }
+
+    console.log(b1.type);
+    console.log(cloneTypes.every(type => type === replacementType) ? "clone-ok" : "clone-bad");
+    console.log(churned.every(b => b.type === churnType) ? "churn-ok" : "churn-bad");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim().split("\n")).toEqual(["application/x-original-type-0000000000000001", "clone-ok", "churn-ok"]);
+  expect(exitCode).toBe(0);
 });

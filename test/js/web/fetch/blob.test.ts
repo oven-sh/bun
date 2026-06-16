@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
@@ -101,6 +101,15 @@ test("new Blob", () => {
   blob = new Blob(["Bun", "Foo"], { type: "\u1234" });
   expect(blob.size).toBe(6);
   expect(blob.type).toBe("");
+});
+
+test("new Blob stringifies non-Blob object parts in order", async () => {
+  const url = new URL("https://example.com/path");
+  expect(await new Blob([url]).text()).toBe("https://example.com/path");
+  expect(await new Blob(["a", url, "b"]).text()).toBe("ahttps://example.com/pathb");
+  expect(await new Blob(["a", {}, "b"]).text()).toBe("a[object Object]b");
+  expect(await new Blob(["a", {}, "b", { toString: () => "X" }]).text()).toBe("a[object Object]bX");
+  expect(await new Blob(["a", ["x", "y"], "b"]).text()).toBe("ax,yb");
 });
 
 test("blob: can be fetched", async () => {
@@ -323,4 +332,227 @@ test("dupe() preserves allocated content_type for Body clone", () => {
   const clonedType = cloned.headers.get("content-type");
   expect(originalType).toStartWith("multipart/form-data; boundary=");
   expect(clonedType).toBe(originalType);
+});
+
+test("Bun.file(path, {type}).text() does not leak the duped content_type", async () => {
+  using dir = tempDir("blob-text-content-type", {
+    "data.txt": "hello",
+  });
+  const script = `
+    const p = ${JSON.stringify(path.join(String(dir), "data.txt"))};
+    const type = "application/x-" + Buffer.alloc(64 * 1024, "a").toString();
+    const file = Bun.file(p, { type });
+    for (let i = 0; i < 100; i++) await file.text();
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 1024; i++) await file.text();
+    Bun.gc(true);
+    const after = process.memoryUsage.rss();
+    console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { deltaMiB } = JSON.parse(stdout);
+  expect(deltaMiB).toBeLessThan(isASAN ? 400 : 40);
+  expect(exitCode).toBe(0);
+});
+
+test("reading a file-backed Blob does not free the source's content type", async () => {
+  using dir = tempDir("blob-text-keeps-type", {
+    "data.txt": "hello",
+  });
+  const customType = "application/x-custom-type-not-in-registry-keepme";
+  const file = Bun.file(path.join(String(dir), "data.txt"), { type: customType });
+  expect(await file.text()).toBe("hello");
+  expect(await file.text()).toBe("hello");
+  expect(file.type).toBe(customType);
+});
+
+test("Bun.write preserves a custom content type on the destination", async () => {
+  using dir = tempDir("blob-write-keeps-type", {});
+  const customType = "application/x-custom-type-not-in-registry-write";
+  const dest = Bun.file(path.join(String(dir), "out.txt"), { type: customType });
+  await Bun.write(dest, "data");
+  expect(await dest.text()).toBe("data");
+  expect(dest.type).toBe(customType);
+});
+
+test("Blob part's bytes survive a later part freeing it during construction", async () => {
+  // Regression: the Blob constructor pushed Blob parts into the string joiner
+  // as *borrowed* views into their Store's bytes. A later part whose
+  // processing runs user JS (an object part's toString) could drop the last
+  // reference to that Blob and GC it, freeing the Store before the joiner
+  // copied the view out — a use-after-free. Blob parts must be copied at push
+  // time. Under ASAN the unfixed read is a use-after-poison crash.
+  using dir = tempDir("blob-part-uaf", {
+    "run.ts": `
+      const SIZE = 1 << 18;
+      const expected = Buffer.alloc(SIZE, "A").toString() + "x";
+      for (let i = 0; i < 16; i++) {
+        const parts: any[] = [
+          new Blob([Buffer.alloc(SIZE, "A")]),
+          {
+            toString() {
+              // Drop the only reference to the Blob part, collect it, then
+              // reallocate same-sized buffers so the freed Store bytes get
+              // clobbered if the joiner still holds a borrowed view into them.
+              parts.length = 0;
+              Bun.gc(true);
+              const clobber = [];
+              for (let j = 0; j < 8; j++) clobber.push(Buffer.alloc(SIZE, "B"));
+              return "x";
+            },
+          },
+        ];
+        const text = await new Blob(parts).text();
+        if (text !== expected) {
+          throw new Error("Blob part bytes were corrupted at iteration " + i);
+        }
+      }
+      process.stdout.write("OK");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
+test("Blob constructor copies typed array parts before later parts run user code", async () => {
+  // Constructing a Blob from [typedArray, objectWithToString] must snapshot the
+  // typed array's bytes when that part is visited. Stringifying a later part
+  // runs arbitrary user JS (toString / Symbol.toPrimitive / proxy traps) which
+  // can transfer or resize the earlier part's backing store before the Blob's
+  // contents are assembled. The resulting Blob must contain the bytes the view
+  // held at construction time, not whatever ends up at that address afterwards.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const ab = new ArrayBuffer(64, { maxByteLength: 1024 });
+        const view = new Uint8Array(ab);
+        view.fill(0x41); // "A"
+        const blob = new Blob([
+          view,
+          {
+            toString() {
+              // Detach the first part's buffer and overwrite the moved
+              // backing store while the Blob is still being assembled.
+              const moved = ab.transfer();
+              new Uint8Array(moved).fill(0x42); // "B"
+              return "tail";
+            },
+          },
+        ]);
+        const text = await blob.text();
+        const expected = Buffer.alloc(64, 0x41).toString() + "tail";
+        if (text !== expected) {
+          throw new Error("unexpected blob contents: " + JSON.stringify(text));
+        }
+        console.log("OK", blob.size);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK 68");
+  expect(exitCode).toBe(0);
+});
+
+test("Blob.slice at an odd byte offset decodes UTF-16LE (BOM) content with text() and json()", async () => {
+  // A blob sliced at an odd start keeps a view into the original store at an odd
+  // byte offset. When the bytes at that offset begin with a UTF-16LE BOM (FF FE),
+  // text()/json() must decode the remaining (odd-aligned) bytes as UTF-16 instead
+  // of aborting. Run in a subprocess so a process abort surfaces as a nonzero exit
+  // code rather than killing the test runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // 0x41 prefix byte, then UTF-16LE BOM (FF FE) followed by "hi" / "42".
+        // slice(1) makes the decoded view start at an odd offset into the backing store.
+        const textBytes = new Uint8Array([0x41, 0xff, 0xfe, 0x68, 0x00, 0x69, 0x00]);
+        const oddText = await new Blob([textBytes]).slice(1).text();
+
+        const jsonBytes = new Uint8Array([0x41, 0xff, 0xfe, 0x34, 0x00, 0x32, 0x00]);
+        const oddJson = await new Blob([jsonBytes]).slice(1).json();
+
+        // The aligned (offset 0) UTF-16LE BOM case keeps working too.
+        const alignedText = await new Blob([new Uint8Array([0xff, 0xfe, 0x68, 0x00, 0x69, 0x00])]).text();
+
+        console.log(JSON.stringify({ oddText, oddJson, alignedText }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe(JSON.stringify({ oddText: "hi", oddJson: 42, alignedText: "hi" }));
+  expect(exitCode).toBe(0);
+});
+
+// structuredClone/postMessage of sliced Blobs and Files is covered by
+// test/js/web/structured-clone-blob-file.test.ts. These tests focus on the
+// consumer paths that go through resolve_size()/resolved_size() rather than
+// serialization — streaming a slice and using one as an HTTP body.
+describe("slice bounds are respected when streaming and serving", () => {
+  test("Blob.slice(start, end).stream()", async () => {
+    const s = new Blob(["0123456789"]).slice(3, 7);
+    expect(await new Response(s.stream()).text()).toBe("3456");
+    // Streaming must not mutate the slice either.
+    expect(s.size).toBe(4);
+    expect(await s.text()).toBe("3456");
+  });
+
+  test("Response(slice).body reader", async () => {
+    const res = new Response(new Blob(["0123456789"]).slice(3, 7));
+    const reader = res.body!.getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    expect(Buffer.concat(chunks).toString()).toBe("3456");
+  });
+
+  test("content-length of a sliced Blob response body", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new Blob(["0123456789"]).slice(3, 7)),
+    });
+
+    const head = await fetch(`http://localhost:${server.port}/`, { method: "HEAD" });
+    expect(head.headers.get("content-length")).toBe("4");
+
+    const get = await fetch(`http://localhost:${server.port}/`);
+    expect(get.headers.get("content-length")).toBe("4");
+    expect(await get.text()).toBe("3456");
+  });
 });

@@ -83,6 +83,52 @@ test("in subdirectory", async () => {
 });
 
 describe("package.json names and versions", () => {
+  test("rejects name and version containing parent directory components", async () => {
+    const projectDir = join(packageDir, "nested", "project");
+    await mkdir(projectDir, { recursive: true });
+    await Promise.all([
+      write(
+        join(projectDir, "package.json"),
+        JSON.stringify({
+          name: "../../outside-pkg",
+          version: "1.0.0",
+        }),
+      ),
+      write(join(projectDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    const { err } = await packExpectError(projectDir, bunEnv);
+    expect(err).toContain("package.json `name` and `version` fields");
+
+    // the tarball must not be created at the location the ".." segments resolve to,
+    // nor anywhere inside the project directory
+    expect(await exists(join(packageDir, "outside-pkg-1.0.0.tgz"))).toBeFalse();
+    expect(await exists(join(projectDir, "outside-pkg-1.0.0.tgz"))).toBeFalse();
+
+    // a version with ".." segments is rejected the same way
+    await write(
+      join(projectDir, "package.json"),
+      JSON.stringify({
+        name: "pack-traversal-check",
+        version: "../1.0.0",
+      }),
+    );
+    const { err: versionErr } = await packExpectError(projectDir, bunEnv);
+    expect(versionErr).toContain("package.json `name` and `version` fields");
+
+    // a normal name and version still packs into the project directory
+    await write(
+      join(projectDir, "package.json"),
+      JSON.stringify({
+        name: "pack-traversal-check",
+        version: "1.0.0",
+      }),
+    );
+    await pack(projectDir, bunEnv);
+    const tarball = readTarball(join(projectDir, "pack-traversal-check-1.0.0.tgz"));
+    expect(tarball.entries).toHaveLength(2);
+  });
+
   const tests = [
     {
       desc: "missing name",

@@ -1173,3 +1173,37 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
     expect(storedFile.owner!.id).toBeString();
   });
 });
+
+it("parses a large list response containing repeated unclosed Key tags quickly", async () => {
+  // ListObjectsV2 body with a valid <Name> followed by ~5MB of opening <Key> tags
+  // that never have a matching closing tag.
+  const malformed = `<ListBucketResult><Name>my_bucket</Name><Contents>${Buffer.alloc(5_000_000, "<Key>").toString()}`;
+
+  using server = createBunServer(async () => {
+    return new Response(malformed, {
+      headers: {
+        "Content-Type": "application/xml",
+      },
+      status: 200,
+    });
+  });
+
+  const client = new S3Client({
+    ...options,
+    endpoint: server.url.href,
+  });
+
+  const start = performance.now();
+  const res = await client.list();
+  const elapsed = performance.now() - start;
+
+  // Fields parsed before the malformed section are still returned; the unterminated
+  // <Key> entries are ignored instead of producing bogus contents.
+  expect(res).toEqual({
+    name: "my_bucket",
+  });
+
+  // Parsing must scale linearly with the response size. Even on slow debug/ASAN builds
+  // a single 5MB response should be handled in well under 10 seconds.
+  expect(elapsed).toBeLessThan(10_000);
+}, 600_000);

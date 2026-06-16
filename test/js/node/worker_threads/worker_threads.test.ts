@@ -52,11 +52,7 @@ describe.concurrent("uncaught exceptions in worker don't abort the process", () 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode };
   }
 
@@ -83,9 +79,7 @@ describe.concurrent("uncaught exceptions in worker don't abort the process", () 
   });
 
   test("worker beforeExit handler throws", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      `process.on("beforeExit", () => { throw 99 })`,
-    );
+    const { stdout, stderr, exitCode } = await run(`process.on("beforeExit", () => { throw 99 })`);
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "worker-exit:1\n",
       stderr: expect.any(String),

@@ -61,8 +61,12 @@ fn replacement_char_uint8_array(global_this: &JSGlobalObject) -> JSValue {
 }
 
 fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
-    const SMALL_BUF_LEN: usize = 192;
-    if slice.len() <= SMALL_BUF_LEN / 3 {
+    const SMALL_BUF_LEN: usize = 2048;
+    // max utf16 -> utf8 expansion is 3 bytes per code unit (BMP) and 4 bytes
+    // per surrogate pair (2 bytes per unit), but an unpaired surrogate becomes
+    // U+FFFD (3 bytes), so worst case per unit is 3. `/ 4` matches the Zig
+    // threshold and leaves slack for the replacement-char case.
+    if slice.len() <= SMALL_BUF_LEN / 4 {
         let mut buf = [0u8; SMALL_BUF_LEN];
         let result = strings::copy_utf16_into_utf8(&mut buf, slice);
         if result.read == 0 || result.written == 0 {
@@ -83,25 +87,12 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
         return uint8array;
     }
 
-    let need = strings::element_length_utf16_into_utf8(slice);
-
-    if need == 0 {
-        return replacement_char_uint8_array(global_this);
-    }
-
-    let Ok(uint8array) = create_uninitialized_uint8_array(global_this, need) else {
-        return JSValue::ZERO;
-    };
-    let Some(mut array_buffer) = uint8array.as_array_buffer(global_this) else {
-        return JSValue::ZERO;
-    };
-    debug_assert!(array_buffer.len == need);
-    let result =
-        strings::copy_utf16_into_utf8_with_utf8_len(array_buffer.byte_slice_mut(), slice, need);
-    if result.written as usize == need && result.read as usize == slice.len() {
-        return uint8array;
-    }
-
+    // Large input: allocate once via to_utf8_alloc_with_type and wrap the
+    // resulting Vec as an external Uint8Array. Pre-sizing a JSC Uint8Array via
+    // simdutf's utf16->utf8 length is unsafe here because that length counts
+    // an unpaired surrogate as 2 bytes, but the U+FFFD replacement we emit is
+    // 3 bytes, so the buffer would be undersized and require a second
+    // allocation.
     let bytes = strings::to_utf8_alloc_with_type(slice);
     ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
         .to_js_unchecked(global_this)

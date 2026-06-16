@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { gc as gcTrace, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, gc as gcTrace, withoutAggressiveGC } from "harness";
 
 const getByteLength = str => {
   // returns the byte length of an utf8 string
@@ -682,4 +682,48 @@ describe("TextEncoder UTF-16 exact-size path", () => {
       }
     }
   });
+});
+
+// Regression: encode16 on large UTF-16 input with an unpaired surrogate used
+// to allocate a JSC Uint8Array sized by simdutf's utf16->utf8 length (which
+// undercounts a lone surrogate as 2 bytes instead of the 3-byte U+FFFD), fail
+// to fill it, and then allocate a second external Uint8Array, orphaning the
+// first until GC. One encode() call must produce exactly one Uint8Array.
+it("encode() allocates one Uint8Array per call for large UTF-16 with a lone surrogate", async () => {
+  const src = `
+    const { heapStats } = require("bun:jsc");
+    const N = 20;
+    const results = {};
+    for (const [name, units] of [["large", 100000], ["mid", 200]]) {
+      const s = Buffer.alloc(units, "x").toString() + "\\uD800" + Buffer.alloc(units, "y").toString();
+      Bun.gc(true);
+      const before = heapStats().objectTypeCounts.Uint8Array || 0;
+      const keep = [];
+      for (let i = 0; i < N; i++) keep.push(new TextEncoder().encode(s));
+      const after = heapStats().objectTypeCounts.Uint8Array || 0;
+      results[name] = { delta: after - before, len: keep[0].length, expectedLen: units + 3 + units };
+    }
+    process.stdout.write(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  const results = JSON.parse(stdout);
+
+  // Output bytes must be correct regardless of the allocation path taken.
+  expect(results.large.len).toBe(results.large.expectedLen);
+  expect(results.mid.len).toBe(results.mid.expectedLen);
+
+  // Exactly one Uint8Array per encode() call. Allow a couple of slack
+  // objects from unrelated lazy init, but 2x (the regressed behavior) must
+  // fail: 20 calls must yield well under 30 live Uint8Arrays, never 40.
+  expect(results.large.delta).toBeGreaterThanOrEqual(20);
+  expect(results.large.delta).toBeLessThan(30);
+  expect(results.mid.delta).toBeGreaterThanOrEqual(20);
+  expect(results.mid.delta).toBeLessThan(30);
 });

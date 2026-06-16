@@ -442,12 +442,13 @@ mod _impl {
                 // buffer keeps `slice` (borrowed from `buf`) valid for the
                 // fallback below.
                 //
-                // `getcwd` can fail with ENOENT when the new cwd has already
-                // been unlinked, e.g. `chdir("..")` into a directory that was
-                // `rm -rf`'d. The chdir itself still succeeded, and Node does
-                // not treat a failed cwd lookup as a chdir failure, so fall
-                // back to the logical path (old cwd joined with the target)
-                // rather than rolling the chdir back and throwing.
+                // `getcwd` can fail after a successful chdir: ENOENT when the
+                // new cwd was unlinked (e.g. `chdir("..")` into a directory
+                // that was `rm -rf`'d) or ERANGE when the cwd has grown past
+                // PATH_MAX. The chdir itself still succeeded, and Node does not
+                // treat a failed cwd lookup as a chdir failure, so fall back to
+                // the logical path (old cwd joined with the target) rather than
+                // rolling the chdir back and throwing.
                 let mut cwd_scratch = bun_paths::path_buffer_pool::get();
                 let into_cwd_len = match Syscall::getcwd(&mut cwd_scratch[..]) {
                     bun_sys::Result::Ok(r) => {
@@ -455,17 +456,26 @@ mod _impl {
                         r
                     }
                     bun_sys::Result::Err(_) => {
+                        // The checked join returns None instead of overflowing
+                        // the fixed buffer when the logical path would exceed
+                        // PATH_MAX; keep the previously cached cwd in that case.
                         let mut resolve_scratch = bun_paths::path_buffer_pool::get();
-                        let resolved = bun_paths::resolve_path::join_abs_string_buf::<
+                        match bun_paths::resolve_path::join_abs_string_buf_checked::<
                             bun_paths::platform::Auto,
                         >(
                             top_level_dir,
                             &mut resolve_scratch[..],
                             &[slice.as_bytes()],
-                        );
-                        let len = resolved.len();
-                        fs.top_level_dir_buf[..len].copy_from_slice(resolved);
-                        len
+                        ) {
+                            // Leave room for the trailing NUL and separator
+                            // written below.
+                            Some(resolved) if resolved.len() + 2 <= bun_paths::MAX_PATH_BYTES => {
+                                let len = resolved.len();
+                                fs.top_level_dir_buf[..len].copy_from_slice(resolved);
+                                len
+                            }
+                            _ => top_level_dir.len(),
+                        }
                     }
                 };
                 fs.top_level_dir_buf[into_cwd_len] = 0;

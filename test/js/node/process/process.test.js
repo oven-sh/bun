@@ -157,6 +157,39 @@ it.skipIf(!isLinux)("process.chdir() does not throw when the cwd was deleted", a
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/32409
+// Linux-only: the process cwd can grow past PATH_MAX via repeated relative
+// chdir, after which getcwd fails with ERANGE. The logical-path fallback must
+// not overflow its fixed buffer, which would crash the process.
+it.skipIf(!isLinux)("process.chdir() does not crash when the cwd grows past PATH_MAX", async () => {
+  using dir = tempDir("process-chdir-long", {
+    "index.js": `
+      const fs = require("node:fs");
+      const seg = "d".repeat(200);
+      // 40 * ~201 bytes is well past PATH_MAX (4096): getcwd() starts failing
+      // with ERANGE partway down, but each short relative chdir still succeeds.
+      for (let i = 0; i < 40; i++) {
+        fs.mkdirSync(seg);
+        process.chdir(seg);
+      }
+      console.log("OK");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
 it("process.hrtime()", async () => {
   const start = process.hrtime();
   const end = process.hrtime(start);

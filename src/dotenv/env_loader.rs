@@ -1223,15 +1223,15 @@ impl<'a> Parser<'a> {
                         // balancing the braces of any nested `${...}`. A `\$`
                         // escape inside the default is resolved when the
                         // default is expanded, so it is not special here.
-                        let mut depth = 0usize;
+                        let mut brace_depth = 0usize;
                         while j < n {
                             match value[j] {
-                                b'{' => depth += 1,
+                                b'{' => brace_depth += 1,
                                 b'}' => {
-                                    if depth == 0 {
+                                    if brace_depth == 0 {
                                         break;
                                     }
-                                    depth -= 1;
+                                    brace_depth -= 1;
                                 }
                                 _ => {}
                             }

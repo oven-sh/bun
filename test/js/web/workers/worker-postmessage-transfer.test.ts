@@ -249,4 +249,63 @@ describe("ReadableStream transfer", () => {
       URL.revokeObjectURL(url);
     }
   });
+
+  test("preserves identity when the same stream is referenced twice", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const rs = new ReadableStream({
+      start(c) {
+        c.enqueue("dup");
+        c.close();
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<unknown[]>();
+    port2.onmessage = async (e: MessageEvent) => {
+      try {
+        const { a, b } = e.data;
+        expect(a).toBeInstanceOf(ReadableStream);
+        // One transferred stream shared by two references must deserialize to
+        // the same object, not two streams fighting over one port.
+        expect(a).toBe(b);
+        const chunks: unknown[] = [];
+        for await (const chunk of a) chunks.push(chunk);
+        resolve(chunks);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    port2.start();
+
+    port1.postMessage({ a: rs, b: rs }, [rs]);
+    expect(await promise).toEqual(["dup"]);
+    port1.close();
+    port2.close();
+  });
+
+  test("errors the receiver when the source errors with a non-cloneable reason", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const rs = new ReadableStream({
+      start(c) {
+        // A function is not structured-cloneable: posting it over the port
+        // throws, which must still propagate an error (not hang) to the receiver.
+        c.error(() => {});
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    port2.onmessage = async (e: MessageEvent) => {
+      try {
+        for await (const _ of e.data);
+        reject(new Error("expected the transferred stream to error"));
+      } catch {
+        resolve("errored");
+      }
+    };
+    port2.start();
+
+    port1.postMessage(rs, [rs]);
+    expect(await promise).toBe("errored");
+    port1.close();
+    port2.close();
+  });
 });

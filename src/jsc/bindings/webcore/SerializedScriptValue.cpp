@@ -799,6 +799,7 @@ static RefPtr<MessagePort> runReadableStreamTransferSteps(JSC::JSGlobalObject& l
     Ref<MessagePort> port2 = channel->port2();
 
     auto& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* clientData = static_cast<JSVMClientData*>(vm.clientData);
     auto& name = clientData->builtinFunctions().readableStreamInternalsBuiltins().structuredCloneTransferReadableStreamPrivateName();
 
@@ -807,24 +808,26 @@ static RefPtr<MessagePort> runReadableStreamTransferSteps(JSC::JSGlobalObject& l
     arguments.append(toJS(&lexicalGlobalObject, globalObject, port1.get()));
     ASSERT(!arguments.hasOverflowed());
     invokeStreamTransferBuiltin(lexicalGlobalObject, name, arguments);
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     return port2.ptr();
 }
 
 // rs-transfer-receiving steps: wrap a received MessagePort in a new ReadableStream
-// backed by a cross-realm transform readable.
-static JSC::JSValue runReadableStreamTransferReceivingSteps(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSGlobalObject* globalObject, MessagePort* port)
+// backed by a cross-realm transform readable. The stream is constructed in the
+// destination realm (globalObject), not the serializer's lexical realm.
+static JSC::JSValue runReadableStreamTransferReceivingSteps(JSC::JSGlobalObject& globalObject, MessagePort* port)
 {
     if (!port)
         return {};
-    auto& vm = lexicalGlobalObject.vm();
+    auto& vm = globalObject.vm();
     auto* clientData = static_cast<JSVMClientData*>(vm.clientData);
     auto& name = clientData->builtinFunctions().readableStreamInternalsBuiltins().structuredCloneReceiveReadableStreamPrivateName();
 
     MarkedArgumentBuffer arguments;
-    arguments.append(toJS(&lexicalGlobalObject, uncheckedDowncast<JSDOMGlobalObject>(globalObject), port));
+    arguments.append(toJS(&globalObject, uncheckedDowncast<JSDOMGlobalObject>(&globalObject), port));
     ASSERT(!arguments.hasOverflowed());
-    return invokeStreamTransferBuiltin(lexicalGlobalObject, name, arguments);
+    return invokeStreamTransferBuiltin(globalObject, name, arguments);
 }
 
 class CloneBase {
@@ -5150,11 +5153,21 @@ private:
                 fail();
                 return JSValue();
             }
-            JSValue result = runReadableStreamTransferReceivingSteps(*m_lexicalGlobalObject, m_globalObject, m_messagePorts[index].get());
+            // The same transferred stream can appear multiple times in the graph;
+            // every occurrence shares one port, so reconstruct it once and return
+            // the same object to preserve structured-clone identity.
+            if (JSValue cached = m_transferredReadableStreams.get(index))
+                return cached;
+            auto& vm = m_globalObject->vm();
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            JSValue result = runReadableStreamTransferReceivingSteps(*m_globalObject, m_messagePorts[index].get());
+            RETURN_IF_EXCEPTION(scope, JSValue());
             if (!result) {
                 fail();
                 return JSValue();
             }
+            m_transferredReadableStreamRoots.appendWithCrashOnOverflow(result);
+            m_transferredReadableStreams.add(index, result);
             return result;
         }
 #if ENABLE(WEBASSEMBLY)
@@ -5396,6 +5409,12 @@ private:
     Vector<CachedString> m_constantPool;
     // Vector<Ref<ImageData>> m_imageDataPool;
     const Vector<RefPtr<MessagePort>>& m_messagePorts;
+    // Deserialized transferred ReadableStreams, keyed by port index, so repeated
+    // references resolve to the same object. Roots kept alive separately from
+    // m_gcBuffer to avoid perturbing the object-reference pool. The zero-key
+    // traits allow port index 0 (a valid key here).
+    HashMap<uint32_t, JSC::JSValue, WTF::DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_transferredReadableStreams;
+    MarkedArgumentBuffer m_transferredReadableStreamRoots;
     ArrayBufferContentsArray* m_arrayBufferContents;
     Vector<RefPtr<JSC::ArrayBuffer>> m_arrayBuffers;
     Vector<String> m_blobURLs;

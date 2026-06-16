@@ -2540,7 +2540,16 @@ export function structuredCloneTransferReadableStream(readable, port) {
     return Promise.$resolve();
   };
   const abortAlgorithm = reason => {
-    port.postMessage({ type: "error", value: reason });
+    // PackAndPostMessageHandlingError: a non-cloneable reason makes postMessage
+    // throw synchronously; still close the port and surface the failure as a
+    // rejected promise instead of letting it escape through abortSteps.
+    try {
+      port.postMessage({ type: "error", value: reason });
+    } catch (e) {
+      $crossRealmTransformSendError(port, e);
+      port.close();
+      return Promise.$reject(e);
+    }
     port.close();
     return Promise.$resolve();
   };

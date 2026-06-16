@@ -197,9 +197,7 @@ describe("ReadableStream transfer", () => {
     const rs = new ReadableStream();
     rs.getReader();
     const { port1, port2 } = new MessageChannel();
-    expect(() => port1.postMessage(rs, [rs])).toThrow(
-      expect.objectContaining({ name: "DataCloneError" }),
-    );
+    expect(() => port1.postMessage(rs, [rs])).toThrow(expect.objectContaining({ name: "DataCloneError" }));
     port1.close();
     port2.close();
   });

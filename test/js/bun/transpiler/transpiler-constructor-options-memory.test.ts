@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // The Rust port of `new Bun.Transpiler(opts)` called `config.transform.clone()`

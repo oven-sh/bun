@@ -2623,12 +2623,8 @@ impl<'a> HTTPClient<'a> {
         }
 
         let deflater = http_thread().deflater();
-        let out = compress_body::compress_into(
-            deflater,
-            input,
-            &opt,
-            &mut self.compressed_request_body,
-        )?;
+        let out =
+            compress_body::compress_into(deflater, input, &opt, &mut self.compressed_request_body)?;
         let slice: &[u8] = match out {
             compress_body::CompressOutput::Shared(n) if into_shared => &deflater.shared_buffer[..n],
             compress_body::CompressOutput::Shared(n) => {

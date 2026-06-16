@@ -620,6 +620,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Name from assignment context for anonymous decorated class expressions.
     /// Set before visitExpr, consumed by lowerStandardDecoratorsImpl.
     pub decorator_class_name: Option<&'a [u8]>,
+
+    /// `bundle || minify_identifiers || tree_shaking || hot_module_reloading`.
+    /// When false, the per-part `symbol_uses` map and `declared_symbols` list
+    /// are never read by the printer or any later pass, so `record_usage` /
+    /// `record_declared_symbol` skip populating them. The per-symbol
+    /// `use_count_estimate` is always maintained — TS unused-import dropping
+    /// and `__dirname`/`__filename`/`module` detection read it unconditionally.
+    pub track_symbol_usage: bool,
 }
 
 // Transposer helpers
@@ -1756,12 +1764,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 debug_assert!(self.symbols.len() > ref_.inner_index() as usize);
             }
             self.symbols[ref_.inner_index() as usize].use_count_estimate += 1;
-            // `get_or_put` zero-initializes the slot on insert (`Use::default()`).
-            self.symbol_uses
-                .get_or_put(ref_)
-                .expect("unreachable")
-                .value_ptr
-                .count_estimate += 1;
+            if self.track_symbol_usage {
+                // `get_or_put` zero-initializes the slot on insert (`Use::default()`).
+                self.symbol_uses
+                    .get_or_put(ref_)
+                    .expect("unreachable")
+                    .value_ptr
+                    .count_estimate += 1;
+            }
         }
 
         // The correctness of TypeScript-to-JavaScript conversion relies on accurate
@@ -6203,6 +6213,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 [r#ref.inner_index() as usize]
                 .use_count_estimate
                 .saturating_sub(1);
+            if !self.track_symbol_usage {
+                return;
+            }
             let Some(mut use_) = self.symbol_uses.get(&r#ref).copied() else {
                 return;
             };
@@ -9027,6 +9040,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             false
         };
 
+        let track_symbol_usage = opts.bundle
+            || opts.features.minify_identifiers
+            || opts.tree_shaking
+            || opts.features.hot_module_reloading;
+
         let mut fn_or_arrow_data_parse = FnOrArrowDataParse::default();
         if opts.features.top_level_await || SCAN_ONLY {
             fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowExpr;
@@ -9034,7 +9052,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let mut symbol_uses = SymbolUseMap::default();
-        let _ = symbol_uses.ensure_total_capacity(estimated_symbol_count);
+        if track_symbol_usage {
+            let _ = symbol_uses.ensure_total_capacity(estimated_symbol_count);
+        }
 
         // JSX transform mode — was the `<J: JsxT>` const-generic parameter,
         // now a runtime field (matches `Parser::parse`'s own `if jsx.parse`
@@ -9045,6 +9065,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `MaybeUninit::write` is safe; it overwrites without dropping.
         out.write(Self {
             legacy_cjs_import_stmts: BumpVec::new_in(arena),
+            track_symbol_usage,
             // This must default to true or else parsing "in" won't work right.
             // It will fail for the case in the "in-keyword.js" file
             allow_in: true,

@@ -75,6 +75,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn record_declared_symbol(&mut self, r#ref: Ref) {
         debug_assert!(r#ref.is_symbol());
+        if !self.track_symbol_usage {
+            return;
+        }
         self.declared_symbols
             .append(bun_ast::DeclaredSymbol {
                 ref_: r#ref,

@@ -3195,6 +3195,10 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
     auto& vm = JSC::getVM(globalObject);
     // Clear the request for the termination exception to be thrown
     vm.clearHasTerminationRequest();
+    // If a NeedTermination trap is still pending (notifyNeedTermination fired
+    // but no safepoint has been reached yet), drop it so the next JS entry
+    // does not immediately re-raise the termination exception.
+    vm.traps().clearTrap(JSC::VMTraps::NeedTermination);
     // In case it actually has been thrown, clear the exception itself as well.
     // tryClearException() refuses to clear termination exceptions, so use
     // TopExceptionScope::clearException() which clears unconditionally —

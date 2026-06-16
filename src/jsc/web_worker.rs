@@ -181,6 +181,15 @@ pub struct WebWorker {
     /// observed concurrently by `terminate_all_and_wait` / parent-thread FFI;
     /// producing `&mut WebWorker` while another thread holds `&WebWorker` is UB).
     exit_called: AtomicBool,
+    /// Set by `on_unhandled_rejection` when it arms the JSC termination trap
+    /// to halt JS while unwinding to `spin()`. `shutdown()` reads this to
+    /// decide whether to clear the pending TerminationException before
+    /// `on_exit()` so `process.on('exit')` handlers run — the parent-initiated
+    /// `terminate()` path leaves it unset and keeps the pending exception so
+    /// `dispatchExitInternal` short-circuits (matching Node). Worker-thread
+    /// only; atomic for the same `&self`-under-concurrent-observation reason
+    /// as `exit_called` above.
+    terminate_from_unhandled_error: AtomicBool,
 }
 
 #[repr(u8)]
@@ -558,6 +567,7 @@ impl WebWorker {
             worker_env_map: Cell::new(core::ptr::null_mut()),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
+            terminate_from_unhandled_error: AtomicBool::new(false),
         }));
         // `worker` is non-null (just heap-allocated). Wrap once for the safe
         // shared reborrows below; the raw `worker` is still used for
@@ -1224,6 +1234,21 @@ impl WebWorker {
             // clear it so process.on('exit') handlers can run. teardownJSCVM
             // re-sets it for the JSC VM teardown.
             vm.jsc_vm().clear_has_termination_request();
+            if self.terminate_from_unhandled_error.load(Ordering::Relaxed) {
+                // `on_unhandled_rejection` armed the JSC trap so JS halted
+                // while the stack unwound to `spin()`; by the time we get
+                // here the trap may have fired and left a pending
+                // TerminationException (and/or the NeedTermination trap bit
+                // is still set). Clearing only the request flag above is
+                // insufficient: `dispatchExitInternal`'s
+                // `hasExceptionsAfterHandlingTraps()` guard would observe
+                // the exception (or re-raise it from the trap bit) and skip
+                // the `process.on('exit')` handlers. Clear the exception and
+                // trap bit as well so the handlers run. The parent-initiated
+                // `terminate()` path does not set this flag; its pending
+                // exception stays and the guard short-circuits there.
+                vm.global().clear_termination_exception();
+            }
             vm.is_shutting_down = true;
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {
@@ -1496,6 +1521,9 @@ fn on_unhandled_rejection(
         let _ = global_object.try_take_exception();
     }
     let _ = worker.set_requested_terminate();
+    worker
+        .terminate_from_unhandled_error
+        .store(true, Ordering::Relaxed);
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy
     // the `JSC::VM`, free the Bun `VirtualMachine` + arena, and post

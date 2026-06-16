@@ -623,17 +623,12 @@ impl UDPSocket {
                     code: BunString::static_(code),
                     message,
                     path: BunString::empty(),
-                    syscall: BunString::empty(),
+                    syscall: BunString::static_("bind"),
                     hostname: BunString::empty(),
                     fd: c_int::MIN,
                     dest: BunString::empty(),
                 };
                 let error_value = sys_err.to_error_instance(global_this);
-                error_value.put(
-                    global_this,
-                    b"syscall",
-                    BunString::static_("bind").to_js(global_this)?,
-                );
                 error_value.put(global_this, b"address", config.hostname.to_js(global_this)?);
                 // Node's ExceptionWithHostPort only sets `port` when it's > 0;
                 // test-dgram-error-message-address.js asserts `e.port === undefined`

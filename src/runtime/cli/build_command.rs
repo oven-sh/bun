@@ -993,7 +993,7 @@ impl BuildCommand {
                         full
                     };
                     if !outfile_path.is_empty() {
-                        use bun_sys::ZStr;
+                        use bun_core::ZStr;
                         let mut nul_path = outfile_path.clone();
                         nul_path.push(0);
                         let zstr = ZStr::from_slice_with_nul(&nul_path);

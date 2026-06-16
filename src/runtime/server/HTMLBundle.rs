@@ -532,7 +532,7 @@ impl Route {
         match &mut completion_task.result {
             BundleV2Result::Err(_err) => {
                 if bun_core::Environment::ENABLE_LOGS {
-                    bun_output::scoped_log!(debug, "onComplete: err - {}", err);
+                    bun_output::scoped_log!(debug, "onComplete: err - {}", _err);
                 }
                 let mut log = Log::init();
                 completion_task.log.clone_to_with_recycled(&mut log, true);

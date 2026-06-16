@@ -442,7 +442,7 @@ impl JSBundleCompletionTask {
                 let outfile_str =
                     std::str::from_utf8(&full_outfile_path).unwrap_or("");
                 if !outfile_str.is_empty() {
-                    use bun_sys::ZStr;
+                    use bun_core::ZStr;
                     let mut nul_path = full_outfile_path.to_vec();
                     nul_path.push(0);
                     let zstr = ZStr::from_slice_with_nul(&nul_path);

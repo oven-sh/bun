@@ -58,10 +58,7 @@ export class Y {
 });
 
 // https://github.com/oven-sh/bun/issues/17502
-test.each([
-  ["--coverage-reporter=lcov"],
-  ["--coverage-reporter", "lcov"],
-])("%s implies --coverage", (...flags) => {
+test.each([["--coverage-reporter=lcov"], ["--coverage-reporter", "lcov"]])("%s implies --coverage", (...flags) => {
   const dir = tempDirWithFiles("cov", {
     "add.ts": `export function add(a: number, b: number) { return a + b; }`,
     "add.test.ts": `

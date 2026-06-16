@@ -463,9 +463,7 @@ mod _impl {
                         match bun_paths::resolve_path::join_abs_string_buf_checked::<
                             bun_paths::platform::Auto,
                         >(
-                            top_level_dir,
-                            &mut resolve_scratch[..],
-                            &[slice.as_bytes()],
+                            top_level_dir, &mut resolve_scratch[..], &[slice.as_bytes()]
                         ) {
                             // Leave room for the trailing NUL and separator
                             // written below.

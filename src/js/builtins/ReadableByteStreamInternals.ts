@@ -332,11 +332,14 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
       const transferredBuffer = $transferBufferToCurrentRealm(chunk.buffer);
       // Spec step 8: a pending pull-into's buffer (the one vended through
       // byobRequest) is transferred too, detaching any view the source kept.
+      // The transfer (step 8.d, which throws on an already-detached buffer per
+      // step 8.b) must run before invalidating the byobRequest (step 8.c), so a
+      // source that detached the buffer itself can still recover via it.
       const pendingPullIntos = $getByIdDirectPrivate(controller, "pendingPullIntos");
       if (pendingPullIntos?.isNotEmpty()) {
-        $readableByteStreamControllerInvalidateBYOBRequest(controller);
         const firstDescriptor = pendingPullIntos.peek();
         firstDescriptor.buffer = $transferBufferToCurrentRealm(firstDescriptor.buffer);
+        $readableByteStreamControllerInvalidateBYOBRequest(controller);
       }
       $readableByteStreamControllerEnqueueChunk(controller, transferredBuffer, byteOffset, byteLength);
       $readableByteStreamControllerProcessPullDescriptors(controller);
@@ -400,9 +403,10 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
     throw new RangeError("Invalid value for view.buffer");
 
   // Account for bytes already filled (spec step 9); an oversized view must be
-  // rejected before the transfer below so it is not detached on failure.
+  // rejected before the transfer below so it is not detached on failure. Spec
+  // and Node throw a RangeError here, matching respond().
   if (firstDescriptor!.bytesFilled + viewByteLength > firstDescriptor!.byteLength)
-    throw $ERR_INVALID_ARG_VALUE("view", view);
+    throw new RangeError("bytesWritten value is too great");
 
   // Spec: transfer the supplied view's buffer, detaching it.
   firstDescriptor!.buffer = $transferBufferToCurrentRealm(view.buffer);

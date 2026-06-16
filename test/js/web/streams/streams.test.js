@@ -1642,7 +1642,7 @@ describe("ReadableStream byte source detaches supplied ArrayBuffers", () => {
       () => {},
     );
 
-    expect(threw).toBeInstanceOf(TypeError);
+    expect(threw).toBeInstanceOf(RangeError);
     expect(newBuffer.byteLength).toBe(16);
   });
 
@@ -1780,5 +1780,39 @@ describe("ReadableStream byte source detaches supplied ArrayBuffers", () => {
     expect(threw).toBeInstanceOf(TypeError);
     expect(byteLengthAfter).toBe(4);
     expect(value[0]).toBe(7);
+  });
+
+  it("enqueue after the source detached the vended buffer throws but keeps the byobRequest usable", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    let threw;
+    let recovered;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        const byobRequest = controller.byobRequest;
+        // The source detaches the descriptor's buffer itself, then enqueues a
+        // valid chunk. The enqueue must throw (the descriptor buffer is detached)
+        // before invalidating the byobRequest, so the source can still recover.
+        byobRequest.view.buffer.transfer();
+        try {
+          controller.enqueue(new Uint8Array([1]));
+        } catch (e) {
+          threw = e;
+        }
+        try {
+          byobRequest.respondWithNewView(new Uint8Array(4));
+          recovered = true;
+        } catch (e) {
+          recovered = e;
+        }
+        resolve();
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const [{ value }] = await Promise.all([reader.read(new Uint8Array(4)), promise]);
+
+    expect(threw).toBeInstanceOf(TypeError);
+    expect(recovered).toBe(true);
+    expect(value.byteLength).toBe(4);
   });
 });

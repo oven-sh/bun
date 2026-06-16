@@ -614,13 +614,18 @@ pub struct Resolver<'a> {
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 
-    /// Set only while resolving the process entry point (`bun <script>`), whose
-    /// specifier is a canonicalized absolute path. When set, `load_as_file`
-    /// resolves that exact file with a single `stat` and `dir_info_cached_miss`
-    /// skips enumerating its parent directory, so startup no longer scales with
-    /// the number of sibling entries (e.g. a script under `/nix/store`). Reset
-    /// immediately after the entry resolve, so ordinary imports are unaffected.
-    pub entry_point_hint: bool,
+    /// The canonicalized absolute path of the process entry point (`bun
+    /// <script>`), set only while that single specifier is being resolved. When
+    /// the path currently being resolved equals this exact value, `load_as_file`
+    /// resolves it with one `stat` and `dir_info_cached_miss` skips enumerating
+    /// its parent directory, so startup no longer scales with the number of
+    /// sibling entries (e.g. a script under `/nix/store`). Scoping to the exact
+    /// path (rather than a plain flag) keeps nested resolutions during the entry
+    /// resolve — a directory entry's `index`/`main`, a browser-field remap — on
+    /// the normal directory-listing path, where on-disk case is preserved. Reset
+    /// to `None` immediately after the entry resolve, so ordinary imports are
+    /// unaffected.
+    pub entry_point_hint: Option<&'static [u8]>,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -694,7 +699,7 @@ impl<'a> Resolver<'a> {
             mutex: from.mutex,
             dir_cache: from.dir_cache,
             prefer_module_field: from.prefer_module_field,
-            entry_point_hint: false,
+            entry_point_hint: None,
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
@@ -995,7 +1000,7 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
-            entry_point_hint: false,
+            entry_point_hint: None,
         }
     }
 
@@ -4417,12 +4422,19 @@ impl<'a> Resolver<'a> {
             // single `stat`; the directory's package.json/tsconfig/node_modules
             // markers are resolved the same way in `dir_info_uncached`. This
             // avoids an O(entries) `readdir` (and works even when the directory
-            // is not listable). Only the leaf qualifies — ancestor directories
-            // are still read normally to locate enclosing config files.
-            // `!care_about_bin_folder`: `bun run` needs this directory's open fd
-            // to probe `node_modules/.bin`, so fall back to a full read there.
-            let lazy_leaf =
-                self.entry_point_hint && !self.care_about_bin_folder && queue_slice_len == 0;
+            // is not listable). Gated on this leaf being the hinted entry's own
+            // parent directory, so `DirInfo`s built for other directories during
+            // the entry resolve are still read in full. `!care_about_bin_folder`:
+            // `bun run` needs this directory's open fd to probe
+            // `node_modules/.bin`, so fall back to a full read there.
+            let lazy_leaf = queue_slice_len == 0
+                && !self.care_about_bin_folder
+                && self.entry_point_hint.is_some_and(|hint| {
+                    strings::eql(
+                        strings::without_trailing_slash_windows_path(queue_top_unsafe_path),
+                        strings::without_trailing_slash_windows_path(Dirname::dirname(hint)),
+                    )
+                });
 
             let open_dir: FD = if lazy_leaf {
                 FD::INVALID
@@ -5738,13 +5750,17 @@ impl<'a> Resolver<'a> {
         // absolute path, so its exact basename is the correct on-disk name.
         // Resolve it with a single `stat` of `dir_path/base` instead of reading
         // the entire parent directory — startup under a huge directory (e.g.
-        // `/nix/store`) otherwise pays an O(entries) `readdir`. Only a regular
-        // file takes the shortcut; anything else falls through to the normal
-        // directory read (which also handles extensionless paths, symlinks, and
-        // directories). Skipped when `care_about_bin_folder` is set: that mode
-        // (`bun run`) needs the directory's open fd to probe `node_modules/.bin`,
-        // which the lazy path does not retain. See `Resolver::entry_point_hint`.
-        if self.entry_point_hint && !self.care_about_bin_folder {
+        // `/nix/store`) otherwise pays an O(entries) `readdir`. Gated on an exact
+        // match with the hinted entry path so nested resolutions during the entry
+        // resolve (a directory entry's `index`/`main`, a browser-field remap)
+        // stay on the normal directory-listing path, where on-disk case is
+        // preserved. Only a regular file takes the shortcut; anything else falls
+        // through to the normal directory read (which also handles extensionless
+        // paths, symlinks, and directories). Skipped when `care_about_bin_folder`
+        // is set: that mode (`bun run`) needs the directory's open fd to probe
+        // `node_modules/.bin`, which the lazy path does not retain. See
+        // `Resolver::entry_point_hint`.
+        if self.entry_point_hint == Some(path) && !self.care_about_bin_folder {
             let base = bun_paths::basename(path);
             // `store_fd = false`: a metadata-only probe, so `kind` closes any fd
             // it opens to follow a symlink instead of caching one this fast path

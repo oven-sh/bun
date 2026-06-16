@@ -1220,7 +1220,9 @@ impl<'a> Parser<'a> {
                     let default_start = j;
                     if braced {
                         // Stop at the `}` that closes this substitution,
-                        // balancing the braces of any nested `${...}`.
+                        // balancing the braces of any nested `${...}`. A `\$`
+                        // escape inside the default is resolved when the
+                        // default is expanded, so it is not special here.
                         let mut depth = 0usize;
                         while j < n {
                             match value[j] {
@@ -1231,7 +1233,6 @@ impl<'a> Parser<'a> {
                                     }
                                     depth -= 1;
                                 }
-                                b'\\' => break,
                                 _ => {}
                             }
                             j += 1;

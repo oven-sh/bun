@@ -267,6 +267,15 @@ test(".env nested default substitution resolves (#32411)", () => {
   expect(stdout).toBe("deep|innerval|z");
 });
 
+test(".env escaped $ inside a default resolves (#32411)", () => {
+  const dir = tempDirWithFiles("dotenv-nested-default-escape", {
+    ".env": ["NE_ESC_NESTED=${NE_EA:-${NE_EB:-a\\$b}}", "NE_ESC_FLAT=${NE_EC:-a\\$b}"].join("\n"),
+    "index.ts": `console.log([process.env.NE_ESC_NESTED, process.env.NE_ESC_FLAT].join("|"));`,
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("a$b|a$b");
+});
+
 test(".env comments", () => {
   const dir = tempDirWithFiles("dotenv-comments", {
     ".env": "#FOZ\nFOO = foo#FAIL\nBAR='bar' #BAZ",

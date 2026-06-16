@@ -2544,6 +2544,19 @@ it("close-delimited streaming writes carry raw bytes with no chunk framing artif
   }
 });
 
+// A bare `new IncomingMessage(null)` has httpVersionMajor/Minor === null;
+// `null < 1` is true, so the ServerResponse constructor's HTTP/1.0 branch
+// (matching node v26.3.0 lib/_http_server.js L214) sets shouldKeepAlive=false
+// and chunked off. The standalone-path tests below that exercise chunked
+// output construct an HTTP/1.1 req like the vendored
+// test-http-server-response-standalone.js does.
+function http11Req() {
+  const req = new IncomingMessage(null as any);
+  req.httpVersionMajor = 1;
+  req.httpVersionMinor = 1;
+  return req;
+}
+
 it("standalone ServerResponse flushes the header block before a non-chunked Buffer body", async () => {
   // assignSocket() + explicit Content-Length + Buffer body: _send buffers the
   // rendered header in outputData; _writeRaw must flush it ahead of the body.
@@ -2582,7 +2595,7 @@ it("standalone ServerResponse buffers writes made before assignSocket and flushe
       cb();
     },
   });
-  const res = new ServerResponse(new IncomingMessage(null as any));
+  const res = new ServerResponse(http11Req());
   res.write("hello");
   res.assignSocket(ws);
   res.end();
@@ -2678,7 +2691,7 @@ it("standalone ServerResponse flushHeaders pushes the header block immediately",
       cb();
     },
   });
-  const res = new ServerResponse(new IncomingMessage(null as any));
+  const res = new ServerResponse(http11Req());
   res.assignSocket(ws);
   res.flushHeaders();
 

@@ -3,6 +3,7 @@ const EventEmitter: typeof import("node:events").EventEmitter = require("node:ev
 const { Duplex, Stream } = require("node:stream");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
+  chunkExpression,
   continueExpression,
   validateHeaderName,
   validateHeaderValue,
@@ -63,7 +64,13 @@ const NumberIsNaN = Number.isNaN;
 const { format } = require("internal/util/inspect");
 
 const { IncomingMessage } = require("node:_http_incoming");
-const { OutgoingMessage, kErrored, kHighWaterMark, kSocket } = require("node:_http_outgoing");
+const {
+  OutgoingMessage,
+  kErrored,
+  kHighWaterMark,
+  kSocket,
+  kRejectNonStandardBodyWrites,
+} = require("node:_http_outgoing");
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
@@ -73,7 +80,6 @@ const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "g
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
 
 const kServerResponse = Symbol("ServerResponse");
-const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
 const kShouldKeepAlive = Symbol("kShouldKeepAlive");
 const kOptimizeEmptyRequests = Symbol("kOptimizeEmptyRequests");
@@ -1449,6 +1455,11 @@ function ServerResponse(req, options): void {
   // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
   if (req.method === "HEAD") this._hasBody = false;
 
+  if (req.httpVersionMajor < 1 || req.httpVersionMinor < 1) {
+    this.useChunkedEncodingByDefault = chunkExpression.test(req.headers?.te ?? "");
+    this.shouldKeepAlive = false;
+  }
+
   if (options) {
     const handle = options[kHandle];
 
@@ -1457,7 +1468,13 @@ function ServerResponse(req, options): void {
     } else {
       this[kHandle] = req[kHandle];
     }
-    this[kRejectNonStandardBodyWrites] = options[kRejectNonStandardBodyWrites] ?? false;
+    // The in-server path passes this via the symbol key (see emitRequestEvent);
+    // a user calling `new ServerResponse(req, { rejectNonStandardBodyWrites: true })`
+    // passes the string key — which the OutgoingMessage constructor already
+    // applied to the same shared symbol — so don't clobber it.
+    if (options[kRejectNonStandardBodyWrites] !== undefined) {
+      this[kRejectNonStandardBodyWrites] = options[kRejectNonStandardBodyWrites];
+    }
   } else {
     this[kHandle] = req[kHandle];
   }
@@ -1813,8 +1830,6 @@ ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
 };
 
 ServerResponse.prototype.writeEarlyHints = function (hints, cb) {
-  let head = "HTTP/1.1 103 Early Hints\r\n";
-
   validateObject(hints, "hints");
 
   if (hints.link === null || hints.link === undefined) {
@@ -1827,20 +1842,20 @@ ServerResponse.prototype.writeEarlyHints = function (hints, cb) {
     return;
   }
 
-  head += "Link: " + link + "\r\n";
+  if (checkInvalidHeaderChar(link)) {
+    throw $ERR_INVALID_CHAR("header content", "Link");
+  }
 
-  for (const key of ObjectKeys(hints)) {
+  const headers = { __proto__: null, Link: link };
+  const keys = ObjectKeys(hints);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
     if (key !== "link") {
-      const value = hints[key];
-      validateHeaderName(key);
-      validateHeaderValue(key, value);
-      head += key + ": " + value + "\r\n";
+      headers[key] = hints[key];
     }
   }
 
-  head += "\r\n";
-
-  this._writeRaw(head, "ascii", cb);
+  this.writeInformation(103, headers, cb);
 };
 
 function processInformationHeader(name, value) {
@@ -1897,12 +1912,16 @@ ServerResponse.prototype.writeProcessing = function (cb) {
 };
 
 ServerResponse.prototype.writeContinue = function (cb) {
+  if (this.headersSent) {
+    throw $ERR_HTTP_HEADERS_SENT("write");
+  }
   if (!this[kHandle]) {
-    // Standalone path: route through _writeRaw like Node.js (and like the
-    // writeProcessing/writeEarlyHints/writeInformation siblings) so the
-    // 100 Continue line reaches the assigned socket.
+    // Standalone path: route through writeInformation like Node.js v26.3.0
+    // (and like the writeProcessing/writeEarlyHints siblings) so the 100
+    // Continue line reaches the assigned socket.
+    this.writeInformation(100, null, cb);
     this._sent100 = true;
-    return this._writeRaw("HTTP/1.1 100 Continue\r\n\r\n", "ascii", cb);
+    return;
   }
   this.socket[kHandle]?.response?.writeContinue();
   this._sent100 = true;

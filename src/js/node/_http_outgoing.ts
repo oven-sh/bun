@@ -866,10 +866,6 @@ function connectionCorkNT(conn) {
 }
 
 OutgoingMessage.prototype.addTrailers = function addTrailers(headers) {
-  if (this.finished) {
-    throw $ERR_HTTP_HEADERS_SENT("set trailing");
-  }
-
   this._trailer = "";
   const keys = ObjectKeys(headers);
   const isArray = ArrayIsArray(headers);
@@ -1113,13 +1109,17 @@ ObjectDefineProperty(OutgoingMessage.prototype, "headers", {
     if (val == null) {
       this[kOutHeaders] = null;
     } else if (typeof val === "object") {
-      const headers = (this[kOutHeaders] = { __proto__: null });
+      this[kOutHeaders] = { __proto__: null };
       const keys = ObjectKeys(val);
       // Retain for(;;) loop for performance reasons
       // Refs: https://github.com/nodejs/node/pull/30958
       for (let i = 0; i < keys.length; ++i) {
         const name = keys[i];
-        headers[name.toLowerCase()] = [name, val[name]];
+        // Route through setHeader so name/value are validated — the
+        // un-prefixed `headers` alias is Bun-public and previously validated
+        // (via the WHATWG Headers constructor), and the ServerResponse
+        // override of this setter routes through setHeader too.
+        this.setHeader(name, val[name]);
       }
     }
   },
@@ -1172,6 +1172,7 @@ export default {
   kOutHeaders,
   kErrored,
   kSocket,
+  kRejectNonStandardBodyWrites,
   parseUniqueHeadersOption,
   validateHeaderName,
   validateHeaderValue,

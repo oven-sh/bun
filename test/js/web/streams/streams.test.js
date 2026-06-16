@@ -1430,4 +1430,121 @@ describe("ReadableStream byte source detaches supplied ArrayBuffers", () => {
     expect(value).toBeInstanceOf(Uint8Array);
     expect(Array.from(value)).toEqual([5, 6, 7]);
   });
+
+  it("byobRequest.respond() detaches the view vended through byobRequest", async () => {
+    let vendoredView;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        vendoredView = controller.byobRequest.view;
+        vendoredView[0] = 42;
+        controller.byobRequest.respond(1);
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const { value } = await reader.read(new Uint8Array(1));
+
+    // The buffer the source wrote into is detached and no longer aliases the
+    // buffer the reader receives.
+    expect(vendoredView.byteLength).toBe(0);
+    expect(value.buffer).not.toBe(vendoredView.buffer);
+    expect(value[0]).toBe(42);
+  });
+
+  it("byobRequest.respond() detaches the vended view even on a partial respond", async () => {
+    let vendoredView;
+    let byteLengthAfterPartialRespond;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        vendoredView = controller.byobRequest.view;
+        // Uint32Array element is 4 bytes; respond(2) is a partial fill.
+        controller.byobRequest.respond(2);
+        // The transfer happens in respond() itself, so the view is already
+        // detached here, before the pull-into is committed.
+        byteLengthAfterPartialRespond = vendoredView.byteLength;
+        controller.error(new Error("stop"));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    await reader.read(new Uint32Array(1)).then(
+      () => {},
+      () => {},
+    );
+
+    expect(byteLengthAfterPartialRespond).toBe(0);
+  });
+
+  it("byobRequest.respond() with an out-of-range value throws without detaching", async () => {
+    let threw;
+    let vendoredView;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        vendoredView = controller.byobRequest.view;
+        try {
+          controller.byobRequest.respond(999);
+        } catch (e) {
+          threw = e;
+        }
+        controller.error(new Error("stop"));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    await reader.read(new Uint8Array(4)).then(
+      () => {},
+      () => {},
+    );
+
+    expect(threw).toBeInstanceOf(RangeError);
+    // A rejected respond must not detach the buffer.
+    expect(vendoredView.byteLength).toBe(4);
+  });
+
+  it("read() rejects (does not throw) for a SharedArrayBuffer-backed view", async () => {
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        controller.byobRequest.respond(1);
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const sabView = new Uint8Array(new SharedArrayBuffer(4));
+
+    // Must return a promise and reject, not throw synchronously.
+    const result = reader.read(sabView);
+    expect(result).toBeInstanceOf(Promise);
+    await expect(result).rejects.toThrow(TypeError);
+  });
+
+  it("read() rejects (does not throw) for a WebAssembly.Memory-backed view", async () => {
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        controller.byobRequest.respond(1);
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const view = new Uint8Array(memory.buffer, 0, 4);
+
+    const result = reader.read(view);
+    expect(result).toBeInstanceOf(Promise);
+    await expect(result).rejects.toThrow(TypeError);
+    // The memory must not have been detached by the failed transfer.
+    expect(memory.buffer.byteLength).toBeGreaterThan(0);
+  });
+
+  it("enqueue() throws synchronously for a SharedArrayBuffer-backed chunk", () => {
+    let controller;
+    const stream = new ReadableStream({
+      type: "bytes",
+      start(c) {
+        controller = c;
+      },
+    });
+    expect(() => controller.enqueue(new Uint8Array(new SharedArrayBuffer(4)))).toThrow(
+      "Cannot transfer a SharedArrayBuffer",
+    );
+  });
 });

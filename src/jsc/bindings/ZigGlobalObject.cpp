@@ -1532,12 +1532,24 @@ JSC_DEFINE_HOST_FUNCTION(functionTransferArrayBuffer,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSArrayBuffer* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(callFrame->argument(0));
-    if (!jsBuffer || jsBuffer->impl()->sharingMode() != JSC::ArrayBufferSharingMode::Default) [[unlikely]] {
-        JSC::throwTypeError(globalObject, scope, "Receiver must be an ArrayBuffer"_s);
+    if (!jsBuffer) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "Argument must be an ArrayBuffer"_s);
         return {};
     }
 
     auto* impl = jsBuffer->impl();
+    if (impl->sharingMode() != JSC::ArrayBufferSharingMode::Default) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "Cannot transfer a SharedArrayBuffer"_s);
+        return {};
+    }
+
+    // WebAssembly.Memory buffers cannot be detached; transferring one would be
+    // unsound, so reject it the same way ArrayBuffer.prototype.transfer does.
+    if (impl->isWasmMemory()) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "Cannot transfer a WebAssembly.Memory buffer"_s);
+        return {};
+    }
+
     if (impl->isDetached()) [[unlikely]] {
         JSC::throwTypeError(globalObject, scope, "Cannot transfer a detached ArrayBuffer"_s);
         return {};

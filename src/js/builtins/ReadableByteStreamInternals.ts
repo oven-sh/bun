@@ -390,6 +390,19 @@ export function readableByteStreamControllerRespond(controller, bytesWritten) {
 
   $assert($getByIdDirectPrivate(controller, "pendingPullIntos").isNotEmpty());
 
+  const firstDescriptor = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
+  // Validate before transferring so an out-of-range respond does not detach the
+  // buffer (matches the spec, which checks the range before TransferArrayBuffer).
+  if (
+    $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamReadable &&
+    firstDescriptor.bytesFilled + bytesWritten > firstDescriptor.byteLength
+  )
+    throw new RangeError("bytesWritten value is too great");
+
+  // Spec (ReadableByteStreamControllerRespond step 6): transfer the descriptor's
+  // buffer, detaching the view that was vended through byobRequest.
+  firstDescriptor.buffer = $transferBufferToCurrentRealm(firstDescriptor.buffer);
+
   $readableByteStreamControllerRespondInternal(controller, bytesWritten);
 }
 
@@ -619,8 +632,18 @@ export function readableByteStreamControllerPullInto(controller, view) {
   const byteOffset = view.byteOffset;
   const byteLength = view.byteLength;
 
+  // TransferArrayBuffer throws for non-transferable buffers (SharedArrayBuffer,
+  // WebAssembly.Memory). read() must surface that as a rejected promise, not a
+  // synchronous throw, so convert the abrupt completion here.
+  let transferredBuffer;
+  try {
+    transferredBuffer = $transferBufferToCurrentRealm(view.buffer);
+  } catch (e) {
+    return Promise.$reject(e);
+  }
+
   const pullIntoDescriptor: PullIntoDescriptor = {
-    buffer: $transferBufferToCurrentRealm(view.buffer),
+    buffer: transferredBuffer,
     byteOffset,
     byteLength,
     bytesFilled: 0,

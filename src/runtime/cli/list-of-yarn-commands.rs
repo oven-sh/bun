@@ -1,6 +1,7 @@
-// The v1 list repeats several v2.3 entries verbatim — duplicates dropped here
-// (commented inline) so the phf macro compiles.
-pub static ALL_YARN_COMMANDS: phf::Set<&'static [u8]> = phf::phf_set! {
+bun_core::comptime_string_set! {
+    // The v1 list repeats several v2.3 entries verbatim — duplicates dropped here
+    // (commented inline) because duplicate keys are a compile error.
+    pub static ALL_YARN_COMMANDS = {
     // yarn v2.3 commands
     b"add",
     b"bin",
@@ -73,4 +74,5 @@ pub static ALL_YARN_COMMANDS: phf::Set<&'static [u8]> = phf::phf_set! {
     // b"why",
     // b"workspace",
     // b"workspaces",
-};
+    };
+}

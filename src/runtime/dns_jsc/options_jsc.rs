@@ -93,8 +93,8 @@ pub(crate) fn family_from_js(
 
     if value.is_string() {
         // `Family.map` is a `ComptimeStringMap` ported as
-        // `bun_dns::FAMILY_MAP: phf::Map`; `.from_js` comes from
-        // `bun_jsc::ComptimeStringMapExt`.
+        // `bun_dns::FAMILY_MAP` (a `comptime_string_map!`); `.from_js` comes
+        // from `bun_jsc::ComptimeStringMapExt`.
         return match js(FAMILY_MAP.from_js(global, value))? {
             Some(f) => Ok(f),
             None => {

@@ -174,13 +174,11 @@ pub enum HardcodedModule {
     BunInternalForTesting,
 }
 
-impl HardcodedModule {
+bun_core::comptime_string_map! {
     /// The module loader first uses `Aliases` to get a single string during
     /// resolution, then maps that single string to the actual module.
     /// Do not include aliases here; Those go in `Aliases`.
-    // Associated `static` is unstable (E0658); `phf::Map` is
-    // const-constructible so use an associated const.
-    pub const MAP: phf::Map<&'static [u8], HardcodedModule> = phf::phf_map! {
+    pub static HARDCODED_MODULE_MAP: HardcodedModule = {
         // Bun
         b"bun" => HardcodedModule::Bun,
         b"bun:app" => HardcodedModule::BunApp,
@@ -268,6 +266,14 @@ impl HardcodedModule {
         b"utf-8-validate" => HardcodedModule::Utf8Validate,
         b"abort-controller" => HardcodedModule::AbortController,
     };
+}
+
+impl HardcodedModule {
+    // Associated `static` is unstable (E0658), so the map lives at module
+    // level; this zero-sized const keeps the `HardcodedModule::MAP` call
+    // shape stable.
+    pub const MAP: __ComptimeStringMap_HARDCODED_MODULE_MAP =
+        __ComptimeStringMap_HARDCODED_MODULE_MAP(());
 }
 
 /// Contains the list of built-in modules from the perspective of the module
@@ -360,9 +366,9 @@ macro_rules! entry {
     };
 }
 
-// `phf::phf_map!` only accepts inline literal entries, so it cannot consume
-// const slices directly; instead the const tables stay the source of truth
-// (callers like `ModuleLoader` iterate them) and `lookup` goes through
+// `comptime_string_map!` only accepts inline literal entries, so it cannot
+// consume const slices directly; instead the const tables stay the source of
+// truth (callers like `ModuleLoader` iterate them) and `lookup` goes through
 // lazily-built hash maps.
 
 type AliasKv = (&'static [u8], Alias);

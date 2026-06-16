@@ -104,7 +104,7 @@ impl Targets {
         use bun_ast::Target as T;
         match target {
             T::Node | T::Bun => Self::runtime_default(),
-            T::Browser | T::BunMacro | T::BakeServerComponentsSsr => Self::browser_default(),
+            T::Browser | T::BunMacro | T::ServerComponentsSsr => Self::browser_default(),
         }
     }
 
@@ -347,18 +347,20 @@ impl Browsers {
                         Safari,
                         NoMapping,
                     }
-                    static MAP: phf::Map<&'static [u8], Browser> = phf::phf_map! {
-                        b"chrome" => Browser::Chrome,
-                        b"edge" => Browser::Edge,
-                        b"firefox" => Browser::Firefox,
-                        b"hermes" => Browser::NoMapping,
-                        b"ie" => Browser::Ie,
-                        b"ios" => Browser::IosSaf,
-                        b"node" => Browser::NoMapping,
-                        b"opera" => Browser::Opera,
-                        b"rhino" => Browser::NoMapping,
-                        b"safari" => Browser::Safari,
-                    };
+                    bun_core::comptime_string_map! {
+                        static MAP: Browser = {
+                            b"chrome" => Browser::Chrome,
+                            b"edge" => Browser::Edge,
+                            b"firefox" => Browser::Firefox,
+                            b"hermes" => Browser::NoMapping,
+                            b"ie" => Browser::Ie,
+                            b"ios" => Browser::IosSaf,
+                            b"node" => Browser::NoMapping,
+                            b"opera" => Browser::Opera,
+                            b"rhino" => Browser::NoMapping,
+                            b"safari" => Browser::Safari,
+                        };
+                    }
                     let browser = MAP.get(&entry[0..idx]).copied();
                     let Some(browser) = browser else { continue };
                     if browser == Browser::NoMapping {

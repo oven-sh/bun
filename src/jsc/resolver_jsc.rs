@@ -4,7 +4,7 @@
 use bstr::BStr;
 
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::String as BunString;
+use bun_core::{OwnedString, String as BunString};
 use bun_paths::resolve_path;
 use bun_paths::{Platform, SEP, SEP_STR};
 
@@ -20,8 +20,8 @@ pub(crate) fn node_module_paths_for_js(
         return Err(global.throw_invalid_argument_type("nodeModulePaths", "path", "string"));
     }
 
-    let in_str = argument.to_bun_string(global)?;
-    Ok(node_module_paths_js_value(in_str, global, false))
+    let in_str = OwnedString::new(argument.to_bun_string(global)?);
+    Ok(node_module_paths_js_value(in_str.get(), global, false))
 }
 
 #[unsafe(no_mangle)]
@@ -41,7 +41,7 @@ pub(crate) extern "C" fn node_module_paths_js_value(
     global: &JSGlobalObject,
     use_dirname: bool,
 ) -> JSValue {
-    let mut list: Vec<BunString> = Vec::new();
+    let mut list: Vec<OwnedString> = Vec::new();
 
     let sliced = in_str.to_utf8();
     let base_path: &[u8] = if use_dirname {
@@ -94,12 +94,12 @@ pub(crate) extern "C" fn node_module_paths_js_value(
                 None => 0,
             } + part.len();
 
-            list.push(BunString::create_format(format_args!(
+            list.push(OwnedString::new(BunString::create_format(format_args!(
                 "{}{}{}node_modules",
                 BStr::new(root_path),
                 BStr::new(&suffix[..prefix_len]),
                 SEP_STR,
-            )));
+            ))));
         }
     }
 
@@ -107,13 +107,15 @@ pub(crate) extern "C" fn node_module_paths_js_value(
         root_path = &root_path[..root_path.len() - 1];
     }
 
-    list.push(BunString::create_format(format_args!(
+    list.push(OwnedString::new(BunString::create_format(format_args!(
         "{}{}node_modules",
         BStr::new(root_path),
         SEP_STR,
-    )));
+    ))));
 
-    list.as_slice().to_js_array(global).unwrap_or(JSValue::ZERO)
+    OwnedString::as_raw_slice(&list)
+        .to_js_array(global)
+        .unwrap_or(JSValue::ZERO)
 }
 
 /// `[bun.String]::to_js_array` lives on the `StringArrayJsc` ext trait below.

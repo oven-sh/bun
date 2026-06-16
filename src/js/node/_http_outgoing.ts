@@ -27,6 +27,10 @@ const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
 } = require("node:_http_common");
 const kUniqueHeaders = Symbol("kUniqueHeaders");
+// Tracks setHeader("set-cookie", []): the FetchHeaders backing store cannot
+// represent a present-but-empty set-cookie header, but Node keeps the raw []
+// and returns it from getHeader (nodejs/node#59734).
+const kEmptySetCookie = Symbol("kEmptySetCookie");
 const kBytesWritten = Symbol("kBytesWritten");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
 const kCorked = Symbol("corked");
@@ -190,6 +194,8 @@ function OutgoingMessage(options) {
   this._closed = false;
   this._header = null;
   this._headerSent = false;
+  this.outputData = [];
+  this.outputSize = 0;
   this[kHighWaterMark] = options?.highWaterMark ?? (process.platform === "win32" ? 16 * 1024 : 64 * 1024);
 }
 const OutgoingMessagePrototype = {
@@ -202,7 +208,10 @@ const OutgoingMessagePrototype = {
   shouldKeepAlive: true,
   _onPendingData: function nop() {},
   outputSize: 0,
-  outputData: [],
+  // No outputData default on the prototype (a shared array would leak buffered
+  // writes across instances, and a lazy accessor would self-destruct when read
+  // directly off the prototype). The constructor creates the per-instance
+  // array; methods lazily init for subclasses that don't chain the constructor.
   strictContentLength: false,
   _removedTE: false,
   _removedContLen: false,
@@ -212,6 +221,10 @@ const OutgoingMessagePrototype = {
   _headerNames: undefined,
   appendHeader(name, value) {
     validateString(name, "name");
+    if (this[kEmptySetCookie] && name.length === 10 && name.toLowerCase() === "set-cookie") {
+      // An appended cookie supersedes the present-but-empty marker.
+      this[kEmptySetCookie] = false;
+    }
     var headers = (this[headersSymbol] ??= new Headers());
     headers.append(name, value);
     return this;
@@ -223,7 +236,11 @@ const OutgoingMessagePrototype = {
   flushHeaders() {},
   getHeader(name) {
     validateString(name, "name");
-    return getHeader(this[headersSymbol], name);
+    const value = getHeader(this[headersSymbol], name);
+    if (value === undefined && this[kEmptySetCookie] && name.toLowerCase() === "set-cookie") {
+      return [];
+    }
+    return value;
   },
 
   // Overridden by ClientRequest and ServerResponse; this version will be called only if the user constructs OutgoingMessage directly.
@@ -244,24 +261,40 @@ const OutgoingMessagePrototype = {
   getHeaderNames() {
     var headers = this[headersSymbol];
     if (!headers) return [];
-    return Array.from(headers.keys());
+    const names = Array.from(headers.keys());
+    if (this[kEmptySetCookie] && !names.includes("set-cookie")) {
+      names.push("set-cookie");
+    }
+    return names;
   },
 
   getRawHeaderNames() {
     var headers = this[headersSymbol];
-    if (!headers) return [];
-    return getRawKeys.$call(headers);
+    const emptySetCookie = this[kEmptySetCookie];
+    if (!headers) return emptySetCookie ? [emptySetCookie] : [];
+    const names = getRawKeys.$call(headers);
+    if (emptySetCookie && !names.some(name => typeof name === "string" && name.toLowerCase() === "set-cookie")) {
+      names.push(emptySetCookie);
+    }
+    return names;
   },
 
   getHeaders() {
     const headers = this[headersSymbol];
     if (!headers) return kEmptyObject;
-    return headers.toJSON();
+    const json = headers.toJSON();
+    if (this[kEmptySetCookie] && json["set-cookie"] === undefined) {
+      json["set-cookie"] = [];
+    }
+    return json;
   },
 
   removeHeader(name) {
     validateString(name, "name");
     throwHeadersSentIfNecessary(this, "remove");
+    if (this[kEmptySetCookie] && name.toLowerCase() === "set-cookie") {
+      this[kEmptySetCookie] = false;
+    }
     const headers = this[headersSymbol];
     if (!headers) return;
     headers.delete(name);
@@ -272,6 +305,17 @@ const OutgoingMessagePrototype = {
     validateHeaderName(name);
     validateHeaderValue(name, value);
     const headers = (this[headersSymbol] ??= new Headers());
+    if (name.length === 10 && name.toLowerCase() === "set-cookie") {
+      if ($isArray(value) && value.length === 0) {
+        // Present-but-empty: nothing to store in the backing Headers (and
+        // nothing goes on the wire), but getHeader must return [].
+        headers.delete(name);
+        // Remember the original-case name so getRawHeaderNames can report it.
+        this[kEmptySetCookie] = name;
+        return this;
+      }
+      this[kEmptySetCookie] = false;
+    }
     setHeader(headers, name, value);
     return this;
   },
@@ -288,20 +332,22 @@ const OutgoingMessagePrototype = {
     // We also cannot safely split by comma.
     // To avoid setHeader overwriting the previous value we push
     // set-cookie values in array and set them all at once.
-    const cookies = [];
+    let cookies = null;
 
     for (const { 0: key, 1: value } of headers) {
       if (key === "set-cookie") {
         if ($isArray(value)) {
+          cookies ??= [];
           cookies.push(...value);
         } else {
+          cookies ??= [];
           cookies.push(value);
         }
         continue;
       }
       this.setHeader(key, value);
     }
-    if (cookies.length) {
+    if (cookies != null) {
       this.setHeader("set-cookie", cookies);
     }
 
@@ -309,6 +355,7 @@ const OutgoingMessagePrototype = {
   },
   hasHeader(name) {
     validateString(name, "name");
+    if (this[kEmptySetCookie] && name.toLowerCase() === "set-cookie") return true;
     const headers = this[headersSymbol];
     if (!headers) return false;
     return headers.has(name);
@@ -316,10 +363,17 @@ const OutgoingMessagePrototype = {
 
   get headers() {
     const headers = this[headersSymbol];
-    if (!headers) return kEmptyObject;
-    return headers.toJSON();
+    if (!headers) return this[kEmptySetCookie] ? { "set-cookie": [] } : kEmptyObject;
+    const json = headers.toJSON();
+    if (this[kEmptySetCookie] && json["set-cookie"] === undefined) {
+      json["set-cookie"] = [];
+    }
+    return json;
   },
   set headers(value) {
+    // Replacing the whole header bag drops the present-but-empty set-cookie
+    // marker; the new Headers determines set-cookie state from here on.
+    this[kEmptySetCookie] = false;
     this[headersSymbol] = new Headers(value);
   },
 
@@ -448,7 +502,7 @@ const OutgoingMessagePrototype = {
         data = this._header + data;
       } else {
         const header = this._header;
-        this.outputData.unshift({
+        (this.outputData ??= []).unshift({
           data: header,
           encoding: "latin1",
           callback: null,
@@ -475,17 +529,40 @@ const OutgoingMessagePrototype = {
 
     if (conn && conn._httpMessage === this && conn.writable) {
       // There might be pending data in the this.output buffer.
-      if (this.outputData.length) {
+      if (this.outputData?.length) {
         this._flushOutput(conn);
       }
       // Directly write to socket.
       return conn.write(data, encoding, callback);
     }
     // Buffer, as long as we're not destroyed.
-    this.outputData.push({ data, encoding, callback });
+    (this.outputData ??= []).push({ data, encoding, callback });
     this.outputSize += data.length;
     this._onPendingData(data.length);
     return this.outputSize < this[kHighWaterMark];
+  },
+  _flushOutput(socket) {
+    const outputLength = this.outputData?.length ?? 0;
+    if (outputLength <= 0) return undefined;
+
+    const outputData = this.outputData;
+    socket.cork();
+    let ret;
+    // Retain for(;;) loop for performance reasons
+    // Refs: https://github.com/nodejs/node/pull/30958
+    for (let i = 0; i < outputLength; i++) {
+      const { data, encoding, callback } = outputData[i];
+      // Avoid any potential ref to Buffer in new generation from old generation
+      outputData[i].data = null;
+      ret = socket.write(data, encoding, callback);
+    }
+    socket.uncork();
+
+    this.outputData = [];
+    this._onPendingData(-this.outputSize);
+    this.outputSize = 0;
+
+    return ret;
   },
 
   end(_chunk, _encoding, _callback) {

@@ -486,8 +486,10 @@ impl LazySourceMap {
                 });
 
                 stored.external_source_names = file_names;
-                // `from_provider` packs the pointer (plus implicit kind/load_hint)
-                // into the `SourceContentPtr` bitfield.
+                // `from_provider` stores the pointer as a raw address in
+                // `SourceContentPtr.data`; the provider dispatch is never
+                // invoked for this type-punned pointer (guarded by
+                // `is_standalone_module_graph`).
                 stored.underlying_provider = SourceMap::SourceContentPtr::from_provider(
                     bun_core::heap::into_raw(data).cast::<SourceMap::SourceProviderMap>(),
                 );
@@ -773,6 +775,16 @@ pub(crate) fn to_bytes(
         };
 
         let dest_path = bun_core::strings::remove_leading_dot_slash(&output_file.dest_path);
+
+        // Windows: store the key with `/`. The template printer emits native
+        // `\` into `dest_path`, but `find_assume_standalone_path` normalizes
+        // lookups to `/`, so a `\` key would miss (ENOENT). Zig normalized this
+        // in place in `Chunk.zig`; the Rust port only normalizes a scratch copy.
+        #[cfg(windows)]
+        let mut dest_path_buf = PathBuffer::uninit();
+        #[cfg(windows)]
+        let dest_path: &[u8] =
+            path::resolve_path::platform_to_posix_buf::<u8>(dest_path, &mut dest_path_buf);
 
         let bytecode: StringPointer = 'brk: {
             if output_file.bytecode_index != u32::MAX {

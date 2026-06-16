@@ -404,9 +404,12 @@ impl<'a> Transpiler<'a> {
         self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
     }
 
-    /// Returns the resolver's auto-install package-manager handle.
+    /// Returns the resolver's auto-install package-manager handle. Errs when
+    /// the one-time init fails (e.g. unreadable top-level directory).
     #[inline]
-    pub fn get_package_manager(&mut self) -> *mut dyn bun_resolver::install_types::AutoInstaller {
+    pub fn get_package_manager(
+        &mut self,
+    ) -> Result<*mut dyn bun_resolver::install_types::AutoInstaller, bun_core::Error> {
         self.resolver.get_package_manager()
     }
 
@@ -2283,7 +2286,7 @@ fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_ast::Target {
         crate::options_impl::Target::Bun => T::Bun,
         crate::options_impl::Target::BunMacro => T::BunMacro,
         crate::options_impl::Target::Node => T::Node,
-        crate::options_impl::Target::BakeServerComponentsSsr => T::BakeServerComponentsSsr,
+        crate::options_impl::Target::ServerComponentsSsr => T::ServerComponentsSsr,
     }
 }
 
@@ -2816,6 +2819,8 @@ impl<'a> Transpiler<'a> {
         }
         self.options.transform_only = true;
 
+        // Only the main-thread transpiler reaches here; worker option clones
+        // carry `output_dir_handle: None` and would route output to stdout.
         if self.options.output_dir_handle.is_none() {
             let outstream = TransformOutstream::Stdout;
             match self.options.import_path_format {
@@ -2833,7 +2838,12 @@ impl<'a> Transpiler<'a> {
                 }
             }
         } else {
-            let Some(output_dir) = self.options.output_dir_handle else {
+            let Some(output_dir) = self
+                .options
+                .output_dir_handle
+                .as_ref()
+                .map(bun_sys::Dir::fd)
+            else {
                 bun_core::Output::print_error("Invalid or missing output directory.");
                 bun_core::Global::crash();
             };
@@ -2870,7 +2880,12 @@ impl<'a> Transpiler<'a> {
         // SAFETY: see above (`self.log` is the same pointer as `log`).
         let mut final_result =
             options::TransformResult::init(outbase, output_files, unsafe { &mut *self.log })?;
-        final_result.root_dir = self.options.output_dir_handle;
+        // Non-owning fd view; `output_dir_handle` keeps ownership.
+        final_result.root_dir = self
+            .options
+            .output_dir_handle
+            .as_ref()
+            .map(bun_sys::Dir::fd);
         Ok(final_result)
     }
 
@@ -3046,7 +3061,7 @@ impl<'a> Transpiler<'a> {
                     }
                     options::Target::Bun
                     | options::Target::BunMacro
-                    | options::Target::BakeServerComponentsSsr => self.print(
+                    | options::Target::ServerComponentsSsr => self.print(
                         print_arena,
                         result,
                         &mut writer,
@@ -3221,6 +3236,8 @@ impl<'a> Transpiler<'a> {
                 dir: self
                     .options
                     .output_dir_handle
+                    .as_ref()
+                    .map(bun_sys::Dir::fd)
                     .unwrap_or(bun_sys::Fd::INVALID),
                 is_outdir: true,
                 ..Default::default()

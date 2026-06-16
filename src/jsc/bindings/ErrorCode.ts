@@ -322,5 +322,12 @@ const errors: ErrorCodeMapping = [
   ["ERR_SECRETS_INTERACTION_NOT_ALLOWED", Error],
   ["ERR_SECRETS_AUTH_FAILED", Error],
   ["ERR_SECRETS_INTERACTION_REQUIRED", Error],
+  ["ERR_POSTGRES_CONNECTION_FAILED", Error, "PostgresError"],
+  ["ERR_MYSQL_CONNECTION_FAILED", Error, "MySQLError"],
+  ["ERR_POSTGRES_CONNECTION_REFUSED", Error, "PostgresError"],
+  ["ERR_MYSQL_CONNECTION_REFUSED", Error, "MySQLError"],
+  // Appended (not alphabetical): discriminants are index-aligned with the
+  // checked-in Rust mirror (src/jsc/ErrorCode.rs) — only ever append here.
+  ["ERR_HTTP2_GOAWAY_SESSION", Error],
 ];
 export default errors;

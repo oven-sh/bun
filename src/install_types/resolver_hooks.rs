@@ -766,9 +766,9 @@ impl<T: NegatableEnum> NegatableExt for T {}
 // ─── negatable_names! ─────────────────────────────────────────────────────
 // Single source of truth for the name↔bit table of a `NegatableEnum` newtype.
 //
-// A hand-maintained `NAME_MAP_KVS` const + a hand-unrolled `lookup_name`
-// match per type would be two parallel tables with an
-// add-a-variant-forget-the-other drift hazard.
+// A hand-maintained `NAME_MAP_KVS` const + a separate lookup table per type
+// would be two parallel tables with an add-a-variant-forget-the-other drift
+// hazard.
 //
 // This macro keeps the single-source property: caller supplies ONE
 // `b"name" => BIT` list (already in `(key.len asc, bytewise asc)` order — that
@@ -778,12 +778,13 @@ impl<T: NegatableEnum> NegatableExt for T {}
 // The macro then expands BOTH the inherent `NAME_MAP_KVS` const (kept inherent
 // so non-trait callers like `lockfile_json_stringify_for_debugging` still
 // path-qualify it) AND the full `NegatableEnum` impl, whose `lookup_name`
-// length-gates the lookup: one `usize` compare
-// per bucket boundary, byte-compare only on length match, early-out once the
-// sorted table passes the requested length. ≤11 entries per type — `phf::Map`
-// would be a hash + indirect load + slice compare for at most 4 candidates.
+// delegates to a `comptime_string_map!` built from the same list (length
+// dispatch + constant-length word compares).
 macro_rules! negatable_names {
-    ($ty:ident : $int:ty => [ $( $key:literal => $bit:ident ),+ $(,)? ]) => {
+    ($ty:ident : $int:ty, $map:ident => [ $( $key:literal => $bit:ident ),+ $(,)? ]) => {
+        bun_core::comptime_string_map! {
+            static $map: $int = { $( $key => <$ty>::$bit ),+ };
+        }
         impl $ty {
             pub const NAME_MAP_KVS: &'static [(&'static [u8], $int)] =
                 &[ $( ($key, <$ty>::$bit) ),+ ];
@@ -795,10 +796,7 @@ macro_rules! negatable_names {
             const ALL_VALUE: $int = <$ty>::ALL_VALUE;
             #[inline]
             fn lookup_name(key: &[u8]) -> Option<$int> {
-                let n = key.len();
-                $( if $key.len() > n { return None; }
-                   if $key.len() == n && key == $key { return Some(<$ty>::$bit); } )+
-                None
+                $map.get(key).copied()
             }
             #[inline] fn name_map_kvs() -> &'static [(&'static [u8], $int)] { <$ty>::NAME_MAP_KVS }
             #[inline] fn has(self, other: $int) -> bool { <$ty>::has(self, other) }
@@ -874,7 +872,7 @@ impl OperatingSystem {
     }
 }
 
-negatable_names! { OperatingSystem: u16 => [
+negatable_names! { OperatingSystem: u16, OPERATING_SYSTEM_NAMES => [
     b"aix" => AIX, b"linux" => LINUX, b"sunos" => SUNOS, b"win32" => WIN32,
     b"darwin" => DARWIN, b"android" => ANDROID, b"freebsd" => FREEBSD, b"openbsd" => OPENBSD,
 ] }
@@ -919,7 +917,7 @@ impl Libc {
     }
 }
 
-negatable_names! { Libc: u8 => [ b"musl" => MUSL, b"glibc" => GLIBC ] }
+negatable_names! { Libc: u8, LIBC_NAMES => [ b"musl" => MUSL, b"glibc" => GLIBC ] }
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -989,7 +987,7 @@ impl Architecture {
     }
 }
 
-negatable_names! { Architecture: u16 => [
+negatable_names! { Architecture: u16, ARCHITECTURE_NAMES => [
     b"arm" => ARM, b"ppc" => PPC, b"x32" => X32, b"x64" => X64,
     b"ia32" => IA32, b"mips" => MIPS, b"s390" => S390,
     b"arm64" => ARM64, b"ppc64" => PPC64, b"s390x" => S390X, b"mipsel" => MIPSEL,

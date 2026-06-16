@@ -153,7 +153,6 @@ pub(crate) fn create_bun_socket_error_to_js(
 /// the SQL bindings need a slightly different signature).
 pub(crate) trait JSGlobalObjectSqlExt {
     fn err_out_of_range<'a>(&'a self, args: core::fmt::Arguments<'a>) -> ErrorBuilder<'a>;
-    fn throw_invalid_arguments_fmt(&self, args: core::fmt::Arguments<'_>) -> JsResult<JSValue>;
     /// `globalObject.bunVM()` — `bun_jsc::JSGlobalObject::bun_vm()` returns
     /// `&mut VirtualMachine`; this `&`-receiver form is for SQL callsites that
     /// only need shared access.
@@ -165,10 +164,6 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
     #[inline]
     fn err_out_of_range<'a>(&'a self, args: core::fmt::Arguments<'a>) -> ErrorBuilder<'a> {
         self.err(ErrorCode::OUT_OF_RANGE, args)
-    }
-    #[inline]
-    fn throw_invalid_arguments_fmt(&self, args: core::fmt::Arguments<'_>) -> JsResult<JSValue> {
-        Err(self.throw(args))
     }
     #[inline]
     fn sql_vm(&self) -> &VirtualMachine {

@@ -925,11 +925,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let me = unsafe { &mut *this.as_ptr() };
         let mut body = data;
         if !me.body.is_empty() {
-            if me.body.len().saturating_add(data.len()) > bun_http::max_http_header_size() {
-                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
-                return;
-            }
             me.body.extend_from_slice(data);
             body = &me.body;
         }
@@ -954,12 +949,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
             Err(picohttp::ParseResponseError::ShortRead) => {
                 if me.body.is_empty() {
-                    if data.len() > bun_http::max_http_header_size() {
-                        // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                        unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
-                        return;
-                    }
                     me.body.extend_from_slice(data);
+                }
+                // ShortRead means no \r\n\r\n was found, so every byte in
+                // `body` is part of an incomplete header — cap that, not
+                // total bytes received (which may include pipelined
+                // WebSocket frames once the header does complete).
+                if me.body.len() > bun_http::max_http_header_size() {
+                    // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
+                    unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
                 }
                 return;
             }
@@ -985,11 +983,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let me = unsafe { &mut *this };
         let mut body = data;
         if !me.body.is_empty() {
-            if me.body.len().saturating_add(data.len()) > bun_http::max_http_header_size() {
-                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
-                return;
-            }
             me.body.extend_from_slice(data);
             body = &me.body;
         }
@@ -1017,12 +1010,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
             Err(picohttp::ParseResponseError::ShortRead) => {
                 if me.body.is_empty() {
-                    if data.len() > bun_http::max_http_header_size() {
-                        // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                        unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
-                        return;
-                    }
                     me.body.extend_from_slice(data);
+                }
+                // ShortRead means no \r\n\r\n was found, so every byte in
+                // `body` is part of an incomplete header — cap that, not
+                // total bytes received.
+                if me.body.len() > bun_http::max_http_header_size() {
+                    // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
+                    unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
                 }
                 return;
             }
@@ -1233,11 +1228,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Process as if it came directly from the socket
         let mut body = data;
         if !me.body.is_empty() {
-            if me.body.len().saturating_add(data.len()) > bun_http::max_http_header_size() {
-                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
-                return;
-            }
             me.body.extend_from_slice(data);
             body = &me.body;
         }
@@ -1262,12 +1252,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
             Err(picohttp::ParseResponseError::ShortRead) => {
                 if me.body.is_empty() {
-                    if data.len() > bun_http::max_http_header_size() {
-                        // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                        unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
-                        return;
-                    }
                     me.body.extend_from_slice(data);
+                }
+                // ShortRead means no \r\n\r\n was found, so every byte in
+                // `body` is part of an incomplete header — cap that, not
+                // total bytes received (which may include pipelined
+                // WebSocket frames once the header does complete).
+                if me.body.len() > bun_http::max_http_header_size() {
+                    // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
+                    unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
                 }
                 return;
             }

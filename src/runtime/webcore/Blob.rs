@@ -4366,17 +4366,11 @@ pub extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
     this.is_jsdom_file.set(true);
-
-    // This is not 100% correct...
-    if let Some(store) = this.store() {
-        if let store::Data::Bytes(bytes) = &mut store.data_mut() {
-            if bytes.stored_name.is_empty() {
-                // Owned heap slice
-                // owned by `stored_name` (`Box<[u8]>`) and freed by `Bytes::Drop`.
-                bytes.stored_name = path_str.to_owned_slice().into_boxed_slice();
-            }
-        }
-    }
+    // Store on the per-Blob `name` rather than the (possibly shared) store's
+    // `stored_name`, so the filename assigned by `FormData` does not leak
+    // into the user's original Blob and can be overridden by a later
+    // `FormData.set(name, blob, filename)`.
+    this.name.set(path_str.dupe_ref());
 }
 
 #[unsafe(no_mangle)]
@@ -4389,7 +4383,14 @@ pub extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
     if let Some(filename) = this.get_file_name() {
         return BunString::from_bytes(filename);
     }
-    BunString::empty()
+    // https://xhr.spec.whatwg.org/#create-an-entry step 3: if the value is a
+    // Blob that is not a File, it becomes a File named "blob". Only called
+    // from `FormData.append`/`set` when no filename argument was provided.
+    if this.is_jsdom_file.get() {
+        BunString::empty()
+    } else {
+        BunString::static_(b"blob")
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

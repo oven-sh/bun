@@ -38,7 +38,7 @@ describe("FormData", () => {
     const formData = new FormData();
     formData.append("foo", blob);
     // @ts-expect-error
-    expect(formData.get("foo").name).toBeUndefined();
+    expect(formData.get("foo").name).toBe("blob");
     formData.append("foo2", new File([blob], "foo.txt"));
     // @ts-expect-error
     expect(formData.get("foo2").name).toBe("foo.txt");
@@ -52,15 +52,64 @@ describe("FormData", () => {
 
     let b1 = form.get("foo") as any;
     expect(blob.name).toBeUndefined();
-    expect(b1.name).toBeUndefined();
+    expect(b1.name).toBe("blob");
 
     form.set("foo", b1, "foo.txt");
     expect(blob.name).toBeUndefined();
-    expect(b1.name).toBeUndefined();
+    expect(b1.name).toBe("blob");
 
     b1 = form.get("foo") as Blob;
     expect(blob.name).toBeUndefined();
     expect(b1.name).toBe("foo.txt");
+  });
+
+  // https://github.com/oven-sh/bun/issues/14725
+  it("defaults the filename to 'blob' when appending/setting a Blob without a filename", async () => {
+    const formData = new FormData();
+    formData.set("via-set", new Blob(["hello"], { type: "text/plain" }));
+    formData.append("via-append", new Blob(["world"]));
+    formData.set("file", new File(["x"], "explicit.txt"));
+    formData.set("override", new Blob(["y"]), "override.bin");
+
+    const viaSet = formData.get("via-set") as File;
+    const viaAppend = formData.get("via-append") as File;
+    const file = formData.get("file") as File;
+    const override = formData.get("override") as File;
+
+    expect({
+      viaSet: { isFile: viaSet instanceof File, name: viaSet.name },
+      viaAppend: { isFile: viaAppend instanceof File, name: viaAppend.name },
+      file: { isFile: file instanceof File, name: file.name },
+      override: { isFile: override instanceof File, name: override.name },
+    }).toEqual({
+      viaSet: { isFile: true, name: "blob" },
+      viaAppend: { isFile: true, name: "blob" },
+      file: { isFile: true, name: "explicit.txt" },
+      override: { isFile: true, name: "override.bin" },
+    });
+
+    const body = await new Response(formData).text();
+    expect(body).toContain('Content-Disposition: form-data; name="via-set"; filename="blob"\r\n');
+    expect(body).toContain('Content-Disposition: form-data; name="via-append"; filename="blob"\r\n');
+    expect(body).toContain('Content-Disposition: form-data; name="file"; filename="explicit.txt"\r\n');
+    expect(body).toContain('Content-Disposition: form-data; name="override"; filename="override.bin"\r\n');
+  });
+
+  // https://github.com/oven-sh/bun/issues/14725
+  it("sends filename='blob' over fetch for a Blob without a filename", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(await req.text());
+      },
+    });
+
+    const formData = new FormData();
+    formData.set("fname", new Blob(["hello, world"], { type: "text/plain" }));
+
+    const res = await fetch(server.url, { method: "POST", body: formData });
+    const body = await res.text();
+    expect(body).toContain('Content-Disposition: form-data; name="fname"; filename="blob"\r\n');
   });
 
   const multipartFormDataFixturesRawBody = [

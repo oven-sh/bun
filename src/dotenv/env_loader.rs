@@ -1219,16 +1219,21 @@ impl<'a> Parser<'a> {
                     j += b":-".len();
                     let default_start = j;
                     if braced {
-                        // Stop at the `}` that closes this substitution. Only a
-                        // nested `${` opens a scope to balance; a bare `{` is a
-                        // literal byte. A `\$` escape in the default is resolved
-                        // when the default is expanded, so it is not special
-                        // here.
+                        // Find the `}` that closes this substitution. A nested
+                        // `${` opens a scope whose own `}` must be balanced; a
+                        // bare `{` is a literal byte, and an escaped `\$` never
+                        // opens a scope (it is a literal `$` once expanded).
                         let mut brace_depth = 0usize;
                         while j < n {
                             match value[j] {
-                                b'{' if j > default_start && value[j - 1] == b'$' => {
-                                    brace_depth += 1
+                                b'\\' if j + 1 < n && value[j + 1] == b'$' => {
+                                    j += 2;
+                                    continue;
+                                }
+                                b'$' if j + 1 < n && value[j + 1] == b'{' => {
+                                    brace_depth += 1;
+                                    j += 2;
+                                    continue;
                                 }
                                 b'}' => {
                                     if brace_depth == 0 {

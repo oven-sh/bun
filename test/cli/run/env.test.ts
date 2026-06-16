@@ -278,11 +278,14 @@ test(".env escaped $ inside a default resolves (#32411)", () => {
       "NE_ESC_FLAT=${NE_EC:-a\\$b}",
       "NE_ESC_TRAIL=${NE_ED:-a\\$}",
       "NE_ESC_TOP=x\\$",
+      // An escaped \$ is not a nested substitution: the first `}` closes
+      // the default, so `${NE_EF:-\${}` resolves to `${` (matches bash).
+      "NE_ESC_EBRACE=${NE_EF:-\\${}",
     ].join("\n"),
-    "index.ts": `console.log([process.env.NE_ESC_NESTED, process.env.NE_ESC_FLAT, process.env.NE_ESC_TRAIL, process.env.NE_ESC_TOP].join("|"));`,
+    "index.ts": `console.log([process.env.NE_ESC_NESTED, process.env.NE_ESC_FLAT, process.env.NE_ESC_TRAIL, process.env.NE_ESC_TOP, process.env.NE_ESC_EBRACE].join("|"));`,
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
-  expect(stdout).toBe("a$b|a$b|a$|x$");
+  expect(stdout).toBe("a$b|a$b|a$|x$|${");
 });
 
 test(".env comments", () => {

@@ -231,13 +231,13 @@ impl Stdio {
 
         let result = match self {
             Self::Blob(blob) => 'brk: {
-                let fd = FdStdio::from_int(i).unwrap().fd();
+                let fd = FdStdio::from_int(i).map(FdStdio::fd);
                 if blob.needs_to_read_file() {
                     if let Some(store) = blob.store() {
                         if let StoreData::File(ref file) = store.data {
                             match file.pathlike {
                                 PathOrFileDescriptor::Fd(store_fd) => {
-                                    if store_fd == fd {
+                                    if Some(store_fd) == fd {
                                         break 'brk SpawnOptionsStdio::Inherit;
                                     }
 
@@ -365,7 +365,11 @@ impl Stdio {
                             "ReadableStream cannot be used for stderr yet. For now, do .stderr"
                         )));
                     }
-                    _ => unreachable!(),
+                    _ => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "ReadableStream cannot be used for stdio[{i}] yet"
+                        )));
+                    }
                 }
 
                 let stream_value = body.to_readable_stream(global)?;
@@ -495,7 +499,11 @@ impl Stdio {
                 0 => b"stdin",
                 1 => b"stdout",
                 2 => b"stderr",
-                _ => unreachable!(),
+                _ => {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "ReadableStream cannot be used for stdio[{i}] yet"
+                    )));
+                }
             };
 
             if is_sync {
@@ -550,14 +558,14 @@ impl Stdio {
         blob: webcore::blob::Any,
         i: i32,
     ) -> JsResult<()> {
-        let fd = FdStdio::from_int(i).unwrap().fd();
+        let fd = FdStdio::from_int(i).map(FdStdio::fd);
 
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {
                 if let StoreData::File(ref file) = store.data {
                     match file.pathlike {
                         PathOrFileDescriptor::Fd(store_fd) => {
-                            if store_fd == fd {
+                            if Some(store_fd) == fd {
                                 *self = Stdio::Inherit;
                             } else {
                                 // TODO: is this supposed to be `store.data.file.pathlike.fd`?
@@ -608,6 +616,13 @@ impl Stdio {
         if blob.fast_size() == 0 {
             *self = Stdio::Ignore;
             return Ok(());
+        }
+
+        if i != 0 {
+            // The parent-side writer that pumps Blob bytes into the child's
+            // pipe (`Writable::Buffer` / memfd) is only wired up for stdin.
+            return Err(global
+                .throw_invalid_arguments(format_args!("Blob cannot be used for stdio[{i}] yet")));
         }
 
         *self = Stdio::Blob(blob);

@@ -1,6 +1,6 @@
 // https://github.com/oven-sh/bun/issues/9410
 import { Database } from "bun:sqlite";
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { join } from "node:path";
 

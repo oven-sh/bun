@@ -1731,4 +1731,54 @@ describe("ReadableStream byte source detaches supplied ArrayBuffers", () => {
     expect(threw).toBeInstanceOf(TypeError);
     expect(newBuffer.byteLength).toBe(4);
   });
+
+  it("respondWithNewView() works after the source transfers the vended buffer out", async () => {
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        // Canonical pattern: transfer the vended buffer away, fill it, respond
+        // with a view over the transferred buffer. The descriptor's own buffer
+        // is now detached, but the new view is the same size.
+        const view = controller.byobRequest.view;
+        const newBuffer = view.buffer.transfer();
+        new Uint8Array(newBuffer)[0] = 42;
+        controller.byobRequest.respondWithNewView(new Uint8Array(newBuffer));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const { value } = await reader.read(new Uint8Array(4));
+
+    expect(value).toBeInstanceOf(Uint8Array);
+    expect(Array.from(value)).toEqual([42, 0, 0, 0]);
+  });
+
+  it("a failed enqueue while a BYOB pull-into is pending leaves the vended view usable", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    let threw;
+    let byteLengthAfter;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        const vendoredView = controller.byobRequest.view;
+        try {
+          // Non-transferable chunk: the enqueue must throw without detaching the
+          // pending descriptor's buffer or invalidating the byobRequest.
+          controller.enqueue(new Uint8Array(new SharedArrayBuffer(4)));
+        } catch (e) {
+          threw = e;
+        }
+        byteLengthAfter = vendoredView.byteLength;
+        // The byobRequest survived the failed enqueue, so a normal respond works.
+        vendoredView[0] = 7;
+        controller.byobRequest.respond(1);
+        resolve();
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const [{ value }] = await Promise.all([reader.read(new Uint8Array(4)), promise]);
+
+    expect(threw).toBeInstanceOf(TypeError);
+    expect(byteLengthAfter).toBe(4);
+    expect(value[0]).toBe(7);
+  });
 });

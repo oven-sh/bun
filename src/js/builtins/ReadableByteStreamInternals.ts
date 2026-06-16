@@ -213,6 +213,7 @@ export function readableByteStreamControllerPull(controller) {
     }
     const pullIntoDescriptor: PullIntoDescriptor = {
       buffer,
+      bufferByteLength: buffer.byteLength,
       byteOffset: 0,
       byteLength: $getByIdDirectPrivate(controller, "autoAllocateChunkSize"),
       bytesFilled: 0,
@@ -325,6 +326,10 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
 
     /* BYOB */
     case 2: {
+      // Spec step 7: transfer the chunk's buffer first. This is the fallible
+      // step (a non-transferable chunk throws here), and it must run before the
+      // pending descriptor is touched so a failed enqueue has no side effects.
+      const transferredBuffer = $transferBufferToCurrentRealm(chunk.buffer);
       // Spec step 8: a pending pull-into's buffer (the one vended through
       // byobRequest) is transferred too, detaching any view the source kept.
       const pendingPullIntos = $getByIdDirectPrivate(controller, "pendingPullIntos");
@@ -333,12 +338,7 @@ export function readableByteStreamControllerEnqueue(controller, chunk) {
         const firstDescriptor = pendingPullIntos.peek();
         firstDescriptor.buffer = $transferBufferToCurrentRealm(firstDescriptor.buffer);
       }
-      $readableByteStreamControllerEnqueueChunk(
-        controller,
-        $transferBufferToCurrentRealm(chunk.buffer),
-        byteOffset,
-        byteLength,
-      );
+      $readableByteStreamControllerEnqueueChunk(controller, transferredBuffer, byteOffset, byteLength);
       $readableByteStreamControllerProcessPullDescriptors(controller);
       break;
     }
@@ -393,8 +393,10 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
     throw new RangeError("Invalid value for view.byteOffset");
 
   // Spec step 8: the new view must be backed by a buffer the same size as the
-  // descriptor's, otherwise its byteOffset/byteLength geometry would no longer fit.
-  if (firstDescriptor!.buffer.byteLength !== view.buffer.byteLength)
+  // descriptor's, otherwise its byteOffset/byteLength geometry would no longer
+  // fit. Compare against the cached length so this still works when the caller
+  // transferred the descriptor's buffer out before responding.
+  if (firstDescriptor!.bufferByteLength !== view.buffer.byteLength)
     throw new RangeError("Invalid value for view.buffer");
 
   // Account for bytes already filled (spec step 9); an oversized view must be
@@ -671,6 +673,7 @@ export function readableByteStreamControllerPullInto(controller, view) {
 
   const pullIntoDescriptor: PullIntoDescriptor = {
     buffer: transferredBuffer,
+    bufferByteLength: transferredBuffer.byteLength,
     byteOffset,
     byteLength,
     bytesFilled: 0,
@@ -731,6 +734,14 @@ interface PullIntoDescriptor {
    * An {@link ArrayBuffer}
    */
   buffer: ArrayBuffer;
+
+  /**
+   * A positive integer representing the initial byte length of {@link buffer}.
+   * Cached at creation so the buffer-size check in respondWithNewView survives
+   * the caller detaching {@link buffer} (e.g. transferring it out before
+   * responding), matching the spec's "buffer byte length" descriptor field.
+   */
+  bufferByteLength: number;
 
   /**
    * A nonnegative integer byte offset into the {@link buffer} where the

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isMacOS } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.
@@ -131,9 +131,10 @@ test(
 // Debug-only: reportZappedCellAndCrash is gated on ASSERT_ENABLED, and on
 // release builds worker shutdown outruns the fast-failing secrets jobs so
 // the separate work-pool → freed-VM race tracked in #32071 fires instead.
-// Skipped on macOS where Bun.secrets.get resolves with null (NotFound) and
-// never reaches createError.
-test.skipIf(isMacOS || !isDebug)(
+// Linux-only: on macOS and Windows Bun.secrets.get for a missing item
+// resolves with null (NotFound) and never reaches createError; on Linux
+// without libsecret it rejects with ERR_SECRETS_PLATFORM_ERROR.
+test.skipIf(!isLinux || !isDebug)(
   "creating a coded error while a TerminationException is pending does not crash",
   async () => {
     await using proc = Bun.spawn({

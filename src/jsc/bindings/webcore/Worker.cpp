@@ -45,6 +45,9 @@
 #include "CloseEvent.h"
 #include "JSMessagePort.h"
 #include "JSBroadcastChannel.h"
+#include "BunClientData.h"
+#include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/JSArrayBufferView.h>
 
 namespace WebCore {
 
@@ -781,6 +784,43 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     worker->enqueueToParent(MessageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() });
 
     return JSValue::encode(jsUndefined());
+}
+
+// node:worker_threads.markAsUncloneable(object)
+//
+// Marks `object` so that any subsequent structured-clone attempt (structuredClone,
+// MessagePort.postMessage, Worker workerData, BroadcastChannel.postMessage) throws a
+// DataCloneError when `object` appears as a value.
+//
+// Per Node.js (https://nodejs.org/api/worker_threads.html#workermarkasuncloneableobject):
+//   - No-op for primitives (including null/undefined).
+//   - No effect on ArrayBuffer, SharedArrayBuffer, or any Buffer/TypedArray/DataView.
+//   - Cannot be undone.
+//
+// Implementation: tag the object with a JSC private-name property, invisible to
+// JS enumeration (Object.keys, Reflect.ownKeys, JSON.stringify) but cheap to read
+// from the structured-clone serializer via getDirect().
+JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUncloneable,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSValue value = callFrame->argument(0);
+
+    // Node: `if ((typeof obj !== 'object' && typeof obj !== 'function') || obj === null) return;`
+    if (!value.isObject())
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    JSC::JSObject* object = JSC::asObject(value);
+
+    // "This has no effect on ArrayBuffer, or any Buffer like objects."
+    if (object->inherits<JSC::JSArrayBuffer>() || object->inherits<JSC::JSArrayBufferView>())
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    object->putDirect(vm, WebCore::builtinNames(vm).isUncloneablePrivateName(), JSC::jsBoolean(true),
+        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 } // namespace WebCore

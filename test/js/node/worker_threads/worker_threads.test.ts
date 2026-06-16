@@ -7,6 +7,7 @@ import wt, {
   BroadcastChannel,
   getEnvironmentData,
   isMainThread,
+  markAsUncloneable,
   markAsUntransferable,
   MessageChannel,
   MessagePort,
@@ -35,6 +36,7 @@ test("support eval in worker", async () => {
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");
+  expect(wt).toHaveProperty("markAsUncloneable");
   expect(wt).toHaveProperty("markAsUntransferable");
   expect(wt).toHaveProperty("moveMessagePortToContext");
   expect(wt).toHaveProperty("parentPort");
@@ -51,6 +53,7 @@ test("all worker_threads module properties are present", () => {
 
   expect(getEnvironmentData).toBeFunction();
   expect(isMainThread).toBeBoolean();
+  expect(markAsUncloneable).toBeFunction();
   expect(markAsUntransferable).toBeFunction();
   expect(moveMessagePortToContext).toBeFunction();
   expect(parentPort).toBeNull();
@@ -485,5 +488,193 @@ describe("getHeapSnapshot", () => {
       "trace_tree",
     ]);
     worker.postMessage(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/29423
+describe("markAsUncloneable", () => {
+  function expectDataCloneError(thunk: () => unknown) {
+    let err: unknown;
+    try {
+      thunk();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect((err as { name?: string }).name).toBe("DataCloneError");
+  }
+
+  test("is exported as a function", () => {
+    expect(typeof markAsUncloneable).toBe("function");
+    expect(markAsUncloneable.length).toBe(1);
+    expect(wt.markAsUncloneable).toBe(markAsUncloneable);
+  });
+
+  test("returns undefined", () => {
+    expect(markAsUncloneable({})).toBeUndefined();
+  });
+
+  test("no-op on primitives, null, and undefined", () => {
+    for (const v of [1, 0, Number.NaN, true, false, "x", "", null, undefined, Symbol(), 0n]) {
+      expect(() => (markAsUncloneable as any)(v)).not.toThrow();
+    }
+    expect(() => (markAsUncloneable as any)()).not.toThrow();
+  });
+
+  test("structuredClone(marked) throws DataCloneError", () => {
+    const obj = { foo: "bar" };
+    markAsUncloneable(obj);
+    expectDataCloneError(() => structuredClone(obj));
+  });
+
+  test("catches marked object nested inside an array", () => {
+    const inner = { secret: 1 };
+    markAsUncloneable(inner);
+    expectDataCloneError(() => structuredClone([1, 2, inner, 4]));
+  });
+
+  test("catches marked object nested inside an object", () => {
+    const inner = { secret: 1 };
+    markAsUncloneable(inner);
+    expectDataCloneError(() => structuredClone({ a: 1, wrapper: { nested: inner } }));
+  });
+
+  test("catches a marked array at the root", () => {
+    const arr: unknown[] = [1, 2, 3];
+    markAsUncloneable(arr);
+    expectDataCloneError(() => structuredClone(arr));
+  });
+
+  test("catches a marked object inside a Map value", () => {
+    const inner = { secret: 1 };
+    markAsUncloneable(inner);
+    expectDataCloneError(() => structuredClone(new Map([["k", inner]])));
+  });
+
+  test("catches a marked object inside a Set", () => {
+    const inner = { secret: 1 };
+    markAsUncloneable(inner);
+    expectDataCloneError(() => structuredClone(new Set([inner])));
+  });
+
+  test("catches a marked class instance", () => {
+    class Foo {}
+    const obj = new Foo();
+    markAsUncloneable(obj);
+    expectDataCloneError(() => structuredClone(obj));
+  });
+
+  test("MessagePort.postMessage(marked) throws DataCloneError", () => {
+    const { port1, port2 } = new MessageChannel();
+    try {
+      const obj = { x: 1 };
+      markAsUncloneable(obj);
+      expectDataCloneError(() => port1.postMessage(obj));
+    } finally {
+      port1.close();
+      port2.close();
+    }
+  });
+
+  test("BroadcastChannel.postMessage(marked) throws DataCloneError", () => {
+    const bc = new BroadcastChannel("markAsUncloneable-test");
+    try {
+      const obj = { x: 1 };
+      markAsUncloneable(obj);
+      expectDataCloneError(() => bc.postMessage(obj));
+    } finally {
+      bc.close();
+    }
+  });
+
+  test("new Worker with marked workerData throws DataCloneError", () => {
+    const obj = { x: 1 };
+    markAsUncloneable(obj);
+    expectDataCloneError(() => new Worker("", { eval: true, workerData: obj }));
+  });
+
+  test("ArrayBuffer is unaffected", () => {
+    const buf = new ArrayBuffer(8);
+    markAsUncloneable(buf);
+    const cloned = structuredClone(buf);
+    expect(cloned).toBeInstanceOf(ArrayBuffer);
+    expect(cloned.byteLength).toBe(8);
+    expect(cloned).not.toBe(buf);
+  });
+
+  test("Buffer / TypedArray / DataView are unaffected", () => {
+    const b = Buffer.from("hello");
+    markAsUncloneable(b);
+    expect(Buffer.from(structuredClone(b)).toString("utf8")).toBe("hello");
+
+    const u8 = new Uint8Array([1, 2, 3, 4]);
+    markAsUncloneable(u8);
+    expect(Array.from(structuredClone(u8))).toEqual([1, 2, 3, 4]);
+
+    const dv = new DataView(new ArrayBuffer(4));
+    dv.setUint32(0, 0xdeadbeef);
+    markAsUncloneable(dv);
+    expect(structuredClone(dv).getUint32(0)).toBe(0xdeadbeef);
+  });
+
+  test("marking is irreversible", () => {
+    const obj = { z: 1 };
+    markAsUncloneable(obj);
+    expectDataCloneError(() => structuredClone(obj));
+    expectDataCloneError(() => structuredClone(obj));
+  });
+
+  test("marker is hidden from enumeration APIs", () => {
+    const obj = { visible: 42 };
+    markAsUncloneable(obj);
+
+    expect(Object.keys(obj)).toEqual(["visible"]);
+    expect(Object.getOwnPropertyNames(obj)).toEqual(["visible"]);
+    expect(Object.getOwnPropertySymbols(obj)).toEqual([]);
+    expect(Reflect.ownKeys(obj)).toEqual(["visible"]);
+    expect(JSON.stringify(obj)).toBe('{"visible":42}');
+
+    const seen: string[] = [];
+    for (const key in obj) seen.push(key);
+    expect(seen).toEqual(["visible"]);
+  });
+
+  test("marked object remains usable locally", () => {
+    const obj: Record<string, unknown> = { a: 1, b: "two" };
+    markAsUncloneable(obj);
+
+    expect(obj.a).toBe(1);
+    obj.c = true;
+    expect(obj.c).toBe(true);
+    delete obj.a;
+    expect("a" in obj).toBe(false);
+  });
+
+  test("unmarked objects still clone normally", () => {
+    const obj = { a: 1, b: [2, 3] };
+    const cloned = structuredClone(obj);
+    expect(cloned).toEqual(obj);
+    expect(cloned).not.toBe(obj);
+  });
+
+  test("works inside a worker thread", async () => {
+    const script = `
+      const { parentPort, markAsUncloneable } = require("node:worker_threads");
+      const obj = { fromChild: true };
+      markAsUncloneable(obj);
+      let name = "";
+      try { structuredClone(obj); } catch (e) { name = e.name; }
+      parentPort.postMessage({ name });
+    `;
+    const worker = new Worker(script, { eval: true });
+    try {
+      const result = await new Promise((resolve, reject) => {
+        worker.on("message", resolve);
+        worker.on("error", reject);
+      });
+      expect(result).toEqual({ name: "DataCloneError" });
+    } finally {
+      await worker.terminate();
+    }
   });
 });

@@ -1594,6 +1594,16 @@ private:
         VM& vm = m_lexicalGlobalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
+        // node:worker_threads.markAsUncloneable: refuse to clone an object tagged
+        // with the private-name marker. Checked before the isArray/isMap/isSet
+        // dispatch so marked containers are rejected too.
+        if (value.isObject()) {
+            if (asObject(value)->getDirect(vm, WebCore::builtinNames(vm).isUncloneablePrivateName())) {
+                code = SerializationReturnCode::DataCloneError;
+                return true;
+            }
+        }
+
         if (isArray(value))
             return false;
 

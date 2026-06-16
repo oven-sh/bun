@@ -1486,16 +1486,12 @@ export default class {
       for (let i = 0; i < 2000; i++) eliminate.push("unused" + i);
       const t = new Bun.Transpiler({ loader: "ts", exports: { eliminate } });
 
-      const expected = t.transformSync(
-        "export const survivor = 1;\nexport const keepMeOut = 2;\n",
-      );
+      const expected = t.transformSync("export const survivor = 1;\nexport const keepMeOut = 2;\n");
       expect(expected).toContain("survivor");
       expect(expected).not.toContain("keepMeOut");
 
       const results = await Promise.all(
-        Array.from({ length: 64 }, () =>
-          t.transform("export const survivor = 1;\nexport const keepMeOut = 2;\n"),
-        ),
+        Array.from({ length: 64 }, () => t.transform("export const survivor = 1;\nexport const keepMeOut = 2;\n")),
       );
       for (const out of results) {
         expect(out).toBe(expected);

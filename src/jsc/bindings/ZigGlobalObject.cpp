@@ -3548,7 +3548,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
                 if (key.get() != typeKey) {
                     auto keyString = String(key.get());
                     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-                    promise->reject(vm, globalObject,
+                    promise->reject(vm,
                         Bun::createError(globalObject, Bun::ErrorCode::ERR_IMPORT_ATTRIBUTE_UNSUPPORTED,
                             makeString("Import attribute \""_s, keyString, "\" with value \""_s, value, "\" is not supported"_s)));
                     return promise;

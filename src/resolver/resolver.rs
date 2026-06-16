@@ -4621,12 +4621,6 @@ impl<'a> Resolver<'a> {
                     self.generation,
                 );
 
-                // Pre-size `data` so the per-entry inserts below skip the
-                // 1→2→4→…→N hashbrown rehash cascade from an empty table. 64
-                // covers a typical node_modules package dir; larger dirs
-                // still rehash from there (cheap relative to starting at 0).
-                new_entry.data.reserve(64);
-
                 if lazy_leaf {
                     // Entry-point fast path: don't enumerate this directory.
                     // Mark the entry incomplete so any later consumer that needs
@@ -4634,6 +4628,11 @@ impl<'a> Resolver<'a> {
                     // this directory's config markers by direct `stat` below.
                     new_entry.complete = false;
                 } else {
+                    // Pre-size `data` so the per-entry inserts below skip the
+                    // 1→2→4→…→N hashbrown rehash cascade from an empty table. 64
+                    // covers a typical node_modules package dir; larger dirs
+                    // still rehash from there (cheap relative to starting at 0).
+                    new_entry.data.reserve(64);
                     let mut dir_iterator = bun_sys::iterate_dir(open_dir);
                     // NOTE: `WrappedIterator::next` returns
                     // `Result<Option<IteratorResult>>`, so use `?`-style break-on-error.
@@ -5767,7 +5766,11 @@ impl<'a> Resolver<'a> {
             // would drop.
             // SAFETY: `rfs` points at the process-global RealFS singleton.
             if let Ok(cache) = unsafe { &mut *rfs }.kind(dir_path, base, FD::INVALID, false) {
-                if cache.kind == Fs::file_system::EntryKind::File {
+                // A non-empty `symlink` means `kind` followed a symlink; those
+                // fall through to the normal path so the realpath is recorded
+                // and relative imports resolve from the real target directory
+                // (e.g. a `node_modules/.bin/<tool>` symlink).
+                if cache.kind == Fs::file_system::EntryKind::File && cache.symlink.is_empty() {
                     let abs_path: &'static [u8] = self
                         .fs_ref()
                         .dirname_store

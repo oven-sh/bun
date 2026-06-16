@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
-import { chmodSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { chmodSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // `bun:main` is backed by ServerEntryPoint.contents — a slice that is
@@ -38,6 +38,10 @@ async function runAsNobody(scriptPath: string) {
     stdout: "pipe",
     stderr: "pipe",
   });
+  // stderr is drained (so the child can't block on a full pipe) but not
+  // asserted: a `nobody` child with a redirected HOME can emit benign,
+  // host-specific warnings, and these tests' contract is the stdout + exit code
+  // that prove the entry point resolved and ran.
   return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 }
 
@@ -53,7 +57,7 @@ test.skipIf(!canDropPrivs)("runs an entry point in a searchable-but-not-listable
   chmodSync(join(root, "sub"), 0o711);
   chmodSync(join(root, "sub", "entry.js"), 0o644);
 
-  const [stdout, stderr, exitCode] = await runAsNobody(join(root, "sub", "entry.js"));
+  const [stdout, _stderr, exitCode] = await runAsNobody(join(root, "sub", "entry.js"));
   expect(stdout).toBe("RAN_OK\n");
   expect(exitCode).toBe(0);
 });
@@ -70,9 +74,38 @@ test.skipIf(!canDropPrivs)("control: runs an entry point in a listable directory
   chmodSync(join(root, "sub"), 0o755);
   chmodSync(join(root, "sub", "entry.js"), 0o644);
 
-  const [stdout, stderr, exitCode] = await runAsNobody(join(root, "sub", "entry.js"));
+  const [stdout, _stderr, exitCode] = await runAsNobody(join(root, "sub", "entry.js"));
   expect(stdout).toBe("RAN_OK\n");
   expect(exitCode).toBe(0);
+});
+
+// A symlinked entry point must resolve its relative imports from the real
+// target directory, not the symlink's directory. Bun canonicalizes the entry
+// path before resolving it, so the stat fast path must see through the symlink;
+// if it instead kept the symlink path, "./dep.js" would be looked up next to
+// the link (where it does not exist) and the run would fail. This is the
+// shape of a `node_modules/.bin/<tool>` symlink whose script does relative
+// requires.
+test.skipIf(isWindows).concurrent("resolves a symlinked entry point relative to its real directory", async () => {
+  using dir = tempDir("bun-main-symlink", {
+    "real/main.js": `import { dep } from "./dep.js";\nconsole.log("SYM_OK", dep);`,
+    "real/dep.js": `export const dep = "from-real";`,
+  });
+  const root = String(dir);
+  symlinkSync(join(root, "real", "main.js"), join(root, "link.js"));
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(root, "link.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: stripAsanWarning(stderr), exitCode }).toEqual({
+    stdout: "SYM_OK from-real\n",
+    stderr: [],
+    exitCode: 0,
+  });
 });
 
 test.concurrent("dynamic import('bun:main') returns the wrapper module", async () => {

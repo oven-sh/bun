@@ -126,6 +126,8 @@ bun_core::comptime_string_map! {
         b"sha3-512" => Algorithm::Sha3_512,
         b"shake128" => Algorithm::Shake128,
         b"shake256" => Algorithm::Shake256,
+        b"shake-128" => Algorithm::Shake128,
+        b"shake-256" => Algorithm::Shake256,
         b"ripemd160" => Algorithm::Ripemd160,
         b"blake2b256" => Algorithm::Blake2b256,
         b"blake2b512" => Algorithm::Blake2b512,

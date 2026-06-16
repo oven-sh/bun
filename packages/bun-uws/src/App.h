@@ -105,6 +105,8 @@ private:
         HttpRouter<typename HttpContextData<SSL>::RouterData> *router;
     };
     std::vector<PendingServerName> pendingServerNames;
+    bool ignoreTrailingSlashFlag = false;
+    bool ignoreDuplicateSlashesFlag = false;
     /* No raw us_listen_socket_t* cache here. server.zig's non-abrupt stop calls
      * us_listen_socket_close(ls) directly; the listener is queued for free in
      * loop_post, so any vector we kept would dangle by the time the deferred
@@ -138,6 +140,7 @@ public:
                 return std::move(*this);
             }
             auto *domainRouter = new HttpRouter<typename HttpContextData<SSL>::RouterData>();
+            domainRouter->setSlashNormalization(ignoreTrailingSlashFlag, ignoreDuplicateSlashesFlag);
             int result = 0;
             forEachListenSocket([&](us_listen_socket_t *ls) {
                 result |= us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx, domainRouter);
@@ -749,6 +752,11 @@ public:
 
     TemplatedApp &&setSlashNormalization(bool ignoreTrailingSlash, bool ignoreDuplicateSlashes) {
         httpContext->getSocketContextData()->router.setSlashNormalization(ignoreTrailingSlash, ignoreDuplicateSlashes);
+        for (auto &p : pendingServerNames) {
+            p.router->setSlashNormalization(ignoreTrailingSlash, ignoreDuplicateSlashes);
+        }
+        ignoreTrailingSlashFlag = ignoreTrailingSlash;
+        ignoreDuplicateSlashesFlag = ignoreDuplicateSlashes;
         return std::move(*this);
     }
 

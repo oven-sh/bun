@@ -147,5 +147,44 @@ describe("Bun.serve SSL validations", () => {
         });
       });
     }
+
+    test("applies ignoreTrailingSlash to SNI domain routers", async () => {
+      using server = Bun.serve({
+        port: 0,
+        ignoreTrailingSlash: true,
+        tls: [
+          {
+            key: privateKey,
+            cert: publicKey,
+            serverName: "localhost",
+          },
+          {
+            key: privateKey,
+            cert: publicKey,
+            serverName: "localhost2.com",
+          },
+        ],
+        routes: {
+          "/api/users": () => new Response("matched"),
+        },
+        fetch: () => new Response("fallback"),
+      });
+
+      const requestUrl = new URL("/api/users/", server.url).href;
+
+      for (const serverName of ["localhost", "localhost2.com"]) {
+        const res = await fetch(requestUrl, {
+          headers: {
+            Host: serverName,
+          },
+          tls: {
+            rejectUnauthorized: false,
+            serverName,
+          },
+          keepAlive: false,
+        });
+        expect(await res.text()).toBe("matched");
+      }
+    });
   }
 });

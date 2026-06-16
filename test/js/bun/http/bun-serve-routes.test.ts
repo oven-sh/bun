@@ -874,7 +874,7 @@ describe("ignoreDuplicateSlashes", () => {
       ignoreDuplicateSlashes: true,
       fetch: () => new Response("fallback"),
       routes: {
-        "/api/users": () => new Response("matched"),
+        "/api/users": req => new Response(req.url),
       },
     });
     server.unref();
@@ -886,7 +886,12 @@ describe("ignoreDuplicateSlashes", () => {
 
   it("collapses duplicate slashes", async () => {
     const res = await fetch(`${server.url.origin}//api//users`);
-    expect(await res.text()).toBe("matched");
+    expect(await res.text()).not.toBe("fallback");
+  });
+
+  it("keeps the raw request.url (duplicate slashes preserved for the handler)", async () => {
+    const res = await fetch(`${server.url.origin}//api//users`);
+    expect(new URL(await res.text()).pathname).toBe("/api//users");
   });
 
   it("does not trim a trailing slash (that flag is off)", async () => {
@@ -939,7 +944,7 @@ describe("ignoreTrailingSlash + ignoreDuplicateSlashes", () => {
       ignoreDuplicateSlashes: true,
       fetch: () => new Response("fallback"),
       routes: {
-        "/api/users": () => new Response("matched"),
+        "/api/users": req => new Response(req.url),
       },
     });
     server.unref();
@@ -951,6 +956,11 @@ describe("ignoreTrailingSlash + ignoreDuplicateSlashes", () => {
 
   it("matches messy duplicate and trailing slashes together", async () => {
     const res = await fetch(`${server.url.origin}//api//users//`);
-    expect(await res.text()).toBe("matched");
+    expect(await res.text()).not.toBe("fallback");
+  });
+
+  it("keeps the raw request.url (messy slashes preserved for the handler)", async () => {
+    const res = await fetch(`${server.url.origin}//api//users//`);
+    expect(new URL(await res.text()).pathname).toBe("/api//users//");
   });
 });

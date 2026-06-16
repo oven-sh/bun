@@ -4539,6 +4539,11 @@ test("bounds merge-key materialization through nested inline wrappers", () => {
   // show that nested-merge copies are charged against the same budget: 200
   // inline wrappers around a 100-key anchor push it over the limit and are
   // rejected rather than silently materializing depth * keyCount properties.
+  //
+  // Each `*d` reference walks 837,931 nodes and each `*c` walks 27,931, so
+  // building a..d plus `pad: [*d x 18, *c x 29]` charges ~16,759,547 of the
+  // 16,777,216 budget (MAX_ALIAS_EXPANSION), leaving ~17,669 for the nested
+  // merges.
   const width = 30;
   const fan = (ref: string) => `[${new Array(width).fill(ref).join(", ")}]`;
   const bomb = [
@@ -4548,6 +4553,13 @@ test("bounds merge-key materialization through nested inline wrappers", () => {
     `d: &d ${fan("*c")}`,
     `pad: [${new Array(18).fill("*d").concat(new Array(29).fill("*c")).join(", ")}]`,
   ];
+  // Precondition: the bomb on its own must stay under the budget; if it did
+  // not, the final assertion could pass because `pad:` threw, not because
+  // nested merges are charged. Appending an unresolved alias throws
+  // "Unresolved alias" only if the parser got past `pad:` without exhausting
+  // the budget (and avoids materializing the bomb to JS on success).
+  expect(() => YAML.parse(bomb.join("\n") + "\nprobe: *nope\n")).toThrow(/Unresolved alias/);
+
   const payload = bomb.concat(wrap(100, 200)).join("\n") + "\n";
   expect(() => YAML.parse(payload)).toThrow(/[Ee]xcessive aliasing/);
 }, 30_000);

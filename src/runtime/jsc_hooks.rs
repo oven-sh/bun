@@ -4028,17 +4028,22 @@ unsafe fn transpile_file(
     // Bun has no URL-fetching module loader. The resolver marks `http(s)://`
     // and `//protocol-relative` specifiers external (so `Bun.resolveSync` /
     // `import.meta.resolve` echo them back, matching Node), but actually
-    // importing one can't work: the file loader handed back a bogus
-    // `{ __esModule, default: "<url>" }` namespace (every named export
-    // `undefined`) and `.js` URLs ENOENT'd reading the URL as a path. Surface a
-    // clean module-not-found error instead. See #32398 / #29076.
+    // importing one can't work: reject it here at load time with a clean
+    // module-not-found error instead of letting it fall through to the file
+    // loader. `require()` uses `MODULE_NOT_FOUND`, ESM uses `ERR_MODULE_NOT_FOUND`,
+    // mirroring `ResolveMessage`.
     {
         let spec = _specifier.slice();
         if spec.starts_with(b"http://") || spec.starts_with(b"https://") || spec.starts_with(b"//")
         {
+            let code = if is_commonjs_require {
+                bun_jsc::ErrCode::MODULE_NOT_FOUND
+            } else {
+                bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND
+            };
             let js = global_ref
                 .err(
-                    bun_jsc::ErrCode::ERR_MODULE_NOT_FOUND,
+                    code,
                     format_args!(
                         "Cannot find module '{}'. Bun does not support importing from URLs.",
                         bstr::BStr::new(spec),

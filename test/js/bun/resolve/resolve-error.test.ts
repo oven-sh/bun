@@ -171,7 +171,28 @@ describe.concurrent("URL imports at runtime are rejected, not stubbed", () => {
     // Post-fix: the import fails at load time, so the program never runs.
     expect(stdout).toBe("");
     expect(stderr).toContain("vtils@3.0.1-beta.2");
+    expect(stderr).toContain("ERR_MODULE_NOT_FOUND");
     expect(exitCode).not.toBe(0);
+  });
+
+  // require() is CommonJS, so it gets MODULE_NOT_FOUND (no ERR_ prefix),
+  // matching ResolveMessage and Node. Pre-fix require(url) threw an ENOENT
+  // with no `.code`. Run in a subprocess so it doesn't share the module
+  // registry entry for `url` with the concurrent import() cases above.
+  it("require() of a URL rejects with MODULE_NOT_FOUND", async () => {
+    using dir = tempDir("issue-32398-require", {
+      "entry.cjs": `try { require(${JSON.stringify(url)}); } catch (e) { console.log(e.code + " " + e.message); }`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "entry.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("MODULE_NOT_FOUND Cannot find module 'https://cdn.pika.dev/vtils@3.0.1-beta.2'. Bun does not support importing from URLs.");
+    expect(exitCode).toBe(0);
   });
 
   // Resolution still succeeds and echoes the URL (matching Node's

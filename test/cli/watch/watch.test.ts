@@ -109,3 +109,69 @@ describe.each(["--watch", "--hot"])("%s exits on SIGINT after the handler cleans
     expect(exitCode).toBe(0);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/32400 (same class, `bun test --watch`)
+// A preload that installs a custom SIGINT handler and cleans up a ref'd
+// resource used to hang the test-watch keep-alive loop after Ctrl+C, the same
+// way `bun run --watch` did. It should exit once the loop drains.
+it.skipIf(isWindows)("bun test --watch exits on SIGINT after the handler cleans up", async () => {
+  using dir = tempDir("test-watch-sigint", {
+    "setup.ts": `
+      const server = Bun.serve({ port: 0, fetch() { return new Response("ok"); } });
+      process.on("SIGINT", async () => {
+        await server.stop();
+        console.log("CLEANED_UP");
+      });
+    `,
+    "noop.test.ts": `
+      import { test, expect } from "bun:test";
+      test("noop", () => { expect(1).toBe(1); });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--watch", "--preload", "./setup.ts", "./noop.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  // `bun test` prints results to stderr; the first run finishing ("Ran ...")
+  // means the watcher is now idle. Drain both streams so neither pipe blocks,
+  // and resolve readiness when the marker appears (or the stream ends early).
+  const stdoutDone = proc.stdout.text();
+  const decoder = new TextDecoder();
+  let stderr = "";
+  const { promise: ranReady, resolve: onRan } = Promise.withResolvers<void>();
+  const stderrDone = (async () => {
+    const reader = proc.stderr.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        stderr += decoder.decode(value, { stream: true });
+        if (stderr.includes("Ran ")) onRan();
+      }
+    } finally {
+      reader.releaseLock();
+      onRan();
+    }
+  })();
+
+  await ranReady;
+  expect(stderr).toContain("Ran ");
+
+  process.kill(proc.pid, "SIGINT");
+
+  // On the buggy build the test-watch loop blocks forever here; the handler
+  // caught SIGINT, so a clean exit is code 0 with no signalCode.
+  const exitCode = await proc.exited;
+  await Promise.all([stdoutDone, stderrDone]);
+
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
+  expect(proc.signalCode).toBe(null);
+  expect(exitCode).toBe(0);
+});

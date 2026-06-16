@@ -1,8 +1,8 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { mkdirSync } from "node:fs";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { mkdirSync } from "node:fs";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");

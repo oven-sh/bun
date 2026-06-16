@@ -5,7 +5,7 @@ use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
 use crate::node::{Encoding, StringOrBuffer};
-use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
+use bun_alloc::{Arena, ArenaVec};
 use bun_ast::Expr;
 use bun_ast::Loader;
 use bun_ast::{ImportRecord, ImportRecordFlags};
@@ -987,7 +987,15 @@ impl JSTranspiler {
             log: bun_ast::Log::init(),
             ..Default::default()
         };
-        let arena = Box::new(Arena::new());
+        // `borrowing_default()` wraps `mi_heap_main()` so the inner `Transpiler`
+        // allocates from the process-global heap, matching
+        // `Transpiler.Transpiler.init(bun.default_allocator, ...)`. Every parse
+        // (`scan` / `transformSync` / `scanImports` / async `transform`) swaps in
+        // a fresh per-call `Arena::new()` via `TranspilerStateGuard`, so this
+        // arena is only the resting-state handle and `configure_defines`' bump.
+        // An owned `mi_heap_new()` here would pin a dedicated mimalloc heap per
+        // `new Bun.Transpiler()` for the instance's lifetime.
+        let arena = Box::new(Arena::borrowing_default());
         // SAFETY: `arena` is heap-allocated and moved (as a Box) into `Box<JSTranspiler>` below;
         // its address is stable for the lifetime of the JSTranspiler. `Transpiler<'static>` forces
         // the borrow to 'static, so launder through a raw ptr.

@@ -254,7 +254,6 @@ pub struct VirtualMachine {
     pub no_macros: bool,
     pub auto_killer: ProcessAutoKiller::ProcessAutoKiller,
 
-    pub has_any_macro_remappings: bool,
     pub is_from_devserver: bool,
     pub has_enabled_macro_mode: bool,
 
@@ -4148,10 +4147,6 @@ impl VirtualMachine {
             }
         };
 
-        if !self.macro_mode {
-            self.has_any_macro_remappings =
-                self.has_any_macro_remappings || self.transpiler.options.macro_remap.count() > 0;
-        }
         // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
         // see lifetime erasure note above).
         ret.query_string = unsafe { bun_ptr::detach_lifetime(query_string) };

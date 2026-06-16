@@ -1498,40 +1498,45 @@ export default class {
       }
     });
 
-    it("transform() per-call cost does not scale with exports.eliminate size", async () => {
+    it("transformSync() per-call cost does not scale with exports.eliminate size", () => {
       // Regression: the Rust port deep-cloned the configured replace_exports
-      // map on every transform() call (twice in the async path), so per-call
-      // latency grew linearly with the eliminate-list length. The source we
-      // transform has a single export, so the parser does one O(1) map
-      // lookup regardless of map size; any remaining scaling is clone
-      // overhead.
+      // map on every transform()/transformSync() call, so per-call latency
+      // grew linearly with the eliminate-list length. The single-export
+      // source means the parser does one O(1) map lookup regardless of map
+      // size; any remaining scaling is clone overhead. Measured on
+      // transformSync() (no work-pool / event-loop hops), with base and big
+      // windows interleaved so transient CI load affects both sides.
       const src = "export const a = 1;\n";
-      const ITERS = 80;
-      async function measure(elimCount) {
-        const opts = { loader: "ts" };
-        if (elimCount > 0) {
-          opts.exports = { eliminate: Array.from({ length: elimCount }, (_, i) => "e" + i) };
-        }
-        const t = new Bun.Transpiler(opts);
-        expect(await t.transform(src)).toBe(t.transformSync(src));
-        for (let i = 0; i < 10; i++) await t.transform(src);
-        let best = Infinity;
-        for (let run = 0; run < 3; run++) {
-          const start = Bun.nanoseconds();
-          for (let i = 0; i < ITERS; i++) await t.transform(src);
-          best = Math.min(best, Bun.nanoseconds() - start);
-        }
-        return best;
+      const ITERS = 100;
+      const make = n =>
+        new Bun.Transpiler({
+          loader: "ts",
+          exports: n > 0 ? { eliminate: Array.from({ length: n }, (_, i) => "e" + i) } : undefined,
+        });
+      const tBase = make(0);
+      const tBig = make(4000);
+      const expected = tBase.transformSync(src);
+      expect(tBig.transformSync(src)).toBe(expected);
+      const time = t => {
+        const start = Bun.nanoseconds();
+        for (let i = 0; i < ITERS; i++) t.transformSync(src);
+        return Bun.nanoseconds() - start;
+      };
+      // Warm both.
+      time(tBase);
+      time(tBig);
+      let base = Infinity;
+      let big = Infinity;
+      for (let run = 0; run < 5; run++) {
+        base = Math.min(base, time(tBase));
+        big = Math.min(big, time(tBig));
       }
-      const base = await measure(0);
-      const big = await measure(4000);
       const ratio = big / base;
-      // Without the fix the ratio is >7x in debug+ASAN and >9x in release;
-      // with it the ratio sits around 1.0x-1.2x. 3x leaves wide margins on
-      // both sides.
+      // Without the fix the ratio is >7x in debug+ASAN and >15x in release;
+      // with it the ratio sits around 1.0x-1.2x.
       if (ratio >= 3) {
         throw new Error(
-          `transform() with 4000-entry exports.eliminate is ${ratio.toFixed(2)}x slower than ` +
+          `transformSync() with 4000-entry exports.eliminate is ${ratio.toFixed(2)}x slower than ` +
             `with an empty map (base=${(base / ITERS / 1e3).toFixed(1)}us/call, ` +
             `big=${(big / ITERS / 1e3).toFixed(1)}us/call); expected <3x`,
         );

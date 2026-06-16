@@ -4821,14 +4821,6 @@ unsafe fn _resolve<'a>(
         }
     };
 
-    // SAFETY: plain bool/usize fields.
-    unsafe {
-        if !(*vm).macro_mode {
-            (*vm).has_any_macro_remappings =
-                (*vm).has_any_macro_remappings || !(*vm).transpiler.options.macro_remap.is_empty();
-        }
-    }
-
     *ret_query = query_string;
     let Some(result_path) = result.path_const() else {
         return Err(bun_core::err!("ModuleNotFound"));

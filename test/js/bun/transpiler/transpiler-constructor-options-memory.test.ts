@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 // The Rust port of `new Bun.Transpiler(opts)` called `config.transform.clone()`
 // when handing the parsed `api::TransformOptions` to `Transpiler::init`, then
@@ -12,8 +12,8 @@ import { bunEnv, bunExe } from "harness";
 test("new Bun.Transpiler() does not retain a second deep copy of TransformOptions", async () => {
   const N = 2000;
   // V+2 = 10240 so each value `Box<[u8]>` lands exactly on a mimalloc size
-  // class, keeping release and debug/ASAN ratios close enough for a single
-  // threshold.
+  // class and the per-allocation rounding overhead is the same across
+  // release and ASAN builds.
   const V = 10238;
   // One full copy of the define *value* payload, in bytes.
   const payload = N * (V + 2);
@@ -60,10 +60,14 @@ test("new Bun.Transpiler() does not retain a second deep copy of TransformOption
   expect({ stdout, stderr, exitCode }).toEqual({ stdout, stderr, exitCode: 0 });
   const { delta } = JSON.parse(stdout.trim());
   const ratio = Number((delta / payload).toFixed(2));
-  // With the redundant `.clone()` the constructor retains one extra full copy
-  // of the define map, pushing the ratio to >= 6.0x (release) / >= 6.5x
-  // (debug+ASAN). Without it the ratio sits at ~5.0-5.1x on Linux. 5.8x
-  // biases the headroom toward the passing side so 16 KB page platforms
-  // (macOS aarch64) and Windows RSS accounting don't flake.
-  expect(ratio).toBeLessThan(5.8);
+  // The redundant `.clone()` retains one extra full copy of the define map,
+  // shifting the ratio up by ~1.3x regardless of build. The baseline varies
+  // by configuration because release+ASAN instruments the C++ side (JSC
+  // bindings, string flattening) that debug+ASAN does not:
+  //
+  //   release         with fix ~5.0   without fix ~6.0
+  //   debug+ASAN      with fix ~5.1   without fix ~6.5
+  //   release+ASAN    with fix ~6.8   without fix ~8.1
+  const threshold = isASAN && !isDebug ? 7.4 : 5.8;
+  expect(ratio).toBeLessThan(threshold);
 });

@@ -31,12 +31,15 @@ const canDropPrivs =
   isLinux && typeof process.getuid === "function" && process.getuid() === 0 && Bun.which("setpriv") != null;
 
 async function runAsNobody(scriptPath: string) {
+  // A private, world-accessible HOME/cwd so `nobody` can reach its own
+  // cache/config without depending on (or touching) host-global /tmp state,
+  // and isn't blocked by a non-traversable test checkout dir.
+  using childHome = tempDir("bun-main-nobody-home", {});
+  chmodSync(String(childHome), 0o777);
   await using proc = Bun.spawn({
     cmd: ["setpriv", `--reuid=${NOBODY}`, `--regid=${NOBODY}`, "--clear-groups", bunExe(), scriptPath],
-    // HOME and cwd point at a world-traversable dir so `nobody` can reach any
-    // cache/config and isn't blocked by a non-traversable test checkout dir.
-    cwd: "/tmp",
-    env: { ...bunEnv, HOME: "/tmp" },
+    cwd: String(childHome),
+    env: { ...bunEnv, HOME: String(childHome) },
     stdout: "pipe",
     stderr: "pipe",
   });

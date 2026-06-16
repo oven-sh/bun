@@ -1646,6 +1646,33 @@ describe("ReadableStream byte source detaches supplied ArrayBuffers", () => {
     expect(newBuffer.byteLength).toBe(16);
   });
 
+  it("respondWithNewView() backed by a differently-sized buffer throws without detaching", async () => {
+    let threw;
+    let newBuffer;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        // The descriptor's buffer is 16 bytes; a view backed by a 6-byte buffer
+        // does not match and must be rejected before the transfer.
+        newBuffer = new ArrayBuffer(6);
+        try {
+          controller.byobRequest.respondWithNewView(new Uint8Array(newBuffer, 4, 2));
+        } catch (e) {
+          threw = e;
+        }
+        controller.error(new Error("stop"));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    await reader.read(new Uint32Array(new ArrayBuffer(16), 4, 2)).then(
+      () => {},
+      () => {},
+    );
+
+    expect(threw).toBeInstanceOf(RangeError);
+    expect(newBuffer.byteLength).toBe(6);
+  });
+
   it("respond() with a non-zero value on a closed stream throws without detaching", async () => {
     const { promise, resolve } = Promise.withResolvers();
     let threw;

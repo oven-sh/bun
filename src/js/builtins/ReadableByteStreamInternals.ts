@@ -392,6 +392,11 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
   if (firstDescriptor!.byteOffset + firstDescriptor!.bytesFilled !== view.byteOffset)
     throw new RangeError("Invalid value for view.byteOffset");
 
+  // Spec step 8: the new view must be backed by a buffer the same size as the
+  // descriptor's, otherwise its byteOffset/byteLength geometry would no longer fit.
+  if (firstDescriptor!.buffer.byteLength !== view.buffer.byteLength)
+    throw new RangeError("Invalid value for view.buffer");
+
   // Account for bytes already filled (spec step 9); an oversized view must be
   // rejected before the transfer below so it is not detached on failure.
   if (firstDescriptor!.bytesFilled + viewByteLength > firstDescriptor!.byteLength)

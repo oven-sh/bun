@@ -4512,6 +4512,46 @@ test("merge keys across many mappings are bounded only by the alias-expansion bu
   expect(parsed.out.m0[`k${keyCount - 1}`]).toBe(keyCount - 1);
 }, 120_000);
 
+test("bounds merge-key materialization through nested inline wrappers", () => {
+  // `{<<: {<<: ... {<<: *big}}}` resolves `*big` once but re-materializes
+  // every property at each nesting level, so depth * keyCount properties
+  // are allocated from an input that is linear in depth + keyCount. Each
+  // copy must be charged against the alias-expansion budget.
+  function wrap(keyCount: number, depth: number) {
+    const keys: string[] = [];
+    for (let i = 0; i < keyCount; i++) keys.push(`k${i}: ${i}`);
+    let out = "out: ";
+    for (let i = 0; i < depth; i++) out += "{<<: ";
+    out += "*big";
+    for (let i = 0; i < depth; i++) out += "}";
+    return [`big: &big {${keys.join(", ")}}`, out];
+  }
+
+  // A reasonable nesting depth still parses and produces the merged result.
+  const ok = YAML.parse(wrap(100, 50).join("\n") + "\n") as {
+    big: Record<string, number>;
+    out: Record<string, number>;
+  };
+  expect(Object.keys(ok.out)).toHaveLength(100);
+  expect(ok.out).toEqual(ok.big);
+
+  // Pre-consume the alias-expansion budget down to a small remainder, then
+  // show that nested-merge copies are charged against the same budget: 200
+  // inline wrappers around a 100-key anchor push it over the limit and are
+  // rejected rather than silently materializing depth * keyCount properties.
+  const width = 30;
+  const fan = (ref: string) => `[${new Array(width).fill(ref).join(", ")}]`;
+  const bomb = [
+    `a: &a ${fan("0")}`,
+    `b: &b ${fan("*a")}`,
+    `c: &c ${fan("*b")}`,
+    `d: &d ${fan("*c")}`,
+    `pad: [${new Array(18).fill("*d").concat(new Array(29).fill("*c")).join(", ")}]`,
+  ];
+  const payload = bomb.concat(wrap(100, 200)).join("\n") + "\n";
+  expect(() => YAML.parse(payload)).toThrow(/[Ee]xcessive aliasing/);
+}, 30_000);
+
 test("bounds alias expansion for parsed and imported YAML documents", async () => {
   // A document with a few levels of anchors, where each level is a sequence of
   // aliases to the previous one, expands to width^depth nodes even though the

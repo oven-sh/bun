@@ -98,9 +98,14 @@ describe.each(["--watch", "--hot"])("%s exits on SIGINT after the handler cleans
     // handler caught SIGINT, so the exit is clean (code 0, no signalCode), not
     // a signal kill.
     const exitCode = await proc.exited;
+    const stderr = await stderrDone;
 
-    expect(exitCode).toBe(0);
+    // Surface stderr (watch banner + any crash output) if the process didn't
+    // exit cleanly, so a regression shows the cause rather than just a code.
+    if (exitCode !== 0) {
+      expect(stderr).toBe("");
+    }
     expect(proc.signalCode).toBe(null);
-    await stderrDone.catch(() => {});
+    expect(exitCode).toBe(0);
   });
 });

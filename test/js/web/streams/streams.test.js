@@ -1501,6 +1501,56 @@ describe("ReadableStream byte source detaches supplied ArrayBuffers", () => {
     expect(vendoredView.byteLength).toBe(4);
   });
 
+  it("byobRequest.respond(0) on a readable stream throws without detaching", async () => {
+    let threw;
+    let vendoredView;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        vendoredView = controller.byobRequest.view;
+        try {
+          controller.byobRequest.respond(0);
+        } catch (e) {
+          threw = e;
+        }
+        controller.error(new Error("stop"));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    await reader.read(new Uint8Array(4)).then(
+      () => {},
+      () => {},
+    );
+
+    expect(threw).toBeInstanceOf(TypeError);
+    expect(vendoredView.byteLength).toBe(4);
+  });
+
+  it("byobRequest.respondWithNewView() with a zero-length view throws without detaching", async () => {
+    let threw;
+    let vendoredView;
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        vendoredView = controller.byobRequest.view;
+        try {
+          controller.byobRequest.respondWithNewView(new Uint8Array(vendoredView.buffer, 0, 0));
+        } catch (e) {
+          threw = e;
+        }
+        controller.error(new Error("stop"));
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    await reader.read(new Uint8Array(4)).then(
+      () => {},
+      () => {},
+    );
+
+    expect(threw).toBeInstanceOf(TypeError);
+    expect(vendoredView.byteLength).toBe(4);
+  });
+
   it("read() rejects (does not throw) for a SharedArrayBuffer-backed view", async () => {
     const stream = new ReadableStream({
       type: "bytes",

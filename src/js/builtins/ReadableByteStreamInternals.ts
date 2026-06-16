@@ -370,14 +370,23 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
 
   let firstDescriptor: PullIntoDescriptor | undefined = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
 
+  // Capture byteLength before any transfer detaches the view (which zeroes it).
+  const viewByteLength = view.byteLength;
+
+  // Validate before transferring so an invalid response does not detach the buffer
+  // (matches the spec, which validates before TransferArrayBuffer).
+  if ($getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamClosed) {
+    if (viewByteLength !== 0) throw new TypeError("view.byteLength must be 0 when the readable byte stream is closed");
+  } else if (viewByteLength === 0) {
+    throw new TypeError("view.byteLength must be greater than 0");
+  }
+
   if (firstDescriptor!.byteOffset + firstDescriptor!.bytesFilled !== view.byteOffset)
     throw new RangeError("Invalid value for view.byteOffset");
 
-  if (firstDescriptor!.byteLength < view.byteLength) throw $ERR_INVALID_ARG_VALUE("view", view);
+  if (firstDescriptor!.byteLength < viewByteLength) throw $ERR_INVALID_ARG_VALUE("view", view);
 
-  // Spec: transfer the supplied view's buffer (detaching it). Capture byteLength
-  // first, since detaching zeroes it.
-  const viewByteLength = view.byteLength;
+  // Spec: transfer the supplied view's buffer, detaching it.
   firstDescriptor!.buffer = $transferBufferToCurrentRealm(view.buffer);
   $readableByteStreamControllerRespondInternal(controller, viewByteLength);
 }
@@ -391,13 +400,15 @@ export function readableByteStreamControllerRespond(controller, bytesWritten) {
   $assert($getByIdDirectPrivate(controller, "pendingPullIntos").isNotEmpty());
 
   const firstDescriptor = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
-  // Validate before transferring so an out-of-range respond does not detach the
-  // buffer (matches the spec, which checks the range before TransferArrayBuffer).
-  if (
-    $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamReadable &&
-    firstDescriptor.bytesFilled + bytesWritten > firstDescriptor.byteLength
-  )
-    throw new RangeError("bytesWritten value is too great");
+  // Validate before transferring so an invalid respond does not detach the buffer
+  // (matches the spec, which validates before TransferArrayBuffer).
+  if ($getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamClosed) {
+    if (bytesWritten !== 0) throw new TypeError("bytesWritten must be 0 when the readable byte stream is closed");
+  } else {
+    if (bytesWritten === 0) throw new TypeError("bytesWritten must be greater than 0");
+    if (firstDescriptor.bytesFilled + bytesWritten > firstDescriptor.byteLength)
+      throw new RangeError("bytesWritten value is too great");
+  }
 
   // Spec (ReadableByteStreamControllerRespond step 6): transfer the descriptor's
   // buffer, detaching the view that was vended through byobRequest.

@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isDebug, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isBroken, isWindows, tempDir, tmpdirSync } from "harness";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 
@@ -53,58 +53,54 @@ afterEach(() => {
 // the watcher kept the process alive. It should exit like a plain `bun run`
 // (and like `node --watch`) once the loop drains after the signal.
 describe.each(["--watch", "--hot"])("%s exits on SIGINT after the handler cleans up", flag => {
-  it.skipIf(isWindows)(
-    "issue #32400",
-    async () => {
-      using dir = tempDir("watch-sigint", {
-        "serve.ts": `
-          const server = Bun.serve({ port: 0, fetch() { return new Response("OK"); } });
-          process.on("SIGINT", async () => {
-            await server.stop();
-            console.log("CLEANED_UP");
-          });
-          console.log("READY");
-        `,
-      });
+  it.skipIf(isWindows)("issue #32400", async () => {
+    using dir = tempDir("watch-sigint", {
+      "serve.ts": `
+        const server = Bun.serve({ port: 0, fetch() { return new Response("OK"); } });
+        process.on("SIGINT", async () => {
+          await server.stop();
+          console.log("CLEANED_UP");
+        });
+        console.log("READY");
+      `,
+    });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", flag, "serve.ts"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", flag, "serve.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      // Drain stderr concurrently so the watch banner can't fill the pipe.
-      const stderrDone = proc.stderr.text();
+    // Drain stderr concurrently so the watch banner can't fill the pipe.
+    const stderrDone = proc.stderr.text();
 
-      // Wait until the server is up and the SIGINT handler is installed.
-      const reader = proc.stdout.getReader();
-      const decoder = new TextDecoder();
-      let stdout = "";
-      let ready = false;
-      while (!ready) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        stdout += decoder.decode(value, { stream: true });
-        if (stdout.includes("READY")) ready = true;
-      }
-      reader.releaseLock();
-      expect(ready).toBe(true);
+    // Wait until the server is up and the SIGINT handler is installed.
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    let ready = false;
+    while (!ready) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      stdout += decoder.decode(value, { stream: true });
+      if (stdout.includes("READY")) ready = true;
+    }
+    reader.releaseLock();
+    expect(ready).toBe(true);
 
-      process.kill(proc.pid, "SIGINT");
+    process.kill(proc.pid, "SIGINT");
 
-      // On the fixed build the handler stops the server, the loop drains and
-      // the process exits. On the buggy build the --watch/--hot loop blocks
-      // forever, so this await hangs and the test times out (the fail-before
-      // state). The handler caught SIGINT, so the exit is clean (code 0, no
-      // signalCode), not a signal kill.
-      const exitCode = await proc.exited;
+    // On the fixed build the handler stops the server, the loop drains and the
+    // process exits. On the buggy build the --watch/--hot loop blocks forever,
+    // so this await hangs and the test times out (the fail-before state). The
+    // handler caught SIGINT, so the exit is clean (code 0, no signalCode), not
+    // a signal kill.
+    const exitCode = await proc.exited;
 
-      expect(exitCode).toBe(0);
-      expect(proc.signalCode).toBe(null);
-      await stderrDone.catch(() => {});
-    },
-    isDebug ? 30_000 : 15_000,
-  );
+    expect(exitCode).toBe(0);
+    expect(proc.signalCode).toBe(null);
+    await stderrDone.catch(() => {});
+  });
 });

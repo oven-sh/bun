@@ -610,6 +610,23 @@ describe("node:http", () => {
       });
     });
 
+    // https://github.com/oven-sh/bun/issues/13820
+    it("res.url should be empty and res.method should be null on client responses", done => {
+      runTest(done, (server, serverPort, done) => {
+        const req = request(`http://localhost:${serverPort}/pathTest?a=1#hash`, res => {
+          try {
+            expect({ url: res.url, method: res.method }).toEqual({ url: "", method: null });
+          } catch (err) {
+            return done(err);
+          }
+          res.resume();
+          res.on("end", () => done());
+          res.on("error", err => done(err));
+        });
+        req.end();
+      });
+    });
+
     // NOTE: Node http.request doesn't follow redirects by default
     it("should handle redirects properly", done => {
       runTest(done, (server, serverPort, done) => {

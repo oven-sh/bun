@@ -10,8 +10,8 @@
 
 import { SQL } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
-import { describeWithContainer, isDockerEnabled, isLinux } from "harness";
+import { describeWithContainer, isDockerEnabled } from "harness";
+import { ensureLocalMySQL } from "./mysql-local-harness";
 
 async function assertBinaryNullIndexedColumn(sql: SQL) {
   // All-digit column names make ColumnIdentifier classify them as Index(n).
@@ -41,56 +41,10 @@ if (isDockerEnabled()) {
     });
   });
 } else {
-  // No docker daemon (e.g. the sandboxed dev/CI-gate container, which ships a
-  // native MariaDB). Connect to that real server: start it if needed,
-  // provision a passwordless TCP user over the root unix socket, and run the
-  // query against it. `MYSQL_URL` short-circuits all of this when set.
-  const MYSQL_SOCKET = "/run/mysqld/mysqld.sock";
-
-  async function waitForSocket(timeoutMs: number): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      if (existsSync(MYSQL_SOCKET)) return true;
-      await Bun.sleep(250);
-    }
-    return existsSync(MYSQL_SOCKET);
-  }
-
-  async function ensureServerStarted(): Promise<boolean> {
-    if (existsSync(MYSQL_SOCKET)) return true;
-    if (Bun.which("mysqld_safe") == null) return false;
-    Bun.spawn({
-      cmd: ["mysqld_safe", "--user=mysql", "--datadir=/var/lib/mysql"],
-      stdout: "ignore",
-      stderr: "ignore",
-      stdin: "ignore",
-      timeout: 60_000,
-    }).unref();
-    return waitForSocket(30_000);
-  }
-
-  async function provisionTcpUser(): Promise<void> {
-    await using root = new SQL({ adapter: "mysql", username: "root", database: "mysql", path: MYSQL_SOCKET, max: 1 });
-    await root`CREATE DATABASE IF NOT EXISTS bun_sql_test`;
-    await root.unsafe("CREATE USER IF NOT EXISTS 'bun_sql_test'@'%' IDENTIFIED BY ''");
-    await root.unsafe("CREATE USER IF NOT EXISTS 'bun_sql_test'@'localhost' IDENTIFIED BY ''");
-    await root.unsafe("GRANT ALL PRIVILEGES ON *.* TO 'bun_sql_test'@'%'");
-    await root.unsafe("GRANT ALL PRIVILEGES ON *.* TO 'bun_sql_test'@'localhost'");
-    await root.unsafe("FLUSH PRIVILEGES");
-  }
-
-  let url: string | null = process.env.MYSQL_URL ?? null;
+  let url: string | null = null;
 
   beforeAll(async () => {
-    if (url) return;
-    if (!isLinux) return;
-    try {
-      if (!(await ensureServerStarted())) return;
-      await provisionTcpUser();
-      url = "mysql://bun_sql_test@127.0.0.1:3306/bun_sql_test";
-    } catch {
-      url = null;
-    }
+    url = await ensureLocalMySQL();
   }, 60_000);
 
   describe("mysql (local)", () => {

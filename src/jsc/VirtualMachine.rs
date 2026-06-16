@@ -4133,7 +4133,8 @@ impl VirtualMachine {
         // not be enumerated to find it. Hint the resolver to `stat` the single file
         // instead (see `Resolver::entry_point_hint`); the guard resets the hint on
         // every exit so ordinary imports keep reading directories normally.
-        let is_main_entry = source == MAIN_FILE_NAME && bun_paths::is_absolute(normalized_specifier);
+        let is_main_entry =
+            source == MAIN_FILE_NAME && bun_paths::is_absolute(normalized_specifier);
         if is_main_entry {
             self.transpiler.resolver.entry_point_hint = true;
         }

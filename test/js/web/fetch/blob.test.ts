@@ -260,6 +260,46 @@ test("blob: can set name property #10178", () => {
   expect(myOtherBlob.name).toBe(10);
 });
 
+// https://github.com/oven-sh/bun/issues/14257
+test("blob: can set lastModified property", () => {
+  const blob = new Blob(["Hello, World"]);
+  // @ts-expect-error
+  blob.lastModified = 123;
+  // @ts-expect-error
+  expect(blob.lastModified).toBe(123);
+
+  class MyBlob extends Blob {
+    constructor(sources: Array<BinaryLike | Blob>, options?: BlobOptions) {
+      super(sources, options);
+      // @ts-expect-error
+      this.lastModified = 456;
+    }
+  }
+
+  const myBlob = new MyBlob(["foo"]);
+  // @ts-expect-error
+  expect(myBlob.lastModified).toBe(456);
+  // @ts-expect-error
+  myBlob.lastModified = 789;
+  // @ts-expect-error
+  expect(myBlob.lastModified).toBe(789);
+
+  const file = new File(["foo"], "bar.txt", { lastModified: 100 });
+  expect(file.lastModified).toBe(100);
+  // @ts-expect-error
+  file.lastModified = 200;
+  expect(file.lastModified).toBe(200);
+
+  class MyFile extends File {
+    constructor() {
+      super(["foo"], "bar.txt");
+      // @ts-expect-error
+      this.lastModified = 999;
+    }
+  }
+  expect(new MyFile().lastModified).toBe(999);
+});
+
 test("#12894", () => {
   const bunFile = Bun.file("foo.txt");
   expect(new File([bunFile], "bar.txt").name).toBe("bar.txt");

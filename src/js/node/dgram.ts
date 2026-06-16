@@ -389,11 +389,23 @@ Socket.prototype.bindSync = function (options) {
     address = this.type === "udp4" ? "0.0.0.0" : "::";
   } else {
     validateString(address, "options.address");
-    if (isIP(address) === 0) {
+    const ipType = isIP(address);
+    if (ipType === 0) {
       throw $ERR_INVALID_ARG_VALUE(
         "options.address",
         address,
         "must be a numeric IP address; bindSync does not perform DNS resolution",
+      );
+    }
+    // Bun.udpSocket infers the address family from the hostname; Node's
+    // handle has a fixed family and rejects a mismatch with EINVAL at bind
+    // time. Reject here so a udp4 socket can't silently bind to an IPv6
+    // address (or vice versa).
+    if (ipType !== (this.type === "udp4" ? 4 : 6)) {
+      throw $ERR_INVALID_ARG_VALUE(
+        "options.address",
+        address,
+        `must be an ${this.type === "udp4" ? "IPv4" : "IPv6"} address for a ${this.type} socket`,
       );
     }
   }

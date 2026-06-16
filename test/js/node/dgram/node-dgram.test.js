@@ -164,6 +164,22 @@ describe("Socket.prototype.bindSync", () => {
     }
   });
 
+  it("rejects an address whose family does not match the socket type", () => {
+    const sock4 = dgram.createSocket("udp4");
+    const sock6 = dgram.createSocket("udp6");
+    try {
+      expect(() => sock4.bindSync({ address: "::1", port: 0 })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      );
+      expect(() => sock6.bindSync({ address: "127.0.0.1", port: 0 })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      );
+    } finally {
+      sock4.close();
+      sock6.close();
+    }
+  });
+
   it("rejects a non-string address", () => {
     const sock = dgram.createSocket("udp4");
     try {

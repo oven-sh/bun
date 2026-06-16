@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMusl, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -1584,7 +1584,14 @@ describe.concurrent("test file discovery (scanner)", () => {
         stderr: "pipe",
       });
       const [, setupErr, setupExit] = await Promise.all([setup.stdout.text(), setup.stderr.text(), setup.exited]);
-      expect({ setupErr, setupExit }).toEqual({ setupErr: "", setupExit: 0 });
+      // On musl, getcwd(3) fails once the cumulative path exceeds PATH_MAX. bash
+      // prints a cd warning for each subsequent level but mkdir/cd still succeed,
+      // so filter that one known warning out before asserting stderr is clean.
+      const filteredSetupErr = setupErr
+        .split("\n")
+        .filter(line => !(isMusl && line.startsWith("cd: error retrieving current directory: getcwd:")))
+        .join("\n");
+      expect({ setupErr: filteredSetupErr, setupExit }).toEqual({ setupErr: "", setupExit: 0 });
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test"],

@@ -5,6 +5,7 @@
 pub mod async_http;
 #[path = "CertificateInfo.rs"]
 pub mod certificate_info;
+pub mod compress_body;
 #[path = "Decompressor.rs"]
 pub mod decompressor;
 #[path = "H2Client.rs"]
@@ -650,6 +651,14 @@ pub struct HTTPClient<'a> {
     pub async_http_id: u32,
     pub hostname: Option<&'a [u8]>,
     pub unix_socket_path: ZigStringSlice,
+    /// `fetch({ compress })` — when set, [`Self::start`] compresses the
+    /// `Bytes` body on the HTTP thread before connecting. Cleared after the
+    /// first compression so retry/h2-retry paths that re-enter `start()` with
+    /// the already-compressed slice don't double-compress.
+    pub compress: Option<compress_body::CompressOption>,
+    /// Backing storage for the compressed body; `state.original_request_body`
+    /// borrows from this for the lifetime of the request.
+    pub compressed_request_body: Vec<u8>,
 }
 
 impl<'a> HTTPClient<'a> {
@@ -2407,8 +2416,36 @@ impl<'a> HTTPClient<'a> {
         self.url.is_https()
     }
 
-    pub fn start(&mut self, body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) {
+    pub fn start(&mut self, mut body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) {
         body_out_str.reset();
+
+        if let Some(opt) = self.compress.take()
+            && let HTTPRequestBody::Bytes(input) = body
+            && !input.is_empty()
+        {
+            match compress_body::compress_into(
+                http_thread().deflater(),
+                input,
+                &opt,
+                &mut self.compressed_request_body,
+            ) {
+                Ok(()) => {
+                    // SAFETY: `compressed_request_body` lives on `self` for the
+                    // request's lifetime; never reallocated after this point
+                    // (`compress` was just `.take()`n). `state.original_request_body`
+                    // / `state.request_body` borrow it until the terminal
+                    // result-callback drops the client.
+                    body = HTTPRequestBody::Bytes(unsafe {
+                        &*core::ptr::from_ref(self.compressed_request_body.as_slice())
+                    });
+                }
+                Err(e) => {
+                    self.state = InternalState::init(body, body_out_str);
+                    self.fail(e);
+                    return;
+                }
+            }
+        }
 
         debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
         self.state = InternalState::init(body, body_out_str);

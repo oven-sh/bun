@@ -235,6 +235,186 @@ test("fetch(data:) with percent-encoding does not leak", async () => {
   expect(exitCode).toBe(0);
 }, 60000);
 
+test("fetch() compress option does not leak bodies or compressor state", async () => {
+  // Exercises:
+  //  - all four encodings
+  //  - the custom-level path (allocates a temporary libdeflate compressor that
+  //    must be freed each call)
+  //  - a small body (thread-local 512 KiB shared-buffer fast path)
+  //  - a ~700 KiB body (slow-path Vec allocation + multi-write send)
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    async fetch(req) {
+      // Drain the body so the request completes; don't decompress (server-side
+      // allocator noise would mask the client-side signal we're measuring).
+      await req.arrayBuffer();
+      return new Response();
+    },
+  });
+
+  const script = /* js */ `
+    const url = process.env.SERVER;
+    const small = Buffer.alloc(32 * 1024, "abcdefghij");
+    // > 512 KiB shared buffer → slow path; large enough that the compressed
+    // output also spans multiple socket writes.
+    const big = Buffer.alloc(700 * 1024, "abcdefghij");
+    const opts = [
+      { compress: "gzip" },
+      { compress: "deflate" },
+      { compress: "br" },
+      { compress: "zstd" },
+      // custom level → temp libdeflate compressor alloc/free each call
+      { compress: { encoding: "gzip", level: 1 } },
+    ];
+
+    async function round() {
+      const promises = [];
+      for (const opt of opts) {
+        promises.push(fetch(url, { method: "POST", body: small, ...opt }).then(r => r.arrayBuffer()));
+        promises.push(fetch(url, { method: "POST", body: big,   ...opt }).then(r => r.arrayBuffer()));
+      }
+      await Promise.all(promises);
+    }
+
+    // Warm up: thread-local CompressorState is allocated once here and stays.
+    for (let i = 0; i < 10; i++) await round();
+    Bun.gc(true);
+    const baseline = process.memoryUsage.rss();
+
+    for (let i = 0; i < 80; i++) await round();
+    Bun.gc(true);
+    const final = process.memoryUsage.rss();
+
+    const deltaMB = (final - baseline) / 1024 / 1024;
+    console.log(JSON.stringify({ baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
+    // 80 rounds × 5 encodings × ~700 KiB bodies → a per-request leak of the
+    // body or compressor state would grow RSS by hundreds of MB.
+    if (deltaMB > ${isASAN ? 256 : 32}) {
+      throw new Error("fetch({compress}) leaked " + Math.round(deltaMB) + " MB over 80 rounds");
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", script],
+    env: { ...bunEnv, SERVER: server.url.href },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  console.log(stdout.trim());
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+}, 60000);
+
+// Response-side: a compressed body that arrives across many packets bypasses
+// the libdeflate one-shot fast path (InternalState.rs:256) and allocates a
+// boxed streaming Decompressor (zlib/brotli/zstd FFI handle) per request,
+// freed via Drop on InternalState::reset(). Dripping the body over chunked
+// transfer encoding forces handle_response_body_chunked_encoding_from_multiple_packets.
+// Paired with compress: on the request side so the same loop covers the
+// multi-write send of a large compressed request body too.
+test("fetch() does not leak streaming decompressor state across fragmented compressed responses", async () => {
+  const script = /* js */ `
+    import { createServer } from "node:net";
+    import { gzipSync, brotliCompressSync, zstdCompressSync } from "node:zlib";
+
+    const plain = Buffer.alloc(64 * 1024, "abcdefghij");
+    const bodies = {
+      gzip: gzipSync(plain),
+      br: brotliCompressSync(plain),
+      zstd: zstdCompressSync(plain),
+    };
+    // ~700 KiB request body → compressed output exceeds the 512 KiB shared
+    // buffer and spans multiple socket writes.
+    const reqBody = Buffer.alloc(700 * 1024, "abcdefghij");
+
+    const server = createServer(sock => {
+      let buf = "";
+      sock.on("data", async chunk => {
+        buf += chunk.toString("latin1");
+        // Drain the request: headers + (chunked) body terminator.
+        if (!buf.includes("\\r\\n\\r\\n")) return;
+        const isChunked = /transfer-encoding:\\s*chunked/i.test(buf);
+        if (isChunked && !buf.includes("\\r\\n0\\r\\n\\r\\n")) return;
+        if (!isChunked) {
+          const m = buf.match(/content-length:\\s*(\\d+)/i);
+          const need = m ? Number(m[1]) : 0;
+          const bodyStart = buf.indexOf("\\r\\n\\r\\n") + 4;
+          if (buf.length - bodyStart < need) return;
+        }
+        const enc = buf.match(/x-want:\\s*(\\w+)/i)[1];
+        const body = bodies[enc];
+        sock.write(
+          "HTTP/1.1 200 OK\\r\\n" +
+          "Content-Encoding: " + enc + "\\r\\n" +
+          "Transfer-Encoding: chunked\\r\\n" +
+          "Connection: close\\r\\n\\r\\n",
+        );
+        // Drip in small chunks so the client's Decompressor sees many
+        // update_buffers()/read_all() cycles before the final flush.
+        for (let i = 0; i < body.length; i += 256) {
+          const piece = body.subarray(i, i + 256);
+          sock.write(piece.length.toString(16) + "\\r\\n");
+          sock.write(piece);
+          sock.write("\\r\\n");
+          // Yield so chunks land in separate packets.
+          await new Promise(r => setImmediate(r));
+        }
+        sock.end("0\\r\\n\\r\\n");
+      });
+      sock.on("error", () => {});
+    }).listen(0, "127.0.0.1");
+    await new Promise(r => server.once("listening", r));
+    const url = "http://127.0.0.1:" + server.address().port + "/";
+
+    async function round() {
+      const promises = [];
+      for (const enc of ["gzip", "br", "zstd"]) {
+        promises.push(
+          fetch(url, {
+            method: "POST",
+            body: reqBody,
+            compress: enc,
+            headers: { "x-want": enc },
+          }).then(async r => {
+            const got = Buffer.from(await r.arrayBuffer());
+            if (!got.equals(plain)) throw new Error(enc + " round-trip mismatch (" + got.length + ")");
+          }),
+        );
+      }
+      await Promise.all(promises);
+    }
+
+    for (let i = 0; i < 10; i++) await round();
+    Bun.gc(true);
+    const baseline = process.memoryUsage.rss();
+
+    for (let i = 0; i < 60; i++) await round();
+    Bun.gc(true);
+    const final = process.memoryUsage.rss();
+
+    server.close();
+    const deltaMB = (final - baseline) / 1024 / 1024;
+    console.log(JSON.stringify({ baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
+    // 60 rounds × 3 encodings = 180 streaming Decompressor handles + 180
+    // ~700 KiB compressed request bodies. A leaked boxed zlib/brotli/zstd
+    // reader or an un-freed compressed body Vec would grow RSS by >100 MB.
+    if (deltaMB > ${isASAN ? 256 : 32}) {
+      throw new Error("fragmented compressed fetch leaked " + Math.round(deltaMB) + " MB over 60 rounds");
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  console.log(stdout.trim());
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+}, 60000);
+
 // Regression for src/runtime/webcore/fetch/FetchTasklet.zig:601,614 —
 // Holder.resolve/reject use `self.promise.swap()` which *consumes* (clears)
 // the jsc.Strong handle on the fetch() promise before calling resolve()/reject().

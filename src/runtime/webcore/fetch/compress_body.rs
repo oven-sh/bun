@@ -85,11 +85,11 @@ impl CompressOption {
                         }
                     }
                 }
-                _ => {
+                other => {
                     return Err(global.throw_invalid_argument_type_value(
                         b"compress.encoding",
                         b"string",
-                        value,
+                        other.unwrap_or(JSValue::UNDEFINED),
                     ));
                 }
             };
@@ -151,18 +151,6 @@ struct CompressorState {
 
 // SAFETY: `*mut T` (null) and `[u8; N]` are both valid at the all-zero bit pattern.
 unsafe impl bun_core::Zeroable for CompressorState {}
-
-impl CompressorState {
-    #[inline]
-    fn compressor_mut<'a>(&self) -> &'a mut bun_libdeflate_sys::libdeflate::Compressor {
-        // SAFETY: `compressor` is set once in `with_state` from
-        // `libdeflate_alloc_compressor` (panics on null) and never freed for
-        // the thread's lifetime. The handle is a separate C heap allocation
-        // disjoint from `self`, so the returned `&mut` does not alias
-        // `shared_buffer`. Thread-local — sole live borrow.
-        unsafe { &mut *self.compressor }
-    }
-}
 
 thread_local! {
     static LAZY_COMPRESSOR: UnsafeCell<Option<Box<CompressorState>>> =
@@ -233,7 +221,12 @@ fn compress_libdeflate(
                 // SAFETY: just allocated, non-null, exclusive.
                 unsafe { &mut *tmp }
             }
-            _ => state.compressor_mut(),
+            // SAFETY: `state.compressor` is set once in `with_state` from
+            // `libdeflate_alloc_compressor` (panics on null) and never freed
+            // for the thread's lifetime. The handle is a separate C heap
+            // allocation disjoint from `state.shared_buffer`, so this `&mut`
+            // does not alias the buffer borrow below.
+            _ => unsafe { &mut *state.compressor },
         };
         let _guard = scopeguard::guard(tmp, |tmp| {
             if !tmp.is_null() {

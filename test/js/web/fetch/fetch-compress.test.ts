@@ -183,7 +183,7 @@ describe("fetch compress option", () => {
 
   test("invalid encoding string throws", () => {
     expect(() =>
-      fetch("http://example.com", {
+      fetch("http://127.0.0.1:1/", {
         method: "POST",
         body: "x",
         // @ts-expect-error
@@ -194,7 +194,7 @@ describe("fetch compress option", () => {
 
   test("invalid level throws", () => {
     expect(() =>
-      fetch("http://example.com", {
+      fetch("http://127.0.0.1:1/", {
         method: "POST",
         body: "x",
         compress: { encoding: "gzip", level: 99 },

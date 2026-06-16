@@ -381,8 +381,11 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
 
   let firstDescriptor: PullIntoDescriptor | undefined = $getByIdDirectPrivate(controller, "pendingPullIntos").peek();
 
-  // Capture byteLength before any transfer detaches the view (which zeroes it).
+  // Capture byteLength before any transfer detaches the view (which zeroes it),
+  // and the buffer once so the size check and the transfer below operate on the
+  // same object even if the view's buffer getter was tampered with.
   const viewByteLength = view.byteLength;
+  const viewBuffer = view.buffer;
 
   // Validate before transferring so an invalid response does not detach the buffer
   // (matches the spec, which validates before TransferArrayBuffer).
@@ -399,7 +402,7 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
   // descriptor's, otherwise its byteOffset/byteLength geometry would no longer
   // fit. Compare against the cached length so this still works when the caller
   // transferred the descriptor's buffer out before responding.
-  if (firstDescriptor!.bufferByteLength !== view.buffer.byteLength)
+  if (firstDescriptor!.bufferByteLength !== viewBuffer.byteLength)
     throw new RangeError("Invalid value for view.buffer");
 
   // Account for bytes already filled (spec step 9); an oversized view must be
@@ -409,7 +412,7 @@ export function readableByteStreamControllerRespondWithNewView(controller, view)
     throw new RangeError("bytesWritten value is too great");
 
   // Spec: transfer the supplied view's buffer, detaching it.
-  firstDescriptor!.buffer = $transferBufferToCurrentRealm(view.buffer);
+  firstDescriptor!.buffer = $transferBufferToCurrentRealm(viewBuffer);
   $readableByteStreamControllerRespondInternal(controller, viewByteLength);
 }
 
@@ -452,8 +455,9 @@ export function readableByteStreamControllerRespondInternal(controller, bytesWri
 }
 
 export function readableByteStreamControllerRespondInReadableState(controller, bytesWritten, pullIntoDescriptor) {
-  if (pullIntoDescriptor.bytesFilled + bytesWritten > pullIntoDescriptor.byteLength)
-    throw new RangeError("bytesWritten value is too great");
+  // Both callers (respond/respondWithNewView) already rejected an over-fill
+  // before transferring, so this is a spec Assert, not a reachable throw.
+  $assert(pullIntoDescriptor.bytesFilled + bytesWritten <= pullIntoDescriptor.byteLength);
 
   $assert(
     $getByIdDirectPrivate(controller, "pendingPullIntos").isEmpty() ||

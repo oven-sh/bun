@@ -1815,4 +1815,34 @@ describe("ReadableStream byte source detaches supplied ArrayBuffers", () => {
     expect(recovered).toBe(true);
     expect(value.byteLength).toBe(4);
   });
+
+  it("respondWithNewView() reads the supplied view's buffer only once", async () => {
+    const stream = new ReadableStream({
+      type: "bytes",
+      pull(controller) {
+        const goodBuffer = new ArrayBuffer(4);
+        new Uint8Array(goodBuffer)[0] = 9;
+        const badBuffer = new ArrayBuffer(64);
+        const view = new Uint8Array(goodBuffer);
+        // A tampered `.buffer` getter must not open a check-vs-use gap: the
+        // buffer whose size is validated must be the buffer that is transferred.
+        let reads = 0;
+        Object.defineProperty(view, "buffer", {
+          configurable: true,
+          get() {
+            return reads++ === 0 ? goodBuffer : badBuffer;
+          },
+        });
+        controller.byobRequest.respondWithNewView(view);
+      },
+    });
+    const reader = stream.getReader({ mode: "byob" });
+    const { value } = await reader.read(new Uint8Array(4));
+
+    // If the second read (badBuffer, 64 bytes) were transferred, value.buffer
+    // would be 64 bytes; the single read keeps it at the validated 4.
+    expect(value.byteLength).toBe(4);
+    expect(value.buffer.byteLength).toBe(4);
+    expect(value[0]).toBe(9);
+  });
 });

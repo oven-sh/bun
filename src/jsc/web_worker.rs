@@ -511,12 +511,7 @@ impl WebWorker {
             // SAFETY: `parent_ref` is the live VM on the calling (parent)
             // thread — its `transpiler` is uniquely owned here.
             if let Some(preload) = unsafe {
-                resolve_entry_point_specifier(
-                    *parent_ref,
-                    utf8_slice.slice(),
-                    error_message,
-                    temp_log,
-                )
+                resolve_entry_point_specifier(*parent_ref, utf8_slice.slice(), error_message)
             } {
                 preloads.push(preload.to_vec().into_boxed_slice());
             }
@@ -1045,21 +1040,16 @@ impl WebWorker {
         // spin() goes through shutdown() which is noreturn, so a `defer free`
         // here would never run anyway.
         let mut resolve_error = BunString::empty();
-        let vm_log = vm.log_mut().unwrap();
         // SAFETY: `vm_ptr` is the live worker-thread VM; the fn takes a raw ptr
         // (no `&mut`) because `vm` is already published under `vm_lock` — see
         // `resolve_entry_point_specifier` Safety contract.
         let path = match unsafe {
-            resolve_entry_point_specifier(
-                vm_ptr,
-                &self.unresolved_specifier,
-                &mut resolve_error,
-                vm_log,
-            )
+            resolve_entry_point_specifier(vm_ptr, &self.unresolved_specifier, &mut resolve_error)
         } {
             Some(p) => p,
             None => {
                 vm.as_mut().exit_handler.exit_code = 1;
+                let vm_log = vm.log_mut().unwrap();
                 if vm_log.errors == 0 && !resolve_error.is_empty() {
                     let err = resolve_error.to_utf8();
                     // `Log::add_error` takes `impl IntoText`; pass an owned
@@ -1539,7 +1529,6 @@ unsafe fn resolve_entry_point_specifier<'s>(
     parent: *mut VirtualMachine,
     str: &'s [u8],
     error_message: &mut BunString,
-    log: &mut bun_ast::Log,
 ) -> Option<&'s [u8]> {
     // SAFETY: per fn contract; read-only field.
     if let Some(graph) = unsafe { (*parent).standalone_module_graph } {
@@ -1640,6 +1629,14 @@ unsafe fn resolve_entry_point_specifier<'s>(
         Err(_) => {
             // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).
             let global = JSGlobalObject::opaque_ref(global);
+            // `resolve_entry_point` wrote the error to `transpiler.log`. Read
+            // it back through the same raw pointer — a separate `&mut Log`
+            // parameter would be `noalias` and miss the write under
+            // optimization (the two point at the same allocation).
+            // SAFETY: `transpiler.log` is non-null after init and outlives
+            // this call (both callers swap in a log that lives on their
+            // stack or VM for the duration).
+            let log = unsafe { &*(*parent).transpiler.log };
             let out: jsc::JsResult<BunString> = (|| {
                 let out = log.to_js(global, "Error resolving Worker entry point")?;
                 out.to_bun_string(global)

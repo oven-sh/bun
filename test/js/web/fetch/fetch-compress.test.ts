@@ -183,6 +183,17 @@ describe("fetch compress option", () => {
     expect(json.rawLength).toBeLessThan(big.length);
   });
 
+  // >512 KiB takes the streaming-zlib slow path; verify it produces a
+  // zlib-wrapped (RFC 1950) stream, not raw deflate.
+  test.concurrent("deflate body larger than the shared buffer (zlib streaming)", async () => {
+    using server = makeServer();
+    const big = Buffer.alloc(600 * 1024, "abcdefghij").toString();
+    const res = await fetch(server.url, { method: "POST", body: big, compress: "deflate" });
+    const json = await res.json();
+    expect(json.encoding).toBe("deflate");
+    expect(json.decoded).toBe(big);
+  });
+
   // gzip bound on 600 KiB of random bytes is > 512 KiB so compress_into spills
   // straight to the per-request Vec instead of borrowing the shared buffer.
   test.concurrent("incompressible body larger than the shared buffer (spill path)", async () => {

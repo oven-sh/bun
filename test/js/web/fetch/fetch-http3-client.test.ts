@@ -42,6 +42,16 @@ beforeAll(async () => {
       "/head": () => new Response("should not appear", { headers: { "x-head": "1" } }),
       "/route/:id": req => new Response("id=" + req.params.id, { headers: { "x-route": "param" } }),
       "/headers-echo": req => Response.json(Object.fromEntries(req.headers)),
+      "/raw-echo": async req => {
+        const raw = Buffer.from(await req.arrayBuffer());
+        return new Response(raw, {
+          headers: {
+            "x-recv-len": String(raw.length),
+            "x-recv-encoding": req.headers.get("content-encoding") ?? "",
+            "x-recv-content-length": req.headers.get("content-length") ?? "",
+          },
+        });
+      },
 
       // Response body driven by pull — one chunk per consumer read.
       "/pull": () => {
@@ -226,6 +236,25 @@ describe("fetch protocol: http3", () => {
     const res = await fetch(`${base}/echo`, { ...h3, method: "POST", body: payload });
     expect(res.headers.get("x-recv-len")).toBe(String(payload.length));
     expect(Buffer.from(await res.bytes()).equals(payload)).toBe(true);
+  });
+
+  test.each([
+    ["small (shared-buffer fast path)", 32 * 1024],
+    ["large (zlib-streaming spill path)", 600 * 1024],
+  ])("compress: gzip request body — %s", async (_, size) => {
+    const { gunzipSync } = await import("node:zlib");
+    const payload = Buffer.alloc(size, "abcdefghij");
+    const res = await fetch(`${base}/raw-echo`, {
+      ...h3,
+      method: "POST",
+      body: payload,
+      compress: "gzip",
+    });
+    const raw = Buffer.from(await res.bytes());
+    expect(res.headers.get("x-recv-encoding")).toBe("gzip");
+    expect(Number(res.headers.get("x-recv-len"))).toBeLessThan(size);
+    expect(res.headers.get("x-recv-content-length")).toBe(String(raw.length));
+    expect(gunzipSync(raw).equals(payload)).toBe(true);
   });
 
   test.each([200, 204, 404, 500])("status %d", async code => {

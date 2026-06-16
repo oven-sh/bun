@@ -280,16 +280,15 @@ pub mod random {
             if let Some(scratch) = self.scratch.take() {
                 // Re-fetch the buffer on the JS thread and re-validate bounds:
                 // the user may have detached or resized it while the WorkPool
-                // task ran. On mismatch, drop the random bytes rather than
-                // write through a stale pointer.
+                // task ran. Copy however much of `scratch` still fits — a
+                // resizable ArrayBuffer shrunk below `offset + size` must receive
+                // the leading bytes (Node writes through the original backing
+                // store, so the surviving prefix is always populated).
                 if let Some(mut buf) = self.value.as_array_buffer(global) {
                     let off = self.offset as usize;
-                    let dst = buf.slice_mut();
-                    match off.checked_add(scratch.len()) {
-                        Some(end) if end <= dst.len() => {
-                            dst[off..end].copy_from_slice(&scratch);
-                        }
-                        _ => {}
+                    if let Some(dst) = buf.slice_mut().get_mut(off..) {
+                        let n = scratch.len().min(dst.len());
+                        dst[..n].copy_from_slice(&scratch[..n]);
                     }
                 }
             }

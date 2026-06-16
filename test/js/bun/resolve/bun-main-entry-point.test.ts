@@ -113,6 +113,35 @@ test.skipIf(isWindows).concurrent("resolves a symlinked entry point relative to 
   });
 });
 
+// Skipping the entry point's parent-directory readdir caches that directory as
+// an incomplete listing. A later resolve that imports the same directory (here
+// a sibling module does `require("../pkg")`, as node-api tests do with
+// `require("../../common")`) must re-read it so `index.js` is found. If the
+// incomplete cache entry is handed out as-is, the directory import fails with
+// "Cannot find module". package.json is present so the directory is resolved as
+// a package (exercising the load_as_directory -> index fallback path).
+test.concurrent("imports the entry point's own directory (incomplete-cache upgrade)", async () => {
+  using dir = tempDir("bun-main-dirimport", {
+    "pkg/package.json": `{"type":"commonjs"}`,
+    "pkg/index.js": `module.exports = "PKG_INDEX";`,
+    "pkg/entry.js": `require("../consumer/consume.js");`,
+    "consumer/consume.js": `console.log("RESOLVED:", require("../pkg"));`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(String(dir), "pkg", "entry.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: stripAsanWarning(stderr), exitCode }).toEqual({
+    stdout: "RESOLVED: PKG_INDEX\n",
+    stderr: [],
+    exitCode: 0,
+  });
+});
+
 test.concurrent("dynamic import('bun:main') returns the wrapper module", async () => {
   using dir = tempDir("bun-main-dyn", {
     // package.json disables auto-install so a regression in the bun:main alias

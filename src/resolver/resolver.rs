@@ -6196,7 +6196,15 @@ impl<'a> Resolver<'a> {
 
         if self.care_about_bin_folder {
             'append_bin_dir: {
-                if info.has_node_modules() {
+                // The `.bin`/`node_modules` discovery below reads the cached
+                // listing directly, so it must see a complete entry. Incomplete
+                // entries are only created by the entry-point lazy leaf (gated
+                // on `!care_about_bin_folder`), so a `care_about_bin_folder`
+                // resolver never marks one itself and can only observe one via
+                // the process-global entries cache. Guard the listing probe so
+                // such a reused entry falls through instead of reading a partial
+                // listing that would miss the real `.bin`.
+                if info.has_node_modules() && entries_complete {
                     if entries!().has_comptime_query(b"node_modules") {
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK below
                         if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
@@ -6237,7 +6245,7 @@ impl<'a> Resolver<'a> {
                     }
                 }
 
-                if info.is_node_modules() {
+                if info.is_node_modules() && entries_complete {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
                         // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
                         if unsafe { q.entry().kind(rfs_ptr, self.store_fd) }

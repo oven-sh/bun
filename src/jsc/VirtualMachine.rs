@@ -5824,7 +5824,11 @@ impl VirtualMachine {
         };
 
         let mut did_print_name = false;
-        let next_source = if has_custom_stack { None } else { source_lines.next() };
+        let next_source = if has_custom_stack {
+            None
+        } else {
+            source_lines.next()
+        };
         if let Some(source) = next_source {
             'brk: {
                 if source.text.slice().is_empty() {

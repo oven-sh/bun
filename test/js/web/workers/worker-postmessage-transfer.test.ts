@@ -356,9 +356,12 @@ describe("ReadableStream transfer", () => {
     };
     port2.start();
 
-    port1.postMessage(rs, [rs]);
-    expect(await promise).toBe(true);
-    port1.close();
-    port2.close();
+    try {
+      port1.postMessage(rs, [rs]);
+      expect(await promise).toBe(true);
+    } finally {
+      port1.close();
+      port2.close();
+    }
   });
 });

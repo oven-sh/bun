@@ -613,6 +613,14 @@ pub struct Resolver<'a> {
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
+
+    /// Set only while resolving the process entry point (`bun <script>`), whose
+    /// specifier is a canonicalized absolute path. When set, `load_as_file`
+    /// resolves that exact file with a single `stat` and `dir_info_cached_miss`
+    /// skips enumerating its parent directory, so startup no longer scales with
+    /// the number of sibling entries (e.g. a script under `/nix/store`). Reset
+    /// immediately after the entry resolve, so ordinary imports are unaffected.
+    pub entry_point_hint: bool,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -686,6 +694,7 @@ impl<'a> Resolver<'a> {
             mutex: from.mutex,
             dir_cache: from.dir_cache,
             prefer_module_field: from.prefer_module_field,
+            entry_point_hint: false,
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
@@ -986,6 +995,7 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            entry_point_hint: false,
         }
     }
 
@@ -4401,7 +4411,19 @@ impl<'a> Resolver<'a> {
             // defer top_parent = queue_top.result — done at end of loop body
             queue_slice_len -= 1;
 
-            let open_dir: FD = if queue_top.fd.is_valid() {
+            // Entry-point fast path: when building the `DirInfo` for the entry
+            // point's own directory (the leaf, processed last), skip opening and
+            // reading it. `load_as_file` already resolved the entry file by a
+            // single `stat`; the directory's package.json/tsconfig/node_modules
+            // markers are resolved the same way in `dir_info_uncached`. This
+            // avoids an O(entries) `readdir` (and works even when the directory
+            // is not listable). Only the leaf qualifies — ancestor directories
+            // are still read normally to locate enclosing config files.
+            let lazy_leaf = self.entry_point_hint && queue_slice_len == 0;
+
+            let open_dir: FD = if lazy_leaf {
+                FD::INVALID
+            } else if queue_top.fd.is_valid() {
                 queue_top.fd
             } else {
                 'open_dir: {
@@ -4496,7 +4518,7 @@ impl<'a> Resolver<'a> {
                 }
             };
 
-            if !queue_top.fd.is_valid() {
+            if !lazy_leaf && !queue_top.fd.is_valid() {
                 Fs::FileSystem::set_max_fd(open_dir.native());
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
                 bufs!(open_dirs)[open_dir_count.get()] = open_dir;
@@ -4590,32 +4612,40 @@ impl<'a> Resolver<'a> {
                 // still rehash from there (cheap relative to starting at 0).
                 new_entry.data.reserve(64);
 
-                let mut dir_iterator = bun_sys::iterate_dir(open_dir);
-                // NOTE: `WrappedIterator::next` returns
-                // `Result<Option<IteratorResult>>`, so use `?`-style break-on-error.
-                // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
-                // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
-                let mut filename_store = FilenameStoreAppender::new();
-                loop {
-                    let _value = match dir_iterator.next() {
-                        Ok(Some(v)) => v,
-                        Ok(None) => break,
-                        Err(_) => break,
-                    };
-                    new_entry
-                        .add_entry_with_store(
-                            // SAFETY: see block-wide note above.
-                            in_place.map(|existing| unsafe { &mut (*existing).data }),
-                            &_value,
-                            &mut filename_store,
-                            (),
-                        )
-                        .expect("unreachable");
-                }
-                if let Some(existing) = in_place {
-                    // SAFETY: see block-wide note above.
-                    // NOTE: bun_collections::StringHashMap exposes `clear`, which drops all entries.
-                    unsafe { &mut *existing }.data.clear();
+                if lazy_leaf {
+                    // Entry-point fast path: don't enumerate this directory.
+                    // Mark the entry incomplete so any later consumer that needs
+                    // the full listing re-reads it; `dir_info_uncached` resolves
+                    // this directory's config markers by direct `stat` below.
+                    new_entry.complete = false;
+                } else {
+                    let mut dir_iterator = bun_sys::iterate_dir(open_dir);
+                    // NOTE: `WrappedIterator::next` returns
+                    // `Result<Option<IteratorResult>>`, so use `?`-style break-on-error.
+                    // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
+                    // (see `DirEntry::add_entry` doc-comment) and reuse the appender state.
+                    let mut filename_store = FilenameStoreAppender::new();
+                    loop {
+                        let _value = match dir_iterator.next() {
+                            Ok(Some(v)) => v,
+                            Ok(None) => break,
+                            Err(_) => break,
+                        };
+                        new_entry
+                            .add_entry_with_store(
+                                // SAFETY: see block-wide note above.
+                                in_place.map(|existing| unsafe { &mut (*existing).data }),
+                                &_value,
+                                &mut filename_store,
+                                (),
+                            )
+                            .expect("unreachable");
+                    }
+                    if let Some(existing) = in_place {
+                        // SAFETY: see block-wide note above.
+                        // NOTE: bun_collections::StringHashMap exposes `clear`, which drops all entries.
+                        unsafe { &mut *existing }.data.clear();
+                    }
                 }
                 new_entry.fd = if self.store_fd { open_dir } else { FD::INVALID };
                 // NOTE: `DirEntry.data` is a `HashMap`
@@ -5701,6 +5731,42 @@ impl<'a> Resolver<'a> {
 
         let dir_path = strings::without_trailing_slash_windows_path(Dirname::dirname(path));
 
+        // Entry-point fast path: the process entry point is a canonicalized
+        // absolute path, so its exact basename is the correct on-disk name.
+        // Resolve it with a single `stat` of `dir_path/base` instead of reading
+        // the entire parent directory — startup under a huge directory (e.g.
+        // `/nix/store`) otherwise pays an O(entries) `readdir`. Only a regular
+        // file takes the shortcut; anything else falls through to the normal
+        // directory read (which also handles extensionless paths, symlinks, and
+        // directories). See `Resolver::entry_point_hint`.
+        if self.entry_point_hint {
+            let base = bun_paths::basename(path);
+            // SAFETY: `rfs` points at the process-global RealFS singleton.
+            if let Ok(cache) = unsafe { &mut *rfs }.kind(dir_path, base, FD::INVALID, self.store_fd)
+            {
+                if cache.kind == Fs::file_system::EntryKind::File {
+                    let abs_path: &'static [u8] = self
+                        .fs_ref()
+                        .dirname_store
+                        .append_slice(path)
+                        .expect("unreachable");
+                    if let Some(debug) = self.debug_logs.as_mut() {
+                        debug.add_note_fmt(format_args!(
+                            "Found entry-point file \"{}\" ",
+                            bstr::BStr::new(base)
+                        ));
+                    }
+                    dec_ret!(Some(LoadResult {
+                        path: abs_path,
+                        diff_case: None,
+                        dirname_fd: FD::INVALID,
+                        file_fd: FD::INVALID,
+                        dir_info: None,
+                    }));
+                }
+            }
+        }
+
         // PORT — `dir_entry` is a slot in the BSSMap singleton (ARENA, see
         // LIFETIMES.tsv); wrap in `BackRef` so later `&mut self` calls
         // (debug_logs / load_extension / dirname_store) don't trip borrowck
@@ -6035,6 +6101,31 @@ impl<'a> Resolver<'a> {
             };
         }
 
+        // When the cached listing is incomplete (the entry-point fast path
+        // created this entry without a `readdir`), the config markers below are
+        // resolved by direct `stat` rather than a map lookup that would miss
+        // them. See `DirEntry::complete` and `dir_info_cached_miss`'s lazy leaf.
+        let entries_complete = entries!().complete;
+        // Resolves the `EntryKind` of config marker `$name` (a lowercase,
+        // `'static` name) in this directory — via the cached listing when
+        // complete, or a direct `stat` when incomplete.
+        macro_rules! marker_kind {
+            ($name:expr) => {
+                if entries_complete {
+                    entries!().get_comptime_query($name).map(|lookup| {
+                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                        unsafe { lookup.entry().kind(rfs_ptr, self.store_fd) }
+                    })
+                } else {
+                    // SAFETY: `rfs_ptr` points at the process-global RealFS singleton.
+                    unsafe { &mut *rfs_ptr }
+                        .kind(path, $name, FD::INVALID, self.store_fd)
+                        .ok()
+                        .map(|cache| cache.kind)
+                }
+            };
+        }
+
         if cfg!(debug_assertions) {
             // `path` is stored in the permanent `dir_cache` as `DirInfo.abs_path`. It must not
             // point into a reused threadlocal scratch buffer, or a later resolution will
@@ -6069,13 +6160,8 @@ impl<'a> Resolver<'a> {
 
         // if (entries != null) {
         if !info.is_node_modules() {
-            if let Some(entry) = entries!().get_comptime_query(b"node_modules") {
-                info.flags.set_present(
-                    DirInfo::Flag::HasNodeModules,
-                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                    unsafe { entry.entry().kind(rfs_ptr, self.store_fd) }
-                        == Fs::file_system::EntryKind::Dir,
-                );
+            if marker_kind!(b"node_modules") == Some(Fs::file_system::EntryKind::Dir) {
+                info.flags.set_present(DirInfo::Flag::HasNodeModules, true);
             }
         }
 
@@ -6278,67 +6364,60 @@ impl<'a> Resolver<'a> {
 
         // Record if this directory has a package.json file
         if self.opts.load_package_json {
-            if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
-                // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                // dies (NLL) before any later `&mut` to this slot.
-                let entry = lookup.entry();
-                // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
+            if marker_kind!(b"package.json") == Some(Fs::file_system::EntryKind::File) {
+                info.package_json = if self.use_package_manager()
+                    && !info.has_node_modules()
+                    && !info.is_node_modules()
                 {
-                    info.package_json = if self.use_package_manager()
-                        && !info.has_node_modules()
-                        && !info.is_node_modules()
+                    self.parse_package_json::<true>(
+                        path,
+                        if FeatureFlags::STORE_FILE_DESCRIPTORS {
+                            fd
+                        } else {
+                            FD::INVALID
+                        },
+                        package_id,
+                    )
+                    .ok()
+                    .flatten()
+                } else {
+                    self.parse_package_json::<false>(
+                        path,
+                        if FeatureFlags::STORE_FILE_DESCRIPTORS {
+                            fd
+                        } else {
+                            FD::INVALID
+                        },
+                        None,
+                    )
+                    .ok()
+                    .flatten()
+                };
+
+                if let Some(pkg) = info.package_json() {
+                    if pkg.browser_map.count() > 0 {
+                        info.enclosing_browser_scope = result.index;
+                        info.package_json_for_browser_field = Some(pkg);
+                    }
+
+                    if !pkg.name.is_empty() || self.care_about_bin_folder {
+                        info.enclosing_package_json = Some(pkg);
+                    }
+
+                    if pkg.dependencies.map.count() > 0
+                        || pkg.package_manager_package_id != Install::INVALID_PACKAGE_ID
                     {
-                        self.parse_package_json::<true>(
-                            path,
-                            if FeatureFlags::STORE_FILE_DESCRIPTORS {
-                                fd
-                            } else {
-                                FD::INVALID
-                            },
-                            package_id,
-                        )
-                        .ok()
-                        .flatten()
-                    } else {
-                        self.parse_package_json::<false>(
-                            path,
-                            if FeatureFlags::STORE_FILE_DESCRIPTORS {
-                                fd
-                            } else {
-                                FD::INVALID
-                            },
-                            None,
-                        )
-                        .ok()
-                        .flatten()
-                    };
+                        // NOTE: store the raw `NonNull` field (not the
+                        // `&'static` accessor result) so mut-provenance flows
+                        // through to `enqueue_dependency_to_resolve`.
+                        info.package_json_for_dependencies = info.package_json;
+                    }
 
-                    if let Some(pkg) = info.package_json() {
-                        if pkg.browser_map.count() > 0 {
-                            info.enclosing_browser_scope = result.index;
-                            info.package_json_for_browser_field = Some(pkg);
-                        }
-
-                        if !pkg.name.is_empty() || self.care_about_bin_folder {
-                            info.enclosing_package_json = Some(pkg);
-                        }
-
-                        if pkg.dependencies.map.count() > 0
-                            || pkg.package_manager_package_id != Install::INVALID_PACKAGE_ID
-                        {
-                            // NOTE: store the raw `NonNull` field (not the
-                            // `&'static` accessor result) so mut-provenance flows
-                            // through to `enqueue_dependency_to_resolve`.
-                            info.package_json_for_dependencies = info.package_json;
-                        }
-
-                        if let Some(logs) = self.debug_logs.as_mut() {
-                            logs.add_note_fmt(format_args!(
-                                "Resolved package.json in \"{}\"",
-                                bstr::BStr::new(path)
-                            ));
-                        }
+                    if let Some(logs) = self.debug_logs.as_mut() {
+                        logs.add_note_fmt(format_args!(
+                            "Resolved package.json in \"{}\"",
+                            bstr::BStr::new(path)
+                        ));
                     }
                 }
             }
@@ -6348,37 +6427,21 @@ impl<'a> Resolver<'a> {
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
             if self.opts.tsconfig_override.is_none() {
-                if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
-                    // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                    // dies (NLL) before any later `&mut` to this slot.
-                    let entry = lookup.entry();
-                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                    if unsafe { entry.kind(rfs_ptr, self.store_fd) }
-                        == Fs::file_system::EntryKind::File
-                    {
-                        let parts = [path, b"tsconfig.json".as_slice()];
-                        tsconfig_path = Some(
-                            self.fs_ref()
-                                .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
-                        );
-                    }
+                if marker_kind!(b"tsconfig.json") == Some(Fs::file_system::EntryKind::File) {
+                    let parts = [path, b"tsconfig.json".as_slice()];
+                    tsconfig_path = Some(
+                        self.fs_ref()
+                            .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
+                    );
                 }
-                if tsconfig_path.is_none() {
-                    if let Some(lookup) = entries!().get_comptime_query(b"jsconfig.json") {
-                        // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
-                        // dies (NLL) before any later `&mut` to this slot.
-                        let entry = lookup.entry();
-                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
-                        if unsafe { entry.kind(rfs_ptr, self.store_fd) }
-                            == Fs::file_system::EntryKind::File
-                        {
-                            let parts = [path, b"jsconfig.json".as_slice()];
-                            tsconfig_path = Some(
-                                self.fs_ref()
-                                    .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
-                            );
-                        }
-                    }
+                if tsconfig_path.is_none()
+                    && marker_kind!(b"jsconfig.json") == Some(Fs::file_system::EntryKind::File)
+                {
+                    let parts = [path, b"jsconfig.json".as_slice()];
+                    tsconfig_path = Some(
+                        self.fs_ref()
+                            .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
+                    );
                 }
             } else if parent.is_none() {
                 // NOTE: re-borrow as 'static so the `&self.opts` borrow ends before

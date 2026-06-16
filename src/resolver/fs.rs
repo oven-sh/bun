@@ -564,6 +564,15 @@ pub struct DirEntry {
     pub fd: Fd,
     pub generation: Generation,
     pub data: dir_entry::EntryMap,
+    /// `true` when `data` holds the complete directory listing. A `false`
+    /// value marks an entry that was created without reading the directory
+    /// (the entry-point fast path skips the full `readdir` of a single known
+    /// file's parent, which matters for huge or non-listable directories like
+    /// `/nix/store`). `get`/lookup against an incomplete entry may miss a file
+    /// that is actually present, so any consumer needing the full listing must
+    /// re-read first: `read_directory_with_iterator` and `entries_at` upgrade
+    /// an incomplete entry to a complete one before returning it.
+    pub complete: bool,
 }
 
 impl DirEntry {
@@ -576,6 +585,7 @@ impl DirEntry {
             data: dir_entry::EntryMap::default(),
             generation,
             fd: Fd::INVALID,
+            complete: true,
         }
     }
 
@@ -1136,7 +1146,11 @@ impl RealFS {
         let existing_ptr = map.at_index(index)?;
         // SAFETY: `entries_mutex` held; no other `&mut` to this slot in scope.
         if let EntriesOption::Entries(entries) = unsafe { &mut *existing_ptr } {
-            if entries.generation < generation {
+            // Re-read on a stale generation OR when the cached entry is
+            // incomplete (the entry-point fast path stored a single known file
+            // without enumerating the directory); callers reaching here need the
+            // full listing.
+            if entries.generation < generation || !entries.complete {
                 let dir_path = entries.dir;
                 // capture raw ptrs to the in-place `DirEntry` fields, then
                 // drop the short-lived `&mut` before re-borrowing `self` for
@@ -1629,9 +1643,11 @@ impl RealFS {
                     // match only — the raw `*mut` is what escapes to the caller.
                     match unsafe { &mut *cached_result } {
                         EntriesOption::Err(_) => return Ok(cached_result),
-                        EntriesOption::Entries(e) if e.generation >= generation => {
+                        EntriesOption::Entries(e) if e.generation >= generation && e.complete => {
                             return Ok(cached_result);
                         }
+                        // A stale generation OR an incomplete (entry-point-lazy)
+                        // entry falls through to a full re-read in place.
                         EntriesOption::Entries(e) => {
                             in_place = Some(&raw mut **e);
                         }

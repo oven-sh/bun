@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
-import { writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
+import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // `bun:main` is backed by ServerEntryPoint.contents — a slice that is
@@ -15,6 +15,65 @@ import { join } from "node:path";
 function stripAsanWarning(stderr: string): string[] {
   return stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
 }
+
+// Resolving the process entry point (`bun <script>`) must not require reading
+// the script's parent directory: it should stat the single known file instead.
+// Reading the directory makes startup scale with the sibling count, which is
+// slow under huge immutable trees such as /nix/store (issue #32389), and it
+// fails outright when the directory is searchable but not listable (mode 0711)
+// even though the file itself is readable, a case Node handles fine.
+//
+// As root, directory read permissions are bypassed, so the directory read is
+// only observable after dropping DAC privileges. These tests run the child as
+// `nobody` via `setpriv`, which requires being root on Linux.
+const NOBODY = "65534";
+const canDropPrivs =
+  isLinux && typeof process.getuid === "function" && process.getuid() === 0 && Bun.which("setpriv") != null;
+
+async function runAsNobody(scriptPath: string) {
+  await using proc = Bun.spawn({
+    cmd: ["setpriv", `--reuid=${NOBODY}`, `--regid=${NOBODY}`, "--clear-groups", bunExe(), scriptPath],
+    // HOME points at a world-writable dir so `nobody` can reach any cache/config.
+    env: { ...bunEnv, HOME: "/tmp" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+}
+
+test.skipIf(!canDropPrivs)("runs an entry point in a searchable-but-not-listable directory", async () => {
+  using dir = tempDir("bun-main-nolist", {
+    "sub/entry.js": `console.log("RAN_OK");`,
+  });
+  const root = String(dir);
+  // mkdtemp creates the tempdir 0700; `nobody` needs to traverse into it.
+  chmodSync(root, 0o755);
+  // 0711: `nobody` can traverse `sub` and open entry.js by name, but cannot
+  // readdir it. Resolving the entry point must therefore avoid readdir.
+  chmodSync(join(root, "sub"), 0o711);
+  chmodSync(join(root, "sub", "entry.js"), 0o644);
+
+  const [stdout, stderr, exitCode] = await runAsNobody(join(root, "sub", "entry.js"));
+  expect(stdout).toBe("RAN_OK\n");
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(!canDropPrivs)("control: runs an entry point in a listable directory as nobody", async () => {
+  // Same privilege drop, but the directory is listable. This isolates the
+  // assertion above: if this control fails, the failure is in the test setup
+  // (setpriv/permissions), not in entry-point resolution.
+  using dir = tempDir("bun-main-list", {
+    "sub/entry.js": `console.log("RAN_OK");`,
+  });
+  const root = String(dir);
+  chmodSync(root, 0o755);
+  chmodSync(join(root, "sub"), 0o755);
+  chmodSync(join(root, "sub", "entry.js"), 0o644);
+
+  const [stdout, stderr, exitCode] = await runAsNobody(join(root, "sub", "entry.js"));
+  expect(stdout).toBe("RAN_OK\n");
+  expect(exitCode).toBe(0);
+});
 
 test.concurrent("dynamic import('bun:main') returns the wrapper module", async () => {
   using dir = tempDir("bun-main-dyn", {

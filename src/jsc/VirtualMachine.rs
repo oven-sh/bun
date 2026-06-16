@@ -4128,6 +4128,27 @@ impl VirtualMachine {
             top_level_dir
         };
 
+        // Entry-point fast path: the process entry point (`source == MAIN_FILE_NAME`)
+        // resolves a canonicalized absolute specifier, so its parent directory need
+        // not be enumerated to find it. Hint the resolver to `stat` the single file
+        // instead (see `Resolver::entry_point_hint`); the guard resets the hint on
+        // every exit so ordinary imports keep reading directories normally.
+        let is_main_entry = source == MAIN_FILE_NAME && bun_paths::is_absolute(normalized_specifier);
+        if is_main_entry {
+            self.transpiler.resolver.entry_point_hint = true;
+        }
+        let self_ptr: *mut Self = self;
+        let _entry_hint_guard = scopeguard::guard((), move |()| {
+            if is_main_entry {
+                // SAFETY: `self_ptr` is the live VM for the duration of `_resolve`.
+                // It is a `Copy` raw pointer, so the guard does not borrow `self`
+                // away from the resolve loop below.
+                unsafe {
+                    (*self_ptr).transpiler.resolver.entry_point_hint = false;
+                }
+            }
+        });
+
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.

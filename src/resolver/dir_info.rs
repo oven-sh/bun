@@ -271,14 +271,11 @@ impl DirInfo {
     }
 
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
-        let entries_ptr = fs::FileSystem::instance()
-            .fs
-            .entries
-            .at_index(self.entries)?;
-        match entries_ptr {
-            fs::EntriesOption::Entries(entries) => Some(&**entries),
-            fs::EntriesOption::Err(_) => None,
-        }
+        // Generation 0 disables generation-based invalidation (the historical
+        // "const" behaviour), but routing through `entries_at` still upgrades an
+        // incomplete (entry-point-lazy) entry to a full directory read before it
+        // is handed to callers that iterate the whole listing.
+        self.get_entries_ref(0)
     }
 
     #[inline]

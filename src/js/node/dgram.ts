@@ -49,6 +49,7 @@ const {
   validateString,
   validateNumber,
   validateFunction,
+  validateObject,
   validatePort,
   validateAbortSignal,
 } = require("internal/validators");
@@ -358,6 +359,89 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
   });
 
   return this;
+};
+
+function emitListeningNT(self) {
+  // Ensure the socket was not closed before the next tick.
+  if (self[kStateSymbol].handle) self.emit("listening");
+}
+
+// Synchronous counterpart of bind(). bind(2) is a local, non-blocking system
+// call, so this binds inline and returns the resolved address (including the
+// OS-assigned ephemeral port when port is 0), throwing synchronously on bind
+// errors such as EADDRINUSE. The address must be a numeric IP literal:
+// asynchronous name resolution is the only genuinely blocking part of bind(),
+// so callers resolve names separately. Message delivery stays asynchronous
+// ('message' events flow as usual); the 'listening' event is emitted on the
+// next tick.
+Socket.prototype.bindSync = function (options) {
+  healthCheck(this);
+  if (options !== undefined) validateObject(options, "options");
+  const state = this[kStateSymbol];
+
+  if (state.bindState !== BIND_STATE_UNBOUND) throw $ERR_SOCKET_ALREADY_BOUND();
+
+  // Validate arguments before mutating state so a bad argument leaves the
+  // socket unbound and reusable.
+  const port = validatePort(options?.port ?? 0, "options.port");
+  let address = options?.address;
+  if (!address) {
+    address = this.type === "udp4" ? "0.0.0.0" : "::";
+  } else {
+    validateString(address, "options.address");
+    if (isIP(address) === 0) {
+      throw $ERR_INVALID_ARG_VALUE(
+        "options.address",
+        address,
+        "must be a numeric IP address; bindSync does not perform DNS resolution",
+      );
+    }
+  }
+
+  state.bindState = BIND_STATE_BINDING;
+
+  let flags = uSockets.LISTEN_DISALLOW_REUSE_PORT_FAILURE;
+  if (state.reuseAddr) flags |= uSockets.LISTEN_REUSE_ADDR;
+  if (state.ipv6Only) flags |= uSockets.SOCKET_IPV6_ONLY;
+  if (state.reusePort) flags |= uSockets.LISTEN_REUSE_PORT;
+
+  const family = this.type === "udp4" ? "IPv4" : "IPv6";
+  let socket;
+  try {
+    socket = Bun.udpSocket({
+      hostname: address,
+      port: port || 0,
+      flags,
+      sync: true,
+      socket: {
+        data: (_socket, data, port, addr) => {
+          this.emit("message", data, {
+            port: port,
+            address: addr,
+            size: data.length,
+            family,
+          });
+        },
+        error: err => {
+          this.emit("error", err);
+        },
+      },
+    });
+  } catch (err) {
+    state.bindState = BIND_STATE_UNBOUND;
+    throw err;
+  }
+
+  if (state.unrefOnBind) {
+    socket.unref();
+    state.unrefOnBind = false;
+  }
+  state.handle.socket = socket;
+  state.receiving = true;
+  state.bindState = BIND_STATE_BOUND;
+
+  process.nextTick(emitListeningNT, this);
+  return this.address();
 };
 
 Socket.prototype.connect = function (port, address, callback) {

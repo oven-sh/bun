@@ -506,6 +506,17 @@ impl UDPSocket {
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
 
+        // node:dgram's `bindSync()` needs the bound socket synchronously. The
+        // bind itself is already synchronous; this only skips the
+        // resolved-Promise wrap on return.
+        let sync = if options.is_object() {
+            options
+                .get_boolean_loose(global_this, "sync")?
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
         let vm = global_this.bun_vm_ptr();
         let this_ptr = Self::new(Self {
             socket: Cell::new(None),
@@ -613,7 +624,9 @@ impl UDPSocket {
                     dest: BunString::empty(),
                 };
                 let error_value = sys_err.to_error_instance(global_this);
+                error_value.put(global_this, b"syscall", BunString::static_("bind").to_js(global_this)?);
                 error_value.put(global_this, b"address", config.hostname.to_js(global_this)?);
+                error_value.put(global_this, b"port", JSValue::js_number(config.port as f64));
 
                 return Err(global_this.throw_value(error_value));
             }
@@ -650,6 +663,9 @@ impl UDPSocket {
         scopeguard::ScopeGuard::into_inner(guard);
 
         this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        if sync {
+            return Ok(this_value);
+        }
         Ok(bun_jsc::JSPromise::resolved_promise_value(
             global_this,
             this_value,

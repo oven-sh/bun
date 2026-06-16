@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicU8, AtomicU16, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, Ordering};
 
 use crate::event_loop::EventLoop;
 use crate::{JSGlobalObject, Task, VirtualMachineRef as VirtualMachine};
@@ -17,6 +17,12 @@ pub struct PosixSignalHandle {
     tail: AtomicU16,
     /// Consumer index (main thread reads).
     head: AtomicU16,
+
+    /// Set when a termination-class signal (SIGHUP/SIGINT/SIGQUIT/SIGTERM) has
+    /// been delivered to a user handler. The `--watch`/`--hot` run-loop reads
+    /// this to exit once the event loop drains instead of blocking in the
+    /// watcher keep-alive forever; a plain `bun run` already exits on drain.
+    termination_requested: AtomicBool,
 }
 
 impl Default for PosixSignalHandle {
@@ -25,8 +31,22 @@ impl Default for PosixSignalHandle {
             signals: [const { AtomicU8::new(0) }; BUFFER_SIZE as usize],
             tail: AtomicU16::new(0),
             head: AtomicU16::new(0),
+            termination_requested: AtomicBool::new(false),
         }
     }
+}
+
+/// Termination-class signals convey "shut down" (the default disposition of
+/// each is to terminate the process). A `--watch`/`--hot` session exits once
+/// the event loop drains after one of these is routed to a user handler,
+/// matching a plain `bun run`. Signals like SIGWINCH or SIGUSR1/2 do not imply
+/// shutdown and are deliberately excluded.
+fn is_termination_signal(signal: u8) -> bool {
+    use bun_core::SignalCode;
+    signal == SignalCode::SIGHUP as u8
+        || signal == SignalCode::SIGINT as u8
+        || signal == SignalCode::SIGQUIT as u8
+        || signal == SignalCode::SIGTERM as u8
 }
 
 impl PosixSignalHandle {
@@ -40,6 +60,12 @@ impl PosixSignalHandle {
     /// Returns `true` if enqueued successfully, or `false` if the ring is full.
     #[allow(dead_code)]
     pub(crate) fn enqueue(&self, signal: u8) -> bool {
+        // Record a shutdown request before anything can short-circuit (a full
+        // ring drops the signal but the intent to terminate still stands).
+        if is_termination_signal(signal) {
+            self.termination_requested.store(true, Ordering::Release);
+        }
+
         // Read the current tail and head (Acquire to ensure we have up-to-date values).
         let old_tail = self.tail.load(Ordering::Acquire);
         let head_val = self.head.load(Ordering::Acquire);
@@ -91,6 +117,13 @@ impl PosixSignalHandle {
         self.head.store(old_head.wrapping_add(1), Ordering::Release);
 
         Some(signal)
+    }
+
+    /// True once a termination-class signal has been delivered to a user
+    /// handler (see [`is_termination_signal`]).
+    #[allow(dead_code)]
+    pub(crate) fn termination_requested(&self) -> bool {
+        self.termination_requested.load(Ordering::Acquire)
     }
 
     /// Drain as many signals as possible and enqueue them as tasks in the event loop.

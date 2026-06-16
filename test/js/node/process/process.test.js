@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -120,7 +120,10 @@ it("process.chdir() on root dir", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/32409
-it.skipIf(isWindows)("process.chdir() does not throw when the cwd was deleted", async () => {
+// Linux-only: only on Linux does chdir("..") succeed while getcwd() then fails
+// for an unlinked cwd. On macOS/BSD the chdir("..") syscall itself fails, so
+// (like Node) Bun throws and there is no divergence to exercise.
+it.skipIf(!isLinux)("process.chdir() does not throw when the cwd was deleted", async () => {
   using dir = tempDir("process-chdir-deleted", {
     "index.js": `
       const fs = require("node:fs");

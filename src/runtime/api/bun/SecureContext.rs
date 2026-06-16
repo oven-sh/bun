@@ -94,6 +94,17 @@ impl SecureContext {
         if args.is_empty() {
             return Err(global.throw(format_args!("PFX certificate argument is mandatory")));
         }
+        // The passphrase is optional; the C side treats NULL as "". Coerce it
+        // before borrowing the pfx ArrayBuffer so a user toString() cannot
+        // detach the buffer behind the borrowed slice.
+        let pass_owned: Option<Vec<u8>> = if args.len() > 1 && !args[1].is_undefined_or_null() {
+            let p = args[1].to_slice(global)?;
+            let mut v = p.slice().to_vec();
+            v.push(0);
+            Some(v)
+        } else {
+            None
+        };
         // The pfx arrives as a Buffer/TypedArray (binary DER) or a string;
         // a string-conversion would mangle the DER bytes, so read the raw
         // view when one exists.
@@ -109,15 +120,6 @@ impl SecureContext {
         if pfx_bytes.is_empty() {
             return Err(global.throw(format_args!("PFX certificate argument is mandatory")));
         }
-        // The passphrase is optional; the C side treats NULL as "".
-        let pass_owned: Option<Vec<u8>> = if args.len() > 1 && !args[1].is_undefined_or_null() {
-            let p = args[1].to_slice(global)?;
-            let mut v = p.slice().to_vec();
-            v.push(0);
-            Some(v)
-        } else {
-            None
-        };
         let mut out_key: *mut core::ffi::c_char = core::ptr::null_mut();
         let mut out_cert: *mut core::ffi::c_char = core::ptr::null_mut();
         let mut out_ca: *mut core::ffi::c_char = core::ptr::null_mut();
@@ -158,6 +160,7 @@ impl SecureContext {
             let message = match reason {
                 "key" => "Unable to load private key from PFX data",
                 "cert" => "Unable to load certificate from PFX data",
+                "mac" => "PFX MAC verification failed - is the passphrase correct?",
                 _ => "Unable to load PFX certificate",
             };
             return Err(global.throw(format_args!("{message}")));

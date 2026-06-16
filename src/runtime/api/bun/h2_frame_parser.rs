@@ -1262,6 +1262,12 @@ pub struct H2FrameParser {
     out_standing_pings: Cell<u64>,
     max_send_header_block_length: Cell<u32>,
     last_stream_id: Cell<u32>,
+    /// Highest PEER-initiated stream id processed (odd ids for a server, even for a
+    /// client). This — not `last_stream_id` — is what an auto-filled GOAWAY must carry:
+    /// RFC 9113 §6.8 last_stream_id refers to streams the RECEIVER initiated, and
+    /// nghttp2 servers reject a GOAWAY naming a client-initiated id with a connection
+    /// PROTOCOL_ERROR (node's last_proc_stream_id semantics).
+    last_peer_stream_id: Cell<u32>,
     // Stream id whose header block is awaiting CONTINUATION frames
     // (RFC 9113 §4.3); 0 when none.
     expecting_continuation: Cell<u32>,
@@ -4496,6 +4502,12 @@ impl H2FrameParser {
         if stream_identifier > self.last_stream_id.get() {
             self.last_stream_id.set(stream_identifier);
         }
+        let peer_parity: u32 = if self.is_server.get() { 1 } else { 0 };
+        if stream_identifier % 2 == peer_parity
+            && stream_identifier > self.last_peer_stream_id.get()
+        {
+            self.last_peer_stream_id.set(stream_identifier);
+        }
 
         // new stream open
         let local_window_size = if self.outstanding_settings.get() > 0 {
@@ -5134,7 +5146,7 @@ impl H2FrameParser {
         }
         let error_code = error_code_arg.to_int32();
 
-        let mut last_stream_id = this.last_stream_id.get();
+        let mut last_stream_id = this.last_peer_stream_id.get();
         if args_list.len >= 2 {
             let last_stream_arg = args_list.ptr[1];
             if !last_stream_arg.is_empty_or_undefined_or_null() {
@@ -7521,6 +7533,7 @@ impl H2FrameParser {
             out_standing_pings: Cell::new(0),
             max_send_header_block_length: Cell::new(0),
             last_stream_id: Cell::new(0),
+            last_peer_stream_id: Cell::new(0),
             expecting_continuation: Cell::new(0),
             is_server: Cell::new(false),
             preface_received_len: Cell::new(0),

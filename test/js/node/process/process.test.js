@@ -166,7 +166,7 @@ it.skipIf(!isLinux)("process.chdir() does not crash when the cwd grows past PATH
   using dir = tempDir("process-chdir-long", {
     "index.js": `
       const fs = require("node:fs");
-      const seg = "d".repeat(200);
+      const seg = Buffer.alloc(200, "d").toString();
       // 40 * ~201 bytes is well past PATH_MAX (4096): getcwd() starts failing
       // with ERANGE partway down, but each short relative chdir still succeeds.
       for (let i = 0; i < 40; i++) {
@@ -200,14 +200,14 @@ it.skipIf(!isLinux)("process.chdir() does not crash when the cwd is exactly PATH
     "index.js": `
       const fs = require("node:fs");
       const TARGET = 4095; // MAX_PATH_BYTES - 1 on Linux: the longest cwd getcwd() returns
-      const big = "d".repeat(250);
+      const big = Buffer.alloc(250, "d").toString();
       // Grow the cwd with short relative chdirs (each getcwd succeeds) until one
       // more <=255-byte segment can land it exactly on TARGET.
       while (process.cwd().length + 1 + 255 < TARGET) {
         fs.mkdirSync(big);
         process.chdir(big);
       }
-      const finalSeg = "d".repeat(TARGET - process.cwd().length - 1);
+      const finalSeg = Buffer.alloc(TARGET - process.cwd().length - 1, "d").toString();
       fs.mkdirSync(finalSeg);
       // cwd is now exactly TARGET bytes; the unguarded trailing-slash write used
       // to index one past top_level_dir_buf here and crash the process.
@@ -240,7 +240,7 @@ it.skipIf(!isLinux)("process.chdir() keeps the cached cwd on the first overflow"
     "fixture.mjs": `
       const fs = require("node:fs");
       const startup = process.cwd();
-      const seg = "d".repeat(200);
+      const seg = Buffer.alloc(200, "d").toString();
       fs.mkdirSync(seg);
       // First chdir pushes the cwd past PATH_MAX; getcwd now fails with ERANGE
       // and the logical path does not fit, so the cached cwd is kept.
@@ -251,10 +251,10 @@ it.skipIf(!isLinux)("process.chdir() keeps the cached cwd on the first overflow"
 
   // Build a startup cwd of ~4000 bytes (just under PATH_MAX) so the fixture's
   // first chdir overflows and hits the getcwd-failure fallback immediately.
-  const big = "d".repeat(200);
+  const big = Buffer.alloc(200, "d").toString();
   let deep = String(dir);
   while (deep.length + 1 + 200 < 3950) deep = join(deep, big);
-  deep = join(deep, "d".repeat(4000 - deep.length - 1));
+  deep = join(deep, Buffer.alloc(4000 - deep.length - 1, "d").toString());
   mkdirSync(deep, { recursive: true });
 
   await using proc = Bun.spawn({

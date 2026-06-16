@@ -3026,6 +3026,11 @@ export function getLoggedInUserCountOrDetails() {
     const users = stdout
       .split("\n")
       .filter(line => /tty|pts/i.test(line))
+      // Only count REMOTE logins (have an `(ip)` suffix from sshd). A local
+      // console/auto-login (e.g. cirruslabs CI VM images log the admin user in
+      // on ttys000 at boot) has no source host and isn't a human debugging the
+      // job — waiting for it would hang the runner forever.
+      .filter(line => /\([^)]+\)\s*$/.test(line))
       .map(line => {
         // who output format: username terminal date/time (ip)
         const [username, terminal, datetime, ip] = line.split(/\s+/);

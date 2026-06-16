@@ -712,7 +712,7 @@ it("encode() allocates one Uint8Array per call for large UTF-16 with a lone surr
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(stderr).toBe("");
   const results = JSON.parse(stdout);
 
   // Output bytes must be correct regardless of the allocation path taken.
@@ -726,4 +726,5 @@ it("encode() allocates one Uint8Array per call for large UTF-16 with a lone surr
   expect(results.large.delta).toBeLessThan(30);
   expect(results.mid.delta).toBeGreaterThanOrEqual(20);
   expect(results.mid.delta).toBeLessThan(30);
+  expect(exitCode).toBe(0);
 });

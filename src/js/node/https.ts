@@ -69,11 +69,73 @@ Agent.prototype.createConnection = function createConnection(...args) {
   return require("node:tls").connect(options);
 };
 
+// Bun's http.Server already handles TLS internally via Bun.serve when given
+// `cert`/`key`/`ca` options, so https.Server can compose http.Server while
+// exposing the tls.Server API surface that node:https consumers expect
+// (`addContext`, `setSecureContext`, `getTicketKeys`, `setTicketKeys`).
+function Server(options, callback) {
+  if (!(this instanceof Server)) return new Server(options, callback);
+
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  } else if (options == null) {
+    options = {};
+  }
+
+  http.Server.$call(this, options, callback);
+
+  // SNI contexts are recorded here; wiring them into the live Bun.serve TLS
+  // handshake (so they actually select per-hostname certs) is a follow-up —
+  // http.Server terminates TLS via Bun.serve, not the raw socket handle that
+  // tls.Server.addContext drives.
+  let contexts: Map<string, any> | null = null;
+
+  this.addContext = function (hostname, context) {
+    if (typeof hostname !== "string") {
+      throw new TypeError("hostname must be a string");
+    }
+    if (!contexts) contexts = new Map();
+    contexts.$set(hostname, context);
+  };
+
+  this.setSecureContext = function (options) {
+    // Validate option shapes consistently with tls.Server.setSecureContext.
+    if (options == null) return;
+    if (options.passphrase !== undefined && typeof options.passphrase !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", options.passphrase);
+    }
+    if (options.servername !== undefined && typeof options.servername !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("options.servername", "string", options.servername);
+    }
+    if (options.secureOptions !== undefined && typeof options.secureOptions !== "number") {
+      throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", options.secureOptions);
+    }
+    if (options.ciphers !== undefined && typeof options.ciphers !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("options.ciphers", "string", options.ciphers);
+    }
+  };
+}
+$toClass(Server, "Server", http.Server);
+
+// Mirror tls.Server's prototype stubs — full ticket-key support is not yet
+// implemented in Bun (matches src/js/node/tls.ts).
+Server.prototype.getTicketKeys = function () {
+  throw new Error("Not implemented in Bun yet");
+};
+Server.prototype.setTicketKeys = function () {
+  throw new Error("Not implemented in Bun yet");
+};
+
+function createServer(options, requestListener) {
+  return new Server(options, requestListener);
+}
+
 var https = {
   Agent,
   globalAgent: new Agent({ keepAlive: true, scheduling: "lifo", timeout: 5000 }),
-  Server: http.Server,
-  createServer: http.createServer,
+  Server,
+  createServer,
   get,
   request,
 };

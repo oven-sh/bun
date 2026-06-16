@@ -291,7 +291,11 @@ fn compress_brotli(global: &JSGlobalObject, input: &[u8], level: Option<i32>) ->
             }
         }
 
-        let cap = if bound != 0 { bound } else { input.len() + 1024 };
+        let cap = if bound != 0 {
+            bound
+        } else {
+            input.len() + 1024
+        };
         let mut out = vec![0u8; cap];
         let mut out_len = out.len();
         // SAFETY: see above.
@@ -307,10 +311,12 @@ fn compress_brotli(global: &JSGlobalObject, input: &[u8], level: Option<i32>) ->
             )
         };
         if ok == 0 {
-            return Err(global.err(
-                jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
-                format_args!("brotli compression failed"),
-            ).throw());
+            return Err(global
+                .err(
+                    jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
+                    format_args!("brotli compression failed"),
+                )
+                .throw());
         }
         out.truncate(out_len);
         Ok(out)
@@ -321,10 +327,12 @@ fn compress_zstd(global: &JSGlobalObject, input: &[u8], level: Option<i32>) -> J
     with_state(|state| {
         let bound = bun_zstd::compress_bound(input.len());
         if bun_zstd::is_error(bound) {
-            return Err(global.err(
-                jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
-                format_args!("zstd compression failed: input too large"),
-            ).throw());
+            return Err(global
+                .err(
+                    jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
+                    format_args!("zstd compression failed: input too large"),
+                )
+                .throw());
         }
         if bound <= state.shared_buffer.len() {
             match bun_zstd::compress(&mut state.shared_buffer, input, level) {
@@ -332,10 +340,15 @@ fn compress_zstd(global: &JSGlobalObject, input: &[u8], level: Option<i32>) -> J
                     return Ok(state.shared_buffer[..n].to_vec());
                 }
                 bun_zstd::Result::Err(msg) => {
-                    return Err(global.err(
-                        jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
-                        format_args!("zstd compression failed: {}", bstr::BStr::new(msg.as_bytes())),
-                    ).throw());
+                    return Err(global
+                        .err(
+                            jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
+                            format_args!(
+                                "zstd compression failed: {}",
+                                bstr::BStr::new(msg.as_bytes())
+                            ),
+                        )
+                        .throw());
                 }
             }
         }
@@ -346,10 +359,15 @@ fn compress_zstd(global: &JSGlobalObject, input: &[u8], level: Option<i32>) -> J
                 out.truncate(n);
                 Ok(out)
             }
-            bun_zstd::Result::Err(msg) => Err(global.err(
-                jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
-                format_args!("zstd compression failed: {}", bstr::BStr::new(msg.as_bytes())),
-            ).throw()),
+            bun_zstd::Result::Err(msg) => Err(global
+                .err(
+                    jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
+                    format_args!(
+                        "zstd compression failed: {}",
+                        bstr::BStr::new(msg.as_bytes())
+                    ),
+                )
+                .throw()),
         }
     })
 }

@@ -308,4 +308,22 @@ describe("ReadableStream transfer", () => {
     port1.close();
     port2.close();
   });
+
+  test("throws DataCloneError when a getter locks the stream during serialization", () => {
+    const rs = new ReadableStream();
+    const { port1, port2 } = new MessageChannel();
+    // The getter runs while the message is being serialized, locking `rs` after
+    // the transfer-list check already passed. The transfer steps must re-check
+    // and reject with DataCloneError, not the cross-realm pipe's TypeError.
+    const message = {
+      get locker() {
+        rs.getReader();
+        return 1;
+      },
+      rs,
+    };
+    expect(() => port1.postMessage(message, [rs])).toThrow(expect.objectContaining({ name: "DataCloneError" }));
+    port1.close();
+    port2.close();
+  });
 });

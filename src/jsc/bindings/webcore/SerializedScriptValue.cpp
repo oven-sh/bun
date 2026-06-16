@@ -807,8 +807,12 @@ static RefPtr<MessagePort> runReadableStreamTransferSteps(JSC::JSGlobalObject& l
     arguments.append(readableStream);
     arguments.append(toJS(&lexicalGlobalObject, globalObject, port1.get()));
     ASSERT(!arguments.hasOverflowed());
-    invokeStreamTransferBuiltin(lexicalGlobalObject, name, arguments);
+    JSValue result = invokeStreamTransferBuiltin(lexicalGlobalObject, name, arguments);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    // The builtin is always installed; guard against a missing/non-callable
+    // private name so we never hand back a port whose writable side is unwired.
+    if (!result)
+        return nullptr;
 
     return port2.ptr();
 }
@@ -6483,6 +6487,18 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     if (scope.exception() || code != SerializationReturnCode::SuccessfullyCompleted) [[unlikely]] {
         releaseSerializedBlockListRefs();
         RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(code));
+    }
+
+    // Serialization can run user getters that lock a stream after the
+    // transfer-list check passed (rs-transfer step 1 runs at transfer time, not
+    // serialize time). Re-validate every stream before detaching any of them, so
+    // a later locked stream can't leave earlier ones partially detached, and the
+    // failure surfaces as DataCloneError rather than the pipe's TypeError.
+    for (auto* readableStream : readableStreams) {
+        if (ReadableStream::isLocked(&lexicalGlobalObject, uncheckedDowncast<JSReadableStream>(readableStream))) {
+            releaseSerializedBlockListRefs();
+            return Exception { DataCloneError, "ReadableStream is locked and cannot be transferred"_s };
+        }
     }
 
     // rs-transfer steps run after the message value is serialized. Each transferred

@@ -4,6 +4,7 @@ export function initializeCompressionStream(this, format) {
   // with node:zlib's defaults, so output bytes match the node-backed
   // implementation this replaced.
   const modes = {
+    __proto__: null,
     "deflate": 1,
     "deflate-raw": 5,
     "gzip": 3,

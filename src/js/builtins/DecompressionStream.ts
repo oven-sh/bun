@@ -2,6 +2,7 @@ export function initializeDecompressionStream(this, format) {
   // node:zlib NodeMode values (INFLATE, GUNZIP, INFLATERAW, BROTLI_DECODE,
   // ZSTD_DECOMPRESS) — see CompressionStream for the encode-side table.
   const modes = {
+    __proto__: null,
     "deflate": 2,
     "deflate-raw": 6,
     "gzip": 4,

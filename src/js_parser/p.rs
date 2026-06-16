@@ -628,6 +628,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// `use_count_estimate` is always maintained — TS unused-import dropping
     /// and `__dirname`/`__filename`/`module` detection read it unconditionally.
     pub track_symbol_usage: bool,
+
+    /// Set in `prepare_for_visit_pass` when the visit-pass `EIdentifier` arm
+    /// would be a no-op for printed output: no symbol-usage tracking, no
+    /// import items to convert to `EImportIdentifier`, no user-supplied
+    /// identifier defines, no `with` scopes, and not TypeScript. The printer's
+    /// `NoOpRenamer` resolves the parse-time `SourceContentsSlice` ref directly,
+    /// so the `find_symbol` retag (and its scope-chain walk) can be skipped.
+    pub skip_identifier_visit: bool,
 }
 
 // Transposer helpers
@@ -3028,6 +3036,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn prepare_for_visit_pass(&mut self) -> Result<(), bun_core::Error> {
+        self.skip_identifier_visit = !TYPESCRIPT
+            && !self.track_symbol_usage
+            && self.is_import_item.is_empty()
+            && self.define.identifiers.count() == 0
+            && !self.has_with_scope
+            && !self.options.features.react_fast_refresh
+            && !self.options.features.server_components.is_enabled();
         {
             // The wrapper stores only the arena and a non-capturing
             // fn-pointer trampoline; the `*mut P` context is supplied *at call
@@ -5819,7 +5834,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::ExprData::EDot(ex) => return ex.can_be_removed_if_unused,
             js_ast::ExprData::EClass(ex) => return self.class_can_be_removed_if_unused(&**ex),
             js_ast::ExprData::EIdentifier(ex) => {
-                debug_assert!(!ex.ref_.is_source_contents_slice()); // was not visited
+                if ex.ref_.is_source_contents_slice() {
+                    // `skip_identifier_visit` left the parse-time ref in
+                    // place; we can't tell whether it's bound, so be
+                    // conservative.
+                    debug_assert!(self.skip_identifier_visit);
+                    return false;
+                }
 
                 if ex.must_keep_due_to_with_stmt() {
                     return false;
@@ -9066,6 +9087,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         out.write(Self {
             legacy_cjs_import_stmts: BumpVec::new_in(arena),
             track_symbol_usage,
+            skip_identifier_visit: false,
             // This must default to true or else parsing "in" won't work right.
             // It will fail for the case in the "in-keyword.js" file
             allow_in: true,

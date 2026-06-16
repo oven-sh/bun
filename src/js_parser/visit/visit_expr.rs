@@ -170,6 +170,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
         let expr = *e;
+        if p.skip_identifier_visit {
+            // The parse-time `SourceContentsSlice` ref already prints
+            // correctly via `NoOpRenamer`; the scope-chain `find_symbol` walk
+            // and everything downstream of it (define substitution,
+            // `EImportIdentifier` conversion, const-reassign diagnostics) are
+            // dead for printed output under this gate. The one observable
+            // effect that must survive is the use_count_estimate bump for
+            // `module` / `exports` / `require` / `__dirname` / `__filename`,
+            // which `to_ast` reads to derive `exports_kind` and the
+            // `uses_*_ref` flags. Route only those through the full path.
+            let r = expr.data.e_identifier().expect("infallible: variant").ref_;
+            // For `SourceContentsSlice` refs (the only kind the parse pass
+            // produces for identifier uses), `inner_index` is the byte length.
+            let len = if r.is_source_contents_slice() {
+                r.inner_index()
+            } else {
+                p.load_name_from_ref(r).len() as u32
+            };
+            if !matches!(len, 6 | 7 | 9 | 10) {
+                return;
+            }
+            let name = p.load_name_from_ref(r);
+            if !matches!(
+                name,
+                b"module" | b"exports" | b"require" | b"__dirname" | b"__filename"
+            ) {
+                return;
+            }
+            // Fall through for the special names so their use counts are tracked.
+        }
         let mut e_ = expr
             .data
             .e_identifier()

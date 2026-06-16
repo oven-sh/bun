@@ -207,10 +207,14 @@ function projectFiles(addon: Buffer) {
   };
 }
 
-async function compileForWindows(dir: string, extraEnv: Record<string, string> = {}): Promise<string> {
+async function compileForWindows(
+  dir: string,
+  extraEnv: Record<string, string> = {},
+  extraArgs: string[] = [],
+): Promise<string> {
   const out = join(dir, "out.exe");
   await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--outfile", out, join(dir, "entry.cjs")],
+    cmd: [bunExe(), "build", "--compile", ...extraArgs, "--outfile", out, join(dir, "entry.cjs")],
     env: { ...bunEnv, ...extraEnv },
     stderr: "pipe",
     stdout: "pipe",
@@ -218,6 +222,14 @@ async function compileForWindows(dir: string, extraEnv: Record<string, string> =
   const [stderr, stdout, code] = await Promise.all([build.stderr.text(), build.stdout.text(), build.exited]);
   if (code !== 0) throw new Error(`bun build --compile failed (exit ${code}):\n${stderr}\n${stdout}`);
   return out;
+}
+
+// The `.bunL` blob's first addon name, for key-format assertions.
+function readBunLKey(exePath: string): string {
+  const bunL = readSectionData(exePath, ".bunL");
+  // [u64 len]['BLNK' u32][version u32][count u32][nameLen u32][name...]
+  const nameLen = bunL.readUInt32LE(20);
+  return bunL.subarray(24, 24 + nameLen).toString("utf8");
 }
 
 describe.skipIf(!isWindows)("bun build --compile native addon static link", () => {
@@ -333,6 +345,32 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
       const absSlot = bn0Data.readBigUInt64LE(0x1000 + 0x008);
       expect(absSlot).toBe(preferredBase + BigInt(bn0.virtualAddress + 0x1000));
       expect(bn0Data.readBigUInt64LE(0x1000 + 0x020)).toBe(0n);
+    },
+    timeout,
+  );
+
+  test(
+    ".bunL key is /-normalised when --asset-naming puts the addon in a subdirectory",
+    async () => {
+      // On a Windows host the template printer renders
+      // `assets/[name].[ext]` with a native `\`. `to_bytes()` stores
+      // the `.bun` graph key with `/`, and the bundled JS emits the
+      // `/`-form to `process.dlopen`, so the `.bunL` key must also be
+      // `/`-form — runtime `lookup()` only normalises the *incoming*
+      // path, never the stored key, so a `\` key here would silently
+      // miss and every merged addon would take the tempfile fallback
+      // with a dead `.bnN` section left in the exe.
+      using dir = tempDir("pe-linked-addon-subdir", projectFiles(makeTinyPEDll()));
+      const exe = await compileForWindows(String(dir), {}, [
+        "--asset-naming",
+        "assets/[name]-[hash].[ext]",
+      ]);
+      const names = parsePESections(exe).map(s => s.name);
+      expect(names).toContain(".bunL");
+      expect(names).toContain(".bn0");
+      const key = readBunLKey(exe);
+      expect(key).not.toContain("\\");
+      expect(key).toMatch(/^B:\/~BUN\/root\/assets\/addon-[0-9a-z]+\.node$/);
     },
     timeout,
   );

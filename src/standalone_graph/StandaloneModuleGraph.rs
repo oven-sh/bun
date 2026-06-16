@@ -1108,11 +1108,20 @@ fn link_native_addons_for_windows(
 
         // Must match `to_bytes` exactly so the runtime lookup key
         // (the `B:/~BUN/...` virtual path passed to `process.dlopen`)
-        // lines up with `LinkedAddon.name`.
+        // lines up with `LinkedAddon.name`. `to_bytes` normalises
+        // `dest_path` to `/` on a Windows host (the template printer
+        // emits native `\` when `--asset-naming` contains a directory
+        // component); runtime `lookup()` only normalises the incoming
+        // path, never the stored key, so a `\` key here would silently
+        // miss and send the addon down the tempfile fallback.
         let dest_path = bun_core::strings::remove_leading_dot_slash(&of.dest_path);
         let mut vpath = Vec::with_capacity(module_prefix.len() + dest_path.len());
         vpath.extend_from_slice(module_prefix);
         vpath.extend_from_slice(dest_path);
+        #[cfg(windows)]
+        path::resolve_path::platform_to_posix_in_place::<u8>(
+            &mut vpath[module_prefix.len()..],
+        );
 
         let linked = match pe_file.add_linked_addon(contents, idx, &vpath) {
             // Running out of header slots for more sections is not a

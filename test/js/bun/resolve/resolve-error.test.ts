@@ -191,6 +191,8 @@ describe.concurrent("URL imports at runtime are rejected, not stubbed", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The error is caught and printed to stdout, so stderr stays empty.
+    expect(stderr).toBe("");
     expect(stdout.trim()).toBe(
       "MODULE_NOT_FOUND Cannot find module 'https://cdn.pika.dev/vtils@3.0.1-beta.2'. Bun does not support importing from URLs.",
     );

@@ -1119,9 +1119,7 @@ fn link_native_addons_for_windows(
         vpath.extend_from_slice(module_prefix);
         vpath.extend_from_slice(dest_path);
         #[cfg(windows)]
-        path::resolve_path::platform_to_posix_in_place::<u8>(
-            &mut vpath[module_prefix.len()..],
-        );
+        path::resolve_path::platform_to_posix_in_place::<u8>(&mut vpath[module_prefix.len()..]);
 
         let linked = match pe_file.add_linked_addon(contents, idx, &vpath) {
             // Running out of header slots for more sections is not a

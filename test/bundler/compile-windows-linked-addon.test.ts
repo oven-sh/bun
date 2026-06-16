@@ -361,10 +361,7 @@ describe.skipIf(!isWindows)("bun build --compile native addon static link", () =
       // miss and every merged addon would take the tempfile fallback
       // with a dead `.bnN` section left in the exe.
       using dir = tempDir("pe-linked-addon-subdir", projectFiles(makeTinyPEDll()));
-      const exe = await compileForWindows(String(dir), {}, [
-        "--asset-naming",
-        "assets/[name]-[hash].[ext]",
-      ]);
+      const exe = await compileForWindows(String(dir), {}, ["--asset-naming", "assets/[name]-[hash].[ext]"]);
       const names = parsePESections(exe).map(s => s.name);
       expect(names).toContain(".bunL");
       expect(names).toContain(".bn0");

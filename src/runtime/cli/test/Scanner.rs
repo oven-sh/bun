@@ -259,8 +259,7 @@ impl<'a> Scanner<'a> {
                 let path2_len = path2_slice.len();
                 self.open_dir_buf[path2_len] = 0;
                 // SAFETY: NUL written at path2_len above.
-                let path2 =
-                    unsafe { ZStr::from_raw(self.open_dir_buf.as_ptr(), path2_len) };
+                let path2 = unsafe { ZStr::from_raw(self.open_dir_buf.as_ptr(), path2_len) };
                 let Ok(child_fd) = bun_sys::open_dir_no_renaming_or_deleting_windows(
                     Fd::INVALID,
                     path2.as_bytes(),

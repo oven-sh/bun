@@ -280,10 +280,12 @@ pub mod random {
             if let Some(scratch) = self.scratch.take() {
                 // Re-fetch the buffer on the JS thread and re-validate bounds:
                 // the user may have detached or resized it while the WorkPool
-                // task ran. Copy however much of `scratch` still fits — a
-                // resizable ArrayBuffer shrunk below `offset + size` must receive
-                // the leading bytes (Node writes through the original backing
-                // store, so the surviving prefix is always populated).
+                // task ran. Copy however much of `scratch` still fits in the
+                // view's current byte range. (A fixed-length TypedArray view
+                // that falls out of bounds on shrink reports `byteLength = 0`
+                // and receives nothing; filling the surviving backing-store
+                // bytes in that case would need the underlying ArrayBuffer's
+                // data/byteLength, which `as_array_buffer` does not expose.)
                 if let Some(mut buf) = self.value.as_array_buffer(global) {
                     let off = self.offset as usize;
                     if let Some(dst) = buf.slice_mut().get_mut(off..) {

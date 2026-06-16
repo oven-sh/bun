@@ -40,6 +40,9 @@ pub(crate) const FETCH_TYPE_ERROR_STRINGS: [&str; 8] = FETCH_TYPE_ERROR_STRING_V
 #[path = "fetch/FetchTasklet.rs"]
 pub mod fetch_tasklet;
 
+#[path = "fetch/compress_body.rs"]
+pub mod compress_body;
+
 // ──────────────────────────────────────────────────────────────────────────
 // fetch() implementation
 // ──────────────────────────────────────────────────────────────────────────
@@ -420,6 +423,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut disable_timeout = false;
     let mut disable_keepalive = false;
     let mut disable_decompression = false;
+    let mut compress: Option<compress_body::CompressOption> = None;
     let mut max_redirects: Option<u8> = None;
     let mut verbose: http::HTTPVerboseLevel = if vm
         .log_ref()
@@ -659,6 +663,34 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         break 'extract_disable_decompression disable_decompression;
     };
+
+    if global_this.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
+
+    // "compress: boolean | string | { encoding, level? }"
+    'extract_compress: {
+        let objects_to_try = [
+            options_object.unwrap_or(JSValue::ZERO),
+            request_init_object.unwrap_or(JSValue::ZERO),
+        ];
+
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                if let Some(compress_value) = obj.get(global_this, "compress")? {
+                    if !compress_value.is_undefined() {
+                        compress =
+                            compress_body::CompressOption::from_js(global_this, compress_value)?;
+                        break 'extract_compress;
+                    }
+                }
+
+                if global_this.has_exception() {
+                    return Ok(JSValue::ZERO);
+                }
+            }
+        }
+    }
 
     if global_this.has_exception() {
         return Ok(JSValue::ZERO);
@@ -1727,6 +1759,35 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         buf.destroy();
                     }
                 }
+            }
+        }
+    }
+
+    // Automatic request-body compression. Only buffered bodies (Blob bytes,
+    // ArrayBuffer/TypedArray, string) are handled; ReadableStream and sendfile
+    // are skipped. S3 destinations replace the header set with a signed one,
+    // so compression is skipped there too.
+    if let Some(compress_opt) = compress
+        && let HTTPRequestBody::AnyBlob(_) = &body
+        && !url.is_s3()
+    {
+        let already_has_encoding = headers
+            .as_ref()
+            .and_then(|h| h.get_content_encoding())
+            .is_some();
+        if !already_has_encoding {
+            let input = body.slice();
+            if !input.is_empty() {
+                let compressed =
+                    compress_body::compress_request_body(global_this, input, &compress_opt)?;
+                let mut old = core::mem::replace(
+                    &mut body,
+                    HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(compressed)),
+                );
+                old.detach();
+                headers
+                    .get_or_insert_default()
+                    .append(b"Content-Encoding", compress_opt.encoding.header_value());
             }
         }
     }

@@ -141,9 +141,19 @@ fn compress_zlib_streaming(
 ) -> Result<(), bun_core::Error> {
     use bun_zlib::{FlushValue, ReturnCode, deflate, deflateEnd, deflateInit2_, zlibVersion};
 
+    // `avail_in` is `c_uint`; feed the input in ≤u32::MAX-sized chunks so a
+    // ≥4 GiB body isn't silently truncated.
+    fn take<'a>(rem: &mut &'a [u8]) -> &'a [u8] {
+        let n = rem.len().min(u32::MAX as usize);
+        let (head, tail) = rem.split_at(n);
+        *rem = tail;
+        head
+    }
+    let mut remaining = input;
+    let first = take(&mut remaining);
     let mut strm: bun_zlib::z_stream = bun_core::ffi::zeroed();
-    strm.next_in = input.as_ptr();
-    strm.avail_in = input.len() as _;
+    strm.next_in = first.as_ptr();
+    strm.avail_in = first.len() as _;
     // gzip wrapper: +16; HTTP "deflate" is the zlib-wrapped stream
     // (RFC 9110 §8.4.1.2): plain 15.
     let window_bits = if gzip { 15 + 16 } else { 15 };
@@ -165,26 +175,37 @@ fn compress_zlib_streaming(
     if rc != ReturnCode::Ok {
         return Err(bun_core::err!(CompressionFailed));
     }
-    // SAFETY: `strm` is stack-pinned for the function's lifetime; the guard
-    // runs `deflateEnd` on it at scope exit (before `strm` is dropped). Raw
-    // pointer avoids the borrow conflict with the loop body.
     let strm_p: *mut bun_zlib::z_stream = &raw mut strm;
-    let _guard = scopeguard::guard(strm_p, |p| unsafe {
-        deflateEnd(p);
+    let _guard = scopeguard::guard(strm_p, |p| {
+        // SAFETY: `strm` is stack-pinned for the function's lifetime; the
+        // guard runs `deflateEnd` on it at scope exit (before `strm` drops).
+        // The raw pointer avoids a borrow conflict with the loop body.
+        unsafe { deflateEnd(p) };
     });
 
     loop {
+        if strm.avail_in == 0 && !remaining.is_empty() {
+            let next = take(&mut remaining);
+            strm.next_in = next.as_ptr();
+            strm.avail_in = next.len() as _;
+        }
+        let flush = if remaining.is_empty() {
+            FlushValue::Finish
+        } else {
+            FlushValue::NoFlush
+        };
         if out.capacity() == out.len() {
             out.reserve(64 * 1024);
         }
         let spare = out.spare_capacity_mut();
         strm.next_out = spare.as_mut_ptr().cast::<u8>();
-        strm.avail_out = spare.len() as _;
+        strm.avail_out = u32::try_from(spare.len()).unwrap_or(u32::MAX);
+        let avail_out_before = strm.avail_out;
         // SAFETY: `strm` initialized; next_in/avail_in/next_out/avail_out are
         // valid for their lengths; `deflate` only reads input and writes the
         // tail of `out`'s spare capacity.
-        let rc = unsafe { deflate(&raw mut strm, FlushValue::Finish) };
-        let produced = spare.len() - strm.avail_out as usize;
+        let rc = unsafe { deflate(&raw mut strm, flush) };
+        let produced = (avail_out_before - strm.avail_out) as usize;
         // SAFETY: zlib has initialized `produced` bytes at the start of
         // `spare`; new len is within capacity.
         unsafe { out.set_len(out.len() + produced) };

@@ -657,6 +657,24 @@ describe("markAsUncloneable", () => {
     expect(cloned).not.toBe(obj);
   });
 
+  test("works on frozen / sealed / non-extensible objects", () => {
+    const frozen = Object.freeze({ a: 1 });
+    markAsUncloneable(frozen);
+    expectDataCloneError(() => structuredClone(frozen));
+    expect(Object.isFrozen(frozen)).toBe(true);
+    expect(Reflect.ownKeys(frozen)).toEqual(["a"]);
+
+    const sealed = Object.seal({ b: 2 });
+    markAsUncloneable(sealed);
+    expectDataCloneError(() => structuredClone(sealed));
+    expect(Object.isSealed(sealed)).toBe(true);
+
+    const nonext = Object.preventExtensions({ c: 3 });
+    markAsUncloneable(nonext);
+    expectDataCloneError(() => structuredClone(nonext));
+    expect(Object.isExtensible(nonext)).toBe(false);
+  });
+
   test("works inside a worker thread", async () => {
     const script = `
       const { parentPort, markAsUncloneable } = require("node:worker_threads");

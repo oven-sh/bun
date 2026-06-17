@@ -859,6 +859,62 @@ function getTestBunStep(platform, options, testOptions = {}) {
 }
 
 /**
+ * Pilot lane: route a FULL darwin-aarch64 test shard to the Tart-backed
+ * macOS host — identical to the normal test-bun step (same parallelism,
+ * same test set) so we validate a real workload, not a toy subset.
+ * Soft-fails so a Tart hiccup never reds the build. The Tart agent
+ * registers `tart=true` and deliberately omits `release-tier`, so the
+ * existing darwin jobs (which all pin a tier — see getTestAgent) never
+ * land on it; this step is the only consumer.
+ *
+ * @param {PipelineOptions} options
+ * @param {string} [buildId]
+ * @returns {Step}
+ */
+function getTartPilotStep(options, buildId, arch) {
+  // One ephemeral Tart guest per job, on the physical arm64 host (fond-mighty-corgi).
+  // arch="aarch64": native. arch="x64": downloads the x64 build; macOS runs it under
+  // Rosetta 2 automatically inside the guest (proven — cosmetic AVX warning only).
+  // Both lanes target the SAME agent (tart=true), so arm64-1 offers availability for
+  // both. The agent omits release-tier so existing darwin jobs never land on it.
+  const rosetta = arch === "x64";
+  const args = [`--step=darwin-${arch}-build-bun`];
+  if (buildId) args.push(`--build-id=${buildId}`);
+  // Skip third-party vendor tests: their `rm -rf dist && bun build.ts` prep
+  // exceeds the runner's hardcoded 60s build timeout under x64 Rosetta. Runs the
+  // core ~2050-test suite (the bun functionality); vendor-under-Rosetta is a
+  // separate follow-up (needs a longer vendor build timeout upstream).
+  args.push("--vendor=false", "--exclude=integration/bun-types");
+  // EXPERIMENT: file-level concurrency (runner's built-in --parallel uses
+  // availableParallelism() = all guest cores). Measures speed + flake delta
+  // vs the sequential ~26-30min baseline, safely behind soft_fail.
+  args.push("--parallel");
+  return {
+    key: `darwin-${arch}-tart-pilot-test-bun`,
+    label: `${getBuildkiteEmoji("darwin")} ${arch} - test-bun (tart pilot${rosetta ? ", rosetta" : ""})`,
+    depends_on: buildId ? [] : [`darwin-${arch}-build-bun`],
+    agents: {
+      queue: "test-darwin",
+      os: "darwin",
+      arch: "aarch64", // physical host is arm64; x64 runs via Rosetta
+      tart: "true",
+    },
+    soft_fail: true,
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    parallelism: 2,
+    timeout_in_minutes: 75,
+    env: {
+      // Per-step guest image selection: the host hook boots this Tart image for
+      // the job (defaults to the sequoia base when unset). Set to the macOS 26
+      // image to measure the 26 guest under solo load.
+      TART_BASE_IMAGE: "bun-ci-base",
+    },
+    command: `./scripts/runner.node.mjs ${args.join(" ")}`,
+  };
+}
+
+/**
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
@@ -1515,6 +1571,14 @@ async function getPipeline(options = {}) {
           steps: [getTestBunStep(target, options, { testFiles, buildId })],
         })),
       );
+      // aarch64-only Tart pilot — x64 darwin is being deprecated at 1.4, so the
+      // x64-via-Rosetta lane (proven possible but slow on subprocess-heavy tests)
+      // isn't worth productionizing. Intel runners cover x64 until then.
+      steps.push({
+        key: "darwin-aarch64",
+        group: getTargetLabel({ os: "darwin", arch: "aarch64" }),
+        steps: [getTartPilotStep(options, buildId, "aarch64")],
+      });
     }
   }
 

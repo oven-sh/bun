@@ -169,7 +169,7 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto rejectWithError = [&](JSValue error) {
-        promise->reject(vm, error);
+        promise->reject(vm, globalObject, error);
         return promise;
     };
 
@@ -208,7 +208,7 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto rejectWithError = [&](JSValue error) {
-        promise->reject(vm, error);
+        promise->reject(vm, globalObject, error);
         return promise;
     };
 
@@ -221,7 +221,7 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
     ASSERT(moduleProgramNode);
 
     ModuleAnalyzer moduleAnalyzer(globalObject, moduleKey, sourceCode, moduleProgramNode->varDeclarations(), moduleProgramNode->lexicalVariables(), moduleProgramNode->features());
-    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(globalObject, scope)));
 
     auto result = moduleAnalyzer.analyze(*moduleProgramNode);
     if (!result) {

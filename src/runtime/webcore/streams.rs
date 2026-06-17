@@ -592,9 +592,9 @@ impl Writable {
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 JSPromise::opaque_ref(prom).to_js()
             }
-            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-            // The sink owns this promise (kept alive via `protect()`); hand the
-            // same value to the caller.
+            // S008: `JSPromise` is an `opaque_ffi!` ZST, so the `*const` to `&`
+            // deref is safe. The sink owns this promise (kept alive via
+            // `protect()`); hand the same value to the caller.
             Writable::PendingPromise(prom) => JSPromise::opaque_ref(prom).to_js(),
         }
     }
@@ -1519,15 +1519,16 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         // Streaming write() backpressure: the chunk was handed to uWS (so our
-        // own buffer is empty) and the socket has now drained. There is nothing
-        // staged to resend — just resolve the parked drain promise so the JS
-        // writer resumes. The `to_write` bookkeeping below assumes a non-empty
-        // buffer (the tryEnd resend path) and would underflow on `len - 1`.
+        // own buffer is empty) and the socket has now drained. Nothing is
+        // staged to resend, so just resolve the parked drain promise and let
+        // the JS writer resume. The `to_write` bookkeeping below assumes a
+        // non-empty buffer (the tryEnd resend path) and would underflow on
+        // `len - 1`.
         if self.buffer.is_empty() {
             if self.done {
                 self.signal.close(None);
             }
-            let _ = self.flush_promise(); // TODO: properly propagate exception upwards
+            let _ = self.flush_promise();
             if self.done {
                 self.finalize();
             }

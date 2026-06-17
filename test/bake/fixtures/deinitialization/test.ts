@@ -1,7 +1,7 @@
 import { getDevServerDeinitCount } from "bun:internal-for-testing";
-import html from "./index.html";
-import { expect, test } from "bun:test";
 import { fullGC } from "bun:jsc";
+import { expect, test } from "bun:test";
+import html from "./index.html";
 
 expect(process.cwd()).toBe(import.meta.dir);
 
@@ -121,3 +121,41 @@ for (const { closeActiveConnections, sendAnyRequests, websocket } of cases) {
     },
   );
 }
+
+test("rapid start→stop does not race the watcher thread's startup", async () => {
+  // https://github.com/oven-sh/bun/pull/32443 — loop start→stop→GC tightly so
+  // at least one iteration's Watcher::shutdown lands in the window between
+  // start() spawning the FileWatcher thread and that thread's first access of
+  // the struct; under ASAN's instrumentation overhead the watcher thread is
+  // slow enough to schedule that this is reliable on the x64-asan lane.
+  const N = 50;
+  const before = getDevServerDeinitCount();
+  for (let i = 0; i < N; i++) {
+    {
+      const server = Bun.serve({
+        routes: { "/": html },
+        fetch() {
+          return new Response("FAIL");
+        },
+        port: 0,
+      });
+      server.stop(true);
+    }
+    // The block scope above made `server` collectible; force GC immediately
+    // so DevServer's Drop (→ Watcher::shutdown) runs while the just-spawned
+    // watcher thread is most likely still in its scheduling window.
+    Bun.gc(true);
+    fullGC();
+  }
+  // Drain: every deinit reached the counter (and nothing crashed reaching here).
+  let attempts = 0;
+  while (getDevServerDeinitCount() < before + N) {
+    Bun.gc(true);
+    fullGC();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    if (++attempts > 100) {
+      throw new Error(`only ${getDevServerDeinitCount() - before} of ${N} dev servers deinitialized`);
+    }
+  }
+  expect(getDevServerDeinitCount()).toBe(before + N);
+});

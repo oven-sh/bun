@@ -480,7 +480,7 @@ describe("CLI argument error messages", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr }).toEqual({
       stdout: "",
-      stderr: expect.stringContaining("--format: \"commonjs\""),
+      stderr: expect.stringContaining('--format: "commonjs"'),
     });
     expect(stderr).toContain("'esm', 'cjs', or 'iife'");
     expect(exitCode).toBe(1);
@@ -497,7 +497,7 @@ describe("CLI argument error messages", () => {
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("--loader");
-    expect(stderr).toContain("\"text\"");
+    expect(stderr).toContain('"text"');
     expect(stderr).toContain(".ext:loader");
     expect(exitCode).toBe(1);
   });
@@ -513,7 +513,7 @@ describe("CLI argument error messages", () => {
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("--define");
-    expect(stderr).toContain("\"FOO\"");
+    expect(stderr).toContain('"FOO"');
     expect(stderr).toContain("key=value");
     expect(exitCode).toBe(1);
   });

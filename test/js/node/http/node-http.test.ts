@@ -2461,6 +2461,8 @@ it("ClientRequest.destroy(err) with a throwing error listener still tears down; 
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim().split("\n")).toEqual(["destroy-returned", "teardown-ran:true", "async-uncaught:handler bug"]);
   expect(exitCode).toBe(0);
+});
+
 it("keep-alive socket reused after a 304 response still frames the next response body", async () => {
   // The native per-request reset must clear the 204/304 no-body flag, or the
   // 200 that follows a 304 on the same connection is sent with no framing

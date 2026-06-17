@@ -262,25 +262,25 @@ const NESTING_LIMIT_ERROR = "Maximum nesting expansion exceeded";
  * multiplier stays 1 across them, so they contribute nothing to the
  * rule-count cap while still lengthening every printed prelude. */
 function deepPadThenFork(pad: number, fork: number): string {
-  return (
-    ".padding-selector {\n".repeat(pad) + ".a:-webkitx .a, .b:-webkitx .b {\n".repeat(fork) + "color: red;"
-  );
+  return ".padding-selector {\n".repeat(pad) + ".a:-webkitx .a, .b:-webkitx .b {\n".repeat(fork) + "color: red;";
 }
 
-test.concurrent("deep padding before the multi-selector split errors instead of emitting huge output", async () => {
-  // 15 fork levels × 2 selectors = under 65,536 rules, so the rule-count cap
-  // never fires; but each rule prints a ~7 KB prelude (400 single-selector
-  // levels × ~17 bytes, plus the fork levels) — 32768 × ~7 KB ≈ 230 MB of
-  // output before the fix.
-  //
-  // Runs in a subprocess: before the fix the printer emits the full ~230 MB
-  // (tens of seconds in a debug build), so a regression is SIGKILL'd by the
-  // kill switch below instead of hanging the runner.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+test.concurrent(
+  "deep padding before the multi-selector split errors instead of emitting huge output",
+  async () => {
+    // 15 fork levels × 2 selectors = under 65,536 rules, so the rule-count cap
+    // never fires; but each rule prints a ~7 KB prelude (400 single-selector
+    // levels × ~17 bytes, plus the fork levels) — 32768 × ~7 KB ≈ 230 MB of
+    // output before the fix.
+    //
+    // Runs in a subprocess: before the fix the printer emits the full ~230 MB
+    // (tens of seconds in a debug build), so a regression is SIGKILL'd by the
+    // kill switch below instead of hanging the runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         const { cssInternals } = require("bun:internal-for-testing");
         const css = ${JSON.stringify(deepPadThenFork(400, 15))};
         try {
@@ -290,19 +290,21 @@ test.concurrent("deep padding before the multi-selector split errors instead of 
           console.log("ERR " + e.message);
         }
       `,
-    ],
-    env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 60_000,
-    killSignal: "SIGKILL",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(proc.signalCode).toBeNull();
-  expect(stdout).toContain("ERR " + NESTING_LIMIT_ERROR);
-  expect(exitCode).toBe(0);
-}, 90_000);
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(proc.signalCode).toBeNull();
+    expect(stdout).toContain("ERR " + NESTING_LIMIT_ERROR);
+    expect(exitCode).toBe(0);
+  },
+  90_000,
+);
 
 test("the padded-then-forked reproduction still minifies with no targets", () => {
   // Without targets nesting is preserved, so the output stays linear.
@@ -336,15 +338,17 @@ test("a large realistic nested stylesheet does not trip the nesting byte bound",
 // 512 levels of nesting, so the indentation counter overflowed its 8-bit
 // storage at depth 128 — a panic in debug builds and wrong indentation in
 // release builds.
-test.concurrent("indentation at the full permitted nesting depth does not overflow", async () => {
-  // Runs in a subprocess: before the fix this panics the process in debug
-  // builds ("attempt to add with overflow").
-  const depth = 500;
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+test.concurrent(
+  "indentation at the full permitted nesting depth does not overflow",
+  async () => {
+    // Runs in a subprocess: before the fix this panics the process in debug
+    // builds ("attempt to add with overflow").
+    const depth = 500;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         const { cssInternals } = require("bun:internal-for-testing");
         const depth = ${depth};
         const src = ".a {\\n".repeat(depth) + "color: red;\\n" + "}".repeat(depth);
@@ -353,18 +357,20 @@ test.concurrent("indentation at the full permitted nesting depth does not overfl
         const needle = "\\n" + Buffer.alloc(2 * depth, " ").toString() + "color: red";
         console.log(out.includes(needle) ? "OK" : "BAD-INDENT " + out.length);
       `,
-    ],
-    env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode, panicked: stderr.includes("overflow") }).toEqual({
-    stdout: "OK",
-    exitCode: 0,
-    panicked: false,
-  });
-}, 30_000);
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, panicked: stderr.includes("overflow") }).toEqual({
+      stdout: "OK",
+      exitCode: 0,
+      panicked: false,
+    });
+  },
+  30_000,
+);
 
 test("bun build does not hang on deeply nested multi-selector css spanning @starting-style", async () => {
   using dir = tempDir("css-starting-style-expansion", {

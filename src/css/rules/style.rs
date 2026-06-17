@@ -217,8 +217,7 @@ impl<R> StyleRule<R> {
             )?;
             if let Some(before) = prelude_before {
                 let emitted = dest.bytes_written().saturating_sub(before);
-                dest.nesting_expansion_bytes =
-                    dest.nesting_expansion_bytes.saturating_add(emitted);
+                dest.nesting_expansion_bytes = dest.nesting_expansion_bytes.saturating_add(emitted);
                 if dest.nesting_expansion_bytes > MAX_NESTING_EXPANSION_BYTES {
                     return dest.new_error(
                         css::error::PrinterErrorKind::maximum_nesting_expansion,

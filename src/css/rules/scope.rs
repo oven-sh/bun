@@ -70,7 +70,7 @@ impl<R> ScopeRule<R> {
                 )?;
             } else {
                 let ctx = dest.ctx;
-                return serialize_selector_list(scope_end.v.slice(), dest, ctx, false);
+                serialize_selector_list(scope_end.v.slice(), dest, ctx, false)?;
             }
             dest.write_char(b')')?;
             dest.whitespace()?;

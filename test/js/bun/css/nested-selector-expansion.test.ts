@@ -234,6 +234,82 @@ test.concurrent(
 );
 
 test.concurrent(
+  "`@scope to (...)` without a scope-start serializes its closing `)`, body, and `}`",
+  async () => {
+    // `ScopeRule::to_css` used to early-return after serializing
+    // `<scope-end>` when `<scope-start>` was absent, leaving the prelude
+    // unclosed and dropping the rule body (and skipping the
+    // nesting-expansion byte budget check below). Fall through instead so
+    // the rule serializes in full.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { cssInternals } = require("bun:internal-for-testing");
+          console.log(cssInternals.minifyTest("@scope to (.a) { .x { color: red } }", ""));
+        `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(proc.signalCode).toBeNull();
+    expect(stdout.trim()).toBe("@scope to (.a){.x{color:red}}");
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
+  "sibling `@scope to (& ...)` rules under a `& > &` chain error out instead of serializing gigabytes",
+  async () => {
+    // `@scope to (...)` without a scope-start serializes `<scope-end>` with
+    // the outer parent context, so `&` in it expands the enclosing `& > &`
+    // chain. Many such sibling `@scope` rules each stay under the
+    // per-prelude substitution cap (reset in `ScopeRule::to_css`) but their
+    // preludes are now charged against the stylesheet-wide byte budget, so
+    // this shape errors out after ~64 MB instead of serializing ~1.7 GB.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { cssInternals } = require("bun:internal-for-testing");
+          const root =
+            "." + Buffer.alloc(500, "a").toString() + "::part(x), " +
+            "." + Buffer.alloc(500, "b").toString() + "::part(y)";
+          let body = "";
+          for (let i = 0; i < 200; i++) body += "@scope to (& .l" + i + ") { } ";
+          let inner = body;
+          for (let i = 0; i < 13; i++) inner = "& > & { " + inner + " }";
+          try {
+            const out = cssInternals._test(root + " { " + inner + " }", "", { firefox: 100 << 16 });
+            console.log("OK " + out.length);
+          } catch (err) {
+            console.log("ERR " + err.message);
+          }
+        `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+      // Kill switch: before the fix this allocated ~1.7 GB of output.
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(proc.signalCode).toBeNull();
+    expect(stdout.trim()).toContain("ERR Maximum nesting expansion exceeded");
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
   "a few sibling rules under a `& > &` chain still serialize without hitting the byte budget",
   async () => {
     // Same shape at a non-pathological scale: 3 sibling leaves under 13

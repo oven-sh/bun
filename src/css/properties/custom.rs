@@ -842,6 +842,43 @@ impl TokenList {
         fallbacks
     }
 
+    /// Approximate recursive count of [`TokenOrValue`] entries in this list
+    /// and every nested list reachable from it (function arguments and
+    /// variable/env fallbacks).
+    ///
+    /// Each cloned entry costs roughly `size_of::<TokenOrValue>()` bytes, so
+    /// this count is a cheap proxy for the bytes a [`DeepClone`] of the list
+    /// will allocate. Used by [`crate::css_rules::MAX_EXPANSION_TOKENS`] to
+    /// bound the work the nesting-expansion `deep_clone` fan-out performs when
+    /// a duplicated declaration carries a large unparsed value — the
+    /// selector-count budget alone cannot see that cost. Saturates at
+    /// `u32::MAX`.
+    pub fn approx_token_count(&self) -> u32 {
+        let mut count = self.v.len() as u32;
+        for tov in &self.v {
+            let nested = match tov {
+                TokenOrValue::Function(f) => f.arguments.approx_token_count(),
+                TokenOrValue::Var(v) => {
+                    v.fallback.as_ref().map_or(0, TokenList::approx_token_count)
+                }
+                TokenOrValue::Env(e) => {
+                    e.fallback.as_ref().map_or(0, TokenList::approx_token_count)
+                }
+                TokenOrValue::UnresolvedColor(c) => match c {
+                    UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. } => {
+                        alpha.approx_token_count()
+                    }
+                    UnresolvedColor::LightDark { light, dark } => light
+                        .approx_token_count()
+                        .saturating_add(dark.approx_token_count()),
+                },
+                _ => 0,
+            };
+            count = count.saturating_add(nested);
+        }
+        count
+    }
+
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 }
 

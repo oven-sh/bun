@@ -1281,6 +1281,22 @@ pub struct StyleContext<'a> {
 /// instead.
 pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 
+/// Upper bound on the approximate number of raw [`TokenOrValue`] entries that
+/// compiling nested rules away may clone across a whole stylesheet.
+///
+/// [`MAX_SELECTOR_EXPANSION`] bounds how many rules the nesting fan-out
+/// produces, but each rule's declaration block is `deep_clone`d along with
+/// it, and an `Unparsed`/`Custom` declaration can carry an arbitrarily large
+/// raw token list. A few kilobytes of nested two-selector rules whose
+/// innermost declaration stores thousands of tokens (an unclosed function
+/// swallowing the rest of the file, for example) stays well under the
+/// selector budget while the cloned token vectors run into gigabytes. Each
+/// cloned entry costs roughly `size_of::<TokenOrValue>()` bytes, so 2 097 152
+/// entries correspond to on the order of a hundred megabytes of clone work —
+/// anything past that is a runaway expansion and is reported as the same
+/// `selector_expansion_limit_exceeded` minify error.
+pub const MAX_EXPANSION_TOKENS: u32 = 1 << 21;
+
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
 ///
@@ -1316,4 +1332,10 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub selector_expansion_total: u32,
+    /// Running total of raw declaration-value tokens that compiling nested
+    /// rules for the targets will clone, checked against
+    /// [`MAX_EXPANSION_TOKENS`]. Complements `selector_expansion_total`: the
+    /// selector count bounds how many rules are produced, this bounds the
+    /// bytes each clone carries.
+    pub expansion_token_total: u32,
 }

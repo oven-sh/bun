@@ -238,6 +238,88 @@ test("shallow nesting spanning @scope still compiles for old targets", () => {
   expect(out).toContain("@scope");
 });
 
+// The selector-expansion cap bounds how many rules the nesting fan-out produces,
+// but each clone also deep-clones the rule's declarations. An `Unparsed`/`Custom`
+// declaration can carry an arbitrarily large raw token list (e.g. an unclosed
+// function swallowed the rest of the file), so a stylesheet well under the
+// selector cap can still allocate gigabytes of cloned token vectors. The
+// minifier now also bounds the approximate token count cloned by the fan-out.
+
+/**
+ * `depth` nested two-selector rules (split one-per-selector for old targets,
+ * so the innermost rule is cloned 2^depth times), with the innermost carrying
+ * a single unparsed `color:` declaration whose value is a generic function
+ * holding `tokens` identifiers. Stays far below the selector cap while the
+ * cloned token vectors alone reach gigabytes before the token cap fires.
+ */
+function nestedWithLargeUnparsedDeclaration(depth: number, tokens: number): string {
+  const blob = Buffer.alloc(tokens * 2, "x ").toString();
+  return `a::part(x), .b::part(y) {\n`.repeat(depth) + `.leaf { color: f(${blob}) }\n` + `}\n`.repeat(depth);
+}
+
+test("nested rules with a large unparsed declaration error instead of cloning gigabytes of tokens", () => {
+  // 8 levels of two-selector nesting: ≤ 2^9 ≈ 512 selectors, far under 65536.
+  // ~16k tokens in the inner declaration, cloned 2^8 times: ≈ 4M tokens, over
+  // the cap. Without the token cap this ran to completion cloning every token.
+  const src = nestedWithLargeUnparsedDeclaration(8, 8192);
+  expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(LIMIT_ERROR);
+});
+
+test("nested rules with a large unparsed declaration below the token cap still compile", () => {
+  // 8 levels, 512 tokens: 2^8 × ~1024 ≈ 260k cloned tokens, well under the
+  // cap, so this must compile normally.
+  const src = nestedWithLargeUnparsedDeclaration(8, 512);
+  const out = minifyTest(src, "", OLD_TARGETS);
+  expect(out).toContain("color:f(");
+  expect(out.length).toBeLessThan(1_000_000);
+});
+
+test("nested rules with a large unparsed declaration are preserved as-is for modern targets", () => {
+  // Nesting stays native; nothing is cloned, so no cap applies.
+  const src = nestedWithLargeUnparsedDeclaration(8, 8192);
+  const out = minifyTest(src, "", MODERN_TARGETS);
+  expect(out).toContain("color:f(");
+  expect(out.length).toBeLessThan(100_000);
+});
+
+test("deep nesting with ordinary parsed declarations stays under the token cap", () => {
+  // Parsed declarations have bounded clone cost (one unit each), so a rule
+  // with many small parsed declarations must not trip the token cap just
+  // because its selector fan-out is near the selector cap.
+  const decls = Array.from({ length: 64 }, (_, i) => `width:${i}px`).join(";");
+  const src = `a::part(x), .b::part(y) {\n`.repeat(12) + `.leaf { ${decls} }\n`;
+  const out = minifyTest(src, "", OLD_TARGETS);
+  expect(out).toContain("width:63px");
+});
+
+test("bun build reports an error instead of OOMing on nested css with a large unparsed declaration", async () => {
+  // The fuzzer input: ~12 two-selector nesting levels over a rule whose
+  // unparsed `color:` value swallowed a long token stream. Before the fix the
+  // build used gigabytes of RSS deep-cloning that token list 4096×.
+  using dir = tempDir("css-nested-token-expansion", {
+    "input.css": nestedWithLargeUnparsedDeclaration(12, 2048),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "input.css", "--outdir", "out"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    // Kill switch: before the fix this allocated multiple gigabytes of cloned
+    // token vectors. Let the child terminate itself so a regression fails the
+    // assertions below instead of exhausting the runner's memory.
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  // Must terminate on its own (reporting the limit error), not be SIGKILLed.
+  expect(proc.signalCode).toBeNull();
+  expect(stderr).toContain(LIMIT_ERROR);
+  expect(exitCode).toBe(1);
+  // The build must fail before emitting the multi-megabyte expanded output.
+  expect(await Bun.file(`${dir}/out/input.css`).exists()).toBe(false);
+});
+
 test("bun build does not hang on deeply nested multi-selector css spanning @starting-style", async () => {
   using dir = tempDir("css-starting-style-expansion", {
     // The fuzzer's depth (14 outer + 11 inner): without the fix this hangs for

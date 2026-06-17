@@ -395,7 +395,21 @@ impl<R> StyleRule<R> {
                     .selector_expansion_multiplier
                     .saturating_mul(self.selectors.v.len().max(1)),
             );
-            if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION {
+            // The selector budget bounds how many copies of this rule the
+            // fan-out produces. Each copy also `deep_clone`s the rule's
+            // declarations; an `Unparsed`/`Custom` value can carry an
+            // arbitrarily large raw token list, so bound the tokens cloned
+            // as well — otherwise a rule whose unparsed value swallowed
+            // kilobytes of input stays under the selector budget while the
+            // cloned token vectors run into gigabytes.
+            context.expansion_token_total = context.expansion_token_total.saturating_add(
+                context
+                    .selector_expansion_multiplier
+                    .saturating_mul(self.approx_declaration_token_count()),
+            );
+            if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION
+                || context.expansion_token_total > super::MAX_EXPANSION_TOKENS
+            {
                 context.err = Some(crate::error::MinifyError {
                     kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
                     loc: self.loc,
@@ -404,6 +418,30 @@ impl<R> StyleRule<R> {
             }
         }
         Ok(())
+    }
+
+    /// Approximate recursive count of raw
+    /// [`TokenOrValue`](css::properties::custom::TokenOrValue) entries carried
+    /// by this rule's declarations. Parsed properties have bounded clone cost so
+    /// they contribute a fixed unit; `Unparsed`/`Custom` properties contribute
+    /// their raw token-list count. Saturates at `u32::MAX`.
+    fn approx_declaration_token_count(&self) -> u32 {
+        use css::properties::Property;
+        let mut count: u32 = 0;
+        for decls in [
+            &self.declarations.declarations,
+            &self.declarations.important_declarations,
+        ] {
+            for decl in decls.iter() {
+                let n = match decl {
+                    Property::Unparsed(u) => u.value.approx_token_count().max(1),
+                    Property::Custom(c) => c.value.approx_token_count().max(1),
+                    _ => 1,
+                };
+                count = count.saturating_add(n);
+            }
+        }
+        count
     }
 
     /// Minify this rule's nested rules, bumping the selector-expansion

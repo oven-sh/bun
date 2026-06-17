@@ -327,6 +327,66 @@ test("shallow padded-then-forked nesting still compiles for old targets", () => 
   expect(out.length).toBeLessThan(100_000);
 });
 
+test.concurrent(
+  "deep padding before an @scope prelude errors instead of emitting huge output",
+  async () => {
+    // Same shape as the style-rule case above, but the leaf is an `@scope`
+    // rule whose prelude contains `&`: `ScopeRule::to_css` serializes its
+    // prelude with the enclosing `StyleContext`, so the `&` inlines the
+    // full ~414-level ancestor chain per cloned `@scope` (2^14 clones from
+    // the fork levels). The `@scope` prelude is charged against the same
+    // byte budget as style-rule preludes.
+    const css =
+      ".padding-selector {\n".repeat(400) +
+      ".a:-webkitx .a, .b:-webkitx .b {\n".repeat(14) +
+      "@scope (& .x) { .y { color: red } }";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { cssInternals } = require("bun:internal-for-testing");
+        const css = ${JSON.stringify(css)};
+        try {
+          const r = cssInternals._test(css, "", { safari: (13 << 16) | (2 << 8) });
+          console.log("OK " + r.length);
+        } catch (e) {
+          console.log("ERR " + e.message);
+        }
+      `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout: stdout.trim(),
+      exitCode,
+      signalCode: proc.signalCode,
+      panicked: stderr.includes("panic"),
+    }).toEqual({
+      stdout: "ERR " + NESTING_LIMIT_ERROR + " when compiling CSS nesting for the configured targets",
+      exitCode: 0,
+      signalCode: null,
+      panicked: false,
+    });
+  },
+  90_000,
+);
+
+test("shallow @scope preludes under compiled nesting still serialize", () => {
+  // A `&` in a `@scope` prelude under a few levels of compiled nesting
+  // inlines the parent chain but stays well under the byte budget.
+  const src = ".a { .b { @scope (& .x) to (& .y) { .z { color: red } } } }";
+  const out = cssInternals._test(src, "", { safari: (13 << 16) | (2 << 8) });
+  expect(out).toContain("@scope");
+  expect(out).toContain(".a .b .x");
+  expect(out).toContain("color: red");
+});
+
 test("a large realistic nested stylesheet does not trip the nesting byte bound", () => {
   // Many top-level rules, each with a few levels of single-selector nesting:
   // the total prelude bytes under a compiled-nesting context are linear in

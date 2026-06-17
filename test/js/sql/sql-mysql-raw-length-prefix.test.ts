@@ -67,7 +67,7 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     await using sql = new SQL({ url: url(), max: 1 });
     const table = "t_rawlen_" + randomUUIDv7("hex").replaceAll("-", "");
     try {
-      await sql`CREATE TABLE ${sql(table)} (name VARCHAR(64), post JSON, blob_data BLOB)`;
+      await sql`CREATE TEMPORARY TABLE ${sql(table)} (name VARCHAR(64), post JSON, blob_data BLOB)`;
       await sql`INSERT INTO ${sql(table)} (name, post, blob_data) VALUES (${shortText}, ${jsonText}, ${Buffer.from(jsonText)})`;
 
       // `.simple().raw()` exercises the ResultSet text-protocol raw branch
@@ -90,7 +90,7 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     await using sql = new SQL({ url: url(), max: 1 });
     const table = "t_rawlen_" + randomUUIDv7("hex").replaceAll("-", "");
     try {
-      await sql`CREATE TABLE ${sql(table)} (name VARCHAR(64), post JSON, blob_data BLOB)`;
+      await sql`CREATE TEMPORARY TABLE ${sql(table)} (name VARCHAR(64), post JSON, blob_data BLOB)`;
       await sql`INSERT INTO ${sql(table)} (name, post, blob_data) VALUES (${shortText}, ${jsonText}, ${Buffer.from(jsonText)})`;
 
       // Without `.simple()`, the client uses a prepared statement and the
@@ -167,7 +167,7 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     await using sql = new SQL({ url: url(), max: 1 });
     const table = "t_null251_" + randomUUIDv7("hex").replaceAll("-", "");
     try {
-      await sql`CREATE TABLE ${sql(table)} (id INT PRIMARY KEY, bio VARCHAR(300), role VARCHAR(32))`;
+      await sql`CREATE TEMPORARY TABLE ${sql(table)} (id INT PRIMARY KEY, bio VARCHAR(300), role VARCHAR(32))`;
       await sql`INSERT INTO ${sql(table)} (id, bio, role) VALUES (1, ${bio251}, ${realRole}), (2, NULL, ${"editor"})`;
 
       // `.simple()` forces the text protocol → ResultSet decode_text, where

@@ -40,17 +40,26 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     // Same as the first failing query → hits the cached .failed statement and calls
     // stmt.error_response.toJS(). Before the fix this read the overwritten buffer and
     // returned bytes from errOverwrite's packet; after the fix it returns the original.
+    // Com_stmt_prepare (read via .simple() so the status query itself does not prepare)
+    // must not increment across this call — proving the third query was served from
+    // Bun's failed-statement cache, not re-prepared on the server. A fresh prepare
+    // would return an identical error for identical SQL and silently satisfy every
+    // assertion below without exercising the cached-slice path.
+    const [{ Value: preparesBefore }] = await sql.unsafe("SHOW SESSION STATUS LIKE 'Com_stmt_prepare'").simple();
     const err2 = await sql`wat ${1} ${sql.unsafe(longA)}`.catch((x: any) => x);
+    const [{ Value: preparesAfter }] = await sql.unsafe("SHOW SESSION STATUS LIKE 'Com_stmt_prepare'").simple();
     expect({
       code: err2.code,
       errno: err2.errno,
       sqlState: err2.sqlState,
       message: err2.message,
+      preparesAfter: Number(preparesAfter),
     }).toEqual({
       code: err1.code,
       errno: err1.errno,
       sqlState: err1.sqlState,
       message: err1.message,
+      preparesAfter: Number(preparesBefore),
     });
     expect(err2.message).toContain(longA);
     expect(err2.message).not.toContain(longZ);

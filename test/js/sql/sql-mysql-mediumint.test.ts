@@ -15,7 +15,7 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     const table = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
     try {
       await sql`
-        CREATE TABLE ${sql(table)} (
+        CREATE TEMPORARY TABLE ${sql(table)} (
           id      INT,
           uviews  MEDIUMINT UNSIGNED,
           sviews  MEDIUMINT,

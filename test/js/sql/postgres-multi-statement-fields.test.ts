@@ -79,6 +79,7 @@ for (const [name, asyncMessage] of [
 ] as const) {
   test(`${name} between result sets does not corrupt message framing`, async () => {
     const { port, server } = await listeningServer(socket => {
+      socket.on("error", () => {});
       let startup = true;
       socket.on("data", data => {
         if (startup) {
@@ -115,8 +116,8 @@ for (const [name, asyncMessage] of [
       const result = await sql`select 1 as x; select 2 as y`.simple();
       expect(result).toEqual([[{ x: "1" }], [{ y: "2" }]]);
     } finally {
-      await sql.close();
-      server.close();
+      await sql.close().catch(() => {});
+      await new Promise<void>(resolve => server.close(() => resolve()));
     }
   });
 }

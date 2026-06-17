@@ -42,6 +42,7 @@ function hugeResultSetHeader(seq: number): Buffer {
 test("MySQL: OOM reallocating statement.columns does not leave a dangling slice", async () => {
   // The mock server runs in the test process (pure node:net, never touches Bun's MySQL code);
   // only the client runs in a subprocess so an ASAN abort there is observable as exitCode != 0.
+  let sawStmtExecute = false;
   const { server, port } = await listeningServer(socket => {
     let buffered = Buffer.alloc(0);
     let authed = false;
@@ -63,6 +64,7 @@ test("MySQL: OOM reallocating statement.columns does not leave a dangling slice"
             ]),
           );
         } else if (cmd === COM_STMT_EXECUTE) {
+          sawStmtExecute = true;
           socket.write(hugeResultSetHeader(1));
         } else {
           socket.end();
@@ -104,9 +106,12 @@ test("MySQL: OOM reallocating statement.columns does not leave a dangling slice"
     // fix the query is rejected cleanly and the JSON result line is printed.
     // stderr is included only so its contents appear in the toEqual diff on
     // failure; the pass/fail signal comes from stdout and exitCode.
-    expect({ stderr, stdout: stdout.trim() }).toEqual({
+    // sawStmtExecute proves the mock actually sent the huge result-set header
+    // (a JSON error before execute would otherwise satisfy the stdout check).
+    expect({ stderr, stdout: stdout.trim(), sawStmtExecute }).toEqual({
       stderr: expect.any(String),
       stdout: expect.stringMatching(/^\{.*\}$/),
+      sawStmtExecute: true,
     });
     const result = JSON.parse(stdout.trim());
     expect(typeof result.code === "string" || typeof result.name === "string").toBe(true);

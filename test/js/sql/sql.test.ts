@@ -12520,7 +12520,7 @@ import { SQL } from "bun";
 
 const sql = new SQL({ url: process.env.DATABASE_URL!, max: 1, idleTimeout: 5, connectionTimeout: 5 });
 try {
-  await sql\`CREATE TABLE ${tableName} ()\`.simple();
+  await sql\`CREATE TEMPORARY TABLE ${tableName} ()\`.simple();
   await sql\`INSERT INTO ${tableName} DEFAULT VALUES\`.simple();
   // First result set: zero columns, one row. Second result set: three named
   // columns, one row.

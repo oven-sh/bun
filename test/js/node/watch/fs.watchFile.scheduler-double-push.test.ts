@@ -103,11 +103,7 @@ test("fs.watchFile scheduler does not double-push its WorkPool task under interv
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // stderr is included in the assertion object for diagnostics on failure
   // but not compared exactly (debug/ASAN builds may emit benign warnings).

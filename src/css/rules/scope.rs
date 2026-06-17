@@ -32,10 +32,14 @@ impl<R> ScopeRule<R> {
         dest.nesting_expansions = 0;
         // Meter the prelude's `&` substitution output against the
         // stylesheet-wide nesting-expansion byte budget (see
-        // `StyleRule::to_css_base`). Only meter if there is a parent
-        // context: without one, `&` serializes as-is and the preludes are
-        // linear in their own tokens.
-        let prelude_bytes_before = dest.ctx.map(|_| dest.bytes_written());
+        // `StyleRule::to_css_base`). Meter when `&` can expand: either an
+        // outer parent context is set, or `<scope-end>` will be serialized
+        // with `<scope-start>` as a temporary parent (below). Without
+        // either, `&` serializes as-is and the preludes are linear in their
+        // own tokens.
+        let has_expanding_context =
+            dest.ctx.is_some() || (self.scope_start.is_some() && self.scope_end.is_some());
+        let prelude_bytes_before = has_expanding_context.then(|| dest.bytes_written());
         if let Some(scope_start) = &self.scope_start {
             dest.write_char(b'(')?;
             // scope_start.to_css(dest)?;

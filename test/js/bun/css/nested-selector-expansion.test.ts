@@ -189,6 +189,51 @@ test.concurrent("many sibling rules under a `& > &` chain error out instead of s
 });
 
 test.concurrent(
+  "top-level `@scope (...) to (...)` preludes are charged against the nesting-expansion byte budget",
+  async () => {
+    // `<scope-end>` is serialized with `<scope-start>` as its parent
+    // context even when there is no outer style-rule context, so each `&`
+    // in `<scope-end>` repeats `<scope-start>`. A 4 KB start identifier with
+    // a 2000-`&` end expands one ~8 KB rule into ~8 MB of prelude; nine such
+    // sibling rules stay under the 64 MB budget, ten exceed it.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { cssInternals } = require("bun:internal-for-testing");
+          const start = "." + Buffer.alloc(4000, "a").toString();
+          const end = Array(2000).fill("&").join(" ");
+          const rule = "@scope (" + start + ") to (" + end + ") { .x { color: red } }\\n";
+          for (const n of [1, 10]) {
+            try {
+              const out = cssInternals._test(rule.repeat(n), "", { firefox: 100 << 16 });
+              console.log("n=" + n + " OK " + out.length);
+            } catch (err) {
+              console.log("n=" + n + " ERR " + err.message);
+            }
+          }
+        `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(proc.signalCode).toBeNull();
+    const lines = stdout.trim().split("\n");
+    // One rule is well under the budget and serializes unchanged.
+    expect(lines[0]).toStartWith("n=1 OK ");
+    // Ten sibling rules push the accumulated preludes past 64 MB and error.
+    expect(lines[1]).toContain("n=10 ERR Maximum nesting expansion exceeded");
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
   "a few sibling rules under a `& > &` chain still serialize without hitting the byte budget",
   async () => {
     // Same shape at a non-pathological scale: 3 sibling leaves under 13

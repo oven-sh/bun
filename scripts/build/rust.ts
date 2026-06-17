@@ -503,6 +503,16 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (cfg.release && !cfg.assertions) {
     rustflags.push("-Zlocation-detail=none");
   }
+  // Path remapping (CI reproducibility) — rustc equivalent of the C/C++
+  // `-ffile-prefix-map` entries in flags.ts. Without this, `file!()` /
+  // panic locations and the DWARF compilation-dir from every workspace
+  // crate and vendored Rust dep (lol-html) embed the absolute checkout
+  // path into the release binary (`strings bun | grep $PWD` shows them).
+  // Gated on `cfg.ci` to match the flags.ts entry.
+  if (cfg.ci) {
+    rustflags.push(`--remap-path-prefix=${cfg.cwd}=.`);
+    rustflags.push(`--remap-path-prefix=${cfg.vendorDir}=vendor`);
+  }
   // IR PGO, Rust half — mirrors the C++ `-fprofile-generate`/`-fprofile-use`
   // (flags.ts) so the Rust ~half of bun's `.text` participates too (a port-era
   // `bun` is mostly Rust now; instrumenting only C++ would leave most of the

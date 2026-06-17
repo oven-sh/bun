@@ -435,6 +435,39 @@ test("the minimized fuzzer input terminates across minify, nesting-compile, and 
   expect(() => prefixTest(input, "", { safari: (13 << 16) | (2 << 8) })).toThrow(boundedError);
 });
 
+test("the ::part()-nested fuzzer input with large token-list declarations is bounded", () => {
+  // 16.5 KB fuzzer-generated input: a `>`-combinator-flooded top-level rule
+  // wrapping ~12 levels of two-selector `::part()`-bearing nested rules whose
+  // deepest declaration value is an unclosed `olor-mix(` swallowing several KB
+  // of trailing text (including a `border-right-color: lab(...)` that stages
+  // an `@supports` fallback). For a chrome 80 target every nested level has
+  // `&` (so is incompatible), cannot wrap in `:is()` (no `:is()` support), and
+  // therefore splits into per-selector clones of the whole subtree, payload
+  // included. Before the clone-weight budget this produced ~155 MB of output
+  // and ~2.3 GB of RSS; the `@supports` fallback for `lab()` was cloned along
+  // with the subtree and accounted for roughly half of that. With the budget
+  // both the nesting-compile and prefix passes now report the clone-limit
+  // error instead.
+  const input = Buffer.from(
+    Bun.gunzipSync(
+      Buffer.from(
+        "H4sICCgOMmoCA2Z1enotaW5wdXQuY3NzAO2bzW7bNhzAd+2AvMBOBIYAdmGmkuWPRsZ6aBID2TqjSZcNA3qhJErmQpECRVl2jAB9g71Cj+0z9BCgj9IX6KX3lpLspUnhNm3ioPb+4oEy/x8/in9+wSAfoAeQVi4tFj29todlmi4rcZZqnOoJp5jFJKKfqnwf0YH0naQ7q13997cIS2TKNJMCptplKYScjnGkZH69moZSFJOgotofXpK9fg5j/tpp4yadjSTzKQ5JzPhkbZts44qKERVUMR+XjWJWcxrqnKggRQhJ102I0rUhJQFV9QbaCmVR5lOhqSokngwmdTT9cbEu+bTkanbnWu/+PTtbQ82iGE3LmcNFQqqY8Hm2L0ImmJ6kVGOPS//YTC3G3EV4LknGPePAfR9KP7uTSjn1pDI0nLNAD10LO00HWchOxqefUbPvt1qdbqtldZ2utd1u2x27/WUr66tUym8kaUJ9jRUxa5mL2tRUr4XuIQeRTEu0Tmoe8Y/NapKJwAQrp94xMzY0ocZMRJgzQYkyyw0JmBlDtQnlXObItpJxA3k8o6htXuvr0iI304PWT6VoPjNRVM+8l3hyjIvNiIvs3rkwlieLJGlZiKst4ohelM6cznc3P+QXxP9tespSCNQyVZa2yLx59vKG3X7tHmNBT9Z0bPbC7IRiEvyTpeXqJmhv3vHn2ShmoppJfMmlctEOKnIcs3GNCUTjYe4hLkVEFdoYZrTx+OCo//jR3qCo68ODo9+7h0f93T/YeGDKB4/2/tw92ovSJ1b/4eGJ3j3s9w/2Wf7bzpNfs7//srk/2e/s93WwI6xf0N17gAf8auNdmRT/DBAOUQA84AEPeMB/E/5pNrVtyzynt16RGMIAeMCvPv7tqzNof8ADHvCABzzgF+OhWQEP+P8lfrW+Zwrh/Gb8qvmFsQ94wAP+lvFTaH3AryW+PAQTUF+W5+NEdUEGIgJ4wAMe8IAH/JLxr59XFUCmqGaNw+pJmPaH1WuE3jx74VibqGVt1is1x7ECGqGyEG3Wi5P489OtMWlGTGAmikP8WLpuyDjFKeW0XOp9GXuFIEsUi4ba16ZSXkYEi6v1P6CcTCKtpfjoxGxM1MznRY8z60vackRVyGWOc0WSc9OqOr0vGF/WXwQjLiep+Zwh4wHVmqpp1dCKBqcLnf1UOtuY3wzQMnGRT7hfM9GqDchA0bgxuyEwyhuoZX7X0V2E7Y+uOqyV0VWPRM/1ZkfHy66DZz37Z89pmlQpJf4FWZnVAuZKwSdVsNLEdDCcOGir0zLd+D7asrebrXbb5J1u127WP0/jxKuZcYDana0OcrbrvQ/3GCU6nUAAAA==",
+        "base64",
+      ),
+    ),
+  ).toString("latin1");
+
+  expect(input.length).toBe(16541);
+  // `minifyTest` has no browser targets, so nothing splits; the output stays
+  // roughly input-sized.
+  const minified = minifyTest(input, "");
+  expect(minified.length).toBeLessThan(20_000);
+  // With a chrome 80 target both the nesting-compile and prefix passes split
+  // at every nested level; the clone-weight budget must cut them off.
+  expect(() => cssInternals._test(input, "", OLD_TARGETS)).toThrow(CLONE_LIMIT_ERROR);
+  expect(() => prefixTest(input, "", OLD_TARGETS)).toThrow(CLONE_LIMIT_ERROR);
+});
+
 // ── combinator token floods stay linear ──────────────────────────────────────
 
 test("a '>' combinator flood in an invalid selector minifies in linear time", () => {

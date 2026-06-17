@@ -1858,7 +1858,7 @@ Object.defineProperty(Socket.prototype, "pending", {
 
 Socket.prototype.resume = function resume() {
   if (!this.connecting) {
-    this._handle?.resume();
+    this._handle?.resume?.();
   }
   // Restore the hold pause() removed - even while still connecting, so the
   // pause-then-resume sequence is symmetric. Gated on the pause flag so a
@@ -1873,7 +1873,7 @@ Socket.prototype.resume = function resume() {
 
 Socket.prototype.pause = function pause() {
   if (!this.destroyed) {
-    this._handle?.pause();
+    this._handle?.pause?.();
     // libuv only counts a stream handle as active - and therefore as keeping
     // the event loop alive - while it is reading. A paused socket lets the
     // process exit; resume() re-refs it unless the user explicitly unref'd.
@@ -1939,7 +1939,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 
 Socket.prototype.read = function read(size) {
   if (!this.connecting) {
-    this._handle?.resume();
+    this._handle?.resume?.();
     // Restarting kernel reads makes the handle hold the loop open again;
     // mirror resume()'s re-ref or a paused-then-read() socket waits for
     // data without keeping the process alive.
@@ -1956,7 +1956,7 @@ Socket.prototype._read = function _read(size) {
   if (this.connecting || !socket) {
     this.once("connect", () => this._read(size));
   } else {
-    socket?.resume();
+    socket?.resume?.();
     // See read() above - the Readable machinery's pull path must also
     // restore the handle's hold on the loop.
     if (this[kPausedUnref] && !this[kUserUnrefed]) {

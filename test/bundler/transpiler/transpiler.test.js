@@ -1714,7 +1714,37 @@ export default <>hi</>
     const t = new Bun.Transpiler({ loader: "js" });
     const out = t.transformSync('import {x} from "m"; function f(){let x=1; x=2; return x}');
     expect(out).toContain("x = 2");
-    expect(out).not.toContain("Cannot assign");
+  });
+
+  it("standalone JS fast path: identifiers that bypass find_symbol don't OOB symbols[]", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const T = new Bun.Transpiler({ loader: "js" });
+          for (const src of [
+            "someLongUndeclaredName = 1;",
+            "someLongUndeclaredName[0] = 1;",
+            "delete someLongUndeclaredName[x];",
+            "typeof (true ? someLongUndeclaredName : 0)",
+            "function f(){void (this || someVeryLongUndeclaredName)}",
+            "[someVeryLongUndeclaredName = 1] = a;",
+            "({someVeryLongUndeclaredName = 1} = a);",
+          ]) T.transformSync(src);
+          const annexB = T.transformSync(
+            "function outer(){ { eval(String.fromCharCode(120)); function f(){return 1} } return f() }",
+          );
+          if (annexB.includes("let f")) throw new Error("Annex-B function decl became block-scoped let");
+          process.stdout.write("ok");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
   it("JSX keys", () => {

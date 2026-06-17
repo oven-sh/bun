@@ -2506,10 +2506,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match expr.data {
                 js_ast::ExprData::EIdentifier(ident) => {
                     if ident.ref_.eql(r#ref)
-                        || self.symbols[ident.ref_.inner_index() as usize]
-                            .link
-                            .get()
-                            .eql(r#ref)
+                        || (!ident.ref_.is_source_contents_slice()
+                            && self.symbols[ident.ref_.inner_index() as usize]
+                                .link
+                                .get()
+                                .eql(r#ref))
                     {
                         self.ignore_usage(r#ref);
                         return Substitution::Success(replacement);
@@ -6081,6 +6082,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let js_ast::ExprData::EIdentifier(id) = value.data else {
             return false;
         };
+        if id.ref_.is_source_contents_slice() {
+            // `skip_identifier_visit` left the parse-time ref in place; we can't
+            // tell whether it's bound, so conservatively keep the guard.
+            return false;
+        }
         if self.symbols[id.ref_.inner_index() as usize].kind != js_ast::symbol::Kind::Unbound {
             return false;
         }

@@ -179,7 +179,9 @@ impl SideEffects {
                 }
 
                 if ident.can_be_removed_if_unused()
-                    || p.symbols[ident.ref_.inner_index() as usize].kind != symbol::Kind::Unbound
+                    || (!ident.ref_.is_source_contents_slice()
+                        && p.symbols[ident.ref_.inner_index() as usize].kind
+                            != symbol::Kind::Unbound)
                 {
                     return None;
                 }

@@ -578,7 +578,6 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  o.rustInputs.push(...outputs);
   o.cppHeaders.push(outputs[0]!, outputs[1]!);
 }
 

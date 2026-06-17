@@ -91,6 +91,25 @@ impl<'bump> DeclarationBlock<'bump> {
         self.declarations.len() + self.important_declarations.len()
     }
 
+    /// Recursive `TokenOrValue` count across every unparsed / custom
+    /// property in this block. Other property kinds are fixed-size values
+    /// whose clone cost is already bounded by the selector-expansion cap.
+    /// See [`css_rules::MAX_TOKEN_EXPANSION`](crate::css_rules::MAX_TOKEN_EXPANSION).
+    pub fn token_weight(&self) -> usize {
+        fn one(p: &css::Property) -> usize {
+            match p {
+                css::Property::Unparsed(u) => u.value.token_weight(),
+                css::Property::Custom(c) => c.value.token_weight(),
+                _ => 0,
+            }
+        }
+        self.declarations
+            .iter()
+            .chain(self.important_declarations.iter())
+            .map(one)
+            .sum()
+    }
+
     pub fn new_in(bump: &'bump Bump) -> Self {
         Self {
             important_declarations: DeclarationList::new_in(bump),

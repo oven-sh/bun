@@ -390,17 +390,34 @@ impl<R> StyleRule<R> {
         context: &mut MinifyContext<'_, '_>,
     ) -> Result<(), MinifyErr> {
         if context.selector_expansion_multiplier > 1 {
-            context.selector_expansion_total = context.selector_expansion_total.saturating_add(
-                context
-                    .selector_expansion_multiplier
-                    .saturating_mul(self.selectors.v.len().max(1)),
-            );
+            let copies = context
+                .selector_expansion_multiplier
+                .saturating_mul(self.selectors.v.len().max(1));
+            context.selector_expansion_total =
+                context.selector_expansion_total.saturating_add(copies);
             if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION {
                 context.err = Some(crate::error::MinifyError {
                     kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
                     loc: self.loc,
                 });
                 return Err(MinifyErr::minify_err);
+            }
+            // Same expansion multiplies this rule's unparsed/custom property
+            // token lists. A large raw value under the selector cap still
+            // deep-clones into gigabytes of `TokenOrValue`, so budget the
+            // token payload separately.
+            let weight = self.declarations.token_weight();
+            if weight > 0 {
+                context.token_expansion_total = context
+                    .token_expansion_total
+                    .saturating_add((copies as usize).saturating_mul(weight));
+                if context.token_expansion_total > super::MAX_TOKEN_EXPANSION {
+                    context.err = Some(crate::error::MinifyError {
+                        kind: crate::error::MinifyErrorKind::token_expansion_limit_exceeded,
+                        loc: self.loc,
+                    });
+                    return Err(MinifyErr::minify_err);
+                }
             }
         }
         Ok(())

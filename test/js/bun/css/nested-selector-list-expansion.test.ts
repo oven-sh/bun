@@ -14,9 +14,10 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // plain `bun build` since the default bundler targets predate `:is()` and
 // native nesting. The minifier now bounds the expansion and reports an error.
 
-const { minifyTest, prefixTest } = cssInternals;
+const { minifyTest, prefixTest, _test } = cssInternals;
 
 const LIMIT_ERROR = "Nested CSS rules expand to more than";
+const TOKEN_LIMIT_ERROR = "raw property tokens when compiled for the configured browser targets";
 
 // `outer` plain-nested two-selector rules, then `atRule`'s block, then `inner`
 // more nested two-selector rules. The blocks are left unclosed (the CSS parser
@@ -261,5 +262,131 @@ test("bun build does not hang on deeply nested multi-selector css spanning @star
   expect(proc.signalCode).toBeNull();
   expect(stderr).toContain(LIMIT_ERROR);
   expect(exitCode).toBe(1);
+  expect(await Bun.file(`${dir}/out/input.css`).exists()).toBe(false);
+});
+
+// Regression test for unbounded token-list cloning when compiling CSS nesting
+// for browser targets that don't support it.
+//
+// The selector-expansion cap counts the number of rules the expansion
+// produces, but each split rule also deep-clones its declarations. An
+// unparsed property value (any value the property-specific parser couldn't
+// read) is stored as a raw TokenList and copied in full for every clone, so
+// a few thousand tokens under ten ::part()-selector nesting levels expanded
+// into gigabytes of in-memory tokens while the selector count stayed well
+// under its 65,536 cap. Found by fuzzing. The minifier now bounds the total
+// cloned-token count and reports an error.
+
+/** `depth` nested ::part() rules with a large unparsed `color:` value at the
+ * bottom. `::part()` is a pseudo-element so the selector list can never be
+ * collapsed into `:is()`; each level is split into one cloned rule per
+ * selector, and the clone carries a full copy of the inner value. */
+function nestedWithLargeUnparsedValue(depth: number, tokens: number): string {
+  // `x ` parses to two tokens (ident + whitespace); the unknown function
+  // `f(...)` around it keeps the whole thing one raw TokenList.
+  const payload = Buffer.alloc(tokens * 2, "x ").toString();
+  return (
+    "x::part(a), y::part(b) {\n".repeat(depth) +
+    ".inner { color: f(" +
+    payload +
+    "var(--x)) }\n" +
+    "}\n".repeat(depth)
+  );
+}
+
+test("nested selector splits with a large unparsed value error instead of exploding (minify)", () => {
+  // 8 two-selector levels = 256 copies of a ~6000-token value = ~1.5M tokens,
+  // past the 1M cap. Before the fix this emitted ~800 KB of output (and at
+  // slightly larger depths allocated gigabytes before the selector cap was
+  // reached).
+  const src = nestedWithLargeUnparsedValue(8, 3000);
+  expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(TOKEN_LIMIT_ERROR);
+});
+
+test("nested selector splits with a large unparsed value error instead of exploding (prefix)", () => {
+  const src = nestedWithLargeUnparsedValue(8, 3000);
+  expect(() => prefixTest(src, "", OLD_TARGETS)).toThrow(TOKEN_LIMIT_ERROR);
+});
+
+test("nested selector splits with a large unparsed value error instead of exploding (_test)", () => {
+  // The fuzzer entrypoint.
+  const src = nestedWithLargeUnparsedValue(8, 3000);
+  expect(() => _test(src, "", OLD_TARGETS)).toThrow(TOKEN_LIMIT_ERROR);
+});
+
+test("nested selector splits with a large unparsed value below the token limit still compile for old targets", () => {
+  // 6 levels = 64 copies of ~6000 tokens = ~384K tokens, under the 1M cap.
+  const src = nestedWithLargeUnparsedValue(6, 3000);
+  const out = minifyTest(src, "", OLD_TARGETS);
+  expect(out).toContain("var(--x)");
+  expect(out.length).toBeLessThan(1_000_000);
+});
+
+test("unparsed-value output below the token limit is unchanged by the cap", () => {
+  // Shallow enough that neither cap applies: the cap must not affect what
+  // valid expansions emit.
+  const src = nestedWithLargeUnparsedValue(2, 20);
+  expect(minifyTest(src, "", OLD_TARGETS)).toMatchInlineSnapshot(
+    `":is(x::part(a),y::part(b)) x::part(a) .inner{color:f(x x x x x x x x x x x x x x x x x x x x var(--x))}:is(x::part(a),y::part(b)) y::part(b) .inner{color:f(x x x x x x x x x x x x x x x x x x x x var(--x))}"`,
+  );
+});
+
+test("large unparsed values are preserved as-is for targets that support CSS nesting", () => {
+  // No split, no clone: the input passes through with native nesting intact
+  // regardless of value size.
+  const src = nestedWithLargeUnparsedValue(12, 3000);
+  const out = minifyTest(src, "", MODERN_TARGETS);
+  expect(out).toContain("var(--x)");
+  expect(out.length).toBeLessThan(20_000);
+});
+
+test("large unparsed values are preserved as-is when no targets are configured", () => {
+  const src = nestedWithLargeUnparsedValue(12, 3000);
+  const out = minifyTest(src, "");
+  expect(out).toContain("var(--x)");
+  expect(out.length).toBeLessThan(20_000);
+});
+
+test("token limit still applies when the large unparsed value sits inside a context-preserving at-rule", () => {
+  // Same `@starting-style` hiding mechanism as the selector-cap tests above:
+  // the token charge must follow the multiplier through the at-rule.
+  const payload = Buffer.alloc(6000, "x ").toString();
+  const src =
+    "x::part(a), y::part(b) {\n".repeat(4) +
+    "@starting-style {\n" +
+    "x::part(a), y::part(b) {\n".repeat(4) +
+    ".inner { color: f(" +
+    payload +
+    "var(--x)) }";
+  expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(TOKEN_LIMIT_ERROR);
+});
+
+test("bun build reports an error instead of OOMing on deeply nested selectors with a large unparsed value", async () => {
+  using dir = tempDir("css-token-expansion", {
+    // 12 levels and a ~6000-token value: before the fix this allocated on the
+    // order of a gigabyte of cloned TokenOrValue before reaching the selector
+    // cap.
+    "input.css": nestedWithLargeUnparsedValue(12, 3000),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "input.css", "--outdir", "out", "--minify"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    // Kill switch for a regression: before the fix this allocated past the
+    // container's memory budget, so let the child terminate itself instead of
+    // hanging the runner.
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Must terminate on its own (reporting the limit error), not be SIGKILLed
+  // by the timeout or OOM-killed by the OS.
+  expect({ signalCode: proc.signalCode, stderr, stdout, exitCode }).toMatchObject({
+    signalCode: null,
+    stderr: expect.stringContaining(LIMIT_ERROR),
+    exitCode: 1,
+  });
   expect(await Bun.file(`${dir}/out/input.css`).exists()).toBe(false);
 });

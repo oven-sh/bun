@@ -1281,6 +1281,21 @@ pub struct StyleContext<'a> {
 /// instead.
 pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 
+/// Upper bound on the number of raw `TokenOrValue` nodes that compiling
+/// nested rules for the configured targets may clone across a stylesheet.
+///
+/// Companion to [`MAX_SELECTOR_EXPANSION`]: that cap counts expanded rules,
+/// this one counts the raw-token payload those rules carry. A rule split
+/// for an incompatible selector deep-clones its declarations (and the
+/// already-expanded nested tree), so a large unparsed property value under
+/// a handful of split levels is duplicated once per expanded rule. The
+/// selector cap alone permits up to 65,536 copies, which for a
+/// multi-thousand-token value is gigabytes of `TokenOrValue` allocations
+/// long before that cap is reached. One million tokens is on the order of
+/// 100 MB of in-memory `TokenOrValue` and a few MB of printed output;
+/// real stylesheets stay far below it.
+pub const MAX_TOKEN_EXPANSION: usize = 1 << 20;
+
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
 ///
@@ -1316,4 +1331,7 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub selector_expansion_total: u32,
+    /// Running total of raw `TokenOrValue` nodes that compiling nested rules
+    /// for the targets will clone, checked against [`MAX_TOKEN_EXPANSION`].
+    pub token_expansion_total: usize,
 }

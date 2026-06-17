@@ -286,11 +286,7 @@ function nestedWithLargeUnparsedValue(depth: number, tokens: number): string {
   // `f(...)` around it keeps the whole thing one raw TokenList.
   const payload = Buffer.alloc(tokens * 2, "x ").toString();
   return (
-    "x::part(a), y::part(b) {\n".repeat(depth) +
-    ".inner { color: f(" +
-    payload +
-    "var(--x)) }\n" +
-    "}\n".repeat(depth)
+    "x::part(a), y::part(b) {\n".repeat(depth) + ".inner { color: f(" + payload + "var(--x)) }\n" + "}\n".repeat(depth)
   );
 }
 

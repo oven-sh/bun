@@ -350,13 +350,35 @@ impl StatWatcherScheduler {
             return;
         }
 
+        // `self.task` is an *intrusive* node in the WorkPool's Treiber stack.
+        // Pushing it while a prior push is still linked (or `work_pool_callback`
+        // is mid-run and has not yet cleared the flag) would overwrite
+        // `self.task.node.next` and, with any other task interleaved between
+        // the two pushes, form a cycle in the run queue. `Buffer::consume`
+        // then fills a worker's 256-slot ring with repeated copies of every
+        // node in the cycle, so any `AsyncFSTask` caught in it is dispatched
+        // many times and runs on freed memory after the first completion
+        // reaches `destroy()` on the JS thread (observed as a null-deref in
+        // `NodeFS::rm` → `PathLike::slice`). `append()` can re-arm this timer
+        // from `initial_stat_success_on_main_thread` while `self.task` is
+        // still in flight, so guard here: if already in flight, re-arm the
+        // one-shot timer and try again next fire; `work_pool_callback` clears
+        // the flag on exit and will itself re-arm via `set_interval`.
+        if self.work_pool_in_flight.swap(true, Ordering::AcqRel) {
+            let this = core::ptr::from_mut(self);
+            let interval = self.get_interval();
+            if interval > 0 {
+                Self::set_timer(this, interval);
+            }
+            return;
+        }
+
         // One ref is held across the work-pool hop (released by the
         // `SchedulerRefGuard` in `work_pool_callback`). Taken here — not in
         // `set_interval` — so the count exactly tracks "task in flight" instead
         // of accumulating one leak per `set_interval(0)` / re-arm.
         // SAFETY: `self` is live (`&mut self`).
         Self::ref_(core::ptr::from_mut(self));
-        self.work_pool_in_flight.store(true, Ordering::Release);
         WorkPool::schedule(&raw mut self.task);
     }
 

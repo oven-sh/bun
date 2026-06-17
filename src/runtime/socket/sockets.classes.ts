@@ -65,6 +65,10 @@ function generate(ssl) {
         fn: "getTLSTicket",
         length: 0,
       },
+      setKeyCert: {
+        fn: "setKeyCert",
+        length: 1,
+      },
       exportKeyingMaterial: {
         fn: "exportKeyingMaterial",
         length: 3,
@@ -101,6 +105,18 @@ function generate(ssl) {
       setNoDelay: {
         fn: "setNoDelay",
         length: 1,
+      },
+      setTypeOfService: {
+        fn: "setTypeOfService",
+        length: 1,
+      },
+      getTypeOfService: {
+        fn: "getTypeOfService",
+        length: 0,
+      },
+      resumeSNI: {
+        fn: "resumeSNI",
+        length: 2,
       },
       setKeepAlive: {
         fn: "setKeepAlive",

@@ -1207,6 +1207,11 @@ pub struct H2FrameParser {
     remaining_length: Cell<i32>,
     // buffer if more data is needed for the current frame
     read_buffer: JsCell<MutableString>,
+    // depth of read dispatches currently on the stack (read()/on_native_read);
+    // detach() defers freeing read_buffer/write_buffer/hpack while > 0 because a
+    // re-entrant teardown from a frame handler must not free memory the
+    // in-flight parse still references (deinit() frees them later).
+    read_dispatch_depth: Cell<u32>,
 
     // local Window limits the download of data
     // current window size for the connection
@@ -1231,6 +1236,12 @@ pub struct H2FrameParser {
     out_standing_pings: Cell<u64>,
     max_send_header_block_length: Cell<u32>,
     last_stream_id: Cell<u32>,
+    /// Highest PEER-initiated stream id processed (odd ids for a server, even for a
+    /// client). This — not `last_stream_id` — is what an auto-filled GOAWAY must carry:
+    /// RFC 9113 §6.8 last_stream_id refers to streams the RECEIVER initiated, and
+    /// nghttp2 servers reject a GOAWAY naming a client-initiated id with a connection
+    /// PROTOCOL_ERROR (node's last_proc_stream_id semantics).
+    last_peer_stream_id: Cell<u32>,
     // Stream id whose header block is awaiting CONTINUATION frames
     // (RFC 9113 §4.3); 0 when none.
     expecting_continuation: Cell<u32>,
@@ -4465,6 +4476,12 @@ impl H2FrameParser {
         if stream_identifier > self.last_stream_id.get() {
             self.last_stream_id.set(stream_identifier);
         }
+        let peer_parity: u32 = if self.is_server.get() { 1 } else { 0 };
+        if stream_identifier % 2 == peer_parity
+            && stream_identifier > self.last_peer_stream_id.get()
+        {
+            self.last_peer_stream_id.set(stream_identifier);
+        }
 
         // new stream open
         let local_window_size = if self.outstanding_settings.get() > 0 {
@@ -5103,7 +5120,7 @@ impl H2FrameParser {
         }
         let error_code = error_code_arg.to_int32();
 
-        let mut last_stream_id = this.last_stream_id.get();
+        let mut last_stream_id = this.last_peer_stream_id.get();
         if args_list.len >= 2 {
             let last_stream_arg = args_list.ptr[1];
             if !last_stream_arg.is_empty_or_undefined_or_null() {
@@ -5113,12 +5130,15 @@ impl H2FrameParser {
                     );
                 }
                 let id = last_stream_arg.to_int32();
-                if id < 0 && id as u32 > MAX_STREAM_ID {
-                    return Err(global_object.throw(format_args!(
-                        "Expected lastStreamId to be a number between 1 and 2147483647"
-                    )));
+                // Like Node's native goaway, a lastStreamId <= 0 means "use the
+                // actual last processed stream id" — Node's JS layer defaults the
+                // argument to 0 and relies on this correction (validateNumber
+                // imposes no range, so negative values reach this path too), and
+                // sending a literal 0 would tell the peer no streams were
+                // processed.
+                if id > 0 {
+                    last_stream_id = id as u32;
                 }
-                last_stream_id = u32::try_from(id).expect("int cast");
             }
             if args_list.len >= 3 {
                 let opaque_data_arg = args_list.ptr[2];
@@ -7136,12 +7156,34 @@ impl H2FrameParser {
 
         if end_stream {
             stream.end_after_headers = true;
-            stream.state = StreamState::HALF_CLOSED_LOCAL;
 
             if wait_for_trailers {
+                stream.state = StreamState::HALF_CLOSED_LOCAL;
                 this.dispatch(JSH2FrameParser::Gc::onWantTrailers, stream.get_identifier());
                 return Ok(JSValue::js_number(stream_id as f64));
             }
+
+            // A HEADERS frame carrying END_STREAM half-closes our side; when
+            // the peer already half-closed (a server responding after the
+            // request body finished) the stream is now fully closed. Mirror
+            // send_data / send_trailers: transition the state forward and
+            // dispatch onStreamEnd — without this a headers-only END_STREAM
+            // response regressed the state to HALF_CLOSED_LOCAL and never
+            // told JS, leaking the stream (and the session's connection
+            // count) until socket close.
+            let identifier = stream.get_identifier();
+            identifier.ensure_still_alive();
+            if stream.state == StreamState::HALF_CLOSED_REMOTE {
+                stream.state = StreamState::CLOSED;
+                stream.free_resources::<false>(this);
+            } else {
+                stream.state = StreamState::HALF_CLOSED_LOCAL;
+            }
+            this.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamEnd,
+                identifier,
+                JSValue::js_number(stream.state as u8 as f64),
+            );
         } else {
             stream.wait_for_trailers = wait_for_trailers;
         }
@@ -7171,23 +7213,36 @@ impl H2FrameParser {
         // of the function, and the window-size update still runs on the error
         // path.
         let array_buffer = buffer.as_pinned_arraybuffer(global_object);
-        let result = (|| {
-            if let Some(array_buffer) = &array_buffer {
-                let mut bytes = array_buffer.byte_slice();
+        // This entry point is only used for JS-stream sockets (createConnection
+        // hands us chunks from a user Duplex; real sockets feed on_native_read).
+        // A frame handler dispatched while parsing can transfer or detach this
+        // buffer, and a transferred backing store can be freed by GC before the
+        // loop finishes - so parse from a parser-owned copy of the chunk and let
+        // go of the pin immediately.
+        let owned: Option<Vec<u8>> = array_buffer
+            .as_ref()
+            .map(|array_buffer| array_buffer.byte_slice().to_vec());
+        if let Some(array_buffer) = &array_buffer {
+            array_buffer.unpin();
+        }
+        let result = if let Some(owned) = &owned {
+            this.read_dispatch_depth
+                .set(this.read_dispatch_depth.get() + 1);
+            let parse = (|| {
+                let mut bytes = owned.as_slice();
                 // read all the bytes
                 while !bytes.is_empty() {
                     let result = this.read_bytes(bytes)?;
                     bytes = &bytes[result..];
                 }
                 Ok(JSValue::UNDEFINED)
-            } else {
-                Err(global_object
-                    .throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
-            }
-        })();
-        if let Some(array_buffer) = &array_buffer {
-            array_buffer.unpin();
-        }
+            })();
+            this.read_dispatch_depth
+                .set(this.read_dispatch_depth.get() - 1);
+            parse
+        } else {
+            Err(global_object.throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
+        };
         this.increment_window_size_if_needed();
         result
     }
@@ -7195,6 +7250,8 @@ impl H2FrameParser {
     pub(crate) fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(H2FrameParser, "onNativeRead");
         self.ref_();
+        self.read_dispatch_depth
+            .set(self.read_dispatch_depth.get() + 1);
         let mut bytes = data;
         let result: JsResult<()> = (|| {
             while !bytes.is_empty() {
@@ -7203,6 +7260,8 @@ impl H2FrameParser {
             }
             Ok(())
         })();
+        self.read_dispatch_depth
+            .set(self.read_dispatch_depth.get() - 1);
         self.increment_window_size_if_needed();
         self.deref();
         result
@@ -7338,6 +7397,7 @@ impl H2FrameParser {
             current_frame: Cell::new(None),
             remaining_length: Cell::new(0),
             read_buffer: JsCell::new(MutableString::default()),
+            read_dispatch_depth: Cell::new(0),
             window_size: Cell::new(DEFAULT_WINDOW_SIZE),
             used_window_size: Cell::new(0),
             remote_window_size: Cell::new(DEFAULT_WINDOW_SIZE),
@@ -7353,6 +7413,7 @@ impl H2FrameParser {
             out_standing_pings: Cell::new(0),
             max_send_header_block_length: Cell::new(0),
             last_stream_id: Cell::new(0),
+            last_peer_stream_id: Cell::new(0),
             expecting_continuation: Cell::new(0),
             is_server: Cell::new(false),
             preface_received_len: Cell::new(0),
@@ -7532,6 +7593,16 @@ impl H2FrameParser {
         self.uncork();
         self.unregister_auto_flush();
         self.detach_native_socket();
+
+        // A teardown triggered from inside a frame handler (session.destroy()
+        // while read()/on_native_read is still parsing) must not free the
+        // buffers the in-flight parse references: a fragmented frame's Payload
+        // points into read_buffer and the HPACK handle may still be decoding.
+        // Leave the allocations to a later detach()/deinit() outside the
+        // dispatch.
+        if self.read_dispatch_depth.get() > 0 {
+            return;
+        }
 
         // Free the allocation, not just the length: `reset()` would only
         // clear `len`; detach() is reachable from JS without a following `deinit`, so the

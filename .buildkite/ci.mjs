@@ -306,7 +306,17 @@ function getRetry() {
     manual: {
       permit_on_passed: true,
     },
-    automatic: false,
+    // Self-heal infra deaths once instead of leaving the build failed until a
+    // human notices and clicks retry:
+    //   -1  = agent lost / process killed (box died, agent restarted)
+    //   255 = step timeout kill (timeout_in_minutes SIGTERM cascade)
+    // User-canceled jobs are state=canceled, which never triggers automatic
+    // retry, so this cannot resurrect deliberately canceled builds. limit: 1
+    // caps the cost when a suite genuinely crashes with these statuses.
+    automatic: [
+      { exit_status: -1, limit: 1 },
+      { exit_status: 255, limit: 1 },
+    ],
   };
 }
 
@@ -824,7 +834,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
-    timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : os === "darwin" ? 40 : 30,
+    timeout_in_minutes: profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       // Platform smoke check: runner.node.mjs asserts the agent matches what
@@ -837,7 +847,8 @@ function getTestBunStep(platform, options, testOptions = {}) {
       EXPECTED_PLATFORM_ARCH: platform.arch,
       ...(platform.abi ? { EXPECTED_PLATFORM_ABI: platform.abi } : {}),
       ...(platform.os === "linux" && platform.distro ? { EXPECTED_PLATFORM_DISTRO: platform.distro } : {}),
-      ...(platform.os === "linux" || (platform.os === "darwin" && platform.arch === "aarch64" && platform.tier === "latest")
+      ...(platform.os === "linux" ||
+      (platform.os === "darwin" && platform.arch === "aarch64" && platform.tier === "latest")
         ? { EXPECTED_PLATFORM_RELEASE: platform.release }
         : {}),
     },
@@ -1350,6 +1361,8 @@ async function getPipelineOptions() {
     };
   }
 
+  // BUILDKITE_MESSAGE is the commit subject line only — option tags like
+  // [publish images] must appear in the subject, not the commit body.
   const commitMessage = getCommitMessage();
 
   /**

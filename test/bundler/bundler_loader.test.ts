@@ -218,4 +218,163 @@ describe("bundler", async () => {
       });
     }
   });
+
+  // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the
+  // printer when bundled with the dev server's module format.
+  // https://github.com/oven-sh/bun/issues/31943
+  describe("internal_bake_dev lazy exports", () => {
+    itBundled("bake-dev/loader-json-default-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import data from "./data.json";
+          console.log(data.value);
+        `,
+        "/data.json": `{"value": 1}`,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.json"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = { value: 1 }");
+        expect(output).toContain("import_data.default.value");
+      },
+    });
+
+    itBundled("bake-dev/loader-json-named-and-star-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import { value } from "./data.json";
+          import * as ns from "./data.json";
+          console.log(value, ns.value);
+        `,
+        "/data.json": `{"value": 1}`,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.json"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = { value: 1 }");
+      },
+    });
+
+    itBundled("bake-dev/loader-json-require", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          const data = require("./data.json");
+          console.log(data.value);
+        `,
+        "/data.json": `{"value": 1}`,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.json"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = { value: 1 }");
+      },
+    });
+
+    itBundled("bake-dev/loader-json-entry-point", {
+      format: "internal_bake_dev",
+      files: {
+        "/data.json": `{"value": 1}`,
+      },
+      entryPoints: ["/data.json"],
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.json"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = { value: 1 }");
+      },
+    });
+
+    itBundled("bake-dev/loader-jsonc-default-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import data from "./data.jsonc";
+          console.log(data.value);
+        `,
+        "/data.jsonc": `{
+          // comment
+          "value": 1,
+        }`,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.jsonc"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = {");
+        expect(output).toContain("value: 1");
+      },
+    });
+
+    itBundled("bake-dev/loader-toml-default-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import data from "./data.toml";
+          console.log(data.value);
+        `,
+        "/data.toml": `value = 1`,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.toml"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = {");
+        expect(output).toContain("value: 1");
+        expect(output).toContain("import_data.default.value");
+      },
+    });
+
+    itBundled("bake-dev/loader-empty-cjs-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import x from "./empty.cjs";
+          console.log(x);
+        `,
+        "/empty.cjs": "",
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"empty.cjs"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = {}");
+      },
+    });
+
+    itBundled("bake-dev/loader-empty-mjs-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import x from "./empty.mjs";
+          console.log(x);
+        `,
+        "/empty.mjs": "",
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"empty.mjs"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = undefined");
+      },
+    });
+
+    // CSS imports are delivered out-of-band by the dev server, so the JS
+    // chunk only contains the importing module. This used to panic while
+    // linking the CSS file's lazy-export JS stub.
+    itBundled("bake-dev/loader-css-module-import", {
+      format: "internal_bake_dev",
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* js */ `
+          import styles from "./styles.module.css";
+          console.log(styles.foo);
+        `,
+        "/styles.module.css": `.foo { color: red; }`,
+      },
+      onAfterBundle(api) {
+        const jsFile = readdirSync(api.outdir).find(x => x.endsWith(".js"))!;
+        expect(api.readFile(join("/out", jsFile))).toContain('"entry.ts"');
+        const cssFile = readdirSync(api.outdir).find(x => x.endsWith(".css"))!;
+        expect(api.readFile(join("/out", cssFile))).toContain("color: red");
+      },
+    });
+  });
 });

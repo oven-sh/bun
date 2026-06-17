@@ -23,27 +23,6 @@ fn algorithm_from_js_case_insensitive(
     Ok(evp::lookup_ignore_case(slice.slice()))
 }
 
-/// Local shim until `bun_jsc` grows a typed `get_optional`.
-/// Returns `None` for missing/null/undefined.
-fn get_optional_slice(
-    target: JSValue,
-    global: &JSGlobalObject,
-    property: &'static [u8],
-) -> JsResult<Option<ZigStringSlice>> {
-    match target.get(global, property)? {
-        Some(v) if !v.is_undefined_or_null() => {
-            if !v.is_string() {
-                // SAFETY: `property` is a `&'static [u8]` literal supplied by
-                // the call-site (`b"algorithm"` etc.) — always ASCII.
-                let prop = unsafe { core::str::from_utf8_unchecked(property) };
-                return Err(global.throw_invalid_argument_type_value(prop, "string", v));
-            }
-            Ok(Some(v.to_slice(global)?))
-        }
-        _ => Ok(None),
-    }
-}
-
 /// Local shim: validates an integer in `[0, MAX_SAFE_INTEGER]`.
 /// `validateIntegerRange` is defined on the cfg-gated `JSGlobalObject` impl,
 /// so inline the minimal u64 path here.
@@ -109,7 +88,7 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         }
 
         // Extract sessionId (optional)
-        if let Some(session_id_slice) = get_optional_slice(options_value, global, b"sessionId")? {
+        if let Some(session_id_slice) = options_value.get_optional_slice(global, b"sessionId")? {
             if session_id_slice.slice().is_empty() {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "sessionId must be a non-empty string"
@@ -250,7 +229,7 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         let options_value = args[1];
 
         // Extract the secret (required)
-        if let Some(secret_slice) = get_optional_slice(options_value, global, b"secret")? {
+        if let Some(secret_slice) = options_value.get_optional_slice(global, b"secret")? {
             if secret_slice.slice().is_empty() {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Secret must be a non-empty string")));
@@ -259,7 +238,7 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         }
 
         // Extract sessionId (optional)
-        if let Some(session_id_slice) = get_optional_slice(options_value, global, b"sessionId")? {
+        if let Some(session_id_slice) = options_value.get_optional_slice(global, b"sessionId")? {
             if session_id_slice.slice().is_empty() {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "sessionId must be a non-empty string"

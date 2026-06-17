@@ -138,6 +138,7 @@ test.skipIf(!isDebug && !isASAN)(
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
+      timeout: 60_000,
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

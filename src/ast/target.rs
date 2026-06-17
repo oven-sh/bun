@@ -14,8 +14,9 @@ pub enum Target {
     Bun,
     BunMacro,
     Node,
-    /// This is used by bake.Framework.ServerComponents.separate_ssr_graph
-    BakeServerComponentsSsr,
+    /// The separate SSR graph when server-components bundling is configured
+    /// with `ServerComponents.separate_ssr_graph`. Resolves like [`Target::Bun`].
+    ServerComponentsSsr,
 }
 
 bun_core::comptime_string_map! {
@@ -39,7 +40,7 @@ impl Target {
     pub fn is_server_side(self) -> bool {
         matches!(
             self,
-            Target::BunMacro | Target::Node | Target::Bun | Target::BakeServerComponentsSsr
+            Target::BunMacro | Target::Node | Target::Bun | Target::ServerComponentsSsr
         )
     }
 
@@ -47,7 +48,7 @@ impl Target {
     pub fn is_bun(self) -> bool {
         matches!(
             self,
-            Target::BunMacro | Target::Bun | Target::BakeServerComponentsSsr
+            Target::BunMacro | Target::Bun | Target::ServerComponentsSsr
         )
     }
 
@@ -92,7 +93,7 @@ impl Target {
         match self {
             Target::Node => NODE,
             Target::Browser => BROWSER,
-            Target::Bun | Target::BunMacro | Target::BakeServerComponentsSsr => BUN,
+            Target::Bun | Target::BunMacro | Target::ServerComponentsSsr => BUN,
         }
     }
 
@@ -103,7 +104,7 @@ impl Target {
             Target::Node => &[b"node"],
             Target::Browser => &[b"browser", b"module"],
             Target::Bun => &[b"bun", b"node"],
-            Target::BakeServerComponentsSsr => &[b"bun", b"node"],
+            Target::ServerComponentsSsr => &[b"bun", b"node"],
             Target::BunMacro => &[b"macro", b"bun", b"node"],
         }
     }

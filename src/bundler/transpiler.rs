@@ -2286,7 +2286,7 @@ fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_ast::Target {
         crate::options_impl::Target::Bun => T::Bun,
         crate::options_impl::Target::BunMacro => T::BunMacro,
         crate::options_impl::Target::Node => T::Node,
-        crate::options_impl::Target::BakeServerComponentsSsr => T::BakeServerComponentsSsr,
+        crate::options_impl::Target::ServerComponentsSsr => T::ServerComponentsSsr,
     }
 }
 
@@ -3061,7 +3061,7 @@ impl<'a> Transpiler<'a> {
                     }
                     options::Target::Bun
                     | options::Target::BunMacro
-                    | options::Target::BakeServerComponentsSsr => self.print(
+                    | options::Target::ServerComponentsSsr => self.print(
                         print_arena,
                         result,
                         &mut writer,

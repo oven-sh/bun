@@ -174,22 +174,19 @@ async function runSiblingUnderAmpChain(depth: number, leaves: number) {
   return { stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode };
 }
 
-test.concurrent(
-  "many sibling rules under a `& > &` chain error out instead of serializing gigabytes",
-  async () => {
-    // Two `::part()` selectors with 500-byte identifiers at the root, nested
-    // 13 levels deep in `& > &` (2^13 = 8192 substitutions per leaf prelude,
-    // well under the 65536 per-prelude cap), with 200 sibling leaf rules
-    // underneath. Before the fix this serialized ~1.7 GB of output; now the
-    // stylesheet-wide byte budget fires after ~64 MB and reports the existing
-    // nesting-expansion error.
-    const { stdout, stderr, signalCode, exitCode } = await runSiblingUnderAmpChain(13, 200);
-    expect(stderr).toBe("");
-    expect(signalCode).toBeNull(); // not killed by the kill switch
-    expect(stdout).toContain("ERR Maximum nesting expansion exceeded");
-    expect(exitCode).toBe(0);
-  },
-);
+test.concurrent("many sibling rules under a `& > &` chain error out instead of serializing gigabytes", async () => {
+  // Two `::part()` selectors with 500-byte identifiers at the root, nested
+  // 13 levels deep in `& > &` (2^13 = 8192 substitutions per leaf prelude,
+  // well under the 65536 per-prelude cap), with 200 sibling leaf rules
+  // underneath. Before the fix this serialized ~1.7 GB of output; now the
+  // stylesheet-wide byte budget fires after ~64 MB and reports the existing
+  // nesting-expansion error.
+  const { stdout, stderr, signalCode, exitCode } = await runSiblingUnderAmpChain(13, 200);
+  expect(stderr).toBe("");
+  expect(signalCode).toBeNull(); // not killed by the kill switch
+  expect(stdout).toContain("ERR Maximum nesting expansion exceeded");
+  expect(exitCode).toBe(0);
+});
 
 test.concurrent(
   "a few sibling rules under a `& > &` chain still serialize without hitting the byte budget",

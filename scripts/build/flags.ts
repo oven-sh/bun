@@ -788,13 +788,17 @@ export const defines: Flag[] = [
   },
   {
     // Shell-escaped quotes so clang receives literal quotes in the define
-    // (the preprocessor needs the string to be "24.3.0", not bare 24.3.0).
+    // (the preprocessor needs the string to be "26.3.0", not bare 26.3.0).
     flag: c => `REPORTED_NODEJS_VERSION=\\"${c.nodejsVersion}\\"`,
     desc: "Node.js version string reported by process.version",
   },
   {
     flag: c => `REPORTED_NODEJS_ABI_VERSION=${c.nodejsAbiVersion}`,
     desc: "Node.js ABI version (process.versions.modules)",
+  },
+  {
+    flag: c => `REPORTED_NODEJS_V8_VERSION=\\"${c.nodejsV8Version}\\"`,
+    desc: "V8 version string (process.versions.v8)",
   },
   {
     // Hardcoded ON — experimental flag not exposed in config

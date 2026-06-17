@@ -3165,7 +3165,15 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     FOR_EACH_GLOBALOBJECT_GC_MEMBER(VISIT_GLOBALOBJECT_GC_MEMBER)
 #undef VISIT_GLOBALOBJECT_GC_MEMBER
 
-    WebCore::clientData(thisObject->vm())->httpHeaderIdentifiers().visit<Visitor>(visitor);
+    // This runs on a concurrent GC helper thread. Fetch the VM through the
+    // visitor (AbstractSlotVisitor::vm() returns m_heap.vm(), guaranteed alive
+    // for the duration of marking) rather than thisObject->vm() which
+    // dereferences JSGlobalObject::m_vm and can read stale bytes if the cell
+    // was picked up via conservative scan mid-recycle (see the
+    // visitGlobalObjectMember(unique_ptr) guard above for the same window).
+    // A stale m_vm surfaces as a SEGV in TypeCastTraits<JSVMClientData>::isType
+    // when downcast<> calls the virtual isWebCoreJSClientData() on garbage.
+    WebCore::clientData(visitor.vm())->httpHeaderIdentifiers().template visit<Visitor>(visitor);
 
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
@@ -3564,7 +3572,7 @@ static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    promise->rejectAsHandled(vm, globalObject, value);
+    promise->rejectAsHandled(vm, value);
     return promise;
 }
 
@@ -3572,7 +3580,7 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    promise->fulfill(vm, globalObject, value);
+    promise->fulfill(vm, value);
     return promise;
 }
 
@@ -3749,7 +3757,7 @@ static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject,
         globalObject, JSC::JSValue::encode(source), compiler.ptr()));
 
     if (scope.exception()) [[unlikely]] {
-        promise->rejectWithCaughtException(globalObject, scope);
+        promise->rejectWithCaughtException(vm, scope);
         return;
     }
 
@@ -3757,7 +3765,7 @@ static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject,
     if (readableStreamMaybe.isNull()) {
         compiler->finalize(globalObject);
         if (scope.exception()) [[unlikely]]
-            promise->rejectWithCaughtException(globalObject, scope);
+            promise->rejectWithCaughtException(vm, scope);
         return;
     }
 
@@ -3769,7 +3777,7 @@ static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject,
     arguments.append(readableStreamMaybe);
     JSC::call(globalObject, builtin, callData, wrapper, arguments);
     if (scope.exception()) [[unlikely]]
-        promise->rejectWithCaughtException(globalObject, scope);
+        promise->rejectWithCaughtException(vm, scope);
 }
 
 void GlobalObject::compileStreaming(JSGlobalObject* globalObject, JSC::JSPromise* promise, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)

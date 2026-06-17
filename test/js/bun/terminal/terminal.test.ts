@@ -381,6 +381,23 @@ describe("Bun.Terminal", () => {
       // Still 0
       expect(terminal.inputFlags).toBe(0);
     });
+
+    test.skipIf(isWindows)("NaN clamps to tcflag_t max, same as Infinity", async () => {
+      // Assigning NaN must clamp to the same value as Infinity (tcflag_t::MAX),
+      // matching the reference `@max(0, @min(num, max))` semantics. The kernel
+      // may mask some bits per field, so compare NaN against Infinity rather
+      // than a hard-coded constant.
+      await using terminal = new Bun.Terminal({ cols: 80, rows: 24 });
+
+      for (const prop of ["inputFlags", "outputFlags", "localFlags", "controlFlags"] as const) {
+        terminal[prop] = Infinity;
+        const fromInfinity = terminal[prop];
+        terminal[prop] = NaN;
+        const fromNaN = terminal[prop];
+        expect({ prop, fromNaN }).toEqual({ prop, fromNaN: fromInfinity });
+        expect(fromNaN).toBeGreaterThan(0);
+      }
+    });
   });
 
   describe("close", () => {

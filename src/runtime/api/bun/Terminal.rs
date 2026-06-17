@@ -1309,7 +1309,9 @@ impl Terminal {
                 return Ok(());
             };
             let max_val: f64 = libc::tcflag_t::MAX as f64;
-            let clamped = num.max(0.0).min(max_val);
+            // Match Zig's `@max(0, @min(num, max_val))`: apply min first so NaN
+            // resolves to max_val (f64::min returns the non-NaN operand), not 0.
+            let clamped = num.min(max_val).max(0.0);
             let bits = clamped as libc::tcflag_t;
             match FIELD {
                 TermiosField::Iflag => termios_data.c_iflag = bits,

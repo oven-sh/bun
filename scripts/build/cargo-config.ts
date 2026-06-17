@@ -84,7 +84,17 @@ export function generateCargoConfig(cfg: Config): string {
     lines.push("");
     lines.push(`[target.${triple}]${triple === host ? "  # host" : ""}`);
     lines.push(`linker = ${JSON.stringify(linkerFor(triple, cfg))}`);
-    lines.push(`rustflags = ["-C", "link-arg=-fuse-ld=lld"]`);
+    // -Qunused-arguments: rustc passes link args that don't apply to every
+    // artifact kind (e.g. `-no-pie` when it links the lol_html_c_api cdylib),
+    // and its `linker_messages` lint re-surfaces clang's "argument unused
+    // during compilation" complaint as a warning on every build-rust job.
+    // These config rustflags reach the cargo invocations that don't set
+    // CARGO_ENCODED_RUSTFLAGS themselves (the lolhtml dep edge, plain
+    // `cargo build`/`cargo check`, rust-analyzer); real linker errors still
+    // fail the link.
+    lines.push(
+      `rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "link-arg=-Qunused-arguments", "-A", "linker_messages"]`,
+    );
   }
   lines.push("");
 

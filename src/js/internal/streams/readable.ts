@@ -2,7 +2,7 @@
 
 const EE = require("node:events");
 const { Stream, prependListener } = require("internal/streams/legacy");
-const { addAbortSignal } = require("internal/streams/add-abort-signal");
+const { addAbortSignal, addAbortSignalNoValidate } = require("internal/streams/add-abort-signal");
 const eos = require("internal/streams/end-of-stream");
 const destroyImpl = require("internal/streams/destroy");
 const { getHighWaterMark, getDefaultHighWaterMark } = require("internal/streams/state");
@@ -21,7 +21,7 @@ const {
   kConstructed,
 } = require("internal/streams/utils");
 const { aggregateTwoErrors } = require("internal/errors");
-const { validateObject } = require("internal/validators");
+const { validateAbortSignal, validateObject } = require("internal/validators");
 const { StringDecoder } = require("node:string_decoder");
 const from = require("internal/streams/from");
 const { SafeSet } = require("internal/primordials");
@@ -561,8 +561,12 @@ function howMuchToRead(n, state) {
   if (n <= 0 || (state.length === 0 && (state[kState] & kEnded) !== 0)) return 0;
   if ((state[kState] & kObjectMode) !== 0) return 1;
   if (NumberIsNaN(n)) {
+    // Fast path for buffers.
+    if ((state[kState] & kDecoder) === 0 && state.length) return state.buffer[state.bufferIndex].length;
+
     // Only flow one buffer at a time.
     if ((state[kState] & kFlowing) !== 0 && state.length) return state.buffer[state.bufferIndex].length;
+
     return state.length;
   }
   if (n <= state.length) return n;
@@ -768,7 +772,7 @@ function emitReadable_(stream) {
 // However, if we're not ended, or reading, and the length < hwm,
 // then go ahead and try to read some more preemptively.
 function maybeReadMore(stream, state) {
-  if ((state[kState] & (kReadingMore | kConstructed)) === kConstructed) {
+  if ((state[kState] & (kReadingMore | kReading | kConstructed)) === kConstructed) {
     state[kState] |= kReadingMore;
     process.nextTick(maybeReadMore_, stream, state);
   }
@@ -1128,6 +1132,13 @@ function nReadingNextTick(self) {
 // If the user uses them, then switch into old mode.
 Readable.prototype.resume = function () {
   const state = this._readableState;
+  // Deliberate divergence from Node 26: upstream early-returns here (and in
+  // pause()) when the stream is destroyed. Legacy Readable subclasses like
+  // fd-slicer assign `this.destroyed = true` (the prototype setter) right
+  // before push(null), so with the guard a piped destination's drain can no
+  // longer resume the source and the final buffered chunk is never delivered —
+  // silently truncating yauzl/extract-zip/puppeteer downloads. Keep the
+  // Node 24 behavior of letting destroyed streams flush their buffer.
   if ((state[kState] & kFlowing) === 0) {
     $debug("resume");
     // We flow only if there is no one listening
@@ -1167,6 +1178,7 @@ function resume_(stream, state) {
 
 Readable.prototype.pause = function () {
   const state = this._readableState;
+  // No destroyed early-return: see the comment in resume() above.
   $debug("call pause");
   if ((state[kState] & (kHasFlowing | kFlowing)) !== kHasFlowing) {
     $debug("pause");
@@ -1245,6 +1257,27 @@ Readable.prototype.iterator = function (options) {
     validateObject(options, "options");
   }
   return streamToAsyncIterator(this, options);
+};
+
+let composeImpl;
+
+Readable.prototype.compose = function compose(stream, options) {
+  if (options != null) {
+    validateObject(options, "options");
+  }
+  if (options?.signal != null) {
+    validateAbortSignal(options.signal, "options.signal");
+  }
+
+  composeImpl ??= require("internal/streams/compose");
+  const composedStream = composeImpl(this, stream);
+
+  if (options?.signal) {
+    // Not validating as we already validated before
+    addAbortSignalNoValidate(options.signal, composedStream);
+  }
+
+  return composedStream;
 };
 
 function streamToAsyncIterator(stream, options?) {
@@ -1528,7 +1561,7 @@ function fromList(n, state) {
         n -= str.length;
         buf[idx++] = null;
       } else {
-        if (n === buf.length) {
+        if (n === str.length) {
           ret += str;
           buf[idx++] = null;
         } else {

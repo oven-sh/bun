@@ -63,6 +63,13 @@ function isDeepEqual(a, b) {
 function isDeepStrictEqual(a, b) {
   return Bun.deepEquals(a, b, true);
 }
+// Strict content comparison that does NOT enforce prototype identity. Used by
+// partialDeepStrictEqual's compareBranch: Node's partial mode compares
+// Buffer/ArrayBuffer/Error/Date/RegExp by content only, so e.g.
+// partialDeepStrictEqual(Buffer.from([1]), new Uint8Array([1])) passes.
+function isDeepStrictEqualWithoutPrototype(a, b) {
+  return Bun.deepEquals(a, b, true, false);
+}
 
 var _inspect;
 function lazyInspect() {
@@ -430,12 +437,12 @@ function compareBranch(actual, expected, comparedObjects?) {
     ArrayBufferIsView(expected) ||
     isAnyArrayBuffer(expected)
   ) {
-    return Bun.deepEquals(actual, expected, true);
+    return isDeepStrictEqualWithoutPrototype(actual, expected);
   }
 
   for (const type of typesToCallDeepStrictEqualWith) {
     if (type(actual) || type(expected)) {
-      return isDeepStrictEqual(actual, expected);
+      return isDeepStrictEqualWithoutPrototype(actual, expected);
     }
   }
 
@@ -503,7 +510,7 @@ function compareBranch(actual, expected, comparedObjects?) {
 
   // Comparison done when at least one of the values is not an object
   if (isSpecial(actual) || isSpecial(expected)) {
-    return isDeepStrictEqual(actual, expected);
+    return isDeepStrictEqualWithoutPrototype(actual, expected);
   }
 
   // Use Reflect.ownKeys() instead of Object.keys() to include symbol properties

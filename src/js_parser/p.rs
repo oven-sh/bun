@@ -629,6 +629,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// and `__dirname`/`__filename`/`module` detection read it unconditionally.
     pub track_symbol_usage: bool,
 
+    /// When true, `declare_symbol` allocates a fresh symbol but does NOT
+    /// insert into `scope.members` for non-module scopes. See the predicate
+    /// in `init` for the rationale.
+    pub skip_scope_members: bool,
+
     /// Set in `prepare_for_visit_pass` when the visit-pass `EIdentifier` arm
     /// would be a no-op for printed output: no symbol-usage tracking, no
     /// import items to convert to `EImportIdentifier`, no user-supplied
@@ -3288,6 +3293,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
+        if self.skip_scope_members {
+            // Non-Entry scopes have no members; the var→module hoist that
+            // matters for `export { name }` was done inline in
+            // `declare_symbol_maybe_generated`.
+            return;
+        }
         // This runs before the visit pass, so it walks the scope tree at the full
         // nesting depth the parser allowed; deep trees must error here instead of
         // overflowing the stack.
@@ -4937,6 +4948,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `Scope` — see `Scope::get_or_put_member_with_hash`.
         let mut scope: js_ast::StoreRef<js_ast::Scope> = self.current_scope;
         let scope_kind = scope.kind;
+        if self.skip_scope_members
+            && scope_kind != js_ast::scope::Kind::Entry
+            // Private names are always resolved via `find_symbol` in `e_index`
+            // (not gated on `skip_identifier_visit`), so their declarations
+            // must reach the ClassBody scope's members.
+            && !js_ast::Symbol::is_kind_private(kind)
+        {
+            // Hoisted (`var`, function) declarations would normally be lifted
+            // to the nearest Entry/FunctionBody scope by `hoist_symbols`.
+            // The only consumer that survives the gate is `export { name }`
+            // resolution against the module scope, so emulate just that part
+            // of the hoist: walk to the hoist boundary; if it's the module
+            // scope, insert there; otherwise nothing reads it.
+            if kind == js_ast::symbol::Kind::Hoisted {
+                let mut s = scope;
+                while !s.kind_stops_hoisting() {
+                    let Some(parent) = s.parent else { break };
+                    s = parent;
+                }
+                if s.kind == js_ast::scope::Kind::Entry {
+                    // SAFETY: see key-lifetime note below — `name: &'a [u8]`
+                    // outlives the arena-owned `Scope` map.
+                    let entry = unsafe { s.members.get_or_put_borrowed(name) };
+                    if !entry.found_existing {
+                        *entry.value_ptr = js_ast::scope::Member { ref_, loc };
+                    }
+                }
+            }
+            return Ok(ref_);
+        }
         // SAFETY: see key-lifetime note above — `name: &'a [u8]` outlives the
         // arena-owned `Scope` map.
         let entry = unsafe { scope.members.get_or_put_borrowed(name) };
@@ -9072,6 +9113,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || opts.tree_shaking
             || opts.features.hot_module_reloading;
 
+        // When `find_symbol` is dead (`skip_identifier_visit`), the per-scope
+        // `members` map for non-module scopes has no readers: visit never
+        // probes it, `hoist_symbols` only moves entries between scopes that
+        // are themselves never probed, and `to_ast` only walks the module
+        // scope. The only behaviors lost are duplicate-declaration diagnostics
+        // and the var-merge — both engine-reported at runtime, same tradeoff
+        // class as the strict-mode reserved-word drop in `e_identifier`.
+        // Module-scope members stay populated (export detection reads them).
+        let skip_scope_members = !TYPESCRIPT
+            && !track_symbol_usage
+            && !opts.features.minify_syntax
+            && !opts.features.inlining
+            && !opts.features.react_fast_refresh
+            && !opts.features.server_components.is_enabled();
+
         let mut fn_or_arrow_data_parse = FnOrArrowDataParse::default();
         if opts.features.top_level_await || SCAN_ONLY {
             fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowExpr;
@@ -9093,6 +9149,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         out.write(Self {
             legacy_cjs_import_stmts: BumpVec::new_in(arena),
             track_symbol_usage,
+            skip_scope_members,
             skip_identifier_visit: false,
             // This must default to true or else parsing "in" won't work right.
             // It will fail for the case in the "in-keyword.js" file

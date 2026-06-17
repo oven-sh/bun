@@ -4790,6 +4790,10 @@ describe("parse error flood", () => {
             target: "browser",
             minifyWhitespace: true,
             deadCodeElimination: true,
+            // Duplicate-declaration detection is part of the scope-map build
+            // which the standalone-transpiler fast path now skips. Force the
+            // full path so this perf-regression test still exercises it.
+            treeShaking: true,
           });
           const check = (label, statement, repeats) => {
             const input = Buffer.alloc(statement.length * repeats, statement).toString();

@@ -698,8 +698,11 @@ impl ErrorCode {
     /// `ERR_TLS_ALPN_CALLBACK_INVALID_RESULT` (instanceof TypeError)
     pub const TLS_ALPN_CALLBACK_INVALID_RESULT: ErrorCode = ErrorCode(319);
 
+    /// `ERR_PROXY_TUNNEL` (instanceof Error)
+    pub const PROXY_TUNNEL: ErrorCode = ErrorCode(320);
+
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 320;
+    pub const COUNT: u16 = 321;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1064,6 +1067,7 @@ impl ErrorCode {
     pub const ERR_SECRETS_AUTH_FAILED: ErrorCode = ErrorCode::SECRETS_AUTH_FAILED;
     pub const ERR_SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode::SECRETS_INTERACTION_REQUIRED;
     pub const ERR_HTTP2_GOAWAY_SESSION: ErrorCode = ErrorCode::HTTP2_GOAWAY_SESSION;
+    pub const ERR_PROXY_TUNNEL: ErrorCode = ErrorCode::PROXY_TUNNEL;
 
     // NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
     // do NOT live here. They belong to the unrelated enum
@@ -1401,6 +1405,7 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_MYSQL_CONNECTION_REFUSED",
     "ERR_HTTP2_GOAWAY_SESSION",
     "ERR_TLS_ALPN_CALLBACK_INVALID_RESULT",
+    "ERR_PROXY_TUNNEL",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

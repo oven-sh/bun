@@ -227,7 +227,8 @@ namespace uWS
             {
                 for (Header *h = headers; (++h)->key.length();)
                 {
-                    if (h->key.length() == lowerCasedHeader.length() && !strncmp(h->key.data(), lowerCasedHeader.data(), lowerCasedHeader.length()))
+                    /* Stored keys keep their wire casing */
+                    if (h->key.length() == lowerCasedHeader.length() && !strncasecmp(h->key.data(), lowerCasedHeader.data(), lowerCasedHeader.length()))
                     {
                         return h->value;
                     }
@@ -251,7 +252,7 @@ namespace uWS
             }
 
             for (Header *h = headers; (++h)->key.length();) {
-                if (h->key.length() == 17 && !strncmp(h->key.data(), "transfer-encoding", 17)) {
+                if (h->key.length() == 17 && !strncasecmp(h->key.data(), "transfer-encoding", 17)) {
                     // Parse comma-separated values, ensuring "chunked" is last if present
                     const auto value = h->value;
                     size_t pos = 0;
@@ -467,13 +468,14 @@ namespace uWS
                 | (c == '*') | (c == '!')) || ((c >= 48) & (c <= 57)) || ((c <= 39) & (c >= 35));
         }
 
-        static inline bool isFieldNameByteFastLowercased(unsigned char &in) {
+        /* Header names keep their original wire casing; lookups go through
+         * the case-insensitive getHeader(). */
+        static inline bool isFieldNameByte(unsigned char in) {
             /* Most common is lowercase alpha and hyphen */
             if (((in >= 97) & (in <= 122)) | (in == '-')) [[likely]] {
                 return true;
             /* Second is upper case alpha */
             } else if ((in >= 65) & (in <= 90)) [[unlikely]] {
-                in |= 32;
                 return true;
             /* These are rarely used but still valid */
             } else if (isUnlikelyFieldNameByte(in)) [[unlikely]] {
@@ -486,7 +488,6 @@ namespace uWS
             /* Best case fast path (particularly useful with clang) */
             while (true) {
                 while ((*p >= 65) & (*p <= 90)) [[likely]] {
-                    *p |= 32;
                     p++;
                 }
                 while (((*p >= 97) & (*p <= 122))) [[likely]] {
@@ -504,7 +505,7 @@ namespace uWS
             }
 
             /* Generic */
-            while (isFieldNameByteFastLowercased(*(unsigned char *)p)) {
+            while (isFieldNameByte(*(unsigned char *)p)) {
                 p++;
             }
             return p;
@@ -891,8 +892,11 @@ namespace uWS
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
-            /* Break if no host header (but we can have empty string which is different from nullptr) */
-            if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()) {
+            /* Break if no host header (but we can have empty string which is different from nullptr).
+             * Upgrade and CONNECT requests are exempt: Node.js dispatches them through the
+             * 'upgrade'/'connect' events before its Host requirement is enforced. */
+            if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()
+                && !isConnectRequest && !req->getHeader("upgrade").data()) {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
             }
 
@@ -909,7 +913,7 @@ namespace uWS
             std::string_view contentLengthString;
             if (req->bf.mightHave("content-length")) {
                 for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
-                    if (h->key.length() == 14 && !strncmp(h->key.data(), "content-length", 14)) {
+                    if (h->key.length() == 14 && !strncasecmp(h->key.data(), "content-length", 14)) {
                         if (contentLengthString.data() == nullptr) {
                             if (h->value.length() == 0) {
                                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH);

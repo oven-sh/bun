@@ -44,11 +44,12 @@ server.on('stream', common.mustCall((stream) => {
       {
         code: 'ERR_INVALID_ARG_TYPE',
         name: 'TypeError',
-        message: 'The "opaqueData" argument must be of type Buffer, ' +
+        message: 'The "opaqueData" argument must be an instance of Buffer, ' +
                  `TypedArray, or DataView.${received}`
       }
     );
   }
+
   stream.session.destroy();
 }));
 

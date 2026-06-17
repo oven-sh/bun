@@ -7003,8 +7003,18 @@ pub mod __gated_printer {
                 .expect("infallible: variant checked")
                 .func;
 
-            // Special-case lazy-export AST
-            if ast.has_lazy_export {
+            // Special-case lazy-export AST. The `SLazyExport` stmt is only
+            // still present when linking skipped `generate_code_for_lazy_export`
+            // (the dev server's incremental graph); the full `link()` used by
+            // `bun build --format=internal_bake_dev` rewrites it into a
+            // `module.exports = ...` assignment printed by the CommonJS branch
+            // below.
+            let body_stmts = slice_of(func.body.stmts);
+            if ast.has_lazy_export
+                && let Some(lazy) = body_stmts
+                    .first()
+                    .and_then(|stmt| stmt.data.s_lazy_export())
+            {
                 self.print_fn_args(
                     Some(func.open_parens_loc),
                     slice_of(func.args),
@@ -7013,8 +7023,6 @@ pub mod __gated_printer {
                 );
                 self.print_space();
                 self.print(b"{\n");
-                let body_stmts = slice_of(func.body.stmts);
-                let lazy = body_stmts[0].data.s_lazy_export().unwrap();
                 if !matches!(*lazy, ExprData::EUndefined(_)) {
                     self.indent();
                     self.print_indent();
@@ -7036,7 +7044,7 @@ pub mod __gated_printer {
                 return;
             }
             // ESM is represented by an array tuple [ dependencies, exports, starImports, load, async ];
-            else if ast.exports_kind == js_ast::ExportsKind::Esm {
+            if ast.exports_kind == js_ast::ExportsKind::Esm {
                 self.print(b": [ [");
                 // Print the dependencies.
                 if stmts.len() > 1 {

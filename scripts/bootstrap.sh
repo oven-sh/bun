@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 34
+# Version: 37
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -8,8 +8,9 @@
 # https://github.com/oven-sh/bun/issues
 
 # If you need to make a change to this script, such as upgrading a dependency,
-# increment the version comment to indicate that a new image should be built.
-# Otherwise, the existing image will be retroactively updated.
+# increment the version comment to indicate that a new image should be built,
+# and land it with `[publish images]` in the commit message so the new tag is
+# actually baked. Otherwise, the existing image will be retroactively updated.
 
 pid="$$"
 
@@ -780,7 +781,7 @@ install_common_software() {
 }
 
 nodejs_version_exact() {
-	print "24.3.0"
+	print "26.3.0"
 }
 
 nodejs_version() {
@@ -819,7 +820,11 @@ install_nodejs() {
 
 	case "$abi" in
 	musl)
-		nodejs_mirror="https://bun-nodejs-release.s3.us-west-1.amazonaws.com"
+		# nodejs.org doesn't publish musl binaries; the unofficial-builds
+		# project (nodejs/unofficial-builds) ships both x64-musl and
+		# arm64-musl for current releases. (The old private S3 mirror at
+		# bun-nodejs-release predates arm64-musl being available there.)
+		nodejs_mirror="https://unofficial-builds.nodejs.org/download/release"
 		nodejs_foldername="node-v$nodejs_version-$nodejs_platform-$nodejs_arch-musl"
 		;;
 	*)
@@ -1450,6 +1455,12 @@ install_windows_sysroot() {
 
 	execute_sudo rm -rf "$sysroot"
 	execute_sudo mkdir -p "$sysroot"
+	# The cache must live on the same filesystem as the output: splat moves
+	# unpacked files with rename(2), which fails with EXDEV (cross-device
+	# link) when the download dir is on tmpfs and /opt is not.
+	xwin_cache="$sysroot.cache"
+	execute_sudo rm -rf "$xwin_cache"
+	execute_sudo mkdir -p "$xwin_cache"
 	# Both target arches in one splat; --include-debug-libs so /MTd (debug
 	# CRT) links work; --include-atl for <atlstr.h> (rescle.cpp);
 	# winsysroot-style + MS arch notation so clang-cl and lld-link resolve it
@@ -1457,14 +1468,14 @@ install_windows_sysroot() {
 	# include/lib casing on a case-sensitive filesystem.
 	# stdout is dropped: xwin draws progress bars there even without a TTY,
 	# which floods the image-build log. Errors stay on stderr.
-	execute_sudo "$xwin_dir/xwin" --accept-license --arch x86_64,aarch64 --sdk-version 10.0.26100 --crt-version 14.44.17.14 --include-atl --cache-dir "$xwin_dir/cache" \
+	execute_sudo "$xwin_dir/xwin" --accept-license --arch x86_64,aarch64 --sdk-version 10.0.26100 --crt-version 14.44.17.14 --include-atl --cache-dir "$xwin_cache" \
 		splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs \
 		--output "$sysroot" >/dev/null
 	# clang-cl/lld-link compose SDK paths as "Include"/"Lib" (title case);
 	# the winsysroot-style splat writes lowercase — alias both spellings.
 	execute_sudo ln -s include "$sysroot/Windows Kits/10/Include"
 	execute_sudo ln -s lib "$sysroot/Windows Kits/10/Lib"
-	execute_sudo rm -rf "$xwin_dir"
+	execute_sudo rm -rf "$xwin_dir" "$xwin_cache"
 	# No WINDOWS_SYSROOT export — detectWindowsSysroot() picks up
 	# /opt/winsysroot by well-known path.
 }
@@ -1767,6 +1778,17 @@ install_chromium() {
 			install_packages libasound2t64
 		else
 			install_packages libasound2
+		fi
+
+		# Install Chrome itself on x64 (no arm64 build exists): with a system
+		# browser present, puppeteer-based tests skip their per-run ~300MB
+		# Chrome for Testing download entirely (see
+		# test/harness.ts getPuppeteerInstallEnv).
+		if [ "$arch" = "x64" ]; then
+			chrome_deb=$(download_file "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb")
+			# Best-effort: execute_sudo aborts the whole script on failure, so the
+			# fallback chain must run inside a single sudo'd shell.
+			execute_sudo sh -c "apt-get install -y '$chrome_deb' || dpkg -i '$chrome_deb' || true"
 		fi
 		;;
 	dnf | yum)

@@ -716,6 +716,45 @@ describe("markAsUncloneable", () => {
     expect(seen).toEqual(["visible"]);
   });
 
+  // The marker is a JSC private name, not the public "isUncloneable" string;
+  // putDirect writes own storage directly without invoking setters or Proxy traps.
+  test("does not collide with user properties or invoke user getters/setters/traps", () => {
+    let fired = "";
+
+    const withAccessor: Record<string, unknown> = {};
+    Object.defineProperty(withAccessor, "isUncloneable", {
+      get() {
+        fired = "get";
+        throw new Error("getter");
+      },
+      set() {
+        fired = "set";
+        throw new Error("setter");
+      },
+      configurable: true,
+    });
+    expect(() => markAsUncloneable(withAccessor)).not.toThrow();
+    expect(fired).toBe("");
+    expectDataCloneError(() => structuredClone(withAccessor));
+    expect(fired).toBe("");
+
+    const proxied = new Proxy(
+      {},
+      {
+        defineProperty() {
+          fired = "defineProperty";
+          throw new Error("trap");
+        },
+        set() {
+          fired = "set";
+          throw new Error("trap");
+        },
+      },
+    );
+    expect(() => markAsUncloneable(proxied)).not.toThrow();
+    expect(fired).toBe("");
+  });
+
   test("marked object remains usable locally", () => {
     const obj: Record<string, unknown> = { a: 1, b: "two" };
     markAsUncloneable(obj);

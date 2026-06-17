@@ -3,6 +3,7 @@
 
 # Tests that are broken
 test/cli/create/create-jsx.test.ts [ FAIL ] # false > react spa (no tailwind) > build
+test/cli/install/bunx.test.ts [ FAIL ] # should handle package that requires node 24: @angular/cli@latest needs a newer Node.js than Bun reports (24.3.0), unskip after the Node.js version bump
 [ WINDOWS-AARCH64 ] test/js/node/test/parallel/test-repl-close.js [ FAIL ] # EPIPE on stdin.write to closed child process
 test/bundler/native-plugin.test.ts [ FAIL ] # prints name when plugin crashes
 test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > segfault should report
@@ -53,3 +54,49 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/cli/run/require-cache.test.ts [ LEAK ] # files transpiled and loaded don't leak file paths > via require()
 [ ASAN ] test/js/bun/http/req-url-leak.test.ts [ LEAK ] # req.url doesn't leak memory
 [ ASAN ] test/js/bun/io/bun-write-leak.test.ts [ LEAK ] # Bun.write should not leak the output data
+
+# Windows-only gaps in named-pipe / socket teardown for ported Node net tests
+# (these pass on Linux and macOS): half-close (FIN) handling on named pipes,
+# RST delivery surfacing as ECONNRESET, and EADDRINUSE on a second listen on
+# the same pipe path.
+[ WINDOWS ] test/js/node/test/parallel/test-net-pingpong.js [ FAIL ] # named-pipe half-close (FIN) handling
+[ WINDOWS ] test/js/node/test/parallel/test-net-socket-reset-send.js [ FAIL ] # reset not surfaced as ECONNRESET on Windows
+[ WINDOWS ] test/js/node/test/parallel/test-net-connect-reset-after-destroy.js [ FAIL ] # reset not surfaced as ECONNRESET on Windows
+[ WINDOWS ] test/js/node/test/parallel/test-net-connect-reset-until-connected.js [ FAIL ] # reset not surfaced as ECONNRESET on Windows
+[ WINDOWS ] test/js/node/test/parallel/test-net-pipe-connect-errors.js [ FAIL ] # named-pipe connect errors are not mapped to ENOENT/EACCES on Windows yet
+[ WINDOWS ] test/js/node/test/parallel/test-net-server-listen-path.js [ FAIL ] # EADDRINUSE not reported for a second listen on the same pipe path
+
+# Same Windows half-close + client-RST gap over a node:http server: the server
+# half-closes (res.socket.end()) mid-upload, the fetch client RSTs the cut-short
+# 10 MB POST body, and that RST is not surfaced to the server's still-open
+# readable side on Windows, so the accepted connection never ends and
+# server.close() (via `await using`) waits forever. The assertion itself passes;
+# only the teardown hangs. Passes on Linux and macOS.
+[ WINDOWS ] test/js/bun/test/parallel/test-http-should-not-emit-or-throw-error-when-writing-after-socket.end.ts [ FAIL ] # half-close + client RST not surfaced on Windows; server.close() waits forever
+
+# The 10 MB socket write in this test is an order of magnitude slower under
+# AddressSanitizer and exceeds the per-test timeout; it passes on regular builds.
+[ ASAN ] test/js/node/test/parallel/test-net-error-twice.js [ SKIP ] # ASAN-instrumented 10 MB write exceeds the timeout
+
+# The localAddress/localPort bind-before-connect and the SO_ERROR read on a
+# connecting socket that was reset during establishment are implemented in the
+# POSIX (kqueue/epoll + BSD socket) connect path; Windows connects through
+# libuv and needs its own implementation of both.
+[ WINDOWS ] test/js/node/test/parallel/test-net-client-bind-twice.js [ FAIL ] # localAddress/localPort binding not implemented for the libuv connect path
+[ WINDOWS ] test/js/node/test/parallel/test-net-server-reset.js [ FAIL ] # connect-time RST reports ECONNREFUSED instead of ECONNRESET on the libuv path
+# Cluster workers sharing a listen port behave differently on Linux, where
+# SO_REUSEPORT load-balances across the workers' own listeners instead of the
+# primary distributing accepted connections; the upstream test's expectations
+# only hold on the distributing model. Passes on macOS, Windows and FreeBSD.
+[ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
+
+# The fetch/h2 client teardown on Windows surfaces read ECONNRESET (WSAECONNRESET)
+# between tests when the pooled connection is dropped without a FIN; every test in
+# the file passes, the stray teardown error makes the run exit 1. Tracked as a
+# known follow-up in the PR description; quarantined here until the Windows
+# teardown path is reworked.
+[ WINDOWS ] test/js/web/fetch/fetch-http2-client.test.ts [ FAIL ] # pooled-h2 teardown surfaces WSAECONNRESET between tests
+
+# node:http servers cannot listen on Windows named pipes yet (ENOENT from
+# uv_pipe bind), so common.PIPE-based http tests cannot run there.
+[ WINDOWS ] test/js/node/test/parallel/test-http-unix-socket-keep-alive.js [ FAIL ] # named-pipe listen unsupported

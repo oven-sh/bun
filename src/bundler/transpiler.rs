@@ -404,9 +404,12 @@ impl<'a> Transpiler<'a> {
         self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
     }
 
-    /// Returns the resolver's auto-install package-manager handle.
+    /// Returns the resolver's auto-install package-manager handle. Errs when
+    /// the one-time init fails (e.g. unreadable top-level directory).
     #[inline]
-    pub fn get_package_manager(&mut self) -> *mut dyn bun_resolver::install_types::AutoInstaller {
+    pub fn get_package_manager(
+        &mut self,
+    ) -> Result<*mut dyn bun_resolver::install_types::AutoInstaller, bun_core::Error> {
         self.resolver.get_package_manager()
     }
 
@@ -2283,7 +2286,7 @@ fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_ast::Target {
         crate::options_impl::Target::Bun => T::Bun,
         crate::options_impl::Target::BunMacro => T::BunMacro,
         crate::options_impl::Target::Node => T::Node,
-        crate::options_impl::Target::BakeServerComponentsSsr => T::BakeServerComponentsSsr,
+        crate::options_impl::Target::ServerComponentsSsr => T::ServerComponentsSsr,
     }
 }
 
@@ -3058,7 +3061,7 @@ impl<'a> Transpiler<'a> {
                     }
                     options::Target::Bun
                     | options::Target::BunMacro
-                    | options::Target::BakeServerComponentsSsr => self.print(
+                    | options::Target::ServerComponentsSsr => self.print(
                         print_arena,
                         result,
                         &mut writer,

@@ -34,9 +34,11 @@ pub use mapping::{Lookup as MappingLookup, Mapping};
 pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 
 // SAFETY: `ParsedSourceMap` is shared across threads via the thread-safe
-// `SavedSourceMap` store (its `ref_count` is an `AtomicU32`). The auto-trait inference fails
-// only because `SourceContentPtr` packs raw provider pointers; those are
-// opaque handles that are never dereferenced off the JS thread.
+// `SavedSourceMap` store (its `ref_count` is an `AtomicU32`). The auto-trait
+// inference fails only because `InternalSourceMap` holds the blob's raw data
+// pointer (owned by this map, or borrowed from the embedded standalone
+// section); `SourceContentPtr`'s provider handles are packed as plain
+// integers and never dereferenced off the JS thread.
 unsafe impl Send for ParsedSourceMap {}
 // SAFETY: see the `Send` rationale above — refcount is atomic and the raw
 // provider pointers are opaque, never dereferenced off the JS thread.
@@ -49,86 +51,6 @@ pub use bun_core::Ordinal;
 
 pub use chunk::Chunk;
 pub use internal_source_map::InternalSourceMap;
-
-// Opaque FFI handle. The real type lives in `bun_jsc` (tier 6); this crate
-// only ever sees it as a pointer.
-bun_opaque::opaque_ffi! { pub struct BakeSourceProvider; }
-
-unsafe extern "C" {
-    // C++ accessor is read-only (`provider->source()`). Taking `*const` avoids
-    // casting away const from the `&self` borrow below; any interior mutation
-    // lives behind the FFI boundary in C++-owned storage that Rust has no
-    // provenance over (this type is an opaque ZST marker).
-    fn BakeSourceProvider__getSourceSlice(this: *const BakeSourceProvider) -> bun_core::String;
-}
-
-unsafe extern "Rust" {
-    /// Link-time-resolved by `bun_runtime::jsc_hooks` (same pattern as
-    /// `__BUN_RUNTIME_HOOKS`). Looks up the bundled `.map`
-    /// JSON for `source_filename` via the live `Bake::GlobalObject`'s
-    /// `PerThread.source_maps`. Returns `None` if not running under Bake
-    /// (caller falls back to disk read), or `Some("")` if the table has no
-    /// entry. The slice borrows `PerThread.bundled_outputs` (lives for the
-    /// bake build session, which outlives any error-stack source-map
-    /// resolution).
-    static __BUN_BAKE_EXTERNAL_SOURCEMAP: fn(source_filename: &[u8]) -> Option<*const [u8]>;
-}
-
-impl BakeSourceProvider {
-    #[inline]
-    pub fn get_source_slice(&self) -> bun_core::String {
-        // SAFETY: opaque FFI handle; address-only pass-through, callee does not
-        // write Rust-visible memory.
-        unsafe { BakeSourceProvider__getSourceSlice(self) }
-    }
-
-    pub fn to_source_content_ptr(&self) -> SourceContentPtr {
-        // SAFETY: opaque ZST handle — `UnsafeCell<[u8; 0]>` at offset 0 grants
-        // interior-mutability provenance, so deriving `*mut Self` from `&self`
-        // is sound. C++ owns the real storage; the `*mut` exists only to match
-        // `SourceContentPtr::from_bake_provider`'s signature (stores it as a
-        // raw address in a packed u60).
-        SourceContentPtr::from_bake_provider(self._p.get().cast::<Self>())
-    }
-
-    /// Returns the pre-bundled sourcemap JSON for `source_filename` if the
-    /// current global is a `Bake::GlobalObject`; `None` otherwise (caller falls
-    /// back to reading `<source>.map` from disk).
-    pub fn get_external_data(&self, source_filename: &[u8]) -> Option<&[u8]> {
-        // SAFETY: link-time-resolved `&'static` Rust-ABI static; the returned
-        // slice borrows `PerThread.bundled_outputs`, which outlives this
-        // `BakeSourceProvider` (the provider is created from a
-        // `bundled_outputs` entry), so reborrowing as `&'self [u8]` is sound.
-        let slice = unsafe { __BUN_BAKE_EXTERNAL_SOURCEMAP }(source_filename)?;
-        // SAFETY: per the hook contract above.
-        Some(unsafe { &*slice })
-    }
-
-    /// The last two arguments to this specify loading hints
-    pub fn get_source_map(
-        &self,
-        source_filename: &[u8],
-        load_hint: SourceMapLoadHint,
-        result: ParseUrlResultHint,
-    ) -> Option<ParseUrl> {
-        get_source_map_impl(self, source_filename, load_hint, result)
-    }
-}
-
-// Dispatch via a trait per PORTING.md §Dispatch.
-impl SourceProvider for BakeSourceProvider {
-    const HAS_EXTERNAL_DATA: bool = true;
-
-    fn get_source_slice(&self) -> bun_core::String {
-        Self::get_source_slice(self)
-    }
-    fn to_source_content_ptr(&self) -> SourceContentPtr {
-        Self::to_source_content_ptr(self)
-    }
-    fn get_external_data(&self, source_filename: &[u8]) -> Option<&[u8]> {
-        Self::get_external_data(self, source_filename)
-    }
-}
 
 // ── leaf types that compile cleanly today ─────────────────────────────────
 
@@ -487,97 +409,45 @@ impl SourceProvider for SourceProviderMap {
     }
 }
 
-bun_opaque::opaque_ffi! { pub struct DevServerSourceProvider; }
-
-#[repr(C)]
-pub struct DevServerSourceMapData {
-    pub ptr: *const u8,
-    pub length: usize,
-}
-
-unsafe extern "C" {
-    // Both C++ accessors are read-only (`provider->source()` /
-    // `provider->sourceMapJSON()`). Taking `*const` avoids casting away
-    // const from the `&self` borrow below; any interior mutation lives behind
-    // the FFI boundary in C++-owned storage that Rust has no provenance over
-    // (this type is an opaque ZST marker).
-    fn DevServerSourceProvider__getSourceSlice(
-        this: *const DevServerSourceProvider,
-    ) -> bun_core::String;
-    fn DevServerSourceProvider__getSourceMapJSON(
-        this: *const DevServerSourceProvider,
-    ) -> DevServerSourceMapData;
-}
-
-impl DevServerSourceProvider {
-    pub fn get_source_slice(&self) -> bun_core::String {
-        // SAFETY: opaque FFI handle; address-only pass-through, callee does not
-        // write Rust-visible memory.
-        unsafe { DevServerSourceProvider__getSourceSlice(self) }
-    }
-    pub fn get_source_map_json_raw(&self) -> DevServerSourceMapData {
-        // SAFETY: opaque FFI handle; address-only pass-through, callee does not
-        // write Rust-visible memory.
-        unsafe { DevServerSourceProvider__getSourceMapJSON(self) }
-    }
-
-    pub fn to_source_content_ptr(&self) -> SourceContentPtr {
-        SourceContentPtr::from_dev_server_provider(self)
-    }
-
-    /// The last two arguments to this specify loading hints
-    pub fn get_source_map(
-        &self,
-        source_filename: &[u8],
-        load_hint: SourceMapLoadHint,
-        result: ParseUrlResultHint,
-    ) -> Option<ParseUrl> {
-        get_source_map_impl(self, source_filename, load_hint, result)
-    }
-}
-
-impl SourceProvider for DevServerSourceProvider {
-    const IS_DEV_SERVER: bool = true;
-
-    fn get_source_slice(&self) -> bun_core::String {
-        DevServerSourceProvider::get_source_slice(self)
-    }
-    fn to_source_content_ptr(&self) -> SourceContentPtr {
-        DevServerSourceProvider::to_source_content_ptr(self)
-    }
-    fn get_source_map_json(&self) -> Option<&[u8]> {
-        let d = self.get_source_map_json_raw();
-        if d.length == 0 {
-            return None;
-        }
-        // SAFETY: ptr/length come from C++ and are valid for the call duration
-        Some(unsafe { core::slice::from_raw_parts(d.ptr, d.length) })
-    }
-}
-
 // ── SourceProvider trait + get_source_map_impl ─────────────────────────────
 
-/// Abstraction over `SourceProviderMap` / `DevServerSourceProvider` /
-/// `BakeSourceProvider` — a trait with default-`None` optional
-/// methods so each provider only overrides what it actually has.
+/// Abstraction over the JSC-runtime provider ([`SourceProviderMap`]) and the
+/// externally-implemented providers that higher tiers pack into a
+/// [`SourceContentPtr`] via `from_source_provider` — a trait with
+/// default-`None` optional capabilities so each provider only overrides what
+/// it actually has.
 pub trait SourceProvider {
     fn get_source_slice(&self) -> bun_core::String;
     fn to_source_content_ptr(&self) -> SourceContentPtr;
 
-    /// Returns the dev-server source map JSON, if this provider is a
-    /// `DevServerSourceProvider`. Default: `None`.
+    /// The provider's own in-memory sourcemap JSON for its source. Only
+    /// consulted when [`Self::HAS_SOURCE_MAP_JSON`]. Default: `None`.
     fn get_source_map_json(&self) -> Option<&[u8]> {
         None
     }
 
-    /// Returns external data (Bake production build), if available.
-    /// Default: `None`.
+    /// Phrases the user-facing warning emitted when [`Self::get_source_map_json`]
+    /// returned bytes that fail to parse; the host suppresses the
+    /// `--sourcemap=external` hint and aborts the lookup after calling this.
+    fn warn_invalid_source_map_json(&self, source_filename: &[u8], err: bun_core::Error) {
+        bun_core::warn!(
+            "Could not decode sourcemap in '{}': {}",
+            ::bstr::BStr::new(source_filename),
+            ::bstr::BStr::new(err.name()),
+        );
+    }
+
+    /// Externally-registered sourcemap JSON keyed by source filename (e.g. an
+    /// in-process build's output table). `None` falls back to reading
+    /// `<source>.map` from disk. Default: `None`.
     fn get_external_data(&self, _source_filename: &[u8]) -> Option<&[u8]> {
         None
     }
 
-    /// `true` only for `DevServerSourceProvider`.
-    const IS_DEV_SERVER: bool = false;
+    /// `true` for providers whose external map comes from
+    /// [`Self::get_source_map_json`]; that JSON is authoritative — when it is
+    /// absent the lookup stops instead of falling back to a `.map` file.
+    const HAS_SOURCE_MAP_JSON: bool = false;
     /// `true` only for providers that implement `get_external_data`.
     const HAS_EXTERNAL_DATA: bool = false;
 }
@@ -632,8 +502,9 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
         // try to load a .map file
         if load_hint != SourceMapLoadHint::IsInlineMap {
             'try_external: {
-                if P::IS_DEV_SERVER {
-                    // For DevServerSourceProvider, get the source map JSON directly
+                if P::HAS_SOURCE_MAP_JSON {
+                    // The provider carries its own sourcemap JSON; it is
+                    // authoritative, so a missing map ends the external lookup.
                     let Some(json_slice) = provider.get_source_map_json() else {
                         break 'try_external;
                     };
@@ -644,15 +515,11 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                             break 'parsed (SourceMapLoadHint::IsExternalMap, parsed);
                         }
                         Err(err) => {
-                            // Print warning even if this came from non-visible code like
-                            // calling `error.stack`. This message is only printed if
-                            // the sourcemap has been found but is invalid, such as being
-                            // invalid JSON text or corrupt mappings.
-                            bun_core::warn!(
-                                "Could not decode sourcemap in dev server runtime: {} - {}",
-                                ::bstr::BStr::new(source_filename),
-                                ::bstr::BStr::new(err.name()),
-                            );
+                            // Warn even if this came from non-visible code like
+                            // calling `error.stack`: the sourcemap was found but is
+                            // invalid, such as being invalid JSON text or corrupt
+                            // mappings. The provider phrases the message.
+                            provider.warn_invalid_source_map_json(source_filename, err);
                             // Disable the "try using --sourcemap=external" hint
                             crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
                             return None;
@@ -662,8 +529,9 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
 
                 if P::HAS_EXTERNAL_DATA {
                     'fallback_to_normal: {
-                        // BakeSourceProvider: if we're under Bake's production build the
-                        // global object is a Bake::GlobalObject and the sourcemap is on it.
+                        // Externally-registered map (e.g. an in-process build's
+                        // output table); when the provider has nothing for this
+                        // file, fall back to the on-disk `.map` lookup below.
                         let Some(data) = provider.get_external_data(source_filename) else {
                             break 'fallback_to_normal;
                         };

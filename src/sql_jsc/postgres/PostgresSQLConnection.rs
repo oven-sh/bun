@@ -7,8 +7,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::jsc::EventLoopTimer;
 use crate::jsc::webcore::AutoFlusher;
 use crate::jsc::{
-    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue,
-    JsResult, VirtualMachine, VirtualMachineSqlExt as _,
+    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult, VirtualMachine,
+    VirtualMachineSqlExt as _,
 };
 use bun_boringssl as BoringSSL;
 use bun_collections::{HashMap, IdentityContext, OffsetByteList, StringMap};
@@ -31,6 +31,7 @@ use crate::postgres::postgres_sql_query::{self, Status as QueryStatus};
 use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
 use crate::postgres::sasl::SASLStatus;
 use crate::shared::CachedStructure as PostgresCachedStructure;
+use crate::shared::connection_ctor_args::{self, ConnectionCtorArgs};
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::PostgresProtocol as protocol;
@@ -472,6 +473,7 @@ impl PostgresSQLConnection {
             bun_uws::SocketKind::PostgresTls,
             ssl_ctx,
             sni,
+            true, // is_client
             ext_size,
             ext_size,
         ) else {
@@ -760,6 +762,28 @@ impl PostgresSQLConnection {
     }
 
     pub fn on_close(&self) {
+        // A close before the handshake finished means the server (or an
+        // intermediary like a container port proxy) accepted the TCP
+        // connection but went away before completing startup — e.g. the
+        // database is still initializing. Report it as a connect failure
+        // (the connection was never established) rather than a closed
+        // connection so the error is actionable.
+        self.handle_socket_failure(|this| match this.status.get() {
+            Status::Connecting | Status::SentStartupMessage => this.fail(
+                b"Connection closed before the connection was established",
+                AnyPostgresError::ConnectionFailed,
+            ),
+            _ => this.fail(b"Connection closed", AnyPostgresError::ConnectionClosed),
+        });
+    }
+
+    pub fn on_connect_error(&self) {
+        self.handle_socket_failure(|this| {
+            this.fail(b"Failed to connect", AnyPostgresError::ConnectionRefused);
+        });
+    }
+
+    fn handle_socket_failure(&self, fail: impl FnOnce(&Self)) {
         self.unregister_auto_flusher();
 
         if self.vm().is_shutting_down() {
@@ -777,7 +801,7 @@ impl PostgresSQLConnection {
             event_loop.enter();
             self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
 
-            self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
+            fail(self);
             event_loop.exit();
         }
     }
@@ -1056,77 +1080,15 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     // `&mut self` helpers like `ssl_ctx_cache()` / `postgres_socket_group()`.
     let vm = global_object.bun_vm().as_mut();
     let arguments = callframe.arguments();
-    let hostname_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global_object)?);
-    let port = arguments[1].coerce::<i32>(global_object)?;
-
-    let username_str = bun_core::OwnedString::new(arguments[2].to_bun_string(global_object)?);
-    let password_str = bun_core::OwnedString::new(arguments[3].to_bun_string(global_object)?);
-    let database_str = bun_core::OwnedString::new(arguments[4].to_bun_string(global_object)?);
-    let ssl_mode: SSLMode = match arguments[5].to_int32() {
-        0 => SSLMode::Disable,
-        1 => SSLMode::Prefer,
-        2 => SSLMode::Require,
-        3 => SSLMode::VerifyCa,
-        4 => SSLMode::VerifyFull,
-        _ => SSLMode::Disable,
+    let Some(args) = ConnectionCtorArgs::<SSLMode>::parse(global_object, &mut *vm, arguments)?
+    else {
+        return Ok(JSValue::ZERO);
     };
-
-    let tls_object = arguments[6];
-
-    let mut tls_config: jsc::api::ServerConfig::SSLConfig = Default::default();
-    let mut secure: Option<*mut uws::SslCtx> = None;
-    if ssl_mode != SSLMode::Disable {
-        tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
-            Default::default()
-        } else if tls_object.is_object() {
-            match jsc::api::ServerConfig::SSLConfig::from_js(&mut *vm, global_object, tls_object) {
-                Ok(opt) => opt.unwrap_or_default(),
-                Err(_) => return Ok(JSValue::ZERO),
-            }
-        } else {
-            return Err(global_object
-                .throw_invalid_arguments(format_args!("tls must be a boolean or an object")));
-        };
-
-        if global_object.has_exception() {
-            drop(tls_config);
-            return Ok(JSValue::ZERO);
-        }
-
-        // We always request the cert so we can verify it and also we manually
-        // abort the connection if the hostname doesn't match. Built here (not
-        // at STARTTLS time) so cert/CA errors throw synchronously. Goes
-        // through the per-VM weak `SSLContextCache` so every connection in the
-        // pool — and every reconnect — shares one `SSL_CTX*` per distinct
-        // config instead of building a fresh one per `PostgresSQLConnection`.
-        let mut err: uws::create_bun_socket_error_t = uws::create_bun_socket_error_t::none;
-        secure = vm
-            .ssl_ctx_cache()
-            .get_or_create_opts(&tls_config.as_usockets_for_client_verification(), &mut err);
-        if secure.is_none() {
-            drop(tls_config);
-            return Err(
-                global_object.throw_value(crate::jsc::create_bun_socket_error_to_js(
-                    err,
-                    global_object,
-                )),
-            );
-        }
-    }
     // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
     // below. Ownership passes into `ptr.*` once allocated — `into_inner`
     // recovers them just before the Box is built so the connect-fail path's
     // `ptr.deinit()` is the sole cleanup.
-    // guard owns `(secure, tls_config)` by value. Do NOT
-    // `drop_in_place` a stack local that Rust would also auto-drop on unwind —
-    // that double-frees. The closure's `_tls_config` is dropped exactly once by
-    // normal scope-exit drop here.
-    let errdefer_guard = scopeguard::guard((secure, tls_config), |(secure, _tls_config)| {
-        if let Some(s) = secure {
-            // SAFETY: SSL_CTX_free is safe to call on a valid SSL_CTX*.
-            unsafe { BoringSSL::c::SSL_CTX_free(s) };
-        }
-    });
+    let errdefer_guard = connection_ctor_args::guard_tls(args.secure, args.tls_config);
 
     // `StringBuilder::append` takes `&mut self` and returns a borrow
     // of the backing buffer, so successive appends can't keep their `&[u8]`
@@ -1146,11 +1108,11 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
     let options_buf: Box<[u8]> = 'brk: {
         let mut b = bun_core::StringBuilder::default();
-        b.cap += username_str.utf8_byte_length()
+        b.cap += args.username_str.utf8_byte_length()
             + 1
-            + password_str.utf8_byte_length()
+            + args.password_str.utf8_byte_length()
             + 1
-            + database_str.utf8_byte_length()
+            + args.database_str.utf8_byte_length()
             + 1
             + options_str.utf8_byte_length()
             + 1
@@ -1158,15 +1120,15 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             + 1;
 
         let _ = b.allocate();
-        let u = username_str.to_utf8_without_ref();
+        let u = args.username_str.to_utf8_without_ref();
         username = bun_ptr::RawSlice::new(b.append(u.slice()));
         drop(u);
 
-        let p = password_str.to_utf8_without_ref();
+        let p = args.password_str.to_utf8_without_ref();
         password = bun_ptr::RawSlice::new(b.append(p.slice()));
         drop(p);
 
-        let d = database_str.to_utf8_without_ref();
+        let d = args.database_str.to_utf8_without_ref();
         database = bun_ptr::RawSlice::new(b.append(d.slice()));
         drop(d);
 
@@ -1194,10 +1156,10 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         if !entry.is_empty() && entry.contains(&0) {
             drop(options_buf);
             // tls_config / secure released by the errdefer above.
-            return global_object.throw_invalid_arguments_fmt(format_args!(
+            return Err(global_object.throw_invalid_arguments(format_args!(
                 "{} must not contain null bytes",
                 bstr::BStr::new(name)
-            ));
+            )));
         }
     }
 
@@ -1247,12 +1209,12 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             authentication_state: JsCell::new(AuthenticationState::Pending),
             secure,
             tls_config,
-            tls_status: Cell::new(if ssl_mode != SSLMode::Disable {
+            tls_status: Cell::new(if args.ssl_mode != SSLMode::Disable {
                 TLSStatus::Pending
             } else {
                 TLSStatus::None
             }),
-            ssl_mode,
+            ssl_mode: args.ssl_mode,
             idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
             connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
             flags: Cell::new(if use_unnamed_prepared_statements {
@@ -1276,7 +1238,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
 
     {
-        let hostname = hostname_str.to_utf8();
+        let hostname = args.hostname_str.to_utf8();
 
         // Postgres always opens plain TCP first (SSLRequest happens in-band),
         // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
@@ -1298,7 +1260,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 uws::SocketKind::Postgres,
                 None,
                 hostname.slice(),
-                port,
+                args.port,
                 ptr,
                 false,
             )
@@ -1389,7 +1351,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &PostgresSQLConnection, _socket: SocketType<SSL>, _: i32) {
-        Self::guarded(this, |t| t.on_close());
+        Self::guarded(this, |t| t.on_connect_error());
     }
 
     pub fn on_timeout(this: &PostgresSQLConnection, _socket: SocketType<SSL>) {
@@ -1418,7 +1380,27 @@ impl PostgresSQLConnection {
     }
 
     fn close(&self) {
-        self.disconnect();
+        // A close while the connect/handshake is still in flight gets no
+        // socket event: uws skips the on_close dispatch for sockets whose
+        // connect never completed, and `disconnect()` only tears down
+        // connected sockets. Fail the connection directly so the JS onclose
+        // callback fires, pending queries are rejected, and the in-flight
+        // socket is torn down instead of completing the handshake after
+        // close.
+        if !self.vm().is_shutting_down()
+            && matches!(
+                self.status.get(),
+                Status::Connecting | Status::SentStartupMessage
+            )
+        {
+            self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
+            // closing an in-flight connect dispatches no socket event, so the
+            // poll ref taken at creation is released here rather than in a
+            // socket callback
+            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+        } else {
+            self.disconnect();
+        }
         self.unregister_auto_flusher();
         self.write_buffer.with_mut(|b| b.clear_and_free());
     }
@@ -2991,7 +2973,7 @@ impl PostgresSQLConnection {
             }
             MessageType::NoticeResponse => {
                 debug!("UNSUPPORTED NoticeResponse");
-                let _resp = protocol::NoticeResponse::decode_internal(reader.reborrow())?;
+                let _resp = protocol::NoticeResponse::decode_notice_internal(reader.reborrow())?;
                 // _resp dropped at scope end
             }
             MessageType::NotificationResponse => {

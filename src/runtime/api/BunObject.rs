@@ -1833,14 +1833,20 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
             let _ = sys::munmap(ptr.cast::<u8>(), size as usize);
         }
 
-        jsc::array_buffer::make_typed_array_with_bytes_no_copy(
-            global_this,
-            jsc::TypedArrayType::TypeUint8,
-            map.as_ptr().cast_mut().cast::<c_void>(),
-            map.len(),
-            Some(munmap_dealloc),
-            map.len() as *mut c_void,
-        )
+        // SAFETY: `map` is the live mapping `bun_sys::mmap_file` just created
+        // (`&'static mut [u8]`, no drop guard); ownership moves to JSC, which
+        // unmaps it exactly once via `munmap_dealloc` with the length stuffed
+        // into the ctx pointer.
+        unsafe {
+            jsc::array_buffer::make_typed_array_with_bytes_no_copy(
+                global_this,
+                jsc::TypedArrayType::TypeUint8,
+                map.as_ptr().cast_mut().cast::<c_void>(),
+                map.len(),
+                Some(munmap_dealloc),
+                map.len() as *mut c_void,
+            )
+        }
     }
 }
 
@@ -2029,56 +2035,20 @@ pub(crate) fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> 
         }
     });
     for (i, index) in sort_indices.iter().enumerate() {
+        use crate::api::standalone_graph_jsc::FileJsc as _;
         let file: &mut GraphFile = &mut unsorted_files[*index as usize];
-        // NOTE (layering): the crate defining `StandaloneModuleGraph.File`
-        // can't depend on `bun_runtime::webcore::Blob`, so build the blob
-        // here from the file's `cached_blob` slot / contents.
-        let input_blob: *mut Blob = standalone_file_blob(file, global_this);
+        // `file_blob` keeps the embedded path (minus the `/$bunfs/root/` prefix)
+        // as the blob name, preserving any subdirectory from the asset template.
+        let input_blob: &mut Blob = file.file_blob(global_this);
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
-        // SAFETY: `standalone_file_blob` returns a non-null heap allocation.
-        let blob = Blob::new(unsafe { (*input_blob).dupe_with_content_type(true) });
+        let blob = Blob::new(input_blob.dupe_with_content_type(true));
         // SAFETY: `Blob::new` returned a fresh heap allocation.
-        unsafe { (*blob).name.set((*input_blob).name.get().dupe_ref()) };
+        unsafe { (*blob).name.set(input_blob.name.get().dupe_ref()) };
         // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
         array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
     }
 
     Ok(array)
-}
-
-/// `StandaloneModuleGraph.File.blob()` — ported here (rather than upstream in
-/// `bun_standalone_graph`) because `Blob`/`Store` live in `bun_runtime::webcore`
-/// and would otherwise create a crate cycle.
-fn standalone_file_blob(
-    file: &mut bun_standalone_graph::File,
-    global: &JSGlobalObject,
-) -> *mut crate::webcore::blob::Blob {
-    use crate::webcore::blob::{Blob, Store, StoreRef};
-    if let Some(cached) = file.cached_blob {
-        return cached.as_ptr().cast::<Blob>();
-    }
-    let store: StoreRef = Store::init(file.contents.as_bytes().to_vec());
-    let blob_body = Blob::init_with_store(store, global);
-    // NOTE (cyclebreak): `MimeType::by_loader` takes the `#[repr(u8)]`
-    // discriminant and an extension.
-    let mime =
-        bun_http_types::MimeType::by_loader(file.loader as u8, bun_paths::extension(file.name));
-    // SAFETY: `mime.value` is `Cow<'static, [u8]>`; the slice pointer is
-    // stable for the life of `mime` (`'static` for the table-backed loaders).
-    blob_body
-        .content_type
-        .set(std::ptr::from_ref::<[u8]>(mime.value.as_ref()));
-    // Hold the (potentially owned) `Cow` for the lifetime of the cached blob.
-    // The `by_loader` table only returns `Borrowed(&'static ..)`, so leaking
-    // is a no-op for the static case and correct for the owned `OTHER` case.
-    let _mime = core::mem::ManuallyDrop::new(mime);
-    blob_body
-        .name
-        .set(BunString::clone_utf8(bun_paths::basename(file.name)));
-    let blob = Blob::new(blob_body);
-    // SAFETY: `Blob::new` heap-allocates; never null.
-    file.cached_blob = core::ptr::NonNull::new(blob.cast());
-    blob
 }
 
 pub(crate) fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -2543,11 +2513,16 @@ pub mod JSZlib {
                 let leaked: &'static mut [u8] = list.leak();
                 let ptr = leaked.as_mut_ptr();
                 let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                array_buffer.to_js_with_context(
-                    global_this,
-                    ptr.cast::<c_void>(),
-                    Some(global_deallocator),
-                )
+                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
+                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
+                // GC via the ctx pointer (the data pointer itself).
+                unsafe {
+                    array_buffer.to_js_with_context(
+                        global_this,
+                        ptr.cast::<c_void>(),
+                        Some(global_deallocator),
+                    )
+                }
             }
             Library::Libdeflate => {
                 let decompressor_ptr = bun_libdeflate::Decompressor::alloc();
@@ -2593,11 +2568,16 @@ pub mod JSZlib {
                 let leaked: &'static mut [u8] = list.leak();
                 let ptr = leaked.as_mut_ptr();
                 let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                array_buffer.to_js_with_context(
-                    global_this,
-                    ptr.cast::<c_void>(),
-                    Some(global_deallocator),
-                )
+                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
+                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
+                // GC via the ctx pointer (the data pointer itself).
+                unsafe {
+                    array_buffer.to_js_with_context(
+                        global_this,
+                        ptr.cast::<c_void>(),
+                        Some(global_deallocator),
+                    )
+                }
             }
         }
     }
@@ -2694,11 +2674,16 @@ pub mod JSZlib {
                 let leaked: &'static mut [u8] = list.leak();
                 let ptr = leaked.as_mut_ptr();
                 let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                array_buffer.to_js_with_context(
-                    global_this,
-                    ptr.cast::<c_void>(),
-                    Some(global_deallocator),
-                )
+                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
+                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
+                // GC via the ctx pointer (the data pointer itself).
+                unsafe {
+                    array_buffer.to_js_with_context(
+                        global_this,
+                        ptr.cast::<c_void>(),
+                        Some(global_deallocator),
+                    )
+                }
             }
             Library::Libdeflate => {
                 let compressor_ptr = bun_libdeflate::Compressor::alloc(level.unwrap_or(6));
@@ -2737,11 +2722,16 @@ pub mod JSZlib {
                 let leaked: &'static mut [u8] = list.leak();
                 let ptr = leaked.as_mut_ptr();
                 let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                array_buffer.to_js_with_context(
-                    global_this,
-                    ptr.cast::<c_void>(),
-                    Some(global_deallocator),
-                )
+                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
+                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
+                // GC via the ctx pointer (the data pointer itself).
+                unsafe {
+                    array_buffer.to_js_with_context(
+                        global_this,
+                        ptr.cast::<c_void>(),
+                        Some(global_deallocator),
+                    )
+                }
             }
         }
     }

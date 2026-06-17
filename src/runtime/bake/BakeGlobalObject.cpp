@@ -38,7 +38,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
 
         if (!keyString) {
             auto promise = JSC::JSPromise::create(vm, global->promiseStructure());
-            promise->reject(vm, global, JSC::createError(global, "import() requires a string"_s));
+            promise->reject(vm, JSC::createError(global, "import() requires a string"_s));
             return promise;
         }
 
@@ -94,7 +94,7 @@ static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->rejectAsHandled(vm, globalObject, value);
+    promise->rejectAsHandled(vm, value);
     return promise;
 }
 
@@ -102,7 +102,7 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->fulfill(vm, globalObject, value);
+    promise->fulfill(vm, value);
     return promise;
 }
 

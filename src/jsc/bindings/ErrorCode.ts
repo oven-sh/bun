@@ -257,7 +257,9 @@ const errors: ErrorCodeMapping = [
   ["ERR_TLS_PROTOCOL_VERSION_CONFLICT", TypeError],
   ["ERR_TLS_PSK_SET_IDENTITY_HINT_FAILED", Error],
   ["ERR_TLS_RENEGOTIATION_DISABLED", Error],
+  ["ERR_TLS_RENEGOTIATION_UNSUPPORTED", Error],
   ["ERR_TLS_SNI_FROM_SERVER", Error],
+  ["ERR_TLS_INVALID_STATE", Error],
   ["ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS", TypeError],
   ["ERR_SSL_NO_CIPHER_MATCH", Error],
   ["ERR_UNAVAILABLE_DURING_EXIT", Error],
@@ -322,5 +324,14 @@ const errors: ErrorCodeMapping = [
   ["ERR_SECRETS_INTERACTION_NOT_ALLOWED", Error],
   ["ERR_SECRETS_AUTH_FAILED", Error],
   ["ERR_SECRETS_INTERACTION_REQUIRED", Error],
+  ["ERR_POSTGRES_CONNECTION_FAILED", Error, "PostgresError"],
+  ["ERR_MYSQL_CONNECTION_FAILED", Error, "MySQLError"],
+  ["ERR_POSTGRES_CONNECTION_REFUSED", Error, "PostgresError"],
+  ["ERR_MYSQL_CONNECTION_REFUSED", Error, "MySQLError"],
+  // Appended (not alphabetical): discriminants are index-aligned with the
+  // checked-in Rust mirror (src/jsc/ErrorCode.rs) — only ever append here.
+  ["ERR_HTTP2_GOAWAY_SESSION", Error],
+  ["ERR_TLS_ALPN_CALLBACK_INVALID_RESULT", TypeError],
+  ["ERR_PROXY_TUNNEL", Error],
 ];
 export default errors;

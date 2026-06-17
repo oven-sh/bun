@@ -348,6 +348,13 @@ pub mod ssl_wrapper {
         pub write: fn(T, &[u8]),
         pub on_data: fn(T, &[u8]),
         pub on_close: fn(T),
+        /// A new resumable TLS session arrived (serialized SSL_SESSION bytes)
+        /// - node's `'session'` event. `None` opts the SSL out of session
+        /// parking entirely (fetch / WebSocket tunnels have no consumer).
+        pub on_session: Option<fn(T, &[u8])>,
+        /// An NSS key-log line (with the trailing newline node appends) -
+        /// node's `'keylog'` event. Same opt-in rules as `on_session`.
+        pub on_keylog: Option<fn(T, &[u8])>,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -478,6 +485,14 @@ pub mod ssl_wrapper {
             let _ = scopeguard::ScopeGuard::into_inner(input_guard);
             let ssl = scopeguard::ScopeGuard::into_inner(ssl_guard);
 
+            // Opt into the parked new-session/keylog queues only when a
+            // handler will drain them (see `flush_pending_events`); the C
+            // callbacks skip un-opted SSLs entirely.
+            if handlers.on_session.is_some() || handlers.on_keylog.is_some() {
+                // SAFETY: `ssl` is the live SSL* created above.
+                unsafe { us_ssl_enable_pending_events(ssl.as_ptr()) };
+            }
+
             let flags = Flags::default();
             flags.set_is_client(is_client);
 
@@ -565,6 +580,28 @@ pub mod ssl_wrapper {
             };
             // we already sent the ssl shutdown
             if Self::r(this).flags.sent_ssl_shutdown() || Self::r(this).flags.fatal_error() {
+                if fast_shutdown {
+                    // A fast shutdown is a full teardown — the owner calls it
+                    // right before detaching/freeing handlers.ctx (proxy tunnel
+                    // on response-complete; TLS-over-duplex on raw EOF).
+                    //
+                    // Run the close callback now, regardless of whether the
+                    // peer's close_notify has arrived: if it HAS (processed
+                    // mid handle_reading, which sets sent_ssl_shutdown before
+                    // flushing the final decrypted bytes), closed_notified may
+                    // still be unset and handle_reading's deferred
+                    // trigger_close_callback would otherwise fire on_close
+                    // into the freed ctx; if it has NOT (peer went away after
+                    // our shutdown), the TLS-over-duplex teardown chain
+                    // (UpgradedDuplex::on_close -> DuplexUpgradeContext::on_close
+                    // -> deinit) never runs and leaks the whole context graph.
+                    // trigger_close_callback is idempotent (closed_notified).
+                    Self::r(this).flags.set_received_ssl_shutdown(true);
+                    Self::r(this).trigger_close_callback();
+                    // Do not read self after the close callback: the owner's
+                    // teardown chain has started.
+                    return true;
+                }
                 return Self::r(this).flags.received_ssl_shutdown();
             }
 
@@ -1121,6 +1158,64 @@ pub mod ssl_wrapper {
                     // read data can trigger writing so we need to handle it
                     Self::r(this).handle_writing(&mut buffer);
                 }
+
+                // The SSL_do_handshake/SSL_read calls above may have parked
+                // new-session tickets / keylog lines (BoringSSL surfaces them
+                // mid-read, where dispatching JS could free the SSL out from
+                // under the caller). The stack has unwound here, so hand them
+                // to the owner - same ordering as the C path's
+                // ssl_flush_pending_session: handshake/data callbacks first,
+                // then sessions.
+                Self::flush_pending_events(this, &mut buffer);
+            }
+        }
+
+        /// Drain the parked new-session / keylog queues into the owner's
+        /// callbacks. Only SSLs whose handlers opted in ever park (see
+        /// `init_with_ctx`), so this is a no-op FFI probe otherwise. The
+        /// callbacks run JS which may close the wrapper; `self.ssl` is
+        /// re-checked between pops and nothing else of `self` is borrowed
+        /// across a dispatch.
+        fn flush_pending_events(this: *mut Self, buffer: &mut [u8; BUFFER_SIZE]) {
+            if Self::r(this).handlers.on_session.is_some() {
+                loop {
+                    let Some(ssl) = Self::r(this).ssl else { return };
+                    // SAFETY: ssl is live (checked above); buffer is writable
+                    // for BUFFER_SIZE bytes, which covers the 64 KB parking cap.
+                    let len = unsafe {
+                        us_ssl_pop_pending_session(
+                            ssl.as_ptr(),
+                            buffer.as_mut_ptr(),
+                            c_int::try_from(BUFFER_SIZE).expect("int cast"),
+                        )
+                    };
+                    if len <= 0 {
+                        break;
+                    }
+                    if let Some(on_session) = Self::r(this).handlers.on_session {
+                        on_session(Self::r(this).handlers.ctx, &buffer[..len as usize]);
+                    }
+                }
+            }
+            if Self::r(this).handlers.on_keylog.is_some() {
+                loop {
+                    let Some(ssl) = Self::r(this).ssl else { return };
+                    // SAFETY: same as the session pop above; keylog entries
+                    // are capped at 4 KB+1, well within BUFFER_SIZE.
+                    let len = unsafe {
+                        us_ssl_pop_pending_keylog(
+                            ssl.as_ptr(),
+                            buffer.as_mut_ptr(),
+                            c_int::try_from(BUFFER_SIZE).expect("int cast"),
+                        )
+                    };
+                    if len <= 0 {
+                        break;
+                    }
+                    if let Some(on_keylog) = Self::r(this).handlers.on_keylog {
+                        on_keylog(Self::r(this).handlers.ctx, &buffer[..len as usize]);
+                    }
+                }
             }
         }
     }
@@ -1151,6 +1246,25 @@ pub mod ssl_wrapper {
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
+        /// Opt this SSL into the parked new-session/keylog queues
+        /// (openssl.c's `us_ssl_new_session_cb` / `us_ssl_keylog_cb` skip
+        /// SSLs without the marker).
+        // SAFETY (unsafe fn): `ssl` must be a live `SSL*`.
+        fn us_ssl_enable_pending_events(ssl: *mut boring_sys::SSL);
+        /// Pop the oldest parked session/keylog entry into `out`; returns the
+        /// entry length or 0 when the queue is empty.
+        // SAFETY (unsafe fn): `ssl` live; `out` writable for `out_cap` bytes.
+        fn us_ssl_pop_pending_session(
+            ssl: *mut boring_sys::SSL,
+            out: *mut u8,
+            out_cap: c_int,
+        ) -> c_int;
+        // SAFETY (unsafe fn): `ssl` live; `out` writable for `out_cap` bytes.
+        fn us_ssl_pop_pending_keylog(
+            ssl: *mut boring_sys::SSL,
+            out: *mut u8,
+            out_cap: c_int,
+        ) -> c_int;
     }
 }
 

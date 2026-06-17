@@ -1,4 +1,4 @@
-# Version: 20
+# Version: 21
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.
@@ -215,9 +215,9 @@ function Install-Git {
 }
 
 function Install-NodeJs {
-  # Pin to match the ABI version Bun expects (NODE_MODULE_VERSION 137).
-  # Latest Node (25.x) uses ABI 141 which breaks node-gyp tests.
-  $nodejsVersion = "24.3.0"
+  # Pin to match the ABI version Bun expects (NODE_MODULE_VERSION 147).
+  # A mismatched Node ABI breaks node-gyp tests.
+  $nodejsVersion = "26.3.0"
   Install-Scoop-Package "nodejs@$nodejsVersion" -Command node
 
   # Seed node-gyp's cache so napi tests don't re-download headers + node.lib

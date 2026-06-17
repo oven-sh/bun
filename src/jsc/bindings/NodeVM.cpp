@@ -341,7 +341,7 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    promise->fulfill(vm, globalObject, result);
+    promise->fulfill(vm, result);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSObject* thenResult = promise->then(globalObject, transformer, jsUndefined());
@@ -937,7 +937,7 @@ bool NodeVMSpecialSandbox::getOwnPropertySlot(JSObject* cell, JSGlobalObject* gl
     auto* thisObject = uncheckedDowncast<NodeVMSpecialSandbox>(cell);
     NodeVMGlobalObject* parentGlobal = thisObject->parentGlobal();
 
-    if (propertyName.uid()->utf8() == "globalThis") [[unlikely]] {
+    if (propertyName == vm.propertyNames->globalThis) [[unlikely]] {
         slot.disableCaching();
         slot.setThisValue(thisObject);
         slot.setValue(thisObject, slot.attributes(), thisObject);
@@ -963,7 +963,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
 
     bool notContextified = thisObject->isNotContextified();
 
-    if (notContextified && propertyName.uid()->utf8() == "globalThis") [[unlikely]] {
+    if (notContextified && propertyName == vm.propertyNames->globalThis) [[unlikely]] {
         slot.disableCaching();
         slot.setThisValue(thisObject);
         slot.setValue(thisObject, slot.attributes(), thisObject->specialSandbox());
@@ -1463,16 +1463,16 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
             return NodeVM::importModuleInner(globalObject, moduleName, WTF::move(parameters), sourceOrigin, globalObject->dynamicImportCallback(), JSValue {});
         }
 
-        promise->reject(vm, globalObject, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
+        promise->reject(vm, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
         return promise;
     }
 
     // Default behavior copied from JSModuleLoader::importModule
     auto moduleNameString = moduleName->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+    RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
     scope.release();
-    promise->reject(vm, globalObject, createError(globalObject, makeString("Could not import the module '"_s, moduleNameString.data, "'."_s)));
+    promise->reject(vm, createError(globalObject, makeString("Could not import the module '"_s, moduleNameString.data, "'."_s)));
     return promise;
 }
 

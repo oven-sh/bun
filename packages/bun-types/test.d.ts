@@ -94,6 +94,23 @@ declare module "bun:test" {
     function resetAllMocks(): void;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     function setSystemTime(now?: number | Date): void;
+    /**
+     * Returns the current clock time in milliseconds since the Unix epoch.
+     * When fake timers are active (via {@link useFakeTimers} or {@link setSystemTime}),
+     * this returns the fake clock value; otherwise it returns the real `Date.now()`.
+     *
+     * @example
+     * ```ts
+     * import { jest } from "bun:test";
+     *
+     * jest.setSystemTime(new Date("2020-01-01"));
+     * console.log(jest.now()); // 1577836800000
+     *
+     * jest.useRealTimers();
+     * console.log(jest.now()); // current real timestamp
+     * ```
+     */
+    function now(): number;
     function setTimeout(milliseconds: number): void;
     function useFakeTimers(options?: { now?: number | Date }): typeof vi;
     function useRealTimers(): typeof vi;

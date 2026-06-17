@@ -29,3 +29,6 @@ jest.fn<() => string>().mockResolvedValue("24");
 jest.fn().mockClear();
 jest.fn().mockReset();
 jest.fn().mockRejectedValueOnce(new Error());
+
+// jest.now() returns a number (current clock time, fake-timer-aware)
+expectType<number>(jest.now());

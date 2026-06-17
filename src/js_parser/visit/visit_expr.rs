@@ -67,7 +67,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .e_identifier()
                         .expect("infallible: variant checked")
                         .ref_;
-                    if r.is_source_contents_slice() && !matches!(r.inner_index(), 6 | 7 | 9 | 10) {
+                    if r.is_source_contents_slice() && !matches!(r.inner_index(), 4 | 6 | 7 | 9 | 10)
+                    {
                         return;
                     }
                 }
@@ -218,26 +219,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // effect that must survive is the use_count_estimate bump for
             // `module` / `exports` / `require` / `__dirname` / `__filename`,
             // which `to_ast` reads to derive `exports_kind` and the
-            // `uses_*_ref` flags. Route only those through the full path.
+            // `uses_*_ref` flags. `eval` is also routed through so that
+            // `is_direct_eval` and the printer's `(0, eval)` indirect-eval
+            // re-wrap see a resolved Unbound symbol. `AllocatedName` refs
+            // (escaped identifiers, e.g. `abc`) always fall through —
+            // `NoOpRenamer` only special-cases `SourceContentsSlice`.
             let r = expr.data.e_identifier().expect("infallible: variant").ref_;
-            // For `SourceContentsSlice` refs (the only kind the parse pass
-            // produces for identifier uses), `inner_index` is the byte length.
-            let len = if r.is_source_contents_slice() {
-                r.inner_index()
-            } else {
-                p.load_name_from_ref(r).len() as u32
-            };
-            if !matches!(len, 6 | 7 | 9 | 10) {
-                return;
+            if r.is_source_contents_slice() {
+                if !matches!(r.inner_index(), 4 | 6 | 7 | 9 | 10) {
+                    return;
+                }
+                if !matches!(
+                    p.load_name_from_ref(r),
+                    b"eval" | b"module" | b"exports" | b"require" | b"__dirname" | b"__filename"
+                ) {
+                    return;
+                }
             }
-            let name = p.load_name_from_ref(r);
-            if !matches!(
-                name,
-                b"module" | b"exports" | b"require" | b"__dirname" | b"__filename"
-            ) {
-                return;
-            }
-            // Fall through for the special names so their use counts are tracked.
         }
         let mut e_ = expr
             .data

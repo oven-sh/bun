@@ -1736,6 +1736,16 @@ export default <>hi</>
             "function outer(){ { eval(String.fromCharCode(120)); function f(){return 1} } return f() }",
           );
           if (annexB.includes("let f")) throw new Error("Annex-B function decl became block-scoped let");
+          for (const src of [
+            "(1 ? eval : 0)(x)",
+            "(true && eval)(x)",
+            "(false || eval)(x)",
+            "(null ?? eval)(x)",
+          ]) {
+            const out = T.transformSync(src);
+            if (!out.includes("(0, eval)")) throw new Error("indirect eval became direct: " + src + " -> " + out);
+          }
+          if (!T.transformSync("\\\\u0061bc;").includes("abc")) throw new Error("escaped identifier mis-printed");
           process.stdout.write("ok");
         `,
       ],
@@ -3020,7 +3030,6 @@ class Foo {
       const out = t.transformSync("function f(){const x=5;return x}\n");
       // Either the const is kept, or it's inlined as `return 5` — but never
       // `return x` with the declaration gone.
-      expect(out).not.toMatch(/return x[;\s]/);
       expect(out.includes("const x") || out.includes("return 5")).toBe(true);
 
       // `inline: true` alone (no minify) must still inline.

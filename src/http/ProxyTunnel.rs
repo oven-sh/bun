@@ -625,6 +625,10 @@ impl ProxyTunnel {
                 on_handshake,
                 on_close,
                 write: write_encrypted,
+                // fetch's proxy tunnel surfaces no 'session'/'keylog' events;
+                // opting out keeps its SSL off the parked queues entirely.
+                on_session: None,
+                on_keylog: None,
                 ctx: this.as_erased_ptr().as_ptr(),
             },
         ) {

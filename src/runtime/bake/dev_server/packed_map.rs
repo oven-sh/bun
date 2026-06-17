@@ -76,7 +76,8 @@ impl PackedMap {
 
     #[inline]
     pub fn memory_cost(&self) -> usize {
-        let mut cost = self.vlq().len() + self.quoted_contents().len() + core::mem::size_of::<Self>();
+        let mut cost =
+            self.vlq().len() + self.quoted_contents().len() + core::mem::size_of::<Self>();
         for inner in self.inner_sources.iter() {
             cost += inner.path.len()
                 + inner.escaped_content.len()

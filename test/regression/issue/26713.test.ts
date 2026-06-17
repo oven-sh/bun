@@ -5,7 +5,7 @@
 // through that input sourcemap so the emitted map's `sources` point at the
 // authored source, not the intermediate `.js`.
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
@@ -62,11 +62,7 @@ describe.concurrent("input sourcemap chaining for external .map references (#267
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("error");
     const out = JSON.parse(stdout);
     // The original TypeScript source must appear in the emitted sourcemap.
@@ -101,11 +97,7 @@ describe.concurrent("input sourcemap chaining for external .map references (#267
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("error");
     const out = JSON.parse(stdout);
     expect(out.sources.some((s: string) => s.replaceAll("\\", "/").endsWith("src/main.ts"))).toBe(true);

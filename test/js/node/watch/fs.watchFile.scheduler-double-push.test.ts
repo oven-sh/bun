@@ -105,12 +105,13 @@ test("fs.watchFile scheduler does not double-push its WorkPool task under interv
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // stderr is included in the assertion object for diagnostics on failure
-  // but not compared exactly (debug/ASAN builds may emit benign warnings).
-  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+  // stderr is carried in the actual object so a crash banner shows in the
+  // failure diff, but matched permissively because debug/ASAN builds may
+  // emit benign warnings.
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
     stdout: JSON.stringify({ ok: true, rounds: 40 }),
+    stderr: expect.any(String),
     exitCode: 0,
     signalCode: null,
   });
-  void stderr;
 }, 30_000);

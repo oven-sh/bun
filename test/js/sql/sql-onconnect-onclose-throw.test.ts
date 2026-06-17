@@ -14,6 +14,8 @@
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer, isDockerEnabled, tempDir } from "harness";
+import path from "node:path";
+import { closedPort } from "./wire-frames";
 
 async function runFixture(code: string, env: Record<string, string> = {}) {
   using dir = tempDir("sql-throwing-hooks", { "fixture.ts": code });
@@ -90,33 +92,22 @@ if (isDockerEnabled()) {
   });
 }
 
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
 // A port with nothing listening on it, so the connection is refused. Refused
 // connections fail fast (not retried), so the throwing onclose fires on the
-// first attempt; without the fix the pending query is never rejected.
-const closedPort = /* ts */ `
-const net = require("net");
-function closedPort() {
-  return new Promise(resolve => {
-    const server = net.createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const port = server.address().port;
-      server.close(() => resolve(port));
-    });
-  });
-}
-`;
-
-function refusedConnectionFixture(adapter: "postgres" | "mysql") {
-  const url = adapter === "postgres" ? "postgres://postgres@127.0.0.1:" : "mysql://root@127.0.0.1:";
-  const db = adapter === "postgres" ? "/postgres" : "/db";
-  return (
-    closedPort +
-    /* ts */ `
+// first attempt; without the fix the pending query is never rejected. The port
+// is allocated in the test process via closedPort() from ./wire-frames and the
+// resulting URL passed to the fixture as FIXTURE_URL.
+const refusedConnectionFixture = /* ts */ `
 import { SQL } from "bun";
 process.on("uncaughtException", err => console.log("uncaught:", err.message));
-const port = await closedPort();
 const sql = new SQL({
-  url: "${url}" + port + "${db}",
+  url: process.env.FIXTURE_URL,
   max: 1,
   onclose(err) {
     console.log("onclose:", err.code);
@@ -130,31 +121,22 @@ try {
   console.log("query rejected:", err.code);
 }
 process.exit(0);
-`
+`;
+
+for (const [adapter, refusedCode, url] of [
+  ["postgres", "ERR_POSTGRES_CONNECTION_REFUSED", (port: number) => `postgres://postgres@127.0.0.1:${port}/postgres`],
+  ["mysql", "ERR_MYSQL_CONNECTION_REFUSED", (port: number) => `mysql://root@127.0.0.1:${port}/db`],
+] as const) {
+  test.concurrent(
+    `${adapter}: a throwing onclose callback still rejects pending queries when the connection is refused`,
+    async () => {
+      const port = await closedPort();
+      const { stdout, exitCode } = await runFixture(refusedConnectionFixture, { FIXTURE_URL: url(port) });
+      expect(stdout).toBe(`onclose: ${refusedCode}\nuncaught: boom from onclose\nquery rejected: ${refusedCode}\n`);
+      expect(exitCode).toBe(0);
+    },
   );
 }
-
-test.concurrent(
-  "postgres: a throwing onclose callback still rejects pending queries when the connection is refused",
-  async () => {
-    const { stdout, exitCode } = await runFixture(refusedConnectionFixture("postgres"));
-    expect(stdout).toBe(
-      "onclose: ERR_POSTGRES_CONNECTION_REFUSED\nuncaught: boom from onclose\nquery rejected: ERR_POSTGRES_CONNECTION_REFUSED\n",
-    );
-    expect(exitCode).toBe(0);
-  },
-);
-
-test.concurrent(
-  "mysql: a throwing onclose callback still rejects pending queries when the connection is refused",
-  async () => {
-    const { stdout, exitCode } = await runFixture(refusedConnectionFixture("mysql"));
-    expect(stdout).toBe(
-      "onclose: ERR_MYSQL_CONNECTION_REFUSED\nuncaught: boom from onclose\nquery rejected: ERR_MYSQL_CONNECTION_REFUSED\n",
-    );
-    expect(exitCode).toBe(0);
-  },
-);
 
 // When createConnection fails synchronously (here: a password function that
 // throws), onclose used to be invoked while the adapter was still filling
@@ -198,6 +180,12 @@ process.exit(0);
   expect(exitCode).toBe(0);
 });
 
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
 // The forced-close path (#32095) and the throwing-callback path (#32037) meet
 // in the pool connection's close handler: the user's onclose runs first and
 // may throw, and the bookkeeping that follows it must still settle the
@@ -205,30 +193,16 @@ process.exit(0);
 // never answers keeps the connection mid-handshake, and connectionTimeout: 0
 // disables the connect timer, so close() is the only teardown path; if the
 // throw skipped the bookkeeping these fixtures would never print "closed".
-const neverAnsweringServer = /* ts */ `
-const net = require("net");
-function neverAnsweringServer() {
-  return new Promise(resolveListening => {
-    const first = Promise.withResolvers();
-    const server = net.createServer(socket => {
-      socket.unref();
-      first.resolve();
-    });
-    server.unref();
-    server.listen(0, "127.0.0.1", () => {
-      resolveListening({ port: server.address().port, accepted: first.promise });
-    });
-  });
-}
-`;
+// The mock server lives in the fixture process (it must observe `accepted`
+// before forcing close) and is imported from ./wire-frames by absolute path.
+const wireFramesPath = path.join(import.meta.dir, "wire-frames.ts");
 
 function forcedCloseFixture(adapter: "postgres" | "mysql") {
   const url = adapter === "postgres" ? "postgres://postgres@127.0.0.1:" : "mysql://root@127.0.0.1:";
   const db = adapter === "postgres" ? "/postgres" : "/db";
-  return (
-    neverAnsweringServer +
-    /* ts */ `
+  return /* ts */ `
 import { SQL } from "bun";
+import { neverAnsweringServer } from ${JSON.stringify(wireFramesPath)};
 process.on("uncaughtException", err => console.log("uncaught:", err.message));
 const { port, accepted } = await neverAnsweringServer();
 const sql = new SQL({
@@ -246,8 +220,7 @@ await sql.close({ timeout: "0" });
 console.log("closed");
 console.log("query rejected:", (await queryError).code);
 process.exit(0);
-`
-  );
+`;
 }
 
 for (const [adapter, closedCode] of [

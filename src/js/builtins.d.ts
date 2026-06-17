@@ -756,6 +756,7 @@ declare function $ERR_VM_MODULE_NOT_MODULE(): Error;
 declare function $ERR_VM_MODULE_DIFFERENT_CONTEXT(): Error;
 declare function $ERR_VM_MODULE_LINK_FAILURE(message: string, cause: Error): Error;
 declare function $ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS(): TypeError;
+declare function $ERR_TLS_ALPN_CALLBACK_INVALID_RESULT(message: string): TypeError;
 declare function $ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS(): Error;
 declare function $ERR_HTTP2_CONNECT_AUTHORITY(): Error;
 declare function $ERR_HTTP2_CONNECT_SCHEME(): Error;

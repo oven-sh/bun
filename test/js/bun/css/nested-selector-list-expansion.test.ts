@@ -298,10 +298,17 @@ test.concurrent(
       killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(proc.signalCode).toBeNull();
-    expect(stdout).toContain("ERR " + NESTING_LIMIT_ERROR);
-    expect(exitCode).toBe(0);
+    expect({
+      stdout: stdout.trim(),
+      exitCode,
+      signalCode: proc.signalCode,
+      panicked: stderr.includes("panic"),
+    }).toEqual({
+      stdout: "ERR " + NESTING_LIMIT_ERROR + " when compiling CSS nesting for the configured targets",
+      exitCode: 0,
+      signalCode: null,
+      panicked: false,
+    });
   },
   90_000,
 );

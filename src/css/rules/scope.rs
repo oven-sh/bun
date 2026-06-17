@@ -30,6 +30,14 @@ impl<R> ScopeRule<R> {
         // compiling nesting, like style rule preludes do (see
         // `serialize::serialize_nesting`).
         dest.nesting_expansions = 0;
+        // Meter the prelude against the nesting-expansion byte budget (see
+        // `StyleRule::to_css_base`). `&` can expand when an outer parent
+        // context is set, or when `<scope-end>` serializes with
+        // `<scope-start>` as a temporary parent below; without either the
+        // prelude serializes verbatim and is not charged.
+        let has_expanding_context =
+            dest.ctx.is_some() || (self.scope_start.is_some() && self.scope_end.is_some());
+        let prelude_before = has_expanding_context.then(|| dest.bytes_written());
         if let Some(scope_start) = &self.scope_start {
             dest.write_char(b'(')?;
             // scope_start.to_css(dest)?;
@@ -64,6 +72,16 @@ impl<R> ScopeRule<R> {
             }
             dest.write_char(b')')?;
             dest.whitespace()?;
+        }
+        if let Some(before) = prelude_before {
+            let emitted = dest.bytes_written().saturating_sub(before);
+            dest.nesting_expansion_bytes = dest.nesting_expansion_bytes.saturating_add(emitted);
+            if dest.nesting_expansion_bytes > super::style::MAX_NESTING_EXPANSION_BYTES {
+                return dest.new_error(
+                    crate::error::PrinterErrorKind::maximum_nesting_expansion,
+                    None,
+                );
+            }
         }
         dest.write_char(b'{')?;
         dest.indent();

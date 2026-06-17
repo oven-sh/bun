@@ -108,7 +108,7 @@ const MAX_PREFIX_EXPANSION_BYTES: usize = 64 << 20;
 /// expansion, so bail out with an error instead of allocating without
 /// bound. Real stylesheets stay far below this — even very large nested
 /// sheets expand to a few megabytes of selector preludes.
-const MAX_NESTING_EXPANSION_BYTES: usize = 64 << 20;
+pub(super) const MAX_NESTING_EXPANSION_BYTES: usize = 64 << 20;
 
 impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {

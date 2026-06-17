@@ -215,16 +215,11 @@ impl Impl {
         // call site that holds the corrupted Strong. The 0x10000 floor is
         // Windows' default null-page guard; legitimate `Impl*` are bmalloc'd
         // far above it.
-        if cfg!(debug_assertions) || cfg!(windows) {
-            // Always-on on Windows while #53265 fs-promises-writeFile segfault
-            // is being root-caused; release-stripped elsewhere. Remove the
-            // `|| cfg!(windows)` once the corrupting writer is found.
-            assert!(
-                (this.as_ptr() as usize) >= 0x10000,
-                "Strong<Impl>* corrupted ({:p}); owning struct was overwritten",
-                this.as_ptr(),
-            );
-        }
+        debug_assert!(
+            (this.as_ptr() as usize) >= 0x10000,
+            "Strong<Impl>* corrupted ({:p}); owning struct was overwritten",
+            this.as_ptr(),
+        );
         // SAFETY: caller contract guarantees `this` is a live handle from
         // `Bun__StrongRef__new`; ownership is transferred to C++ which frees it.
         unsafe { Bun__StrongRef__delete(this.as_ptr()) };

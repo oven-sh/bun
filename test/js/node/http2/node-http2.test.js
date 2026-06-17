@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, isASAN, isCI, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import fs from "node:fs";
 import http2 from "node:http2";
@@ -10,7 +10,10 @@ import { Duplex } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx } = createTest(import.meta.path);
-const ASAN_MULTIPLIER = isASAN ? 3 : 1;
+// bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
+// there; the 10k-request maxSessionMemory stress test takes ~90s under
+// debug+ASAN vs ~2s release, so scale for either.
+const ASAN_MULTIPLIER = isDebug ? 10 : isASAN ? 3 : 1;
 
 function invalidArgTypeHelper(input) {
   if (input === null) return " Received null";
@@ -745,6 +748,30 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(result).toBeUndefined();
           expect(req.rstCode).toBe(http2.constants.NGHTTP2_CANCEL);
           expect(req.aborted).toBeTrue(); // will be true in this case
+        });
+
+        it("signal validation matches node: non-signal objects throw, duck-typed { aborted } is accepted", async () => {
+          const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
+          client.on("error", () => {});
+          try {
+            // node's validateAbortSignal accepts any object with an 'aborted'
+            // property ('aborted' in signal), so a duck-typed { aborted: true }
+            // takes the pre-aborted fast path instead of throwing...
+            const { promise, resolve, reject } = Promise.withResolvers();
+            const req = client.request({ ":path": "/" }, { signal: { aborted: true } });
+            req.on("error", err => (err.name === "AbortError" ? resolve() : reject(err)));
+            await promise;
+            // ...while objects without 'aborted' (and non-objects) throw
+            // ERR_INVALID_ARG_TYPE synchronously, before the fast path.
+            expect(() => client.request({ ":path": "/" }, { signal: {} })).toThrow(
+              expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+            );
+            expect(() => client.request({ ":path": "/" }, { signal: 42 })).toThrow(
+              expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+            );
+          } finally {
+            client.close();
+          }
         });
 
         it("state should work", async () => {
@@ -1594,7 +1621,7 @@ it("http2 session.goaway() validates input types", async done => {
 
           // Test opaqueData argument
           expect(() => session.goaway(0, 0, input)).toThrow(
-            'The "opaqueData" argument must be of type Buffer, ' + `TypedArray, or DataView.${received}`,
+            'The "opaqueData" argument must be an instance of Buffer, ' + `TypedArray, or DataView.${received}`,
           );
         }
 
@@ -1787,9 +1814,13 @@ it("http2 client receives 'goaway' when the server rejects a stream", async () =
 
     const { code } = await goawayReceived;
     expect(code).toBe(http2.constants.NGHTTP2_ENHANCE_YOUR_CALM);
-    expect(sessionError?.code).not.toBe("ERR_HTTP2_SESSION_ERROR");
 
     await clientClosed;
+    // Like Node, a non-NO_ERROR GOAWAY destroys the session with
+    // ERR_HTTP2_SESSION_ERROR (verified against Node 26: a server-sent
+    // ENHANCE_YOUR_CALM goaway yields exactly this error on the client).
+    expect(sessionError?.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(sessionError?.message).toBe("Session closed with error code 11");
   } finally {
     server.close();
   }
@@ -2710,4 +2741,156 @@ it("http2 client keeps parsing a socket chunk whose ArrayBuffer is transferred b
 
   expect(stdout).toContain('PINGS:["4141414141414141","4242424242424242"]');
   expect(exitCode).toBe(0);
+});
+
+it("http2 option range error messages use the options. prefix", () => {
+  for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
+    let error;
+    try {
+      http2.createServer({ [opt]: -1 });
+    } catch (e) {
+      error = e;
+    }
+    expect(error?.code).toBe("ERR_OUT_OF_RANGE");
+    expect(error?.message).toContain(`"options.${opt}"`);
+  }
+});
+
+it("getPackedSettings caps initialWindowSize at 2**31-1", () => {
+  // The cap itself is valid.
+  http2.getPackedSettings({ initialWindowSize: 2 ** 31 - 1 });
+
+  let error;
+  try {
+    http2.getPackedSettings({ initialWindowSize: 2 ** 31 });
+  } catch (e) {
+    error = e;
+  }
+  expect(error?.code).toBe("ERR_HTTP2_INVALID_SETTING_VALUE");
+  expect(error?.message).toBe('Invalid value for setting "initialWindowSize": 2147483648');
+
+  error = undefined;
+  try {
+    http2.getUnpackedSettings(Buffer.from([0x00, 0x04, 0xff, 0xff, 0xff, 0xff]), { validate: true });
+  } catch (e) {
+    error = e;
+  }
+  expect(error?.code).toBe("ERR_HTTP2_INVALID_SETTING_VALUE");
+});
+
+it("http2 stream.respond/respondWithFD/respondWithFile reject raw-headers arrays", async () => {
+  // Passing an array of headers used to be spread into an object with
+  // numeric-string keys ("0", "1", ...) and sent as garbage header frames.
+  // Node v24 rejects arrays with ERR_INVALID_ARG_TYPE; v26 added support for
+  // the [name1, value1, ...] raw form for respond() (not yet implemented here)
+  // while still rejecting arrays in respondWithFD/respondWithFile.
+  const errors = [];
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    for (const invoke of [
+      () => stream.respond([":status", "200", "x-foo", "bar"]),
+      () => stream.respondWithFD(0, ["x-foo", "bar"]),
+      () => stream.respondWithFile(import.meta.path, ["x-foo", "bar"]),
+    ]) {
+      try {
+        invoke();
+        errors.push(null);
+      } catch (e) {
+        errors.push(e);
+      }
+    }
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+
+  await new Promise(resolve => server.listen(0, resolve));
+  const port = server.address().port;
+  const client = http2.connect(`http://localhost:${port}`);
+  client.on("error", () => {});
+
+  try {
+    const req = client.request({ ":path": "/" });
+    const response = await new Promise((resolve, reject) => {
+      req.on("error", reject);
+      req.on("response", resolve);
+      req.end();
+    });
+    let body = "";
+    req.on("data", chunk => (body += chunk));
+    await new Promise(resolve => req.on("end", resolve));
+
+    expect(errors).toHaveLength(3);
+    for (const err of errors) {
+      expect(err).not.toBeNull();
+      expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(err).toBeInstanceOf(TypeError);
+    }
+    // The real respond() afterwards still worked and no bogus "0"/"1" headers leaked.
+    expect(response[":status"]).toBe(200);
+    expect(response["0"]).toBeUndefined();
+    expect(body).toBe("ok");
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
+  // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
+  // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.
+  // The error may surface synchronously or on the returned stream.
+  function captureRequestError(session) {
+    try {
+      const req = session.request({ ":path": "/" });
+      return new Promise(resolve => req.on("error", resolve));
+    } catch (e) {
+      return Promise.resolve(e);
+    }
+  }
+
+  const server = http2.createServer();
+  let endHangingStream;
+  server.on("stream", (stream, headers) => {
+    stream.respond({ ":status": 200 });
+    if (headers[":path"] === "/hang") {
+      endHangingStream = () => stream.end("done");
+    } else {
+      stream.end("ok");
+    }
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const port = server.address().port;
+
+  try {
+    // Closed session (graceful close with a stream still in flight).
+    const client = http2.connect(`http://localhost:${port}`);
+    client.on("error", () => {});
+    await new Promise(resolve => client.on("connect", resolve));
+    const inflight = client.request({ ":path": "/hang" });
+    inflight.on("error", () => {});
+    inflight.resume();
+    await new Promise(resolve => inflight.on("response", resolve));
+    client.close();
+    expect(client.closed).toBe(true);
+    expect(client.destroyed).toBe(false);
+
+    const goawayError = await captureRequestError(client);
+    expect(goawayError.code).toBe("ERR_HTTP2_GOAWAY_SESSION");
+    expect(goawayError.message).toBe("New streams cannot be created after receiving a GOAWAY");
+
+    endHangingStream();
+    await new Promise(resolve => inflight.on("close", resolve));
+
+    // Destroyed session.
+    const client2 = http2.connect(`http://localhost:${port}`);
+    client2.on("error", () => {});
+    await new Promise(resolve => client2.on("connect", resolve));
+    client2.destroy();
+
+    const destroyedError = await captureRequestError(client2);
+    expect(destroyedError.code).toBe("ERR_HTTP2_INVALID_SESSION");
+    expect(destroyedError.message).toBe("The session has been destroyed");
+  } finally {
+    server.close();
+  }
 });

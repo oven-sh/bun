@@ -1,5 +1,5 @@
 // Hardcoded module "node:perf_hooks"
-const { throwNotImplemented } = require("internal/shared");
+const { throwNotImplemented, kNodeEntryTypes, NodeEntryObserver, enqueueNodeEntry } = require("internal/shared");
 const { validateFunction, validateObject } = require("internal/validators");
 
 const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
@@ -13,7 +13,7 @@ var {
   PerformanceEntry,
   PerformanceMark,
   PerformanceMeasure,
-  PerformanceObserver,
+  PerformanceObserver: NodePerformanceObserver,
   PerformanceObserverEntryList,
 } = globalThis;
 
@@ -114,11 +114,10 @@ class PerformanceResourceTiming {
 }
 $toClass(PerformanceResourceTiming, "PerformanceResourceTiming", PerformanceEntry);
 
-// --- timerify + 'function' entryType support -------------------------------
-// The global PerformanceObserver is WebCore's and only knows web entry types,
-// so node-only 'function' entries (produced by performance.timerify) are
-// tracked and dispatched from JS here.
-
+// 'function' entries (perf_hooks timerify) are routed through the same
+// node-only registry as net/dns/http. The entry object is its own class so
+// it is `instanceof PerformanceEntry` (the WebCore constructor throws when
+// called directly, so the prototype chain is linked instead of subclassing).
 class PerformanceNodeEntry {
   name;
   entryType;
@@ -154,110 +153,90 @@ Object.setPrototypeOf(PerformanceNodeEntry.prototype, PerformanceEntry.prototype
 Object.setPrototypeOf(PerformanceNodeEntry, PerformanceEntry);
 Object.defineProperty(PerformanceNodeEntry, "name", { value: "PerformanceNodeEntry" });
 
-class PerformanceNodeObserverEntryList {
-  #entries;
-  constructor(entries) {
-    this.#entries = entries;
-  }
-  getEntries() {
-    return this.#entries.slice();
-  }
-  getEntriesByType(type) {
-    return this.#entries.filter(entry => entry.entryType === type);
-  }
-  getEntriesByName(name, type) {
-    return this.#entries.filter(entry => entry.name === name && (type === undefined || entry.entryType === type));
-  }
-}
-Object.defineProperty(PerformanceNodeObserverEntryList, "name", { value: "PerformanceObserverEntryList" });
+const kNodeObserver = Symbol("kNodeObserver");
+const kObserverCallback = Symbol("kObserverCallback");
 
-const functionObservers = new Set();
-let pendingFunctionEntries = [];
-let functionDispatchPending = false;
-
-function dispatchFunctionEntries() {
-  functionDispatchPending = false;
-  const entries = pendingFunctionEntries;
-  pendingFunctionEntries = [];
-  const list = new PerformanceNodeObserverEntryList(entries);
-  for (const observer of functionObservers) {
-    observer[kDispatchNodeEntries](list);
-  }
-}
-
-function enqueueFunctionEntry(entry) {
-  if (functionObservers.size === 0) return;
-  pendingFunctionEntries.push(entry);
-  if (!functionDispatchPending) {
-    functionDispatchPending = true;
-    queueMicrotask(dispatchFunctionEntries);
-  }
-}
-
-const kDispatchNodeEntries = Symbol("kDispatchNodeEntries");
-
-class NodePerformanceObserver extends PerformanceObserver {
-  #callback;
-
+/**
+ * The native (WebCore) observer only understands mark/measure/resource.
+ * Node-only entry types ('net', 'dns', ...) are routed to the JS-side
+ * registry in internal/shared; everything else is delegated to the native
+ * observer unchanged. (`NodePerformanceObserver` is the existing alias for
+ * the native class destructured from globalThis above.)
+ */
+class PerformanceObserverForNodeTypes extends NodePerformanceObserver {
   constructor(callback) {
     super(callback);
-    this.#callback = callback;
+    this[kObserverCallback] = callback;
   }
 
+  /** The native list plus the Node-only types routed through the JS registry. */
   static get supportedEntryTypes() {
-    return [...super.supportedEntryTypes, "function"].sort();
+    return [...new Set([...(NodePerformanceObserver.supportedEntryTypes ?? []), ...kNodeEntryTypes])].sort();
   }
 
   observe(options) {
-    if (!$isObject(options)) {
-      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+    let requested;
+    let isTypeMode = false;
+    if (options != null && typeof options === "object") {
+      if (options.entryTypes !== undefined && Array.isArray(options.entryTypes)) {
+        requested = options.entryTypes;
+      } else if (options.type !== undefined) {
+        requested = [options.type];
+        isTypeMode = true;
+      }
     }
-    if (options.entryTypes !== undefined) {
-      const entryTypes = options.entryTypes;
-      if (!$isArray(entryTypes)) {
-        throw $ERR_INVALID_ARG_TYPE("options.entryTypes", "string[]", entryTypes);
+    if (requested) {
+      const nodeTypes = requested.filter(type => kNodeEntryTypes.has(type));
+      let registration = this[kNodeObserver];
+      if (nodeTypes.length > 0 && !registration) {
+        registration = this[kNodeObserver] = new NodeEntryObserver(this[kObserverCallback], this);
       }
-      if (entryTypes.length === 0) {
-        return;
+      if (registration) {
+        if (isTypeMode) {
+          // observe({type}) appends to the observed set per the spec.
+          registration.observe([...registration.types, ...nodeTypes]);
+        } else {
+          // observe({entryTypes}) replaces the observed set, including
+          // dropping a previously-observed node type when the new set has
+          // none.
+          registration.observe(nodeTypes);
+        }
       }
-      const webTypes = entryTypes.filter(type => type !== "function");
-      const observesFunction = webTypes.length !== entryTypes.length;
-      if (webTypes.length !== 0) {
-        super.observe({ ...options, entryTypes: webTypes });
-      } else {
-        // Function-only list: replace semantics also drop any previously
-        // observed web entry types (node clears the whole set before
-        // re-adding from the new array).
-        super.disconnect();
+      if (nodeTypes.length > 0) {
+        const webTypes = requested.filter(type => !kNodeEntryTypes.has(type));
+        if (webTypes.length === 0) {
+          // observe({entryTypes}) replaces the whole observed set: a
+          // previously-subscribed web type must stop firing when the new set
+          // is node-only. The native impl rejects an empty entryTypes array,
+          // so drop the subscription instead of re-observing with [].
+          if (!isTypeMode) {
+            try {
+              super.disconnect();
+            } catch {}
+          }
+          return;
+        }
+        // A non-empty webTypes set alongside a node type is only possible in
+        // entryTypes mode (observe({type}) requests exactly one type), so the
+        // forwarded subscription is always an entryTypes one.
+        return super.observe({ ...options, entryTypes: webTypes });
       }
-      // The entryTypes form replaces the observed set (unlike the additive
-      // type form), so clear any prior "function" registration when the new
-      // list doesn't include it. Registration happens after super.observe()
-      // so a throw there doesn't leave a stale entry behind.
-      if (observesFunction) {
-        functionObservers.add(this);
-      } else {
-        functionObservers.delete(this);
-      }
-      return;
-    }
-    if (options.type === "function") {
-      functionObservers.add(this);
-      return;
     }
     return super.observe(options);
   }
 
   disconnect() {
-    functionObservers.delete(this);
+    this[kNodeObserver]?.disconnect();
+    this[kNodeObserver] = undefined;
     return super.disconnect();
   }
-
-  [kDispatchNodeEntries](list) {
-    this.#callback(list, this);
-  }
 }
-Object.defineProperty(NodePerformanceObserver, "name", { value: "PerformanceObserver" });
+// Not $toClass: that resets the prototype object and would drop the
+// observe/disconnect overrides above. Only the public name needs fixing.
+Object.defineProperty(PerformanceObserverForNodeTypes, "name", {
+  value: "PerformanceObserver",
+  configurable: true,
+});
 
 function timerify(fn, options = {}) {
   validateFunction(fn, "fn");
@@ -304,7 +283,7 @@ function processTimerifyComplete(name, start, args, histogram) {
   if (histogram !== undefined) {
     histogram.record(Math.ceil(duration * 1e6));
   }
-  enqueueFunctionEntry(new PerformanceNodeEntry(name, "function", start, duration, args));
+  enqueueNodeEntry(new PerformanceNodeEntry(name, "function", start, duration, args));
 }
 
 export default {
@@ -364,7 +343,7 @@ export default {
   PerformanceEntry,
   PerformanceMark,
   PerformanceMeasure,
-  PerformanceObserver: NodePerformanceObserver,
+  PerformanceObserver: PerformanceObserverForNodeTypes,
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
   timerify,

@@ -513,6 +513,45 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     ws.close();
   });
 
+  test("sends exactly one clientNavigated event per SetUrl message", async () => {
+    // https://github.com/oven-sh/bun/issues/32080
+    // Request "/" first so its route bundle takes index 0 and "/second" below
+    // deterministically gets index 1, even when this test runs in isolation.
+    await fetch(serverUrl.href).then(r => r.blob());
+
+    const connectedEventPromise = session.waitForEvent("BunFrontendDevServer.clientConnected");
+    const ws = await createHMRClient();
+    try {
+      const { connectionId } = await connectedEventPromise;
+
+      const navigated: any[] = [];
+      const { promise: sawSentinelNavigation, resolve, reject } = Promise.withResolvers<void>();
+      session.addEventListener("BunFrontendDevServer.clientNavigated", (params: any) => {
+        if (params.connectionId !== connectionId) return;
+        navigated.push(params);
+        if (params.url === "/does-not-exist") resolve();
+      });
+      ws.addEventListener("close", e => reject(new Error(`HMR socket closed unexpectedly: ${e.code}`)));
+      ws.addEventListener("error", () => reject(new Error("HMR socket error")));
+
+      // Navigate to a matched route, then to an unknown one. The server handles
+      // the messages in order and emits inspector events synchronously, so once
+      // the event for the unknown route arrives, every event for "/second" has
+      // been delivered.
+      ws.send("n" + "/second");
+      ws.send("n" + "/does-not-exist");
+      await sawSentinelNavigation;
+
+      expect(navigated).toEqual([
+        { serverId: expect.any(Number), connectionId, url: "/second", routeBundleId: 1 },
+        // Failed lookups report a single event with no routeBundleId.
+        { serverId: expect.any(Number), connectionId, url: "/does-not-exist" },
+      ]);
+    } finally {
+      ws.close();
+    }
+  });
+
   test("should notify on consoleLog events", async () => {
     await fetch(serverUrl.href).then(r => r.blob());
 

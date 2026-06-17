@@ -1032,7 +1032,7 @@ impl ServerWebSocket {
         }
 
         let mut corker = Corker {
-            args: &[],
+            args: &[this_value],
             global_object: global_this,
             this_value,
             callback,

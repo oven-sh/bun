@@ -124,8 +124,12 @@ if (isDockerEnabled()) {
       await using sql = new SQL({ url: url(), max: 1 });
 
       // Ensure the single pooled connection is established before the oversized
-      // attempt so both queries share it.
-      await sql`SELECT 1`;
+      // attempt so both queries share it, and capture its server-side
+      // CONNECTION_ID() so we can prove the follow-up runs on the SAME session.
+      // A regression that flushed partial bytes (or closed on overflow) would
+      // let the pool transparently reconnect and `select 1 as ok` would succeed
+      // on a new session without the write-buffer rollback having worked.
+      const [{ cid: cidBefore }] = await sql`SELECT CONNECTION_ID() as cid`;
 
       // 1 command byte + 0xffffff bytes of query text = 0x1000000 — one past
       // the largest payload a single MySQL packet can frame.
@@ -140,10 +144,13 @@ if (isDockerEnabled()) {
       // see garbage instead of `select 1` and this query would not resolve to
       // the expected row.
       const second = await sql.unsafe("select 1 as ok");
+      const [{ cid: cidAfter }] = await sql`SELECT CONNECTION_ID() as cid`;
 
-      expect({ first, second }).toEqual({
+      expect({ first, second, cidAfter }).toEqual({
         first: "ERR_MYSQL_OVERFLOW",
         second: [{ ok: 1 }],
+        // Same MySQL session ⇒ rollback worked, no reconnect masked the failure.
+        cidAfter: cidBefore,
       });
     });
 

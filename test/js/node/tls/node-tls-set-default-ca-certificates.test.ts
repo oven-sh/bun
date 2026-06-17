@@ -291,4 +291,126 @@ describe.concurrent("tls.setDefaultCACertificates", () => {
     expect(stdout.trim()).toBe("ok");
     expect(exitCode).toBe(0);
   });
+
+  test("addCACert after setDefaultCACertificates clones from the current defaults", async () => {
+    // A SecureContext built with { requestCert: true, ca: undefined } holds
+    // the process-shared default X509_STORE directly (openssl.c's
+    // request_cert branch). setDefaultCACertificates() drops and rebuilds
+    // that cached store, so comparing the CTX's store against the *current*
+    // shared pointer no longer detects "this is the shared one". addCACert's
+    // clone-on-write is driven by the per-CTX user-CA flag instead: on a
+    // context that has never had its own CAs it builds a fresh private
+    // store from the CURRENT process defaults (here [ca1]) and appends to
+    // that, rather than mutating the stale shared store the CTX still holds
+    // (which would leak the added CA into every sibling context sharing it
+    // and leave the CTX verifying against a bundle that never contained
+    // ca1).
+    const { stdout, stderr, exitCode } = await run(`
+      const tls = require("node:tls");
+      const fs = require("node:fs");
+      const { once } = require("node:events");
+      const assert = require("node:assert");
+
+      const ca1  = fs.readFileSync(${JSON.stringify(path.join(keysDir, "ca1-cert.pem"))}, "utf8");
+      const ca2  = fs.readFileSync(${JSON.stringify(path.join(keysDir, "ca2-cert.pem"))}, "utf8");
+      const agent1Key  = fs.readFileSync(${JSON.stringify(path.join(keysDir, "agent1-key.pem"))});
+      const agent1Cert = fs.readFileSync(${JSON.stringify(path.join(keysDir, "agent1-cert.pem"))});
+
+      // requestCert with no explicit ca -> CTX store is the shared default
+      // (the bundled roots at this point).
+      const ctx = tls.createSecureContext({ requestCert: true });
+
+      // Invalidate the cached shared store; the current default is now [ca1].
+      tls.setDefaultCACertificates([ca1]);
+
+      // Must clone-on-write into a private store seeded from the *current*
+      // defaults ([ca1]) and then append ca2 -> [ca1, ca2]. A stale
+      // pointer-identity check against the new shared store would miss the
+      // clone and append to the old bundled-root store instead (no ca1).
+      ctx.context.addCACert(ca2);
+
+      // Connect with this context to a server presenting agent1 (signed by
+      // ca1). addCACert marked the CTX with user CAs, so the per-SSL
+      // default-store overlay is skipped and verification runs against the
+      // CTX's own private store: it must contain ca1.
+      const server = tls.createServer({ key: agent1Key, cert: agent1Cert }, s => s.end());
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const port = server.address().port;
+
+      const client = tls.connect({
+        port,
+        host: "127.0.0.1",
+        servername: "agent1",
+        secureContext: ctx,
+        rejectUnauthorized: false,
+      });
+      client.on("error", () => {});
+      await once(client, "secureConnect");
+      const authorized = client.authorized;
+      const err = client.authorizationError;
+      client.destroy();
+      server.close();
+
+      assert.strictEqual(authorized, true,
+        "addCACert did not seed the private store from the current defaults: " + err);
+      console.log("ok");
+    `);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an mTLS server built before setDefaultCACertificates honours the override", async () => {
+    // The server accept path gets the same per-SSL verify-store refresh as
+    // the client path: a requestCert server whose SSL_CTX was built before
+    // setDefaultCACertificates() (and so still points at the stale shared
+    // store) verifies each accepted connection against the CURRENT process
+    // defaults, not the bundled roots it was built with.
+    const { stdout, stderr, exitCode } = await run(`
+      const tls = require("node:tls");
+      const fs = require("node:fs");
+      const { once } = require("node:events");
+      const assert = require("node:assert");
+
+      const ca1  = fs.readFileSync(${JSON.stringify(path.join(keysDir, "ca1-cert.pem"))}, "utf8");
+      const agent1Key  = fs.readFileSync(${JSON.stringify(path.join(keysDir, "agent1-key.pem"))});
+      const agent1Cert = fs.readFileSync(${JSON.stringify(path.join(keysDir, "agent1-cert.pem"))});
+
+      const authorized = Promise.withResolvers();
+      const server = tls.createServer({
+        key: agent1Key,
+        cert: agent1Cert,
+        requestCert: true,
+        rejectUnauthorized: false,
+      });
+      server.on("secureConnection", s => { authorized.resolve(s.authorized); s.end(); });
+      server.on("tlsClientError", err => authorized.reject(err));
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const port = server.address().port;
+
+      // Override installed AFTER the server's SSL_CTX was built.
+      tls.setDefaultCACertificates([ca1]);
+
+      const client = tls.connect({
+        port,
+        host: "127.0.0.1",
+        key: agent1Key,
+        cert: agent1Cert,
+        rejectUnauthorized: false,
+      });
+      client.on("error", () => {});
+      const result = await authorized.promise;
+      client.destroy();
+      server.close();
+
+      assert.strictEqual(result, true,
+        "server did not pick up setDefaultCACertificates() for client-cert verification");
+      console.log("ok");
+    `);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
 });

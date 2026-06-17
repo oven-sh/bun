@@ -949,28 +949,26 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   if (!ctx || !content) {
     return 0;
   }
+  us_ex_idx_ensure();
   X509_STORE *store = SSL_CTX_get_cert_store(ctx);
   /* Clone-on-write: a context that shares the process-wide default root
    * store must get its own copy before a CA is appended, or the addition
    * would be visible to every other context in the process - the same
    * root_cert_store check Node's SecureContext::AddCACert performs.
-   * us_get_shared_default_ca_store() up-refs before returning, so release
-   * the reference taken just for this comparison. */
-  X509_STORE *shared = us_get_shared_default_ca_store();
-  int store_is_shared = store && store == shared;
-  X509_STORE_free(shared);
-  /* A default context built without ca/requestCert keeps the empty store from
-   * SSL_CTX_new() (verification for it normally comes from the per-socket
-   * shared-root override). addCACert must EXTEND the default trust set the
-   * way Node does, so when the store is the shared one - or still empty -
-   * replace it with a fresh full default store (bundled roots, NODE_EXTRA_CA
-   * certificates, system CAs when enabled) before appending the user's CA. */
-  int store_is_empty = 0;
-  if (store && !store_is_shared) {
-    const STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(store);
-    store_is_empty = objs == NULL || sk_X509_OBJECT_num(objs) == 0;
-  }
-  if (store_is_shared || store_is_empty) {
+   *
+   * us_ctx_user_ca_ex_idx is the contract here: it is set exactly when this
+   * SSL_CTX has a PRIVATE store (built from an explicit ca/caFile option or
+   * by an earlier addCACert on this context). When the flag is clear, the
+   * store is either the process-wide shared-default X509_STORE (attached by
+   * the request_cert-without-ca branch above) or the still-empty store from
+   * SSL_CTX_new(); both require swapping in a fresh private default store
+   * before appending. Do NOT compare `store` against
+   * us_get_shared_default_ca_store() by pointer identity:
+   * tls.setDefaultCACertificates() invalidates and rebuilds that cache, so a
+   * CTX built before the override would compare its stale shared pointer
+   * against the new one, fall through, and mutate a store other CTXs still
+   * share. */
+  if (!SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx)) {
     X509_STORE *own = us_get_default_ca_store();
     if (!own) {
       return 0;
@@ -981,7 +979,6 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   if (!store) {
     return 0;
   }
-  us_ex_idx_ensure();
   SSL_CTX_set_ex_data(ctx, us_ctx_user_ca_ex_idx, (void *)1);
   return add_ca_cert_to_ctx_store(ctx, content, store);
 }
@@ -1193,6 +1190,18 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
     /* sni_cb recovers ls per-SSL — never via the shared SSL_CTX. */
     us_ex_idx_ensure();
     SSL_set_ex_data(ssl, us_ssl_listener_ex_idx, listener);
+    /* Same refresh as the client path: an mTLS server built with
+     * request_cert before tls.setDefaultCACertificates() was called still
+     * holds the stale shared store on its SSL_CTX; hand each accepted SSL
+     * the current process defaults so client-cert verification follows the
+     * override. A CTX that has its own CA set (explicit `ca` option or a
+     * later addCACert) is left alone. */
+    if (us_has_user_root_certs()
+        && SSL_CTX_get_verify_mode(ctx) != SSL_VERIFY_NONE
+        && !SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx)) {
+      X509_STORE *roots = us_get_shared_default_ca_store();
+      if (roots) SSL_set0_verify_cert_store(ssl, roots);
+    }
   }
 
   s->ssl = ssl;

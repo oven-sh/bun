@@ -9,6 +9,7 @@ import {
   gc,
   isASAN,
   isBroken,
+  isDebug,
   isFlaky,
   isMacOS,
   isWindows,
@@ -2447,6 +2448,10 @@ describe("fetch should allow duplex", () => {
 it("should allow to follow redirect if connection is closed, abort should work even if the socket was closed before the redirect", async () => {
   for (const type of ["normal", "delay"]) {
     await using server = net.createServer(socket => {
+      // Raw test server: tolerate client aborts, surface anything unexpected.
+      socket.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code !== "ECONNRESET" && err.code !== "EPIPE" && err.code !== "ECONNABORTED") throw err;
+      });
       let body = "";
       socket.on("data", data => {
         body += data.toString("utf8");
@@ -2765,7 +2770,10 @@ it("releases interim 1xx response bytes as they are parsed while waiting for the
     // Only a small parse tail may be retained while the interim responses stream in;
     // the ~48 MB of already-consumed 1xx bytes must not accumulate in the process.
     const deltaMB = (rssDuringFlood - rssBefore) / 1024 / 1024;
-    expect(deltaMB).toBeLessThan(isASAN ? 48 : 16);
+    // A local `bun bd` debug build is ASAN-instrumented but not named
+    // `bun-asan`, so isASAN is false there; its quarantine retains the freed
+    // flood bytes the same way - give it the same allowance.
+    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 48 : 16);
   } finally {
     for (const socket of sockets) socket.destroy();
     server.close();

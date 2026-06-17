@@ -152,7 +152,14 @@ function main(): void {
     run(join(llvmBin, "llvm-as"), [stubLl, "-o", stubBc]);
 
     const merged = join(tmp, "merged.bc");
-    run(join(llvmBin, "llvm-link"), [...bitcode, stubBc, "-o", merged]);
+    // The stub goes FIRST: llvm-link uses the first module as the link
+    // destination, and IRMover silently inherits the data layout / target
+    // triple when the destination has none. With the stub last it is a
+    // *source* module whose empty layout differs from the destination's,
+    // and every build-bun job warns "Linking two modules of different data
+    // layouts". Same merged output either way (verified: the module flag and
+    // the real layout both survive).
+    run(join(llvmBin, "llvm-link"), [stubBc, ...bitcode, "-o", merged]);
     run(join(llvmBin, "opt"), ["--module-summary", merged, "-o", outObj]);
   } finally {
     rmSync(tmp, { recursive: true, force: true });

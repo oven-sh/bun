@@ -34,6 +34,7 @@ pub fn write_output_files_to_disk(
     chunks: &mut [Chunk],
     output_files: &mut OutputFileList,
     standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
+    standalone_sourcemaps: &mut [Option<Box<[u8]>>],
 ) -> Result<(), Error> {
     let _trace = bun_core::perf::trace("Bundler.writeOutputFilesToDisk");
 
@@ -90,6 +91,86 @@ pub fn write_output_files_to_disk(
         // In standalone mode, only write HTML chunks to disk.
         // Insert placeholder output files for non-HTML chunks to keep indices aligned.
         if standalone_chunk_contents.is_some() && !matches!(chunk.content, Content::Html) {
+            // The chunk itself is inlined into the HTML document, but its .map
+            // file (linked/external sourcemaps) is still written to disk.
+            let source_map_index: Option<u32> = if let Some(output_source_map) =
+                standalone_sourcemaps
+                    .get_mut(chunk_index_in_chunks_list)
+                    .and_then(Option::take)
+            {
+                let source_map_final_rel_path = strings::concat(&[&chunk.final_rel_path, b".map"]);
+
+                let rel_parent = paths::resolve_path::dirname::<paths::platform::Posix>(
+                    &source_map_final_rel_path,
+                );
+                if !rel_parent.is_empty() {
+                    if let Err(e) = root_dir.make_path(rel_parent) {
+                        c.log_mut().add_error_fmt(
+                            None,
+                            Loc::EMPTY,
+                            format_args!(
+                                "{} creating outdir {} while saving sourcemap {}",
+                                e.name(),
+                                quote(rel_parent),
+                                quote(&*source_map_final_rel_path),
+                            ),
+                        );
+                        return Err(e);
+                    }
+                }
+
+                if let Err(e) = bun_sys::File::write_file(
+                    bun_sys::Fd::from_std_dir(&root_dir),
+                    paths::resolve_path::z(&source_map_final_rel_path, &mut pathbuf),
+                    &output_source_map,
+                ) {
+                    c.log_mut().add_sys_error(
+                        &e,
+                        format_args!(
+                            "writing sourcemap for chunk {}",
+                            quote(&chunk.final_rel_path)
+                        ),
+                    );
+                    return Err(err!("WriteFailed"));
+                }
+
+                let input_path: &[u8] = if chunk.entry_point.is_entry_point() {
+                    c.parse_graph().input_files.items_source()
+                        [chunk.entry_point.source_index() as usize]
+                        .path
+                        .text
+                } else {
+                    &chunk.final_rel_path
+                };
+
+                Some(
+                    output_files.insert_for_sourcemap_or_bytecode(OutputFile::init(
+                        OutputFileInit {
+                            output_path: source_map_final_rel_path,
+                            input_path: strings::concat(&[input_path, b".map"]),
+                            loader: Loader::Json,
+                            input_loader: Loader::File,
+                            output_kind: options::OutputKind::Sourcemap,
+                            size: Some(output_source_map.len()),
+                            data: OutputFileData::Saved(0),
+                            side: Some(options::Side::Client),
+                            entry_point_index: None,
+                            is_executable: false,
+                            hash: None,
+                            source_map_index: None,
+                            bytecode_index: None,
+                            module_info_index: None,
+                            display_size: 0,
+                            referenced_css_chunks: Box::default(),
+                            source_index: IndexOptional::NONE,
+                            bake_extra: BakeExtra::default(),
+                        },
+                    ))?,
+                )
+            } else {
+                None
+            };
+
             let _ = output_files.insert_for_chunk(OutputFile::init(OutputFileInit {
                 data: OutputFileData::Saved(0),
                 hash: None,
@@ -100,7 +181,7 @@ pub fn write_output_files_to_disk(
                 input_loader: Loader::Js,
                 output_path: Box::default(),
                 is_executable: false,
-                source_map_index: None,
+                source_map_index,
                 bytecode_index: None,
                 module_info_index: None,
                 side: Some(options::Side::Client),

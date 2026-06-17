@@ -612,9 +612,14 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // `Chunk::allocator_for_size` ever becomes size-dependent, matched-arena
     // dealloc must be restored here.
     let mut standalone_chunk_contents: Option<Vec<Option<Box<[u8]>>>> = None;
+    // Finalized sourcemap JSON for standalone-mode chunks whose sourcemap
+    // option writes a separate .map file (linked/external). Indexed by chunk;
+    // consumed by the output-file loops below.
+    let mut standalone_sourcemaps: Vec<Option<Box<[u8]>>> = Vec::new();
 
     if is_standalone {
         let mut scc: Vec<Option<Box<[u8]>>> = vec![None; chunks.len()];
+        standalone_sourcemaps = vec![None; chunks.len()];
 
         // `IntermediateOutput.code_standalone` reads `&Chunk` /
         // `&[Chunk]` (chunk is `&chunks[ci]`). Take `intermediate_output` out
@@ -623,6 +628,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             if matches!(chunks[ci].content, crate::chunk::Content::Html) {
                 continue;
             }
+            let sourcemap_option = chunks[ci].content.sourcemap(c.options.source_maps);
             let mut ds: usize = 0;
             // Pass `scc` so that `.asset` pieces (e.g. `import logo from "./logo.svg"` with
             // the file loader) are resolved to data: URIs from `url_for_css` instead of
@@ -631,21 +637,117 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // back to file paths when their entry in `scc` is null, matching the previous
             // behavior for inter-chunk imports.
             let mut intermediate_output = core::mem::take(&mut chunks[ci].intermediate_output);
-            let buffer = intermediate_output
-                .code_standalone(
-                    None,
-                    c.parse_graph(),
-                    &c.graph,
-                    c.options.public_path,
-                    &chunks[ci],
-                    chunks,
-                    &mut ds,
-                    false,
-                    false,
-                    &scc,
-                )?
-                .buffer;
+            let code_result = intermediate_output.code_standalone(
+                None,
+                c.parse_graph(),
+                &c.graph,
+                c.options.public_path,
+                &chunks[ci],
+                chunks,
+                &mut ds,
+                false,
+                sourcemap_option != SourceMapOption::None,
+                &scc,
+            )?;
             chunks[ci].intermediate_output = intermediate_output;
+            let mut buffer = code_result.buffer;
+
+            match sourcemap_option {
+                tag @ (SourceMapOption::External | SourceMapOption::Linked) => {
+                    let output_source_map = chunks[ci]
+                        .output_source_map
+                        .finalize(&code_result.shifts)
+                        .expect("Failed to allocate memory for external source map");
+
+                    if tag == SourceMapOption::Linked {
+                        let mut source_map_final_rel_path: Vec<u8> =
+                            Vec::with_capacity(chunks[ci].final_rel_path.len() + b".map".len());
+                        source_map_final_rel_path.extend_from_slice(&chunks[ci].final_rel_path);
+                        source_map_final_rel_path.extend_from_slice(b".map");
+
+                        // The chunk content is inlined into the HTML document,
+                        // so the sourceMappingURL resolves relative to the HTML
+                        // file rather than a JS file next to the .map. Point at
+                        // the .map path relative to the HTML chunk's directory.
+                        let mut relative_platform_buf = path::path_buffer_pool::get();
+                        let [a, b]: [&[u8]; 2] = if !c.options.public_path.is_empty() {
+                            cheap_prefix_normalizer(
+                                c.options.public_path,
+                                &source_map_final_rel_path,
+                            )
+                        } else {
+                            let entry_point_id = chunks[ci].entry_point.entry_point_id();
+                            let mut html_dir: &[u8] = chunks
+                                .iter()
+                                .find(|ch| {
+                                    matches!(ch.content, crate::chunk::Content::Html)
+                                        && ch.entry_point.entry_point_id() == entry_point_id
+                                })
+                                .map(|ch| {
+                                    path::resolve_path::dirname::<path::platform::Posix>(
+                                        &ch.final_rel_path,
+                                    )
+                                })
+                                .unwrap_or(b"");
+                            if html_dir == b"." {
+                                html_dir = b"";
+                            }
+                            cheap_prefix_normalizer(
+                                b"",
+                                if html_dir.is_empty() {
+                                    &source_map_final_rel_path
+                                } else {
+                                    path::resolve_path::relative_platform_buf::<
+                                        path::platform::Posix,
+                                        false,
+                                    >(
+                                        &mut relative_platform_buf[..],
+                                        html_dir,
+                                        &source_map_final_rel_path,
+                                    )
+                                },
+                            )
+                        };
+
+                        let source_map_start = b"//# sourceMappingURL=";
+                        let total_len =
+                            buffer.len() + source_map_start.len() + a.len() + b.len() + b"\n".len();
+                        let mut buf: Vec<u8> = Vec::with_capacity(total_len);
+                        buf.extend_from_slice(&buffer);
+                        buf.extend_from_slice(source_map_start);
+                        buf.extend_from_slice(a);
+                        buf.extend_from_slice(b);
+                        buf.push(b'\n');
+                        buffer = buf.into_boxed_slice();
+                    }
+
+                    standalone_sourcemaps[ci] = Some(output_source_map);
+                }
+                SourceMapOption::Inline => {
+                    let output_source_map = chunks[ci]
+                        .output_source_map
+                        .finalize(&code_result.shifts)
+                        .expect("Failed to allocate memory for inline source map");
+                    let encode_len = bun_base64::encode_len(&output_source_map);
+
+                    let source_map_start = b"//# sourceMappingURL=data:application/json;base64,";
+                    let total_len = buffer.len() + source_map_start.len() + encode_len + 1;
+                    let mut buf: Vec<u8> = Vec::with_capacity(total_len);
+
+                    buf.extend_from_slice(&buffer);
+                    buf.extend_from_slice(source_map_start);
+
+                    let old_len = buf.len();
+                    // Capacity reserved above; resize zero-fills then base64 overwrites.
+                    buf.resize(old_len + encode_len, 0);
+                    let _ = bun_base64::encode(&mut buf[old_len..], &output_source_map);
+
+                    buf.push(b'\n');
+                    buffer = buf.into_boxed_slice();
+                }
+                SourceMapOption::None => {}
+            }
+
             scc[ci] = Some(buffer);
         }
 
@@ -661,6 +763,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             chunks,
             &mut output_files,
             standalone_chunk_contents.as_deref(),
+            &mut standalone_sourcemaps,
         )?;
     } else {
         // In-memory build (also used for standalone mode)
@@ -677,6 +780,46 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     crate::chunk::Content::Html
                 )
             {
+                // Emit the chunk's .map file (linked/external) even though the
+                // chunk itself is inlined into the HTML document.
+                let source_map_index: Option<u32> = if let Some(output_source_map) =
+                    standalone_sourcemaps[chunk_index_in_chunks_list].take()
+                {
+                    let chunk = &chunks[chunk_index_in_chunks_list];
+                    let mut source_map_final_rel_path: Vec<u8> =
+                        Vec::with_capacity(chunk.final_rel_path.len() + b".map".len());
+                    source_map_final_rel_path.extend_from_slice(&chunk.final_rel_path);
+                    source_map_final_rel_path.extend_from_slice(b".map");
+                    let input_path: &[u8] = if chunk.entry_point.is_entry_point() {
+                        c.parse_graph().input_files.items_source()
+                            [chunk.entry_point.source_index() as usize]
+                            .path
+                            .text
+                    } else {
+                        chunk.final_rel_path.as_ref()
+                    };
+
+                    Some(output_files.insert_for_sourcemap_or_bytecode(
+                        options::OutputFile::init(options::OutputFileInit {
+                            data: options::OutputFileData::Buffer {
+                                data: output_source_map,
+                            },
+                            hash: None,
+                            loader: Loader::Json,
+                            input_loader: Loader::File,
+                            output_path: source_map_final_rel_path.into_boxed_slice(),
+                            output_kind: options::OutputKind::Sourcemap,
+                            input_path: strings::concat(&[input_path, b".map"]),
+                            side: None,
+                            entry_point_index: None,
+                            is_executable: false,
+                            ..Default::default()
+                        }),
+                    )?)
+                } else {
+                    None
+                };
+
                 let _ = output_files.insert_for_chunk(options::OutputFile::init(
                     options::OutputFileInit {
                         data: options::OutputFileData::Buffer {
@@ -690,7 +833,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         input_loader: Loader::Js,
                         output_path: Box::default(),
                         is_executable: false,
-                        source_map_index: None,
+                        source_map_index,
                         bytecode_index: None,
                         module_info_index: None,
                         side: Some(options::Side::Client),
@@ -1144,13 +1287,16 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     if is_standalone {
-        // For standalone mode, filter to only HTML output files.
+        // For standalone mode, filter to HTML output files plus the .map files
+        // of the inlined chunks (linked/external sourcemaps).
         // Deinit dropped items to free their heap allocations (paths, buffers).
         let mut result = output_files.take();
         let mut write_idx: usize = 0;
         let len = result.len();
         for i in 0..len {
-            if result[i].loader == Loader::Html {
+            if result[i].loader == Loader::Html
+                || result[i].output_kind == options::OutputKind::Sourcemap
+            {
                 result.swap(write_idx, i);
                 write_idx += 1;
             }

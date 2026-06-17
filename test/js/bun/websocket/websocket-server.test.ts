@@ -941,6 +941,41 @@ describe("ServerWebSocket", () => {
       },
     };
   });
+  // https://github.com/oven-sh/bun/issues/21588
+  test("cork() passes ws to callback", done => {
+    let count = 0;
+    return {
+      open(ws) {
+        try {
+          let thisInside;
+          const ret = ws.cork(function (ctx) {
+            thisInside = this;
+            ctx.send("1");
+            ctx.sendText("2");
+            ctx.sendBinary(new TextEncoder().encode("3"));
+            return ctx;
+          });
+          expect(ret).toBe(ws);
+          expect(thisInside).toBe(ws);
+          ws.cork(ctx => {
+            expect(ctx).toBe(ws);
+          });
+        } catch (err) {
+          done(err);
+        }
+      },
+      message(_, message) {
+        if (typeof message === "string") {
+          expect(+message).toBe(++count);
+        } else {
+          expect(+new TextDecoder().decode(message)).toBe(++count);
+        }
+        if (count === 3) {
+          done();
+        }
+      },
+    };
+  });
   describe("close()", () => {
     test("(no arguments)", done => ({
       open(ws) {

@@ -1,6 +1,6 @@
 import { Socket } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { gcTick } from "harness";
+import { bunEnv, bunExe, gcTick } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -296,6 +296,69 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
   server.stop();
   done();
 });
+
+// A buffered (non-streaming) fetch() must be able to decompress a response
+// body larger than 1 GiB. The HTTP client's Decompressor runs unbounded, the
+// same as the original Zig implementation; only available memory limits it.
+// Run in a subprocess so the ~1 GiB output buffer does not linger in the test
+// process.
+it("fetch() with a buffered gzip response whose decompressed size exceeds 1 GiB works", async () => {
+  const fixture = /* js */ `
+      import { createGzip } from "node:zlib";
+
+      const CHUNK = Buffer.alloc(1024 * 1024);
+      const N = 1025; // 1 GiB + 1 MiB
+      const chunks = [];
+      await new Promise((resolve, reject) => {
+        const gz = createGzip();
+        gz.on("data", c => chunks.push(c));
+        gz.on("end", resolve);
+        gz.on("error", reject);
+        let i = 0;
+        const pump = () => {
+          while (i < N) {
+            i++;
+            if (!gz.write(CHUNK)) return void gz.once("drain", pump);
+          }
+          gz.end();
+        };
+        pump();
+      });
+      const body = Buffer.concat(chunks);
+
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch() {
+          return new Response(body, {
+            headers: {
+              "Content-Encoding": "gzip",
+              "Content-Length": String(body.length),
+            },
+          });
+        },
+      });
+      try {
+        const res = await fetch(\`http://127.0.0.1:\${server.port}/\`);
+        const buf = await res.arrayBuffer();
+        console.log("OK", buf.byteLength);
+      } finally {
+        server.stop(true);
+      }
+    `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: `OK ${1025 * 1024 * 1024}`,
+    stderr: expect.not.stringContaining("error"),
+    exitCode: 0,
+  });
+}, 60_000);
 
 describe("empty compressed responses", () => {
   // A response that declares Content-Encoding but sends zero body bytes must

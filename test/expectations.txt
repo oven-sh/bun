@@ -8,6 +8,41 @@ test/cli/install/bunx.test.ts [ FAIL ] # should handle package that requires nod
 test/bundler/native-plugin.test.ts [ FAIL ] # prints name when plugin crashes
 test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > segfault should report
 
+# Exposed by the bun -e/--eval fix that stopped swallowing uncaught exceptions (see PR #31826):
+# the spawned child needs process.binding('inspector'), which is not implemented
+test/js/node/test/parallel/test-inspector-enabled.js [ FAIL ]
+
+# Verbatim node v26.3.0 test asserting a FinalizationRegistry callback fires
+# within ONE globalThis.gc() + ONE setImmediate after the connect callback's
+# closure is unreferenced. The FinalizationRegistry spec gives no timing
+# guarantee for cleanup callbacks; JSC schedules them via DeferredWorkTimer
+# with no defined ordering relative to the immediate queue. The connect
+# listener IS removed (verified: listenerCount("secureConnect") === 0 in
+# done()) and the object IS collected (test passes 70/70 on darwin and
+# glibc Linux); on alpine x64 the FR callback delivery slips past the single
+# setImmediate after this PR's added module loads at process startup shift
+# the heap layout. The robust fix is gcUntil() rather than a single tick,
+# but the file is a verbatim upstream port. Quarantined on the failing
+# linux-x64-musl matrix only; still runs everywhere else (build 63145:
+# alpine 3.23 x64 + x64-baseline only).
+[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on musl x64
+
+# Vendored node v26.3.0 stream tests blocked on missing native subsystems (see PR #31826)
+test/js/node/test/parallel/test-stream-pipeline.js [ SKIP ] # block at L271 hangs: pipeline(rs, req) writes 11x'hello' raw after a never-ended GET's \r\n\r\n; node's llhttp rejects lowercase 'h' as a method char (HPE_INVALID_METHOD -> clientError -> 400+close -> req 'close' -> pipeline callback fires), but bun's uWS HttpParser buffers any incomplete run of valid tchars waiting for the request-line, so the connection stays open and the callback never fires. Pre-existing server-parser leniency; needs uWS HttpParser to reject non-uppercase method bytes like llhttp.
+test/js/node/test/parallel/test-stream-wrap.js [ FAIL ] # needs internal/test/binding + js_stream (net.Socket({handle}) libuv compat layer)
+test/js/node/test/parallel/test-stream-wrap-drain.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)
+test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)
+
+# Pre-existing fs.watch leak unmasked by this PR's eval-entry exception fix:
+# the child's thrown leak error ("fs.watch(dir) leaked N MB") used to be
+# swallowed by the silent-exit-0 eval bug (uncaught throw in a CJS -e script
+# exited 0 with empty stderr), so this test false-passed everywhere - the
+# same ~14KB-per-watch growth (~70MB over 5000 iterations) reproduces on
+# unmodified main once the error actually surfaces. Needs a PathWatcher
+# investigation; the #29854 resolved_path fix covers only the ~path-length
+# portion.
+[ DARWIN ] test/js/node/watch/fs.watch.test.ts [ FAIL ] # pre-existing leak, false-positive pass before the eval exception fix
+
 # Tests that are flaky
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 

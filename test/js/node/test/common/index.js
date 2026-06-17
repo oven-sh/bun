@@ -136,6 +136,23 @@ if (process.argv.length === 2 &&
       }
       if (flag === "--expose-internals" && process.versions.bun) {
         process.env.SKIP_FLAG_CHECK = "1";
+        // Serve require("internal/*") from bun's internal module registry
+        // (via bun:internal-for-testing, which is expose-internals-gated:
+        // always available in debug builds, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+        // for release). Unknown internal/* specifiers fall through to the
+        // original require and fail exactly as before.
+        const BunModule = require('module');
+        const originalRequire = BunModule.prototype.require;
+        let exposedInternals;
+        BunModule.prototype.require = function require(id) {
+          if (typeof id === 'string' && id.startsWith('internal/')) {
+            exposedInternals ??= originalRequire.call(this, 'bun:internal-for-testing').exposedInternals;
+            if (exposedInternals[id] !== undefined) {
+              return exposedInternals[id];
+            }
+          }
+          return originalRequire.apply(this, arguments);
+        };
         break;
       }
       if (flag === "test") {

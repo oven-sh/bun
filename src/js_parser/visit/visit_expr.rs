@@ -67,7 +67,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .e_identifier()
                         .expect("infallible: variant checked")
                         .ref_;
-                    if r.is_source_contents_slice() && !matches!(r.inner_index(), 4 | 6 | 7 | 9 | 10)
+                    if r.is_source_contents_slice()
+                        && !matches!(r.inner_index(), 4 | 6 | 7 | 9 | 10)
                     {
                         return;
                     }

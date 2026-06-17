@@ -344,8 +344,7 @@ test.concurrent.each([
     // full ~414-level ancestor chain per cloned `@scope` (2^14 clones from
     // the fork levels). The `@scope` prelude is charged against the same
     // byte budget as style-rule preludes.
-    const css =
-      ".padding-selector {\n".repeat(400) + ".a:-webkitx .a, .b:-webkitx .b {\n".repeat(14) + leaf;
+    const css = ".padding-selector {\n".repeat(400) + ".a:-webkitx .a, .b:-webkitx .b {\n".repeat(14) + leaf;
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

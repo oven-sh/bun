@@ -308,6 +308,13 @@ private:
 
             httpResponseData->fromAncientRequest = httpRequest->isAncient();
 
+            /* Per-request framing flags; writeHead only ever sets them, so a
+             * stale true from a previous 204/304 (or close-delimited) response
+             * on this keep-alive socket would strip the next response's body
+             * framing. */
+            httpResponseData->noBodyStatus = false;
+            httpResponseData->closeDelimited = false;
+
             /* Select the router based on SNI (only possible for SSL) */
             auto *selectedRouter = &httpContextData->router;
             if constexpr (SSL) {

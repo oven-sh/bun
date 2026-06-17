@@ -1,3 +1,5 @@
+// This is a port of Node.js's lib/_http_common.js
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js
 const { checkIsHttpToken } = require("internal/validators");
 const FreeList = require("internal/freelist");
 const { methods, allMethods, HTTPParser } = process.binding("http_parser");
@@ -42,6 +44,7 @@ const validateHeaderValue = (name, value) => {
 const insecureHTTPParser = false;
 
 const kIncomingMessage = Symbol("IncomingMessage");
+const kSkipPendingData = Symbol("SkipPendingData");
 const kOnMessageBegin = HTTPParser.kOnMessageBegin | 0;
 const kOnHeaders = HTTPParser.kOnHeaders | 0;
 const kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
@@ -130,7 +133,7 @@ function parserOnBody(b) {
   const stream = this.incoming;
 
   // If the stream has already been removed, then drop it.
-  if (stream === null) return;
+  if (stream === null || stream[kSkipPendingData]) return;
 
   // Pretend this was the result of a stream._read call.
   if (!stream._dumped) {
@@ -143,7 +146,7 @@ function parserOnMessageComplete() {
   const parser = this;
   const stream = parser.incoming;
 
-  if (stream !== null) {
+  if (stream !== null && !stream[kSkipPendingData]) {
     stream.complete = true;
     // Emit any trailing headers.
     const headers = parser._headers;
@@ -250,6 +253,7 @@ export default {
   methods,
   parsers,
   kIncomingMessage,
+  kSkipPendingData,
   HTTPParser,
   isLenient,
   prepareError,

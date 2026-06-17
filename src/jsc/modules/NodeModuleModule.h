@@ -18,6 +18,7 @@ using namespace JSC;
 
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled);
+JSC::JSValue createStreamIterEnabledFlag(Bun::GlobalObject*);
 void addNodeModuleConstructorProperties(JSC::VM &vm, Bun::GlobalObject *globalObject);
 
 extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsJSValue(BunString specifier, JSC::JSGlobalObject*, bool use_dirname);

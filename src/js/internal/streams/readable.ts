@@ -1259,6 +1259,35 @@ Readable.prototype.iterator = function (options) {
   return streamToAsyncIterator(this, options);
 };
 
+// The flag cannot be checked at module load time (readable loads during
+// bootstrap before options are available). Instead, toAsyncStreamable is
+// always defined but lazily initializes on first call -- throwing if the
+// flag is not set.
+{
+  const toAsyncStreamable = Symbol.for("Stream.toAsyncStreamable");
+  let createBatchedAsyncIterator;
+  let normalizeBatch;
+  let kValidatedSource;
+
+  Readable.prototype[toAsyncStreamable] = function () {
+    if (createBatchedAsyncIterator === undefined) {
+      // Write-once CLI bit set during argument parsing - unlike
+      // process.execArgv this cannot be mutated by user code.
+      if (!$cpp("NodeModuleModule.cpp", "createStreamIterEnabledFlag")) {
+        throw $ERR_STREAM_ITER_MISSING_FLAG();
+      }
+      ({ createBatchedAsyncIterator, normalizeBatch } = require("internal/streams/iter/classic"));
+      ({ kValidatedSource } = require("internal/streams/iter/types"));
+    }
+    const state = this._readableState;
+    const normalize = state.objectMode || state.encoding ? normalizeBatch : null;
+    const iter = createBatchedAsyncIterator(this, normalize);
+    iter[kValidatedSource] = true;
+    iter.stream = this;
+    return iter;
+  };
+}
+
 let composeImpl;
 
 Readable.prototype.compose = function compose(stream, options) {

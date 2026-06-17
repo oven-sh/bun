@@ -825,3 +825,47 @@ it("escapes quotes and newlines in requested version literals when writing yarn.
   // No yarn.lock line is forged from the version literal's contents.
   expect(lines.filter(line => line.trimStart().startsWith('resolved "http://injected.example'))).toEqual([]);
 });
+
+it("prints an actionable error for a lockfile version newer than this build supports", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "future-lockfile",
+      dependencies: {},
+    }),
+  );
+
+  await write(
+    join(packageDir, "bun.lock"),
+    JSON.stringify({
+      lockfileVersion: 99,
+      workspaces: {
+        "": {
+          name: "future-lockfile",
+        },
+      },
+      packages: {},
+    }),
+  );
+
+  const { exited, stdout, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+
+  expect(err).toContain("Unsupported lockfile version 99");
+  expect(err).toContain("newer version of Bun");
+  expect(err).toMatch(/This is Bun v\d+\.\d+\.\d+/);
+  expect(err).toMatch(/supports lockfile versions up to \d+/);
+  expect(err).toContain("Run 'bun upgrade'");
+  // the old message gave no hint at all
+  expect(err).not.toContain("Unknown lockfile version");
+  expect(await exited).toBe(0);
+});

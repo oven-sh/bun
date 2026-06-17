@@ -9354,6 +9354,201 @@ it("does not install transitive file: dependencies with overlong folder targets"
   expect(exitCode).toBe(1);
 });
 
+for (const field of ["resolutions", "overrides"]) {
+  it(`installs a file: dependency pointing outside the project when it came from root package.json "${field}"`, async () => {
+    // `overrides` / `resolutions` can only be declared in the root package.json,
+    // so a file: path written there is user-specified and should be trusted
+    // even when it is applied to a transitive dependency in a nested tree.
+    using dir = tempDir("override-file-dep", {
+      "shared/package.json": JSON.stringify({
+        name: "shared",
+        version: "1.0.0",
+      }),
+      "shared/index.js": "module.exports = 'shared';",
+      "project/package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {
+          "pkg-a": "file:./pkg-a",
+          "shared": "file:../shared",
+        },
+        [field]: {
+          shared: "file:../shared",
+        },
+      }),
+      "project/pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        version: "1.0.0",
+        dependencies: {
+          shared: "1.0.0",
+        },
+      }),
+      "project/pkg-a/index.js": "module.exports = require('shared');",
+    });
+    const projectDir = join(String(dir), "project");
+
+    // Run install twice: the first pass exercises the resolve/enqueue path
+    // (no lockfile yet), then node_modules is wiped so the second pass
+    // exercises the install-from-lockfile path.
+    for (let i = 0; i < 2; i++) {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: projectDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+      expect(err).not.toContain("unsafe folder path");
+      expect(err).not.toContain("refusing to install");
+      expect(err).not.toContain("Could not find package.json");
+      expect(err).not.toContain("failed to resolve");
+      expect(exitCode).toBe(0);
+      expect(out).toContain("shared");
+
+      if (i === 0) {
+        await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+      }
+    }
+
+    expect(await exists(join(projectDir, "node_modules", "shared", "package.json"))).toBe(true);
+
+    // pkg-a must be able to resolve `shared` at runtime.
+    await using runProc = spawn({
+      cmd: [bunExe(), "-e", "console.log(require('pkg-a'))"],
+      cwd: projectDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [runOut, runErr, runExit] = await Promise.all([
+      runProc.stdout.text(),
+      runProc.stderr.text(),
+      runProc.exited,
+    ]);
+    expect(runErr).toBe("");
+    expect(runOut.trim()).toBe("shared");
+    expect(runExit).toBe(0);
+  });
+
+  it(`installs a file: dependency pointing outside the project when it came from root package.json "${field}" (existing lockfile)`, async () => {
+    // Same as above but starting from a lockfile that already contains the
+    // nested folder resolution, so the package installer (not the enqueue
+    // path) is what sees the escaping folder path.
+    using dir = tempDir("override-file-dep-lock", {
+      "shared/package.json": JSON.stringify({
+        name: "shared",
+        version: "1.0.0",
+      }),
+      "shared/index.js": "module.exports = 'shared';",
+      "project/package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {
+          "pkg-a": "file:./pkg-a",
+          "shared": "file:../shared",
+        },
+        [field]: {
+          shared: "file:../shared",
+        },
+      }),
+      "project/pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        version: "1.0.0",
+        dependencies: {
+          shared: "1.0.0",
+        },
+      }),
+      "project/pkg-a/index.js": "module.exports = require('shared');",
+      "project/bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: {
+          "": {
+            name: "my-app",
+            dependencies: {
+              "pkg-a": "file:./pkg-a",
+              "shared": "file:../shared",
+            },
+          },
+        },
+        overrides: {
+          shared: "file:../shared",
+        },
+        packages: {
+          "pkg-a": ["pkg-a@file:pkg-a", { dependencies: { shared: "1.0.0" } }],
+          "shared": ["shared@file:../shared", {}],
+          "pkg-a/shared": ["shared@file:../shared", {}],
+        },
+      }),
+    });
+    const projectDir = join(String(dir), "project");
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projectDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    expect(err).not.toContain("unsafe folder path");
+    expect(err).not.toContain("refusing to install");
+    expect(err).not.toContain("Could not find package.json");
+    expect(err).not.toContain("failed to resolve");
+    expect(exitCode).toBe(0);
+    expect(out).toContain("shared");
+    expect(await exists(join(projectDir, "node_modules", "shared", "package.json"))).toBe(true);
+  });
+
+  it(`still rejects transitive file: dependencies that escape their package when a different name is in "${field}"`, async () => {
+    // An override for a different name must not whitelist an unrelated
+    // transitive file: dependency that points outside its package.
+    using dir = tempDir("override-file-dep-unrelated", {
+      "secret/credentials.txt": "do-not-link-me",
+      "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+      "project/package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {
+          "evil-folder-dep": "file:./evil-folder-dep",
+        },
+        [field]: {
+          shared: "file:../shared",
+        },
+      }),
+      "project/evil-folder-dep/index.js": "module.exports = 1;",
+      "project/evil-folder-dep/package.json": JSON.stringify({
+        name: "evil-folder-dep",
+        version: "1.0.0",
+        dependencies: {
+          loot: "file:../../secret",
+        },
+      }),
+    });
+    const projectDir = join(String(dir), "project");
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projectDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    expect(await exists(join(projectDir, "node_modules", "loot"))).toBe(false);
+    expect(await exists(join(projectDir, "node_modules", "evil-folder-dep", "node_modules", "loot"))).toBe(false);
+    expect(err).toContain("Could not find package.json");
+    expect(out).not.toContain("2 packages installed");
+    expect(exitCode).toBe(1);
+  });
+}
+
 it("does not extract a local file: tarball outside the temp dir for a dependency alias containing '..' path segments", async () => {
   // For `file:` tarball dependencies, the dependency alias (the key in
   // `dependencies`) is used to derive the temporary extraction folder name.

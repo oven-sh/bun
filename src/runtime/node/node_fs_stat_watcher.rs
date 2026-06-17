@@ -362,14 +362,16 @@ impl StatWatcherScheduler {
         // `NodeFS::rm` → `PathLike::slice`). `append()` can re-arm this timer
         // from `initial_stat_success_on_main_thread` while `self.task` is
         // still in flight, so guard here: if already in flight, re-arm the
-        // one-shot timer and try again next fire; `work_pool_callback` clears
-        // the flag on exit and will itself re-arm via `set_interval`.
+        // one-shot timer and try again next fire. `work_pool_callback` clears
+        // the flag on exit; the re-arm must be unconditional because its
+        // `!contain_watchers` branch stores `current_interval = 0` directly
+        // (no `set_interval` / no timer update) and can race an `append()`
+        // that landed after its `pop_batch()`, which would otherwise leave a
+        // live watcher with the timer disarmed. `.max(5)` matches the clamp
+        // applied to every watcher interval in `StatWatcher::init`.
         if self.work_pool_in_flight.swap(true, Ordering::AcqRel) {
             let this = core::ptr::from_mut(self);
-            let interval = self.get_interval();
-            if interval > 0 {
-                Self::set_timer(this, interval);
-            }
+            Self::set_timer(this, self.get_interval().max(5));
             return;
         }
 

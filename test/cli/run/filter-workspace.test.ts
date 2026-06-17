@@ -436,7 +436,7 @@ describe("bun", () => {
     runInCwdFailure(cwd_root, "*", "notpresent", /No packages matched/);
   });
   test("should warn about malformed package.json", () => {
-    runInCwdFailure(cwd_root, "*", "x", /Failed to read package.json/);
+    runInCwdFailure(cwd_root, "*", "x", /Failed to read .*malformed2.*package\.json/);
   });
   test("nonzero exit code on failure", () => {
     const dir = tempDirWithFiles("testworkspace", {
@@ -589,5 +589,31 @@ describe("bun", () => {
     expect(stdoutval).not.toMatch(/lines elided/);
     expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
     expect(exitCode).toBe(0);
+  });
+
+  test("warning names which package.json failed to parse", async () => {
+    const dir = tempDirWithFiles("filter-bad-pkgjson", {
+      packages: {
+        good: {
+          "package.json": JSON.stringify({ name: "good", scripts: { go: "echo ok" } }),
+        },
+        broken: {
+          "package.json": "this is { not valid json",
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "go"],
+      cwd: dir,
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const sep = process.platform === "win32" ? "\\" : "/";
+    expect(stderr).toContain(`broken${sep}package.json`);
+    expect(stderr).toContain("skipping this workspace package");
   });
 });

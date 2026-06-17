@@ -466,3 +466,55 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(a).toContain('"A"');
   expect(b).toContain('"B"');
 });
+
+describe("CLI argument error messages", () => {
+  test("--format with an unrecognized value echoes the value back", async () => {
+    using dir = tempDir("build-format-err", { "in.js": "console.log(1)" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--format=commonjs", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("--format: \"commonjs\""),
+    });
+    expect(stderr).toContain("'esm', 'cjs', or 'iife'");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--loader without a ':' separator names the flag and the bad token", async () => {
+    using dir = tempDir("build-loader-err", { "in.js": "console.log(1)" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--loader", "text", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("--loader");
+    expect(stderr).toContain("\"text\"");
+    expect(stderr).toContain(".ext:loader");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--define without a separator names the flag and shows an example", async () => {
+    using dir = tempDir("build-define-err", { "in.js": "console.log(FOO)" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--define", "FOO", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("--define");
+    expect(stderr).toContain("\"FOO\"");
+    expect(stderr).toContain("key=value");
+    expect(exitCode).toBe(1);
+  });
+});

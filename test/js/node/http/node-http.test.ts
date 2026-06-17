@@ -2398,9 +2398,9 @@ it("ClientRequest.destroy(err) emits 'error' before the terminal 'close'", async
 });
 
 it("ClientRequest.destroy(err) with no error listener does not throw and still tears down", async () => {
-  // destroy() must never throw synchronously (node runs the teardown first
-  // and surfaces the error async). A listener attached after destroy()
-  // returns, same tick, still catches it - like node's async socket error.
+  // destroy() must never throw synchronously (node routes the error through
+  // the socket's listener and surfaces it async). A listener attached after
+  // destroy() returns, same tick, still catches it.
   const server = http.createServer((req, res) => {
     res.write("x");
   });
@@ -2409,17 +2409,17 @@ it("ClientRequest.destroy(err) with no error listener does not throw and still t
   const { port } = server.address() as AddressInfo;
 
   try {
-    const { err, closed } = await new Promise<{ err: Error; closed: boolean }>(resolve => {
+    const { err, closedAtError } = await new Promise<{ err: Error; closedAtError: boolean }>(resolve => {
       const req = http.get({ host: "127.0.0.1", port }, () => {
         let sawClose = false;
         req.on("close", () => (sawClose = true));
         req.destroy(new Error("boom")); // must not throw
-        req.on("error", e => resolve({ err: e, closed: sawClose }));
+        req.on("error", e => resolve({ err: e, closedAtError: sawClose }));
       });
     });
     expect(err.message).toBe("boom");
-    // The teardown chain ran (close emitted synchronously inside destroy).
-    expect(closed).toBe(true);
+    // 'error' fires before the terminal 'close' (node v26.3.0 verified).
+    expect(closedAtError).toBe(false);
   } finally {
     server.close();
   }
@@ -2459,7 +2459,8 @@ it("ClientRequest.destroy(err) with a throwing error listener still tears down; 
     stderr: "pipe",
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim().split("\n")).toEqual(["destroy-returned", "teardown-ran:true", "async-uncaught:handler bug"]);
+  // node v26.3.0 verified: 'close' is async (after destroy() returns).
+  expect(stdout.trim().split("\n")).toEqual(["destroy-returned", "teardown-ran:false", "async-uncaught:handler bug"]);
   expect(exitCode).toBe(0);
 });
 

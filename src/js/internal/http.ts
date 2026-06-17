@@ -188,16 +188,9 @@ function emitEOFIncomingMessageOuter(self) {
   self.push(null);
   self.complete = true;
 }
-function emitEOFIncomingMessage(self, sync) {
+function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
-  // Client response bodies push EOF synchronously with the final data chunk
-  // so a single 'readable' emission covers both, matching node's parser
-  // calling onMessageComplete in the same tick as the last body chunk.
-  if (sync) {
-    emitEOFIncomingMessageOuter(self);
-  } else {
-    process.nextTick(emitEOFIncomingMessageOuter, self);
-  }
+  process.nextTick(emitEOFIncomingMessageOuter, self);
 }
 
 function validateMsecs(numberlike: any, field: string) {

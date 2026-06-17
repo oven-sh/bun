@@ -675,9 +675,10 @@ impl<R> CssRuleList<R> {
                         if context.selector_expansion_multiplier > 1 {
                             let weight = unk.prelude.token_weight()
                                 + unk.block.as_ref().map_or(0, |b| b.token_weight());
-                            if context
-                                .charge_token_expansion(context.selector_expansion_multiplier, weight)
-                            {
+                            if context.charge_token_expansion(
+                                context.selector_expansion_multiplier,
+                                weight,
+                            ) {
                                 context.err = Some(crate::error::MinifyError {
                                     kind: crate::error::MinifyErrorKind::token_expansion_limit_exceeded,
                                     loc: unk.loc,

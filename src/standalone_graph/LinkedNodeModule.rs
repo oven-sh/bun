@@ -548,20 +548,29 @@ fn bind(entry: &Entry) -> Result<Resolved, BindError> {
         }
     }
 
-    let abs = |rva: u32| -> *mut c_void {
-        if rva != 0 {
-            // SAFETY: rva lies inside bun.exe's image (validated at build
-            // time against the merged span).
-            unsafe { base.add(rva as usize).cast() }
-        } else {
-            core::ptr::null_mut()
+    // Same corrupted-.bunL defence as entry_point above: the export
+    // RVAs are cast to function pointers and *called* by
+    // BunProcess.cpp (napi_register_module_v1,
+    // node_api_module_get_api_version_v1), so a bit-rotted value
+    // pointing into bun.exe's own RX .text could execute whatever is
+    // there and return garbage instead of falling back.
+    let abs = |rva: u32| -> Result<*mut c_void, BindError> {
+        if rva == 0 {
+            return Ok(core::ptr::null_mut());
         }
+        if (rva as u64) < lo || (rva as u64) >= hi {
+            return Err(BindError::BadSection);
+        }
+        // SAFETY: rva lies inside the merged addon span (checked above).
+        Ok(unsafe { base.add(rva as usize).cast() })
     };
     Ok(Resolved {
-        napi_register_module_v1: abs(entry.export_register),
-        node_api_module_get_api_version_v1: abs(entry.export_api_version),
-        bun_plugin_name: abs(entry.export_plugin_name),
-        handle_token: abs(entry.rva_base),
+        napi_register_module_v1: abs(entry.export_register)?,
+        node_api_module_get_api_version_v1: abs(entry.export_api_version)?,
+        bun_plugin_name: abs(entry.export_plugin_name)?,
+        // rva_base is lo itself; no span check needed.
+        // SAFETY: rva_base is where the loader mapped the addon's RVA 0.
+        handle_token: unsafe { base.add(entry.rva_base as usize).cast() },
         did_bind: false,
     })
 }

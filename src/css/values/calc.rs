@@ -857,14 +857,37 @@ impl<V: CalcValue> Calc<V> {
         // instead of producing `Angle::Rad(atan2(10,5))`. Tracked as a known
         // incompleteness; no behaviour stub is added because a partial
         // dimension matcher would mis-reduce mixed-unit lengths.
-        if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
-            return Ok(v);
+        //
+        // Each fallback must re-check `hit_unrecoverable`: `Length::from_calc`
+        // and `Percentage::from_calc` wrap any `Calc` variant, so their
+        // `parse_sum` can reach a nested `atan2()` that the `Angle` attempt
+        // above never saw (because `Angle::from_calc` rejected an
+        // intermediate `Product`/`Sum` first). Without the check both
+        // fallbacks re-descend the whole nested tree, giving 2^depth parses
+        // for `atan2(N * min(a, b) + N + atan2(...))`-shaped input.
+        match try_parse_atan2_args::<C, Length>(input, ctx) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+            }
         }
-        if let Ok(v) = try_parse_atan2_args::<C, Percentage>(input, ctx) {
-            return Ok(v);
+        match try_parse_atan2_args::<C, Percentage>(input, ctx) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+            }
         }
-        if let Ok(v) = try_parse_atan2_args::<C, Time>(input, ctx) {
-            return Ok(v);
+        match try_parse_atan2_args::<C, Time>(input, ctx) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+            }
         }
 
         let parse_ident_fn = move |c: C, ident: &[u8]| -> Option<Calc<CSSNumber>> {

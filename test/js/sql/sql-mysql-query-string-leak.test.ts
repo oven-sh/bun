@@ -9,15 +9,16 @@
 // retain the query-string bytes.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, describeWithContainer, isASAN, isDockerEnabled, tempDir } from "harness";
 
-describeWithContainer("mysql", { image: "mysql_plain" }, container => {
-  test("MySQL: query string is not leaked across query lifecycle", async () => {
-    await container.ready;
-    const url = `mysql://root@${container.host}:${container.port}/bun_sql_test`;
+if (isDockerEnabled()) {
+  describeWithContainer("mysql", { image: "mysql_plain" }, container => {
+    test("MySQL: query string is not leaked across query lifecycle", async () => {
+      await container.ready;
+      const url = `mysql://root@${container.host}:${container.port}/bun_sql_test`;
 
-    using dir = tempDir("mysql-query-string-leak", {
-      "fixture.js": /* js */ `
+      using dir = tempDir("mysql-query-string-leak", {
+        "fixture.js": /* js */ `
         const { SQL } = require("bun");
 
         const sql = new SQL({ url: process.env.MYSQL_URL, max: 1 });
@@ -56,36 +57,37 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
         const deltaMiB = (rssAfter - rssBefore) / 1024 / 1024;
         console.log(JSON.stringify({ rssBefore, rssAfter, deltaMiB }));
       `,
-    });
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.js"],
-      env: { ...bunEnv, MYSQL_URL: url },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 120_000,
-    });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.js"],
+        env: { ...bunEnv, MYSQL_URL: url },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 120_000,
+      });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    let parsed: { deltaMiB: number };
-    try {
-      parsed = JSON.parse(stdout.trim());
-    } catch {
-      throw new Error(`fixture did not emit JSON\nstdout:\n${stdout}\nstderr:\n${stderr}`);
-    }
-    // With the leak, every one of the ~200 x 512 KiB query strings is retained
-    // (plus per-string overhead), so RSS grows by >= ~100 MiB. With the fix the
-    // strings are freed as each MySQLQuery is finalized and growth stays small.
-    // ASAN's quarantine retains freed allocations (default 256 MB) and a real
-    // server adds wire-buffer + encode churn on top of the string churn, so the
-    // delta runs higher under bun-asan even with the fix; widen the threshold
-    // there. The non-ASAN bound is the discriminating check.
-    expect(parsed.deltaMiB).toBeLessThan(isASAN ? 384 : 50);
-    expect(exitCode).toBe(0);
-    // 200 × 512 KiB round-trips to a real MySQL server plus ~20 Bun.gc(true)
-    // calls in an ASAN debug subprocess can take tens of seconds; the 5s
-    // default is too tight.
-  }, 120_000);
-});
+      let parsed: { deltaMiB: number };
+      try {
+        parsed = JSON.parse(stdout.trim());
+      } catch {
+        throw new Error(`fixture did not emit JSON\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+      }
+      // With the leak, every one of the ~200 x 512 KiB query strings is retained
+      // (plus per-string overhead), so RSS grows by >= ~100 MiB. With the fix the
+      // strings are freed as each MySQLQuery is finalized and growth stays small.
+      // ASAN's quarantine retains freed allocations (default 256 MB) and a real
+      // server adds wire-buffer + encode churn on top of the string churn, so the
+      // delta runs higher under bun-asan even with the fix; widen the threshold
+      // there. The non-ASAN bound is the discriminating check.
+      expect(parsed.deltaMiB).toBeLessThan(isASAN ? 384 : 50);
+      expect(exitCode).toBe(0);
+      // 200 × 512 KiB round-trips to a real MySQL server plus ~20 Bun.gc(true)
+      // calls in an ASAN debug subprocess can take tens of seconds; the 5s
+      // default is too tight.
+    }, 120_000);
+  });
+}

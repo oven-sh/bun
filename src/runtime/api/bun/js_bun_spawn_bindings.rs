@@ -1202,14 +1202,31 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     | sys::Errno::EPERM
                     | sys::Errno::EISDIR
                     | sys::Errno::ENOTDIR) => {
-                        let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
+                        let argv0_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                             // SAFETY: argv[0] is non-null and points at a NUL-terminated
                             // string we built above (lives in `arg0_backing`/`arg_backing`).
                             ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
                         } else {
                             ZStr::EMPTY
                         };
-                        if !display_path.as_bytes().is_empty() {
+                        // posix_spawn collapses chdir(cwd) and execve(argv[0]) failures
+                        // into a single errno. When the user passed an explicit cwd and
+                        // it is not an existing directory, blame the cwd so the error
+                        // points at the actual problem instead of argv[0].
+                        let display_path: &[u8] = if user_specified_cwd
+                            && matches!(errno, sys::Errno::ENOENT | sys::Errno::ENOTDIR)
+                            && !matches!(
+                                sys::exists_at_type(
+                                    sys::Fd::cwd(),
+                                    ZBox::from_bytes(cwd).as_zstr(),
+                                ),
+                                Ok(sys::ExistsAtType::Directory)
+                            ) {
+                            cwd
+                        } else {
+                            argv0_path.as_bytes()
+                        };
+                        if !display_path.is_empty() {
                             let mut systemerror = err.with_path(display_path).to_system_error();
                             if errno == sys::Errno::ENOENT {
                                 systemerror.errno = -UV_E::NOENT;

@@ -229,6 +229,111 @@ test("deeply nested multi-selector rules spanning @scope error instead of explod
   expect(minifyTest(".a, .b {\n".repeat(outer) + "color: red", "", OLD_TARGETS).length).toBeGreaterThan(0);
 });
 
+// The selector-expansion cap counts expanded selectors, not the rule structs
+// that partitioning materializes in memory. An input can stay under the
+// count cap while the partition path (targets without `:is()`) deep-clones a
+// large nested subtree at every level, growing the resident rule count
+// exponentially. Shape: `partitionLevels` two-selector levels wrapping
+// `siblings` single-selector rules whose declarations provide the per-rule
+// byte weight. The expanded selector count stays under 65536 while the
+// cloned-rule count passes the partition-clone cap.
+function partitionArenaBlowup(partitionLevels: number, siblings: number): string {
+  let css = "";
+  // Safari 13.2 supports `:placeholder-shown` but not unprefixed `:autofill`,
+  // so this list is incompatible and (since :is() is unsupported) partitioned.
+  for (let i = 0; i < partitionLevels; i++) {
+    css += ".foo:placeholder-shown .bar, .foo:-webkit-autofill .baz {\n";
+  }
+  const decl = Buffer.alloc(192, "x").toString();
+  for (let i = 0; i < siblings; i++) {
+    css += `.r${i} { --a: ${decl}; --b: ${decl}; color: red; border: 1px solid currentcolor; }\n`;
+  }
+  css += "}\n".repeat(partitionLevels);
+  return css;
+}
+
+// Safari 13 does not support `:is()`, so incompatible selector lists are
+// partitioned into one cloned rule per selector rather than wrapped.
+const SAFARI_13_2 = { safari: (13 << 16) | (2 << 8) };
+
+test("nested partition clones under the selector-count cap still error once too many rules are cloned", () => {
+  // 11 partition levels (multiplier 2^11) wrapping 28 sibling rules charges
+  // ~61K expanded selectors, under the 65536 count cap, but the
+  // partition-clone budget fires well before that. Without it this
+  // allocates hundreds of megabytes of cloned rule structs before printing.
+  expect(() => prefixTest(partitionArenaBlowup(11, 28), "", SAFARI_13_2)).toThrow(LIMIT_ERROR);
+});
+
+test("a small partition-clone subtree under both caps still compiles for targets without :is()", () => {
+  // Same shape with a tiny subtree: ~8K expanded selectors and a few MB of
+  // cloned rules, well under both caps.
+  const out = prefixTest(partitionArenaBlowup(11, 2), "", SAFARI_13_2);
+  expect(out).toContain("color: red");
+  expect(out.length).toBeLessThan(5_000_000);
+});
+
+// The exact shape that found the gap: a 9.5 KB input whose selector count
+// charges ~61K (under the cap) but whose partition clones drove peak memory
+// past ~250 MB. Run in a child so a regression only balloons the child's
+// memory, not the test runner's.
+test.concurrent(
+  "fuzzed nested partition-clone input errors instead of ballooning memory (safari 13.2)",
+  async () => {
+    const fixture = `
+      const b64 = "H4sIAAAAAAACA+1azW7jNhBurwXyDsQuAliFqZUsWbblWxcIUPTWF2hpibJZU6RK0bGTIEAeZY899t5Diz5K70UfIR1KVmInztqO7MQbWIAtivpmhj+a+Uak7ETKMPvn5jdOIjqSPKYK5yM5FcgeENVEtrmPp3QwZhqTiZYJ49zcu0RX39gvIpxRlWc00uycVlLb2AujEY3GNK7sIjh2auDLVlwd+6xGKCUzzARnguKcXdIQfS8SJpi+wLgq3VYFie8rsfuT4zhP/UQ269cx5HZ9P+j4vtPxOk6v3XYDt31UuYXKo93HoJO38ziY4DGP1E+dKnsDqUzoGUitZRqiSHKpGjHLIS5d4MxDdq/T6gUthG0vaDmdLrK7jt9yAqv/9lSgUipEPBo12o7d63VPkeu1QcJDntddgF7flTISmxhNOBsKnFOeXH3ulhn9Ky2zMCI8amD3W5jvhq9o2uyeTy3rep2sId77OH1bIKOVSHSFMI62rZf8399vzBAUI4FTNmswYcajiTQlHPWOx1s4XmYef94YedpEkkNSZPXBs6qsJ+F0Bn9yGiIlp/e+J8+pMtX4Ivzvjz+RSY6qkIfmDh+iAqCk1KCwdDpFRM40kwLrlIkhTiYi0qAAasJc0yxv3EXYv24SOJpUxAsemUg6G4WIzjISxjQhE65xrhXV0bxWxDTuH+Hbw9egt7+xVXOKDBwzTdMcwh4VmirE6ZBEF3BK9D2wei4HcoalYhuJVGDAhGgEhUspIPSuVhozZd4N4HlEQqp0M5iSExE30p3qPMIOBlbErjIteZTSuMhuI8e63iHozod4RoYUDxQlYzygiVSULrUPVExSseB0JlhPFclCZP4P5MY8KZwn1BDPQ+RmM5QD2cRImSiQyZIU5vyxwBIxXV1b0EvbcdIcqOVz4kvAAgCIRJpIUM5udQIMkjRmk/QD8NG88uOIqEgSvmVpuWJAovGwiBA44ixbL1CVYHlnI9yuSz9sgCuLt3tpw0ZAVs/Iy4i8XKm2psI5R5QNR3oPrZwqcEjI91IZ04Mex3Wl2ip+2Qh3svq2pjONzQgqUsS3gkN218PXGNO1oF/XqAhDkkDut78WlvxVXfcrHjkQGgk5yTWORozHh8soH5/HKD/W1k0ES8FVxDwV2JxgFkZb0YwSXZtxXmU463FsvUhv3APDDAwnJos1CwaKxbQEizqGFuZmwCGfLFjlYBjgdmNti6F8CxL4kkoQcGoqWngFKuL8RnInz2aVr55JK3tloBXcUy2Sm3wNx0SNG+/PvjtrIu/s7MyaX59V10+LFaHNuKtJ/4jCQ0Vis07SOMq8ikxK8nGIJoo3TCm38/Ph+1wTZRVrWugDcgN4dS5V4YvmA2QEFMWphZQxacBbQBf17rg9u+rNHptojJwsWRkCWWFYXITVGU1xudKS1zb996enepit6OH9nliR+OcjEpuFeLcFsOKPk0HDd05RO7AD5PWs/nLLtpZ+uGSTQvAtO/gugUBkiNfOxPCdhVqu3/G7XuB3ke+g4rsIaL+zuJdaS0mdD1z2/1nMU99p5LBOV/TauP2ykxfbmYHdcortzMDuBMgPbM9tWc1yq9OttjlhLhwXzr4FI9SGEfFgP9kMTKuctjyDlvZf0PanurYfa//6Ydcq3Qj8jAkiFq08XFn8H8dTrmx3JQAA";
+      const c = require("bun:internal-for-testing").cssInternals;
+      const i = Buffer.from(Bun.gunzipSync(Buffer.from(b64, "base64"))).toString("latin1");
+      const targets = { safari: (13 << 16) | (2 << 8) };
+      for (const fn of [c._test, c.prefixTest]) {
+        let threw = false;
+        try {
+          fn(i, "", targets);
+        } catch (e) {
+          threw = true;
+          if (!String(e.message).includes("Nested CSS rules expand to more than")) {
+            console.error("WRONG ERROR:", e.message);
+            process.exit(2);
+          }
+        }
+        if (!threw) {
+          console.error("DID NOT THROW");
+          process.exit(3);
+        }
+      }
+      // minifyTest has no targets, so nothing is expanded and nothing should throw.
+      const p = c.minifyTest(i, "");
+      if (typeof p !== "string" || p.length === 0) {
+        console.error("minifyTest returned", typeof p, p && p.length);
+        process.exit(4);
+      }
+      console.log("OK");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: {
+        ...bunEnv,
+        BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+        BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      // Kill switch: before the fix this allocated hundreds of megabytes in
+      // each of `_test` and `prefixTest`. Let the child terminate itself so
+      // a regression fails the assertions below instead of hanging the
+      // runner.
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: "OK",
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
+  },
+);
+
 test("shallow nesting spanning @scope still compiles for old targets", () => {
   const src = nestedAcrossAtRule("@scope", ".a, .b", 2, 2);
   const out = minifyTest(src, "", OLD_TARGETS);

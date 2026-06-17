@@ -705,6 +705,32 @@ impl<R> CssRuleList<R> {
             v: self.v.iter().map(|r| r.deep_clone(bump)).collect(),
         }
     }
+
+    /// Total number of `CssRule` entries in this list, counting through every
+    /// nested rule list (style rules, `@media`, `@supports`, `@container`,
+    /// `@scope`, `@starting-style`, `@layer`, `@-moz-document`, `@nest`).
+    ///
+    /// Used to charge the partition-clone budget (see
+    /// [`MAX_PARTITION_CLONE_RULES`]): this is what `deep_clone` is about to
+    /// allocate, so the caller walks the subtree once before cloning it.
+    pub fn count_rules(&self) -> u32 {
+        let mut n: u32 = 0;
+        for r in &self.v {
+            n = n.saturating_add(1).saturating_add(match r {
+                CssRule::Style(s) => s.rules.count_rules(),
+                CssRule::Media(m) => m.rules.count_rules(),
+                CssRule::Supports(s) => s.rules.count_rules(),
+                CssRule::Container(c) => c.rules.count_rules(),
+                CssRule::Scope(s) => s.rules.count_rules(),
+                CssRule::StartingStyle(s) => s.rules.count_rules(),
+                CssRule::LayerBlock(l) => l.rules.count_rules(),
+                CssRule::MozDocument(d) => d.rules.count_rules(),
+                CssRule::Nesting(nst) => nst.style.rules.count_rules(),
+                _ => 0,
+            });
+        }
+        n
+    }
 }
 
 // ── `.style` arm body — preserved verbatim port, gated on StyleRule
@@ -847,7 +873,30 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     }
     let mut incompatible_rules: SmallList<IncompatibleRuleEntry<R>, 1> =
         SmallList::init_capacity(incompatible.len());
+    // Each split-out selector deep-clones the full nested subtree. Minify
+    // runs bottom-up, so by this point the subtree already carries every
+    // deeper level's clones, and nesting such splits roughly doubles the
+    // cloned rule count at each level. Charge the subtree's rule count
+    // against the partition-clone budget before materializing another copy
+    // of it. See `MAX_PARTITION_CLONE_RULES`.
+    let subtree_rules = if incompatible.len() > 0 && !sty.rules.v.is_empty() {
+        sty.rules.count_rules()
+    } else {
+        0
+    };
     while incompatible.len() > 0 {
+        if subtree_rules > 0 {
+            context.partition_clone_total = context
+                .partition_clone_total
+                .saturating_add(subtree_rules);
+            if context.partition_clone_total > MAX_PARTITION_CLONE_RULES {
+                context.err = Some(css::error::MinifyError {
+                    kind: css::error::MinifyErrorKind::selector_expansion_limit_exceeded,
+                    loc: sty.loc,
+                });
+                return Err(MinifyErr::minify_err);
+            }
+        }
         let sel = incompatible.ordered_remove(0);
         let list = SelectorList {
             v: SmallList::with_one(sel),
@@ -1281,6 +1330,27 @@ pub struct StyleContext<'a> {
 /// instead.
 pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 
+/// Upper bound on the number of `CssRule` structs minify may materialize by
+/// deep-cloning nested subtrees when partitioning incompatible selectors.
+///
+/// When the targets don't support `:is()`, a multi-selector rule whose
+/// selector list is not compatible with the targets is split into one rule
+/// per incompatible selector, and each split rule carries a `deep_clone` of
+/// the original rule's nested subtree (see `minify_style_arm`). Minify runs
+/// bottom-up, so nesting such rules roughly doubles the subtree at every
+/// level and the cloned rule count grows exponentially. Every cloned
+/// `CssRule` carries its own selector list, declaration block and children
+/// vector in memory, so the limit here is tighter than
+/// [`MAX_SELECTOR_EXPANSION`]: the latter also bounds expansion that happens
+/// purely at print time (where nothing is allocated beyond the output
+/// buffer), but here each counted rule is a full struct sitting in the heap
+/// until the stylesheet is dropped. Real stylesheets clone only a handful of
+/// rules along this path; anything past this limit is a runaway expansion
+/// and is reported as `selector_expansion_limit_exceeded` instead of
+/// exhausting memory. Complements [`MAX_SELECTOR_EXPANSION`] and
+/// `MAX_PREFIX_EXPANSION_BYTES` (`rules/style.rs`).
+pub const MAX_PARTITION_CLONE_RULES: u32 = 16_384;
+
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
 ///
@@ -1316,4 +1386,9 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub selector_expansion_total: u32,
+    /// Running total of `CssRule` structs materialized by `deep_clone` when
+    /// partitioning incompatible selectors, checked against
+    /// [`MAX_PARTITION_CLONE_RULES`]. See that constant for why this is
+    /// bounded separately from [`Self::selector_expansion_total`].
+    pub partition_clone_total: u32,
 }

@@ -916,6 +916,53 @@ test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", asy
   }
 });
 
+// Sentry BUN-2V7Z: debug_assert!(!socket.is_shutdown()/is_closed()) in the
+// ProxyHeaders arm of on_writable (and the matching assert in
+// send_initial_request_payload) fired when the outer proxy socket died
+// between the inner-TLS handshake completing and the first HTTP write.
+// The assertion only fired in builds with debug-assertions on (Windows
+// Zig release builds used ReleaseSafe, hence 100% Windows in Sentry);
+// on other release builds the request would write into a dead outer
+// socket and stall. The race is not deterministically reproducible on
+// Linux loopback (the RST is processed as a separate event after
+// on_writable returns), so this test verifies the fetch rejects cleanly
+// with a connection error rather than asserting or hanging.
+for (const scheme of ["http", "https"] as const) {
+  test.concurrent(
+    `outer ${scheme.toUpperCase()} proxy socket reset right after inner TLS handshake rejects cleanly`,
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), require.resolve("./proxy-handshake-closed-socket-fixture.ts"), scheme, "10"],
+        env: {
+          ...bunEnv,
+          // The explicit per-request proxy must not be bypassed or rerouted
+          // by ambient proxy configuration on CI hosts; clear them in the
+          // spawn env so the child starts clean (see PROXY_ENV_KEYS above).
+          NO_PROXY: undefined,
+          no_proxy: undefined,
+          HTTP_PROXY: undefined,
+          http_proxy: undefined,
+          HTTPS_PROXY: undefined,
+          https_proxy: undefined,
+        },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) console.error("stderr:", stderr);
+      const lines = stdout.trim().split("\n");
+      // Every iteration must reject with a connection-flavored error, not
+      // TimeoutError (which would mean the request stalled on a dead socket
+      // and only the AbortSignal freed it) and not "resolved".
+      expect(lines).toHaveLength(10);
+      for (const line of lines) {
+        expect(line).toMatch(/^rejected: (ECONNRESET|ConnectionClosed|ECONNREFUSED|ConnectionRefused)$/);
+      }
+      expect(stderr).not.toContain("hung");
+      expect(exitCode).toBe(0);
+    },
+  );
+}
+
 describe.concurrent("proxy object format with headers", () => {
   test("proxy object with url string works same as string proxy", async () => {
     const response = await fetch(httpServer.url, {

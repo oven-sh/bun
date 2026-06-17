@@ -331,7 +331,7 @@ const errors: ErrorCodeMapping = [
   // Appended (not alphabetical): discriminants are index-aligned with the
   // checked-in Rust mirror (src/jsc/ErrorCode.rs) — only ever append here.
   ["ERR_HTTP2_GOAWAY_SESSION", Error],
-  ["ERR_PROXY_TUNNEL", Error],
   ["ERR_TLS_ALPN_CALLBACK_INVALID_RESULT", TypeError],
+  ["ERR_PROXY_TUNNEL", Error],
 ];
 export default errors;

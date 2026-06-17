@@ -694,11 +694,12 @@ impl ErrorCode {
 
     /// `ERR_HTTP2_GOAWAY_SESSION`
     pub const HTTP2_GOAWAY_SESSION: ErrorCode = ErrorCode(318);
-    /// `ERR_PROXY_TUNNEL` (instanceof Error)
-    pub const PROXY_TUNNEL: ErrorCode = ErrorCode(319);
 
     /// `ERR_TLS_ALPN_CALLBACK_INVALID_RESULT` (instanceof TypeError)
-    pub const TLS_ALPN_CALLBACK_INVALID_RESULT: ErrorCode = ErrorCode(320);
+    pub const TLS_ALPN_CALLBACK_INVALID_RESULT: ErrorCode = ErrorCode(319);
+
+    /// `ERR_PROXY_TUNNEL` (instanceof Error)
+    pub const PROXY_TUNNEL: ErrorCode = ErrorCode(320);
 
     /// == C++ `NODE_ERROR_COUNT`.
     pub const COUNT: u16 = 321;
@@ -1403,8 +1404,8 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_POSTGRES_CONNECTION_REFUSED",
     "ERR_MYSQL_CONNECTION_REFUSED",
     "ERR_HTTP2_GOAWAY_SESSION",
-    "ERR_PROXY_TUNNEL",
     "ERR_TLS_ALPN_CALLBACK_INVALID_RESULT",
+    "ERR_PROXY_TUNNEL",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

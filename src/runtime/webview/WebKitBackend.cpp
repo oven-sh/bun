@@ -540,7 +540,7 @@ static JSPromise* sendOp(JSGlobalObject* g, JSWebView* view, WriteBarrier<JSProm
     auto* promise = JSPromise::create(vm, g->promiseStructure());
     auto& c = client();
     if (!c.sock || c.dead || us_socket_is_closed(c.sock)) {
-        promise->reject(vm, createError(g, "WebView host process is not running"_s));
+        promise->reject(vm, g, createError(g, "WebView host process is not running"_s));
         return promise;
     }
     // Inc BEFORE slot.set so GC never observes a set slot with count==0.

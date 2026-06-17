@@ -3664,7 +3664,7 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
         (void)scope.tryClearException();
 
         if (auto* promise = dynamicDowncast<JSC::JSPromise>(promiseValue)) {
-            promise->reject(vm, exception->value());
+            promise->reject(vm, globalObject, exception->value());
             RETURN_IF_EXCEPTION(scope, );
             return;
         }
@@ -3674,7 +3674,7 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
 
     if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(result)) {
         if (auto* promise = dynamicDowncast<JSC::JSPromise>(promiseValue)) {
-            promise->reject(vm, errorInstance);
+            promise->reject(vm, globalObject, errorInstance);
             RETURN_IF_EXCEPTION(scope, );
             return;
         }

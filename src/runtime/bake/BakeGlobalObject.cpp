@@ -38,7 +38,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
 
         if (!keyString) {
             auto promise = JSC::JSPromise::create(vm, global->promiseStructure());
-            promise->reject(vm, JSC::createError(global, "import() requires a string"_s));
+            promise->reject(vm, global, JSC::createError(global, "import() requires a string"_s));
             return promise;
         }
 

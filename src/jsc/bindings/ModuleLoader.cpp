@@ -470,7 +470,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(JSC::JSValue::decode(encodedPromiseValue));
 
     if (!res->success) {
-        RELEASE_AND_RETURN(scope, promise->reject(vm, JSValue::decode(res->result.err.value)));
+        RELEASE_AND_RETURN(scope, promise->reject(vm, globalObject, JSValue::decode(res->result.err.value)));
     }
 
     auto* specifierValue = Bun::toJS(globalObject, *specifier);
@@ -502,7 +502,7 @@ extern "C" void Bun__onFulfillAsyncModule(
             auto* exception = scope.exception();
             if (!vm.isTerminationException(exception)) {
                 (void)scope.tryClearException();
-                promise->reject(vm, exception);
+                promise->reject(vm, globalObject, exception);
                 scope.assertNoExceptionExceptTermination();
             }
         }
@@ -1267,7 +1267,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObjec
     JSC::JSPromise* promise = pendingModule->internalPromise();
 
     pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
-    promise->reject(vm, reason);
+    promise->reject(vm, globalObject, reason);
 
     return JSValue::encode(reason);
 }

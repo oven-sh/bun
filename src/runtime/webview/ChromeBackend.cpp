@@ -1362,7 +1362,7 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     // rejectAllAndMarkDead reset it). WebSocket mode doesn't need
     // m_wsOpen here — send() queues until onOpen fires.
     if (t.m_dead || t.m_mode == TransportMode::None) {
-        promise->reject(vm, createError(g, "Chrome connection is not available"_s));
+        promise->reject(vm, g, createError(g, "Chrome connection is not available"_s));
         return promise;
     }
     v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);

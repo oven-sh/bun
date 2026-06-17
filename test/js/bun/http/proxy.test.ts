@@ -922,12 +922,7 @@ test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", asy
 for (const scheme of ["http", "https"] as const) {
   test(`outer ${scheme.toUpperCase()} proxy socket reset right after inner TLS handshake rejects cleanly`, async () => {
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        require.resolve("./proxy-handshake-closed-socket-fixture.ts"),
-        scheme,
-        "10",
-      ],
+      cmd: [bunExe(), require.resolve("./proxy-handshake-closed-socket-fixture.ts"), scheme, "10"],
       env: {
         ...bunEnv,
         // The explicit per-request proxy must not be bypassed or rerouted

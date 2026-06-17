@@ -28,7 +28,7 @@ test/js/node/test/parallel/test-inspector-enabled.js [ FAIL ]
 [ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on musl x64
 
 # Vendored node v26.3.0 stream tests blocked on missing native subsystems (see PR #31826)
-test/js/node/test/parallel/test-stream-pipeline.js [ SKIP ] # hangs: native http client coalesces response-body segments between pulls; needs per-socket-read delivery
+test/js/node/test/parallel/test-stream-pipeline.js [ SKIP ] # block at L271 hangs: pipeline(rs, req) writes 11x'hello' raw after a never-ended GET's \r\n\r\n; node's llhttp rejects lowercase 'h' as a method char (HPE_INVALID_METHOD -> clientError -> 400+close -> req 'close' -> pipeline callback fires), but bun's uWS HttpParser buffers any incomplete run of valid tchars waiting for the request-line, so the connection stays open and the callback never fires. Pre-existing server-parser leniency; needs uWS HttpParser to reject non-uppercase method bytes like llhttp.
 test/js/node/test/parallel/test-stream-wrap.js [ FAIL ] # needs internal/test/binding + js_stream (net.Socket({handle}) libuv compat layer)
 test/js/node/test/parallel/test-stream-wrap-drain.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)
 test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)

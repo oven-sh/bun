@@ -8,8 +8,9 @@
 # https://github.com/oven-sh/bun/issues
 
 # If you need to make a change to this script, such as upgrading a dependency,
-# increment the version comment to indicate that a new image should be built.
-# Otherwise, the existing image will be retroactively updated.
+# increment the version comment to indicate that a new image should be built,
+# and land it with `[publish images]` in the commit message so the new tag is
+# actually baked. Otherwise, the existing image will be retroactively updated.
 
 pid="$$"
 

@@ -277,6 +277,7 @@ test("the mixed vendor-prefix fuzzer shape with large payloads is bounded too", 
 });
 
 test.each([
+  ["unparsed-property-value", "box-shadow: PAD;"],
   ["dimension-unit", "--p: 1PAD;"],
   ["dashed-ident", "--p: --PAD;"],
   ["var-name", "--p: var(--PAD);"],

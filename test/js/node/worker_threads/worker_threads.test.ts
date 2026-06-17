@@ -718,8 +718,8 @@ describe("markAsUncloneable", () => {
   });
 
   // The marker is a JSC private name, not the public "isUncloneable" string;
-  // putDirect writes own storage directly without invoking setters or Proxy traps.
-  test("does not collide with user properties or invoke user getters/setters/traps", () => {
+  // putDirect writes own storage directly without invoking user setters.
+  test("does not collide with user properties or invoke user getters/setters", () => {
     let fired = "";
 
     const withAccessor: Record<string, unknown> = {};
@@ -738,7 +738,16 @@ describe("markAsUncloneable", () => {
     expect(fired).toBe("");
     expectDataCloneError(() => structuredClone(withAccessor));
     expect(fired).toBe("");
+  });
 
+  // Node.js throws "TypeError: Cannot pass private property name to proxy
+  // trap" here (V8 refuses to route private-symbol access through a Proxy at
+  // all). Bun's putDirect is non-virtual and writes the ProxyObject's own
+  // storage directly, so the call succeeds without invoking any handler trap.
+  // Either way no user code runs; the only observable difference is whether
+  // the call itself throws.
+  test("does not invoke Proxy handler traps", () => {
+    let fired = "";
     const proxied = new Proxy(
       {},
       {
@@ -752,7 +761,9 @@ describe("markAsUncloneable", () => {
         },
       },
     );
-    expect(() => markAsUncloneable(proxied)).not.toThrow();
+    try {
+      markAsUncloneable(proxied);
+    } catch {}
     expect(fired).toBe("");
   });
 

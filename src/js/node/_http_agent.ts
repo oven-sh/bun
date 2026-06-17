@@ -1,3 +1,5 @@
+// This is a port of Node.js's lib/_http_agent.js
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_agent.js
 const EventEmitter = require("node:events");
 const { parseProxyConfigFromEnv, kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
 const { getLazy, kEmptyObject, once } = require("internal/shared");
@@ -6,6 +8,8 @@ const { isIP } = require("internal/net/isIP");
 
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
+const kRequestAsyncResource = Symbol("requestAsyncResource");
+const { AsyncResource } = require("node:async_hooks");
 
 function freeSocketErrorListener(err) {
   const socket = this;
@@ -75,7 +79,14 @@ function Agent(options): void {
     const requests = this.requests[name];
     if (requests?.length) {
       const req = requests.shift();
-      setRequestSocket(this, req, socket);
+      const reqAsyncRes = req[kRequestAsyncResource];
+      if (reqAsyncRes) {
+        // Run request within the original async context.
+        reqAsyncRes.runInAsyncScope(setRequestSocket, undefined, this, req, socket);
+        req[kRequestAsyncResource] = null;
+      } else {
+        setRequestSocket(this, req, socket);
+      }
       if (requests.length === 0) {
         delete this.requests[name];
       }
@@ -125,10 +136,11 @@ function maybeEnableKeylog(this: Agent, eventName) {
     this[kOnKeylog] = function onkeylog(keylog) {
       agent.emit("keylog", keylog, this);
     };
-    // Existing sockets will start listening on keylog now.
-    const sockets = Object.values(this.sockets);
-    for (let i = 0; i < sockets.length; i++) {
-      sockets[i]!.on("keylog", this[kOnKeylog]);
+    // Existing sockets will start listening on keylog now. agent.sockets
+    // maps names to socket arrays, so flatten before attaching (upstream
+    // iterates the outer object and calls .on() on the arrays).
+    for (const socket of Object.values(this.sockets).flat() as any[]) {
+      socket.on("keylog", this[kOnKeylog]);
     }
   }
 }
@@ -186,14 +198,65 @@ function handleSocketAfterProxy(err, req) {
   if (err.code === "ERR_PROXY_TUNNEL") {
     if (err.proxyTunnelTimeout) {
       req.emit("timeout"); // Propagate the timeout from the tunnel to the request.
-    } else {
-      req.emit("error", err);
     }
+    req.emit("error", err);
   }
 }
 
-Agent.prototype.addRequest = function addRequest(_req, _options, _port /* legacy */, _localAddress /* legacy */) {
-  $debug("WARN: Agent.addRequest is a no-op");
+Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */, localAddress /* legacy */) {
+  // Legacy API: addRequest(req, host, port, localAddress)
+  if (typeof options === "string") {
+    options = {
+      __proto__: null,
+      host: options,
+      port,
+      localAddress,
+    };
+  }
+
+  // Here the agent options will override per-request options.
+  options = { __proto__: null, ...options, ...this.options };
+  if (options.socketPath) options.path = options.socketPath;
+
+  normalizeServerName(options, req);
+
+  const name = this.getName(options);
+  this.sockets[name] ||= [];
+
+  const freeSockets = this.freeSockets[name];
+  let socket;
+  if (freeSockets) {
+    while (freeSockets.length && freeSockets[0].destroyed) {
+      freeSockets.shift();
+    }
+    socket = this.scheduling === "fifo" ? freeSockets.shift() : freeSockets.pop();
+    if (!freeSockets.length) delete this.freeSockets[name];
+  }
+
+  const freeLen = freeSockets ? freeSockets.length : 0;
+  const sockLen = freeLen + this.sockets[name].length;
+
+  // Reusing a socket from the pool.
+  if (socket) {
+    this.reuseSocket(socket, req);
+    setRequestSocket(this, req, socket);
+    this.sockets[name].push(socket);
+  } else if (sockLen < this.maxSockets && this.totalSocketCount < this.maxTotalSockets) {
+    $debug("call onSocket", sockLen, freeLen);
+    // If we are under maxSockets create a new one.
+    this.createSocket(req, options, onSocketCreated.bind(this, req));
+  } else {
+    $debug("wait for socket");
+    // We are over limit so we'll add it to the queue.
+    this.requests[name] ||= [];
+
+    // Used to create sockets for pending requests from different origin
+    req[kRequestOptions] = options;
+    // Used to capture the original async context.
+    req[kRequestAsyncResource] = new AsyncResource("QueuedRequest");
+
+    this.requests[name].push(req);
+  }
 };
 
 Agent.prototype.createSocket = function createSocket(req, options, cb) {
@@ -215,7 +278,11 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
   options.encoding = null;
 
   const oncreate = once((err, s) => {
-    if (err) return cb(err);
+    // Pass the socket along with the error: proxy-tunnel failures with a
+    // statusCode deliberately skip destroy in cleanupAndPropagate so
+    // req.onSocket can destroy the connection - dropping it here would leak
+    // a proxy socket that holds its end open after a non-200 CONNECT.
+    if (err) return cb(err, s);
     this.sockets[name] ||= [];
     this.sockets[name].push(s);
     this.totalSocketCount++;
@@ -344,17 +411,31 @@ Agent.prototype.removeSocket = function removeSocket(s, options) {
 
   if (req && options) {
     req[kRequestOptions] = undefined;
-    this.createSocket(req, options, (err, socket) => {
-      if (err) {
-        handleSocketAfterProxy(err, req);
-        req.onSocket(null, err);
-        return;
-      }
-
-      socket.emit("free");
-    });
+    this.createSocket(req, options, onSocketCreatedForPending.bind(undefined, req));
   }
 };
+
+function onSocketCreated(this: any, req, err, socket) {
+  if (err) {
+    handleSocketAfterProxy(err, req);
+    req.onSocket(socket, err);
+    return;
+  }
+
+  setRequestSocket(this, req, socket);
+}
+
+function onSocketCreatedForPending(req, err, socket) {
+  if (err) {
+    handleSocketAfterProxy(err, req);
+    // Forward the socket (when the creation error left one behind) so
+    // onSocketNT can destroy it, like the non-pending path.
+    req.onSocket(socket ?? null, err);
+    return;
+  }
+
+  socket.emit("free");
+}
 
 Agent.prototype.keepSocketAlive = function keepSocketAlive(socket) {
   socket.setKeepAlive(true, this.keepAliveMsecs);
@@ -421,14 +502,33 @@ function setRequestSocket(agent, req, socket) {
   socket.setTimeout(req.timeout);
 }
 
+// Like Node.js: NODE_USE_ENV_PROXY opts the global agents into proxying via
+// the HTTP_PROXY/HTTPS_PROXY/NO_PROXY environment variables.
+function shouldUseEnvProxy() {
+  const value = process.env.NODE_USE_ENV_PROXY;
+  if (Boolean(value) === false || value === "0") {
+    return false;
+  }
+  // Like Node.js's startup EnvHttpProxyAgent setup: configured proxy URLs are
+  // parsed eagerly, so an unparsable URL throws a TypeError (Invalid URL).
+  const httpProxy = process.env.http_proxy || process.env.HTTP_PROXY;
+  const httpsProxy = process.env.https_proxy || process.env.HTTPS_PROXY;
+  if (httpProxy && URL.canParse(httpProxy) === false) {
+    throw $ERR_INVALID_URL(httpProxy);
+  }
+  if (httpsProxy && URL.canParse(httpsProxy) === false) {
+    throw $ERR_INVALID_URL(httpsProxy);
+  }
+  return true;
+}
+
 export default {
   Agent,
   globalAgent: new Agent({
     keepAlive: true,
     scheduling: "lifo",
     timeout: 5000,
-    // This normalized from both --use-env-proxy and NODE_USE_ENV_PROXY settings.
-    // proxyEnv: getOptionValue("--use-env-proxy") ? filterEnvForProxies(process.env) : undefined,
-    proxyEnv: undefined, // TODO:
+    proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
   }),
+  shouldUseEnvProxy,
 };

@@ -847,7 +847,8 @@ function getTestBunStep(platform, options, testOptions = {}) {
       EXPECTED_PLATFORM_ARCH: platform.arch,
       ...(platform.abi ? { EXPECTED_PLATFORM_ABI: platform.abi } : {}),
       ...(platform.os === "linux" && platform.distro ? { EXPECTED_PLATFORM_DISTRO: platform.distro } : {}),
-      ...(platform.os === "linux" || (platform.os === "darwin" && platform.arch === "aarch64" && platform.tier === "latest")
+      ...(platform.os === "linux" ||
+      (platform.os === "darwin" && platform.arch === "aarch64" && platform.tier === "latest")
         ? { EXPECTED_PLATFORM_RELEASE: platform.release }
         : {}),
     },
@@ -1360,6 +1361,8 @@ async function getPipelineOptions() {
     };
   }
 
+  // BUILDKITE_MESSAGE is the commit subject line only — option tags like
+  // [publish images] must appear in the subject, not the commit body.
   const commitMessage = getCommitMessage();
 
   /**

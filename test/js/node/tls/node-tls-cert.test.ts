@@ -720,69 +720,84 @@ describe("tls ciphers should work", () => {
   });
 });
 
-it("server-side getPeerCertificate() should not leak", async () => {
-  // Guards against the SSL_get_peer_certificate X509 ref leak and the
-  // computeRaw BIO leak on the server getPeerCertificate() path.
-  const { promise: serverSocketPromise, resolve: onServerSocket } = Promise.withResolvers<TLSSocket>();
-  const server = tls.createServer(
-    {
-      key: serverTls.key,
-      cert: serverTls.cert,
-      ca: [clientTls.ca],
-      requestCert: true,
-      rejectUnauthorized: false,
-    },
-    socket => onServerSocket(socket),
-  );
-  await once(server.listen(0, "127.0.0.1"), "listening");
+// A local `bun bd` debug build is ASAN-instrumented but not named `bun-asan`;
+// ASAN's default 256MB quarantine retains every freed allocation, so RSS grows
+// by the total allocation churn regardless of leaks and the threshold below
+// cannot distinguish a leak from the quarantine. Skip every debug build -
+// since isASAN learned that local debug builds are ASAN-instrumented too,
+// debug+ASAN is exactly the un-measurable combination (quarantine + redzones
+// inflate RSS unboundedly for this access pattern); CI's release ASAN lane
+// (isDebug false) keeps running with its own threshold.
+it.skipIf(isDebug)(
+  "server-side getPeerCertificate() should not leak",
+  async () => {
+    // Guards against the SSL_get_peer_certificate X509 ref leak and the
+    // computeRaw BIO leak on the server getPeerCertificate() path.
+    const { promise: serverSocketPromise, resolve: onServerSocket } = Promise.withResolvers<TLSSocket>();
+    const server = tls.createServer(
+      {
+        key: serverTls.key,
+        cert: serverTls.cert,
+        ca: [clientTls.ca],
+        requestCert: true,
+        rejectUnauthorized: false,
+      },
+      socket => onServerSocket(socket),
+    );
+    await once(server.listen(0, "127.0.0.1"), "listening");
 
-  const client = tls.connect({
-    host: "127.0.0.1",
-    port: (server.address() as AddressInfo).port,
-    key: clientTls.key,
-    cert: clientTls.cert,
-    ca: [serverTls.ca],
-    checkServerIdentity,
-  });
-  await once(client, "secureConnect");
+    const client = tls.connect({
+      host: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      key: clientTls.key,
+      cert: clientTls.cert,
+      ca: [serverTls.ca],
+      checkServerIdentity,
+    });
+    await once(client, "secureConnect");
 
-  const serverSocket = await serverSocketPromise;
-  try {
-    // Make sure the client actually sent a cert so we exercise the
-    // SSL_get_peer_certificate path rather than falling through to the
-    // cert-chain branch.
-    const first = serverSocket.getPeerCertificate();
-    expect(first).toBeDefined();
-    expect(first?.subject).toBeDefined();
+    const serverSocket = await serverSocketPromise;
+    try {
+      // Make sure the client actually sent a cert so we exercise the
+      // SSL_get_peer_certificate path rather than falling through to the
+      // cert-chain branch.
+      const first = serverSocket.getPeerCertificate();
+      expect(first).toBeDefined();
+      expect(first?.subject).toBeDefined();
 
-    function spin(n: number) {
-      for (let i = 0; i < n; i++) {
-        serverSocket.getPeerCertificate();
-        serverSocket.getPeerCertificate(false);
+      function spin(n: number) {
+        for (let i = 0; i < n; i++) {
+          serverSocket.getPeerCertificate();
+          serverSocket.getPeerCertificate(false);
+        }
+        Bun.gc(true);
+        Bun.gc(true);
       }
-      Bun.gc(true);
-      Bun.gc(true);
+
+      // Run in fixed-size rounds with a GC after each so the steady-state
+      // heap footprint stays bounded. The first few rounds grow the heap
+      // regardless of leaks, so take the baseline after warmup.
+      const perRound = isDebug ? 2_500 : 5_000;
+      for (let round = 0; round < 4; round++) spin(perRound);
+      const baseline = process.memoryUsage.rss();
+
+      for (let round = 0; round < 10; round++) spin(perRound);
+      const after = process.memoryUsage.rss();
+      const growth = after - baseline;
+
+      // Unpatched, the BIO leak alone is ~800 bytes/call → ~40MB over the
+      // 50k abbreviated calls here (~20MB for 25k in debug). Leave slack for
+      // allocator/ASAN noise but stay well below that. Both calls in the loop
+      // build the full leaf-certificate object (getPeerCertificate(false) used
+      // to return {}), so the debug budget covers 2x the constructions. Local
+      // debug (non-`bun-asan`) builds skip this test entirely - see skipIf above.
+      const threshold = 1024 * 1024 * (isDebug ? 20 : isASAN ? 16 : 12);
+      expect(growth).toBeLessThan(threshold);
+    } finally {
+      client.end();
+      serverSocket.end();
+      server.close();
     }
-
-    // Run in fixed-size rounds with a GC after each so the steady-state
-    // heap footprint stays bounded. The first few rounds grow the heap
-    // regardless of leaks, so take the baseline after warmup.
-    const perRound = isDebug ? 2_500 : 5_000;
-    for (let round = 0; round < 4; round++) spin(perRound);
-    const baseline = process.memoryUsage.rss();
-
-    for (let round = 0; round < 10; round++) spin(perRound);
-    const after = process.memoryUsage.rss();
-    const growth = after - baseline;
-
-    // Unpatched, the BIO leak alone is ~800 bytes/call → ~40MB over the
-    // 50k abbreviated calls here (~20MB for 25k in debug). Leave slack for
-    // allocator/ASAN noise but stay well below that.
-    const threshold = 1024 * 1024 * (isDebug ? 10 : isASAN ? 16 : 12);
-    expect(growth).toBeLessThan(threshold);
-  } finally {
-    client.end();
-    serverSocket.end();
-    server.close();
-  }
-}, 180_000);
+  },
+  180_000,
+);

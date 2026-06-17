@@ -231,10 +231,20 @@ void ScriptExecutionContext::addToContextsMap()
     Locker locker { allScriptExecutionContextsMapLock };
     ASSERT(!allScriptExecutionContextsMap().contains(m_identifier));
     allScriptExecutionContextsMap().add(m_identifier, this);
+    m_isInContextsMap = true;
 }
 
 void ScriptExecutionContext::removeFromContextsMap()
 {
+    // Idempotent: worker teardown removes the entry eagerly (before the
+    // final GC) so cross-thread posts see the context as gone instead of
+    // landing on a VM that is about to stop ticking. ~GlobalObject, which
+    // runs whenever GC eventually collects the global, calls this again;
+    // the flag short-circuits that second call so the destructor's
+    // !contains() ASSERT still catches real mismatches.
+    if (!m_isInContextsMap)
+        return;
+    m_isInContextsMap = false;
     Locker locker { allScriptExecutionContextsMapLock };
     ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
     allScriptExecutionContextsMap().remove(m_identifier);

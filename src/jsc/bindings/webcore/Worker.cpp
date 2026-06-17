@@ -90,6 +90,11 @@ void WebWorker__releaseParentPollRef(void* worker);
 // Free the native WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
 
+// Drain-and-drop the worker VM's pending concurrent-task queue. Called from
+// teardownJSCVM on the worker thread, after the context is unregistered and
+// before JSC teardown. See the comment at the call site.
+void Bun__dropConcurrentCppTasksForWorker(Zig::GlobalObject* globalObject);
+
 } // extern "C"
 // -------------------------------------------------------------------------------------------------
 
@@ -583,6 +588,29 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
         globalObject->requireMap()->clear(globalObject);
         scope.exception(); // TODO: handle or assert none?
         vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
+        // Take the context out of the global map now rather than relying on
+        // the collect below to finalize ~GlobalObject and do it. That collect
+        // is best-effort: any JSC::Strong, conservative stack root, or DOM
+        // object with hasPendingActivity (e.g. an entangled MessagePort with
+        // a listener) keeps the global marked, so ~GlobalObject may not run
+        // before shutdown() proceeds to vm.deinit() and sets has_terminated.
+        // Removing the entry here makes postTaskTo() return false instead.
+        // ~GlobalObject's later removeFromContextsMap() is a no-op once
+        // m_isInContextsMap is cleared.
+        if (auto* ctx = globalObject->scriptExecutionContext())
+            ctx->removeFromContextsMap();
+        // With the context out of the map, no new cross-thread posts can
+        // arrive (postTaskTo holds the map lock across lookup+enqueue).
+        // Drain-and-drop whatever is already sitting in the Rust EventLoop's
+        // concurrent_tasks queue so the ConcurrentTask boxes and their
+        // captured EventLoopTask* payloads (Ref<SerializedScriptValue>,
+        // Ref<Worker>, ...) are released while this JSC VM is still alive.
+        // The main-thread exit path does the equivalent in global_exit();
+        // workers had no such hook, so any postTaskTo landing between the
+        // last tick_concurrent() and the map removal above leaked under
+        // LSAN (BroadcastChannel across a tree of workers makes that window
+        // trivially reachable in test-worker-messaging.js).
+        Bun__dropConcurrentCppTasksForWorker(globalObject);
         gcUnprotect(globalObject);
         globalObject = nullptr;
     }

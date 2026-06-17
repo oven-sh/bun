@@ -219,7 +219,7 @@ function markAsUntransferable() {
   throwNotImplemented("worker_threads.markAsUntransferable");
 }
 
-const markAsUncloneable = $newCppFunction("Worker.cpp", "jsFunctionMarkAsUncloneable", 1);
+const markAsUncloneable = $newCppFunction("Worker.cpp", "jsFunction_markAsUncloneable", 1);
 
 function moveMessagePortToContext() {
   throwNotImplemented("worker_threads.moveMessagePortToContext");

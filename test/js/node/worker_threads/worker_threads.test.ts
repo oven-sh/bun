@@ -507,6 +507,7 @@ describe("markAsUncloneable", () => {
 
   test("is exported as a function", () => {
     expect(typeof markAsUncloneable).toBe("function");
+    expect(markAsUncloneable.name).toBe("markAsUncloneable");
     expect(markAsUncloneable.length).toBe(1);
     expect(wt.markAsUncloneable).toBe(markAsUncloneable);
   });

@@ -800,7 +800,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 // Implementation: tag the object with a JSC private-name property, invisible to
 // JS enumeration (Object.keys, Reflect.ownKeys, JSON.stringify) but cheap to read
 // from the structured-clone serializer via getDirect().
-JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUncloneable,
+JSC_DEFINE_HOST_FUNCTION(jsFunction_markAsUncloneable,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();

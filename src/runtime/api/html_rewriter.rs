@@ -568,7 +568,13 @@ impl HTMLRewriterLoader {
                 // the destination sink; valid for the duration of this call.
                 unsafe { (*pending).apply_backpressure(&mut self.output, bytes) };
             }
-            Writable::IntoArray(_) | Writable::Owned(_) | Writable::Temporary(_) => {
+            // `PendingPromise` is only produced by the HTTP server response
+            // sink, which this rewriter output never wraps; treat it as a normal
+            // ready write.
+            Writable::IntoArray(_)
+            | Writable::Owned(_)
+            | Writable::Temporary(_)
+            | Writable::PendingPromise(_) => {
                 self.signal.ready(
                     if self.chunk_size > 0 {
                         Some(self.chunk_size as u64)

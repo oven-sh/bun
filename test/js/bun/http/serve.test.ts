@@ -2429,3 +2429,74 @@ it.if(isPosix)("serves /bun:info over a unix socket in development mode", async 
   expect(text).toContain("bun_version");
   expect(res.status).toBe(200);
 });
+
+it("applies backpressure to a Response(ReadableStream) body when the client stalls reading (#32469)", async () => {
+  const CHUNK = Buffer.alloc(64 * 1024, 65); // 64 KiB
+  // If the server ever ignores backpressure it runs away to this cap (128 MiB)
+  // and closes the stream; correct backpressure plateaus far below it.
+  const CAP_CHUNKS = 2048;
+  let pulls = 0;
+  let producedEverything = false;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream(
+        {
+          pull(controller) {
+            pulls++;
+            controller.enqueue(CHUNK);
+            if (pulls >= CAP_CHUNKS) {
+              controller.close();
+              producedEverything = true;
+              return;
+            }
+            // Yield to macrotasks periodically so a runaway (no-backpressure)
+            // producer can't starve the event loop and hide from this test.
+            if (pulls % 64 === 0) return Bun.sleep(0);
+          },
+        },
+        { highWaterMark: 1 },
+      );
+      return new Response(stream);
+    },
+  });
+
+  // Raw client: send the request, read the response headers + a little body,
+  // then stop reading so TCP backpressure propagates back to the server.
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"));
+  socket.once("data", () => {
+    socket.pause(); // got the head of the response; now stall forever
+    onStalled();
+  });
+
+  try {
+    await stalled;
+
+    // Poll a bounded window for the absence of a runaway: wait until the pull
+    // count stops growing (backpressure engaged) or the server produces the
+    // whole capped body (the bug).
+    let lastPulls = -1;
+    let stableTurns = 0;
+    while (!producedEverything && stableTurns < 12) {
+      await Bun.sleep(25);
+      if (pulls === lastPulls) {
+        stableTurns++;
+      } else {
+        stableTurns = 0;
+        lastPulls = pulls;
+      }
+    }
+
+    // A stalled client must not let the server buffer the whole body. Correct
+    // backpressure plateaus at roughly the socket buffer (tens of 64 KiB
+    // chunks); without it the producer runs to CAP_CHUNKS and closes.
+    expect(producedEverything).toBe(false);
+    expect(pulls).toBeLessThan(1024);
+  } finally {
+    socket.destroy();
+  }
+});

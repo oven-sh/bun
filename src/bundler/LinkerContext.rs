@@ -2289,15 +2289,12 @@ impl<'a> LinkerContext<'a> {
             // SAFETY: `self.mangled_props` is not mutated during printing; detached borrow
             // outlives only this call (see above).
             unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
-        // DevServer uses a separate sourcemap stitcher that hard-codes one
-        // `sources[]` slot per file; passing `input_source_map` would
-        // corrupt its output. Gate the whole feature on the Bun.build path.
-        let input_source_map: Option<&bun_sourcemap::InputSourceMap> = if self.dev_server.is_none()
-        {
-            parse_graph.input_files.items_input_source_map()[source_index.get() as usize].as_deref()
-        } else {
-            None
-        };
+        // DevServer's sourcemap stitcher (`SourceMapStore::join_vlq`) now
+        // tracks per-file inner-source expansion via `PackedMap.inner_sources`,
+        // so chained input sourcemaps flow through both paths.
+        let input_source_map: Option<&bun_sourcemap::InputSourceMap> =
+            parse_graph.input_files.items_input_source_map()[source_index.get() as usize]
+                .as_deref();
 
         let print_options = js_printer::Options {
             bundling: true,

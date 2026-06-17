@@ -7,13 +7,29 @@ use std::rc::Rc;
 /// Line count newtype.
 pub(crate) type LineCount = bun_core::GenericIndex<u32, u8>;
 
-/// `PackedMap.end_state` — only the two fields the bundler needs to thread
-/// between chunks (generated_column is always 0 because minification is off,
+/// `PackedMap.end_state` — the fields the bundler needs to thread between
+/// chunks (generated_column is always 0 because minification is off,
 /// generated_line is recomputed per concatenation).
 #[derive(Copy, Clone, Default)]
 pub struct EndState {
     pub original_line: i32,
     pub original_column: i32,
+    /// Chunk-local source index of the last emitted mapping.
+    /// `0` → the input file itself (the intermediate); `1 + i` → inner
+    /// source `i` from the input file's `//# sourceMappingURL=` chain.
+    /// Only nonzero when `inner_sources` is non-empty.
+    pub source_index: i32,
+}
+
+/// An inner source contributed by the input file's own
+/// `//# sourceMappingURL=` comment (inline `data:` or external `.map`).
+/// One per entry in the input sourcemap's `sources[]`; `path` is the
+/// resolved absolute path (or the raw name when not resolvable) and
+/// `escaped_content` is the JSON-quoted `sourcesContent[i]` (empty when
+/// the input map did not carry content for that slot).
+pub struct InnerSource {
+    pub path: Box<[u8]>,
+    pub escaped_content: Box<[u8]>,
 }
 
 /// Packed source mapping data for a single file.
@@ -25,10 +41,18 @@ pub struct PackedMap {
     /// to preserve that effort for concatenation and re-concatenation.
     escaped_source: Box<[u8]>,
     pub end_state: EndState,
+    /// Inner sources contributed by the input file's own sourcemap.
+    /// Empty when the input carried no `//# sourceMappingURL=` chain (the
+    /// common case).
+    pub inner_sources: Box<[InnerSource]>,
 }
 
 impl PackedMap {
-    pub fn new_non_empty(chunk: &mut bun_sourcemap::Chunk, escaped_source: Box<[u8]>) -> Rc<Self> {
+    pub fn new_non_empty(
+        chunk: &mut bun_sourcemap::Chunk,
+        escaped_source: Box<[u8]>,
+        inner_sources: Box<[InnerSource]>,
+    ) -> Rc<Self> {
         let buffer = &mut chunk.buffer;
         debug_assert!(!buffer.is_empty());
         Rc::new(Self {
@@ -37,13 +61,28 @@ impl PackedMap {
             end_state: EndState {
                 original_line: chunk.end_state.original_line,
                 original_column: chunk.end_state.original_column,
+                source_index: chunk.end_state.source_index,
             },
+            inner_sources,
         })
+    }
+
+    /// How many `sources[]` slots this file occupies in the rendered
+    /// sourcemap: one for the intermediate input, plus one per inner source.
+    #[inline]
+    pub fn source_slot_count(&self) -> usize {
+        1 + self.inner_sources.len()
     }
 
     #[inline]
     pub fn memory_cost(&self) -> usize {
-        self.vlq().len() + self.quoted_contents().len() + core::mem::size_of::<Self>()
+        let mut cost = self.vlq().len() + self.quoted_contents().len() + core::mem::size_of::<Self>();
+        for inner in self.inner_sources.iter() {
+            cost += inner.path.len()
+                + inner.escaped_content.len()
+                + core::mem::size_of::<InnerSource>();
+        }
+        cost
     }
 
     #[inline]

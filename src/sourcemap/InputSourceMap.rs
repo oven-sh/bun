@@ -43,6 +43,37 @@ impl InputSourceMap {
         let url = find_source_mapping_url(source)?;
         parse_data_url(url)
     }
+
+    /// Like [`parse_from_source`] but also resolves external `.map`
+    /// references (non-`data:` URLs) relative to `source_dir` and reads
+    /// them from disk. Used by the bundler when the input file lives in
+    /// the `file` namespace. `http(s)://` and other remote schemes are
+    /// skipped. Failure to read the sidecar file returns `None` (the
+    /// build falls back to mapping against the intermediate).
+    pub fn parse_from_source_with_fs(
+        source: &[u8],
+        source_dir: &[u8],
+    ) -> Option<Box<InputSourceMap>> {
+        let url = find_source_mapping_url(source)?;
+        if bun_core::strings::has_prefix_comptime(url, b"data:") {
+            return parse_data_url(url);
+        }
+        // Skip remote / protocol-relative references; only local paths are
+        // loadable during bundling.
+        if bun_core::strings::contains_comptime(url, b"://")
+            || bun_core::strings::has_prefix_comptime(url, b"//")
+        {
+            return None;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let abs = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
+            source_dir,
+            &mut buf,
+            &[url],
+        );
+        let bytes = bun_sys::File::read_from(bun_core::Fd::cwd(), abs).ok()?;
+        InputSourceMap::parse(&bytes)
+    }
 }
 
 /// Malformed input is indistinguishable from "no chain available" — callers

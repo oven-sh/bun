@@ -82,7 +82,62 @@ pub struct Entry {
     pub overlapping_memory_cost: u32,
 }
 
+/// Result of [`Entry::lookup_source`].
+pub struct SourceLookup<'a> {
+    /// Absolute path of the source.
+    pub path: &'a [u8],
+    /// JSON-quoted source contents for this slot (empty when unavailable).
+    pub escaped_content: &'a [u8],
+}
+
 impl Entry {
+    /// Total number of `sources[]` slots this entry occupies, excluding the
+    /// HMR runtime at slot 0. One per file plus one per inner source
+    /// contributed by a file's input-sourcemap chain.
+    pub fn source_slot_count(&self) -> usize {
+        let mut n = 0usize;
+        for f in self.files.iter() {
+            n += match f.get() {
+                Some(pm) => pm.source_slot_count(),
+                None => 1,
+            };
+        }
+        n
+    }
+
+    /// Resolve a rendered-sourcemap `source_index` back to the path /
+    /// content it names. Index 0 is the HMR runtime; indices 1.. cover the
+    /// flattened per-file slots in the same order `render_json` emits them.
+    pub fn lookup_source(&self, source_index: usize) -> Option<SourceLookup<'_>> {
+        if source_index == 0 {
+            return None;
+        }
+        let mut base = 1usize;
+        for (path, file) in self.paths.iter().zip(self.files.iter()) {
+            let pm = file.get();
+            let slots = match pm {
+                Some(pm) => pm.source_slot_count(),
+                None => 1,
+            };
+            if source_index < base + slots {
+                let sub = source_index - base;
+                if sub == 0 {
+                    return Some(SourceLookup {
+                        path,
+                        escaped_content: pm.map(|p| p.quoted_contents()).unwrap_or(b""),
+                    });
+                }
+                let inner = &pm?.inner_sources[sub - 1];
+                return Some(SourceLookup {
+                    path: &inner.path,
+                    escaped_content: &inner.escaped_content,
+                });
+            }
+            base += slots;
+        }
+        None
+    }
+
     /// `SourceMapStore.Entry.renderMappings`.
     pub fn render_mappings(&self, kind: ChunkKind) -> Result<Vec<u8>, bun_core::Error> {
         let mut j = StringJoiner::default();
@@ -112,8 +167,17 @@ impl Entry {
         #[cfg(windows)]
         let mut buf = bun_paths::path_buffer_pool::get();
 
-        for native_file_path in paths.iter() {
-            let native_file_path: &[u8] = native_file_path;
+        // Walk each file's outer path + inner-source paths together so slot
+        // order matches `join_vlq` / `sourcesContent` below. Files without a
+        // PackedMap (HTML, empty JS) have exactly one slot (their own path).
+        let path_iter = paths.iter().zip(map_files.iter()).flat_map(|(p, f)| {
+            let inner: &[packed_map::InnerSource] = match f.get() {
+                Some(pm) => &pm.inner_sources,
+                None => &[],
+            };
+            core::iter::once::<&[u8]>(p).chain(inner.iter().map(|s| s.path.as_ref()))
+        });
+        for native_file_path in path_iter {
             source_map_strings.extend_from_slice(b",");
             #[cfg(windows)]
             let path: &[u8] =
@@ -198,18 +262,29 @@ impl Entry {
             let quoted_slice = source_map.quoted_contents();
             if quoted_slice.is_empty() {
                 debug_assert!(false); // vlq without source contents!
-                j.push_static(b",\"// Did not have source contents for this file.\n// This is a bug in Bun's bundler and should be reported with a reproduction.\"");
-                continue;
+                j.push_static(b"\"// Did not have source contents for this file.\n// This is a bug in Bun's bundler and should be reported with a reproduction.\"");
+            } else {
+                // Store the location of the source file. Since it is going
+                // to be stored regardless for use by the served source map.
+                // These 8 bytes per file allow remapping sources without
+                // reading from disk, as well as ensuring that remaps to
+                // this exact sourcemap can print the previous state of
+                // the code when it was modified.
+                debug_assert_eq!(quoted_slice[0], b'"');
+                debug_assert_eq!(quoted_slice[quoted_slice.len() - 1], b'"');
+                j.push_static(quoted_slice);
             }
-            // Store the location of the source file. Since it is going
-            // to be stored regardless for use by the served source map.
-            // These 8 bytes per file allow remapping sources without
-            // reading from disk, as well as ensuring that remaps to
-            // this exact sourcemap can print the previous state of
-            // the code when it was modified.
-            debug_assert_eq!(quoted_slice[0], b'"');
-            debug_assert_eq!(quoted_slice[quoted_slice.len() - 1], b'"');
-            j.push_static(quoted_slice);
+            // Inner sources (slots 1..N for this file). An inner source may
+            // legitimately lack content (input map had no `sourcesContent`
+            // entry) — emit `null` there.
+            for inner in source_map.inner_sources.iter() {
+                j.push_static(b",");
+                if inner.escaped_content.is_empty() {
+                    j.push_static(b"null");
+                } else {
+                    j.push_static(&inner.escaped_content);
+                }
+            }
         }
         // This first mapping makes the bytes from line 0 column 0 to the next mapping
         j.push_static(br#"],"names":[],"mappings":"AAAA"#);
@@ -294,14 +369,22 @@ impl Entry {
         // The runtime ends at line 2942 with })({ so modules start after that.
         let mut lines_between: u32 = runtime_line_count;
 
-        // Join all of the mappings together.
+        // Join all of the mappings together. Each file owns a
+        // contiguous run of `sources[]` slots: one for its own path
+        // (the intermediate), plus one per inner source it
+        // contributed via an input sourcemap chain. Within a file's
+        // VLQ chunk, `source_index` is chunk-local (0 = intermediate,
+        // 1+i = inner i); we rewrite the first segment of each chunk
+        // so chunk-local 0 lands at this file's base slot.
+        let mut next_source_index: usize = 1; // slot 0 = HMR runtime
         for (i, file) in map_files.iter().enumerate() {
             match file {
                 packed_map::Shared::Some(source_map) => {
-                    let source_index = i + 1;
                     let content: &packed_map::PackedMap = source_map.as_ref();
+                    let base = next_source_index;
+                    next_source_index += content.source_slot_count();
                     let start_state = SourceMapState {
-                        source_index: i32::try_from(source_index).expect("int cast"),
+                        source_index: i32::try_from(base).expect("int cast"),
                         generated_line: i32::try_from(lines_between).expect("int cast"),
                         generated_column: 0,
                         original_line: 0,
@@ -317,7 +400,8 @@ impl Entry {
                     )?;
 
                     prev_end_state = SourceMapState {
-                        source_index: i32::try_from(source_index).expect("int cast"),
+                        source_index: i32::try_from(base).expect("int cast")
+                            + content.end_state.source_index,
                         generated_line: 0,
                         generated_column: 0,
                         original_line: content.end_state.original_line,
@@ -325,11 +409,13 @@ impl Entry {
                     };
                 }
                 packed_map::Shared::LineCount(count) => {
+                    next_source_index += 1;
                     lines_between += count.get();
                     // - Empty file has no breakpoints that could remap.
                     // - Codegen of HTML files cannot throw.
                 }
                 packed_map::Shared::None => {
+                    next_source_index += 1;
                     // NOTE: It is too late to compute the line count since the bundled text may
                     // have been freed already. For example, a HMR chunk is never persisted.
                     // We could return an error here but what would be a better behavior for renderJSON and renderMappings?
@@ -438,8 +524,7 @@ pub type EntryIndex = bun_core::GenericIndex<u32, SmEntryMarker>;
 pub struct GetResult<'a> {
     pub index: EntryIndex,
     pub mappings: source_map::mapping::List,
-    pub file_paths: &'a [Box<[u8]>],
-    pub entry_files: &'a [packed_map::Shared],
+    pub entry: &'a Entry,
 }
 pub struct SourceMapStore {
     pub entries: ArrayHashMap<Key, Entry>,
@@ -702,7 +787,7 @@ impl SourceMapStore {
         match source_map::mapping::parse(
             &vlq_bytes,
             None,
-            i32::try_from(entry.paths.len()).expect("int cast"),
+            i32::try_from(entry.source_slot_count()).expect("int cast"),
             0, // unused
             Default::default(),
         ) {
@@ -716,8 +801,7 @@ impl SourceMapStore {
             source_map::ParseResult::Success(mut psm) => Some(GetResult {
                 index: EntryIndex::init(u32::try_from(index).expect("int cast")),
                 mappings: core::mem::take(&mut psm.mappings),
-                file_paths: &entry.paths,
-                entry_files: &entry.files,
+                entry,
             }),
         }
     }

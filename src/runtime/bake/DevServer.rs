@@ -3852,6 +3852,59 @@ impl<'a> HotUpdateContext<'a> {
     }
 }
 
+/// Build the dev-server `InnerSource` list for a compiled file from its
+/// parsed `//# sourceMappingURL=` chain (if any). Paths are resolved to
+/// absolute against the intermediate file's directory so
+/// `SourceMapStore::render_json` can `file://`-encode them like any other
+/// source; contents are JSON-quoted for direct emission in `sourcesContent`.
+fn collect_inner_sources(
+    input_source_map: Option<&bun_sourcemap::InputSourceMap>,
+    intermediate_path: &bun_paths::fs::Path<'_>,
+) -> Box<[packed_map::InnerSource]> {
+    let Some(ism) = input_source_map else {
+        return Box::default();
+    };
+    let names = &ism.map.external_source_names;
+    if names.is_empty() {
+        return Box::default();
+    }
+    let base_dir: &[u8] = if intermediate_path.is_file() {
+        intermediate_path.name().dir_with_trailing_slash()
+    } else {
+        b""
+    };
+    let mut out: Vec<packed_map::InnerSource> = Vec::with_capacity(names.len());
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    for (i, name) in names.iter().enumerate() {
+        let name: &[u8] = name.as_ref();
+        let abs: &[u8] = if !base_dir.is_empty()
+            && !bun_paths::resolve_path::Platform::AUTO.is_absolute(name)
+        {
+            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                base_dir,
+                &mut **path_buf,
+                &[name],
+            )
+        } else {
+            name
+        };
+        let escaped = match ism.sources_content.get(i) {
+            Some(content) if !content.is_empty() => {
+                let mut buf = bun_core::MutableString::init(content.len() + 2)
+                    .unwrap_or_else(|_| bun_core::MutableString::init_empty());
+                let _ = bun_core::quote_for_json(content, &mut buf, false);
+                buf.list.into_boxed_slice()
+            }
+            _ => Box::default(),
+        };
+        out.push(packed_map::InnerSource {
+            path: Box::<[u8]>::from(abs),
+            escaped_content: escaped,
+        });
+    }
+    out.into_boxed_slice()
+}
+
 /// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
 /// This function does not recover DevServer state if it fails (allocation failure)
 pub(super) fn finalize_bundle(
@@ -3986,6 +4039,7 @@ pub(super) fn finalize_bundle(
     let html_chunks_mut = &mut html_rest[..n_html];
     let input_file_sources = bv2.graph.input_files.items_source();
     let input_file_loaders = bv2.graph.input_files.items_loader();
+    let input_source_maps = bv2.graph.input_files.items_input_source_map();
     let import_records = bv2.graph.ast.items_import_records();
     let targets = bv2.graph.ast.items_target();
     let scbs = bv2.graph.server_component_boundaries.slice();
@@ -4060,6 +4114,8 @@ pub(super) fn finalize_bundle(
             }
         };
         let quoted_contents = &quoted_source_contents[part_range.source_index.get() as usize];
+        let source = &input_file_sources[part_range.source_index.get() as usize];
+        let input_source_map = input_source_maps[part_range.source_index.get() as usize].as_deref();
         match targets[part_range.source_index.get() as usize].bake_graph() {
             bake::Graph::Client => dev.client_graph.receive_chunk(
                 &mut ctx,
@@ -4075,6 +4131,7 @@ pub(super) fn finalize_bundle(
                         escaped_source: quoted_contents
                             .as_ref()
                             .map(|v| v.as_slice().to_vec().into_boxed_slice()),
+                        inner_sources: collect_inner_sources(input_source_map, &source.path),
                     }),
                 },
                 false,
@@ -4093,6 +4150,7 @@ pub(super) fn finalize_bundle(
                         escaped_source: quoted_contents
                             .as_ref()
                             .map(|v| v.as_slice().to_vec().into_boxed_slice()),
+                        inner_sources: collect_inner_sources(input_source_map, &source.path),
                     }),
                 },
                 graph == bake::Graph::Ssr,
@@ -7167,6 +7225,7 @@ fn extract_pathname_from_url(url: &[u8]) -> &[u8] {
 
 // Type aliases referenced throughout (Phase B will resolve to real paths)
 use crate::bake::dev_server::incremental_graph;
+use crate::bake::dev_server::packed_map;
 use crate::bake::dev_server::route_bundle;
 use crate::bake::dev_server::serialized_failure;
 use crate::bake::dev_server::source_map_store;

@@ -1636,11 +1636,11 @@ describe("Bun.build chains inline input sourcemaps", () => {
     expect(parsed.sources.some((s: string) => s.endsWith("intermediate.js"))).toBe(true);
   });
 
-  // Non-inline `sourceMappingURL=foo.js.map` references aren't chained
-  // (external map resolution is out of scope for this change). The build
-  // must behave exactly as before — the intermediate ends up as the
-  // deepest source, not a spurious crash.
-  test("external .map reference — unchanged behavior", async () => {
+  // An external `sourceMappingURL=foo.js.map` reference whose sidecar
+  // file is missing on disk must not fail the build; the intermediate
+  // stays the deepest source. (When the sidecar exists the chain is
+  // loaded — covered in test/regression/issue/26713.test.ts.)
+  test("external .map reference with missing sidecar — falls back cleanly", async () => {
     const dir = tempDirWithFiles("bun-build-chained-sourcemap-external", {
       "intermediate.js": "export const q = 3;\n//# sourceMappingURL=intermediate.js.map\n",
       "entry.ts": `import { q } from './intermediate.js';\nconsole.log(q);\n`,

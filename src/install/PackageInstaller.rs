@@ -1377,17 +1377,20 @@ impl<'a> PackageInstaller<'a> {
                     installer.cache_dir = Fd::cwd();
                 } else {
                     // transitive folder dependencies are relative to their parent. they are not hoisted
-
-                    // overrides/resolutions are only ever parsed from the root package.json,
-                    // so a folder path that reached here via an override was written by the
-                    // user and is trusted the same as a direct dependency of the root.
-                    let dep_name_hash = self.lockfile().buffers.dependencies.as_slice()
-                        [dependency_id as usize]
-                        .name_hash;
-                    let from_override = self.lockfile().overrides.get(dep_name_hash).is_some();
-
                     if folder.len() >= self.folder_path_buf.len()
-                        || (!from_override && bin::bin_target_escapes_package_dir(folder))
+                        || (bin::bin_target_escapes_package_dir(folder) && {
+                            // overrides/resolutions are only ever parsed from the root
+                            // package.json, so a folder path that reached here via an
+                            // override was written by the user and is trusted the same
+                            // as a direct dependency of the root.
+                            let dep = &self.lockfile().buffers.dependencies.as_slice()
+                                [dependency_id as usize];
+                            !self.lockfile().overrides.contains_name(
+                                dep.name_hash,
+                                dep.name.slice(string_buf!()),
+                                string_buf!(),
+                            )
+                        })
                     {
                         if log_level != Options::LogLevel::Silent {
                             bun_core::pretty_errorln!(

@@ -131,3 +131,7 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # known follow-up in the PR description; quarantined here until the Windows
 # teardown path is reworked.
 [ WINDOWS ] test/js/web/fetch/fetch-http2-client.test.ts [ FAIL ] # pooled-h2 teardown surfaces WSAECONNRESET between tests
+
+# node:http servers cannot listen on Windows named pipes yet (ENOENT from
+# uv_pipe bind), so common.PIPE-based http tests cannot run there.
+[ WINDOWS ] test/js/node/test/parallel/test-http-unix-socket-keep-alive.js [ FAIL ] # named-pipe listen unsupported

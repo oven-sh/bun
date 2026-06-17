@@ -599,6 +599,29 @@ describe("markAsUncloneable", () => {
     expectDataCloneError(() => structuredClone(err));
   });
 
+  // In Node.js, Blob/File/DOMException/CryptoKey/KeyObject/X509Certificate are
+  // JS-layer JSTransferable wrappers whose transfer_mode_private_symbol is
+  // overwritten by markAsUncloneable, so they throw when cloned.
+  test("catches a marked Blob / File / DOMException", () => {
+    const blob = new Blob(["x"]);
+    markAsUncloneable(blob);
+    expectDataCloneError(() => structuredClone(blob));
+
+    const file = new File(["x"], "a.txt");
+    markAsUncloneable(file);
+    expectDataCloneError(() => structuredClone(file));
+
+    const dex = new DOMException("msg", "AbortError");
+    markAsUncloneable(dex);
+    expectDataCloneError(() => structuredClone(dex));
+  });
+
+  test("catches a marked CryptoKey", async () => {
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
+    markAsUncloneable(key);
+    expectDataCloneError(() => structuredClone(key));
+  });
+
   test("catches a marked object inside a Map value", () => {
     const inner = { secret: 1 };
     markAsUncloneable(inner);

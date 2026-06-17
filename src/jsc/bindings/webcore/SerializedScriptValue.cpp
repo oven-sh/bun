@@ -1090,14 +1090,18 @@ private:
     }
 
     // node:worker_threads.markAsUncloneable tags the object with a private-name
-    // property. Node's marker is only consulted by the node_messaging.cc
-    // ValueSerializer delegate, which V8 reaches only for generic objects and
-    // Error instances (built-in containers, wrappers, ArrayBuffer/TypedArray,
-    // and WebAssembly types are dispatched first). Node's v8.serialize and
-    // child_process `serialization: "advanced"` use a different delegate that
-    // never reads the marker. Mirror that by gating on the messaging entry
-    // points and calling this only from the ErrorInstance and generic-object
-    // serialization paths.
+    // property. Node consults the marker from node_messaging.cc's ValueSerializer
+    // delegate, which V8 reaches for JS_OBJECT_TYPE / JS_API_OBJECT_TYPE (plain
+    // objects, class instances, Error, and JS-layer host wrappers like Blob /
+    // File / CryptoKey / KeyObject / X509Certificate / DOMException). V8 built-in
+    // instance types (Array, Map, Set, Date, RegExp, primitive wrappers,
+    // ArrayBuffer/TypedArray, WebAssembly.Module/Memory) are dispatched first and
+    // never see the marker, and MessagePort's native GetTransferMode() ignores
+    // it. Node's v8.serialize and child_process `serialization: "advanced"` use a
+    // different delegate that never reads the marker. Mirror that by gating on
+    // the messaging entry points and calling this from ErrorInstance,
+    // ObjectStartState, and each serializer branch that corresponds to a Node
+    // JSTransferable host type.
     bool isMarkedUncloneableForMessaging(VM& vm, JSObject* object)
     {
         if (m_forStorage != SerializationForStorage::No)
@@ -1837,6 +1841,10 @@ private:
             }
 #if ENABLE(WEB_CRYPTO)
             if (auto* key = JSCryptoKey::toWrapped(vm, obj)) {
+                if (isMarkedUncloneableForMessaging(vm, obj)) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 if (m_forStorage == SerializationForStorage::Yes && !key->extractable()) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
@@ -1981,6 +1989,10 @@ private:
             }
 #endif
             if (obj->inherits<JSDOMException>()) {
+                if (isMarkedUncloneableForMessaging(vm, obj)) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 dumpDOMException(obj, code);
                 return true;
             }
@@ -2001,6 +2013,10 @@ private:
             // write bun types
             auto _cloneable = StructuredCloneableSerialize::fromJS(value);
             if (_cloneable) {
+                if (isMarkedUncloneableForMessaging(vm, obj)) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 auto cloneable = _cloneable.value();
                 const bool isTransferCompatible = m_forTransfer == SerializationForCrossProcessTransfer::Yes ? cloneable.isForTransfer : true;
                 const bool isStorageCompatible = m_forStorage == SerializationForStorage::Yes ? cloneable.isForStorage : true;
@@ -2018,6 +2034,10 @@ private:
             }
 
             if (auto* x509 = dynamicDowncast<Bun::JSX509Certificate>(obj)) {
+                if (isMarkedUncloneableForMessaging(vm, obj)) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 write(Bun__X509CertificateTag);
                 X509* cert = x509->m_x509.get();
 
@@ -2044,6 +2064,10 @@ private:
             }
 
             if (auto* keyObject = dynamicDowncast<Bun::JSKeyObject>(obj)) {
+                if (isMarkedUncloneableForMessaging(vm, obj)) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 write(Bun__KeyObjectTag);
 
                 auto& handle = keyObject->handle();

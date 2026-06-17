@@ -2,12 +2,17 @@
 // Profiler APIs are implemented; other inspector APIs are stubs.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const EventEmitter = require("node:events");
+const { pathToFileURL } = require("node:url");
+const { isAbsolute } = require("node:path");
 
 // Native profiler functions exposed via $newCppFunction
 const startCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler", 0);
 const stopCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopCPUProfiler", 0);
 const setCPUSamplingInterval = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_setCPUSamplingInterval", 1);
 const isCPUProfilerRunning = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_isCPUProfilerRunning", 0);
+const startPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage", 0);
+const stopPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage", 0);
+const collectPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage", 0);
 
 function open() {
   throwNotImplemented("node:inspector", 2445);
@@ -165,9 +170,149 @@ function removeConsoleHooks() {
   hookedConsoleMethods.length = 0;
 }
 
+// Reshapes the raw control-flow-profiler data from jsFunction_collectPreciseCoverage
+// ([{ url, scriptId, sourceLength, blocks: [[start, end, count]], functions: [[start, end, executed]] }])
+// into the V8 ScriptCoverage list returned by Profiler.takePreciseCoverage:
+// each function gets an entry whose first range spans the whole function with its
+// call count, followed by the basic-block ranges inside it; blocks outside any
+// function go on a synthetic whole-script entry.
+function buildScriptCoverageList(
+  rawScripts: Array<{
+    url: string;
+    scriptId: number;
+    sourceLength: number;
+    blocks: Array<[number, number, number]>;
+    functions: Array<[number, number, boolean]>;
+  }>,
+  callCount: boolean,
+  detailed: boolean,
+): object[] {
+  const result: object[] = [];
+
+  for (const script of rawScripts) {
+    const { scriptId, sourceLength } = script;
+    let { url } = script;
+    // V8 coverage reports file-backed scripts with file:// URLs even when the
+    // script name is a plain filesystem path (e.g. a vm script filename or a
+    // require()d module), so convert absolute paths the same way.
+    if (url && isAbsolute(url)) {
+      url = pathToFileURL(url).href;
+    }
+
+    // Outer functions before nested ones, so a stack-based sweep below sees
+    // enclosing ranges first.
+    const functions = script.functions
+      .filter(([start, end]) => start >= 0 && end >= start)
+      .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end >= start).sort((a, b) => a[0] - b[0]);
+
+    // Assign each basic block to the innermost function range containing it.
+    const blocksPerFunction: Array<Array<[number, number, number]>> = functions.map(() => []);
+    const topLevelBlocks: Array<[number, number, number]> = [];
+    const stack: number[] = [];
+    let nextFunction = 0;
+    for (const block of blocks) {
+      while (nextFunction < functions.length && functions[nextFunction][0] <= block[0]) {
+        stack.push(nextFunction);
+        nextFunction++;
+      }
+      // Functions that ended before this block started can no longer contain
+      // this block or any later one (blocks are sorted by start).
+      while (stack.length > 0 && functions[stack[stack.length - 1]][1] < block[0]) {
+        stack.pop();
+      }
+      // The stack is a nesting chain (siblings get popped above), so ends
+      // decrease towards the top; the first entry from the top that still
+      // covers the block's end is the innermost containing function.
+      let owner = -1;
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (functions[stack[i]][1] >= block[1]) {
+          owner = stack[i];
+          break;
+        }
+      }
+      if (owner === -1) {
+        topLevelBlocks.push(block);
+      } else {
+        blocksPerFunction[owner].push(block);
+      }
+    }
+
+    const scriptExecuted =
+      blocks.some(([, , count]) => count > 0) || functions.some(([, , executed]) => executed) ? 1 : 0;
+    const entries: object[] = [];
+
+    const toRange = ([startOffset, endOffset, count]: [number, number, number]) => ({
+      startOffset,
+      endOffset,
+      count: callCount ? count : count > 0 ? 1 : 0,
+    });
+
+    // Whole-script entry. V8 always reports one covering the entire source.
+    entries.push({
+      functionName: "",
+      ranges: [
+        { startOffset: 0, endOffset: sourceLength, count: scriptExecuted },
+        ...(detailed ? topLevelBlocks.map(toRange) : []),
+      ],
+      isBlockCoverage: detailed,
+    });
+
+    for (let i = 0; i < functions.length; i++) {
+      const [startOffset, endOffset, executed] = functions[i];
+      if (!executed) {
+        entries.push({
+          functionName: "",
+          ranges: [{ startOffset, endOffset, count: 0 }],
+          isBlockCoverage: false,
+        });
+        continue;
+      }
+
+      const ownBlocks = blocksPerFunction[i];
+      // The block with the smallest start offset is the function's entry
+      // block; it runs exactly once per invocation, so its execution count is
+      // the call count.
+      let count = 1;
+      if (ownBlocks.length > 0) {
+        let entryBlock = ownBlocks[0];
+        for (const block of ownBlocks) {
+          if (block[0] < entryBlock[0]) entryBlock = block;
+        }
+        count = entryBlock[2];
+      }
+      entries.push({
+        functionName: "",
+        ranges: [
+          { startOffset, endOffset, count: callCount ? count : count > 0 ? 1 : 0 },
+          ...(detailed ? ownBlocks.map(toRange) : []),
+        ],
+        isBlockCoverage: detailed,
+      });
+    }
+
+    result.push({ scriptId: String(scriptId), url, functions: entries });
+  }
+
+  return result;
+}
+
+function collectCoverageScripts(): any[] | Error {
+  const raw = collectPreciseCoverage();
+  if (raw === null) return [];
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    return new Error(`Failed to parse coverage JSON: ${e}`);
+  }
+}
+
 class Session extends EventEmitter {
   #connected = false;
   #profilerEnabled = false;
+  #preciseCoverageEnabled = false;
+  #preciseCoverageCallCount = false;
+  #preciseCoverageDetailed = false;
 
   connect() {
     if (this.#connected) {
@@ -183,6 +328,10 @@ class Session extends EventEmitter {
   disconnect() {
     if (!this.#connected) return;
     if (isCPUProfilerRunning()) stopCPUProfiler();
+    if (this.#preciseCoverageEnabled) {
+      stopPreciseCoverage();
+      this.#preciseCoverageEnabled = false;
+    }
     this.#profilerEnabled = false;
     this.#connected = false;
     runtimeEnabledSessions.delete(this);
@@ -273,11 +422,43 @@ class Session extends EventEmitter {
         return {};
       }
 
-      case "Profiler.getBestEffortCoverage":
-      case "Profiler.startPreciseCoverage":
-      case "Profiler.stopPreciseCoverage":
-      case "Profiler.takePreciseCoverage":
-        return new Error("Coverage APIs are not supported");
+      case "Profiler.startPreciseCoverage": {
+        if (!this.#profilerEnabled) return new Error("Profiler is not enabled");
+        if (!this.#preciseCoverageEnabled) {
+          startPreciseCoverage();
+          this.#preciseCoverageEnabled = true;
+        }
+        this.#preciseCoverageCallCount = !!(params as any)?.callCount;
+        this.#preciseCoverageDetailed = !!(params as any)?.detailed;
+        return { timestamp: Date.now() / 1000 };
+      }
+
+      case "Profiler.stopPreciseCoverage": {
+        if (!this.#profilerEnabled) return new Error("Profiler is not enabled");
+        if (this.#preciseCoverageEnabled) {
+          stopPreciseCoverage();
+          this.#preciseCoverageEnabled = false;
+        }
+        return {};
+      }
+
+      case "Profiler.takePreciseCoverage": {
+        if (!this.#preciseCoverageEnabled) return new Error("Precise coverage has not been started.");
+        const scripts = collectCoverageScripts();
+        if (scripts instanceof Error) return scripts;
+        return {
+          result: buildScriptCoverageList(scripts, this.#preciseCoverageCallCount, this.#preciseCoverageDetailed),
+          timestamp: Date.now() / 1000,
+        };
+      }
+
+      case "Profiler.getBestEffortCoverage": {
+        // Best-effort coverage reports whatever execution data already exists,
+        // at function granularity with 0/1 counts, like V8 does.
+        const scripts = collectCoverageScripts();
+        if (scripts instanceof Error) return scripts;
+        return { result: buildScriptCoverageList(scripts, false, false) };
+      }
 
       default:
         return new Error(`Inspector method "${method}" is not supported`);

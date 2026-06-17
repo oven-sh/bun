@@ -1,6 +1,120 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
+
+// Mirrors how vitest's @vitest/coverage-v8 provider drives the inspector: a
+// promise Session, Profiler.enable, startPreciseCoverage, evaluating modules
+// through node:vm, then takePreciseCoverage.
+const coverageVmFixture = `
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+
+const callCount = process.argv[2] === "true";
+const detailed = process.argv[3] === "true";
+
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount, detailed });
+
+const code = [
+  "function add(a, b) {",
+  "  return a + b;",
+  "}",
+  "function classify(n) {",
+  "  if (n < 0) {",
+  "    return 'negative';",
+  "  }",
+  "  return 'positive';",
+  "}",
+  "function neverCalled(x) {",
+  "  return x * 2;",
+  "}",
+  "({ add, classify, neverCalled });",
+].join("\\n");
+const url = "file:///inspector-coverage-fixture/virtual.js";
+const exported = vm.runInThisContext(code, { filename: url });
+exported.add(1, 2);
+exported.add(3, 4);
+exported.add(5, 6);
+exported.classify(1);
+exported.classify(2);
+
+const coverage = await session.post("Profiler.takePreciseCoverage");
+await session.post("Profiler.stopPreciseCoverage");
+await session.post("Profiler.disable");
+session.disconnect();
+
+const entry = coverage.result.find(script => script.url === url);
+console.log(
+  JSON.stringify({
+    codeLength: code.length,
+    timestampType: typeof coverage.timestamp,
+    offsets: {
+      addBody: code.indexOf("return a + b"),
+      negativeReturn: code.indexOf("'negative'"),
+      positiveReturn: code.indexOf("'positive'"),
+      neverCalledBody: code.indexOf("x * 2"),
+    },
+    entry,
+  }),
+);
+`;
+
+const coverageImportFixture = `
+import { Session } from "node:inspector/promises";
+
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+
+const { double } = await import("./covered-module.mjs");
+double(2);
+double(3);
+
+const coverage = await session.post("Profiler.takePreciseCoverage");
+await session.post("Profiler.stopPreciseCoverage");
+session.disconnect();
+
+const entry = coverage.result.find(script => script.url.endsWith("covered-module.mjs"));
+console.log(
+  JSON.stringify({
+    url: entry?.url ?? null,
+    functionCounts: entry ? entry.functions.map(f => f.ranges[0].count) : null,
+  }),
+);
+`;
+
+const coveredModuleFixture = `
+export function double(x) {
+  return x * 2;
+}
+
+export function neverCalled(x) {
+  return x + 1;
+}
+`;
+
+// Picks the entry whose primary range most tightly encloses the offset, the
+// same way a coverage consumer attributes an AST node to a function.
+function entryCoveringOffset(functions: any[], offset: number) {
+  let best: any;
+  for (const fn of functions) {
+    const range = fn.ranges[0];
+    if (range.startOffset <= offset && offset < range.endOffset) {
+      if (
+        !best ||
+        range.startOffset > best.ranges[0].startOffset ||
+        (range.startOffset === best.ranges[0].startOffset && range.endOffset < best.ranges[0].endOffset)
+      ) {
+        best = fn;
+      }
+    }
+  }
+  return best;
+}
 
 describe("node:inspector", () => {
   describe("Session", () => {
@@ -309,16 +423,134 @@ describe("node:inspector", () => {
       expect(() => session.post("Runtime.evaluate")).toThrow("not supported");
       session.disconnect();
     });
+  });
 
-    test("coverage APIs throw not supported", () => {
+  describe("precise coverage", () => {
+    test("startPreciseCoverage requires Profiler.enable", () => {
+      const session = new inspector.Session();
+      session.connect();
+      expect(() => session.post("Profiler.startPreciseCoverage")).toThrow("Profiler is not enabled");
+      expect(() => session.post("Profiler.stopPreciseCoverage")).toThrow("Profiler is not enabled");
+      session.disconnect();
+    });
+
+    test("takePreciseCoverage before startPreciseCoverage throws", () => {
       const session = new inspector.Session();
       session.connect();
       session.post("Profiler.enable");
-      expect(() => session.post("Profiler.getBestEffortCoverage")).toThrow("not supported");
-      expect(() => session.post("Profiler.startPreciseCoverage")).toThrow("not supported");
-      expect(() => session.post("Profiler.stopPreciseCoverage")).toThrow("not supported");
-      expect(() => session.post("Profiler.takePreciseCoverage")).toThrow("not supported");
+      expect(() => session.post("Profiler.takePreciseCoverage")).toThrow("Precise coverage has not been started.");
       session.disconnect();
+    });
+
+    test("getBestEffortCoverage returns a result array", () => {
+      const session = new inspector.Session();
+      session.connect();
+      const result = session.post("Profiler.getBestEffortCoverage");
+      expect(result).toEqual({ result: expect.any(Array) });
+      session.disconnect();
+    });
+
+    test.concurrent("collects block coverage with call counts for vm scripts", async () => {
+      using dir = tempDir("inspector-coverage-vm", {
+        "fixture.mjs": coverageVmFixture,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs", "true", "true"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const { codeLength, timestampType, offsets, entry } = JSON.parse(stdout);
+
+      expect(timestampType).toBe("number");
+      expect(entry).toBeDefined();
+      expect(entry.scriptId).toBeString();
+
+      // Whole-script entry spans the entire source and ran once.
+      expect(entry.functions[0].isBlockCoverage).toBe(true);
+      expect(entry.functions[0].ranges[0]).toEqual({ startOffset: 0, endOffset: codeLength, count: 1 });
+
+      // add() was called 3 times.
+      const addEntry = entryCoveringOffset(entry.functions, offsets.addBody);
+      expect(addEntry.isBlockCoverage).toBe(true);
+      expect(addEntry.ranges[0].count).toBe(3);
+
+      // classify() was called twice and never took the negative branch, so a
+      // block range with count 0 covers the untaken branch.
+      const classifyEntry = entryCoveringOffset(entry.functions, offsets.positiveReturn);
+      expect(classifyEntry.ranges[0].count).toBe(2);
+      expect(
+        classifyEntry.ranges.some(
+          (range: any) =>
+            range.count === 0 &&
+            range.startOffset <= offsets.negativeReturn &&
+            offsets.negativeReturn < range.endOffset,
+        ),
+      ).toBe(true);
+
+      // neverCalled() reports a single function-granularity range with count 0.
+      const neverCalledEntry = entryCoveringOffset(entry.functions, offsets.neverCalledBody);
+      expect(neverCalledEntry).toEqual({
+        functionName: "",
+        isBlockCoverage: false,
+        ranges: [{ startOffset: expect.any(Number), endOffset: expect.any(Number), count: 0 }],
+      });
+    });
+
+    test.concurrent("respects callCount: false and detailed: false", async () => {
+      using dir = tempDir("inspector-coverage-flags", {
+        "fixture.mjs": coverageVmFixture,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs", "false", "false"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const { offsets, entry } = JSON.parse(stdout);
+
+      expect(entry).toBeDefined();
+      for (const fn of entry.functions) {
+        expect(fn.isBlockCoverage).toBe(false);
+        expect(fn.ranges).toHaveLength(1);
+        expect([0, 1]).toContain(fn.ranges[0].count);
+      }
+      // Counts are clamped to 0/1 when callCount is false.
+      expect(entryCoveringOffset(entry.functions, offsets.addBody).ranges[0].count).toBe(1);
+      expect(entryCoveringOffset(entry.functions, offsets.neverCalledBody).ranges[0].count).toBe(0);
+    });
+
+    test.concurrent("collects coverage for modules imported after start", async () => {
+      using dir = tempDir("inspector-coverage-import", {
+        "fixture.mjs": coverageImportFixture,
+        "covered-module.mjs": coveredModuleFixture,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const { url, functionCounts } = JSON.parse(stdout);
+
+      // Filesystem-backed scripts are reported with file:// URLs, like V8.
+      expect(url).toStartWith("file://");
+      expect(url).toEndWith("covered-module.mjs");
+      // double() ran twice, neverCalled() never ran.
+      expect(functionCounts).toContain(2);
+      expect(functionCounts).toContain(0);
     });
   });
 

@@ -327,9 +327,17 @@ test("shallow padded-then-forked nesting still compiles for old targets", () => 
   expect(out.length).toBeLessThan(100_000);
 });
 
-test.concurrent(
-  "deep padding before an @scope prelude errors instead of emitting huge output",
-  async () => {
+test.concurrent.each([
+  // Both `<scope-start>` and `<scope-end>` serialize with the enclosing
+  // `StyleContext`, so a `&` in either inlines the full ancestor chain.
+  // The `to`-only form exercises the `scope_start.is_none()` branch in
+  // `ScopeRule::to_css`, which previously early-returned past both the
+  // byte metering and the closing `)`/body/`}`.
+  ["<scope-start>", "@scope (& .x) { .y { color: red } }"],
+  ["<scope-end> without <scope-start>", "@scope to (& .x) { .y { color: red } }"],
+])(
+  "deep padding before an @scope %s prelude errors instead of emitting huge output",
+  async (_label, leaf) => {
     // Same shape as the style-rule case above, but the leaf is an `@scope`
     // rule whose prelude contains `&`: `ScopeRule::to_css` serializes its
     // prelude with the enclosing `StyleContext`, so the `&` inlines the
@@ -337,9 +345,7 @@ test.concurrent(
     // the fork levels). The `@scope` prelude is charged against the same
     // byte budget as style-rule preludes.
     const css =
-      ".padding-selector {\n".repeat(400) +
-      ".a:-webkitx .a, .b:-webkitx .b {\n".repeat(14) +
-      "@scope (& .x) { .y { color: red } }";
+      ".padding-selector {\n".repeat(400) + ".a:-webkitx .a, .b:-webkitx .b {\n".repeat(14) + leaf;
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -385,6 +391,14 @@ test("shallow @scope preludes under compiled nesting still serialize", () => {
   expect(out).toContain("@scope");
   expect(out).toContain(".a .b .x");
   expect(out).toContain("color: red");
+});
+
+test("@scope with <scope-end> but no <scope-start> serializes its whole body", () => {
+  // The `scope_start.is_none()` branch in `ScopeRule::to_css` used to
+  // `return` after writing `<scope-end>`, skipping the closing paren, the
+  // body, and the closing brace. Falling through serializes the full rule.
+  const out = cssInternals._test("@scope to (.x) { .y { color: red } }", "", undefined);
+  expect(out).toBe("@scope to (.x) {\n  .y {\n    color: red;\n  }\n}\n");
 });
 
 test("a large realistic nested stylesheet does not trip the nesting byte bound", () => {

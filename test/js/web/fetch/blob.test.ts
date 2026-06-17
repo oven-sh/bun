@@ -316,6 +316,28 @@ describe("File prototype chain", () => {
     expect(await req.text()).toBe("Hello");
   });
 
+  test("new Blob([file]) and resolveObjectURL(createObjectURL(file)) return plain Blobs", async () => {
+    const file = new File(["Hello"], "a.txt");
+
+    const wrapped = new Blob([file]);
+    expect(wrapped[Symbol.toStringTag]).toBe("Blob");
+    expect(wrapped instanceof File).toBe(false);
+    const wrappedClone = structuredClone(wrapped);
+    expect(wrappedClone[Symbol.toStringTag]).toBe("Blob");
+    expect(Object.getPrototypeOf(wrappedClone)).toBe(Blob.prototype);
+    expect(wrappedClone instanceof File).toBe(false);
+    expect(await wrappedClone.text()).toBe("Hello");
+
+    const { resolveObjectURL } = require("node:buffer");
+    const url = URL.createObjectURL(file);
+    const resolved = resolveObjectURL(url);
+    URL.revokeObjectURL(url);
+    expect(resolved[Symbol.toStringTag]).toBe("Blob");
+    expect(Object.getPrototypeOf(resolved)).toBe(Blob.prototype);
+    expect(resolved instanceof File).toBe(false);
+    expect(await resolved.text()).toBe("Hello");
+  });
+
   test("structuredClone of File preserves File prototype", async () => {
     const file = new File(["Hello"], "file.txt", { type: "text/plain" });
     const clone = structuredClone(file);

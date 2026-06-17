@@ -487,6 +487,35 @@ impl TokenList {
         Self::parse(input, options, 0)
     }
 
+    /// Approximate clone-cost of this token list: the total number of
+    /// [`TokenOrValue`] entries it contains, counted recursively through the
+    /// nested token lists of `Function`/`Var`/`Env`/`UnresolvedColor`.
+    ///
+    /// Each entry is ~96 bytes of global-heap `Vec` storage when deep-cloned
+    /// (see the `PERF` note on [`TokenList`]). Used by the selector-expansion
+    /// budget in `rules/style.rs` so a rule with a large unparsed value can't
+    /// be cloned unboundedly when compiling nesting away.
+    pub fn weight(&self) -> u32 {
+        let mut total: u32 = 0;
+        for tok in &self.v {
+            total = total.saturating_add(1).saturating_add(match tok {
+                TokenOrValue::Function(f) => f.arguments.weight(),
+                TokenOrValue::Var(v) => v.fallback.as_ref().map_or(0, TokenList::weight),
+                TokenOrValue::Env(e) => e.fallback.as_ref().map_or(0, TokenList::weight),
+                TokenOrValue::UnresolvedColor(c) => match c {
+                    UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. } => {
+                        alpha.weight()
+                    }
+                    UnresolvedColor::LightDark { light, dark } => {
+                        light.weight().saturating_add(dark.weight())
+                    }
+                },
+                _ => 0,
+            });
+        }
+        total
+    }
+
     pub fn parse_raw(
         input: &mut Parser,
         tokens: &mut Vec<TokenOrValue>,

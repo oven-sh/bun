@@ -1281,6 +1281,22 @@ pub struct StyleContext<'a> {
 /// instead.
 pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 
+/// Upper bound on the total declaration clone weight that compiling nested
+/// rules away may produce.
+///
+/// [`MAX_SELECTOR_EXPANSION`] bounds the number of selectors (and so the
+/// number of rule copies) the expansion creates, but each copy also
+/// deep-clones its declarations. A rule whose value is a large unparsed
+/// [`TokenList`](crate::css_properties::custom::TokenList) carries that whole
+/// list into every copy; the token `Vec`s live on the global heap, so a few
+/// thousand copies of a few-thousand-token list is already gigabytes even
+/// well under the selector cap. One unit here is one
+/// [`TokenOrValue`](crate::css_properties::custom::TokenOrValue) entry
+/// (~96 bytes cloned), so this cap corresponds to roughly 100 MB of cloned
+/// tokens. Real stylesheets stay far below it; exceeding it is reported as a
+/// `selector_expansion_limit_exceeded` minify error instead.
+pub const MAX_DECLARATION_EXPANSION: u32 = 1_048_576;
+
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
 ///
@@ -1316,4 +1332,9 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub selector_expansion_total: u32,
+    /// Running total of declaration clone weight (token-list entries; see
+    /// [`TokenList::weight`](crate::css_properties::custom::TokenList::weight))
+    /// that compiling nested rules for the targets will produce, checked
+    /// against [`MAX_DECLARATION_EXPANSION`].
+    pub declaration_expansion_total: u32,
 }

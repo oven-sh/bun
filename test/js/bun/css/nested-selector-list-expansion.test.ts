@@ -71,6 +71,74 @@ test("deeply nested ::part() selector lists error instead of exploding when comp
   expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(LIMIT_ERROR);
 });
 
+// The selector cap (`MAX_SELECTOR_EXPANSION`) bounds how many rule copies the
+// split produces, but each copy deep-clones the rule's declarations too. A
+// rule under the selector cap whose value is a large unparsed token list
+// therefore still cloned into gigabytes of heap-allocated token `Vec`s. The
+// minifier now also charges each copy's declaration weight against a separate
+// cap (`MAX_DECLARATION_EXPANSION`) — found by fuzzing.
+test.concurrent(
+  "nested ::part() rules with a large unparsed leaf error instead of OOMing when compiled for old targets",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { cssInternals } = require("bun:internal-for-testing");
+        // 14 nesting levels × 2 selectors = 16384 copies, well under the 65536
+        // selector cap. The leaf's "color:" value is an unparsed list of 1000
+        // ident tokens; 16384 copies × 1000 tokens × ~96 bytes each is ~1.5 GB
+        // of token clones, so without the declaration-weight cap this OOMs.
+        let css = ".leaf { color: " + Buffer.alloc(1000, "abc ").toString() + "; }";
+        for (let i = 0; i < 14; i++) css = "a::part(x), b::part(y) { " + css + " }";
+        try {
+          cssInternals.prefixTest(css, "", { safari: (13 << 16) | (2 << 8) });
+          console.log("OK");
+        } catch (err) {
+          console.log("ERR " + err.message);
+        }
+      `,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+      // Kill switch: before the fix this allocates gigabytes of token clones
+      // and either OOMs or (on a large-memory host) runs for a very long time.
+      // Let the child be killed so a regression fails the assertions below
+      // instead of hanging the runner.
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: expect.stringContaining("ERR " + LIMIT_ERROR),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
+
+test("nested rules with a modest unparsed leaf still compile for old targets", () => {
+  // Same shape, shallow enough that both the selector and declaration budgets
+  // accommodate it: 8 levels × 2 selectors = 256 copies, leaf has ~50 tokens.
+  let css = ".leaf { color: " + Buffer.alloc(50, "abc ").toString() + "; }";
+  for (let i = 0; i < 8; i++) css = "a::part(x), b::part(y) { " + css + " }";
+  const out = prefixTest(css, "", { safari: (13 << 16) | (2 << 8) });
+  expect(out).toContain("abc");
+  expect(out.length).toBeLessThan(500_000);
+});
+
+test("a single rule with a large unparsed value and no nesting still compiles", () => {
+  // The declaration-weight cap only charges copies that nesting expansion
+  // creates; a flat rule is never multiplied, so a large value on its own is
+  // fine regardless of targets.
+  const css = ".leaf { color: " + Buffer.alloc(5000, "abc ").toString() + "; }";
+  const out = prefixTest(css, "", OLD_TARGETS);
+  expect(out).toContain("abc");
+});
+
 test("nested rules below the expansion limit still compile for old targets", () => {
   const src = nestedRules("co :is(.bar), .bar :is(.baz)", 8);
   const out = minifyTest(src, "", OLD_TARGETS);

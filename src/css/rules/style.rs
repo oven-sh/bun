@@ -385,17 +385,28 @@ impl<R> StyleRule<R> {
     /// otherwise a few hundred bytes of deeply nested multi-selector rules
     /// expand into gigabytes of cloned rules and output. See
     /// [`css_rules::MAX_SELECTOR_EXPANSION`](super::MAX_SELECTOR_EXPANSION).
+    ///
+    /// Each copy also deep-clones this rule's declarations, so the rule's
+    /// declaration weight is charged against
+    /// [`css_rules::MAX_DECLARATION_EXPANSION`](super::MAX_DECLARATION_EXPANSION)
+    /// in the same proportion; otherwise a large unparsed value under the
+    /// selector cap still clones into gigabytes of token lists.
     pub(crate) fn charge_selector_expansion(
         &self,
         context: &mut MinifyContext<'_, '_>,
     ) -> Result<(), MinifyErr> {
         if context.selector_expansion_multiplier > 1 {
-            context.selector_expansion_total = context.selector_expansion_total.saturating_add(
-                context
-                    .selector_expansion_multiplier
-                    .saturating_mul(self.selectors.v.len().max(1)),
-            );
-            if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION {
+            let copies = context
+                .selector_expansion_multiplier
+                .saturating_mul(self.selectors.v.len().max(1));
+            context.selector_expansion_total =
+                context.selector_expansion_total.saturating_add(copies);
+            context.declaration_expansion_total = context
+                .declaration_expansion_total
+                .saturating_add(copies.saturating_mul(declaration_clone_weight(&self.declarations)));
+            if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION
+                || context.declaration_expansion_total > super::MAX_DECLARATION_EXPANSION
+            {
                 context.err = Some(crate::error::MinifyError {
                     kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
                     loc: self.loc,
@@ -497,6 +508,27 @@ impl<R> StyleRule<R> {
                 true
             }
     }
+}
+
+/// Approximate clone-cost of a declaration block: one unit per declaration as
+/// a baseline, plus the recursive token count of any unparsed / custom value
+/// (whose [`TokenList`](css::css_properties::custom::TokenList) `Vec`s are the
+/// expensive part of `DeclarationBlock::deep_clone`). Charged by
+/// [`StyleRule::charge_selector_expansion`] against
+/// [`css_rules::MAX_DECLARATION_EXPANSION`](super::MAX_DECLARATION_EXPANSION).
+fn declaration_clone_weight(decls: &DeclarationBlock<'_>) -> u32 {
+    use css::properties::Property;
+    let mut total: u32 = 0;
+    for list in [&decls.declarations, &decls.important_declarations] {
+        for prop in list.iter() {
+            total = total.saturating_add(1).saturating_add(match prop {
+                Property::Custom(p) => p.value.weight(),
+                Property::Unparsed(p) => p.value.weight(),
+                _ => 0,
+            });
+        }
+    }
+    total
 }
 
 // ─── deep_clone ───────────────────────────────────────────────────────────

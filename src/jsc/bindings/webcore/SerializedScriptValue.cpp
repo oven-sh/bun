@@ -1089,6 +1089,24 @@ private:
         return object->inherits<JSSet>();
     }
 
+    // node:worker_threads.markAsUncloneable tags the object with a private-name
+    // property. Node's marker is only consulted by the node_messaging.cc
+    // ValueSerializer delegate, which V8 reaches only for generic objects and
+    // Error instances (built-in containers, wrappers, ArrayBuffer/TypedArray,
+    // and WebAssembly types are dispatched first). Node's v8.serialize and
+    // child_process `serialization: "advanced"` use a different delegate that
+    // never reads the marker. Mirror that by gating on the messaging entry
+    // points and calling this only from the ErrorInstance and generic-object
+    // serialization paths.
+    bool isMarkedUncloneableForMessaging(VM& vm, JSObject* object)
+    {
+        if (m_forStorage != SerializationForStorage::No)
+            return false;
+        if (m_forTransfer != SerializationForCrossProcessTransfer::No)
+            return false;
+        return !!object->getDirect(vm, WebCore::builtinNames(vm).isUncloneablePrivateName());
+    }
+
     bool checkForDuplicate(JSObject* object)
     {
         // Record object for graph reconstruction
@@ -1684,20 +1702,11 @@ private:
                 write(String::fromLatin1(JSC::Yarr::flagsString(regExp->regExp()->flags()).data()));
                 return true;
             }
-            // node:worker_threads.markAsUncloneable: reject objects tagged with the
-            // private-name marker. Placed after the Array/Date/Boolean/String/Number/
-            // BigInt/RegExp dispatch and with Map/Set excluded, matching Node.js where
-            // V8's ValueSerializer handles those instance types without consulting the
-            // delegate that reads the marker. Gated on the messaging path so
-            // node:v8.serialize (SerializationForStorage::Yes) ignores the marker, as
-            // Node's v8.serialize does.
-            if (m_forStorage == SerializationForStorage::No
-                && !obj->inherits<JSMap>() && !obj->inherits<JSSet>()
-                && obj->getDirect(vm, WebCore::builtinNames(vm).isUncloneablePrivateName())) {
-                code = SerializationReturnCode::DataCloneError;
-                return true;
-            }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
+                if (isMarkedUncloneableForMessaging(vm, obj)) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 auto& vm = m_lexicalGlobalObject->vm();
                 auto errorTypeValue = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->name);
                 RETURN_IF_EXCEPTION(scope, false);
@@ -2708,6 +2717,8 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             if (inputObjectStack.size() > maximumFilterRecursion)
                 return SerializationReturnCode::StackOverflowError;
             JSObject* inObject = asObject(inValue);
+            if (isMarkedUncloneableForMessaging(vm, inObject))
+                return SerializationReturnCode::DataCloneError;
             if (!startObject(inObject))
                 break;
             // At this point, all supported objects other than Object

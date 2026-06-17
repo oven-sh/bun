@@ -1,4 +1,4 @@
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -570,6 +570,29 @@ describe("markAsUncloneable", () => {
     expect(structuredClone(bo).valueOf()).toBe(true);
   });
 
+  test("marked WebAssembly.Module / Memory still clone", () => {
+    const bytes = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+    const mod = new WebAssembly.Module(bytes);
+    markAsUncloneable(mod);
+    const { port1, port2 } = new MessageChannel();
+    try {
+      expect(() => port1.postMessage(mod)).not.toThrow();
+    } finally {
+      port1.close();
+      port2.close();
+    }
+
+    const mem = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+    markAsUncloneable(mem);
+    const { port1: p1, port2: p2 } = new MessageChannel();
+    try {
+      expect(() => p1.postMessage(mem)).not.toThrow();
+    } finally {
+      p1.close();
+      p2.close();
+    }
+  });
+
   test("catches a marked Error instance", () => {
     const err = new Error("boom");
     markAsUncloneable(err);
@@ -695,6 +718,35 @@ describe("markAsUncloneable", () => {
     markAsUncloneable(obj);
     const buf = v8.serialize(obj);
     expect(v8.deserialize(buf)).toEqual({ a: 1 });
+  });
+
+  // Node's child_process `serialization: "advanced"` uses v8.DefaultSerializer,
+  // the same delegate as v8.serialize, so it also ignores the marker.
+  test("child_process advanced IPC ignores the marker", async () => {
+    using dir = tempDir("markAsUncloneable-ipc", {
+      "child.js": `
+        process.on("message", m => {
+          process.send({ echo: m });
+        });
+      `,
+    });
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "child.js")],
+      env: bunEnv,
+      serialization: "advanced",
+      ipc(message) {
+        resolve(message);
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    proc.exited.then(code => reject(new Error("child exited early: " + code)));
+    const obj = { a: 1 };
+    markAsUncloneable(obj);
+    expect(() => proc.send(obj)).not.toThrow();
+    const received = await promise;
+    expect(received).toEqual({ echo: { a: 1 } });
+    proc.kill();
   });
 
   test("works on frozen / sealed / non-extensible objects", () => {

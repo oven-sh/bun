@@ -1428,10 +1428,10 @@ function Server(options, secureConnectionListener): void {
 
   Server.prototype.setTicketKeys = function (keys) {
     if (!isArrayBufferView(keys)) {
-      throw $ERR_INVALID_ARG_TYPE("keys", ["Buffer", "TypedArray", "DataView"], keys);
+      throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView"], keys);
     }
     if (keys.byteLength !== 48) {
-      throw $ERR_INVALID_ARG_VALUE("keys", keys.byteLength, "must be exactly 48 bytes");
+      throw $ERR_INVALID_ARG_VALUE("buffer", keys, "Session ticket keys must be a 48-byte buffer");
     }
     if (this._handle) {
       _setTicketKeys(this._handle, keys);

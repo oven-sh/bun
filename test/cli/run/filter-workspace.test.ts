@@ -611,9 +611,13 @@ describe("bun", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The good package still runs; the broken one is skipped with a warning
+    // that names its path.
+    expect(stdout).toContain("ok");
     const sep = process.platform === "win32" ? "\\" : "/";
     expect(stderr).toContain(`broken${sep}package.json`);
     expect(stderr).toContain("skipping this workspace package");
+    expect(exitCode).toBe(0);
   });
 });

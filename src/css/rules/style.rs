@@ -395,7 +395,18 @@ impl<R> StyleRule<R> {
                     .selector_expansion_multiplier
                     .saturating_mul(self.selectors.v.len().max(1)),
             );
-            if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION {
+            // The selector-split deep-clones every declaration of this rule
+            // once per expanded selector combination, so charge the block's
+            // approximate clone bytes times the multiplier — a rule with a
+            // large unparsed token list stays under the selector-count limit
+            // while still expanding into gigabytes of cloned tokens.
+            context.selector_expansion_bytes = context.selector_expansion_bytes.saturating_add(
+                (context.selector_expansion_multiplier as usize)
+                    .saturating_mul(self.declarations.approx_clone_bytes()),
+            );
+            if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION
+                || context.selector_expansion_bytes > super::MAX_SELECTOR_EXPANSION_BYTES
+            {
                 context.err = Some(crate::error::MinifyError {
                     kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
                     loc: self.loc,

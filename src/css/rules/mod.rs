@@ -1281,6 +1281,19 @@ pub struct StyleContext<'a> {
 /// instead.
 pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 
+/// Upper bound on the approximate bytes of declaration storage that compiling
+/// nested rules away for the configured targets may expand into.
+///
+/// [`MAX_SELECTOR_EXPANSION`] bounds the selector *count*, but a single rule
+/// can carry a large unparsed declaration (thousands of tokens). Each
+/// selector-split deep-clones the whole declaration block, so a rule with a
+/// large token list nested under a dozen multi-selector levels expands into
+/// gigabytes of cloned `TokenOrValue` storage while staying under the selector
+/// count limit. Charge each rule's declaration bytes times the expansion
+/// multiplier against this budget so such inputs fail with
+/// `selector_expansion_limit_exceeded` instead of OOMing.
+pub const MAX_SELECTOR_EXPANSION_BYTES: usize = 64 << 20;
+
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
 ///
@@ -1316,4 +1329,8 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub selector_expansion_total: u32,
+    /// Running total of approximate declaration bytes that compiling nested
+    /// rules for the targets will expand to, checked against
+    /// [`MAX_SELECTOR_EXPANSION_BYTES`].
+    pub selector_expansion_bytes: usize,
 }

@@ -842,6 +842,35 @@ impl TokenList {
         fallbacks
     }
 
+    /// Approximate heap bytes that `deep_clone` would allocate for this token
+    /// list, including nested function arguments / fallback lists. Used to
+    /// bound the memory cost of the selector-expansion deep-clones — see
+    /// [`css_rules::MAX_SELECTOR_EXPANSION_BYTES`](crate::css_rules::MAX_SELECTOR_EXPANSION_BYTES).
+    pub(crate) fn approx_clone_bytes(&self) -> usize {
+        let mut total = self.v.len() * core::mem::size_of::<TokenOrValue>();
+        for tok in &self.v {
+            total = total.saturating_add(match tok {
+                TokenOrValue::Function(f) => f.arguments.approx_clone_bytes(),
+                TokenOrValue::Var(v) => {
+                    v.fallback.as_ref().map_or(0, TokenList::approx_clone_bytes)
+                }
+                TokenOrValue::Env(e) => {
+                    e.fallback.as_ref().map_or(0, TokenList::approx_clone_bytes)
+                }
+                TokenOrValue::UnresolvedColor(c) => match c {
+                    UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. } => {
+                        alpha.approx_clone_bytes()
+                    }
+                    UnresolvedColor::LightDark { light, dark } => light
+                        .approx_clone_bytes()
+                        .saturating_add(dark.approx_clone_bytes()),
+                },
+                _ => 0,
+            });
+        }
+        total
+    }
+
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 }
 

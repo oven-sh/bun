@@ -91,6 +91,26 @@ impl<'bump> DeclarationBlock<'bump> {
         self.declarations.len() + self.important_declarations.len()
     }
 
+    /// Approximate heap bytes that `deep_clone` would allocate for this
+    /// declaration block. Used to bound the memory cost of the
+    /// selector-expansion deep-clones — see
+    /// [`css_rules::MAX_SELECTOR_EXPANSION_BYTES`](crate::css_rules::MAX_SELECTOR_EXPANSION_BYTES).
+    pub(crate) fn approx_clone_bytes(&self) -> usize {
+        let mut total = self.len() * core::mem::size_of::<css::Property>();
+        for decl in self
+            .declarations
+            .iter()
+            .chain(self.important_declarations.iter())
+        {
+            total = total.saturating_add(match decl {
+                css::Property::Unparsed(u) => u.value.approx_clone_bytes(),
+                css::Property::Custom(c) => c.value.approx_clone_bytes(),
+                _ => 0,
+            });
+        }
+        total
+    }
+
     pub fn new_in(bump: &'bump Bump) -> Self {
         Self {
             important_declarations: DeclarationList::new_in(bump),

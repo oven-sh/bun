@@ -238,6 +238,81 @@ test("shallow nesting spanning @scope still compiles for old targets", () => {
   expect(out).toContain("@scope");
 });
 
+// A rule with a large unparsed declaration nested under a dozen `::part()`
+// levels stays well under the 65,536-selector limit (only ~16k combinations),
+// but each selector-split deep-clones every token of that declaration, so the
+// expansion blew up to multiple gigabytes of cloned token storage and OOMed.
+// The minifier now also bounds the expanded declaration bytes.
+function nestedRulesWithLargeDeclaration(depth: number, tokens: number): string {
+  // `::part()` can never be wrapped in `:is()`, so every level clones its
+  // subtree — the shape the fuzzer minimized to.
+  return (
+    "x::part(a), y::part(b) {\n".repeat(depth) +
+    ".inner { color: " +
+    Buffer.alloc(tokens * 2, "x ").toString() +
+    "}\n" +
+    "}\n".repeat(depth)
+  );
+}
+
+test("a large unparsed declaration under ::part() nesting errors instead of exploding", () => {
+  // 9 levels × 2 selectors = 512 combinations (well under the selector-count
+  // cap), each cloning a ~5,000-token declaration: hundreds of megabytes of
+  // cloned token storage without the byte limit, multi-gigabyte at 13+ levels.
+  const src = nestedRulesWithLargeDeclaration(9, 5_000);
+  expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(LIMIT_ERROR);
+});
+
+test("a large unparsed declaration at shallow nesting still compiles for old targets", () => {
+  // 4 levels × 2 selectors = 16 combinations: the same declaration but
+  // duplicated only 16 times, well under the byte limit.
+  const src = nestedRulesWithLargeDeclaration(4, 5_000);
+  const out = minifyTest(src, "", OLD_TARGETS);
+  expect(out).toContain(".inner");
+  expect(out.length).toBeLessThan(1_000_000);
+});
+
+test("a large unparsed declaration is preserved as-is for targets that support CSS nesting", () => {
+  // No expansion, so the byte limit doesn't apply even at 13 levels.
+  const src = nestedRulesWithLargeDeclaration(13, 5_000);
+  const out = minifyTest(src, "", MODERN_TARGETS);
+  expect(out).toContain(".inner");
+  expect(out.length).toBeLessThan(100_000);
+});
+
+test("nested rules with ordinary declarations still compile up to the selector-count limit", () => {
+  // The byte limit must not make the selector-count limit stricter for
+  // ordinary-sized declarations: 15 `::part()` levels (~32k combinations) is
+  // the largest depth that passed the selector-count cap before, and it must
+  // still pass now.
+  const src = nestedRules("x::part(a), y::part(b)", 15);
+  const out = minifyTest(src, "", OLD_TARGETS);
+  expect(out).toContain("color:red");
+});
+
+test("bun build does not OOM on ::part() nesting over a large unparsed declaration", async () => {
+  using dir = tempDir("css-nested-declaration-expansion", {
+    "input.css": nestedRulesWithLargeDeclaration(13, 5_000),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "input.css", "--outdir", "out", "--minify"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    // Kill switch: before the fix this build allocated multiple gigabytes of
+    // cloned token storage. Let the child terminate itself so a regression
+    // fails the assertions below instead of hanging the runner or OOMing it.
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(proc.signalCode).toBeNull();
+  expect(stderr).toContain(LIMIT_ERROR);
+  expect(exitCode).toBe(1);
+  expect(await Bun.file(`${dir}/out/input.css`).exists()).toBe(false);
+});
+
 test("bun build does not hang on deeply nested multi-selector css spanning @starting-style", async () => {
   using dir = tempDir("css-starting-style-expansion", {
     // The fuzzer's depth (14 outer + 11 inner): without the fix this hangs for

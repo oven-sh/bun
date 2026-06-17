@@ -186,3 +186,61 @@ test("new tls.TLSSocket(socket, { isServer: true }) does not re-emit post-upgrad
     server.close();
   }
 });
+
+test("server-side TLS upgrade does not re-inject buffered ClientHello (initialData) #32239", async () => {
+  // When the ClientHello is already buffered on the accepted socket at wrap time
+  // (readable/paused-mode STARTTLS with an async gap before the wrap), the native
+  // side feeds it synchronously during upgradeTLS and fires the raw tap before
+  // upgradeTLS returns. The flag must be set before that call so the buffered
+  // bytes are not re-pushed back into the accepted socket's readable buffer.
+  const { promise, resolve } = Promise.withResolvers<{ reinjected: boolean }>();
+
+  const server = net.createServer(accepted => {
+    accepted.on("error", () => {});
+    accepted.write("SERVER_GREETING");
+    let negotiated = false;
+    accepted.on("data", function onData(chunk) {
+      if (negotiated || !chunk.toString("latin1").includes("STARTTLS")) return;
+      negotiated = true;
+      accepted.write("PROCEED");
+      // Switch to paused mode so the client's ClientHello buffers instead of
+      // flowing; the wrap then sees it as non-empty initialData.
+      accepted.removeListener("data", onData);
+      accepted.pause();
+      accepted.once("readable", () => {
+        const tlsSock = new tls.TLSSocket(accepted, { isServer: true, key: certs.key, cert: certs.cert });
+        tlsSock.on("error", () => {});
+        // On the unfixed build the buffered ClientHello is synchronously
+        // re-pushed into the accepted socket's readable buffer during the wrap.
+        resolve({ reinjected: accepted.readableLength > 0 });
+      });
+    });
+  });
+
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as net.AddressInfo;
+
+  const socket = net.connect(port, "127.0.0.1");
+  try {
+    socket.on("error", () => {});
+    socket.on("close", () => resolve({ reinjected: false }));
+    socket.on("data", data => {
+      const text = data.toString("latin1");
+      if (text.includes("SERVER_GREETING")) {
+        socket.write("STARTTLS");
+      } else if (text.includes("PROCEED")) {
+        const tlsSocket = tls.connect({ socket, servername: "localhost", rejectUnauthorized: false });
+        tlsSocket.on("error", () => {});
+      }
+    });
+
+    const result = await promise;
+
+    // The buffered ClientHello must reach the TLS engine, not resurface as
+    // readable bytes on the accepted socket.
+    expect(result.reinjected).toBe(false);
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});

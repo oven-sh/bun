@@ -1944,6 +1944,12 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
   // pulled off the fd into the connection's readable buffer; hand them to the
   // TLS engine so the handshake doesn't stall.
   const pending = connection.read();
+  // Set before upgradeTLS: with non-empty initialData the native side enables
+  // the ciphertext tap and synchronously feeds those bytes inside this call,
+  // firing ServerHandlers.data on the original accepted socket before it returns.
+  // The flag must already be set so the guard suppresses that re-emission; once
+  // TLS owns the stream those bytes belong to the TLS layer, not this socket.
+  connection[kupgradedToTLS] = true;
   const result = socket.upgradeTLS({
     data: this,
     tls,
@@ -1952,15 +1958,12 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     initialData: pending || undefined,
   });
   if (!result) {
+    connection[kupgradedToTLS] = false;
     this._handle = null;
     throw new Error("Invalid socket");
   }
   const [raw, tlsHandle] = result;
   connection._handle = raw;
-  // The raw half keeps delivering post-upgrade ciphertext to the original
-  // accepted socket's handlers. Once TLS owns the stream, stop surfacing those
-  // bytes as cleartext `data` on the original socket (matches the client path).
-  connection[kupgradedToTLS] = true;
   this.once("end", this[kCloseRawConnection]);
   raw.connecting = false;
   this._handle = tlsHandle;

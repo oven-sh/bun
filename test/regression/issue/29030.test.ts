@@ -105,4 +105,24 @@ describe("issue #29030 - deepStrictEqual prototype check", () => {
     expect(() => assert.deepStrictEqual(new Set([1, 2]), new Set([1, 2]))).not.toThrow();
     expect(() => assert.deepStrictEqual(new Error("x"), new Error("x"))).not.toThrow();
   });
+
+  // The prototype check is scoped to deepStrictEqual/isDeepStrictEqual. Node's
+  // assert.partialDeepStrictEqual compares Buffer/ArrayBuffer/Error/Date/RegExp
+  // by content only and does NOT enforce prototype identity, so these must pass.
+  test("partialDeepStrictEqual does not enforce prototype identity", () => {
+    expect(() => assert.partialDeepStrictEqual(Buffer.from([1, 2]), new Uint8Array([1, 2]))).not.toThrow();
+    expect(() => assert.partialDeepStrictEqual({ b: Buffer.from([1]) }, { b: new Uint8Array([1]) })).not.toThrow();
+
+    class MyError extends Error {}
+    expect(() => assert.partialDeepStrictEqual(new MyError("x"), new Error("x"))).not.toThrow();
+
+    class Sub extends Uint8Array {}
+    expect(() => assert.partialDeepStrictEqual(Sub.from([1, 2]), new Uint8Array([1, 2]))).not.toThrow();
+  });
+
+  test("partialDeepStrictEqual still rejects differing content", () => {
+    expect(() => assert.partialDeepStrictEqual(Buffer.from([1, 2]), new Uint8Array([9, 9]))).toThrow(
+      assert.AssertionError,
+    );
+  });
 });

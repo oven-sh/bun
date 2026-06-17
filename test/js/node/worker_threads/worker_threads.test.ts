@@ -820,7 +820,6 @@ describe("markAsUncloneable", () => {
     expect(() => proc.send(obj)).not.toThrow();
     const received = await promise;
     expect(received).toEqual({ echo: { a: 1 } });
-    proc.kill();
   });
 
   test("works on frozen / sealed / non-extensible objects", () => {

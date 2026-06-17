@@ -8,9 +8,23 @@ function nestedAtan2Chain(depth: number): string {
   return `hsl(sin(2\n${body}` + Buffer.alloc(depth + 3, ")").toString();
 }
 
+// A nested atan2() chain whose first argument starts with an unreducible
+// product (`2 * min(1, 2)` stays as `Calc::Product` because numeric `min()`
+// arguments are not folded), so `Calc<Angle>::parse_sum` fails at `add()`
+// rather than at a nested math function. The previous short-circuit only
+// covered the latter, letting the `Length` and `Percentage` fallbacks both
+// recurse, which is 2^depth.
+function nestedAtan2ProductChain(depth: number): string {
+  let body = "atan2(1)";
+  for (let i = 0; i < depth; i++) body = `atan2(2 * min(1, 2) + 3 + ${body})`;
+  return `hsl(calc(${body}) 50% 50%)`;
+}
+
 const cases: [css: string, expected: string | null][] = [
   [nestedAtan2Chain(40), null],
   [nestedAtan2Chain(64), null],
+  [nestedAtan2ProductChain(40), null],
+  [nestedAtan2ProductChain(64), null],
   ["hsl(" + Buffer.alloc(6 * 64, "atan2(").toString() + "9, 1" + Buffer.alloc(64, ")").toString() + " 50% 50%)", null],
   ["hsl(atan2(9, 1) 50% 50%)", "#8dbf40"],
   ["hsl(atan2(atan2(9,1), atan2(2,3)) 50% 50%)", "#aebf40"],
@@ -28,6 +42,11 @@ const cases: [css: string, expected: string | null][] = [
   ["hsl(atan2(1, sign(1s)) 50% 50%)", "#bf9f40"],
   ["hsl(atan2(1, calc(sign(1px))) 50% 50%)", "#bf9f40"],
   ["hsl(atan2(atan2(9,1), 1) 50% 50%)", null],
+  ["hsl(atan2(2 * min(1, 2) + 3, 5) 50% 50%)", null],
+  ["hsl(atan2(2 * min(1deg, 2deg) + 3deg, 5deg) 50% 50%)", "#bf9f40"],
+  ["hsl(atan2(2 * min(1px, 2px) + 3px, 5px) 50% 50%)", "#bf9f40"],
+  ["hsl(atan2(2 * min(1%, 2%) + 3%, 5%) 50% 50%)", "#bf9f40"],
+  ["hsl(atan2(2 * min(1s, 2s) + 3s, 5s) 50% 50%)", "#bf9f40"],
 ];
 
 test("deeply nested atan2() color values parse in linear time instead of hanging", async () => {

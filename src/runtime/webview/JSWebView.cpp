@@ -63,7 +63,7 @@ void settleSlot(JSGlobalObject* g, JSWebView* v,
     if (ok)
         p->resolve(g, g->vm(), value);
     else
-        p->reject(g->vm(), value);
+        p->reject(g->vm(), g, value);
 }
 
 // --- WebViewEventTarget ----------------------------------------------------

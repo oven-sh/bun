@@ -94,7 +94,7 @@ static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->rejectAsHandled(vm, value);
+    promise->rejectAsHandled(vm, globalObject, value);
     return promise;
 }
 
@@ -102,7 +102,7 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->fulfill(vm, value);
+    promise->fulfill(vm, globalObject, value);
     return promise;
 }
 

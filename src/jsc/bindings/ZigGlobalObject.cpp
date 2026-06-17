@@ -3484,16 +3484,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     auto sourceURL = sourceOrigin.url();
     String sourceOriginStringHolder;
-    int64_t referrerAsyncOrder = -1;
     if (sourceURL.isEmpty()) {
         sourceOriginStringHolder = String("."_s);
     } else if (sourceURL.protocolIsFile()) {
         sourceOriginStringHolder = sourceURL.fileSystemPath();
-        auto query = sourceURL.queryWithLeadingQuestionMark();
-        auto referrerKey = query.isEmpty()
-            ? JSC::Identifier::fromString(vm, sourceOriginStringHolder)
-            : JSC::Identifier::fromString(vm, makeString(sourceOriginStringHolder, query));
-        referrerAsyncOrder = globalObject->moduleLoader()->asyncEvaluationOrderForKey(referrerKey);
     } else if (sourceURL.protocol() == "builtin"_s) {
         ASSERT(sourceURL.string().startsWith("builtin://"_s));
         sourceOriginStringHolder = sourceURL.string().substringSharingImpl(10 /* builtin:// */);
@@ -3505,7 +3499,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceURL.protocolIsFile() ? sourceOriginStringHolder : String())) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
 
-            auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr, /* deferred */ false, referrerAsyncOrder);
+            auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr, /* deferred */ false);
             if (scope.exception()) [[unlikely]] {
                 return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
             }
@@ -3565,7 +3559,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     // ScriptFetchParameters before calling this hook, so `parameters` is
     // already the parsed RefPtr (or null). Just forward it.
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
-        JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
+        JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false);
     if (scope.exception()) [[unlikely]] {
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }
@@ -3578,7 +3572,7 @@ static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    promise->rejectAsHandled(vm, value);
+    promise->rejectAsHandled(vm, globalObject, value);
     return promise;
 }
 
@@ -3586,7 +3580,7 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    promise->fulfill(vm, value);
+    promise->fulfill(vm, globalObject, value);
     return promise;
 }
 
@@ -3763,7 +3757,7 @@ static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject,
         globalObject, JSC::JSValue::encode(source), compiler.ptr()));
 
     if (scope.exception()) [[unlikely]] {
-        promise->rejectWithCaughtException(vm, scope);
+        promise->rejectWithCaughtException(globalObject, scope);
         return;
     }
 
@@ -3771,7 +3765,7 @@ static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject,
     if (readableStreamMaybe.isNull()) {
         compiler->finalize(globalObject);
         if (scope.exception()) [[unlikely]]
-            promise->rejectWithCaughtException(vm, scope);
+            promise->rejectWithCaughtException(globalObject, scope);
         return;
     }
 
@@ -3783,7 +3777,7 @@ static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject,
     arguments.append(readableStreamMaybe);
     JSC::call(globalObject, builtin, callData, wrapper, arguments);
     if (scope.exception()) [[unlikely]]
-        promise->rejectWithCaughtException(vm, scope);
+        promise->rejectWithCaughtException(globalObject, scope);
 }
 
 void GlobalObject::compileStreaming(JSGlobalObject* globalObject, JSC::JSPromise* promise, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)

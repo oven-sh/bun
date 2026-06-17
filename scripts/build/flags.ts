@@ -1375,8 +1375,28 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: "-Wl,--gc-sections",
-    when: c => c.linux && c.release,
+    when: c => c.linux && c.release && !c.ohos,
     desc: "Garbage-collect unused sections (release only; debug keeps Zig dbHelper symbols)",
+  },
+  {
+    // OHOS: gc-sections with Rust FFI strips uSockets symbols referenced
+    // only from Rust. --export-dynamic ensures they remain available at
+    // startup when the dynamic linker resolves them.
+    flags: ["-Wl,--gc-sections", "-Wl,--export-dynamic",
+      "-Wl,--undefined=us_ssl_pop_pending_session",
+      "-Wl,--undefined=us_ssl_pop_pending_keylog",
+      "-Wl,--undefined=us_ssl_enable_pending_events",
+      "-Wl,--undefined=us_socket_write_check_error",
+      "-Wl,--undefined=us_internal_ssl_loop_state_save",
+      "-Wl,--undefined=us_internal_ssl_loop_state_restore",
+      "-Wl,--undefined=us_ssl_parse_pkcs12",
+      "-Wl,--undefined=us_ssl_ctx_add_ca_cert",
+      "-Wl,--undefined=us_socket_get_tos",
+      "-Wl,--undefined=us_socket_sni_resolve",
+      "-Wl,--undefined=us_socket_set_tos",
+      "-Wl,--undefined=us_socket_tls_feed"],
+    when: c => c.linux && c.release && c.ohos,
+    desc: "Force-keep uSockets SSL symbols referenced via Rust FFI (OHOS)",
   },
   {
     // Always icf=safe in release. The stripped `bun` shares its build-id

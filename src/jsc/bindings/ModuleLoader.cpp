@@ -74,14 +74,14 @@ static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
     auto scope = DECLARE_THROW_SCOPE(vm);
     scope.throwException(globalObject, value);
-    return promise->rejectWithCaughtException(vm, scope);
+    return promise->rejectWithCaughtException(globalObject, scope);
 }
 
 static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    promise->fulfill(vm, value);
+    promise->fulfill(vm, globalObject, value);
     return promise;
 }
 
@@ -1247,7 +1247,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
         throwException(globalObject, scope, result);
     }
     if (scope.exception()) [[unlikely]] {
-        auto retValue = JSValue::encode(promise->rejectWithCaughtException(vm, scope));
+        auto retValue = JSValue::encode(promise->rejectWithCaughtException(globalObject, scope));
         pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
         return retValue;
     }

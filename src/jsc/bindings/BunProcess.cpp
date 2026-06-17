@@ -20,6 +20,10 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSMap.h"
+// Provide a fallback for REPORTED_NODEJS_V8_VERSION if not defined by build system
+#ifndef REPORTED_NODEJS_V8_VERSION
+#define REPORTED_NODEJS_V8_VERSION "14.6.202.34-node.20"
+#endif
 #include "JavaScriptCore/JSMapInlines.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "JavaScriptCore/JSString.h"

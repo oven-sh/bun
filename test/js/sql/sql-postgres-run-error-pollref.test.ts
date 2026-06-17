@@ -27,11 +27,15 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    void stderr;
 
-    expect(stdout).toBe("rejected:ERR_INVALID_ARG_TYPE\n");
-    // exited on its own, not killed by the runner's timeout
-    expect(proc.signalCode).toBeNull();
-    expect(exitCode).toBe(0);
+    // signalCode null = exited on its own, not killed by the runner's timeout.
+    // stderr is matched as any(String) so ASAN/debug noise doesn't flake it but
+    // its actual content still shows up in the failure diff.
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "rejected:ERR_INVALID_ARG_TYPE\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });

@@ -1632,6 +1632,12 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetPlatform, (JSC::JSGlobalObject * gl
     return JSValue::encode(JSC::jsString(vm, String("Win32"_s)));
 #elif OS(LINUX)
     return JSValue::encode(JSC::jsString(vm, String("Linux x86_64"_s)));
+#elif OS(FREEBSD)
+#if CPU(ARM64)
+    return JSValue::encode(JSC::jsString(vm, String("FreeBSD arm64"_s)));
+#else
+    return JSValue::encode(JSC::jsString(vm, String("FreeBSD amd64"_s)));
+#endif
 #else
     return JSValue::encode(JSC::jsEmptyString(vm));
 #endif

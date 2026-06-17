@@ -134,9 +134,10 @@ test("new tls.TLSSocket(socket, { isServer: true }) does not re-emit post-upgrad
   // negotiation the server wraps the accepted socket with an isServer TLSSocket.
   // The client's ClientHello (ciphertext) must reach the TLS layer, not resurface
   // as cleartext `data` on the accepted socket and re-enter the server's handler.
-  const { promise, resolve } = Promise.withResolvers<{ dataAfterUpgrade: boolean; message: string }>();
+  const { promise, resolve } = Promise.withResolvers<{ wrapped: boolean; dataAfterUpgrade: boolean; message: string }>();
 
   let dataAfterUpgrade = false;
+  let wrapped = false;
 
   const server = net.createServer(accepted => {
     let upgraded = false;
@@ -152,8 +153,9 @@ test("new tls.TLSSocket(socket, { isServer: true }) does not re-emit post-upgrad
         upgraded = true;
         accepted.write("PROCEED");
         const tlsSock = new tls.TLSSocket(accepted, { isServer: true, key: certs.key, cert: certs.cert });
-        tlsSock.on("error", () => resolve({ dataAfterUpgrade, message: "" }));
-        tlsSock.on("secure", () => resolve({ dataAfterUpgrade, message: "" }));
+        wrapped = true;
+        tlsSock.on("error", () => resolve({ wrapped, dataAfterUpgrade, message: "" }));
+        tlsSock.on("secure", () => resolve({ wrapped, dataAfterUpgrade, message: "" }));
       }
     });
   });
@@ -164,20 +166,23 @@ test("new tls.TLSSocket(socket, { isServer: true }) does not re-emit post-upgrad
   const socket = net.connect(port, "127.0.0.1");
   try {
     socket.on("error", () => {});
-    socket.on("close", () => resolve({ dataAfterUpgrade, message: "" }));
+    socket.on("close", () => resolve({ wrapped, dataAfterUpgrade, message: "" }));
     socket.on("data", data => {
       const text = data.toString("latin1");
       if (text.includes("SERVER_GREETING")) {
         socket.write("STARTTLS");
       } else if (text.includes("PROCEED")) {
         const tlsSocket = tls.connect({ socket, servername: "localhost", rejectUnauthorized: false });
-        tlsSocket.on("error", err => resolve({ dataAfterUpgrade, message: err.message }));
-        tlsSocket.on("secureConnect", () => resolve({ dataAfterUpgrade, message: "" }));
+        tlsSocket.on("error", err => resolve({ wrapped, dataAfterUpgrade, message: err.message }));
+        tlsSocket.on("secureConnect", () => resolve({ wrapped, dataAfterUpgrade, message: "" }));
       }
     });
 
     const result = await promise;
 
+    // The server must actually have wrapped the accepted socket (guards against
+    // an early close settling the promise before the upgrade ran).
+    expect(result.wrapped).toBe(true);
     // The accepted socket must go quiet once the server TLS layer owns the stream.
     expect(result.dataAfterUpgrade).toBe(false);
     expect(result.message).not.toContain("Invalid socket");
@@ -193,7 +198,7 @@ test("server-side TLS upgrade does not re-inject buffered ClientHello (initialDa
   // side feeds it synchronously during upgradeTLS and fires the raw tap before
   // upgradeTLS returns. The flag must be set before that call so the buffered
   // bytes are not re-pushed back into the accepted socket's readable buffer.
-  const { promise, resolve } = Promise.withResolvers<{ reinjected: boolean }>();
+  const { promise, resolve } = Promise.withResolvers<{ wrapped: boolean; reinjected: boolean }>();
 
   const server = net.createServer(accepted => {
     accepted.on("error", () => {});
@@ -212,7 +217,7 @@ test("server-side TLS upgrade does not re-inject buffered ClientHello (initialDa
         tlsSock.on("error", () => {});
         // On the unfixed build the buffered ClientHello is synchronously
         // re-pushed into the accepted socket's readable buffer during the wrap.
-        resolve({ reinjected: accepted.readableLength > 0 });
+        resolve({ wrapped: true, reinjected: accepted.readableLength > 0 });
       });
     });
   });
@@ -223,7 +228,9 @@ test("server-side TLS upgrade does not re-inject buffered ClientHello (initialDa
   const socket = net.connect(port, "127.0.0.1");
   try {
     socket.on("error", () => {});
-    socket.on("close", () => resolve({ reinjected: false }));
+    // An early close resolves wrapped:false so the assertion fails rather than
+    // vacuously passing before the wrap ran.
+    socket.on("close", () => resolve({ wrapped: false, reinjected: false }));
     socket.on("data", data => {
       const text = data.toString("latin1");
       if (text.includes("SERVER_GREETING")) {
@@ -236,6 +243,9 @@ test("server-side TLS upgrade does not re-inject buffered ClientHello (initialDa
 
     const result = await promise;
 
+    // The wrap must have actually run (guards against an early close settling
+    // the promise with the passing default).
+    expect(result.wrapped).toBe(true);
     // The buffered ClientHello must reach the TLS engine, not resurface as
     // readable bytes on the accepted socket.
     expect(result.reinjected).toBe(false);

@@ -1950,13 +1950,22 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
   // The flag must already be set so the guard suppresses that re-emission; once
   // TLS owns the stream those bytes belong to the TLS layer, not this socket.
   connection[kupgradedToTLS] = true;
-  const result = socket.upgradeTLS({
-    data: this,
-    tls,
-    socket: serverHandlersFor(this),
-    isServer: true,
-    initialData: pending || undefined,
-  });
+  let result;
+  try {
+    result = socket.upgradeTLS({
+      data: this,
+      tls,
+      socket: serverHandlersFor(this),
+      isServer: true,
+      initialData: pending || undefined,
+    });
+  } catch (error) {
+    // A thrown upgrade (e.g. bad cert/key/cipher) must not leave the accepted
+    // socket latched, or its data handlers stay silent for a socket that was
+    // never actually wrapped.
+    connection[kupgradedToTLS] = false;
+    throw error;
+  }
   if (!result) {
     connection[kupgradedToTLS] = false;
     this._handle = null;

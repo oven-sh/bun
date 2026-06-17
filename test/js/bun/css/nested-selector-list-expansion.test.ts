@@ -388,6 +388,26 @@ test("token limit covers env() index lists", () => {
   expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(TOKEN_LIMIT_ERROR);
 });
 
+test("token limit covers a flat top-level rule split into many incompatible selectors", () => {
+  // No nesting (multiplier == 1), but an N-selector list the targets can't
+  // collapse into `:is()` is still partitioned into N rules that each
+  // deep-clone the declaration block. Charged as copies = N x W.
+  // :user-valid is unsupported everywhere; chrome 80 lacks :is(), so no
+  // collapse. 2000 selectors x ~10,000 tokens = ~20M > 1M.
+  const sels = Array.from({ length: 2000 }, (_, i) => `.s${i}:user-valid`).join(", ");
+  const payload = Buffer.alloc(10000, "x ").toString();
+  const src = sels + " { --foo: f(" + payload + "var(--x)) }";
+  expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(TOKEN_LIMIT_ERROR);
+});
+
+test("a flat top-level single-selector rule with a large unparsed value is not charged", () => {
+  // copies == 1: nothing is cloned, so nothing is charged regardless of W.
+  const payload = Buffer.alloc(10000, "x ").toString();
+  const src = ".s:user-valid { --foo: f(" + payload + "var(--x)) }";
+  const out = minifyTest(src, "", OLD_TARGETS);
+  expect(out).toContain("var(--x)");
+});
+
 test("bun build reports an error instead of OOMing on deeply nested selectors with a large unparsed value", async () => {
   using dir = tempDir("css-token-expansion", {
     // 12 levels and a ~6000-token value: before the fix this allocated on the

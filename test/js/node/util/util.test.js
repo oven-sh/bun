@@ -429,4 +429,33 @@ describe("util", () => {
       });
     }
   });
+
+  describe("inspect numericSeparator", () => {
+    const sep = v => util.inspect(v, { numericSeparator: true });
+
+    it("formats negative fractional numbers (#23098)", () => {
+      // Previously produced "0..12" and dropped the sign.
+      expect(sep([0.1234, -0.12, -0.123, -0.1234, -1.234])).toBe("[ 0.123_4, -0.12, -0.123, -0.123_4, -1.234 ]");
+    });
+
+    it("matches Node for each negative fraction", () => {
+      expect(sep(-0.12)).toBe("-0.12");
+      expect(sep(-0.123)).toBe("-0.123");
+      expect(sep(-0.1234)).toBe("-0.123_4");
+      expect(sep(-1.234)).toBe("-1.234");
+      expect(sep(-12345.6789)).toBe("-12_345.678_9");
+    });
+
+    it("keeps the sign on -0", () => {
+      expect(sep(-0)).toBe("-0");
+      expect(sep(0)).toBe("0");
+    });
+
+    it("groups large integers and fractions", () => {
+      expect(sep(1234567)).toBe("1_234_567");
+      expect(sep(-1234567)).toBe("-1_234_567");
+      expect(sep(123456.789)).toBe("123_456.789");
+      expect(sep(0.1234)).toBe("0.123_4");
+    });
+  });
 });

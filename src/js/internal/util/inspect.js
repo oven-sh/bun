@@ -1959,28 +1959,33 @@ function addNumericSeparatorEnd(integerString) {
 const remainingText = remaining => `... ${remaining} more item${remaining > 1 ? "s" : ""}`;
 
 function formatNumber(fn, number, numericSeparator) {
+  // Format -0 as '-0'. Checking `number === -0` won't distinguish 0 from -0.
+  // String(-0) === '0', so this must be checked before any String() conversion.
+  if (ObjectIs(number, -0)) {
+    return fn("-0", "number");
+  }
   if (!numericSeparator) {
-    // Format -0 as '-0'. Checking `number === -0` won't distinguish 0 from -0.
-    if (ObjectIs(number, -0)) {
-      return fn("-0", "number");
-    }
     return fn(`${number}`, "number");
   }
+
+  const numberString = String(number);
   const integer = MathTrunc(number);
-  const string = String(integer);
+
   if (integer === number) {
-    if (!NumberIsFinite(number) || StringPrototypeIncludes(string, "e")) {
-      return fn(string, "number");
+    if (!NumberIsFinite(number) || StringPrototypeIncludes(numberString, "e")) {
+      return fn(numberString, "number");
     }
-    return fn(`${addNumericSeparator(string)}`, "number");
+    return fn(addNumericSeparator(numberString), "number");
   }
-  if (NumberIsNaN(number)) {
-    return fn(string, "number");
+  if (NumberIsNaN(number) || StringPrototypeIncludes(numberString, "e")) {
+    return fn(numberString, "number");
   }
-  return fn(
-    `${addNumericSeparator(string)}.${addNumericSeparatorEnd(StringPrototypeSlice(String(number), string.length + 1))}`,
-    "number",
-  );
+
+  const decimalIndex = StringPrototypeIndexOf(numberString, ".");
+  const integerPart = StringPrototypeSlice(numberString, 0, decimalIndex);
+  const fractionalPart = StringPrototypeSlice(numberString, decimalIndex + 1);
+
+  return fn(`${addNumericSeparator(integerPart)}.${addNumericSeparatorEnd(fractionalPart)}`, "number");
 }
 
 function formatBigInt(fn, bigint, numericSeparator) {

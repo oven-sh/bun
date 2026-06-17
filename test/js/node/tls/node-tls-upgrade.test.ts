@@ -128,3 +128,61 @@ test("tls.connect({ socket }) does not re-emit post-upgrade bytes on the origina
     server.close();
   }
 });
+
+test("new tls.TLSSocket(socket, { isServer: true }) does not re-emit post-upgrade bytes on the accepted socket (server STARTTLS) #32239", async () => {
+  // Server-side STARTTLS (SMTP/IMAP/FTPS pattern): after the plaintext
+  // negotiation the server wraps the accepted socket with an isServer TLSSocket.
+  // The client's ClientHello (ciphertext) must reach the TLS layer, not resurface
+  // as cleartext `data` on the accepted socket and re-enter the server's handler.
+  const { promise, resolve } = Promise.withResolvers<{ dataAfterUpgrade: boolean; message: string }>();
+
+  let dataAfterUpgrade = false;
+
+  const server = net.createServer(accepted => {
+    let upgraded = false;
+    accepted.on("error", () => {});
+    accepted.write("SERVER_GREETING");
+    accepted.on("data", data => {
+      if (upgraded) {
+        // Post-upgrade ciphertext must not resurface here.
+        dataAfterUpgrade = true;
+        return;
+      }
+      if (data.toString("latin1").includes("STARTTLS")) {
+        upgraded = true;
+        accepted.write("PROCEED");
+        const tlsSock = new tls.TLSSocket(accepted, { isServer: true, key: certs.key, cert: certs.cert });
+        tlsSock.on("error", () => resolve({ dataAfterUpgrade, message: "" }));
+        tlsSock.on("secure", () => resolve({ dataAfterUpgrade, message: "" }));
+      }
+    });
+  });
+
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as net.AddressInfo;
+
+  const socket = net.connect(port, "127.0.0.1");
+  try {
+    socket.on("error", () => {});
+    socket.on("close", () => resolve({ dataAfterUpgrade, message: "" }));
+    socket.on("data", data => {
+      const text = data.toString("latin1");
+      if (text.includes("SERVER_GREETING")) {
+        socket.write("STARTTLS");
+      } else if (text.includes("PROCEED")) {
+        const tlsSocket = tls.connect({ socket, servername: "localhost", rejectUnauthorized: false });
+        tlsSocket.on("error", err => resolve({ dataAfterUpgrade, message: err.message }));
+        tlsSocket.on("secureConnect", () => resolve({ dataAfterUpgrade, message: "" }));
+      }
+    });
+
+    const result = await promise;
+
+    // The accepted socket must go quiet once the server TLS layer owns the stream.
+    expect(result.dataAfterUpgrade).toBe(false);
+    expect(result.message).not.toContain("Invalid socket");
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});

@@ -600,6 +600,11 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    // Server-side `new tls.TLSSocket(accepted, { isServer: true })` upgrades the
+    // accepted socket via bunUpgradeServerTLS; the raw half still sees the
+    // post-upgrade ciphertext. This socket is the transport, so keep its idle
+    // timer and byte count live, but don't re-emit those bytes as cleartext.
+    if (self[kupgradedToTLS]) return;
     if (!self.push(buffer)) {
       socket.pause();
     }
@@ -1952,6 +1957,10 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
   }
   const [raw, tlsHandle] = result;
   connection._handle = raw;
+  // The raw half keeps delivering post-upgrade ciphertext to the original
+  // accepted socket's handlers. Once TLS owns the stream, stop surfacing those
+  // bytes as cleartext `data` on the original socket (matches the client path).
+  connection[kupgradedToTLS] = true;
   this.once("end", this[kCloseRawConnection]);
   raw.connecting = false;
   this._handle = tlsHandle;

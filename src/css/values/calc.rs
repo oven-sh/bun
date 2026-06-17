@@ -857,14 +857,40 @@ impl<V: CalcValue> Calc<V> {
         // instead of producing `Angle::Rad(atan2(10,5))`. Tracked as a known
         // incompleteness; no behaviour stub is added because a partial
         // dimension matcher would mis-reduce mixed-unit lengths.
-        if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
-            return Ok(v);
+        //
+        // Each fallback can re-enter nested `atan2()` via `parse_value`, so the
+        // same `hit_unrecoverable` gate used for the `Angle` attempt above must
+        // be re-checked between attempts: the `Angle` attempt can fail in
+        // `Calc::add` (e.g. `min(1,2) + 0 + 0` yields `Sum.add(Number)` which
+        // `Angle::from_calc` rejects) before ever reaching a nested math
+        // function, so the counter is still unchanged when we fall through
+        // here. `Length`/`Percentage` accept that same sum and then descend
+        // into the nested `atan2()`; once that descent records a failure, the
+        // remaining type probes cannot succeed and retrying them is
+        // exponential in the nesting depth.
+        match try_parse_atan2_args::<C, Length>(input, ctx) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+            }
         }
-        if let Ok(v) = try_parse_atan2_args::<C, Percentage>(input, ctx) {
-            return Ok(v);
+        match try_parse_atan2_args::<C, Percentage>(input, ctx) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+            }
         }
-        if let Ok(v) = try_parse_atan2_args::<C, Time>(input, ctx) {
-            return Ok(v);
+        match try_parse_atan2_args::<C, Time>(input, ctx) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+            }
         }
 
         let parse_ident_fn = move |c: C, ident: &[u8]| -> Option<Calc<CSSNumber>> {

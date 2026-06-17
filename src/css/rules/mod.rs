@@ -526,6 +526,25 @@ impl<R> CssRuleList<R> {
                 rule,
                 CssRule::Import(_) | CssRule::Namespace(_) | CssRule::LayerStatement(_)
             );
+
+            // Bound the bytes emitted while compiling CSS nesting away for
+            // the targets. `MAX_SELECTOR_EXPANSION` caps how many rule copies
+            // the incompatible-selector split may produce, but each copy
+            // carries the rule's full declaration block, so a leaf with a
+            // large unparsed value cloned a few thousand times can still
+            // expand a few kilobytes of input into hundreds of megabytes
+            // without exceeding the selector-count cap.
+            if let Some(origin) = dest.nesting_bytes_origin {
+                let in_progress = dest.bytes_written().saturating_sub(origin);
+                if dest.nesting_compiled_bytes.saturating_add(in_progress)
+                    > style::MAX_NESTING_COMPILED_BYTES
+                {
+                    return dest.new_error(
+                        crate::error::PrinterErrorKind::maximum_nesting_expansion,
+                        None,
+                    );
+                }
+            }
         }
         Ok(())
     }

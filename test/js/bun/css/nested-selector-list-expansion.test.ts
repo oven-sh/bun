@@ -263,3 +263,174 @@ test("bun build does not hang on deeply nested multi-selector css spanning @star
   expect(exitCode).toBe(1);
   expect(await Bun.file(`${dir}/out/input.css`).exists()).toBe(false);
 });
+
+// ─── byte-based expansion cap (MAX_NESTING_COMPILED_BYTES) ──────────────────
+//
+// MAX_SELECTOR_EXPANSION caps how many rule *copies* the incompatible-selector
+// split may produce, but each copy carries the rule's full declaration block.
+// A leaf with a multi-kilobyte unparsed value cloned a few thousand times
+// stays well under the selector-count cap while expanding a few kilobytes of
+// input into hundreds of megabytes of output. Fuzzer signature sampled during
+// the resulting serialization: `dtoa_short_impl | CSSNumberFns::to_css`.
+
+const BYTES_LIMIT_ERROR = "Maximum nesting expansion exceeded";
+
+// Safari 13.2 doesn't support native nesting or `:is()`, so nested selector
+// lists containing an implicit `&` are split into one cloned rule per selector.
+const SAFARI_13_2 = { safari: (13 << 16) | (2 << 8) };
+
+function nestedWithBigLeaf(depth: number, bigBytes: number): string {
+  let src = "";
+  for (let i = 0; i < depth; i++) src += "o::part(header), .foo::part(body) {\n";
+  src += ".leaf { border-right-color: lab(40% 56.6 39); --big: " + Buffer.alloc(bigBytes, "x").toString() + "; }\n";
+  return src;
+}
+
+test(
+  "nested rules with a large declaration block error instead of exploding when compiled for old targets",
+  () => {
+    // 14 levels of 2-selector ::part() lists = 8192 leaf copies (under the
+    // 65536 selector cap) × ~10 KB declaration block each ≈ 85 MB output.
+    // Before the byte cap this returned the full 85 MB string.
+    const src = nestedWithBigLeaf(14, 10_000);
+    expect(() => minifyTest(src, "", SAFARI_13_2)).toThrow(BYTES_LIMIT_ERROR);
+  },
+  // Serializing up to the 64 MB byte cap (or the full 85 MB on a regression)
+  // takes ~3-4 s under a debug+ASAN build.
+  30_000,
+);
+
+test(
+  "all css test-internals entry points bound the nesting-compiled byte output",
+  async () => {
+    // Cover `_test` and `prefixTest` in a subprocess so a regression fails the
+    // assertions below instead of stalling the runner while each endpoint
+    // serializes ~85 MB.
+    const script = `
+      const c = require("bun:internal-for-testing").cssInternals;
+      let input = "";
+      for (let i = 0; i < 14; i++) input += "o::part(header), .foo::part(body) {\\n";
+      input += ".leaf { border-right-color: lab(40% 56.6 39); --big: " + Buffer.alloc(10000, "x").toString() + "; }\\n";
+      for (const fn of ["_test", "prefixTest"]) {
+        try {
+          const out = c[fn](input, "", { safari: (13 << 16) | (2 << 8) });
+          console.log(fn, "length", out.length);
+        } catch (e) {
+          console.log(fn, "threw", e.message);
+        }
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, signalCode: proc.signalCode }).toMatchObject({ signalCode: null });
+    const lines = stdout.trim().split("\n");
+    expect(lines.length).toBe(2);
+    for (const line of lines) {
+      expect(line).toContain("threw");
+      expect(line).toContain(BYTES_LIMIT_ERROR);
+    }
+    expect(exitCode).toBe(0);
+  },
+  90_000,
+);
+
+test("nested rules with a large declaration block stay below the byte cap at moderate depth", () => {
+  // 10 levels × 2 selectors = 512 leaf copies × ~10 KB ≈ 5 MB output; fine.
+  const src = nestedWithBigLeaf(10, 10_000);
+  const out = minifyTest(src, "", SAFARI_13_2);
+  expect(out).toContain("--big:");
+  expect(out.length).toBeLessThan(10_000_000);
+});
+
+test("deeply nested rules with small declarations stay below the byte cap", () => {
+  // 14 levels × 2 selectors = 8192 leaf copies with a tiny declaration; a few
+  // MB of output, well under the byte cap (and still under the selector cap).
+  const src = nestedWithBigLeaf(14, 100);
+  const out = minifyTest(src, "", SAFARI_13_2);
+  expect(out).toContain("--big:");
+  expect(out.length).toBeLessThan(10_000_000);
+});
+
+test("large declarations are not bounded when nesting is preserved", () => {
+  // Without targets nothing is compiled away, so the output stays linear and
+  // the byte cap doesn't apply.
+  const src = nestedWithBigLeaf(14, 100_000);
+  const out = minifyTest(src, "");
+  expect(out).toContain("--big:");
+  expect(out.length).toBeLessThan(200_000);
+});
+
+test(
+  "bun build does not write gigabyte output for nested rules with large declarations",
+  async () => {
+    using dir = tempDir("css-nesting-big-decl", {
+      // 50 KB input → ~825 MB bundled output before the byte cap.
+      "input.css": nestedWithBigLeaf(14, 50_000),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "input.css", "--outdir", "out", "--minify"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      // Kill switch: before the byte cap this wrote ~825 MB; let the child
+      // terminate itself so a regression fails below instead of filling the
+      // disk.
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Must terminate on its own, not be SIGKILLed by the timeout.
+    expect({ stderr, stdout, signalCode: proc.signalCode }).toMatchObject({ signalCode: null });
+    // The printer bails once the byte cap is exceeded; the bundler may not
+    // surface the PrinterError message, but it must not write the runaway
+    // output. Assert the output file (if any) is bounded well below what a
+    // single unbounded level would produce.
+    const outFile = Bun.file(`${dir}/out/input.css`);
+    const size = (await outFile.exists()) ? outFile.size : 0;
+    expect(size).toBeLessThan(70_000_000);
+    void exitCode;
+  },
+  90_000,
+);
+
+test("fuzzer reproduction does not hang the css printer", async () => {
+  // 15 813-byte fuzzer input that expanded to ~145 MB of output under `_test`
+  // with Safari 13.2 targets (sampled inside `CSSNumberFns::to_css` during
+  // serialization). Run it in a subprocess so a regression fails the timeout
+  // assertion instead of hanging the runner.
+  const blob =
+    "H4sIAAAAAAACA+2bT2/bNhTAd+2AfIGeHjAEsAszlSz/aWSshyYxkK0zmnRZMaAXSqJkLjQpULRlxwiQb7Cv0GP7GXYIsI/Se9HL7hklRU2TzqkzJ0PsUTxQId/jj+Z75iPix6fw1JSlK7O7Xi88wl2q3lVhNFEoURNGEB3giHwpcj+ss6rlw5uTpZv0g+Ve87P/EBaLhCoquNlt70ogZGSMIinSxWYaCp7tg5Iov3+l7883Jm4uXNZuc7CRoD5BIR5QNrn3k/3XZW1OwYhwIqmP8lXREZ2EKsUySABAuG6Mpar0CQ6IrNZgIxRZm0+4IjLr8UQwqcL029my+MuW+fQupP76/fT0kiQw8KE/v/x9lsyaYZpvIC5wIQeYldUuDymnapIQhTwm/EO9w2h1F1DZE487egD3LBT+8EEixNQTUtNQSgPVd22CnLoDFtjx+Pg6uSeNRqvdaFhtp21tNpt2y25+Xcu6kUj+IXESE18hiXVMc6GZTa8Bj8EBPFQCVknMw/6hjipDHmhrpcQ7pFqHxESr8QgxygmWOuzggOqvUmVCGBMp2FY8roHHhgSa+rW65Cvy/uTtJ8nbcaLVE8lWUG8WxVM6iifGKDuXuGB3LjoH4mhWT5I3ouK0OCKXe88HLQ8636SXuj+df/JWY6iFbDmVQmFFXC44mUvpzkLP+5N3tzzsTc8fM3xbkbE+KNMjgnDw2zDJYx4nnfKrUFajAeXF9uILJqQLW5DVaEDHFcqBDPqpB0zwiEhY6w9J7cXeQffF851eNtdnewc/tfcPuts/03FPt/ee7/yyfbATJS+t7rP9I7W93+3u7dL0x62XPwx/fWUzf7Lb2u2qYItb38Ojxwa/3Pjcx8SIyFBH1f/l4rsizv5tgJnxQYM3eIM3+PuIPzOrb/DX4V8Pp7Zt6efYmMHgDd7gb47/+MepnsGsd2MXgzd4gzd4gzf4RfHL9XmmxpwGb/AGb/DLgp+a1Tf4lcTnP9oGxBd5IhEvLhUYixi8wRv8QviLH1GMGQze4OfFg26oWOOweGKqr7YUr1GW2utY69Cw1quFmONYAYkgb4T1apa6XGb+DXA9ohxRnmU9I51aGFJ9WzAhTGcNa7w3xFxfHcxjfkAYnkRK6QtP08/05bn+P2pfkS7TvlAqcXyhWqA7X1G+Kj8Lhl2G9b1Hv09ZQJS+CjEtllSS4HjmYA/zwdbKtGklYhd8zPyKtkulh3uSDGrn6dOjtAYN/XcVHgGyP8sDXymleVNDS7nzFFpJo75e+8KHv/P0DYe6UwjF/qW+vKoE1BWcTQpjJbF2MBQ7sNFqaJd9Ahv2Zr3RbOq61W7b9er1NIa9ivZ5aLY2WuBsVjt/A6/0pDbFPQAA";
+  const script = `
+    const c = require("bun:internal-for-testing").cssInternals;
+    const i = Buffer.from(Bun.gunzipSync(Buffer.from(${JSON.stringify(blob)}, "base64"))).toString("latin1");
+    if (i.length !== 15813) throw new Error("bad blob decode: " + i.length);
+    let p;
+    try { p = c.minifyTest(i, "") } catch {}
+    try { c._test(i, "", { safari: (13 << 16) | (2 << 8) }) } catch {}
+    try { c.prefixTest(i, "", { safari: (13 << 16) | (2 << 8) }) } catch {}
+    try { if (typeof p === "string" && p.length) c.minifyTest(p, "") } catch {}
+    console.log("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, signalCode: proc.signalCode }).toMatchObject({
+    stdout: "ok\n",
+    signalCode: null,
+  });
+  expect(exitCode).toBe(0);
+}, 90_000);

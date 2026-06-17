@@ -91,6 +91,21 @@ impl<R> StyleRule<R> {
 /// (`selectors/selector.rs`) and `MAX_SELECTOR_EXPANSION` (`rules/mod.rs`).
 const MAX_PREFIX_EXPANSION_BYTES: usize = 64 << 20;
 
+/// Upper bound on the number of output bytes that compiling CSS nesting away
+/// for the configured targets may emit across the whole stylesheet.
+///
+/// [`super::MAX_SELECTOR_EXPANSION`] bounds how many rule *copies* the
+/// incompatible-selector split in `minify_style_arm` may produce, but each
+/// copy carries the rule's full declaration block. A leaf rule with a large
+/// unparsed value (e.g. a multi-kilobyte `--custom:` token list) cloned a few
+/// thousand times stays well under the selector-count cap while still
+/// expanding a few kilobytes of input into hundreds of megabytes of output.
+/// Bytes emitted under `with_context` (the `!supports_nesting` branch of
+/// [`StyleRule::to_css_base`]) are accumulated and bounded here so runaway
+/// expansion errors instead of allocating gigabytes. Matches
+/// [`MAX_PREFIX_EXPANSION_BYTES`].
+pub(super) const MAX_NESTING_COMPILED_BYTES: usize = 64 << 20;
+
 impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.vendor_prefix.is_empty() {
@@ -298,11 +313,26 @@ impl<R> StyleRule<R> {
                 helpers_newline(self, dest, supports_nesting, len)?;
             }
             dest.skip_prefixed_nested_rules = skip_prefixed_nested;
+            // Record the output position at the outermost compiled-nesting
+            // entry so `CssRuleList::to_css` can bound the bytes this subtree
+            // emits without double-counting inner levels. Cleared (and folded
+            // into the running total) on exit from the outermost level.
+            let set_nesting_origin = dest.nesting_bytes_origin.is_none();
+            if set_nesting_origin {
+                dest.nesting_bytes_origin = Some(dest.bytes_written());
+            }
             // `with_context` keeps the (closure-data, fn) split so the
             // `Printer` reborrow lives only inside `func`.
             let result =
                 dest.with_context(&self.selectors, &self.rules, |rules, d| rules.to_css(d));
             dest.skip_prefixed_nested_rules = saved_skip;
+            if set_nesting_origin {
+                if let Some(origin) = dest.nesting_bytes_origin.take() {
+                    dest.nesting_compiled_bytes = dest
+                        .nesting_compiled_bytes
+                        .saturating_add(dest.bytes_written().saturating_sub(origin));
+                }
+            }
             result?;
         }
         Ok(())

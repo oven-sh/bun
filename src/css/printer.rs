@@ -175,6 +175,24 @@ pub struct Printer<'a> {
     /// rule's later passes do count, but without nesting to compound them that
     /// stays linear in the input.
     pub prefix_expansion_bytes: usize,
+    /// Running total of bytes emitted while compiling CSS nesting away for the
+    /// configured targets (i.e. while printing a rule's nested children with a
+    /// parent-selector context set). When the targets don't support native
+    /// nesting, every nested rule is flattened into the output, and
+    /// `minify_style_arm` additionally clones the entire already-flattened
+    /// subtree once per incompatible selector in each ancestor, so a few
+    /// kilobytes of deeply nested multi-selector rules with a large
+    /// declaration block can expand into hundreds of megabytes. Bytes written
+    /// by each outermost `with_context` call are accumulated here (never
+    /// reset) and bounded in `CssRuleList::to_css`. Complements the
+    /// selector-count cap `MAX_SELECTOR_EXPANSION`, which bounds how many
+    /// rules the expansion may produce but not how large each rule is.
+    pub nesting_compiled_bytes: usize,
+    /// `bytes_written()` at the moment the outermost compiled-nesting
+    /// `with_context` call began; `None` outside one. Lets the per-rule check
+    /// in `CssRuleList::to_css` measure the in-progress subtree without
+    /// double-counting inner nesting levels.
+    pub nesting_bytes_origin: Option<usize>,
     pub scratchbuf: BumpVec<'a, u8>,
     pub error_kind: Option<css::PrinterError>,
     pub import_info: Option<ImportInfo<'a>>,
@@ -348,6 +366,8 @@ impl<'a> Printer<'a> {
             ctx: None,
             nesting_expansions: 0,
             prefix_expansion_bytes: 0,
+            nesting_compiled_bytes: 0,
+            nesting_bytes_origin: None,
             error_kind: None,
         }
     }

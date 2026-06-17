@@ -216,7 +216,6 @@ test/js/node/test/parallel/test-http-dummy-characters-smuggling.js
 test/js/node/test/parallel/test-http-missing-header-separator-lf.js
 test/js/node/test/parallel/test-http-invalid-te.js
 test/js/node/test/parallel/test-http-missing-header-separator-cr.js
-test/js/node/test/parallel/test-http-server-reject-chunked-with-content-length.js
 test/js/node/test/parallel/test-http-chunked-smuggling.js
 test/js/node/test/parallel/test-http-double-content-length.js
 test/js/node/test/parallel/test-http-blank-header.js
@@ -386,6 +385,9 @@ test/js/node/vm/vm.test.ts
 
 # VM has terminated
 test/js/node/test/parallel/test-net-during-close.js
+test/js/node/test/parallel/test-net-socket-reset-send.js
+test/js/node/test/parallel/test-net-connect-reset-after-destroy.js
+test/js/node/test/parallel/test-net-connect-reset-until-connected.js
 
 # JSC::BuiltinNames::~BuiltinNames
 test/js/bun/shell/shell-hang.test.ts
@@ -447,3 +449,6 @@ test/js/node/test/parallel/test-https-localaddress-bind-error.js
 test/js/node/test/parallel/test-crypto-op-during-process-exit.js
 
 test/js/third_party/prisma/prisma.test.ts
+# upgradeDuplexToTLS protos/server_name Box<[u8]> are owned by the JS-held
+# socket cell; tests that exit before a final GC report them as indirect leaks.
+test/js/node/tls/node-tls-connect.test.ts

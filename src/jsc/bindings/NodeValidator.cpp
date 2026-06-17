@@ -607,6 +607,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateUndefined, (JSC::JSGlobalObject * gl
     return JSValue::encode(jsUndefined());
 }
 
+// Matches Node's validateBuffer, which throws ERR_INVALID_ARG_TYPE with the
+// "must be an instance of Buffer, TypedArray, or DataView" message:
+// https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/validators.js#L396
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -616,12 +619,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globa
     auto name = callFrame->argument(1);
 
     if (!buffer.isUndefined()) {
-        if (!buffer.isCell()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer);
-
-        auto ty = buffer.asCell()->type();
-
-        if (JSC::typedArrayType(ty) == NotTypedArray) {
-            return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer);
+        if (!buffer.isCell() || JSC::typedArrayType(buffer.asCell()->type()) == NotTypedArray) {
+            auto nameStr = name.isUndefined() ? String("buffer"_s) : name.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, nameStr, "Buffer, TypedArray, or DataView"_s, buffer);
         }
     }
     return JSValue::encode(jsUndefined());

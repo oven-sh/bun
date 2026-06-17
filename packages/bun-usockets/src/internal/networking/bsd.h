@@ -188,6 +188,10 @@ int bsd_socket_multicast_interface(LIBUS_SOCKET_DESCRIPTOR fd, const struct sock
 int bsd_socket_set_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr, const struct sockaddr_storage *iface, int drop);
 int bsd_socket_set_source_specific_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *source, const struct sockaddr_storage *group, const struct sockaddr_storage *iface, int drop);
 int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay);
+/* IP type-of-service (IPv4 IP_TOS / IPv6 IPV6_TCLASS). set returns 0 or a
+ * negative platform errno; get returns the value (>= 0) or a negative errno. */
+int bsd_socket_set_tos(LIBUS_SOCKET_DESCRIPTOR fd, int tos);
+int bsd_socket_get_tos(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err);
 
@@ -230,7 +234,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port);
 int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options);
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t pathlen, int options);
 

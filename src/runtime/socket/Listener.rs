@@ -460,6 +460,13 @@ impl Listener {
                 bstr::BStr::new(hostname_bytes)
             ));
             log!("Failed to listen {}", errno);
+            // libuv reports UV_EINVAL for a pipe path it cannot express in a
+            // sockaddr_un, which is what Node surfaces for an over-long path.
+            let errno = if errno == bun_sys::SystemErrno::ENAMETOOLONG as c_int {
+                bun_sys::SystemErrno::EINVAL as c_int
+            } else {
+                errno
+            };
             if errno != 0 {
                 err.put(
                     global,
@@ -510,6 +517,22 @@ impl Listener {
                     );
                 }
             }
+            // Register the dynamic SNI dispatch when the JS config provided a
+            // `serverName` handler - `us_select_cert_cb` invokes it FIRST for
+            // every ClientHello carrying a servername (the user callback takes
+            // precedence over the static SNI tree, Node semantics) and
+            // installs whichever context it returns on the in-flight SSL. A
+            // null return falls back to the static tree (bind hostname +
+            // addContext entries), then the default context; an asynchronous
+            // resolution suspends the handshake until resumeSNI.
+            // SAFETY: `handlers` is embedded in the live Listener.
+            if !unsafe { &*this_ref.handlers.as_ptr() }
+                .on_server_name
+                .is_empty()
+            {
+                // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
+                bun_opaque::opaque_deref_mut(listen_socket).on_server_name(us_dispatch_server_name);
+            }
         }
 
         let this = scopeguard::ScopeGuard::into_inner(cleanup); // ownership transfers to JS wrapper
@@ -538,6 +561,7 @@ impl Listener {
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
             connection: JsCell::new(None),
+            local_binding: JsCell::new(None),
             server_name: JsCell::new(None),
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
@@ -581,6 +605,7 @@ impl Listener {
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
             connection: JsCell::new(None),
+            local_binding: JsCell::new(None),
             server_name: JsCell::new(None),
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
@@ -967,6 +992,28 @@ impl Listener {
         };
         // `connection` Box drops on error path
 
+        // `localAddress`/`localPort`: bind the socket to this address before
+        // connecting. node:net validates localAddress as a literal IP and
+        // localPort as a number before they reach us.
+        let local_binding: Option<(Box<[u8]>, u16)> = 'lb: {
+            let Some(local_addr_js) = opts.get_truthy(global, "localAddress")? else {
+                break 'lb None;
+            };
+            if !local_addr_js.is_string() {
+                break 'lb None;
+            }
+            let local_addr_slice = local_addr_js.to_slice(global)?;
+            let local_addr_bytes = local_addr_slice.slice();
+            if local_addr_bytes.is_empty() {
+                break 'lb None;
+            }
+            let local_port: u16 = match opts.get_truthy(global, "localPort")? {
+                Some(p) if p.is_number() => p.to_int32().clamp(0, 65535) as u16,
+                _ => 0,
+            };
+            Some((local_addr_bytes.to_vec().into_boxed_slice(), local_port))
+        };
+
         // Resolve the prebuilt SSL_CTX before the platform branches so the Windows
         // named-pipe path can adopt it. node:tls passes the native SecureContext as
         // `tls.secureContext` so we share its already-built SSL_CTX.
@@ -1088,6 +1135,7 @@ impl Listener {
                         // Free old resources before reassignment to prevent memory leaks
                         // when sockets are reused for reconnection (common with MongoDB driver)
                         prev.connection.set(Some(connection));
+                        prev.local_binding.set(local_binding.clone());
                         if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
                             prev.protos.set(None);
                         }
@@ -1102,6 +1150,7 @@ impl Listener {
                             handlers: Cell::new(NonNull::new(handlers_ptr)),
                             socket: Cell::new(uws::NewSocketHandler::<true>::DETACHED),
                             connection: JsCell::new(Some(connection)),
+                            local_binding: JsCell::new(local_binding.clone()),
                             protos: JsCell::new(ssl_taken.as_mut().and_then(|s| s.take_protos())),
                             server_name: JsCell::new(
                                 ssl_taken.as_mut().and_then(|s| s.take_server_name()),
@@ -1189,6 +1238,7 @@ impl Listener {
                         // non-pipe arm below. Previously `.connection = null`
                         // dropped the duped pipe-path bytes on the floor.
                         prev.connection.set(Some(connection));
+                        prev.local_binding.set(local_binding.clone());
                         debug_assert!(prev.protos.get().is_none());
                         debug_assert!(prev.server_name.get().is_none());
                         prev_ptr
@@ -1198,6 +1248,7 @@ impl Listener {
                             handlers: Cell::new(NonNull::new(handlers_ptr)),
                             socket: Cell::new(uws::NewSocketHandler::<false>::DETACHED),
                             connection: JsCell::new(Some(connection)),
+                            local_binding: JsCell::new(local_binding.clone()),
                             protos: JsCell::new(None),
                             server_name: JsCell::new(None),
                             owned_ssl_ctx: Cell::new(None),
@@ -1314,6 +1365,7 @@ impl Listener {
                 prev_maybe_tls,
                 handlers_ptr,
                 connection,
+                local_binding,
                 ssl_taken.as_mut(),
                 owned_ssl_ctx,
                 default_data,
@@ -1327,6 +1379,7 @@ impl Listener {
                 prev_maybe_tcp,
                 handlers_ptr,
                 connection,
+                local_binding,
                 ssl_taken.as_mut(),
                 owned_ssl_ctx,
                 default_data,
@@ -1404,6 +1457,7 @@ fn connect_finish<const IS_SSL: bool>(
     maybe_previous: Option<*mut NewSocket<IS_SSL>>,
     handlers_ptr: *mut Handlers,
     connection: UnixOrHost,
+    local_binding: Option<(Box<[u8]>, u16)>,
     mut ssl: Option<&mut SSLConfig>,
     owned_ssl_ctx: Option<NonNull<boring_sys::SSL_CTX>>,
     default_data: JSValue,
@@ -1441,6 +1495,7 @@ fn connect_finish<const IS_SSL: bool>(
         // Free old resources before reassignment to prevent memory leaks
         // when sockets are reused for reconnection (common with MongoDB driver)
         prev.connection.set(Some(connection));
+        prev.local_binding.set(local_binding);
         if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
             prev.protos.set(None); // drop old Box
         }
@@ -1459,6 +1514,7 @@ fn connect_finish<const IS_SSL: bool>(
             handlers: Cell::new(NonNull::new(handlers_ptr)),
             socket: Cell::new(uws::NewSocketHandler::<IS_SSL>::DETACHED),
             connection: JsCell::new(Some(connection)),
+            local_binding: JsCell::new(local_binding),
             protos: JsCell::new(ssl.as_mut().and_then(|s| s.take_protos())),
             server_name: JsCell::new(ssl.as_mut().and_then(|s| s.take_server_name())),
             owned_ssl_ctx: Cell::new(owned_ssl_ctx.map(|p| p.as_ptr())),
@@ -1502,9 +1558,35 @@ fn connect_finish<const IS_SSL: bool>(
     // borrow is needed here.
     if socket_ref.do_connect().is_err() {
         let errno = if port.is_none() {
-            bun_sys::SystemErrno::ENOENT as c_int
+            // Preserve the real errno from the failed connect(2) on a unix path:
+            // connecting to an existing non-socket file is ENOTSOCK, a
+            // permission-denied path is EACCES, a missing one is ENOENT.
+            let os_errno = bun_sys::last_errno();
+            if os_errno == bun_sys::SystemErrno::ENAMETOOLONG as c_int {
+                // libuv reports UV_EINVAL for a pipe path it cannot express.
+                bun_sys::SystemErrno::EINVAL as c_int
+            } else if os_errno != 0 {
+                os_errno
+            } else {
+                bun_sys::SystemErrno::ENOENT as c_int
+            }
         } else {
-            bun_sys::SystemErrno::ECONNREFUSED as c_int
+            // A synchronous TCP connect failure is almost always the local
+            // bind() (localAddress/localPort) failing - preserve the errnos a
+            // bind() meaningfully produces (EADDRINUSE: port busy,
+            // EADDRNOTAVAIL: address not local, EACCES: privileged port,
+            // EINVAL: address family mismatch); everything else stays
+            // ECONNREFUSED. Mirrors handle_connect_error's whitelist.
+            let os_errno = bun_sys::last_errno();
+            if os_errno == bun_sys::SystemErrno::EADDRINUSE as c_int
+                || os_errno == bun_sys::SystemErrno::EADDRNOTAVAIL as c_int
+                || os_errno == bun_sys::SystemErrno::EACCES as c_int
+                || os_errno == bun_sys::SystemErrno::EINVAL as c_int
+            {
+                os_errno
+            } else {
+                bun_sys::SystemErrno::ECONNREFUSED as c_int
+            }
         };
         // SAFETY: `socket` is the live heap pointer; `socket_ref`'s `&mut` is no
         // longer used on this branch. `handle_connect_error` takes `*mut Self`
@@ -1766,4 +1848,136 @@ impl WindowsNamedPipeListeningContext {
             drop(bun_core::heap::take(this));
         }
     }
+}
+
+/// `openssl.c`'s `us_select_cert_cb` (the early select-certificate callback)
+/// calls this FIRST for every ClientHello carrying a servername - the user
+/// SNICallback takes precedence over the static SNI tree (Node semantics) -
+/// so the JS callback can pick a context for the requested hostname. The
+/// returned `SSL_CTX*` applies to the in-flight handshake only - the caller
+/// installs it with `SSL_set_SSL_CTX`, which takes its own reference, and
+/// nothing is cached in the SNI tree, so the callback runs per-connection the
+/// way Node's does. A null return falls back to the static tree (bind
+/// hostname + addContext entries), then the default context. An asynchronous
+/// SNICallback sets `*abort_handshake = 2` instead: the handshake suspends
+/// (select-certificate retry) until the JS resolution calls
+/// `handle.resumeSNI(...)` -> `us_socket_sni_resolve()`.
+///
+/// # Safety
+/// `ls` is a live listen socket whose accept-group ext holds a `*mut Listener`
+/// and `hostname` is a NUL-terminated string valid for the call. JS-thread
+/// only.
+pub(crate) extern "C" fn us_dispatch_server_name(
+    ls: *mut uws_sys::ListenSocket,
+    hostname: *const core::ffi::c_char,
+    abort_handshake: *mut core::ffi::c_int,
+    socket: *mut c_void,
+) -> *mut c_void {
+    jsc::mark_binding!();
+    if ls.is_null() || hostname.is_null() {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: `ls` is live per the fn contract; the accept group's ext holds
+    // the owning `*mut Listener` for the lifetime of the listen socket.
+    let listener_ptr: *mut Listener = unsafe { (*ls).group().owner::<Listener>() };
+    if listener_ptr.is_null() {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: see above.
+    let listener: &Listener = unsafe { &*listener_ptr };
+    // SAFETY: `handlers` is embedded in the live Listener.
+    let handlers = unsafe { &*listener.handlers.as_ptr() };
+    if handlers.vm.is_shutting_down() {
+        return core::ptr::null_mut();
+    }
+    let callback = handlers.on_server_name;
+    if callback.is_empty() {
+        return core::ptr::null_mut();
+    }
+    // No `Handlers::enter`/`exit` scope here: that protocol tracks the
+    // accepted-socket callback lifecycle (an exit returning true means "the
+    // socket died during the callback, free the handlers"), and running it
+    // against the listener's own handlers from inside the handshake corrupts
+    // their refcount for every subsequent accept. The listener and its
+    // embedded handlers are structurally alive for the duration of this
+    // synchronous dispatch - the listen socket cannot be freed mid-handshake.
+    let global = handlers.global_object;
+    // Pass the listener's `data` (the owning net.Server) rather than minting a
+    // JS wrapper for the Listener itself - `to_js` here would create a second
+    // cell owning the same Rust struct and whichever is collected first frees
+    // it out from under the other.
+    let this_value = listener
+        .strong_data
+        .get()
+        .get()
+        .unwrap_or(JSValue::UNDEFINED);
+    // SAFETY: `hostname` is NUL-terminated per the fn contract.
+    let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
+    let js_name = ZigString::init(name.to_bytes()).to_js(&global);
+    // The accepted socket processing this ClientHello: its JS wrapper is the
+    // resume handle an asynchronous SNICallback uses (`handle.resumeSNI(...)`)
+    // to complete the suspended handshake. The wrapper's lifecycle is
+    // GC-managed, so a resume after the socket died is a safe no-op.
+    let socket_handle: JSValue = if socket.is_null() {
+        JSValue::UNDEFINED
+    } else {
+        // SAFETY: the C caller passes the live us_socket_t processing this
+        // ClientHello; for BunSocketTls sockets the ext slot holds the
+        // TLSSocket wrapper.
+        let s_ref = uws_sys::us_socket_t::opaque_mut(socket.cast());
+        if s_ref.kind() == uws_sys::SocketKind::BunSocketTls {
+            let tls_ptr: *mut TLSSocket = *s_ref.ext::<*mut TLSSocket>();
+            if tls_ptr.is_null() {
+                JSValue::UNDEFINED
+            } else {
+                // SAFETY: ext slot holds a live TLSSocket; single-threaded dispatch.
+                unsafe { &*tls_ptr }.get_this_value(&global)
+            }
+        } else {
+            JSValue::UNDEFINED
+        }
+    };
+    let result = match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
+        Ok(v) => v,
+        Err(err) => global.take_exception(err),
+    };
+    // The JS handler returns:
+    //   - undefined/null            -> fall through to the default context
+    //   - a native SecureContext    -> install it on the in-flight SSL
+    //   - `true`                    -> the SNICallback is asynchronous; suspend
+    //     the handshake (select_cert_retry) until handle.resumeSNI(...) fires
+    //   - an Error (SNICallback reported one, returned an invalid context, or
+    //     threw) -> abort the handshake; the connection is dropped without an
+    //     alert and the JS side emits 'tlsClientError' from the
+    //     handshake-failure path with the stashed error.
+    if result.is_boolean() && result.to_boolean() {
+        if !abort_handshake.is_null() {
+            // SAFETY: live out-parameter for the duration of this dispatch.
+            unsafe { *abort_handshake = 2 };
+        }
+        return core::ptr::null_mut();
+    }
+    if result.to_error().is_some() {
+        if !abort_handshake.is_null() {
+            // SAFETY: the C caller passes a live out-parameter for the
+            // duration of this synchronous dispatch.
+            unsafe { *abort_handshake = 1 };
+        }
+        return core::ptr::null_mut();
+    }
+    if result.is_undefined_or_null() {
+        return core::ptr::null_mut();
+    }
+    if let Some(sc) = SecureContext::from_js(result) {
+        // SAFETY: from_js returned non-null; the SecureContext is live for the
+        // call and SSL_set_SSL_CTX takes its own reference to the SSL_CTX.
+        return unsafe { (*sc).borrow() }.cast();
+    }
+    // Anything else is not a SecureContext: Node treats this as an invalid SNI
+    // context and drops the connection.
+    if !abort_handshake.is_null() {
+        // SAFETY: see above.
+        unsafe { *abort_handshake = 1 };
+    }
+    core::ptr::null_mut()
 }

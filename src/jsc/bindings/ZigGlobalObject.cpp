@@ -2241,35 +2241,9 @@ void GlobalObject::finishCreation(VM& vm)
 
             JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
 
-            obj->putDirectAccessor(
-                globalObject,
-                JSC::Identifier::fromString(init.vm, "userAgent"_s),
-                JSC::GetterSetter::create(
-                    init.vm,
-                    globalObject,
-                    JSC::JSFunction::create(init.vm, globalObject, 0, "get userAgent"_s, functionNavigatorGetUserAgent, ImplementationVisibility::Public),
-                    nullptr),
-                accessorAttributes);
-
-            obj->putDirectAccessor(
-                globalObject,
-                JSC::Identifier::fromString(init.vm, "platform"_s),
-                JSC::GetterSetter::create(
-                    init.vm,
-                    globalObject,
-                    JSC::JSFunction::create(init.vm, globalObject, 0, "get platform"_s, functionNavigatorGetPlatform, ImplementationVisibility::Public),
-                    nullptr),
-                accessorAttributes);
-
-            obj->putDirectAccessor(
-                globalObject,
-                JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s),
-                JSC::GetterSetter::create(
-                    init.vm,
-                    globalObject,
-                    JSC::JSFunction::create(init.vm, globalObject, 0, "get hardwareConcurrency"_s, functionNavigatorGetHardwareConcurrency, ImplementationVisibility::Public),
-                    nullptr),
-                accessorAttributes);
+            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "userAgent"_s), functionNavigatorGetUserAgent, JSC::NoIntrinsic, accessorAttributes);
+            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "platform"_s), functionNavigatorGetPlatform, JSC::NoIntrinsic, accessorAttributes);
+            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s), functionNavigatorGetHardwareConcurrency, JSC::NoIntrinsic, accessorAttributes);
 
             obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
                 jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);

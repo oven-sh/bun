@@ -161,6 +161,11 @@ pub struct Handlers {
     pub on_writable: fn(*mut c_void),
     pub on_error: fn(*mut c_void, bun_sys::Error),
     pub on_timeout: fn(*mut c_void),
+    /// A new resumable TLS session (serialized SSL_SESSION) - node's
+    /// `'session'` event on the wrapping TLSSocket.
+    pub on_session: fn(*mut c_void, &[u8]),
+    /// An NSS key-log line - node's `'keylog'` event.
+    pub on_keylog: fn(*mut c_void, &[u8]),
 }
 
 impl WindowsNamedPipe {
@@ -370,6 +375,16 @@ impl WindowsNamedPipe {
         (self.handlers.on_data)(self.handlers.ctx, decoded_data);
     }
 
+    fn on_session(&mut self, session: &[u8]) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onSession ({})", session.len());
+        (self.handlers.on_session)(self.handlers.ctx, session);
+    }
+
+    fn on_keylog(&mut self, line: &[u8]) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onKeylog ({})", line.len());
+        (self.handlers.on_keylog)(self.handlers.ctx, line);
+    }
+
     // ── SSLWrapper trampolines ───────────────────────────────────────────────
     // `ssl_wrapper::Handlers<*mut Self>` carries `fn(*mut Self, ..)` slots; the
     // method receivers above are `&mut self`, so adapt at the FFI boundary.
@@ -387,6 +402,14 @@ impl WindowsNamedPipe {
     fn ssl_on_data(this: *mut Self, d: &[u8]) {
         // SAFETY: see `ssl_on_open`.
         unsafe { (*this).on_data(d) }
+    }
+    fn ssl_on_session(this: *mut Self, d: &[u8]) {
+        // SAFETY: see `ssl_on_open`.
+        unsafe { (*this).on_session(d) }
+    }
+    fn ssl_on_keylog(this: *mut Self, d: &[u8]) {
+        // SAFETY: see `ssl_on_open`.
+        unsafe { (*this).on_keylog(d) }
     }
     fn ssl_on_close(this: *mut Self) {
         // SAFETY: see `ssl_on_open`.
@@ -714,6 +737,8 @@ impl WindowsNamedPipe {
                     on_data: Self::ssl_on_data,
                     on_close: Self::ssl_on_close,
                     write: Self::ssl_write,
+                    on_session: Some(Self::ssl_on_session),
+                    on_keylog: Some(Self::ssl_on_keylog),
                 },
             ) {
                 Ok(w) => Some(w),
@@ -932,6 +957,8 @@ impl WindowsNamedPipe {
             on_data: Self::ssl_on_data,
             on_close: Self::ssl_on_close,
             write: Self::ssl_write,
+            on_session: Some(Self::ssl_on_session),
+            on_keylog: Some(Self::ssl_on_keylog),
         };
         if let Some(ctx) = owned_ctx {
             self.flags.set_is_ssl(true);
@@ -984,6 +1011,8 @@ impl WindowsNamedPipe {
                     on_data: Self::ssl_on_data,
                     on_close: Self::ssl_on_close,
                     write: Self::ssl_write,
+                    on_session: Some(Self::ssl_on_session),
+                    on_keylog: Some(Self::ssl_on_keylog),
                 },
             )?);
 
@@ -1198,6 +1227,14 @@ impl WindowsNamedPipe {
                     unsafe { (*this).wrapper = None };
                 }
             }
+        } else {
+            // Plain (non-TLS) named pipe: half-close the write side so the peer
+            // observes EOF. Without this, Socket.prototype.end() over a Windows
+            // named pipe (endNT → shutdown()) never signals the peer, and an
+            // allowHalfOpen peer waiting on 'end' hangs. `writer.end()` is
+            // idempotent and mirrors `close`'s unconditional writer teardown.
+            // SAFETY: `this` aliases the live `&mut self`; single JS thread.
+            unsafe { (*this).writer.end() };
         }
     }
 

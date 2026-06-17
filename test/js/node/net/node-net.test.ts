@@ -743,6 +743,9 @@ it("should not hang after destroy", async () => {
   const net = require("node:net");
   const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
   const server = net.createServer(c => {
+    // The client destroys without reading; the resulting RST surfaces as
+    // ECONNRESET here (Node behaves identically) — handle it.
+    c.on("error", () => {});
     c.write("Hello client");
   });
   try {

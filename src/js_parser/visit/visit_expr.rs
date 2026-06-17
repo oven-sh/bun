@@ -1203,8 +1203,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if (in_.assign_target != js_ast::AssignTarget::None || is_delete_target)
             && let Data::EIdentifier(target_id) = e_.target.data
             && !target_id.ref_.is_source_contents_slice()
-            && p.symbols[target_id.ref_.inner_index() as usize].kind
-                == js_ast::symbol::Kind::Import
+            && p.symbols[target_id.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
         {
             let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
             p.log().add_range_error_fmt(

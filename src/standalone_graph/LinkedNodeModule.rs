@@ -520,13 +520,23 @@ fn bind(entry: &Entry) -> Result<Resolved, BindError> {
     // fallback. An addon with a hand-written DllMain THREAD_ATTACH
     // handler should set BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK=1.
     if entry.entry_point != 0 {
+        // Same corrupted-.bunL defence as the sibling span checks
+        // above. Unlike a write (immediate AV on a bad page), a *call*
+        // into bun.exe's own RX .text can return without faulting and
+        // make bind() succeed with the real DllMain (CRT init, static
+        // ctors, napi_module_register) never having run — a non-local
+        // failure. Fail closed to the tempfile path instead.
+        if (entry.entry_point as u64) < lo || (entry.entry_point as u64) >= hi {
+            return Err(BindError::BadSection);
+        }
         const DLL_PROCESS_ATTACH: u32 = 1;
         type DllMain = unsafe extern "system" fn(*mut c_void, u32, *mut c_void) -> i32;
         // entry_point is a bun-relative RVA (rebased at build time), so
         // the absolute address is a single add.
         //
-        // SAFETY: entry_point was validated at build time to lie inside
-        // the addon image; the section was just re-protected and flushed.
+        // SAFETY: entry_point lies inside the merged addon span
+        // (checked above); the section was just re-protected and
+        // flushed.
         let dll_main: DllMain =
             unsafe { core::mem::transmute(base.add(entry.entry_point as usize)) };
         // SAFETY: calling the addon's DllMain exactly as the loader would.

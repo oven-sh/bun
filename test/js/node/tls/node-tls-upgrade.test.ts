@@ -134,7 +134,11 @@ test("new tls.TLSSocket(socket, { isServer: true }) does not re-emit post-upgrad
   // negotiation the server wraps the accepted socket with an isServer TLSSocket.
   // The client's ClientHello (ciphertext) must reach the TLS layer, not resurface
   // as cleartext `data` on the accepted socket and re-enter the server's handler.
-  const { promise, resolve } = Promise.withResolvers<{ wrapped: boolean; dataAfterUpgrade: boolean; message: string }>();
+  const { promise, resolve } = Promise.withResolvers<{
+    wrapped: boolean;
+    dataAfterUpgrade: boolean;
+    message: string;
+  }>();
 
   let dataAfterUpgrade = false;
   let wrapped = false;

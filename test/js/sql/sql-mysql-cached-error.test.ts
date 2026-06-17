@@ -46,6 +46,10 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     // would return an identical error for identical SQL and silently satisfy every
     // assertion below without exercising the cached-slice path.
     const [{ Value: preparesBefore }] = await sql.unsafe("SHOW SESSION STATUS LIKE 'Com_stmt_prepare'").simple();
+    // err1 and errOverwrite each reached COM_STMT_PREPARE, so the counter is
+    // already non-zero here; if it were 0 the "no increment" check below would
+    // be vacuous because the prepared path was never taken.
+    expect(Number(preparesBefore)).toBeGreaterThan(0);
     const err2 = await sql`wat ${1} ${sql.unsafe(longA)}`.catch((x: any) => x);
     const [{ Value: preparesAfter }] = await sql.unsafe("SHOW SESSION STATUS LIKE 'Com_stmt_prepare'").simple();
     expect({

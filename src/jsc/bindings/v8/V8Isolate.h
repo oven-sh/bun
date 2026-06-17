@@ -17,12 +17,12 @@ class GlobalInternals;
 // they need to have the correct layout.
 class Isolate final {
 public:
-    // v8-internal.h:978 (Node.js 24.3.0+)
-    static constexpr int kUndefinedValueRootIndex = 4;
-    static constexpr int kTheHoleValueRootIndex = 5;
-    static constexpr int kNullValueRootIndex = 6;
-    static constexpr int kTrueValueRootIndex = 7;
-    static constexpr int kFalseValueRootIndex = 8;
+    // v8-internal.h (Node.js 26.3.0+)
+    static constexpr int kUndefinedValueRootIndex = 0;
+    static constexpr int kTheHoleValueRootIndex = 1;
+    static constexpr int kNullValueRootIndex = 2;
+    static constexpr int kTrueValueRootIndex = 3;
+    static constexpr int kFalseValueRootIndex = 4;
 
     Isolate(shim::GlobalInternals* globalInternals);
 
@@ -52,10 +52,10 @@ public:
 
     // Padding so that m_roots is aligned with V8's kIsolateRootsOffset.
     // Computed as: kIsolateRootsOffset - sizeof(fields above).
-    // For the current V8 (14.x, Node 24.3.0+): 640 - 16 = 624 = 78 words.
-    uintptr_t m_padding[78];
+    // For V8 in Node 26.3.0+: 688 - 16 = 672 = 84 words.
+    uintptr_t m_padding[84];
 
-    std::array<TaggedPointer, 9> m_roots;
+    std::array<TaggedPointer, 6> m_roots;
 };
 
 } // namespace v8

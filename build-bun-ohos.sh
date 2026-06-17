@@ -82,12 +82,16 @@ sync_source() {
     # scripts/ 目录
     (cd "$DEV_SRC" && tar cf - "${excludes[@]}" scripts/) | (cd "$CI_SRC" && tar xf -)
 
+    # packages/ 目录（bun-usockets、bun-uws 等，大小写敏感）
+    (cd "$DEV_SRC" && tar cf - "${excludes[@]}" packages/) | (cd "$CI_SRC" && tar xf -)
+
     # 单个配置文件
     cp "$DEV_SRC/Cargo.toml" "$CI_SRC/Cargo.toml" 2>/dev/null || true
     cp "$DEV_SRC/Cargo.lock" "$CI_SRC/Cargo.lock" 2>/dev/null || true
     cp "$DEV_SRC/package.json" "$CI_SRC/package.json" 2>/dev/null || true
     cp "$DEV_SRC/configure.json" "$CI_SRC/configure.json" 2>/dev/null || true
     cp "$DEV_SRC/bun.lock" "$CI_SRC/bun.lock" 2>/dev/null || true
+    cp "$DEV_SRC/build-bun-ohos.sh" "$CI_SRC/build-bun-ohos.sh" 2>/dev/null || true
 
     ok "源码同步完成"
 }

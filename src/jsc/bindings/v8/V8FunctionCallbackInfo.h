@@ -54,11 +54,10 @@ public:
     // frame rather than owning any storage. Mutable for parity with V8 (GC
     // may rewrite slots through a const view).
     //
-    // V8 14.x added `implicit_args_` before `values_` and `length_` after
-    // it. We match the layout for compatibility assertions.
-    uintptr_t implicit_args_;
+    // V8 14.x (Node 24.3.0) added `implicit_args_` before `values_` and
+    // `length_` after it. V8 15.x (Node 26.3.0+) removed both, going back
+    // to single-pointer layout.
     mutable TaggedPointer values[1];
-    uintptr_t length_;
 
     FunctionCallbackInfo() = delete;
     FunctionCallbackInfo(const FunctionCallbackInfo&) = delete;

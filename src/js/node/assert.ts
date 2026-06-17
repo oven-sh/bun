@@ -458,7 +458,7 @@ function compareBranch(actual, expected, comparedObjects?) {
 
     expectedIteration: for (const expectedItem of expectedIterator) {
       for (let actualIdx = 0; actualIdx < actualArray.length; actualIdx++) {
-        if (!usedIndices.has(actualIdx) && isDeepStrictEqual(actualArray[actualIdx], expectedItem)) {
+        if (!usedIndices.has(actualIdx) && isDeepStrictEqualWithoutPrototype(actualArray[actualIdx], expectedItem)) {
           usedIndices.add(actualIdx);
           continue expectedIteration;
         }
@@ -480,7 +480,7 @@ function compareBranch(actual, expected, comparedObjects?) {
     for (const expectedItem of expected) {
       let found = false;
       for (const { 0: key, 1: count } of expectedCounts) {
-        if (isDeepStrictEqual(key, expectedItem)) {
+        if (isDeepStrictEqualWithoutPrototype(key, expectedItem)) {
           SafeMapPrototypeSet.$call(expectedCounts, key, count + 1);
           found = true;
           break;
@@ -494,7 +494,7 @@ function compareBranch(actual, expected, comparedObjects?) {
     // Create a map to count occurrences of relevant elements in the actual array
     for (const actualItem of actual) {
       for (const { 0: key, 1: count } of expectedCounts) {
-        if (isDeepStrictEqual(key, actualItem)) {
+        if (isDeepStrictEqualWithoutPrototype(key, actualItem)) {
           if (count === 1) {
             SafeMapPrototypeDelete.$call(expectedCounts, key);
           } else {

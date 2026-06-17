@@ -118,10 +118,20 @@ describe("issue #29030 - deepStrictEqual prototype check", () => {
 
     class Sub extends Uint8Array {}
     expect(() => assert.partialDeepStrictEqual(Sub.from([1, 2]), new Uint8Array([1, 2]))).not.toThrow();
+
+    // Same content/different prototype as array and set *elements*: the
+    // compareBranch element-matching loops must also skip the prototype check.
+    expect(() => assert.partialDeepStrictEqual([Buffer.from([1, 2])], [new Uint8Array([1, 2])])).not.toThrow();
+    expect(() =>
+      assert.partialDeepStrictEqual(new Set([Buffer.from([1, 2])]), new Set([new Uint8Array([1, 2])])),
+    ).not.toThrow();
   });
 
   test("partialDeepStrictEqual still rejects differing content", () => {
     expect(() => assert.partialDeepStrictEqual(Buffer.from([1, 2]), new Uint8Array([9, 9]))).toThrow(
+      assert.AssertionError,
+    );
+    expect(() => assert.partialDeepStrictEqual([Buffer.from([1, 2])], [new Uint8Array([9, 9])])).toThrow(
       assert.AssertionError,
     );
   });

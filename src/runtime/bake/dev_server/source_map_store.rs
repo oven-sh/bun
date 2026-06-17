@@ -784,10 +784,14 @@ impl SourceMapStore {
         // PERF: `render_mappings` returns `Vec<u8>` (global alloc); could
         // use an arena.
 
+        // `render_mappings` emits source indices in `0..=slots` (slot 0 is the
+        // HMR runtime, slots `1..=slots` are files / their inner sources).
+        // `mapping::parse` rejects `source_index >= sources_count`, so pass
+        // `slots + 1` to cover the runtime slot.
         match source_map::mapping::parse(
             &vlq_bytes,
             None,
-            i32::try_from(entry.source_slot_count()).expect("int cast"),
+            i32::try_from(entry.source_slot_count() + 1).expect("int cast"),
             0, // unused
             Default::default(),
         ) {

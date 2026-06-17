@@ -3889,9 +3889,9 @@ fn collect_inner_sources(
             };
         let escaped = match ism.sources_content.get(i) {
             Some(content) if !content.is_empty() => {
-                let mut buf = bun_core::MutableString::init(content.len() + 2)
-                    .unwrap_or_else(|_| bun_core::MutableString::init_empty());
-                let _ = bun_core::quote_for_json(content, &mut buf, false);
+                let mut buf =
+                    bun_core::handle_oom(bun_core::MutableString::init(content.len() + 2));
+                bun_core::handle_oom(bun_core::quote_for_json(content, &mut buf, false));
                 buf.list.into_boxed_slice()
             }
             _ => Box::default(),
@@ -4698,6 +4698,14 @@ pub(super) fn finalize_bundle(
                         source_map_hash.update(&keys[part.get() as usize]);
                         if let Some(map) = values[part.get() as usize].source_map.get() {
                             source_map_hash.update(map.vlq());
+                            // Inner-source paths/contents shape the rendered
+                            // `.js.map` independently of the VLQ (e.g. a
+                            // sidecar `.map` whose `sources`/`sourcesContent`
+                            // changed but whose mappings are identical).
+                            for inner in map.inner_sources.iter() {
+                                source_map_hash.update(&inner.path);
+                                source_map_hash.update(&inner.escaped_content);
+                            }
                         }
                     }
                     // Set the bottom bit.

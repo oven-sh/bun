@@ -1092,16 +1092,8 @@ impl<'a> LinkerContext<'a> {
 
         let sources = self.parse_graph().input_files.items_source();
         let quoted_source_map_contents = self.graph.files.items_quoted_source_contents();
-        // DevServer uses a separate sourcemap stitcher (`SourceMapStore::join_vlq`)
-        // that hard-codes one `sources[]` slot per input; threading inner-map
-        // expansion through there would corrupt its output. `DevServer == None`
-        // gates the whole feature so the HMR path stays byte-identical.
-        let input_source_maps: Option<&[Option<Box<bun_sourcemap::InputSourceMap>>]> =
-            if self.dev_server.is_none() {
-                Some(self.parse_graph().input_files.items_input_source_map())
-            } else {
-                None
-            };
+        let input_source_maps: &[Option<Box<bun_sourcemap::InputSourceMap>>] =
+            self.parse_graph().input_files.items_input_source_map();
 
         // Entries in `results` do not 1:1 map to source files, the mapping
         // is actually many to one, where a source file can have multiple chunks
@@ -1133,7 +1125,7 @@ impl<'a> LinkerContext<'a> {
                 // `1` for the intermediate input, plus one slot per inner
                 // source listed in its `sourceMappingURL`.
                 let inner: Option<&bun_sourcemap::InputSourceMap> =
-                    input_source_maps.and_then(|m| m[index as usize].as_deref());
+                    input_source_maps[index as usize].as_deref();
                 let expansion: i32 = 1 + match inner {
                     Some(ism) => {
                         i32::try_from(ism.map.external_source_names.len()).expect("int cast")
@@ -1174,7 +1166,7 @@ impl<'a> LinkerContext<'a> {
                     emitted_contents += 1;
                 }
                 // Slots 1..N: inner sources' contents, if any.
-                if let Some(ism) = input_source_maps.and_then(|m| m[index as usize].as_deref()) {
+                if let Some(ism) = input_source_maps[index as usize].as_deref() {
                     for content in ism.sources_content.iter() {
                         j.push_static(b",\n    ");
                         if !content.is_empty() {

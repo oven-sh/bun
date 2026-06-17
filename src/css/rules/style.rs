@@ -406,11 +406,15 @@ impl<R> StyleRule<R> {
         // Same fan-out multiplies this rule's unparsed/custom property token
         // lists. A large raw value under the selector cap still deep-clones
         // into gigabytes of `TokenOrValue`, so budget the token payload
-        // separately. Gate on `copies > 1` (not the enclosing multiplier): a
-        // flat top-level rule with N > 1 selectors that `minify_style_arm`
-        // partitions still deep-clones its declarations N times while the
-        // multiplier is 1.
-        if copies > 1 && context.charge_token_expansion(copies, self.declarations.token_weight()) {
+        // separately. Gate on `copies > 1` so a flat top-level rule with
+        // N > 1 selectors that `minify_style_arm` partitions is charged even
+        // while the enclosing multiplier is still 1, and on
+        // `should_compile_selectors()` because with no selector compilation
+        // configured the partition never runs and nothing is cloned.
+        if copies > 1
+            && context.targets.should_compile_selectors()
+            && context.charge_token_expansion(copies, self.declarations.token_weight())
+        {
             context.err = Some(crate::error::MinifyError {
                 kind: crate::error::MinifyErrorKind::token_expansion_limit_exceeded,
                 loc: self.loc,

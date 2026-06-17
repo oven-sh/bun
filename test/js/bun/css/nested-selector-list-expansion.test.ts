@@ -408,6 +408,17 @@ test("a flat top-level single-selector rule with a large unparsed value is not c
   expect(out).toContain("var(--x)");
 });
 
+test("a flat multi-selector rule with a large unparsed value is not charged when no targets are configured", () => {
+  // No targets: `should_compile_selectors()` is false, `minify_style_arm`
+  // never partitions, so nothing is cloned and nothing should be charged.
+  const sels = Array.from({ length: 2000 }, (_, i) => `.s${i}`).join(", ");
+  const payload = Buffer.alloc(10000, "x ").toString();
+  const src = sels + " { --foo: f(" + payload + "var(--x)) }";
+  const out = minifyTest(src, "");
+  expect(out).toContain("var(--x)");
+  expect(out.length).toBeLessThan(src.length + 100);
+});
+
 test("bun build reports an error instead of OOMing on deeply nested selectors with a large unparsed value", async () => {
   using dir = tempDir("css-token-expansion", {
     // 12 levels and a ~6000-token value: before the fix this allocated on the

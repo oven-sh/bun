@@ -1143,7 +1143,6 @@ JSC::JSValue createStreamIterEnabledFlag(Bun::GlobalObject*)
     return JSC::jsBoolean(Bun__streamIterEnabled());
 }
 
-
 void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,

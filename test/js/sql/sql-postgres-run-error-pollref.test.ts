@@ -6,27 +6,32 @@
 // connection will touch it until the next server message, so the event loop
 // stays pinned and the process never exits.
 //
-// The fixture connects to a mock server, lets the connection go idle, then
+// The fixture connects to a real Postgres, lets the connection go idle, then
 // issues a query whose binding is rejected synchronously before anything is
 // written. It must print the rejection and exit on its own.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, describeWithContainer } from "harness";
 import path from "node:path";
 
-test("postgres: synchronous do_run failure does not pin the event loop", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "sql-postgres-run-error-pollref-fixture.ts")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+describeWithContainer("postgres", { image: "postgres_plain" }, container => {
+  test("postgres: synchronous do_run failure does not pin the event loop", async () => {
+    await container.ready;
+    const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "sql-postgres-run-error-pollref-fixture.ts")],
+      env: { ...bunEnv, DATABASE_URL: url },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void stderr;
+
+    expect(stdout).toBe("rejected:ERR_INVALID_ARG_TYPE\n");
+    // exited on its own, not killed by the runner's timeout
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
   });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  void stderr;
-
-  expect(stdout).toBe("rejected:ERR_INVALID_ARG_TYPE\n");
-  // exited on its own, not killed by the runner's timeout
-  expect(proc.signalCode).toBeNull();
-  expect(exitCode).toBe(0);
 });

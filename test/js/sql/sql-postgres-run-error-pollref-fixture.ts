@@ -5,38 +5,12 @@
 // Signature::generate) none of the error returns unref'd it, so the event
 // loop stayed pinned and the process hung.
 //
-// The fixture prints "rejected:<code>" once the query has been rejected,
-// unrefs the mock-server handles and then falls through. With no pending
-// work it must exit on its own (exit code 0, no signal).
-
-import net from "node:net";
-
-function pkt(type: string, body: Buffer): Buffer {
-  const header = Buffer.alloc(5);
-  header.write(type, 0);
-  header.writeInt32BE(body.length + 4, 1);
-  return Buffer.concat([header, body]);
-}
-
-const authenticationOk = pkt("R", Buffer.from([0, 0, 0, 0]));
-const readyForQuery = pkt("Z", Buffer.from("I"));
-
-const server = net.createServer(socket => {
-  socket.unref();
-  let startup = true;
-  socket.on("data", () => {
-    if (startup) {
-      startup = false;
-      socket.write(Buffer.concat([authenticationOk, readyForQuery]));
-    }
-  });
-});
-await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-server.unref();
-const port = (server.address() as net.AddressInfo).port;
+// The fixture prints "rejected:<code>" once the query has been rejected and
+// then falls through. With no pending work it must exit on its own (exit
+// code 0, no signal).
 
 const sql = new Bun.SQL({
-  url: `postgres://u@127.0.0.1:${port}/db`,
+  url: process.env.DATABASE_URL!,
   max: 1,
   idleTimeout: 0,
   maxLifetime: 0,

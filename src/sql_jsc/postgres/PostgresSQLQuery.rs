@@ -479,15 +479,6 @@ impl PostgresSQLQuery {
         };
         let connection: &PostgresSQLConnection = &connection;
 
-        // `KeepAlive::ref_` takes an `EventLoopCtx` (manual vtable in `bun_io`), not a
-        // `*mut VirtualMachine`. `global_object.bun_vm()` and `get_vm_ctx(.Js)` both
-        // resolve to the same singleton JS VM, so route through the global hook —
-        // identical to `PostgresSQLConnection::vm_ctx`.
-        connection.poll_ref.with_mut(|r| {
-            r.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
         let query = arguments[1];
 
         if !query.is_object() {
@@ -563,6 +554,16 @@ impl PostgresSQLQuery {
                 release_query_ref();
                 return Err(global_object.throw_out_of_memory());
             }
+
+            // Request is enqueued: keep the event loop alive until the server
+            // responds. KeepAlive is a flag (not a count), so taking this any
+            // earlier would leave it stuck Active on the synchronous-error
+            // returns above.
+            connection.poll_ref.with_mut(|r| {
+                r.ref_(bun_io::posix_event_loop::get_vm_ctx(
+                    bun_io::AllocatorType::Js,
+                ))
+            });
 
             this.this_value.with_mut(|r| r.upgrade(global_object));
             js::target_set_cached(this_value, global_object, query);
@@ -827,6 +828,15 @@ impl PostgresSQLQuery {
             release_query_ref();
             return Err(global_object.throw_out_of_memory());
         }
+        // Request is enqueued: keep the event loop alive until the server
+        // responds. See the matching call in the simple-query branch above
+        // for why this must come after every fallible step.
+        connection.poll_ref.with_mut(|r| {
+            r.ref_(bun_io::posix_event_loop::get_vm_ctx(
+                bun_io::AllocatorType::Js,
+            ))
+        });
+
         this.this_value.with_mut(|r| r.upgrade(global_object));
 
         js::target_set_cached(this_value, global_object, query);

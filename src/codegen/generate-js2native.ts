@@ -343,12 +343,20 @@ export function getJS2NativeRust() {
 
 export function getJS2NativeDTS() {
   // Accept both the bare basename and the full src-relative path: call sites
-  // use the latter to disambiguate when two files share a basename.
+  // use the latter to disambiguate when two files share a basename. A
+  // basename that appears in more than one directory is rejected by
+  // resolveNativeFileId, so don't offer it as a valid key.
   const srcDir = path.join(import.meta.dir, "..");
+  const rustFiles = sourceFiles.filter(f => f.endsWith(".rs"));
+  const basenameCounts = new Map<string, number>();
+  for (const file of rustFiles) {
+    const name = basename(file);
+    basenameCounts.set(name, (basenameCounts.get(name) ?? 0) + 1);
+  }
   const rustNames = new Set<string>();
-  for (const file of sourceFiles) {
-    if (!file.endsWith(".rs")) continue;
-    rustNames.add(basename(file));
+  for (const file of rustFiles) {
+    const name = basename(file);
+    if (basenameCounts.get(name) === 1) rustNames.add(name);
     rustNames.add(path.relative(srcDir, file).replaceAll(sep, "/"));
   }
 

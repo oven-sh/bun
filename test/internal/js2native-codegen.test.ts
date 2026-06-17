@@ -73,5 +73,8 @@ test("generated d.ts types the keys as .rs filenames", () => {
   expect(dts).toContain("declare type NativeFilenameRust = ");
   expect(dts).toContain('"mysql.rs"');
   expect(dts).toContain('"sql_jsc/mysql.rs"');
+  // Ambiguous basenames are rejected by the resolver, so the d.ts must not
+  // offer the bare form as a valid key (the src-relative forms are still in).
+  expect(dts).not.toContain('"lib.rs"');
   expect(dts).not.toContain("NativeFilenameZig");
 });

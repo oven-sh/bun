@@ -95,10 +95,12 @@ export class ClassDefinition {
    * Which language implements the native side of this class.
    *
    * The C++ wrapper output (`ZigGeneratedClasses.{h,cpp}`) is byte-identical
-   * regardless of this flag — it only selects whether the implementer thunks
-   * land in `ZigGeneratedClasses.zig` or `generated_classes.rs`.
+   * regardless of this flag; it only selects whether the `#[no_mangle]`
+   * implementer thunks are emitted into `generated_classes.rs`. Classes with
+   * `lang: "zig"` are skipped by that emitter and must provide the matching
+   * symbols themselves (remaining `.zig` siblings are reference-only).
    *
-   * @default "zig"
+   * @default "rust"
    */
   lang?: "zig" | "rust";
   /**

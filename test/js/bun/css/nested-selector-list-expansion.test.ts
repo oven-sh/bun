@@ -377,11 +377,11 @@ test("bun build reports an error instead of OOMing on deeply nested selectors wi
     killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Must terminate on its own (reporting the limit error), not be SIGKILLed
-  // by the timeout or OOM-killed by the OS.
+  // Must terminate on its own (reporting the token-expansion error), not be
+  // SIGKILLed by the timeout or OOM-killed by the OS.
   expect({ signalCode: proc.signalCode, stderr, stdout, exitCode }).toMatchObject({
     signalCode: null,
-    stderr: expect.stringContaining(LIMIT_ERROR),
+    stderr: expect.stringContaining(TOKEN_LIMIT_ERROR),
     exitCode: 1,
   });
   expect(await Bun.file(`${dir}/out/input.css`).exists()).toBe(false);

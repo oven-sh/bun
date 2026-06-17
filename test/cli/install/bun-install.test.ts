@@ -9423,11 +9423,7 @@ for (const field of ["resolutions", "overrides"]) {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [runOut, runErr, runExit] = await Promise.all([
-      runProc.stdout.text(),
-      runProc.stderr.text(),
-      runProc.exited,
-    ]);
+    const [runOut, runErr, runExit] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
     expect(runErr).toBe("");
     expect(runOut.trim()).toBe("shared");
     expect(runExit).toBe(0);

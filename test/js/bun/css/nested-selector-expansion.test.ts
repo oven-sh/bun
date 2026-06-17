@@ -233,36 +233,33 @@ test.concurrent(
   },
 );
 
-test.concurrent(
-  "`@scope to (...)` without a scope-start serializes its closing `)`, body, and `}`",
-  async () => {
-    // `ScopeRule::to_css` used to early-return after serializing
-    // `<scope-end>` when `<scope-start>` was absent, leaving the prelude
-    // unclosed and dropping the rule body (and skipping the
-    // nesting-expansion byte budget check below). Fall through instead so
-    // the rule serializes in full.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+test.concurrent("`@scope to (...)` without a scope-start serializes its closing `)`, body, and `}`", async () => {
+  // `ScopeRule::to_css` used to early-return after serializing
+  // `<scope-end>` when `<scope-start>` was absent, leaving the prelude
+  // unclosed and dropping the rule body (and skipping the
+  // nesting-expansion byte budget check below). Fall through instead so
+  // the rule serializes in full.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
           const { cssInternals } = require("bun:internal-for-testing");
           console.log(cssInternals.minifyTest("@scope to (.a) { .x { color: red } }", ""));
         `,
-      ],
-      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 20_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(proc.signalCode).toBeNull();
-    expect(stdout.trim()).toBe("@scope to (.a){.x{color:red}}");
-    expect(exitCode).toBe(0);
-  },
-);
+    ],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(proc.signalCode).toBeNull();
+  expect(stdout.trim()).toBe("@scope to (.a){.x{color:red}}");
+  expect(exitCode).toBe(0);
+});
 
 test.concurrent(
   "sibling `@scope to (& ...)` rules under a `& > &` chain error out instead of serializing gigabytes",

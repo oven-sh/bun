@@ -138,15 +138,6 @@ impl Optional {
         !Impl::get(r).is_empty()
     }
 
-    /// Debug-only raw handle pointer for corruption probes (#53265). Null when
-    /// `None`. Do NOT dereference — only compare against the small-integer
-    /// floor in `Impl::destroy`.
-    #[doc(hidden)]
-    #[inline]
-    pub fn handle_ptr(&self) -> *const () {
-        self.handle.map_or(core::ptr::null(), |p| p.as_ptr().cast())
-    }
-
     pub fn try_swap(&mut self) -> Option<JSValue> {
         let result = self.swap();
         if result.is_empty() {

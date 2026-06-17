@@ -322,7 +322,11 @@ struct us_socket_t *us_socket_adopt(us_socket_r s, us_socket_group_r group,
  * sni may be NULL. */
 struct us_socket_t *us_socket_adopt_tls(us_socket_r s, us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx, const char *sni,
-    int old_ext_size, int ext_size) __attribute__((nonnull(1, 2, 4)));
+    int is_client, int old_ext_size, int ext_size) __attribute__((nonnull(1, 2, 4)));
+/* Feed bytes that were already read off the wire (e.g. a ClientHello consumed
+ * by the plain-TCP layer before the socket was adopted into TLS) through the
+ * same decrypt path as bytes arriving from the kernel. */
+struct us_socket_t *us_socket_tls_feed(us_socket_r s, const char *data, int length) __attribute__((nonnull(1)));
 /* Send ClientHello after adopt_tls. Separate so the caller can repoint the
  * ext slot before any dispatch can fire. */
 void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
@@ -350,8 +354,21 @@ void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
 void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
+/* Returns an owned reference; the caller must release it. */
+struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
+    const char *hostname_pattern) nonnull_fn_decl;
+/* Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (caller frees);
+ * returns 0 with a static *err_reason tag on failure. */
+int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
+    char **out_key, size_t *out_key_len, char **out_cert, size_t *out_cert_len,
+    char **out_ca, size_t *out_ca_len, const char **err_reason);
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
-    void (*cb)(struct us_listen_socket_t *, const char *hostname)) nonnull_fn_decl;
+    struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket)) nonnull_fn_decl;
+/* Resume a handshake suspended by an async SNICallback (the dynamic resolver
+ * set abort_handshake = 2). `ctx` may be NULL (use the default context); the
+ * call consumes the reference. `error` != 0 aborts the handshake. Safe to call
+ * after the socket closed (no-op). */
+void us_socket_sni_resolve(us_socket_r s, struct ssl_ctx_st *ctx, int error);
 void *us_socket_server_name_userdata(us_socket_r s);
 
 /* ── Connect ──────────────────────────────────────────────────────────────
@@ -359,9 +376,10 @@ void *us_socket_server_name_userdata(us_socket_r s);
  * us_connecting_socket_t* (DNS / happy-eyeballs in flight, *is_connecting=0).
  * ssl_ctx may be NULL for plain TCP. */
 void *us_socket_group_connect(us_socket_group_r group, unsigned char kind,
-    struct ssl_ctx_st *ssl_ctx, const char *host, int port, int options,
+    struct ssl_ctx_st *ssl_ctx, const char *host, int port,
+    const char *local_host, int local_port, int options,
     int socket_ext_size, int *is_connecting)
-    __attribute__((nonnull(1, 4, 8)));  /* ssl_ctx nullable */
+    __attribute__((nonnull(1, 4, 10)));  /* ssl_ctx, local_host nullable */
 struct us_socket_t *us_socket_group_connect_unix(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
     const char *server_path, size_t pathlen, int options, int socket_ext_size)
@@ -404,6 +422,9 @@ struct us_bun_socket_context_options_t {
     const char * const *ca;
     unsigned int ca_count;
     unsigned int secure_options;
+    // Minimum/maximum TLS protocol version (TLS1_VERSION..TLS1_3_VERSION); 0 = unset/default.
+    int ssl_min_version;
+    int ssl_max_version;
     int reject_unauthorized;
     int request_cert;
     unsigned int client_renegotiation_limit;
@@ -438,6 +459,17 @@ struct ssl_ctx_st *us_ssl_ctx_from_options(
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 long us_ssl_ctx_live_count(void);
+/* Appends the certificates in the PEM `content` to `ctx`'s trust store;
+ * returns 0 when nothing could be added. */
+int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
+/* TLS-over-duplex / named-pipe SSL owners (no us_socket_t): opt an SSL into
+ * the parked new-session/keylog queues, then drain them with the pop calls
+ * after each SSL_read/SSL_do_handshake stack unwinds. Pop returns the entry
+ * length (0 = queue empty); entries are capped at 64 KB (sessions) and
+ * 4 KB+1 (keylog lines). */
+void us_ssl_enable_pending_events(struct ssl_st *ssl);
+int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_cap);
+int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_cap);
 
 /* Public interfaces for loops */
 
@@ -507,6 +539,11 @@ int us_socket_write(us_socket_r s, const char *nonnull_arg data, int length) non
 int us_socket_write2(us_socket_r s, const char *header, int header_length, const char *payload, int payload_length) nonnull_fn_decl;
 /* Bypass TLS — write raw bytes to the fd even if `s->ssl` is set. */
 int us_socket_raw_write(us_socket_r s, const char *data, int length);
+/* Like us_socket_write, but additionally reports a fatal (non-would-block)
+ * send error through *fatal_write_error so opted-in callers can fail the
+ * write instead of retrying forever. TLS sockets fall back to
+ * us_socket_write (their errors propagate through the SSL layer). */
+int us_socket_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
 
 void us_socket_timeout(us_socket_r s, unsigned int seconds) nonnull_fn_decl;
 void us_socket_long_timeout(us_socket_r s, unsigned int minutes) nonnull_fn_decl;
@@ -564,6 +601,10 @@ void us_socket_unref(us_socket_r s);
 
 void us_socket_nodelay(us_socket_r s, int enabled);
 int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay);
+/* IP type-of-service (IPv4 IP_TOS / IPv6 IPV6_TCLASS). set returns 0 or a
+ * negative platform errno; get returns the value (>= 0) or a negative errno. */
+int us_socket_set_tos(us_socket_r s, int tos);
+int us_socket_get_tos(us_socket_r s);
 void us_socket_resume(us_socket_r s);
 void us_socket_pause(us_socket_r s);
 

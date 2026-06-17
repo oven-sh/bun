@@ -3,6 +3,11 @@ import fs, { readdirSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
 
+// Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
+// PATH, which varies by CI machine — disable the detection so the directory
+// snapshots are stable everywhere.
+const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
+
 (isWindows ? describe : describe.concurrent)("bun init", () => {
   test("bun init works", async () => {
     const temp = tempDirWithFiles("bun-init-works", {});
@@ -11,7 +16,7 @@ import path from "path";
       cmd: [bunExe(), "init", "-y"],
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
 
     expect(await exited).toBe(0);
@@ -47,7 +52,7 @@ import path from "path";
       cmd: [bunExe(), "init"],
       cwd: temp,
       stdio: [new Blob(["\n\n\n\n\n\n\n\n\n\n\n\n"]), "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
 
     expect(await exited).toBe(0);
@@ -90,7 +95,7 @@ import path from "path";
       cmd: [bunExe(), "init", "-y", "mydir"],
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
     expect(await exited).toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
@@ -115,7 +120,7 @@ import path from "path";
       cmd: [bunExe(), "init", "-y", "mydir"],
       cwd: temp,
       stdio: ["ignore", "pipe", "pipe"],
-      env: bunEnv,
+      env: initEnv,
     });
     expect(await exited).not.toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
@@ -128,7 +133,7 @@ import path from "path";
       cmd: [bunExe(), "init", "-y", "u t f ∞™/subpath"],
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
     expect(await exited).toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["u t f ∞™"]);
@@ -152,7 +157,7 @@ import path from "path";
       cmd: [bunExe(), "init", "-y", "mydir"],
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
     expect(await exited).toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
@@ -182,7 +187,7 @@ import path from "path";
       cmd: [bunExe(), "init", "mydir"],
       cwd: temp,
       stdio: ["ignore", "pipe", "pipe"],
-      env: bunEnv,
+      env: initEnv,
     });
     expect(await exited2).toBe(0);
     expect(await stderr.text()).toMatchInlineSnapshot(`
@@ -231,7 +236,7 @@ import path from "path";
       cmd: [bunExe(), "init", "--react"],
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
 
     expect(await exited).toBe(0);
@@ -254,7 +259,7 @@ import path from "path";
       cmd: [bunExe(), "init", "--react=tailwind"],
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
 
     expect(await exited).toBe(0);
@@ -277,7 +282,7 @@ import path from "path";
       cmd: [bunExe(), "init", "--react=shadcn"],
       cwd: temp,
       stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
+      env: initEnv,
     });
 
     expect(await exited).toBe(0);
@@ -306,7 +311,7 @@ import path from "path";
     await using proc = Bun.spawn({
       cmd: [bunExe(), "init", "-y"],
       cwd: temp,
-      env: bunEnv,
+      env: initEnv,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

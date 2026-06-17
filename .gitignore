@@ -129,6 +129,11 @@ sign.json
 src/bake/generated.ts
 src/generated_enum_extractor.zig
 src/jsc/bindings-obj
+# The two generators below were removed in the $zig -> $native rename, but a
+# build of an older checkout can still leave these on disk; keep them ignored
+# so they are never accidentally committed.
+src/jsc/bindings/GeneratedJS2Native.zig
+src/jsc/bindings/GeneratedBindings.zig
 src/bun.js/debug-bindings-obj
 src/deps/zig-clap/.gitattributes
 src/deps/zig-clap/.github

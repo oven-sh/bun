@@ -4,6 +4,8 @@ const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
+const _getTicketKeys = $newRustFunction("Listener.rs", "jsGetTicketKeys", 1);
+const _setTicketKeys = $newRustFunction("Listener.rs", "jsSetTicketKeys", 2);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray } = require("internal/tls");
 const {
@@ -1418,17 +1420,22 @@ function Server(options, secureConnectionListener): void {
   Server.prototype[kNativeSecureContextCtor] = NativeSecureContext;
 
   Server.prototype.getTicketKeys = function () {
-    throw Error("Not implented in Bun yet");
+    if (this._handle) {
+      return _getTicketKeys(this._handle);
+    }
+    throw $ERR_SERVER_NOT_RUNNING();
   };
 
   Server.prototype.setTicketKeys = function (keys) {
-    if (!ArrayBuffer.isView(keys)) {
-      throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView"], keys);
+    if (!isArrayBufferView(keys)) {
+      throw $ERR_INVALID_ARG_TYPE("keys", ["Buffer", "TypedArray", "DataView"], keys);
     }
     if (keys.byteLength !== 48) {
-      throw $ERR_INVALID_ARG_VALUE("buffer", keys, "Session ticket keys must be a 48-byte buffer");
+      throw $ERR_INVALID_ARG_VALUE("keys", keys.byteLength, "must be exactly 48 bytes");
     }
-    throw Error("Not implented in Bun yet");
+    if (this._handle) {
+      _setTicketKeys(this._handle, keys);
+    }
   };
 
   this[buntls] = function (port, host, isClient) {

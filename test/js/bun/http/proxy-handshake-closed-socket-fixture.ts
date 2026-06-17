@@ -30,7 +30,6 @@ function handleClient(client: net.Socket) {
   client.on("error", () => {});
   let upstream: net.Socket | null = null;
   let head = Buffer.alloc(0);
-  let postConnectClientFlights = 0;
 
   function killClient() {
     upstream?.destroy();
@@ -53,10 +52,7 @@ function handleClient(client: net.Socket) {
       const leftover = head.subarray(end + 4);
       upstream = net.connect(backendPort, "127.0.0.1", () => {
         client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-        if (leftover.length) {
-          postConnectClientFlights++;
-          upstream!.write(leftover);
-        }
+        if (leftover.length) upstream!.write(leftover);
       });
       upstream.on("error", () => {});
       // When the backend's ServerHello/Cert/Finished flight arrives, relay
@@ -69,7 +65,6 @@ function handleClient(client: net.Socket) {
       upstream.on("close", () => client.destroy());
       return;
     }
-    postConnectClientFlights++;
     upstream.write(chunk);
   });
   client.on("close", () => upstream?.destroy());

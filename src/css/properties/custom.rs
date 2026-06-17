@@ -831,6 +831,10 @@ impl TokenList {
                     }
                 }
                 TokenOrValue::Env(e) => {
+                    // `indices` is an unbounded `Vec<i32>` that every
+                    // deep_clone reallocates; count each index as one unit
+                    // (conservative: i32 is much smaller than TokenOrValue).
+                    n += e.indices.len();
                     if let Some(fallback) = &e.fallback {
                         n += fallback.token_weight();
                     }

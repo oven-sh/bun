@@ -664,6 +664,28 @@ impl<R> CssRuleList<R> {
                     }
                     CssRule::FontPaletteValues(_) => {}
                     CssRule::Property(_) => {}
+                    CssRule::Unknown(unk) => {
+                        // An unknown at-rule nested inside a style rule is
+                        // deep-cloned once per enclosing selector combination
+                        // along with the rest of the nested subtree, and its
+                        // prelude + block are raw `TokenList`s. Charge them
+                        // against the token-expansion cap so a large unknown
+                        // block under the selector cap can't still clone
+                        // into gigabytes of `TokenOrValue`.
+                        if context.selector_expansion_multiplier > 1 {
+                            let weight = unk.prelude.token_weight()
+                                + unk.block.as_ref().map_or(0, |b| b.token_weight());
+                            if context
+                                .charge_token_expansion(context.selector_expansion_multiplier, weight)
+                            {
+                                context.err = Some(crate::error::MinifyError {
+                                    kind: crate::error::MinifyErrorKind::token_expansion_limit_exceeded,
+                                    loc: unk.loc,
+                                });
+                                return Err(MinifyErr::minify_err);
+                            }
+                        }
+                    }
                     _ => {}
                 }
 
@@ -1334,4 +1356,20 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of raw `TokenOrValue` nodes that compiling nested rules
     /// for the targets will clone, checked against [`MAX_TOKEN_EXPANSION`].
     pub token_expansion_total: usize,
+}
+
+impl MinifyContext<'_, '_> {
+    /// Charge `copies * weight` raw `TokenOrValue` nodes against
+    /// [`MAX_TOKEN_EXPANSION`]. Returns `true` when the cap is exceeded, in
+    /// which case the caller records a `token_expansion_limit_exceeded`
+    /// error at its own location.
+    pub(crate) fn charge_token_expansion(&mut self, copies: u32, weight: usize) -> bool {
+        if weight == 0 {
+            return false;
+        }
+        self.token_expansion_total = self
+            .token_expansion_total
+            .saturating_add((copies as usize).saturating_mul(weight));
+        self.token_expansion_total > MAX_TOKEN_EXPANSION
+    }
 }

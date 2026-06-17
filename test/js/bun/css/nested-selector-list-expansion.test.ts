@@ -357,6 +357,37 @@ test("token limit still applies when the large unparsed value sits inside a cont
   expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(TOKEN_LIMIT_ERROR);
 });
 
+test("token limit covers nested unknown at-rule bodies", () => {
+  // An unknown at-rule nested inside a style rule stores its block as a raw
+  // TokenList and is deep-cloned by the same per-selector split, so its
+  // tokens must count against the cap too (not just declaration values).
+  const payload = Buffer.alloc(6000, "x ").toString();
+  const src = "x::part(a), y::part(b) {\n".repeat(8) + "@foo { " + payload + "}";
+  expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(TOKEN_LIMIT_ERROR);
+});
+
+test("token limit covers nested unknown at-rule preludes", () => {
+  // Same as above with the payload in the prelude instead of the block.
+  const payload = Buffer.alloc(6000, "x ").toString();
+  const src = "x::part(a), y::part(b) {\n".repeat(8) + "@foo " + payload + ";";
+  expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(TOKEN_LIMIT_ERROR);
+});
+
+test("small nested unknown at-rules below the token limit still compile for old targets", () => {
+  const src = "x::part(a), y::part(b) {\n".repeat(2) + "@foo a b c { x y z }";
+  expect(minifyTest(src, "", OLD_TARGETS)).toMatchInlineSnapshot(`"@foo a b c{x y z}@foo a b c{x y z}"`);
+});
+
+test("token limit covers env() index lists", () => {
+  // `env(name i i i ...)` parses an unbounded Vec<i32> of indices that every
+  // deep_clone reallocates; with the list uncounted the cap could be undershot
+  // while the cloned Vec<i32> still reached gigabytes. 60,000 indices under
+  // 8 two-selector levels charges 256 x 60,001 = ~15M > 1M.
+  const indices = Buffer.alloc(120000, " 1").toString();
+  const src = "x::part(a), y::part(b) {\n".repeat(8) + ".inner { --foo: env(x" + indices + ") }";
+  expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(TOKEN_LIMIT_ERROR);
+});
+
 test("bun build reports an error instead of OOMing on deeply nested selectors with a large unparsed value", async () => {
   using dir = tempDir("css-token-expansion", {
     // 12 levels and a ~6000-token value: before the fix this allocated on the

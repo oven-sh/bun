@@ -114,14 +114,6 @@ impl GarbageCollectionController {
         }
 
         self.disabled = env.is_some_and(|e| e.has(b"BUN_GC_TIMER_DISABLE"));
-
-        if !self.disabled {
-            Self::arm(
-                core::ptr::from_mut(vm),
-                &raw mut self.gc_repeating_timer,
-                i64::from(gc_timer_interval),
-            );
-        }
     }
 
     /// Remove `t` from the heap if linked, set its deadline to `now + ms`, and
@@ -204,6 +196,16 @@ impl GarbageCollectionController {
     pub fn process_gc_timer(&mut self) {
         if self.disabled {
             return;
+        }
+        // Lazy-arm the repeating timer on the first event-loop tick instead of
+        // in `init()`, so the timer heap is never touched before the event loop
+        // is fully wired (matters for Windows' `ensure_uv_timer`).
+        if self.gc_repeating_timer.state == TimerState::PENDING {
+            Self::arm(
+                VirtualMachine::get_mut_ptr(),
+                &raw mut self.gc_repeating_timer,
+                i64::from(self.gc_timer_interval),
+            );
         }
         let vm = VirtualMachine::get().jsc_vm();
         self.process_gc_timer_with_heap_size(vm, vm.block_bytes_allocated());

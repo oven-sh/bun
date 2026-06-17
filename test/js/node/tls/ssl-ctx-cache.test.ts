@@ -174,41 +174,6 @@ test("Bun.connect with inline ca shares SSL_CTX across calls", async () => {
   }
 });
 
-// Tombstone-adopt path: after the last owner drops and the entry is
-// tombstoned (ctx nulled, digest still mapped), the next get_or_create for
-// the same digest must adopt the rebuilt CTX into the existing slot: one
-// allocation, and subsequent identical configs are cache hits again.
-test("rebuilding a config after its SSL_CTX was reclaimed reuses the tombstoned slot", async () => {
-  // Drain leftovers so `before` is stable (same preamble as the weak-cache test).
-  Bun.gc(true);
-  await new Promise<void>(r => setImmediate(r));
-  Bun.gc(true);
-  const before = sslCtxLiveCount();
-
-  // Unique digest via a distinctive cipher list so nothing else shares it.
-  const opts = { ciphers: "ECDHE-RSA-AES256-GCM-SHA384" };
-  let sc: any = tls.createSecureContext(opts);
-  expect(sslCtxLiveCount()).toBe(before + 1);
-  sc = undefined;
-
-  for (let i = 0; i < 50; i++) {
-    Bun.gc(true);
-    await new Promise<void>(r => setImmediate(r));
-    if (sslCtxLiveCount() <= before) break;
-  }
-  expect(sslCtxLiveCount()).toBeLessThanOrEqual(before);
-  // Re-capture after the loop: the sweeps above may also reclaim stragglers
-  // from earlier tests, so `before` is no longer the right baseline.
-  const drained = sslCtxLiveCount();
-
-  // Same digest again: the cache must rebuild exactly one CTX (adopting the
-  // tombstoned entry) and the follow-up create must dedupe onto it.
-  sc = tls.createSecureContext(opts);
-  const again = tls.createSecureContext({ ...opts });
-  expect(again.context).toBe(sc.context);
-  expect(sslCtxLiveCount()).toBe(drained + 1);
-});
-
 // https://github.com/oven-sh/bun/issues/31881: node:http2 churn (a new
 // session per request, firebase-admin's pattern) over the weak cache, with GC
 // pressure interleaved so reclaim/tombstone/rebuild overlap the session

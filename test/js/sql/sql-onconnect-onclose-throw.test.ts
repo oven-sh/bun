@@ -15,7 +15,12 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer, isDockerEnabled, tempDir } from "harness";
 import path from "node:path";
-import { closedPort } from "./wire-frames";
+
+// Fixtures that need closedPort() / neverAnsweringServer() run them in the
+// spawned subprocess (not the test process) by importing ./wire-frames via
+// this absolute path, so the bind→close→connect window is not widened by
+// the subprocess spawn.
+const wireFramesPath = path.join(import.meta.dir, "wire-frames.ts");
 
 async function runFixture(code: string, env: Record<string, string> = {}) {
   using dir = tempDir("sql-throwing-hooks", { "fixture.ts": code });
@@ -100,14 +105,20 @@ if (isDockerEnabled()) {
 //
 // A port with nothing listening on it, so the connection is refused. Refused
 // connections fail fast (not retried), so the throwing onclose fires on the
-// first attempt; without the fix the pending query is never rejected. The port
-// is allocated in the test process via closedPort() from ./wire-frames and the
-// resulting URL passed to the fixture as FIXTURE_URL.
-const refusedConnectionFixture = /* ts */ `
+// first attempt; without the fix the pending query is never rejected. The
+// fixture allocates the closed port itself (same as forcedCloseFixture below)
+// so the bind→close→connect window is not widened by the subprocess spawn,
+// during which the concurrent forcedCloseFixture tests are issuing bind(0).
+function refusedConnectionFixture(adapter: "postgres" | "mysql") {
+  const url = adapter === "postgres" ? "postgres://postgres@127.0.0.1:" : "mysql://root@127.0.0.1:";
+  const db = adapter === "postgres" ? "/postgres" : "/db";
+  return /* ts */ `
 import { SQL } from "bun";
+import { closedPort } from ${JSON.stringify(wireFramesPath)};
 process.on("uncaughtException", err => console.log("uncaught:", err.message));
+const port = await closedPort();
 const sql = new SQL({
-  url: process.env.FIXTURE_URL,
+  url: "${url}" + port + "${db}",
   max: 1,
   onclose(err) {
     console.log("onclose:", err.code);
@@ -122,16 +133,16 @@ try {
 }
 process.exit(0);
 `;
+}
 
-for (const [adapter, refusedCode, url] of [
-  ["postgres", "ERR_POSTGRES_CONNECTION_REFUSED", (port: number) => `postgres://postgres@127.0.0.1:${port}/postgres`],
-  ["mysql", "ERR_MYSQL_CONNECTION_REFUSED", (port: number) => `mysql://root@127.0.0.1:${port}/db`],
+for (const [adapter, refusedCode] of [
+  ["postgres", "ERR_POSTGRES_CONNECTION_REFUSED"],
+  ["mysql", "ERR_MYSQL_CONNECTION_REFUSED"],
 ] as const) {
   test.concurrent(
     `${adapter}: a throwing onclose callback still rejects pending queries when the connection is refused`,
     async () => {
-      const port = await closedPort();
-      const { stdout, exitCode } = await runFixture(refusedConnectionFixture, { FIXTURE_URL: url(port) });
+      const { stdout, exitCode } = await runFixture(refusedConnectionFixture(adapter));
       expect(stdout).toBe(`onclose: ${refusedCode}\nuncaught: boom from onclose\nquery rejected: ${refusedCode}\n`);
       expect(exitCode).toBe(0);
     },
@@ -195,8 +206,6 @@ process.exit(0);
 // throw skipped the bookkeeping these fixtures would never print "closed".
 // The mock server lives in the fixture process (it must observe `accepted`
 // before forcing close) and is imported from ./wire-frames by absolute path.
-const wireFramesPath = path.join(import.meta.dir, "wire-frames.ts");
-
 function forcedCloseFixture(adapter: "postgres" | "mysql") {
   const url = adapter === "postgres" ? "postgres://postgres@127.0.0.1:" : "mysql://root@127.0.0.1:";
   const db = adapter === "postgres" ? "/postgres" : "/db";

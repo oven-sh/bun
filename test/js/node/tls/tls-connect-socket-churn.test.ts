@@ -59,12 +59,14 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
   // crypto, not a wait-for-condition.
 }, 30_000);
 
-test("createSecureContext memoises the native SSL_CTX (not the wrapper) by config", () => {
+test("createSecureContext owns its native SSL_CTX exclusively (fresh wrapper too)", () => {
   const a = tls.createSecureContext({ cert: tlsCerts.cert });
   const b = tls.createSecureContext({ cert: tlsCerts.cert, servername: "other.example" });
-  // Same SSL_CTX-relevant fields → same native handle…
-  expect(a.context).toBe(b.context);
-  // …but the wrapper is fresh so per-call fields don't leak across callers.
+  // The user-facing constructor owns its SSL_CTX exclusively so addCACert on
+  // one context can never affect another; only the internal connect/listen
+  // paths memoise by config digest.
+  expect(a.context).not.toBe(b.context);
+  // The wrapper is fresh too, so per-call fields don't leak across callers.
   expect(a).not.toBe(b);
   expect(b.servername).toBe("other.example");
   expect(a.servername).toBeUndefined();

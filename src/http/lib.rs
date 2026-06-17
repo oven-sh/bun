@@ -1320,6 +1320,22 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> bun_core::Error {
 // fields so the state-machine bodies stay readable.
 impl<'a> HTTPClient<'a> {
     #[inline]
+    /// Whether closing this socket gracefully would queue our FIN behind
+    /// request-body bytes that have not yet been handed to the kernel - the
+    /// case where the peer (which may have stopped reading the body) would
+    /// never observe the connection closing.
+    pub fn has_unsent_request_body(&self) -> bool {
+        if self.state.request_stage == RequestStage::Done {
+            return false;
+        }
+        if self.flags.is_streaming_request_body {
+            // More body chunks may still be produced by JS.
+            return true;
+        }
+        !self.request_body().is_empty()
+    }
+
+    #[inline]
     fn request_body(&self) -> &[u8] {
         // `request_body` is a `RawSlice` into `original_request_body` (sibling
         // field of `self`); the RawSlice invariant centralises the unsafe.

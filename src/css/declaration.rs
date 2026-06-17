@@ -92,9 +92,12 @@ impl<'bump> DeclarationBlock<'bump> {
     }
 
     /// Recursive `TokenOrValue` count across every unparsed / custom
-    /// property in this block. Other property kinds are fixed-size values
-    /// whose clone cost is already bounded by the selector-expansion cap.
-    /// See [`css_rules::MAX_TOKEN_EXPANSION`](crate::css_rules::MAX_TOKEN_EXPANSION).
+    /// property in this block. Parsed property kinds carry no raw
+    /// `TokenOrValue` nodes and are not counted here; note that list-typed
+    /// parsed values (`font-family`, `background-image`, ...) are not
+    /// fixed-size and have their own clone cost, which this raw-token cap
+    /// does not budget. See
+    /// [`css_rules::MAX_TOKEN_EXPANSION`](crate::css_rules::MAX_TOKEN_EXPANSION).
     pub fn token_weight(&self) -> usize {
         fn one(p: &css::Property) -> usize {
             match p {

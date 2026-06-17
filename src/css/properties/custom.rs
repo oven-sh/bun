@@ -317,6 +317,42 @@ pub struct TokenList {
 impl TokenList {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
+    /// Recursive count of [`TokenOrValue`] nodes reachable from this list,
+    /// including those nested inside `Function`/`Var`/`Env`/`UnresolvedColor`
+    /// arguments. Used by the minifier's rule-expansion cap
+    /// (`css_rules::MAX_RULE_EXPANSION_WEIGHT`) as a proxy for how much a
+    /// `deep_clone` of this list will allocate.
+    pub fn node_count(&self) -> u64 {
+        let mut w = self.v.len() as u64;
+        for tv in &self.v {
+            match tv {
+                TokenOrValue::Function(f) => w = w.saturating_add(f.arguments.node_count()),
+                TokenOrValue::Var(v) => {
+                    if let Some(fb) = &v.fallback {
+                        w = w.saturating_add(fb.node_count());
+                    }
+                }
+                TokenOrValue::Env(e) => {
+                    w = w.saturating_add(e.indices.len() as u64);
+                    if let Some(fb) = &e.fallback {
+                        w = w.saturating_add(fb.node_count());
+                    }
+                }
+                TokenOrValue::UnresolvedColor(c) => match c {
+                    UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. } => {
+                        w = w.saturating_add(alpha.node_count());
+                    }
+                    UnresolvedColor::LightDark { light, dark } => {
+                        w = w.saturating_add(light.node_count())
+                            .saturating_add(dark.node_count());
+                    }
+                },
+                _ => {}
+            }
+        }
+        w
+    }
+
     pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         if !dest.minify && self.v.len() == 1 && self.v[0].is_whitespace() {
             return Ok(());

@@ -71,6 +71,58 @@ test("deeply nested ::part() selector lists error instead of exploding when comp
   expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(LIMIT_ERROR);
 });
 
+// The selector-count cap alone doesn't bound memory: splitting a selector
+// list clones the rule's whole nested subtree (declarations included) once
+// per selector, so a nesting depth well under the cap that bottoms out in a
+// single large declaration still multiplies into gigabytes of cloned AST.
+// Found by fuzzing (13 nested levels of `::part()` selector pairs over an
+// ~11 KB unparsed declaration value allocated several gigabytes).
+
+/** `depth` nested two-selector `::part()` rules over a declaration of roughly `bytes` bytes. */
+function partRulesOverLargeDeclaration(depth: number, bytes: number): string {
+  const decl = "color: " + Buffer.alloc(bytes >> 1, "x ").toString() + ";\n";
+  return "x::part(a), y::part(b) {\n".repeat(depth) + decl + "}\n".repeat(depth);
+}
+
+test("nested ::part() lists over a large declaration error instead of exploding when compiled for old targets", () => {
+  // 11 levels × 2 selectors each = 2048 expanded selectors (well under the
+  // selector-count cap), but each carries a clone of the ~10 KB declaration.
+  // At the fuzzer's 13 levels this allocated several gigabytes; 11 levels is
+  // enough to exceed the weight cap while keeping the unfixed case bounded.
+  const src = partRulesOverLargeDeclaration(11, 10_000);
+  expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(LIMIT_ERROR);
+  expect(() => prefixTest(src, "", { safari: (13 << 16) | (2 << 8) })).toThrow(LIMIT_ERROR);
+});
+
+test("shallow ::part() nesting over a large declaration still compiles for old targets", () => {
+  // A few levels clone the large declaration only a handful of times, which
+  // stays well under the byte cap.
+  const src = partRulesOverLargeDeclaration(3, 10_000);
+  const out = minifyTest(src, "", OLD_TARGETS);
+  expect(out).toContain("color:");
+  expect(out.length).toBeLessThan(1_000_000);
+});
+
+test("deep ::part() nesting over a small declaration still compiles under the selector-count cap", () => {
+  // 12 levels × 2 selectors each = 4096 expanded selectors: the byte cap
+  // must not reject inputs the selector-count cap already allows when the
+  // cloned subtree is small.
+  const src = partRulesOverLargeDeclaration(12, 10);
+  const out = minifyTest(src, "", OLD_TARGETS);
+  expect(out).toContain("color:");
+});
+
+test("nested ::part() lists over deeply nested function tokens error instead of exploding", () => {
+  // The fuzzer reproduction's shape: the large declaration is one unparsed
+  // value whose few outer tokens hide ~80 levels of nested `fn(... { ...`
+  // argument lists. The weight cap recurses into those nested token lists,
+  // so this still trips the limit instead of allocating gigabytes.
+  let val = "red";
+  for (let i = 0; i < 80; i++) val = "fn(a b c d e f g h { k: " + val;
+  const src = "x::part(a), y::part(b) {\n".repeat(10) + `color: ${val};`;
+  expect(() => prefixTest(src, "", { safari: (13 << 16) | (2 << 8) })).toThrow(LIMIT_ERROR);
+});
+
 test("nested rules below the expansion limit still compile for old targets", () => {
   const src = nestedRules("co :is(.bar), .bar :is(.baz)", 8);
   const out = minifyTest(src, "", OLD_TARGETS);

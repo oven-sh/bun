@@ -847,6 +847,21 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     }
     let mut incompatible_rules: SmallList<IncompatibleRuleEntry<R>, 1> =
         SmallList::init_capacity(incompatible.len());
+    if incompatible.len() > 0 {
+        // `sty.rules` here is the already-expanded subtree (inner levels have
+        // been split and cloned by the recursion above), so each clone's cost
+        // compounds across nesting levels. The selector-count cap bounds how
+        // many clones this loop produces, but not how large each one is;
+        // weigh the subtree once and charge it per clone so a handful of
+        // levels over a large declaration block can't allocate without limit.
+        let clone_weight = rule_list_clone_weight(&sty.rules).saturating_add(
+            declaration_block_clone_weight(incompatible_decls.as_ref().unwrap_or(&sty.declarations)),
+        );
+        context.charge_rule_expansion_weight(
+            clone_weight.saturating_mul(u64::from(incompatible.len())),
+            sty.loc,
+        )?;
+    }
     while incompatible.len() > 0 {
         let sel = incompatible.ordered_remove(0);
         let list = SelectorList {
@@ -1281,6 +1296,25 @@ pub struct StyleContext<'a> {
 /// instead.
 pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 
+/// Upper bound on the approximate node weight that splitting incompatible
+/// selector lists may clone across a stylesheet.
+///
+/// [`MAX_SELECTOR_EXPANSION`] bounds how many selectors the expansion
+/// produces, but splitting a selector list clones the rule's entire nested
+/// subtree (declarations included) once per selector. When the subtree
+/// carries a large declaration block — e.g. an unparsed value of several
+/// kilobytes of tokens — even a few thousand expanded selectors (well under
+/// that cap) can multiply into gigabytes of cloned AST. Real-world
+/// stylesheets that need splitting clone only a small amount; anything past
+/// this limit is a runaway expansion, reported as the same
+/// `selector_expansion_limit_exceeded` error. Complements
+/// `MAX_PREFIX_EXPANSION_BYTES` (`rules/style.rs`) on the printing side.
+///
+/// The weight unit is a count of AST nodes (rules, declarations, selector
+/// components, unparsed-value tokens) — a cheap proxy for the bytes a
+/// `deep_clone` will allocate. See [`rule_list_clone_weight`].
+pub const MAX_RULE_EXPANSION_WEIGHT: u64 = 1 << 20;
+
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
 ///
@@ -1316,4 +1350,99 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub selector_expansion_total: u32,
+    /// Running total of approximate AST-node weight cloned by incompatible-
+    /// selector splitting so far, checked against
+    /// [`MAX_RULE_EXPANSION_WEIGHT`]. See that constant for why the
+    /// selector-count cap alone is insufficient.
+    pub rule_expansion_weight: u64,
+}
+
+impl MinifyContext<'_, '_> {
+    /// Charge `weight` clone-weight units against [`MAX_RULE_EXPANSION_WEIGHT`].
+    ///
+    /// Called before the rule-splitting `deep_clone`s in [`minify_style_arm`]
+    /// so the expansion is refused before the allocation that would exceed
+    /// the limit, not after.
+    pub(crate) fn charge_rule_expansion_weight(
+        &mut self,
+        weight: u64,
+        loc: Location,
+    ) -> Result<(), MinifyErr> {
+        self.rule_expansion_weight = self.rule_expansion_weight.saturating_add(weight);
+        if self.rule_expansion_weight > MAX_RULE_EXPANSION_WEIGHT {
+            self.err = Some(crate::error::MinifyError {
+                kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
+                loc,
+            });
+            return Err(MinifyErr::minify_err);
+        }
+        Ok(())
+    }
+}
+
+/// Approximate AST-node count a `DeclarationBlock::deep_clone` will copy:
+/// one per declaration, plus the recursive token count of any
+/// unparsed/custom value (whose nested `TokenList` vectors dominate the
+/// clone cost).
+pub(crate) fn declaration_block_clone_weight(decls: &css::DeclarationBlock<'_>) -> u64 {
+    use css::properties::Property;
+    let mut w: u64 = 0;
+    for list in [
+        decls.declarations.as_slice(),
+        decls.important_declarations.as_slice(),
+    ] {
+        for p in list {
+            w = w.saturating_add(1);
+            match p {
+                Property::Unparsed(u) => {
+                    w = w.saturating_add(u.value.node_count());
+                }
+                Property::Custom(c) => {
+                    w = w.saturating_add(c.value.node_count());
+                }
+                _ => {}
+            }
+        }
+    }
+    w
+}
+
+/// Approximate AST-node count a `CssRuleList::deep_clone` will copy. Walks
+/// the subtree once; the walk is cheaper than the clone it guards, so the
+/// pre-check bounds total work even when it refuses the clone. Style rules
+/// are weighed by their selector components, declarations (via
+/// [`declaration_block_clone_weight`]) and nested rules; the remaining
+/// nesting-holding at-rules just recurse into their rule list. Other rule
+/// kinds don't participate in the selector-split blowup and are counted as a
+/// single node.
+pub(crate) fn rule_list_clone_weight<R>(rules: &CssRuleList<R>) -> u64 {
+    let mut w: u64 = 0;
+    for rule in rules.v.iter() {
+        w = w.saturating_add(1);
+        match rule {
+            CssRule::Style(sty) => {
+                for sel in sty.selectors.v.slice() {
+                    w = w.saturating_add(sel.components.len() as u64);
+                }
+                w = w.saturating_add(declaration_block_clone_weight(&sty.declarations));
+                w = w.saturating_add(rule_list_clone_weight(&sty.rules));
+            }
+            CssRule::Nesting(nst) => {
+                for sel in nst.style.selectors.v.slice() {
+                    w = w.saturating_add(sel.components.len() as u64);
+                }
+                w = w.saturating_add(declaration_block_clone_weight(&nst.style.declarations));
+                w = w.saturating_add(rule_list_clone_weight(&nst.style.rules));
+            }
+            CssRule::Media(r) => w = w.saturating_add(rule_list_clone_weight(&r.rules)),
+            CssRule::Supports(r) => w = w.saturating_add(rule_list_clone_weight(&r.rules)),
+            CssRule::Container(r) => w = w.saturating_add(rule_list_clone_weight(&r.rules)),
+            CssRule::LayerBlock(r) => w = w.saturating_add(rule_list_clone_weight(&r.rules)),
+            CssRule::Scope(r) => w = w.saturating_add(rule_list_clone_weight(&r.rules)),
+            CssRule::StartingStyle(r) => w = w.saturating_add(rule_list_clone_weight(&r.rules)),
+            CssRule::MozDocument(r) => w = w.saturating_add(rule_list_clone_weight(&r.rules)),
+            _ => {}
+        }
+    }
+    w
 }

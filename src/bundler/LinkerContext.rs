@@ -1326,14 +1326,13 @@ fn write_sources_for(
                 // then be re-relativized against `chunk_abs_dir`.
                 // `join_abs` returns a borrow into a thread-local buffer;
                 // we copy out immediately via `relative_alloc`.
-                let abs_path: &[u8] =
-                    if bun_paths::resolve_path::Platform::AUTO.is_absolute(name) {
-                        name
-                    } else {
-                        bun_paths::resolve_path::join_abs::<
-                            bun_paths::resolve_path::platform::Auto,
-                        >(base_dir, name)
-                    };
+                let abs_path: &[u8] = if bun_paths::resolve_path::Platform::AUTO.is_absolute(name) {
+                    name
+                } else {
+                    bun_paths::resolve_path::join_abs::<bun_paths::resolve_path::platform::Auto>(
+                        base_dir, name,
+                    )
+                };
                 rel_path_storage =
                     bun_paths::resolve_path::relative_alloc(chunk_abs_dir, abs_path)?;
                 &rel_path_storage

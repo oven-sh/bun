@@ -8,10 +8,10 @@ import { SQL } from "bun";
 import { expect, mock, test } from "bun:test";
 import {
   listeningServer,
-  mysqlHandshakeV10,
-  mysqlOkPacket,
   MYSQL_CLIENT_SSL,
   MYSQL_DEFAULT_CAPABILITIES,
+  mysqlHandshakeV10,
+  mysqlOkPacket,
 } from "./wire-frames";
 
 test("MySQL TLS handshake rejects plaintext packets buffered behind the server greeting", async () => {

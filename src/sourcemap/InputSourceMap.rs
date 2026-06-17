@@ -141,12 +141,37 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
 
     let source_count = sources_paths.items.len_u32() as usize;
 
+    // `sourceRoot` is optional; per the spec it is prepended to each entry
+    // in `sources` before further resolution.
+    let source_root: &[u8] = match json.get(b"sourceRoot") {
+        Some(v) => match v.data.as_e_string() {
+            Some(estr) => bun_core::handle_oom(estr.string(&arena)),
+            None => b"",
+        },
+        None => b"",
+    };
+
     // Copy source paths out of the arena into owned storage.
     let mut source_paths_slice: Vec<Box<[u8]>> = Vec::with_capacity(source_count);
     for item in sources_paths.items.slice() {
         let estr = item.data.as_e_string().ok_or(InvalidSourceMap)?;
         let s = bun_core::handle_oom(estr.string(&arena));
-        source_paths_slice.push(Box::<[u8]>::from(s));
+        let owned: Box<[u8]> = if source_root.is_empty() {
+            Box::<[u8]>::from(s)
+        } else {
+            // Insert a separator if the root doesn't end in one and the
+            // source name doesn't begin with one (matches esbuild).
+            let need_sep = !matches!(source_root.last(), Some(b'/') | Some(b'\\'))
+                && !matches!(s.first(), Some(b'/') | Some(b'\\'));
+            let mut v = Vec::with_capacity(source_root.len() + need_sep as usize + s.len());
+            v.extend_from_slice(source_root);
+            if need_sep {
+                v.push(b'/');
+            }
+            v.extend_from_slice(s);
+            v.into_boxed_slice()
+        };
+        source_paths_slice.push(owned);
     }
 
     // Copy source contents. Non-strings (null, etc.) and empty slots map to `b""`.

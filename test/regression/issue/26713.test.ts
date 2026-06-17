@@ -121,6 +121,32 @@ describe.concurrent("input sourcemap chaining for external .map references (#267
     expect(map.sourcesContent[tsIdx]).toBe(originalSource);
   });
 
+  test("external .map with sourceRoot is prepended to inner source paths", async () => {
+    using dir = tempDir("26713-sourceroot", {
+      "dist/main.js": `console.log("hi");\n//# sourceMappingURL=main.js.map\n`,
+      "dist/main.js.map": JSON.stringify({
+        version: 3,
+        sourceRoot: "../src/",
+        sources: ["main.ts"],
+        sourcesContent: ['console.log("hi");\n'],
+        names: [],
+        mappings: "AAAA",
+      }),
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "dist", "main.js")],
+      sourcemap: "external",
+      outdir: join(String(dir), "out"),
+    });
+    expect(result.success).toBe(true);
+    const mapFile = result.outputs.find(o => o.path.endsWith(".map"));
+    const map = await Bun.file(mapFile!.path).json();
+    // The inner source must resolve through sourceRoot: dist/main.js +
+    // ../src/main.ts -> src/main.ts (not dist/main.ts).
+    expect(map.sources.some((s: string) => s.replaceAll("\\", "/").endsWith("src/main.ts"))).toBe(true);
+    expect(map.sources.some((s: string) => s.replaceAll("\\", "/").endsWith("dist/main.ts"))).toBe(false);
+  });
+
   test("Bun.build with missing external .map falls back cleanly", async () => {
     using dir = tempDir("26713-missing", {
       "main.js": `console.log("hi");\n//# sourceMappingURL=does-not-exist.map\n`,

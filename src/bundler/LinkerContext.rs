@@ -1304,30 +1304,46 @@ fn write_sources_for(
     // relative to the directory of the intermediate file it came from,
     // then made relative to `chunk_abs_dir` (the chunk's output dir) for
     // the emitted JSON. Absolute inner paths stay absolute before
-    // relativization.
+    // relativization. When the intermediate lives in a non-file
+    // namespace (a plugin's virtual module), its `text` is not a
+    // filesystem path, so emit the inner name as-is rather than joining
+    // against a meaningless dirname.
     if let Some(ism) = input_map {
-        let base_dir = bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(
-            outer_path.text,
-        );
+        let is_file = outer_path.is_file();
+        let base_dir = if is_file {
+            bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(
+                outer_path.text,
+            )
+        } else {
+            b""
+        };
         for name in ism.map.external_source_names.iter() {
             let name: &[u8] = name.as_ref();
-            // Use `join_abs` to produce an absolute inner path (when the
-            // inner map emitted a relative source name) that can then be
-            // re-relativized against `chunk_abs_dir`. `join_abs` returns
-            // a borrow into a thread-local buffer; we copy out immediately
-            // via `relative_alloc`.
-            let abs_path: &[u8] = if bun_paths::resolve_path::Platform::AUTO.is_absolute(name) {
-                name
+            let rel_path_storage;
+            let rel_path: &[u8] = if is_file {
+                // Use `join_abs` to produce an absolute inner path (when
+                // the inner map emitted a relative source name) that can
+                // then be re-relativized against `chunk_abs_dir`.
+                // `join_abs` returns a borrow into a thread-local buffer;
+                // we copy out immediately via `relative_alloc`.
+                let abs_path: &[u8] =
+                    if bun_paths::resolve_path::Platform::AUTO.is_absolute(name) {
+                        name
+                    } else {
+                        bun_paths::resolve_path::join_abs::<
+                            bun_paths::resolve_path::platform::Auto,
+                        >(base_dir, name)
+                    };
+                rel_path_storage =
+                    bun_paths::resolve_path::relative_alloc(chunk_abs_dir, abs_path)?;
+                &rel_path_storage
             } else {
-                bun_paths::resolve_path::join_abs::<bun_paths::resolve_path::platform::Auto>(
-                    base_dir, name,
-                )
+                name
             };
-            let rel_path = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, abs_path)?;
 
             let mut quote_buf = MutableString::init(rel_path.len() + ", ".len() + 2)?;
             quote_buf.append_assume_capacity(b", ");
-            js_printer::quote_for_json(&rel_path, &mut quote_buf, false)?;
+            js_printer::quote_for_json(rel_path, &mut quote_buf, false)?;
             joiner.push_owned(quote_buf.to_default_owned());
         }
     }

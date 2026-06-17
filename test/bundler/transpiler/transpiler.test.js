@@ -1703,6 +1703,20 @@ export default <>hi</>
     expect(exitCode).toBe(0);
   });
 
+  it("define: local binding in nested scope shadows the define", () => {
+    const t = new Bun.Transpiler({ loader: "js", define: { DEBUG: "false" } });
+    const out = t.transformSync("function f(){const DEBUG=1;return DEBUG}");
+    expect(out).toContain("return DEBUG");
+    expect(out).not.toContain("return false");
+  });
+
+  it("named import: local binding in nested scope shadows the import", () => {
+    const t = new Bun.Transpiler({ loader: "js" });
+    const out = t.transformSync('import {x} from "m"; function f(){let x=1; x=2; return x}');
+    expect(out).toContain("x = 2");
+    expect(out).not.toContain("Cannot assign");
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",
@@ -4790,10 +4804,6 @@ describe("parse error flood", () => {
             target: "browser",
             minifyWhitespace: true,
             deadCodeElimination: true,
-            // Duplicate-declaration detection is part of the scope-map build
-            // which the standalone-transpiler fast path now skips. Force the
-            // full path so this perf-regression test still exercises it.
-            treeShaking: true,
           });
           const check = (label, statement, repeats) => {
             const input = Buffer.alloc(statement.length * repeats, statement).toString();

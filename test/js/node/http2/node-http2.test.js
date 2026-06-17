@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, isASAN, isCI, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import fs from "node:fs";
 import http2 from "node:http2";
@@ -10,7 +10,10 @@ import { Duplex } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx } = createTest(import.meta.path);
-const ASAN_MULTIPLIER = isASAN ? 3 : 1;
+// bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
+// there; the 10k-request maxSessionMemory stress test takes ~90s under
+// debug+ASAN vs ~2s release, so scale for either.
+const ASAN_MULTIPLIER = isDebug ? 10 : isASAN ? 3 : 1;
 
 function invalidArgTypeHelper(input) {
   if (input === null) return " Received null";
@@ -1618,7 +1621,7 @@ it("http2 session.goaway() validates input types", async done => {
 
           // Test opaqueData argument
           expect(() => session.goaway(0, 0, input)).toThrow(
-            'The "opaqueData" argument must be of type Buffer, ' + `TypedArray, or DataView.${received}`,
+            'The "opaqueData" argument must be an instance of Buffer, ' + `TypedArray, or DataView.${received}`,
           );
         }
 

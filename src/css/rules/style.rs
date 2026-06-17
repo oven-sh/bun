@@ -91,6 +91,25 @@ impl<R> StyleRule<R> {
 /// (`selectors/selector.rs`) and `MAX_SELECTOR_EXPANSION` (`rules/mod.rs`).
 const MAX_PREFIX_EXPANSION_BYTES: usize = 64 << 20;
 
+/// Maximum number of selector-prelude bytes compiled nesting may emit
+/// across a whole stylesheet.
+///
+/// When the targets don't support CSS nesting, every nested rule's prelude
+/// inlines the full parent selector chain (`serialize::serialize_nesting`
+/// walks the `StyleContext` up to the root). Minify's
+/// [`MAX_SELECTOR_EXPANSION`](super::MAX_SELECTOR_EXPANSION) bounds how many
+/// rules that expansion produces, but each of those rules still writes a
+/// prelude whose length grows with nesting depth — and the parser permits
+/// up to 512 levels. The product of the two (tens of thousands of rules ×
+/// hundreds of ancestor selectors each) lets a few kilobytes of input print
+/// hundreds of megabytes of output without tripping any existing limit. The
+/// bytes written for each such prelude are measured and accumulated (see
+/// `Printer::nesting_expansion_bytes`); exceeding this limit is a runaway
+/// expansion, so bail out with an error instead of allocating without
+/// bound. Real stylesheets stay far below this — even very large nested
+/// sheets expand to a few megabytes of selector preludes.
+const MAX_NESTING_EXPANSION_BYTES: usize = 64 << 20;
+
 impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.vendor_prefix.is_empty() {
@@ -179,12 +198,34 @@ impl<R> StyleRule<R> {
             // Each rule prelude gets its own budget for `&` substitutions when
             // compiling nesting (see `serialize::serialize_nesting`).
             dest.nesting_expansions = 0;
+            // When a parent-selector chain is being inlined into this
+            // prelude (compiled nesting), measure how many bytes the
+            // prelude emits and charge them against the expansion-byte
+            // budget so the (rule count × nesting depth) blow-up stays
+            // bounded. Rules at the top level (`ctx == None`) are the
+            // original output and are not charged.
+            let prelude_before = if ctx.is_some() {
+                Some(dest.bytes_written())
+            } else {
+                None
+            };
             selector::serialize::serialize_selector_list(
                 self.selectors.v.slice(),
                 dest,
                 ctx,
                 false,
             )?;
+            if let Some(before) = prelude_before {
+                let emitted = dest.bytes_written().saturating_sub(before);
+                dest.nesting_expansion_bytes =
+                    dest.nesting_expansion_bytes.saturating_add(emitted);
+                if dest.nesting_expansion_bytes > MAX_NESTING_EXPANSION_BYTES {
+                    return dest.new_error(
+                        css::error::PrinterErrorKind::maximum_nesting_expansion,
+                        None,
+                    );
+                }
+            }
             dest.whitespace()?;
             dest.write_char(b'{')?;
             dest.indent();

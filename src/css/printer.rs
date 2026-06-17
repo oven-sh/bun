@@ -126,7 +126,9 @@ pub struct Printer<'a> {
     pub sources: Option<&'a Vec<Box<[u8]>>>,
     pub dest: &'a mut dyn Write,
     pub loc: Location,
-    pub indent_amt: u8,
+    // Wide enough for 2 × MAX_NESTING_DEPTH (css_parser.rs) so nesting at the
+    // full permitted depth never overflows it.
+    pub indent_amt: u16,
     pub line: u32,
     pub col: u32,
     pub minify: bool,
@@ -158,6 +160,19 @@ pub struct Printer<'a> {
     /// `serialize::serialize_nesting` so deeply nested rules with multiple
     /// `&` references per level cannot expand exponentially.
     pub nesting_expansions: u32,
+    /// Running total of selector-prelude bytes written for style rules that
+    /// are serialized under a compiled-nesting `StyleContext` (i.e. a parent
+    /// selector chain is being inlined into the prelude). When the targets
+    /// don't support CSS nesting, every nested rule's prelude prints the
+    /// whole ancestor chain, so the output grows with (rule count × nesting
+    /// depth). Minify's `MAX_SELECTOR_EXPANSION` bounds the rule count but
+    /// not the per-rule prelude length (bounded only by the 512-level parser
+    /// depth cap), so deeply nested rules whose selectors are partitioned
+    /// for compatibility can still expand a few KB of input into hundreds of
+    /// megabytes of output. Accumulated across the whole stylesheet (never
+    /// reset) and bounded in `StyleRule::to_css_base`. Complements
+    /// `prefix_expansion_bytes`.
+    pub nesting_expansion_bytes: usize,
     /// Running total of bytes emitted by duplicate vendor-prefix passes. A rule
     /// whose selector list carries more than one vendor prefix (e.g. a list
     /// mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a single
@@ -347,6 +362,7 @@ impl<'a> Printer<'a> {
             css_module: None,
             ctx: None,
             nesting_expansions: 0,
+            nesting_expansion_bytes: 0,
             prefix_expansion_bytes: 0,
             error_kind: None,
         }

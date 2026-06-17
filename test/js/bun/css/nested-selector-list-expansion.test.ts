@@ -238,6 +238,134 @@ test("shallow nesting spanning @scope still compiles for old targets", () => {
   expect(out).toContain("@scope");
 });
 
+// Regression for a CSS-minifier output bomb found by fuzzing: a ~10 KB input
+// drove the CSS printer to ~200 MB of output (peak ~1.6 GB RSS including the
+// returned JS string and intermediate buffers) when compiling nesting for
+// Safari 13, without tripping any existing limit.
+//
+// When the targets don't support nesting, every nested rule's selector
+// prelude inlines the full parent chain (one ancestor's selector per nesting
+// level). Minify's selector-expansion cap bounds how many rules the nesting
+// expands into, but each of those rules still prints a prelude proportional
+// to the nesting depth (the parser permits up to 512 levels). By stacking the
+// multi-selector rules at the *bottom* of a long single-selector chain, the
+// selector-expansion total stays under 65,536 rules while each of those rules
+// prints a hundreds-of-levels-long prelude. The printer now bounds the total
+// selector-prelude bytes emitted under a compiled-nesting context and errors
+// out instead.
+
+const NESTING_LIMIT_ERROR = "Maximum nesting expansion exceeded";
+
+/** `pad` single-selector levels followed by `fork` levels of two incompatible
+ * (custom-pseudo) selectors that must be partitioned into separate rules when
+ * compiled for old targets. With the pad levels first the selector-expansion
+ * multiplier stays 1 across them, so they contribute nothing to the
+ * rule-count cap while still lengthening every printed prelude. */
+function deepPadThenFork(pad: number, fork: number): string {
+  return (
+    ".padding-selector {\n".repeat(pad) + ".a:-webkitx .a, .b:-webkitx .b {\n".repeat(fork) + "color: red;"
+  );
+}
+
+test.concurrent("deep padding before the multi-selector split errors instead of emitting huge output", async () => {
+  // 15 fork levels × 2 selectors = under 65,536 rules, so the rule-count cap
+  // never fires; but each rule prints a ~7 KB prelude (400 single-selector
+  // levels × ~17 bytes, plus the fork levels) — 32768 × ~7 KB ≈ 230 MB of
+  // output before the fix.
+  //
+  // Runs in a subprocess: before the fix the printer emits the full ~230 MB
+  // (tens of seconds in a debug build), so a regression is SIGKILL'd by the
+  // kill switch below instead of hanging the runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { cssInternals } = require("bun:internal-for-testing");
+        const css = ${JSON.stringify(deepPadThenFork(400, 15))};
+        try {
+          const r = cssInternals._test(css, "", { safari: (13 << 16) | (2 << 8) });
+          console.log("OK " + r.length);
+        } catch (e) {
+          console.log("ERR " + e.message);
+        }
+      `,
+    ],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(proc.signalCode).toBeNull();
+  expect(stdout).toContain("ERR " + NESTING_LIMIT_ERROR);
+  expect(exitCode).toBe(0);
+}, 90_000);
+
+test("the padded-then-forked reproduction still minifies with no targets", () => {
+  // Without targets nesting is preserved, so the output stays linear.
+  const out = minifyTest(deepPadThenFork(100, 15), "");
+  expect(out).toContain("color:red");
+  expect(out.length).toBeLessThan(20_000);
+});
+
+test("shallow padded-then-forked nesting still compiles for old targets", () => {
+  // Well under the byte budget.
+  const out = minifyTest(deepPadThenFork(20, 5), "", { safari: (13 << 16) | (2 << 8) });
+  expect(out).toContain("color:red");
+  expect(out.length).toBeLessThan(100_000);
+});
+
+test("a large realistic nested stylesheet does not trip the nesting byte bound", () => {
+  // Many top-level rules, each with a few levels of single-selector nesting:
+  // the total prelude bytes under a compiled-nesting context are linear in
+  // the input size. This must not throw.
+  let src = "";
+  for (let i = 0; i < 4000; i++) {
+    src += `.a${i} { .b${i} { .c${i} { --v${i}: 1 } } }\n`;
+  }
+  const out = minifyTest(src, "", OLD_TARGETS);
+  expect(out.length).toBeGreaterThan(0);
+  expect(out).toContain(".a3999 .b3999 .c3999");
+});
+
+// With no browser targets (or targets that support CSS nesting), nesting is
+// preserved and the printer indents by 2 per level. The parser permits up to
+// 512 levels of nesting, so the indentation counter overflowed its 8-bit
+// storage at depth 128 — a panic in debug builds and wrong indentation in
+// release builds.
+test.concurrent("indentation at the full permitted nesting depth does not overflow", async () => {
+  // Runs in a subprocess: before the fix this panics the process in debug
+  // builds ("attempt to add with overflow").
+  const depth = 500;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { cssInternals } = require("bun:internal-for-testing");
+        const depth = ${depth};
+        const src = ".a {\\n".repeat(depth) + "color: red;\\n" + "}".repeat(depth);
+        const out = cssInternals._test(src, "", undefined);
+        // The innermost declaration is indented at 2 * depth spaces.
+        const needle = "\\n" + Buffer.alloc(2 * depth, " ").toString() + "color: red";
+        console.log(out.includes(needle) ? "OK" : "BAD-INDENT " + out.length);
+      `,
+    ],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, panicked: stderr.includes("overflow") }).toEqual({
+    stdout: "OK",
+    exitCode: 0,
+    panicked: false,
+  });
+}, 30_000);
+
 test("bun build does not hang on deeply nested multi-selector css spanning @starting-style", async () => {
   using dir = tempDir("css-starting-style-expansion", {
     // The fuzzer's depth (14 outer + 11 inner): without the fix this hangs for

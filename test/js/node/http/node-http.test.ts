@@ -842,8 +842,13 @@ describe("node:http", () => {
       // Minimal proxy that records the CONNECT request it receives and replies
       // 502 so the tunnel fails the same way it does in Node.
       const proxy = createNetServer(socket => {
-        socket.once("data", buf => {
-          gotConnect(buf.toString());
+        let buf = "";
+        socket.on("data", chunk => {
+          buf += chunk.toString();
+          // Buffer to the end of the request-header block — a single TCP
+          // chunk is not guaranteed to carry the full CONNECT line + Host.
+          if (buf.indexOf("\r\n\r\n") === -1) return;
+          gotConnect(buf);
           socket.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n");
         });
       });

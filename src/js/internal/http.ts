@@ -435,7 +435,7 @@ class ProxyConfig {
       // Follow curl's behavior: strip leading dot before matching suffixes.
       if (entry.startsWith(".")) {
         const suffix = entry.substring(1);
-        if (host.endsWith(suffix)) return false;
+        if (host === suffix || (host.endsWith(suffix) && host[host.length - suffix.length - 1] === ".")) return false;
       }
 
       // Handle wildcards like *.example.com

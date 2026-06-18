@@ -67,9 +67,11 @@ impl InputSourceMap {
         // `url` is the trailing line of an arbitrary input file; use the
         // length-checked join so an overlong reference falls back to
         // `None` rather than panicking on the fixed PathBuffer.
-        let abs = bun_paths::resolve_path::join_abs_string_buf_checked::<
-            bun_paths::platform::Loose,
-        >(source_dir, &mut buf, &[url])?;
+        let abs = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Loose>(
+            source_dir,
+            &mut buf,
+            &[url],
+        )?;
         let bytes = bun_sys::File::read_from(bun_core::Fd::cwd(), abs).ok()?;
         InputSourceMap::parse(&bytes)
     }

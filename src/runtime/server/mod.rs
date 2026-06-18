@@ -1539,6 +1539,28 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         let Some(listener) = self.listener.take() else {
+            // Upgrading from graceful (`stop(false)`) to abrupt:
+            // `stop(false)` already took the listener, but the uWS App
+            // still owns open/idle keep-alive connections that would
+            // otherwise pin the event loop. `app.close()` force-closes
+            // every remaining socket on the app. This is the path that
+            // makes `server.close(); server.closeAllConnections();`
+            // actually drain msal-style loopback servers.
+            //
+            // This runs BEFORE the h3 branch below, because the h3 branch
+            // flips `TERMINATED` on abrupt stops, which would make our
+            // `!TERMINATED` guard false and skip the app close for
+            // h3-enabled servers (HTTPS + h3: true).
+            if abrupt && !self.flags.contains(ServerFlags::TERMINATED) {
+                if let Some(app) = self.app {
+                    if let Some(ws) = self.config.websocket.as_mut() {
+                        ws.handler.app = None;
+                    }
+                    self.flags.insert(ServerFlags::TERMINATED);
+                    // S012: `NewApp<SSL>` is a ZST opaque — safe deref.
+                    bun_opaque::opaque_deref_mut(app).close();
+                }
+            }
             if Self::HAS_H3 && self.h3_app.is_some() {
                 self.unref();
                 self.notify_inspector_server_stopped();

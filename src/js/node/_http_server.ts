@@ -75,6 +75,11 @@ const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
+// Set synchronously in close(); tracks whether the server has entered
+// the shutdown sequence, so address()/close() behave like Node even
+// while the underlying Bun.serve reference is still populated for
+// closeAllConnections()/unref() to reach.
+const kServerClosed = Symbol("http.server.closed");
 
 const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
@@ -95,7 +100,22 @@ function emitCloseServer(self: Server) {
   callCloseCallback(self);
   self.emit("close");
 }
-function emitCloseNTServer(this: Server) {
+function emitCloseNTServer(this: Server, closingServer) {
+  // The underlying Bun server has finished shutting down — drop our
+  // reference so the allClosed promise chain can settle and the event
+  // loop can exit. msal and other consumers call
+  // `close() → closeAllConnections() → unref()` in sequence; the
+  // underlying reference has to survive past `close()` so the follow-up
+  // calls can still reach the native layer.
+  //
+  // Guard against re-listen: if the caller already started a fresh
+  // `listen()` before this callback fired, `this[serverSymbol]` now
+  // points at a NEW Bun.serve handle — nulling it would trash the new
+  // listener. Only clear when the handle still matches the one whose
+  // allClosed promise we're resolving.
+  if (this[serverSymbol] === closingServer) {
+    this[serverSymbol] = undefined;
+  }
   process.nextTick(emitCloseServer, this);
 }
 
@@ -351,10 +371,15 @@ Server.prototype.closeAllConnections = function () {
   if (!server) {
     return;
   }
-  this[serverSymbol] = undefined;
+  this[kServerClosed] = true;
   clearInterval(this[kConnectionsCheckingInterval]);
   this.listening = false;
 
+  // Abrupt stop — force-closes any open connections, including the ones
+  // a graceful `close()` would have left open. We keep `this[serverSymbol]`
+  // populated so subsequent calls (e.g. `unref()`) still reach the native
+  // server; it's cleared in `emitCloseNTServer` once everything actually
+  // drains.
   server.stop(true);
 };
 
@@ -378,13 +403,18 @@ Server.prototype.close = function (optionalCallback?) {
   // Node.js's httpServerPreClose clears the connections-checking interval
   // even when the server was never listening.
   clearInterval(this[kConnectionsCheckingInterval]);
-  if (!server) {
+  if (!server || this[kServerClosed]) {
     if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
     return;
   }
-  this[serverSymbol] = undefined;
+  this[kServerClosed] = true;
   if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
   this.listening = false;
+  // Graceful stop: stop accepting, close idle connections. Callers like
+  // `@azure/msal-node` follow this with `closeAllConnections()` to force-
+  // close remaining in-flight sockets, so we must NOT null out
+  // `this[serverSymbol]` here — that reference is still needed by the
+  // subsequent `closeAllConnections()` / `unref()` calls.
   server.closeIdleConnections();
   server.stop();
 };
@@ -426,7 +456,12 @@ Server.prototype[Symbol.asyncDispose] = function () {
 };
 
 Server.prototype.address = function () {
-  if (!this[serverSymbol]) return null;
+  // Node returns null from address() once close() has been called, even
+  // if draining isn't finished. We keep `this[serverSymbol]` populated
+  // past `close()` so the msal pattern `close() → closeAllConnections()`
+  // still reaches the native layer — `kServerClosed` is the "has close
+  // been called" signal.
+  if (!this[serverSymbol] || this[kServerClosed]) return null;
   return this[serverSymbol].address;
 };
 
@@ -541,6 +576,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
+    // Reset the "has close been called" flag — Node allows listening
+    // again after close, so address()/close() need to behave normally
+    // on the fresh listen.
+    this[kServerClosed] = false;
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
@@ -877,8 +916,13 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       // },
     });
 
-    getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
-    isHTTPS = this[serverSymbol].protocol === "https";
+    // Capture the Bun.serve handle for this listen generation so the
+    // close callback can tell whether it's still the current one (see
+    // `emitCloseNTServer`). Without this, a fresh `listen()` that races
+    // the previous shutdown would have its new handle nulled out.
+    const bunServer = this[serverSymbol];
+    getBunServerAllClosedPromise(bunServer).$then(emitCloseNTServer.bind(this, bunServer));
+    isHTTPS = bunServer.protocol === "https";
     // always set strict method validation to true for node.js compatibility
     setServerCustomOptions(
       this[serverSymbol],

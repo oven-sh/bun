@@ -2499,23 +2499,35 @@ where
     pub fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {
         let rc = self.get_all_closed_promise(&self.global());
 
-        if self.has_listener() {
-            let abrupt = 'brk: {
-                if let Some(val) = abruptly {
-                    if val.is_boolean() && val.to_boolean() {
-                        break 'brk true;
-                    }
+        let abrupt = 'brk: {
+            if let Some(val) = abruptly {
+                if val.is_boolean() && val.to_boolean() {
+                    break 'brk true;
                 }
-                false
-            };
-            self.stop(abrupt);
+            }
+            false
+        };
+
+        // For an abrupt stop, the app may still have open connections
+        // even after a graceful `stop(false)` cleared `self.listener`.
+        // `stop_listening` force-closes those via `app.close()` only when
+        // it actually enters the abrupt branch, so we can't gate on
+        // `has_listener()` here. `stop`/`stop_listening` are idempotent:
+        // second calls short-circuit via the `terminated` flag and the
+        // `deinit_scheduled` flag, so this is safe.
+        if abrupt {
+            if self.has_listener() || (self.app.is_some() && !self.flags.contains(ServerFlags::TERMINATED)) {
+                self.stop(true);
+            }
+        } else if self.has_listener() {
+            self.stop(false);
         }
 
         rc
     }
 
     pub fn dispose_from_js(&mut self) -> JSValue {
-        if self.has_listener() {
+        if self.has_listener() || (self.app.is_some() && !self.flags.contains(ServerFlags::TERMINATED)) {
             self.stop(true);
         }
         JSValue::UNDEFINED

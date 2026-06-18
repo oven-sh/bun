@@ -1017,17 +1017,6 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         // The wrapper stays attached so `run_pending` can resolve the Promise;
         // `~JS${name}` → `finalize` releases the per-wrapper +1 once GC
         // sweeps.
-        //
-        // 13f9cff9 added an eager `detach_ptr_extern + finalize()` in the
-        // non-pending else-branch as a #53265 defense. But the `end` host-fn
-        // must not detach (only `${name}__doClose` does), and the eager detach
-        // breaks Node `.end()` idempotency: child_process stdin teardown
-        // calls `.end()` → eager-detach → subsequent `.ref()`/`.unref()`/
-        // `.end()` from the Writable destroy path hit `get_this` → DETACHED →
-        // "already been closed" (8+ [new] in #53781). Reverted; the #53265
-        // root cause is the missing per-wrapper `ref_()` (df4f2c44) +
-        // `Blob::get_writer` leaking init's +1 (now fixed at Blob.rs:1894/
-        // 1959), not the lack of eager detach.
         if T::HAS_PROTECT_JS_WRAPPER && this.sink.pending_state_is_pending() {
             this.sink.protect_js_wrapper(global, frame.this());
         }

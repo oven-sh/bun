@@ -63,20 +63,8 @@ pub mod postgres_request;
 pub mod data_cell;
 
 pub mod types {
-    #[path = "bool.rs"]
-    pub mod r#bool;
-
-    #[path = "bytea.rs"]
-    pub mod bytea;
-
     #[path = "date.rs"]
     pub mod date;
-
-    #[path = "json.rs"]
-    pub mod json;
-
-    #[path = "PostgresString.rs"]
-    pub mod postgres_string;
 
     #[path = "tag_jsc.rs"]
     pub mod tag_jsc;
@@ -85,9 +73,6 @@ pub mod types {
 pub mod protocol {
     #[path = "error_response_jsc.rs"]
     pub mod error_response_jsc;
-
-    #[path = "notice_response_jsc.rs"]
-    pub mod notice_response_jsc;
 }
 
 // Re-exports of base-crate protocol/types modules.

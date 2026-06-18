@@ -682,10 +682,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         // Attached unconditionally to match Node's resOnFinish; the
         // hasSubscribers check happens in emitResponseFinishChannel.
-        http_res.on(
-          "finish",
-          emitResponseFinishChannel.bind({ req: http_req, res: http_res, socket, server }),
-        );
+        http_res.on("finish", emitResponseFinishChannel.bind({ req: http_req, res: http_res, socket, server }));
 
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = onServerRequestEvent.bind(socket);

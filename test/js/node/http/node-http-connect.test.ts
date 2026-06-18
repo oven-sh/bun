@@ -279,7 +279,6 @@ describe("HTTP server CONNECT", () => {
     await using proxyServer = http.createServer();
 
     proxyServer.on("connect", (req, socket, head) => {
-      // This shouldn't be reached for malformed requests
       socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
       socket.end();
     });
@@ -287,14 +286,41 @@ describe("HTTP server CONNECT", () => {
     await once(proxyServer.listen(0, "127.0.0.1"), "listening");
     const proxyAddress = proxyServer.address() as AddressInfo;
 
-    // Test various malformed requests
+    // Requests Node.js rejects before dispatching the 'connect' event.
     const malformedRequests = [
       "CONNECT\r\n\r\n", // Missing target
+      "CONNEC example.com:80 HTTP/1.1\r\n\r\n", // Typo in method
+      "CONNECT example.com:80\r\n\r\n", // Missing HTTP version (Node.js treats this as ancient HTTP; we reject it)
+    ];
+
+    // Node.js dispatches these to the 'connect' event: CONNECT requests are
+    // exempt from the Host requirement and the authority form is not
+    // validated beyond tokenization (verified against Node.js).
+    const acceptedRequests = [
       "CONNECT example.com HTTP/1.1\r\n\r\n", // Missing port
       "CONNECT :80 HTTP/1.1\r\n\r\n", // Missing host
-      "CONNEC example.com:80 HTTP/1.1\r\n\r\n", // Typo in method
-      "CONNECT example.com:80\r\n\r\n", // Missing HTTP version
     ];
+
+    for (const request of acceptedRequests) {
+      const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
+        client.write(request);
+      });
+
+      const { promise, resolve } = Promise.withResolvers<string>();
+      const received: string[] = [];
+      client.on("data", data => {
+        received.push(data.toString());
+      });
+      client.on("end", () => {
+        resolve(received.join(""));
+      });
+      client.on("error", () => {
+        resolve("CONNECTION_ERROR");
+      });
+
+      const response = await promise;
+      expect(response).toContain("200 Connection established");
+    }
 
     for (const request of malformedRequests) {
       const client = net.connect(proxyAddress.port, proxyAddress.address, () => {

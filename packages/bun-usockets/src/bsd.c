@@ -611,6 +611,66 @@ int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay)
     #endif
 }
 
+/* IP type-of-service / traffic-class. The option level depends on the socket
+ * family (IP_TOS for IPv4, IPV6_TCLASS for IPv6), detected via getsockname.
+ * Returns 0 on success or a negative platform errno on failure (the negative
+ * convention matches what node:net's ErrnoException expects). */
+static int bsd_socket_tos_level(LIBUS_SOCKET_DESCRIPTOR fd, int *level, int *option) {
+    struct sockaddr_storage storage;
+    socklen_t addrlen = sizeof(storage);
+    if (getsockname(fd, (struct sockaddr *) &storage, &addrlen)) {
+#ifdef _WIN32
+        return -WSAGetLastError();
+#else
+        return -errno;
+#endif
+    }
+    if (storage.ss_family == AF_INET) {
+        *level = IPPROTO_IP;
+        *option = IP_TOS;
+    } else if (storage.ss_family == AF_INET6) {
+        *level = IPPROTO_IPV6;
+        *option = IPV6_TCLASS;
+    } else {
+        return -EINVAL;
+    }
+    return 0;
+}
+
+int bsd_socket_set_tos(LIBUS_SOCKET_DESCRIPTOR fd, int tos) {
+    int level, option;
+    int err = bsd_socket_tos_level(fd, &level, &option);
+    if (err) return err;
+#ifdef _WIN32
+    if (setsockopt(fd, level, option, (const char *) &tos, sizeof(tos))) {
+        return -WSAGetLastError();
+    }
+#else
+    if (setsockopt(fd, level, option, &tos, sizeof(tos))) {
+        return -errno;
+    }
+#endif
+    return 0;
+}
+
+int bsd_socket_get_tos(LIBUS_SOCKET_DESCRIPTOR fd) {
+    int level, option;
+    int err = bsd_socket_tos_level(fd, &level, &option);
+    if (err) return err;
+    int tos = 0;
+    socklen_t len = sizeof(tos);
+#ifdef _WIN32
+    if (getsockopt(fd, level, option, (char *) &tos, (int *) &len)) {
+        return -WSAGetLastError();
+    }
+#else
+    if (getsockopt(fd, level, option, &tos, &len)) {
+        return -errno;
+    }
+#endif
+    return tos;
+}
+
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
     // Linux TCP_CORK has the same underlying corking mechanism as with MSG_MORE
 #ifdef TCP_CORK
@@ -821,6 +881,21 @@ ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
 #if !defined(_WIN32)
 #include <sys/uio.h>
 
+ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int count) {
+    /* POSIX writev fails with EINVAL above IOV_MAX (1024 on Linux/macOS); cap and
+     * let the caller's partial-write handling carry the remainder. */
+    if (count > 1024) {
+        count = 1024;
+    }
+    while (1) {
+        ssize_t written = writev(fd, (const struct iovec *)iov, count);
+        if (UNLIKELY(IS_EINTR(written))) {
+            continue;
+        }
+        return written;
+    }
+}
+
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
     struct iovec chunks[2];
 
@@ -840,6 +915,16 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
     }
 }
 #else
+ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int count) {
+    ssize_t total = 0;
+    for (int i = 0; i < count; i++) {
+        ssize_t written = bsd_send(fd, (const char *)iov[i].iov_base, (int)iov[i].iov_len);
+        if (written > 0) total += written;
+        if (written != (ssize_t)iov[i].iov_len) break;
+    }
+    return total > 0 ? total : -1;
+}
+
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
     ssize_t written = bsd_send(fd, header, header_length);
     if (written == header_length) {
@@ -1261,6 +1346,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     struct sockaddr_un server_address;
     size_t addrlen = 0;
     if (bsd_create_unix_socket_address(path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
+        /* The path could not be expressed as a sockaddr_un (the basename
+         * exceeds sun_path even with the dirfd workaround); surface the errno
+         * so the caller can report something better than a codeless failure. */
+        if (error && errno) *error = errno;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1599,10 +1688,29 @@ static int is_loopback(struct sockaddr_storage *sockaddr) {
 }
 #endif
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options) {
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, NULL);
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
+    }
+
+    /* Bind to the requested local address/port before connecting (the
+     * `localAddress`/`localPort` connect options). A failure here - typically
+     * EADDRINUSE or EADDRNOTAVAIL - fails the connect with that errno. */
+    if (local_addr) {
+        socklen_t local_len = local_addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+        if (bind(fd, (struct sockaddr *) local_addr, local_len)) {
+#ifdef _WIN32
+            int bind_err = WSAGetLastError();
+            bsd_close_socket(fd);
+            WSASetLastError(bind_err);
+#else
+            int bind_err = errno;
+            bsd_close_socket(fd);
+            errno = bind_err;
+#endif
+            return LIBUS_SOCKET_ERROR;
+        }
     }
 
 #ifdef _WIN32

@@ -74,6 +74,39 @@ test("listen() during an in-flight close() doesn't corrupt the new server", asyn
   await new Promise<void>(r => server.close(() => r()));
 });
 
+// Regression: close() now leaves the native handle populated (so
+// closeAllConnections()/unref() can still reach it), which means ref()
+// must not re-pin the event loop on an already-closed server. A stray
+// ref() after close() would otherwise keep the loop alive until GC.
+test("ref() after close() does not keep the event loop alive", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const http = require("node:http");
+        const server = http.createServer();
+        server.listen(0, "127.0.0.1", () => {
+          server.close();
+          // Pre-fix this re-activated the poll ref on a closed server and
+          // pinned the loop (no listener, no connections) until GC.
+          server.ref();
+          process.stdout.write("REF_DONE\\n");
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  // If ref() re-pinned the loop, the subprocess never exits and
+  // `proc.exited` never resolves — the runner's timeout catches that.
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("REF_DONE");
+  expect(exitCode).toBe(0);
+});
+
 // End-to-end: spawn a child that opens an HTTP server, accepts a
 // keep-alive connection, and calls the msal teardown. Must exit
 // immediately — not wait for the keep-alive idle timeout to reclaim

@@ -232,7 +232,10 @@ function emitRequestCloseNT(self) {
 }
 
 function emitListeningNextTick(self, hostname, port) {
-  if ((self.listening = !!self[serverSymbol])) {
+  // `serverSymbol` now survives past close() (see close()/emitCloseNTServer),
+  // so a close() that raced this deferred tick must not re-announce
+  // 'listening'; gate on `kServerClosed` like address()/close() do.
+  if ((self.listening = !!self[serverSymbol] && !self[kServerClosed])) {
     // TODO: remove the arguments
     // Note does not pass any arguments.
     self.emit("listening", null, hostname, port);
@@ -356,7 +359,11 @@ function setupConnectionsTracking(this: any) {
 
 Server.prototype.ref = function () {
   this._unref = false;
-  this[serverSymbol]?.ref?.();
+  // Don't re-pin the loop on a server that's already closing — after
+  // close() `serverSymbol` is still populated but `kServerClosed` is set.
+  // (unref() below is intentionally NOT gated: it's the third step of
+  // msal's `close() → closeAllConnections() → unref()` teardown.)
+  if (!this[kServerClosed]) this[serverSymbol]?.ref?.();
   return this;
 };
 
@@ -953,7 +960,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
 Server.prototype.setTimeout = function (msecs, callback) {
   const server = this[serverSymbol];
-  if (server) {
+  // After close() `serverSymbol` is still populated but `kServerClosed`
+  // is set; defer the timeout (as when not yet listening) so the next
+  // listen() replays it onto the fresh server rather than configuring
+  // the stopped one.
+  if (server && !this[kServerClosed]) {
     setServerIdleTimeout(server, Math.ceil(msecs / 1000));
     if (typeof callback === "function") this.once("timeout", callback);
   } else {

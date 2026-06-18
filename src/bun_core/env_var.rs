@@ -192,6 +192,13 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE, "BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO", {});
+    // Force the event loop to use epoll_pwait(2) instead of epoll_pwait2(2).
+    // Escape hatch for seccomp policies that block syscall 441 without
+    // returning a checkable errno (Android app sandbox, some container
+    // runtimes). epoll_kqueue.c already falls back on ENOSYS/EPERM/EOPNOTSUPP/
+    // EACCES when the syscall returns; this covers environments where it
+    // faults instead.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2, "BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX, "BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX", {});
     // Disable streaming tarball extraction in `bun install`. When disabled,
     // the whole .tgz is buffered in memory before being decompressed and

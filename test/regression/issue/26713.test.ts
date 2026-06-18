@@ -29,9 +29,10 @@ async function makeFixture() {
   });
   const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.includes("main.js"), stderr, code }).toEqual({ stdout: true, stderr: "", code: 0 });
-  // Sanity: the pre-built map points at the original source.
+  // Sanity: the pre-built map points at the original source. Bun emits
+  // platform separators here, so normalize before comparing.
   const prebuiltMap = await Bun.file(join(String(dir), "main.js.map")).json();
-  expect(prebuiltMap.sources).toEqual(["src/main.ts"]);
+  expect(prebuiltMap.sources.map((s: string) => s.replaceAll("\\", "/"))).toEqual(["src/main.ts"]);
   return dir;
 }
 

@@ -1261,8 +1261,7 @@ describe("expect()", () => {
       let innerMap = new Map(arr4);
       Bun.deepEquals(outerMap, innerMap);
     }
-  }, // debug + ASAN build this runs well past the default per-test timeout. // Allocates hundreds of thousands of Set/Map iterators on purpose; under a
-  300_000);
+  }, 300_000); // debug + ASAN build this runs well past the default per-test timeout. // Allocates hundreds of thousands of Set/Map iterators on purpose; under a
 
   test("deepEquals - Date", () => {
     let d = new Date();

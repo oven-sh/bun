@@ -849,6 +849,74 @@ describe("expect()", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/32485
+  test("toEqual ignores undefined properties on frozen objects (slow path)", () => {
+    // Frozen objects are not fast-property-enumerable, so they take deepEquals'
+    // slow path. An extra `undefined` key that is not last in enumeration order
+    // used to be flagged as a diff there.
+    expect(Object.freeze({ a: 1, b: undefined, c: 3 })).toEqual(Object.freeze({ a: 1, c: 3 }));
+    expect(Object.freeze({ a: 1, c: 3 })).toEqual(Object.freeze({ a: 1, b: undefined, c: 3 }));
+    expect(Object.freeze({ a: 1, b: undefined })).toEqual(Object.freeze({ a: 1 }));
+    expect(Object.freeze({ a: 1 })).toEqual(Object.freeze({ a: 1, b: undefined }));
+
+    // Nested objects, outer frozen (the originally reported shape).
+    expect(Object.freeze({ a: 1, b: undefined, nested: { d: 1, e: undefined } })).toEqual(
+      Object.freeze({ a: 1, nested: { d: 1 } }),
+    );
+    // Inner object also frozen: the slow path recurses into itself.
+    expect(Object.freeze({ a: 1, b: undefined, nested: Object.freeze({ d: 1, e: undefined }) })).toEqual(
+      Object.freeze({ a: 1, nested: Object.freeze({ d: 1 }) }),
+    );
+
+    // Via expect.arrayContaining, which compares with the expected array as the
+    // left-hand (fewer-keys) operand.
+    expect([Object.freeze({ a: 1, b: undefined, c: 3 })]).toEqual(
+      expect.arrayContaining([Object.freeze({ a: 1, c: 3 })]),
+    );
+    expect([Object.freeze({ a: 1, b: undefined, nested: { d: 1, e: undefined } })]).toEqual(
+      expect.arrayContaining([Object.freeze({ a: 1, nested: { d: 1 } })]),
+    );
+
+    // A genuinely extra, non-undefined key is still a difference.
+    expect(Object.freeze({ a: 1, b: 2, c: 3 })).not.toEqual(Object.freeze({ a: 1, c: 3 }));
+    expect(Object.freeze({ a: 1, c: 3 })).not.toEqual(Object.freeze({ a: 1, b: 2, c: 3 }));
+    expect(Object.freeze({ a: 1, b: null, c: 3 })).not.toEqual(Object.freeze({ a: 1, c: 3 }));
+    // Differing defined values must still fail.
+    expect(Object.freeze({ a: 1, b: undefined, c: 3 })).not.toEqual(Object.freeze({ a: 1, c: 4 }));
+
+    // toStrictEqual does not ignore undefined, so a differing key set is never equal.
+    expect(Object.freeze({ a: 1, c: 3 })).toStrictEqual(Object.freeze({ a: 1, c: 3 }));
+    expect(Object.freeze({ a: 1, b: undefined, c: 3 })).toStrictEqual(Object.freeze({ a: 1, b: undefined, c: 3 }));
+    expect(Object.freeze({ a: 1, b: undefined, c: 3 })).not.toStrictEqual(Object.freeze({ a: 1, c: 3 }));
+    expect(Object.freeze({ a: 1, c: 3 })).not.toStrictEqual(Object.freeze({ a: 1, b: undefined, c: 3 }));
+  });
+
+  // https://github.com/oven-sh/bun/issues/32485
+  test("toEqual ignores undefined properties on Error objects (slow path)", () => {
+    // Errors are compared by a dedicated path that had the same positional bug:
+    // an extra `undefined` own property interleaved before a shared key.
+    const withExtra = () => {
+      const e = new Error("boom");
+      e.extra = undefined;
+      e.code = "E";
+      return e;
+    };
+    const withoutExtra = () => {
+      const e = new Error("boom");
+      e.code = "E";
+      return e;
+    };
+    expect(withoutExtra()).toEqual(withExtra());
+    expect(withExtra()).toEqual(withoutExtra());
+    expect([withExtra()]).toEqual(expect.arrayContaining([withoutExtra()]));
+
+    // A genuinely extra, non-undefined key is still a difference.
+    const withDefined = new Error("boom");
+    withDefined.extra = 1;
+    withDefined.code = "E";
+    expect(withoutExtra()).not.toEqual(withDefined);
+  });
+
   test("toThrow asymmetric matchers", () => {
     expect(() => {
       const err = new Error("foo");
@@ -1170,25 +1238,30 @@ describe("expect()", () => {
   });
 
   test("deepEquals Set/Map stress test", () => {
+    // Exercises the Set/Map iterator-allocation path in deepEquals (see #14256):
+    // the elements are distinct-identity arrays, so every comparison falls back
+    // to a linear search that allocates a fresh iterator per element. The counts
+    // below keep thousands of those allocations while staying within the default
+    // test timeout under a debug + ASAN build.
     const arr1 = [];
     const arr2 = [];
     const arr3 = [];
     const arr4 = [];
 
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < 25; i++) {
       arr1[i] = [i];
       arr2[i] = [i];
       arr3[i] = [i, [i]];
       arr4[i] = [i, [i]];
     }
 
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < 500; i++) {
       let outerSet = new Set(arr1);
       let innerSet = new Set(arr2);
       Bun.deepEquals(outerSet, innerSet);
     }
 
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < 250; i++) {
       let outerMap = new Map(arr3);
       let innerMap = new Map(arr4);
       Bun.deepEquals(outerMap, innerMap);

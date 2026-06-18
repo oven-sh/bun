@@ -121,3 +121,8 @@ leak:WebCore::jsSQLStatementOpenStatementFunction
 # is called before firing (WaiterListManager::clearTimer on notify/unregister),
 # the DispatchTimer and its Bun-side WTFTimer Box leak. JSC-owned ref-cycle.
 leak:WTF::RunLoop::dispatchAfter
+# test/js/node/inspector/inspector.test.ts — BunInspectorConnection objects are
+# deliberately never freed (cross-thread message queues may still reference
+# them); a node:inspector client that connects and disconnects before exit
+# leaves its connection behind.
+leak:Bun::BunInspectorConnection::create

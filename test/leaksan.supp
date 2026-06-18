@@ -120,3 +120,7 @@ leak:WebCore::jsSQLStatementOpenStatementFunction
 # is called before firing (WaiterListManager::clearTimer on notify/unregister),
 # the DispatchTimer and its Bun-side WTFTimer Box leak. JSC-owned ref-cycle.
 leak:WTF::RunLoop::dispatchAfter
+# A worker→parent postMessage that lands as the parent process exits leaves one
+# ConcurrentTask Box queued in the parent's concurrent queue (process-exit
+# race; the task is run-then-freed in the steady state).
+leak:WebCore::MessagePortPipe::scheduleDrain

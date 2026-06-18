@@ -255,26 +255,28 @@ impl ClientEntryPoint {
 
 #[derive(Default)]
 pub struct ServerEntryPoint {
-    /// The generated wrapper source for `bun:main`. Always a valid slice
-    /// (either empty or owned by `bun.default_allocator`) so readers never
-    /// see `undefined` memory regardless of the `generated` flag's state.
-    pub contents: Box<[u8]>,
+    /// Set once `reload_entry_point` has run, i.e. the VM has a `main` path
+    /// that `bun:main` should wrap. The wrapper source itself is not stored;
+    /// it is regenerated on demand by [`generate_source`] each time `bun:main`
+    /// is fetched, so there is no cached buffer that can go stale between the
+    /// call to `generate()` and a later `import("bun:main")`.
     pub generated: bool,
 }
-
-// `deinit` only freed `contents` and reset flags; with `Box<[u8]>` this is the
-// auto-generated `Drop`, so no explicit impl is needed.
 
 impl ServerEntryPoint {
     pub fn generate(
         entry: &mut ServerEntryPoint,
-        is_hot_reload_enabled: bool,
-        path_to_use: &[u8],
+        _is_hot_reload_enabled: bool,
+        _path_to_use: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // Use the global arena so this buffer's lifetime is decoupled
-        // from whichever arena the caller's VM happens to be using; the
-        // slice is read later from `getHardcodedModule` which outlives any
-        // per-transpile arena.
+        entry.generated = true;
+        Ok(())
+    }
+
+    /// Build the synthetic `bun:main` wrapper that imports `path_to_use` and
+    /// auto-starts `Bun.serve` on its default export. Pure function of its
+    /// arguments; called each time `bun:main` is fetched.
+    pub fn generate_source(is_hot_reload_enabled: bool, path_to_use: &[u8]) -> Vec<u8> {
         let code: Vec<u8> = 'brk: {
             if is_hot_reload_enabled {
                 let mut v: Vec<u8> = Vec::new();
@@ -313,7 +315,7 @@ impl ServerEntryPoint {
                      }}\n",
                     strings::format_escapes(path_to_use, strings::QuoteEscapeFormatFlags { quote_char: b'\'', ..Default::default() }),
                 )
-                .map_err(|_| bun_core::err!("FormatError"))?;
+                .expect("write! into Vec<u8> is infallible");
                 break 'brk v;
             }
             let mut v: Vec<u8> = Vec::new();
@@ -338,16 +340,10 @@ impl ServerEntryPoint {
                  }}\n",
                 strings::format_escapes(path_to_use, strings::QuoteEscapeFormatFlags { quote_char: b'"', ..Default::default() }),
             )
-            .map_err(|_| bun_core::err!("FormatError"))?;
+            .expect("write! into Vec<u8> is infallible");
             v
         };
-
-        // Free the previous buffer on regenerate (hot reload) instead of
-        // leaking it. `contents` is either "" or a previously generated buffer.
-        // (Handled implicitly: assigning to `Box<[u8]>` drops the old one.)
-        entry.contents = code.into_boxed_slice();
-        entry.generated = true;
-        Ok(())
+        code
     }
 }
 

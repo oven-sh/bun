@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -13,7 +13,11 @@ import { join } from "node:path";
 // free-then-reallocate on each reload.
 
 function stripAsanWarning(stderr: string): string[] {
-  return stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
+  return stderr
+    .split("\n")
+    .filter(
+      l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes") && !l.startsWith("debug warn:"),
+    );
 }
 
 test.concurrent("dynamic import('bun:main') returns the wrapper module", async () => {
@@ -82,6 +86,79 @@ test.concurrent("import('bun:main') from a preload (before the module map is pop
     signalCode: null,
   });
 });
+
+// Sentry BUN-36H7 / https://github.com/oven-sh/bun/issues/27192:
+// import("bun:main") inside a compiled standalone executable faulted in
+// getHardcodedModule reading the stored `entry_point.contents` slice
+// (SEGV at a page-aligned high address, i.e. a freed mimalloc segment).
+// The wrapper source is now regenerated on demand from `vm.main` at fetch
+// time, so there is no stored buffer that can go stale between
+// `reload_entry_point` and the fetch. This exercises the exact crash
+// scenario: the bundled entry both (a) is reached via the initial
+// bun:main fetch at boot and (b) explicitly re-imports bun:main after the
+// top-level evaluation has completed.
+test.concurrent(
+  "import('bun:main') in a compiled standalone executable",
+  async () => {
+    using dir = tempDir("bun-main-compile", {
+      "package.json": "{}",
+      "entry.mjs": `
+        // bun:main statically imports this file, so awaiting it at the top
+        // level would be a TLA self-cycle. Defer to a task so bun:main
+        // finishes evaluating first, then re-import it from user code.
+        setImmediate(async () => {
+          try {
+            Bun.gc(true);
+            const m = await import("bun:main");
+            if (m[Symbol.toStringTag] !== "Module") throw new Error("expected module namespace");
+            const keys = Object.keys(m);
+            if (keys.length !== 0) throw new Error("expected empty wrapper namespace, got keys: " + keys.join(","));
+            console.log("OK");
+          } catch (e) {
+            console.error(String(e));
+            process.exit(1);
+          }
+        });
+      `,
+    });
+    const outfile = join(String(dir), isWindows ? "out.exe" : "out");
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "./entry.mjs", "--outfile", outfile],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringContaining("error:"), exitCode: 0 });
+      void stdout;
+    }
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect({ stdout, stderr: stripAsanWarning(stderr), exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "OK\n",
+      stderr: [],
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  isDebug ? 120_000 : 60_000,
+);
 
 test.concurrent(
   "ServerEntryPoint regenerates cleanly across --hot reloads",

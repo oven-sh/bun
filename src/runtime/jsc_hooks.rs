@@ -3426,7 +3426,7 @@ fn js_synthetic_module(name: &'static [u8], specifier: &bun_core::String) -> Own
 /// before `ServerEntryPoint::generate` has run, or `bun:internal-for-testing`
 /// without the opt-in flag).
 fn get_hardcoded_module(
-    _jsc_vm: *mut VirtualMachine,
+    jsc_vm: *mut VirtualMachine,
     specifier: &bun_core::String,
     hardcoded: HardcodedModule,
 ) -> Option<OwnedResolvedSource> {
@@ -3437,21 +3437,29 @@ fn get_hardcoded_module(
 
     match hardcoded {
         HardcodedModule::BunMain => {
-            // Synthetic `bun:main` wrapper — pulls source from this thread's
-            // `RuntimeState.entry_point`.
+            // Synthetic `bun:main` wrapper. Regenerate the source on demand
+            // from `vm.main` rather than reading a stored buffer, so there is
+            // no cached slice that can dangle between `reload_entry_point`
+            // and a later `import("bun:main")` (Sentry BUN-36H7).
             let state = runtime_state();
             if state.is_null() {
                 return None;
             }
             // SAFETY: `state` is the live per-thread `RuntimeState` boxed in
             // `init_runtime_state`; no other `&mut` to `entry_point` is held.
-            let ep = unsafe { &(*state).entry_point };
-            if !ep.generated {
+            if !unsafe { &(*state).entry_point }.generated {
                 return None;
             }
+            // SAFETY: `jsc_vm` is the live per-thread VM (fn contract).
+            let vm = unsafe { &*jsc_vm };
+            let main = vm.main();
+            if main.is_empty() {
+                return None;
+            }
+            let code = ServerEntryPoint::generate_source(vm.is_watcher_enabled(), main);
             use bun_jsc::resolved_source::Tag;
             Some(OwnedResolvedSource::from(ResolvedSource {
-                source_code: bun_core::String::clone_utf8(&ep.contents),
+                source_code: bun_core::String::clone_utf8(&code),
                 // +1 each: ~SourceProvider() derefs `specifier` and
                 // `source_url` once all uses are done (see ZigSourceProvider.cpp).
                 specifier: specifier.dupe_ref(),

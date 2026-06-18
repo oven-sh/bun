@@ -1702,9 +1702,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ));
     }
 
-    pub fn on_listen(&mut self, socket: Option<*mut uws_sys::app::ListenSocket<SSL>>) {
+    pub fn on_listen(
+        &mut self,
+        socket: Option<*mut uws_sys::app::ListenSocket<SSL>>,
+        error: c_int,
+    ) {
         let Some(socket) = socket else {
-            return self.on_listen_failed();
+            return self.on_listen_failed(error);
         };
         self.listener = Some(socket);
         // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
@@ -1724,65 +1728,93 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// error-stack drain is still TODO; the EADDRINUSE/
     /// EACCES paths below cover the node:http `server.listen` error contract.
     #[cold]
-    pub fn on_listen_failed(&mut self) {
+    pub fn on_listen_failed(&mut self, error: c_int) {
+        use bun_jsc::ZigStringJsc as _;
+
         self.listener = None;
         let global = self.global_this();
 
+        // `error` is the errno from the failed bind/listen syscall, plumbed up
+        // through the uSockets listen callback (reading errno after the fact is
+        // unreliable: intermediate close/setsockopt calls clobber it). 0 yields
+        // `None`, which keeps the historical "is port in use?" fallback message.
+        //
+        // On Windows the plumbed value is a Win32/WSA code (WSAGetLastError /
+        // GetLastError), so it must go through the Win32→errno table via
+        // `init_c_int`. The cross-platform `init(i64)` takes a discriminant
+        // fast-path that would mis-read small Win32 codes whose numeric value
+        // collides with a POSIX errno (e.g. ERROR_PATH_NOT_FOUND 3 → ESRCH
+        // instead of ENOENT). On POSIX `error` already is a POSIX errno, so the
+        // direct discriminant path is correct.
+        let system_errno = match error {
+            0 => None,
+            #[cfg(windows)]
+            _ => bun_sys::SystemErrno::init_c_int(error),
+            #[cfg(not(windows))]
+            _ => bun_sys::SystemErrno::init(error as i64),
+        };
+        // Node/libuv expose the negated POSIX errno on the JS error. This is the
+        // same value `Error::to_system_error` writes (see fill_system_error_common),
+        // derived directly to avoid building and leaking a temporary SystemError
+        // whose formatted `message` string has no Drop.
+        let js_errno = system_errno
+            .map(|se| c_int::from(se as u16).wrapping_neg())
+            .unwrap_or(0);
+
         let error_instance = match &self.config.address {
-            server_config::Address::Tcp {
-                port,
-                hostname: _hostname,
-            } => {
-                // Rust's `target_os = "linux"` excludes
-                // Android, so match both explicitly.
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                {
-                    let errno = bun_sys::get_errno(-1i32);
-                    if errno == bun_sys::E::EACCES {
-                        let host = _hostname
-                            .as_ref()
-                            .map(|h| h.as_bytes())
-                            .unwrap_or(b"0.0.0.0");
-                        let err = jsc::SystemError {
-                            message: bun_core::String::create_format(format_args!(
-                                "permission denied {}:{}",
-                                bstr::BStr::new(host),
-                                port
-                            )),
-                            code: bun_core::String::static_("EACCES"),
-                            syscall: bun_core::String::static_("listen"),
-                            ..Default::default()
-                        };
-                        let _ = global.throw_value(err.to_error_instance(global));
-                        return;
+            server_config::Address::Tcp { port, hostname } => {
+                let host = hostname
+                    .as_ref()
+                    .map(|h| h.as_bytes())
+                    .unwrap_or(b"0.0.0.0");
+                let err = match system_errno {
+                    Some(bun_sys::SystemErrno::EACCES) => jsc::SystemError {
+                        errno: js_errno,
+                        message: bun_core::String::create_format(format_args!(
+                            "permission denied {}:{}",
+                            bstr::BStr::new(host),
+                            port
+                        )),
+                        code: bun_core::String::static_("EACCES"),
+                        syscall: bun_core::String::static_("listen"),
+                        ..Default::default()
                     }
-                    // e.g. ENOSPC from epoll_ctl(EPOLL_CTL_ADD). Linux-only because
-                    // on other platforms errno is not reliably preserved through
-                    // the C++/callback chain to here; see PR #30364.
-                    if errno != bun_sys::E::SUCCESS && errno != bun_sys::E::EADDRINUSE {
-                        let err = jsc::SystemError::from(
-                            bun_sys::Error::from_code(errno, bun_sys::Tag::listen)
-                                .to_system_error(),
-                        );
-                        let _ = global.throw_value(err.to_error_instance(global));
-                        return;
+                    .to_error_instance(global),
+                    // EADDRINUSE (the common case) or an errno uSockets couldn't
+                    // resolve keeps the historical message.
+                    None
+                    | Some(bun_sys::SystemErrno::SUCCESS)
+                    | Some(bun_sys::SystemErrno::EADDRINUSE) => jsc::SystemError {
+                        errno: js_errno,
+                        message: bun_core::String::create_format(format_args!(
+                            "Failed to start server. Is port {} in use?",
+                            port
+                        )),
+                        code: bun_core::String::static_("EADDRINUSE"),
+                        syscall: bun_core::String::static_("listen"),
+                        ..Default::default()
                     }
-                }
-                jsc::SystemError {
-                    message: bun_core::String::create_format(format_args!(
-                        "Failed to start server. Is port {} in use?",
-                        port
-                    )),
-                    code: bun_core::String::static_("EADDRINUSE"),
-                    syscall: bun_core::String::static_("listen"),
-                    ..Default::default()
-                }
-                .to_error_instance(global)
+                    .to_error_instance(global),
+                    // EADDRNOTAVAIL, EPERM, … surface with their real code/message.
+                    Some(se) => jsc::SystemError::from(
+                        bun_sys::Error::new(se, bun_sys::Tag::listen).to_system_error(),
+                    )
+                    .to_error_instance(global),
+                };
+                // Node attaches address + port to TCP listen errors regardless of
+                // errno (matching `Bun.listen` in Listener.rs).
+                err.put(
+                    global,
+                    b"address",
+                    bun_core::ZigString::init_utf8(host).to_js(global),
+                );
+                err.put(global, b"port", JSValue::js_number(f64::from(*port)));
+                err
             }
             server_config::Address::Unix(unix) => {
                 let unix = unix.as_bytes();
-                match bun_sys::get_errno(-1i32) {
-                    bun_sys::E::SUCCESS => jsc::SystemError {
+                match system_errno {
+                    None | Some(bun_sys::SystemErrno::SUCCESS) => jsc::SystemError {
                         message: bun_core::String::create_format(format_args!(
                             "Failed to listen on unix socket {}",
                             bun_core::fmt::QuotedFormatter { text: unix }
@@ -1792,8 +1824,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         ..Default::default()
                     }
                     .to_error_instance(global),
-                    e => jsc::SystemError::from(
-                        bun_sys::Error::from_code(e, bun_sys::Tag::listen)
+                    Some(se) => jsc::SystemError::from(
+                        bun_sys::Error::new(se, bun_sys::Tag::listen)
                             .with_path(unix)
                             .to_system_error(),
                     )
@@ -2900,6 +2932,7 @@ mod trampoline {
 
     pub(super) extern "C" fn on_listen<const SSL: bool, const DEBUG: bool>(
         socket: *mut UwsListenSocket,
+        error: c_int,
         user_data: *mut c_void,
     ) {
         // SAFETY: user_data is the `*mut NewServer<..>` passed to listen_with_config.
@@ -2909,16 +2942,17 @@ mod trampoline {
         } else {
             Some(socket.cast::<uws_sys::app::ListenSocket<SSL>>())
         };
-        server.on_listen(socket);
+        server.on_listen(socket, error);
     }
 
     pub(super) extern "C" fn on_listen_unix<const SSL: bool, const DEBUG: bool>(
         socket: *mut UwsListenSocket,
         _domain: *const c_char,
         _flags: i32,
+        error: c_int,
         user_data: *mut c_void,
     ) {
-        on_listen::<SSL, DEBUG>(socket, user_data);
+        on_listen::<SSL, DEBUG>(socket, error, user_data);
     }
 
     pub(super) extern "C" fn on_404<const SSL: bool, const DEBUG: bool>(

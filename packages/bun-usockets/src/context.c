@@ -375,8 +375,8 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
     us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
     if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
         /* EPOLL_CTL_ADD failed (e.g. ENOSPC at fs.epoll.max_user_watches).
-         * Report via both the out-param and thread-local errno: Bun.listen
-         * reads *error, Bun.serve reads errno. */
+         * Report via the out-param, which both Bun.listen and Bun.serve read;
+         * restore errno across the close/free cleanup so it isn't masked. */
         int saved_errno = errno;
         bsd_close_socket(listen_socket_fd);
         us_poll_free(p, group->loop);

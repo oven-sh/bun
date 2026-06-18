@@ -123,11 +123,13 @@ typedef struct {
     uws_websocket_close_handler close;
 } uws_socket_behavior_t;
 
+/* `error` is the errno from the bind/listen syscall when `listen_socket` is NULL,
+ * or 0 on success. Callers use it to distinguish EADDRINUSE, EACCES, etc. */
 typedef void (*uws_listen_handler)(struct us_listen_socket_t* listen_socket,
-    void* user_data);
+    int error, void* user_data);
 typedef void (*uws_listen_domain_handler)(
     struct us_listen_socket_t* listen_socket, const char* domain, int options,
-    void* user_data);
+    int error, void* user_data);
 
 typedef void (*uws_method_handler)(uws_res_t* response, uws_req_t* request,
     void* user_data);

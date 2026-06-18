@@ -394,6 +394,9 @@ static JSC::JSUint8Array* transcodeUcs2FromUtf8(JSC::JSGlobalObject* globalObjec
 static JSC::JSUint8Array* transcodeUtf8FromUcs2(JSC::JSGlobalObject* globalObject, std::span<const uint8_t> source, UErrorCode* status)
 {
     const size_t lengthInChars = source.size() / sizeof(char16_t);
+    if (!lengthInChars)
+        return WebCore::createEmptyBuffer(globalObject);
+
     Vector<char16_t> sourceChars(lengthInChars);
     memcpy(sourceChars.mutableSpan().data(), source.data(), lengthInChars * sizeof(char16_t));
 
@@ -422,6 +425,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_transcode,
     auto* source = dynamicDowncast<JSC::JSUint8Array>(sourceValue);
     if (!source) [[unlikely]]
         return Bun::ERR::INVALID_ARG_TYPE_INSTANCE(scope, lexicalGlobalObject, "source"_s, "Buffer or Uint8Array"_s, sourceValue);
+
+    if (source->isDetached()) [[unlikely]]
+        return Bun::ERR::INVALID_STATE(scope, lexicalGlobalObject, "Cannot transcode on a detached buffer"_s);
 
     const size_t byteLength = source->byteLength();
     if (!byteLength)

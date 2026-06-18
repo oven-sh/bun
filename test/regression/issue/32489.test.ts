@@ -56,7 +56,10 @@ int main(int argc, char **argv) {
    * core file so the CI runner does not flag it as a crash. RLIMIT_CORE
    * survives execvp. */
   struct rlimit no_core = {0, 0};
-  setrlimit(RLIMIT_CORE, &no_core);
+  if (setrlimit(RLIMIT_CORE, &no_core) != 0) {
+    perror("setrlimit(RLIMIT_CORE)");
+    return 77;
+  }
 
   struct sock_filter filter[] = {
     /* arch check */

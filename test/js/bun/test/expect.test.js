@@ -1237,37 +1237,33 @@ describe("expect()", () => {
     expect(w).toEqual(w);
   });
 
-  test(
-    "deepEquals Set/Map stress test",
-    () => {
-      const arr1 = [];
-      const arr2 = [];
-      const arr3 = [];
-      const arr4 = [];
+  test("deepEquals Set/Map stress test", () => {
+    const arr1 = [];
+    const arr2 = [];
+    const arr3 = [];
+    const arr4 = [];
 
-      for (let i = 0; i < 150; i++) {
-        arr1[i] = [i];
-        arr2[i] = [i];
-        arr3[i] = [i, [i]];
-        arr4[i] = [i, [i]];
-      }
+    for (let i = 0; i < 150; i++) {
+      arr1[i] = [i];
+      arr2[i] = [i];
+      arr3[i] = [i, [i]];
+      arr4[i] = [i, [i]];
+    }
 
-      for (let i = 0; i < 2000; i++) {
-        let outerSet = new Set(arr1);
-        let innerSet = new Set(arr2);
-        Bun.deepEquals(outerSet, innerSet);
-      }
+    for (let i = 0; i < 2000; i++) {
+      let outerSet = new Set(arr1);
+      let innerSet = new Set(arr2);
+      Bun.deepEquals(outerSet, innerSet);
+    }
 
-      for (let i = 0; i < 1000; i++) {
-        let outerMap = new Map(arr3);
-        let innerMap = new Map(arr4);
-        Bun.deepEquals(outerMap, innerMap);
-      }
-    },
-    // Allocates hundreds of thousands of Set/Map iterators on purpose; under a
-    // debug + ASAN build this runs well past the default per-test timeout.
-    300_000,
-  );
+    for (let i = 0; i < 1000; i++) {
+      let outerMap = new Map(arr3);
+      let innerMap = new Map(arr4);
+      Bun.deepEquals(outerMap, innerMap);
+    }
+  }, // Allocates hundreds of thousands of Set/Map iterators on purpose; under a
+  // debug + ASAN build this runs well past the default per-test timeout.
+  300_000);
 
   test("deepEquals - Date", () => {
     let d = new Date();

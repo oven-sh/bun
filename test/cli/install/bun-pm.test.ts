@@ -260,10 +260,7 @@ it("should list aliased dependencies", async () => {
 it("should list only trusted dependencies with --trusted", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
-  await writeFile(
-    join(package_dir, "bunfig.toml"),
-    `[install]\ncache = false\nregistry = "${root_url}/"\n`,
-  );
+  await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${root_url}/"\n`);
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -339,10 +336,7 @@ it("should list only trusted dependencies with --trusted", async () => {
 it("should list only trusted dependencies with --all --trusted", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
-  await writeFile(
-    join(package_dir, "bunfig.toml"),
-    `[install]\ncache = false\nregistry = "${root_url}/"\n`,
-  );
+  await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${root_url}/"\n`);
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -400,10 +394,7 @@ it("should list only trusted dependencies with --all --trusted", async () => {
 it("should list nothing with --trusted when no dependencies are trusted", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
-  await writeFile(
-    join(package_dir, "bunfig.toml"),
-    `[install]\ncache = false\nregistry = "${root_url}/"\n`,
-  );
+  await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${root_url}/"\n`);
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({

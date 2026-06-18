@@ -62,7 +62,7 @@ test("first use of process.nextTick during stack exhaustion does not break Worke
   let stderr = "";
   let exitCode: number | null = null;
   let signalCode: NodeJS.Signals | number | null = null;
-  for (let unwound = 20; unwound <= 400; unwound += 20) {
+  for (let unwound = 20; unwound <= 400; unwound += 10) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.js", String(unwound)],
       env: bunEnv,
@@ -72,10 +72,10 @@ test("first use of process.nextTick during stack exhaustion does not break Worke
     });
     [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     signalCode = proc.signalCode;
-    if (exitCode === 0 && stdout.includes("WORKER_OK")) break;
-    // Exit code 7 (or non-zero with the RangeError on stderr) means the child died inside
-    // reportUncaughtExceptionAtEventLoop before reaching the healthy-stack Worker; give it
-    // more headroom and try again.
+    // Exit code 7 (or any non-zero exit with the RangeError on stderr) means the child died
+    // inside reportUncaughtExceptionAtEventLoop before reaching the healthy-stack Worker; give
+    // it more headroom and try again. Exit 0 means the child ran to completion (regardless of
+    // whether the second Worker posted), so stop and assert on this result.
     if (exitCode === 0) break;
   }
 
@@ -83,6 +83,10 @@ test("first use of process.nextTick during stack exhaustion does not break Worke
     expect(stderr).toBe("");
   }
   expect(stdout).toContain("WORKER_OK");
+  // After queueNextTick's retry succeeds it putDirects the recovered function over the stale
+  // undefined slot; if the retry was never needed (the initializer succeeded on first try), the
+  // property was already a function. Either way it must not remain undefined after recovery.
+  expect(stdout).toContain("after=function");
   expect(signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });

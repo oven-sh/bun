@@ -1,14 +1,4 @@
 // https://github.com/oven-sh/bun/issues/32492
-//
-// Running several `bun build` processes at once (as `concurrently` / `turbo` do)
-// made some of them take ~10,000ms instead of ~10ms. Each CLI `bun build` owns
-// its bundler worker pool and shuts it down when the build finishes. The pool's
-// shutdown woke idle workers only when the wake-event's prior state happened to
-// be WAITING, but a worker can be genuinely parked while that state is
-// transiently cleared by a concurrent consumer. When shutdown raced that window
-// the parked worker was never woken and slept until its 10s idle-futex timeout,
-// stalling the whole build by ~10s. The stall is non-deterministic and only
-// shows up under CPU contention, so this fires many builds concurrently.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
@@ -35,9 +25,8 @@ test("concurrent bun build does not stall on worker-pool shutdown", async () => 
 
   const CONCURRENCY = 24;
   const ROUNDS = 16;
-  // The stall, when it happens, is the fixed ~10s idle-futex timeout. A normal
-  // bundle here is a few hundred ms even under ASAN + heavy contention, so any
-  // build over this threshold is the regression.
+  // A healthy bundle here is a few hundred ms even under ASAN + contention; the
+  // regression stalls for a fixed ~10s, so this threshold cleanly separates them.
   const STALL_MS = 5000;
 
   const buildOnce = async (round: number, i: number) => {

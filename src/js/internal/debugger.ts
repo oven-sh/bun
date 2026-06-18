@@ -492,9 +492,12 @@ class Debugger {
 
     if (this.#nodeInspector) {
       // node:inspector clients speak CDP; the adapter sits between the
-      // WebSocket and the JSC-protocol backend connection.
+      // WebSocket and the JSC-protocol backend connection. Unlike Bun's own
+      // --inspect connections, an attached client must not keep the process
+      // alive — Node exits with a debugger attached — so never ref the event
+      // loop for these connections (the `true` argument means "do not ref").
       let adapter: any;
-      const backend = this.#createBackend(refEventLoop, (...messages: string[]) => {
+      const backend = this.#createBackend(true, (...messages: string[]) => {
         for (const message of messages) {
           adapter.handleBackendMessage(message);
         }

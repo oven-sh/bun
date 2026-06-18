@@ -156,7 +156,8 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder\n\
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
   <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile\n\
-  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
+  <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
+  <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username\n\
   <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
@@ -531,6 +532,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 more_packages[0] = true;
             }
 
+            let trusted_only = strings::left_has_any_in_right(args, &[b"--trusted"]);
+
             if strings::left_has_any_in_right(args, &[b"-A", b"-a", b"--all"]) {
                 print_node_modules_folder_structure(
                     &first_directory,
@@ -539,6 +542,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     &mut directories,
                     lockfile,
                     &mut more_packages,
+                    trusted_only,
                 )?;
             } else {
                 let mut cwd_buf = PathBuffer::uninit();
@@ -554,6 +558,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let dependencies = lockfile.buffers.dependencies.as_slice();
                 let slice = lockfile.packages.slice();
                 let resolutions = slice.items_resolution();
+                let pkg_names = slice.items_name();
                 let root_deps = slice.items_dependencies()[0];
 
                 Output::println(format_args!(
@@ -574,6 +579,22 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 // `sort_unstable_by` is pdqsort; names are
                 // unique so stability is irrelevant.
                 sorted_dependencies.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+
+                if trusted_only {
+                    sorted_dependencies.retain(|&dep_id| {
+                        let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
+                        if package_id as usize >= lockfile.packages.len() {
+                            return false;
+                        }
+                        let alias = dependencies[dep_id as usize].name.slice(string_bytes);
+                        let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
+                        lockfile.has_trusted_dependency(
+                            alias,
+                            pkg_name,
+                            &resolutions[package_id as usize],
+                        )
+                    });
+                }
 
                 for (index, &dependency_id) in sorted_dependencies.iter().enumerate() {
                     let package_id =
@@ -700,8 +721,10 @@ fn print_node_modules_folder_structure(
     directories: &mut Vec<NodeModulesFolder>,
     lockfile: &Lockfile,
     more_packages: &mut [bool],
+    trusted_only: bool,
 ) -> Result<(), bun_core::Error> {
     let resolutions = lockfile.packages.items_resolution();
+    let pkg_names = lockfile.packages.items_name();
     let string_bytes = lockfile.buffers.string_bytes.as_slice();
 
     {
@@ -776,6 +799,21 @@ fn print_node_modules_folder_structure(
     // stability is irrelevant.
     sorted_dependencies.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
 
+    if trusted_only {
+        sorted_dependencies.retain(|&dep_id| {
+            let package_id = lockfile.buffers.resolutions[dep_id as usize];
+            if package_id as usize >= lockfile.packages.len() {
+                return false;
+            }
+            let alias = dependencies[dep_id as usize].name.slice(string_bytes);
+            let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
+            lockfile.has_trusted_dependency(alias, pkg_name, &resolutions[package_id as usize])
+        });
+        if depth == 0 {
+            more_packages[0] = sorted_dependencies.len() > 1;
+        }
+    }
+
     let sorted_len = sorted_dependencies.len();
     for (index, &dependency_id) in sorted_dependencies.iter().enumerate() {
         let package_name = dependencies[dependency_id as usize]
@@ -833,6 +871,7 @@ fn print_node_modules_folder_structure(
                     directories,
                     lockfile,
                     more_packages,
+                    trusted_only,
                 )?;
             }
             dir_index += 1;

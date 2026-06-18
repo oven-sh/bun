@@ -1715,6 +1715,102 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
 
+    test("bun pm ls --trusted uses default trusted list when trustedDependencies is not set", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.2.3",
+          dependencies: {
+            "electron": "1.0.0",
+            "no-deps": "1.0.0",
+          },
+        }),
+      );
+
+      {
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const err = await stderr.text();
+        expect(err).not.toContain("error:");
+        expect(err).toContain("Saved lockfile");
+        expect(await exited).toBe(0);
+      }
+
+      // Without `trustedDependencies` in package.json, `--trusted` falls back to
+      // the default trusted list. `electron` is on it, `no-deps` is not.
+      {
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "pm", "ls", "--trusted"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const out = await stdout.text();
+        expect(await stderr.text()).toBe("");
+        expect(out).toBe(`${packageDir} node_modules (2)
+└── electron@1.0.0
+`);
+        expect(await exited).toBe(0);
+      }
+
+      // With `trustedDependencies` set, the default list is ignored.
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.2.3",
+          dependencies: {
+            "electron": "1.0.0",
+            "no-deps": "1.0.0",
+          },
+          trustedDependencies: ["no-deps"],
+        }),
+      );
+
+      {
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const err = await stderr.text();
+        expect(err).not.toContain("error:");
+        expect(await exited).toBe(0);
+      }
+
+      {
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "pm", "ls", "--trusted"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const out = await stdout.text();
+        expect(await stderr.text()).toBe("");
+        expect(out).toBe(`${packageDir} node_modules (2)
+└── no-deps@1.0.0
+`);
+        expect(await exited).toBe(0);
+      }
+    });
+
     test("default trusted dependencies should not be used of trustedDependencies is populated", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;

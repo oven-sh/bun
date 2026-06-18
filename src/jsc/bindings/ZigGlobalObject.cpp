@@ -2756,6 +2756,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     auto target = callFrame->argument(0).toObject(globalObject);
     auto name = callFrame->argument(1);
     JSObject* base = callFrame->argument(2).getObject();
+    JSValue prototypeValue = callFrame->argument(3);
     JSObject* prototypeBase = nullptr;
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
@@ -2774,14 +2775,48 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
         }
     }
 
-    JSObject* prototype = prototypeBase ? JSC::constructEmptyObject(globalObject, prototypeBase) : JSC::constructEmptyObject(globalObject);
+    // Builtin function declarations have no own "prototype" property, so one is
+    // created below. A `class` declaration already owns its prototype (holding the
+    // class body), and node:tty installs a lazy "prototype" accessor before calling
+    // $toClass; both of those are kept rather than overwritten.
+    JSC::PropertySlot prototypeSlot(target, JSC::PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+    bool hasOwnPrototype = target->methodTable()->getOwnPropertySlot(target, globalObject, vm.propertyNames->prototype, prototypeSlot);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    prototype->structure()->setMayBePrototype(true);
-    prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
+    if (!hasOwnPrototype) {
+        JSObject* prototype = prototypeValue.getObject();
+        if (!prototype) {
+            // No prototype object was passed: create one inheriting from the base's.
+            prototype = prototypeBase ? JSC::constructEmptyObject(globalObject, prototypeBase) : JSC::constructEmptyObject(globalObject);
+            RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        }
+
+        // Transitions the structure rather than flagging it in place: the object may
+        // share its structure (object literals, the empty-object structure cache).
+        prototype->didBecomePrototype(vm);
+
+        // Keep a "constructor" the caller already defined (e.g. a shared class prototype).
+        bool hasOwnConstructor = prototype->hasOwnProperty(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        if (!hasOwnConstructor) {
+            prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
+        }
+
+        // A function's own "prototype" property is non-enumerable and non-configurable
+        // (writable for function-style constructors): https://tc39.es/ecma262/#sec-function-instances-prototype
+        target->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+    } else if (!prototypeSlot.isAccessor() && prototypeBase) {
+        // A `class` declaration keeps its own prototype (with the class body on it),
+        // but a bare `class X {}` given a base would not inherit from it. Wire the
+        // class prototype's [[Prototype]] to the base so instances inherit, mirroring
+        // `class X extends base {}`. An accessor prototype (node:tty) is left alone.
+        JSValue existingPrototype = target->getDirect(vm, vm.propertyNames->prototype);
+        if (JSObject* prototypeObject = existingPrototype.getObject()) {
+            prototypeObject->setPrototypeDirect(vm, prototypeBase);
+        }
+    }
 
     target->setPrototypeDirect(vm, base);
-    target->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | 0);
     target->putDirect(vm, vm.propertyNames->name, name, PropertyAttribute::DontEnum | 0);
 
     return JSValue::encode(jsUndefined());

@@ -912,3 +912,79 @@ test("getEventListeners", () => {
 test("EventEmitter.name", () => {
   expect(EventEmitter.name).toBe("EventEmitter");
 });
+
+// https://github.com/oven-sh/bun/issues/32160
+describe("constructor 'prototype' property descriptor", () => {
+  test("EventEmitter.prototype is non-enumerable and non-configurable", () => {
+    expect(Object.getOwnPropertyDescriptor(EventEmitter, "prototype")).toEqual({
+      value: EventEmitter.prototype,
+      writable: true,
+      enumerable: false,
+      configurable: false,
+    });
+  });
+
+  test("copying EventEmitter's descriptors onto another function does not throw", () => {
+    const target = function () {};
+    Object.defineProperties(target, Object.getOwnPropertyDescriptors(EventEmitter));
+    expect(target.prototype).toBe(EventEmitter.prototype);
+  });
+
+  // The same bug applied to every builtin constructor whose prototype is
+  // assigned (or set up via $toClass) in builtin JS rather than created by
+  // a function declaration.
+  const constructors: [name: string, get: () => Function][] = [
+    ["events.EventEmitter", () => require("node:events").EventEmitter],
+    ["events.init", () => require("node:events").init],
+    ["url.Url", () => require("node:url").Url],
+    ["crypto.Certificate", () => require("node:crypto").Certificate],
+    ["console.Console", () => require("node:console").Console],
+    ["http.OutgoingMessage", () => require("node:http").OutgoingMessage],
+    ["http.IncomingMessage", () => require("node:http").IncomingMessage],
+    ["http.ClientRequest", () => require("node:http").ClientRequest],
+    ["stream.Readable", () => require("node:stream").Readable],
+    ["stream.Writable", () => require("node:stream").Writable],
+    ["stream.Duplex", () => require("node:stream").Duplex],
+    ["net.Socket", () => require("node:net").Socket],
+    ["tty.ReadStream", () => require("node:tty").ReadStream],
+    ["tty.WriteStream", () => require("node:tty").WriteStream],
+    ["Bun.$.Shell", () => require("bun").$.Shell],
+  ];
+
+  test.each(constructors)("%s matches a regular function's descriptor", (_name, get) => {
+    const ctor = get();
+    // Read .prototype first: tty's streams materialize theirs lazily.
+    const prototype = ctor.prototype;
+    const { value, ...attributes } = Object.getOwnPropertyDescriptor(ctor, "prototype")!;
+    expect(value).toBe(prototype);
+    expect(attributes).toEqual({
+      writable: true,
+      enumerable: false,
+      configurable: false,
+    });
+
+    // "name" has the spec's descriptor too (non-writable, unlike "prototype").
+    const { value: _value, ...nameAttributes } = Object.getOwnPropertyDescriptor(ctor, "name")!;
+    expect(nameAttributes).toEqual({
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
+  // $toClass also fills in prototype.constructor the way a class declaration
+  // would. tty.WriteStream and Bun.$.Shell deliberately reuse prototype objects
+  // owned by other constructors, so they are excluded here.
+  const withOwnConstructor = constructors.filter(([name]) => name !== "tty.WriteStream" && name !== "Bun.$.Shell");
+
+  test.each(withOwnConstructor)("%s prototype.constructor matches Node's descriptor", (_name, get) => {
+    const ctor = get();
+    const { value, ...attributes } = Object.getOwnPropertyDescriptor(ctor.prototype, "constructor")!;
+    expect(value).toBe(ctor);
+    expect(attributes).toEqual({
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+});

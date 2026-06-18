@@ -90,7 +90,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
     // themselves, so walk the heap for live script executables and collect
     // their source providers. A provider whose executables have all been
     // collected is not reported; its functions are no longer reachable.
-    Vector<Ref<SourceProvider>> providers;
+    Vector<Ref<JSC::SourceProvider>> providers;
     HashSet<SourceID> seenSourceIDs;
     {
         HeapIterationScope iterationScope(vm.heap);

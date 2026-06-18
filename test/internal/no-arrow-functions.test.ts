@@ -17,16 +17,23 @@ import path from "path";
 import ts from "typescript";
 import { globAllSources } from "../../scripts/glob-sources.ts";
 
+const root = path.resolve(import.meta.dir, "..", "..");
+const standalone = typeof describe === "undefined";
+
 const limitsPath = import.meta.dir + "/no-arrow-functions-limits.json";
 const limits: Record<string, number> = await Bun.file(limitsPath)
   .json()
-  .catch(function () {
-    return {};
+  .catch(function (err) {
+    // Allow a missing baseline only when regenerating it; in test mode a
+    // missing or malformed limits file is a setup error, not an empty ratchet.
+    if (standalone && err?.code === "ENOENT") return {};
+    throw err;
   });
 
-const root = path.resolve(import.meta.dir, "..", "..");
 const jsSources = globAllSources().js.filter(function (p) {
-  return !p.endsWith(".d.ts");
+  if (p.endsWith(".d.ts")) return false;
+  const rel = path.relative(root, p).replaceAll(path.sep, "/");
+  return rel.startsWith("src/js/");
 });
 
 function countArrows(source: string, content: string): [number, number[]] {
@@ -56,7 +63,7 @@ for (const abs of jsSources) {
   }
 }
 
-if (typeof describe === "undefined") {
+if (standalone) {
   // Standalone mode (`bun ./test/internal/no-arrow-functions.test.ts`):
   // regenerate the limits file from the current tree.
   const sorted = Object.fromEntries(

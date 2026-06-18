@@ -860,6 +860,31 @@ function getTestBunStep(platform, options, testOptions = {}) {
 }
 
 /**
+ * CI image lifecycle
+ * ------------------
+ * Build/test agents boot from pre-baked cloud images (AWS AMIs for Linux,
+ * Azure Shared Image Gallery for Windows). The image a job requests is
+ * `${getImageKey(platform)}-v${N}`, where N is the `# Version:` comment at the
+ * top of scripts/bootstrap.sh (Linux) or scripts/bootstrap.ps1 (Windows).
+ *
+ * To change what's installed on a CI machine:
+ *
+ *   1. Edit bootstrap.sh / bootstrap.ps1 and bump its `# Version:` line.
+ *   2. Open a PR whose **commit subject** contains `[build images]` (or
+ *      `[build linux images]` / `[build windows images]` to scope it). This
+ *      bakes throwaway `…-build-<buildNumber>` images and runs the full
+ *      build+test pipeline against them so you can verify the change.
+ *   3. Once green, amend/force-push the subject to `[publish images]` (or the
+ *      scoped variant). This bakes the real `…-vN` images that normal CI will
+ *      pick up. Publishing replaces the live tag in place — for Windows it
+ *      deletes the existing gallery version before the new one finishes — so
+ *      don't cancel a publish run mid-bake.
+ *   4. Merge the PR **after** the publish run is green. By then the `…-vN`
+ *      images already exist, so the post-merge `main` build runs immediately
+ *      instead of everyone waiting 2-3 h on a bake.
+ *
+ * These tags are ignored on `main` — image bakes happen on the PR only.
+ *
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
@@ -1381,6 +1406,23 @@ async function getPipelineOptions() {
   const isCanary =
     !parseBoolean(getEnv("RELEASE", false) || "false") &&
     !/\[(release|build release|release build)\]/i.test(commitMessage);
+
+  let buildImages = parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i);
+  let publishImages = parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i);
+  let imageFilter = (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase();
+
+  // Image bake/publish is meant to happen on the PR; the squash-merge commit
+  // subject often still carries the [publish images] tag, which would re-run
+  // the multi-hour bake on main and (because publish replaces the live image
+  // tag) briefly delete the images CI runs on. Ignore the tag on main and run
+  // a normal build instead.
+  if (isMainBranch() && (buildImages || publishImages)) {
+    console.log(`Ignoring [${publishImages || buildImages}] on main branch — images are built and published from PRs.`);
+    buildImages = false;
+    publishImages = false;
+    imageFilter = undefined;
+  }
+
   return {
     canary: isCanary ? canary : 0,
     skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
@@ -1389,10 +1431,10 @@ async function getPipelineOptions() {
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
-    buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
+    buildImages,
     dryRun: parseOption(/\[(dry run)\]/i),
-    publishImages: parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
-    imageFilter: (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase(),
+    publishImages,
+    imageFilter,
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };

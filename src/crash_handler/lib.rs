@@ -2289,24 +2289,18 @@ mod draft {
 
     impl Platform {
         // Rust cannot concat ident names at const time without a proc-macro; spell out the cfg matrix.
+        // Baseline is `Environment::BASELINE`, not a Cargo feature — `cfg(feature = "baseline")`
+        // was always false because no such feature exists, so baseline builds emitted the
+        // non-baseline char and bun.report symbolicated them against the wrong artifact.
         const CURRENT: u8 = {
             // Android folds into the Linux variants. bun.report decodes the same
             // single-char codes; introducing new ones would break older decoders.
             #[cfg(all(
                 any(target_os = "linux", target_os = "android"),
-                target_arch = "x86_64",
-                not(feature = "baseline")
+                target_arch = "x86_64"
             ))]
             {
-                b'l'
-            }
-            #[cfg(all(
-                any(target_os = "linux", target_os = "android"),
-                target_arch = "x86_64",
-                feature = "baseline"
-            ))]
-            {
-                b'B'
+                if Environment::BASELINE { b'B' } else { b'l' }
             }
             #[cfg(all(
                 any(target_os = "linux", target_os = "android"),
@@ -2315,41 +2309,25 @@ mod draft {
             {
                 b'L'
             }
-            #[cfg(all(target_os = "macos", target_arch = "x86_64", not(feature = "baseline")))]
+            #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
             {
-                b'm'
-            }
-            #[cfg(all(target_os = "macos", target_arch = "x86_64", feature = "baseline"))]
-            {
-                b'b'
+                if Environment::BASELINE { b'b' } else { b'm' }
             }
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             {
                 b'M'
             }
-            #[cfg(all(windows, target_arch = "x86_64", not(feature = "baseline")))]
+            #[cfg(all(windows, target_arch = "x86_64"))]
             {
-                b'w'
-            }
-            #[cfg(all(windows, target_arch = "x86_64", feature = "baseline"))]
-            {
-                b'e'
+                if Environment::BASELINE { b'e' } else { b'w' }
             }
             #[cfg(all(windows, target_arch = "aarch64"))]
             {
                 b'W'
             }
-            #[cfg(all(
-                target_os = "freebsd",
-                target_arch = "x86_64",
-                not(feature = "baseline")
-            ))]
+            #[cfg(all(target_os = "freebsd", target_arch = "x86_64"))]
             {
-                b'f'
-            }
-            #[cfg(all(target_os = "freebsd", target_arch = "x86_64", feature = "baseline"))]
-            {
-                b'g'
+                if Environment::BASELINE { b'g' } else { b'f' }
             }
             #[cfg(all(target_os = "freebsd", target_arch = "aarch64"))]
             {

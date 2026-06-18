@@ -1,6 +1,7 @@
 const SymbolIterator = Symbol.iterator;
 const SymbolAsyncIterator = Symbol.asyncIterator;
 const PromisePrototypeThen = Promise.prototype.$then;
+const { aggregateTwoErrors } = require("internal/errors");
 
 function from(Readable, iterable, opts) {
   let iterator;
@@ -52,12 +53,18 @@ function from(Readable, iterable, opts) {
     }
   };
 
+  const originalDestroy = readable._destroy;
   readable._destroy = function (error, cb) {
-    PromisePrototypeThen.$call(
-      close(error),
-      $isCallable(cb) ? () => process.nextTick(cb, error) : () => {}, // nextTick is here in case cb throws
-      $isCallable(cb) ? e => process.nextTick(cb, e || error) : () => {},
-    );
+    // Chain the instance _destroy (e.g. duplexify's ac.abort()) first: it is
+    // what unblocks a generator parked on its source, so close() can settle.
+    originalDestroy.$call(this, error, destroyError => {
+      const combinedError = destroyError || error;
+      PromisePrototypeThen.$call(
+        close(combinedError),
+        $isCallable(cb) ? () => process.nextTick(cb, combinedError) : () => {}, // nextTick is here in case cb throws
+        $isCallable(cb) ? closeError => process.nextTick(cb, aggregateTwoErrors(combinedError, closeError)) : () => {},
+      );
+    });
   };
 
   async function close(error) {

@@ -132,7 +132,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_ADDRESS", Error],
   ["ERR_INVALID_ADDRESS_FAMILY", RangeError],
   ["ERR_INVALID_ARG_TYPE", TypeError],
-  ["ERR_INVALID_ARG_VALUE", TypeError],
+  ["ERR_INVALID_ARG_VALUE", TypeError, undefined, RangeError],
   ["ERR_INVALID_ASYNC_ID", RangeError],
   ["ERR_INVALID_CHAR", TypeError],
   ["ERR_INVALID_CURSOR_POS", TypeError],
@@ -167,6 +167,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_MODULE_NOT_FOUND", Error],
   ["ERR_MULTIPLE_CALLBACK", Error],
   ["ERR_NON_CONTEXT_AWARE_DISABLED", Error],
+  ["ERR_OPERATION_FAILED", Error],
   ["ERR_OUT_OF_RANGE", RangeError],
   ["ERR_PARSE_ARGS_INVALID_OPTION_VALUE", TypeError],
   ["ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL", TypeError],
@@ -240,6 +241,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_STREAM_ALREADY_FINISHED", Error],
   ["ERR_STREAM_CANNOT_PIPE", Error],
   ["ERR_STREAM_DESTROYED", Error],
+  ["ERR_STREAM_ITER_MISSING_FLAG", TypeError],
   ["ERR_STREAM_NULL_VALUES", TypeError],
   ["ERR_STREAM_PREMATURE_CLOSE", Error],
   ["ERR_STREAM_PUSH_AFTER_EOF", Error],
@@ -332,5 +334,6 @@ const errors: ErrorCodeMapping = [
   // checked-in Rust mirror (src/jsc/ErrorCode.rs) — only ever append here.
   ["ERR_HTTP2_GOAWAY_SESSION", Error],
   ["ERR_TLS_ALPN_CALLBACK_INVALID_RESULT", TypeError],
+  ["ERR_PROXY_TUNNEL", Error],
 ];
 export default errors;

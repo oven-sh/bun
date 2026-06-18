@@ -443,8 +443,12 @@ function parseCertString() {
   throwNotImplemented("Not implemented");
 }
 
-const rejectUnauthorizedDefault =
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0" && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "false";
+// Node.js reads NODE_TLS_REJECT_UNAUTHORIZED lazily (per connection), so a
+// script can set it after loading the module and still have it apply.
+function rejectUnauthorizedDefault() {
+  const value = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  return value !== "0" && value !== "false";
+}
 
 function unfqdn(host) {
   return RegExpPrototypeSymbolReplace.$call(/[.]$/, host, "");
@@ -841,7 +845,7 @@ function TLSSocket(socket?, options?) {
   this[ksession] = undefined;
   this.alpnProtocol = null;
   this._secureEstablished = false;
-  this._rejectUnauthorized = rejectUnauthorizedDefault;
+  this._rejectUnauthorized = rejectUnauthorizedDefault();
   this._securePending = true;
   this._newSessionPending = undefined;
   this._controlReleased = undefined;
@@ -974,9 +978,10 @@ TLSSocket.prototype.getSession = function getSession() {
 TLSSocket.prototype.getEphemeralKeyInfo = function getEphemeralKeyInfo() {
   const info = this._handle?.getEphemeralKeyInfo?.();
   if (info == null) return info;
-  // Node always returns an object shaped { type, name, size } (each undefined
-  // when there is no ephemeral key, e.g. a non-(EC)DHE key exchange).
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/_tls_wrap.js#L1437
+  // Empirically node always surfaces all three keys here (values undefined when
+  // absent): a client socket on a TLS 1.3 ECDHE session observes
+  // Object.keys(...) === ['type','name','size'] under node v26.3.0, so the
+  // reshape below is required for key-set parity with our native return.
   return { type: info.type, name: info.name, size: info.size };
 };
 
@@ -1231,7 +1236,7 @@ function Server(options, secureConnectionListener): void {
   this.ca = undefined;
   this.passphrase = undefined;
   this.secureOptions = undefined;
-  this._rejectUnauthorized = rejectUnauthorizedDefault;
+  this._rejectUnauthorized = rejectUnauthorizedDefault();
   this._requestCert = undefined;
   this.servername = undefined;
   this.ALPNProtocols = undefined;
@@ -1370,7 +1375,7 @@ function Server(options, secureConnectionListener): void {
 
       if (typeof rejectUnauthorized !== "undefined") {
         this._rejectUnauthorized = rejectUnauthorized;
-      } else this._rejectUnauthorized = rejectUnauthorizedDefault;
+      } else this._rejectUnauthorized = rejectUnauthorizedDefault();
 
       if (typeof options.ciphers !== "undefined") {
         if (typeof options.ciphers !== "string") {

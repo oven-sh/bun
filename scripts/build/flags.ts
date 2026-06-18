@@ -704,10 +704,10 @@ export const bunOnlyFlags: Flag[] = [
 
   // ─── Bun-target-specific ───
   {
-    flag: ["-fconstexpr-steps=2542484", "-fconstexpr-depth=54"],
+    flag: ["-fconstexpr-steps=6000000", "-fconstexpr-depth=54"],
     when: c => c.unix,
     lang: "cxx",
-    desc: "Raise constexpr limits (JSC uses heavy constexpr)",
+    desc: "Raise constexpr limits (JSC uses heavy constexpr; the embedded module registry literals are large)",
   },
   {
     flag: ["-fno-pic", "-fno-pie"],

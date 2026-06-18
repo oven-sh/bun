@@ -663,6 +663,14 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (!requestShouldKeepAlive(http_req)) {
           http_res[kMustCloseConnection] = true;
         }
+
+        // Attached unconditionally to match Node's resOnFinish; the
+        // hasSubscribers check happens in emitResponseFinishChannel. Registered
+        // before endSocketOnFinishIfNeeded so the publish observes the socket
+        // before its writable side is ended (as Node's resOnFinish publishes
+        // before socket.destroySoon()).
+        http_res.on("finish", emitResponseFinishChannel.bind({ req: http_req, res: http_res, socket, server }));
+
         http_res.once("finish", endSocketOnFinishIfNeeded.bind(undefined, socket, http_res));
 
         if (hasObserver("http")) {
@@ -679,10 +687,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           });
           http_res.once("finish", stopServerResponsePerf);
         }
-
-        // Attached unconditionally to match Node's resOnFinish; the
-        // hasSubscribers check happens in emitResponseFinishChannel.
-        http_res.on("finish", emitResponseFinishChannel.bind({ req: http_req, res: http_res, socket, server }));
 
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = onServerRequestEvent.bind(socket);

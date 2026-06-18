@@ -1,8 +1,11 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { tls as tlsCert } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
 import http from "node:http";
+import http2 from "node:http2";
+import https from "node:https";
 import net from "node:net";
 
 describe("Channel", () => {
@@ -610,6 +613,80 @@ describe("http server channels (#29586)", () => {
       expect(receivedStart).toHaveLength(0);
     } finally {
       requestStart.unsubscribe(onStart);
+    }
+  });
+
+  // Node's resOnFinish publishes before it ends the socket, so on the
+  // connection-close path a subscriber still sees a not-yet-ended socket.
+  // The finish listener is registered before endSocketOnFinishIfNeeded to
+  // preserve that ordering.
+  test("response.finish publishes before the socket is ended (Connection: close)", async () => {
+    const finish = channel("http.server.response.finish");
+    let writableEndedAtPublish: boolean | undefined;
+    const onFinish = (msg: any) => {
+      writableEndedAtPublish = msg.socket.writableEnded;
+    };
+    finish.subscribe(onFinish);
+    let client: any;
+    try {
+      await using server = http.createServer((_req, res) => res.end("ok"));
+      const port = await listen(server);
+      await new Promise<void>((resolve, reject) => {
+        client = net.connect(port, () => {
+          client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        });
+        let buf = "";
+        client.on("data", d => (buf += d));
+        client.on("close", () => resolve());
+        client.on("error", reject);
+      });
+      await drain();
+      expect(writableEndedAtPublish).toBe(false);
+    } finally {
+      client?.destroy?.();
+      finish.unsubscribe(onFinish);
+    }
+  });
+
+  // Node routes http2 allowHTTP1 through the full http1 connectionListener, so
+  // all three channels fire on the HTTP/1 fallback. Bun's fallback lives in
+  // http2.ts and must publish the same three.
+  test("all three channels fire on the http2 allowHTTP1 fallback", async () => {
+    const created = channel("http.server.response.created");
+    const requestStart = channel("http.server.request.start");
+    const finish = channel("http.server.response.finish");
+    const seen: string[] = [];
+    const onCreated = () => seen.push("created");
+    const onStart = () => seen.push("start");
+    const onFinish = () => seen.push("finish");
+    created.subscribe(onCreated);
+    requestStart.subscribe(onStart);
+    finish.subscribe(onFinish);
+    try {
+      await using server = http2.createSecureServer(
+        { allowHTTP1: true, key: tlsCert.key, cert: tlsCert.cert },
+        (_req, res) => res.end("ok"),
+      );
+      const port = await listen(server as unknown as http.Server);
+      // node:https client negotiates http/1.1 (no h2 ALPN) → HTTP/1 fallback.
+      await new Promise<void>((resolve, reject) => {
+        const req = https.request(
+          { port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] },
+          res => {
+            res.resume();
+            res.on("end", resolve);
+            res.on("error", reject);
+          },
+        );
+        req.on("error", reject);
+        req.end();
+      });
+      await drain();
+      expect(seen.sort()).toEqual(["created", "finish", "start"]);
+    } finally {
+      created.unsubscribe(onCreated);
+      requestStart.unsubscribe(onStart);
+      finish.unsubscribe(onFinish);
     }
   });
 

@@ -301,6 +301,16 @@ pub enum Mode {
     Connect,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum Protocol {
+    /// WebKit inspector protocol, spoken by debug.bun.sh and the VSCode extension.
+    Jsc,
+    /// V8 Chrome DevTools Protocol, spoken by clients of `node:inspector`'s
+    /// `inspector.open()` (Chrome DevTools, vscode-js-debug, ...). The
+    /// debugger-thread server translates CDP to the JSC protocol.
+    NodeInspector,
+}
+
 pub struct Debugger {
     // `'static` is genuine: set from `cli::cli_dupe` (process-lifetime CLI
     // arena) — see jsc_hooks.rs. Never freed.
@@ -315,6 +325,7 @@ pub struct Debugger {
     // wait_for_connection: bool = false,
     pub set_breakpoint_on_first_line: bool,
     pub mode: Mode,
+    pub protocol: Protocol,
 
     pub test_reporter_agent: TestReporterAgent,
     pub lifecycle_reporter_agent: LifecycleAgent,
@@ -337,6 +348,7 @@ impl Default for Debugger {
             wait_for_connection: Wait::Off,
             set_breakpoint_on_first_line: false,
             mode: Mode::Listen,
+            protocol: Protocol::Jsc,
             test_reporter_agent: TestReporterAgent::default(),
             lifecycle_reporter_agent: LifecycleAgent::default(),
             frontend_dev_server_agent: UnsafeCell::new(BunFrontendDevServerAgent::default()),
@@ -358,6 +370,7 @@ unsafe extern "C" {
         url: &mut BunString,
         from_env: c_int,
         is_connect: bool,
+        is_node_inspector: bool,
     );
 }
 
@@ -691,11 +704,12 @@ impl Debugger {
         // practice; `create()` always populates `debugger` before spawning).
         // SAFETY: `other_vm` live; short-lived shared borrow of `debugger`
         // ends before any other access to `*other_vm`.
-        let (ctx_id, is_connect, from_env, path_or_port) =
+        let (ctx_id, is_connect, is_node_inspector, from_env, path_or_port) =
             match unsafe { (*other_vm).debugger.as_deref() } {
                 Some(d) => (
                     d.script_execution_context_id,
                     d.mode == Mode::Connect,
+                    d.protocol == Protocol::NodeInspector,
                     d.from_environment_variable,
                     d.path_or_port,
                 ),
@@ -709,13 +723,13 @@ impl Debugger {
         if !from_env.is_empty() {
             let mut url = BunString::clone_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect);
+            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false);
         }
 
         if let Some(path_or_port) = path_or_port {
             let mut url = BunString::clone_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect);
+            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect, is_node_inspector);
         }
 
         this.global().handle_rejected_promises();
@@ -756,6 +770,87 @@ impl Debugger {
             this.event_loop_mut().tick_possibly_forever();
         }
     }
+}
+
+/// `inspector.open()` from `node:inspector` — start the debugger thread and
+/// its WebSocket server at runtime, speaking the V8 Chrome DevTools Protocol.
+/// Returns false when an inspector is already configured (CLI `--inspect`,
+/// `BUN_INSPECT`, or a previous `inspector.open()`), when called off the main
+/// thread, or when the debugger thread could not be started.
+// HOST_EXPORT(Debugger__startNodeInspectorServer, c)
+pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: bool) -> bool {
+    // Short-lived borrows only — `Debugger::create` re-enters JS and forms its
+    // own `&mut VirtualMachine` (see the aliasing note on
+    // `wait_for_debugger_if_necessary`).
+    let this: &VirtualMachine = VirtualMachine::get();
+    if !this.is_main_thread {
+        return false;
+    }
+    if this.debugger.is_some() || HAS_CREATED_DEBUGGER.load(Ordering::Relaxed) {
+        return false;
+    }
+
+    // The URL outlives the process: the debugger struct stores `'static` slices
+    // (CLI-arena lifetimes), so leak the runtime-provided URL the same way.
+    let url_bytes: &'static [u8] = Box::leak(url.to_utf8_bytes().into_boxed_slice());
+    this.as_mut().debugger = Some(Box::new(Debugger {
+        path_or_port: Some(url_bytes),
+        wait_for_connection: if wait_for_connection {
+            Wait::Forever
+        } else {
+            Wait::Off
+        },
+        protocol: Protocol::NodeInspector,
+        ..Default::default()
+    }));
+
+    // Frontends need positions that map back to the original source, so stop
+    // minifying and caching transpiled output for code loaded from now on,
+    // mirroring `configure_debugger` in jsc_hooks.rs.
+    crate::runtime_transpiler_cache::IS_DISABLED.store(true, Ordering::Relaxed);
+    {
+        let opts = &mut this.as_mut().transpiler.options;
+        opts.minify_identifiers = false;
+        opts.minify_syntax = false;
+        opts.minify_whitespace = false;
+        opts.debugger = true;
+    }
+
+    let global = this.global;
+    // SAFETY: `global` is set during `VirtualMachine::init` and outlives the VM.
+    if Debugger::create(VirtualMachine::get_mut_ptr(), unsafe { &*global }).is_err() {
+        this.as_mut().debugger = None;
+        return false;
+    }
+
+    if !wait_for_connection {
+        // The waiting path calls this from `wait_for_debugger_if_necessary`;
+        // without it the inspected global never gets its inspector controller.
+        let ctx_id = match this.debugger.as_deref() {
+            Some(d) => d.script_execution_context_id,
+            None => return false,
+        };
+        Bun__ensureDebugger(ctx_id, false);
+    }
+
+    true
+}
+
+/// `inspector.open(port, host, true)` / `inspector.waitForDebugger()` — block,
+/// ticking the event loop, until a frontend connects to the inspector.
+// HOST_EXPORT(Debugger__waitForNodeInspectorConnection, c)
+pub fn wait_for_node_inspector_connection() {
+    let this = VirtualMachine::get();
+    {
+        let Some(dbg) = this.debugger_mut() else {
+            return;
+        };
+        if dbg.wait_for_connection == Wait::Off {
+            return;
+        }
+        dbg.must_block_until_connected = true;
+    }
+    Debugger::wait_for_debugger_if_necessary(VirtualMachine::get_mut_ptr());
 }
 
 // HOST_EXPORT(Debugger__didConnect, c)

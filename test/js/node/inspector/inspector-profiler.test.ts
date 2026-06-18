@@ -564,16 +564,16 @@ describe("node:inspector", () => {
       expect(inspector.console.log).toBe(globalThis.console.log);
     });
 
-    test("open() throws not implemented", () => {
-      expect(() => inspector.open()).toThrow();
+    // open()/close()/waitForDebugger() behavior is covered in inspector.test.ts;
+    // opening a server is process-global state, so it is not exercised here.
+    test("open(), close() and waitForDebugger() are functions", () => {
+      expect(inspector.open).toBeInstanceOf(Function);
+      expect(inspector.close).toBeInstanceOf(Function);
+      expect(inspector.waitForDebugger).toBeInstanceOf(Function);
     });
 
-    test("close() throws not implemented", () => {
-      expect(() => inspector.close()).toThrow();
-    });
-
-    test("waitForDebugger() throws not implemented", () => {
-      expect(() => inspector.waitForDebugger()).toThrow();
+    test("waitForDebugger() throws when the inspector is not active", () => {
+      expect(() => inspector.waitForDebugger()).toThrow("Inspector was not activated");
     });
   });
 });

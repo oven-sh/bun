@@ -95,6 +95,12 @@ type CreateBackendFn = (
   receive: (...messages: string[]) => void,
 ) => unknown;
 
+// CDP translation is only needed for node:inspector servers, so load it lazily.
+let lazyInspectorCDPAdapter: any;
+function cdpAdapterConstructor() {
+  return (lazyInspectorCDPAdapter ??= require("internal/inspector/cdp").InspectorCDPAdapter);
+}
+
 export default function (
   executionContextId: number,
   url: string,
@@ -103,9 +109,72 @@ export default function (
   close: () => void,
   isAutomatic: boolean,
   urlIsServer: boolean,
+  isNodeInspector: boolean,
+  reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
 ): void {
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
+    return;
+  }
+
+  if (isNodeInspector) {
+    // node:inspector's inspector.open(): connections speak the V8 Chrome
+    // DevTools Protocol, the listening URL is reported back to the inspected
+    // thread (which prints Node's "Debugger listening on ..." line), and a
+    // control callback lets the inspected thread close the server or forward
+    // commands from the in-process inspector.Session.
+    let debug: Debugger;
+    try {
+      debug = new Debugger(executionContextId, url, createBackend, send, close, true);
+    } catch (error) {
+      reportNodeInspectorServerStarted("", undefined, `${(error as Error)?.message ?? error}`);
+      return;
+    }
+
+    let sessionBackend: Backend | undefined;
+    let sessionAdapter: any;
+    const control = (message: string) => {
+      let parsed: any;
+      try {
+        parsed = JSON.parse(message);
+      } catch {
+        return;
+      }
+      switch (parsed?.type) {
+        case "close":
+          sessionBackend?.close();
+          sessionBackend = undefined;
+          sessionAdapter = undefined;
+          debug.stop();
+          return;
+        case "command": {
+          // A CDP command forwarded from the inspected thread's in-process
+          // inspector.Session (e.g. Debugger.setBreakpointByUrl from vitest
+          // --inspect-brk). Responses stay on this thread; the in-process
+          // Session treats these as fire-and-forget.
+          if (!sessionAdapter) {
+            let adapter: any;
+            sessionBackend = debug.createSessionBackend((...messages: string[]) => {
+              for (const backendMessage of messages) {
+                adapter.handleBackendMessage(backendMessage);
+              }
+            });
+            adapter = new (cdpAdapterConstructor())(
+              (backendMessage: string) => void sessionBackend?.write(backendMessage),
+              () => {},
+            );
+            sessionAdapter = adapter;
+            sessionAdapter.handleClientMessage(JSON.stringify({ id: 0, method: "Debugger.enable", params: {} }));
+          }
+          sessionAdapter.handleClientMessage(
+            JSON.stringify({ id: parsed.id ?? 0, method: parsed.method, params: parsed.params ?? {} }),
+          );
+          return;
+        }
+      }
+    };
+
+    reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
     return;
   }
 
@@ -168,6 +237,10 @@ function unescapeUnixSocketUrl(href: string) {
 class Debugger {
   #url?: URL;
   #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void) => Backend;
+  // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
+  // /json discovery endpoints are served.
+  #nodeInspector = false;
+  #server?: WebSocketServer;
 
   constructor(
     executionContextId: number,
@@ -175,7 +248,9 @@ class Debugger {
     createBackend: CreateBackendFn,
     send: (message: string | string[]) => void,
     close: () => void,
+    isNodeInspector: boolean = false,
   ) {
+    this.#nodeInspector = isNodeInspector;
     try {
       this.#createBackend = (refEventLoop, receive) => {
         const backend = createBackend(executionContextId, refEventLoop, receive);
@@ -229,6 +304,19 @@ class Debugger {
     return this.#url;
   }
 
+  // Stops the node:inspector server and terminates its connections
+  // (inspector.close() on the inspected thread).
+  stop(): void {
+    this.#server?.stop(true);
+    this.#server = undefined;
+  }
+
+  // A backend connection that is not tied to a WebSocket client, used for
+  // commands forwarded from the in-process inspector.Session.
+  createSessionBackend(receive: (...messages: string[]) => void): Backend {
+    return this.#createBackend(true, receive);
+  }
+
   #listen(): void {
     const { protocol, hostname, port, pathname } = this.#url!;
 
@@ -241,6 +329,7 @@ class Debugger {
         websocket: this.#websocket,
       });
 
+      this.#server = server;
       this.#url!.hostname = server.hostname;
       this.#url!.port = `${server.port}`;
       return;
@@ -325,6 +414,26 @@ class Debugger {
     };
   }
 
+  // Node-shaped /json/list payload describing the single debuggable target.
+  #nodeInspectorTargets(): unknown[] {
+    const { hostname, port, pathname } = this.#url!;
+    const id = pathname.slice(1);
+    const wsAddress = `${hostname}:${port}${pathname}`;
+    return [
+      {
+        description: "bun instance",
+        devtoolsFrontendUrl: `devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=${wsAddress}`,
+        devtoolsFrontendUrlCompat: `devtools://devtools/bundled/inspector.html?experiments=true&v8only=true&ws=${wsAddress}`,
+        faviconUrl: "https://bun.com/favicon.ico",
+        id,
+        title: `bun[${process.pid}]`,
+        type: "node",
+        url: "file://",
+        webSocketDebuggerUrl: `ws://${wsAddress}`,
+      },
+    ];
+  }
+
   #fetch(request: Request, server: WebSocketServer): Response | undefined {
     const { method, url, headers } = request;
     const { pathname } = new URL(url);
@@ -337,10 +446,16 @@ class Debugger {
 
     switch (pathname) {
       case "/json/version":
-        return Response.json(versionInfo());
+        return Response.json(this.#nodeInspector ? nodeVersionInfo() : versionInfo());
       case "/json":
       case "/json/list":
-      // TODO?
+        // Discovery endpoint used by CDP clients (chrome://inspect, vscode-js-debug)
+        // to find the WebSocket URL. Only served for node:inspector servers; the
+        // Bun-protocol inspector has no CDP-speaking clients to discover it.
+        if (this.#nodeInspector) {
+          return Response.json(this.#nodeInspectorTargets());
+        }
+        break;
     }
 
     if (!this.#url!.protocol.includes("unix") && this.#url!.pathname !== pathname) {
@@ -374,6 +489,27 @@ class Debugger {
     const { refEventLoop } = data;
 
     const client = bufferedWriter(writer);
+
+    if (this.#nodeInspector) {
+      // node:inspector clients speak CDP; the adapter sits between the
+      // WebSocket and the JSC-protocol backend connection.
+      let adapter: any;
+      const backend = this.#createBackend(refEventLoop, (...messages: string[]) => {
+        for (const message of messages) {
+          adapter.handleBackendMessage(message);
+        }
+      });
+      adapter = new (cdpAdapterConstructor())(
+        (message: string) => void backend.write(message),
+        (message: string) => void client.write(message),
+      );
+
+      data.client = client;
+      data.backend = backend;
+      data.adapter = adapter;
+      return;
+    }
+
     const backend = this.#createBackend(refEventLoop, (...messages: string[]) => {
       for (const message of messages) {
         client.write(message);
@@ -386,8 +522,12 @@ class Debugger {
 
   #message(connection: ConnectionOwner, message: string): void {
     const { data } = connection;
-    const { backend } = data;
+    const { backend, adapter } = data;
     $debug("remote:", message);
+    if (adapter) {
+      adapter.handleClientMessage(message);
+      return;
+    }
     backend?.write(message);
   }
 
@@ -522,6 +662,15 @@ function versionInfo(): unknown {
     "WebKit-Version": process.versions.webkit,
     "Bun-Version": Bun.version,
     "Bun-Revision": Bun.revision,
+  };
+}
+
+// Node-shaped /json/version payload, served for node:inspector servers so CDP
+// clients recognize the target the same way they recognize a Node process.
+function nodeVersionInfo(): unknown {
+  return {
+    "Browser": `Bun/${Bun.version}`,
+    "Protocol-Version": "1.1",
   };
 }
 
@@ -679,6 +828,8 @@ type Connection = {
   refEventLoop: boolean;
   client?: Writer;
   backend?: Backend;
+  // Present for node:inspector connections, which speak the V8 protocol.
+  adapter?: any;
 };
 
 type Writer = {

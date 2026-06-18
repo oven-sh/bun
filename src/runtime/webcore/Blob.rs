@@ -1955,10 +1955,17 @@ impl BlobExt for Blob {
             // `webcore::PathOrFileDescriptor` is not `Clone`; build user
             // options first, then move `input_path` in once.
             let mut stream_start = if has_args && arg0.is_object() {
-                streams::Start::from_js_with_tag::<{ streams::StartTag::FileSink }>(
+                match streams::Start::from_js_with_tag::<{ streams::StartTag::FileSink }>(
                     global_this,
                     arg0,
-                )?
+                ) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        // SAFETY: release the +1 ref from `init` on throwing-getter path.
+                        unsafe { webcore::FileSink::deref(sink) };
+                        return Err(e);
+                    }
+                }
             } else {
                 streams::Start::FileSink(streams::FileSinkOptions {
                     chunk_size: 0,
@@ -1966,14 +1973,22 @@ impl BlobExt for Blob {
                     ..Default::default()
                 })
             };
-            if let streams::Start::FileSink(ref mut opts) = stream_start {
-                opts.input_path = input_path;
-            } else {
-                stream_start = streams::Start::FileSink(streams::FileSinkOptions {
-                    chunk_size: 0,
-                    input_path,
-                    ..Default::default()
-                });
+            match stream_start {
+                streams::Start::Err(err) => {
+                    // SAFETY: release the +1 ref from `init`.
+                    unsafe { webcore::FileSink::deref(sink) };
+                    return Err(global_this.throw_value(err.to_js(global_this)));
+                }
+                streams::Start::FileSink(ref mut opts) => {
+                    opts.input_path = input_path;
+                }
+                _ => {
+                    stream_start = streams::Start::FileSink(streams::FileSinkOptions {
+                        chunk_size: 0,
+                        input_path,
+                        ..Default::default()
+                    });
+                }
             }
 
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.

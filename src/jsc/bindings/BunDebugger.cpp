@@ -870,6 +870,7 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
     // Snapshot under the lock, release before calling into the inspector —
     // `willDestroyFrontendAndBackend` must not run with `inspectorConnectionsLock` held.
     Vector<BunInspectorConnection*, 8> toDisconnect;
+    bool hasEverConnected = false;
     {
         Locker<Lock> locker(inspectorConnectionsLock);
         if (!inspectorConnections)
@@ -881,6 +882,7 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
         if (it == inspectorConnections->end())
             return;
         for (auto* connection : it->value) {
+            hasEverConnected |= connection->hasEverConnected;
             if (connection->status == ConnectionStatus::Disconnected)
                 continue;
             connection->status = ConnectionStatus::Disconnected;
@@ -891,7 +893,11 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
         }
     }
 
-    if (toDisconnect.isEmpty())
+    // A controller that never had a frontend connect has no agents and is safe
+    // to destroy normally. One that did needs the leak workaround below even
+    // if every connection has already disconnected (e.g. inspector.close()
+    // before exit) — its destructor still trips the CheckedPtr ordering bug.
+    if (!hasEverConnected)
         return;
 
     for (auto* connection : toDisconnect)

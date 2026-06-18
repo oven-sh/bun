@@ -2274,14 +2274,13 @@ describe("createReadStream", () => {
     expect(caught?.code).toBe("ERR_STREAM_PREMATURE_CLOSE");
   });
 
-  // Regression: _destroy used to register `once(kReadStreamFastPath, ...)` for an
-  // event that is never emitted when { start, autoClose } were both truthy, so
-  // 'close' never fired and the fd was leaked.
+  // https://github.com/oven-sh/bun/pull/30920
   it("emits 'close' and releases fd with { start: 0, autoClose: true }", async () => {
     const stream = createReadStream(join(import.meta.dir, "readFileSync.txt"), { start: 0, autoClose: true });
-    const { promise, resolve } = Promise.withResolvers<void>();
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
 
     stream.on("data", () => {});
+    stream.on("error", reject);
     stream.on("close", () => resolve());
 
     await promise;

@@ -81,6 +81,10 @@ pub enum HardcodedModule {
     NodeStream,
     #[strum(serialize = "node:stream/consumers")]
     NodeStreamConsumers,
+    #[strum(serialize = "node:stream/iter")]
+    NodeStreamIter,
+    #[strum(serialize = "node:zlib/iter")]
+    NodeZlibIter,
     #[strum(serialize = "node:stream/promises")]
     NodeStreamPromises,
     #[strum(serialize = "node:stream/web")]
@@ -242,6 +246,8 @@ bun_core::comptime_string_map! {
         b"node:repl" => HardcodedModule::NodeRepl,
         b"node:stream" => HardcodedModule::NodeStream,
         b"node:stream/consumers" => HardcodedModule::NodeStreamConsumers,
+        b"node:stream/iter" => HardcodedModule::NodeStreamIter,
+        b"node:zlib/iter" => HardcodedModule::NodeZlibIter,
         b"node:stream/promises" => HardcodedModule::NodeStreamPromises,
         b"node:stream/web" => HardcodedModule::NodeStreamWeb,
         b"node:string_decoder" => HardcodedModule::NodeStringDecoder,
@@ -426,6 +432,8 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry!("node:repl"),
     node_entry!("node:stream"),
     node_entry!("node:stream/consumers"),
+    node_entry!("node:stream/iter"),
+    node_entry!("node:zlib/iter"),
     node_entry!("node:stream/promises"),
     node_entry!("node:stream/web"),
     node_entry!("node:string_decoder"),
@@ -482,6 +490,8 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry!("repl"),
     node_entry!("stream"),
     node_entry!("stream/consumers"),
+    node_entry!("stream/iter"),
+    node_entry!("zlib/iter"),
     node_entry!("stream/promises"),
     node_entry!("stream/web"),
     node_entry!("string_decoder"),
@@ -806,6 +816,44 @@ const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
     BUN_TEST_EXTRA_ALIAS_KVS,
 ];
 
+static STREAM_ITER_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// `--experimental-stream-iter` (node parity): `stream/iter` resolves as a
+/// builtin only when the flag was passed on the CLI as an exec argument.
+/// Set once during CLI parsing (`cli/Arguments.rs`), which owns the
+/// exec-arg/script-positional distinction — a raw argv scan here would also
+/// match the flag appearing after the script name, where node treats it as
+/// a script argument.
+pub fn stream_iter_enabled() -> bool {
+    STREAM_ITER_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_stream_iter_enabled(enabled: bool) {
+    STREAM_ITER_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Read by C++ (`createStreamIterEnabledFlag`, NodeModuleModule.cpp) so JS
+/// builtins can consult the write-once CLI bit instead of the user-mutable
+/// `process.execArgv`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__streamIterEnabled() -> bool {
+    stream_iter_enabled()
+}
+
+/// True when `name` is a stream/iter specifier that must stay invisible
+/// because `--experimental-stream-iter` was not passed. Consulted by every
+/// reader of the alias tables (`Alias::get` and `ModuleLoader`'s raw-table
+/// scan) so introspection APIs like `require.resolve.paths` agree with
+/// `require` about what is a builtin.
+pub fn stream_iter_alias_gated(name: &[u8]) -> bool {
+    (name == b"stream/iter"
+        || name == b"node:stream/iter"
+        || name == b"zlib/iter"
+        || name == b"node:zlib/iter")
+        && !stream_iter_enabled()
+}
+
 fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [u8], Alias> {
     let mut map = bun_collections::HashMap::with_capacity(tables.iter().map(|t| t.len()).sum());
     for table in tables {
@@ -844,6 +892,13 @@ impl Alias {
     }
 
     pub fn get(name: &[u8], target: Target, cfg: Cfg) -> Option<Alias> {
+        // Without `--experimental-stream-iter` the aliases stay invisible so
+        // the bare specifier falls through to filesystem resolution
+        // ("Cannot find module") and the node:-prefixed one reports
+        // "No such built-in module", matching node.
+        if stream_iter_alias_gated(name) {
+            return None;
+        }
         if target.is_bun() {
             if cfg.rewrite_jest_for_tests {
                 return lookup(&BUN_TEST_ALIAS_MAP, name);

@@ -44,11 +44,27 @@ if (process.env.NODE_DEBUG) {
   debugEnvRegex = new RegExp("^" + debugEnv + "$", "i");
 }
 var debugEnv;
+// Emits a warning when the user enables NODE_DEBUG=http or NODE_DEBUG=http2,
+// like Node.js's internal/util/debuglog.
+function emitWarningIfNeeded(set) {
+  if ("HTTP" === set || "HTTP2" === set) {
+    process.emitWarning(
+      "Setting the NODE_DEBUG environment variable " +
+        "to '" +
+        set.toLowerCase() +
+        "' can expose sensitive " +
+        "data (such as passwords, tokens and authentication headers) " +
+        "in the resulting log.",
+    );
+  }
+}
+
 function debuglog(set) {
   set = set.toUpperCase();
   if (!debugs[set]) {
     if (debugEnvRegex.test(set)) {
       var pid = process.pid;
+      emitWarningIfNeeded(set);
       debugs[set] = function () {
         var msg = format.$apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);

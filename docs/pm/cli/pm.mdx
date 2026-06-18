@@ -152,6 +152,19 @@ bun list --all
 ├── ...
 ```
 
+To print only trusted dependencies (those allowed to run lifecycle scripts). When `trustedDependencies` is set in `package.json`, packages from that list are shown; otherwise packages from Bun's [default trusted dependencies](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt) list are shown.
+
+```bash terminal icon="terminal"
+bun pm ls --trusted
+# or
+bun list --trusted
+```
+
+```txt
+/path/to/project node_modules (135)
+└── esbuild@0.21.5
+```
+
 ## whoami
 
 Print your npm username. Requires you to be logged in (`bunx npm login`) with credentials in either `bunfig.toml` or `.npmrc`:

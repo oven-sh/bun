@@ -52,11 +52,6 @@ unsafe fn seat<'a>(input: &'a [u8], out: &'a mut Vec<u8>) -> (&'static [u8], &'s
     }
 }
 
-/// Decompression-bomb guard for response bodies inflated on the HTTP thread:
-/// a hostile server must not be able to expand a tiny compressed payload into
-/// an unbounded allocation.
-const MAX_DECOMPRESSED_BODY_SIZE: usize = 1024 * 1024 * 1024;
-
 impl Decompressor {
     // Note: the boxed readers' `Drop` impls call `end()`, so an
     // explicit `Drop` is unnecessary. Callers that want a mid-lifecycle reset
@@ -78,7 +73,7 @@ impl Decompressor {
             let (input, out) = unsafe { seat(buffer, &mut body_out_str.list) };
             match encoding {
                 Encoding::Gzip | Encoding::Deflate => {
-                    let mut reader = ZlibReaderArrayList::init_with_options_and_list_allocator(
+                    let reader = ZlibReaderArrayList::init_with_options_and_list_allocator(
                         input,
                         out,
                         bun_zlib::Options {
@@ -96,20 +91,17 @@ impl Decompressor {
                             ..Default::default()
                         },
                     )?;
-                    reader.max_output_size = MAX_DECOMPRESSED_BODY_SIZE;
                     *self = Decompressor::Zlib(reader);
                     return Ok(());
                 }
                 Encoding::Brotli => {
-                    let mut reader =
+                    let reader =
                         BrotliReaderArrayList::new_with_options(input, out, &Default::default())?;
-                    reader.max_output_size = MAX_DECOMPRESSED_BODY_SIZE;
                     *self = Decompressor::Brotli(reader);
                     return Ok(());
                 }
                 Encoding::Zstd => {
-                    let mut reader = ZstdReaderArrayList::init_with_list_allocator(input, out)?;
-                    reader.max_output_size = MAX_DECOMPRESSED_BODY_SIZE;
+                    let reader = ZstdReaderArrayList::init_with_list_allocator(input, out)?;
                     *self = Decompressor::Zstd(reader);
                     return Ok(());
                 }

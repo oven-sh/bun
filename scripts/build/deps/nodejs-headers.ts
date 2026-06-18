@@ -14,10 +14,13 @@ import type { Dependency } from "../source.ts";
  * download URL, and passed to zig as -Dreported_nodejs_version.
  * Override via `--nodejs-version=X.Y.Z` to test a bump.
  */
-export const NODEJS_VERSION = "24.3.0";
+export const NODEJS_VERSION = "26.3.0";
 
 /** Node.js NODE_MODULE_VERSION — for native addon ABI compat. */
-export const NODEJS_ABI_VERSION = "137";
+export const NODEJS_ABI_VERSION = "147";
+
+/** V8 version reported by process.versions.v8 — must match the pinned Node.js version's. */
+export const NODEJS_V8_VERSION = "14.6.202.34-node.20";
 
 export const nodejsHeaders: Dependency = {
   name: "nodejs",

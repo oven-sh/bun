@@ -211,6 +211,17 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
+// Userland access to node-internal modules for vendored node tests that
+// declare `// Flags: --expose-internals` (served via the require interceptor
+// in test/js/node/test/common/index.js). Static requires only — the builtin
+// bundler cannot rewrite variable-path requires. Extend the map as more
+// vendored tests need more internals.
+export const exposedInternals = {
+  "internal/streams/add-abort-signal": require("internal/streams/add-abort-signal"),
+  "internal/async_context_frame": require("internal/async_context_frame"),
+  "internal/async_hooks": require("internal/async_hooks"),
+};
+
 export const fs = require("node:fs/promises").$data;
 
 export const fsStreamInternals = {

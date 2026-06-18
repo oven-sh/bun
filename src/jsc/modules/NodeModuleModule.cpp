@@ -1134,6 +1134,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
                 ->hasOverriddenModuleResolveFilenameFunction));
 }
 
+extern "C" bool Bun__streamIterEnabled();
+
+// $cpp("NodeModuleModule.cpp", "createStreamIterEnabledFlag"): the write-once
+// `--experimental-stream-iter` CLI bit, so builtins don't have to consult the
+// user-mutable `process.execArgv`.
+JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*)
+{
+    return JSC::jsBoolean(Bun__streamIterEnabled());
+}
+
 } // namespace Bun
 
 namespace Zig {

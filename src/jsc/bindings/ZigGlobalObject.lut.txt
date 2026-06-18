@@ -14,7 +14,7 @@
   fetch                           constructBunFetchObject                              PropertyCallback
   postMessage                     jsFunctionPostMessage                                Function 1
   prompt                          WebCore__prompt                                      Function 1
-  queueMicrotask                  functionQueueMicrotask                               Function 2
+  queueMicrotask                  functionQueueMicrotask                               Function 1
   removeEventListener             jsFunctionRemoveEventListener                        Function 2
   reportError                     functionReportError                                  Function 1
   setImmediate                    functionSetImmediate                                 Function 1

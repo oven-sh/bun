@@ -132,7 +132,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_ADDRESS", Error],
   ["ERR_INVALID_ADDRESS_FAMILY", RangeError],
   ["ERR_INVALID_ARG_TYPE", TypeError],
-  ["ERR_INVALID_ARG_VALUE", TypeError],
+  ["ERR_INVALID_ARG_VALUE", TypeError, undefined, RangeError],
   ["ERR_INVALID_ASYNC_ID", RangeError],
   ["ERR_INVALID_CHAR", TypeError],
   ["ERR_INVALID_CURSOR_POS", TypeError],
@@ -167,6 +167,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_MODULE_NOT_FOUND", Error],
   ["ERR_MULTIPLE_CALLBACK", Error],
   ["ERR_NON_CONTEXT_AWARE_DISABLED", Error],
+  ["ERR_OPERATION_FAILED", Error],
   ["ERR_OUT_OF_RANGE", RangeError],
   ["ERR_PARSE_ARGS_INVALID_OPTION_VALUE", TypeError],
   ["ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL", TypeError],
@@ -240,6 +241,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_STREAM_ALREADY_FINISHED", Error],
   ["ERR_STREAM_CANNOT_PIPE", Error],
   ["ERR_STREAM_DESTROYED", Error],
+  ["ERR_STREAM_ITER_MISSING_FLAG", TypeError],
   ["ERR_STREAM_NULL_VALUES", TypeError],
   ["ERR_STREAM_PREMATURE_CLOSE", Error],
   ["ERR_STREAM_PUSH_AFTER_EOF", Error],
@@ -257,7 +259,9 @@ const errors: ErrorCodeMapping = [
   ["ERR_TLS_PROTOCOL_VERSION_CONFLICT", TypeError],
   ["ERR_TLS_PSK_SET_IDENTITY_HINT_FAILED", Error],
   ["ERR_TLS_RENEGOTIATION_DISABLED", Error],
+  ["ERR_TLS_RENEGOTIATION_UNSUPPORTED", Error],
   ["ERR_TLS_SNI_FROM_SERVER", Error],
+  ["ERR_TLS_INVALID_STATE", Error],
   ["ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS", TypeError],
   ["ERR_SSL_NO_CIPHER_MATCH", Error],
   ["ERR_UNAVAILABLE_DURING_EXIT", Error],
@@ -324,5 +328,12 @@ const errors: ErrorCodeMapping = [
   ["ERR_SECRETS_INTERACTION_REQUIRED", Error],
   ["ERR_POSTGRES_CONNECTION_FAILED", Error, "PostgresError"],
   ["ERR_MYSQL_CONNECTION_FAILED", Error, "MySQLError"],
+  ["ERR_POSTGRES_CONNECTION_REFUSED", Error, "PostgresError"],
+  ["ERR_MYSQL_CONNECTION_REFUSED", Error, "MySQLError"],
+  // Appended (not alphabetical): discriminants are index-aligned with the
+  // checked-in Rust mirror (src/jsc/ErrorCode.rs) — only ever append here.
+  ["ERR_HTTP2_GOAWAY_SESSION", Error],
+  ["ERR_TLS_ALPN_CALLBACK_INVALID_RESULT", TypeError],
+  ["ERR_PROXY_TUNNEL", Error],
 ];
 export default errors;

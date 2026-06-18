@@ -28,6 +28,11 @@ pub(crate) mod framework_router_body;
 #[path = "production.rs"]
 mod production_body;
 
+// `Bun__add{Bake,DevServer}SourceProvider*` host exports — the Rust side of
+// `BakeSourceProvider.h` / `DevServerSourceProvider.h`. Reached only via the
+// codegen-emitted `extern "C"` thunks in `generated_host_exports.rs`.
+pub mod source_provider_exports;
+
 // Re-exports from the submodule bodies so `production.rs` can name them
 // without going through the keystone stubs below.
 pub use bake_body::{PatternBuffer, UserOptions, print_warning};

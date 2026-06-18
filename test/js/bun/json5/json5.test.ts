@@ -1659,3 +1659,43 @@ describe("deeply nested parse results", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("stringify memory", () => {
+  test("does not leak with a string space argument", async () => {
+    // Unique >10-char space string per call so each iteration allocates a
+    // fresh WTFStringImpl for the stored space and hits the clamp branch in
+    // newline(). Nested object/array so indent > 0.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--smol",
+        "-e",
+        /* js */ `
+          const obj = { a: [1, 2, 3], b: { c: 4 }, d: 5 };
+          const pad = Buffer.alloc(1024 * 1024, " ").toString();
+          for (let i = 0; i < 20; i++) Bun.JSON5.stringify(obj, null, pad + i);
+          Bun.gc(true);
+          const before = process.memoryUsage.rss();
+          for (let i = 0; i < 200; i++) Bun.JSON5.stringify(obj, null, pad + i);
+          Bun.gc(true);
+          const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+          if (growthMB > 64) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        // Under ASAN every freed allocation parks in the allocator quarantine
+        // (default quarantine_size_mb=256) instead of being returned, so the
+        // RSS-delta heuristic over-reports even when nothing leaks. Disable
+        // the quarantine for this measurement process so the 64 MB threshold
+        // keeps separating "fixed" from "leaking ~200 MB". Harmless when the
+        // binary is not ASAN-built.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+});

@@ -15,9 +15,7 @@ import { join } from "node:path";
 function stripAsanWarning(stderr: string): string[] {
   return stderr
     .split("\n")
-    .filter(
-      l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes") && !l.startsWith("debug warn:"),
-    );
+    .filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes") && !l.startsWith("debug warn:"));
 }
 
 test.concurrent("dynamic import('bun:main') returns the wrapper module", async () => {
@@ -130,11 +128,7 @@ test.concurrent(
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringContaining("error:"), exitCode: 0 });
       void stdout;
     }
@@ -145,11 +139,7 @@ test.concurrent(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr: stripAsanWarning(stderr), exitCode, signalCode: proc.signalCode }).toEqual({
       stdout: "OK\n",
       stderr: [],

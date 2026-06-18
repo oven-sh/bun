@@ -16,7 +16,11 @@ impl<'a> ArrayList<'a> {
     }
 
     pub fn pwrite(&mut self, bytes: &[u8], i: usize) -> Result<(), AnyPostgresError> {
-        self.array[i..i + bytes.len()].copy_from_slice(bytes);
+        let end = i.checked_add(bytes.len()).ok_or(AnyPostgresError::Overflow)?;
+        self.array
+            .get_mut(i..end)
+            .ok_or(AnyPostgresError::Overflow)?
+            .copy_from_slice(bytes);
         Ok(())
     }
 }
@@ -60,7 +64,10 @@ impl<'a> WriterContext for ArrayListCtx<'a> {
     }
     fn pwrite(mut self, bytes: &[u8], i: usize) -> Result<(), AnyPostgresError> {
         let arr = self.array_mut();
-        arr[i..i + bytes.len()].copy_from_slice(bytes);
+        let end = i.checked_add(bytes.len()).ok_or(AnyPostgresError::Overflow)?;
+        arr.get_mut(i..end)
+            .ok_or(AnyPostgresError::Overflow)?
+            .copy_from_slice(bytes);
         Ok(())
     }
 }

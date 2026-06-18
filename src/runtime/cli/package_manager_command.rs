@@ -963,9 +963,17 @@ fn print_trusted_dependencies_flat(
         let name = dependencies[dep_id as usize].name.slice(string_bytes);
         let resolution = resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto);
         if index + 1 < trusted.len() {
-            bun_core::prettyln!("<d>├──<r> {}<r><d>@{}<r>\n", bstr::BStr::new(name), resolution,);
+            bun_core::prettyln!(
+                "<d>├──<r> {}<r><d>@{}<r>\n",
+                bstr::BStr::new(name),
+                resolution,
+            );
         } else {
-            bun_core::prettyln!("<d>└──<r> {}<r><d>@{}<r>\n", bstr::BStr::new(name), resolution,);
+            bun_core::prettyln!(
+                "<d>└──<r> {}<r><d>@{}<r>\n",
+                bstr::BStr::new(name),
+                resolution,
+            );
         }
     }
 }

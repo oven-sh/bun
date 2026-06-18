@@ -345,7 +345,7 @@ it("should list only trusted dependencies with --all --trusted", async () => {
       dependencies: {
         moo: "./moo",
       },
-      trustedDependencies: ["moo"],
+      trustedDependencies: ["bar"],
     }),
   );
   await mkdir(join(package_dir, "moo"));
@@ -375,7 +375,9 @@ it("should list only trusted dependencies with --all --trusted", async () => {
   }
   urls.length = 0;
 
-  // --all --trusted shows only moo (trusted), not bar (transitive, not trusted)
+  // `bar` is a transitive dependency of `moo` (untrusted). Trust is by
+  // package name, so `--all --trusted` must still find it regardless of
+  // where it sits in the tree.
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "ls", "--all", "--trusted"],
     cwd: package_dir,
@@ -386,7 +388,69 @@ it("should list only trusted dependencies with --all --trusted", async () => {
   });
   expect(await stderr.text()).toBe("");
   expect(await stdout.text()).toBe(`${package_dir} node_modules
-└── moo@moo
+└── bar@0.0.2
+`);
+  expect(await exited).toBe(0);
+});
+
+it("should list trusted transitive dependencies under untrusted parents with --all --trusted (isolated)", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  // Isolated linker gives every package its own nested node_modules, so the
+  // trusted transitive dep lives under an untrusted parent folder.
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `[install]\ncache = false\nregistry = "${root_url}/"\nlinker = "isolated"\n`,
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        moo: "./moo",
+      },
+      trustedDependencies: ["bar"],
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.1.0",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+  urls.length = 0;
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls", "--all", "--trusted"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(await stderr.text()).toBe("");
+  expect(await stdout.text()).toBe(`${package_dir} node_modules
+└── bar@0.0.2
 `);
   expect(await exited).toBe(0);
 });

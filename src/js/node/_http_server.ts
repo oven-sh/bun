@@ -375,6 +375,7 @@ Object.defineProperty(Server.prototype, "_connections", {
   get() {
     return this[kTrackedConnections]?.size ?? 0;
   },
+  set(_value) {},
 });
 
 Server.prototype.closeIdleConnections = function () {

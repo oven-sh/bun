@@ -394,6 +394,7 @@ const {
   validateNumber,
   validateAbortSignal,
 } = require("internal/validators");
+const { kTimeout, getTimerDuration } = require("internal/timers");
 
 let utcCache;
 
@@ -2028,6 +2029,10 @@ function assertSession(session) {
 hideFromStack(assertSession);
 
 function pushToStream(stream, data) {
+  // Activity on this stream refreshes its per-stream idle timer so a
+  // completed/in-flight stream does not prematurely fire 'timeout' while
+  // data is still being delivered.
+  stream._unrefTimer();
   if (data && stream[bunHTTP2StreamStatus] & StreamState.Closed) {
     if (!stream._readableState.ended) {
       // closed, but not ended, so resume and push null to end the stream
@@ -2078,6 +2083,12 @@ function markStreamClosed(stream: Http2Stream) {
 
   if ((status & StreamState.Closed) === 0) {
     stream[bunHTTP2StreamStatus] = status | StreamState.Closed;
+    // Disarm the per-stream idle timer on every close transition (explicit
+    // close(), _destroy, and the natural END_STREAM completion that only
+    // calls markStreamClosed and may defer destroy). Mirrors Node's
+    // closeStream() clearing the timer regardless of the close path.
+    clearTimeout(stream[kTimeout]);
+    stream[kTimeout] = null;
     publishStreamCloseChannel(stream);
 
     markWritableDone(stream);
@@ -2097,6 +2108,8 @@ class Http2Stream extends Duplex {
   [bunHTTP2StreamStatus]: number = 0;
 
   rstCode: number | undefined = undefined;
+  timeout: number | undefined = undefined;
+  [kTimeout]: ReturnType<typeof setTimeout> | null = null;
   [bunHTTP2Headers]: any;
   [kInfoHeaders]: any;
   #sentTrailers: any;
@@ -2202,10 +2215,39 @@ class Http2Stream extends Duplex {
     this.#sentTrailers = headers;
   }
 
-  setTimeout(timeout, callback) {
-    const session = this[bunHTTP2Session];
-    if (!session) return;
-    session.setTimeout(timeout, callback);
+  setTimeout(msecs, callback) {
+    if (this.destroyed) return this;
+
+    this.timeout = msecs;
+
+    msecs = getTimerDuration(msecs, "msecs");
+
+    clearTimeout(this[kTimeout]);
+
+    if (msecs === 0) {
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.removeListener("timeout", callback);
+      }
+    } else {
+      this[kTimeout] = setTimeout(this._onTimeout.bind(this), msecs).unref();
+
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.once("timeout", callback);
+      }
+    }
+    return this;
+  }
+
+  _onTimeout() {
+    if (this.destroyed) return;
+    this.emit("timeout");
+  }
+
+  _unrefTimer() {
+    const timer = this[kTimeout];
+    if (timer) timer.refresh();
   }
 
   get closed() {
@@ -2489,6 +2531,7 @@ class Http2Stream extends Duplex {
       this.once("ready", this._writev.bind(this, data, callback));
       return;
     }
+    this._unrefTimer();
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
@@ -2532,6 +2575,7 @@ class Http2Stream extends Duplex {
       this.once("ready", this._write.bind(this, chunk, encoding, callback));
       return;
     }
+    this._unrefTimer();
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
@@ -2745,6 +2789,10 @@ class ServerHttp2Stream extends Http2Stream {
     if (!parser) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
+    // Sending the PUSH_PROMISE HEADERS frame is outbound activity on the
+    // parent stream; refresh its per-stream idle timer (mirrors Node's
+    // kUpdateTimer in pushStream()).
+    this._unrefTimer();
     headers = { ...headers };
     assertNoConnectionHeaders(headers);
     const sensitives = headers[sensitiveHeaders];
@@ -2921,6 +2969,11 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_HTTP2_HEADERS_AFTER_RESPOND();
     }
 
+    // Sending a 1xx informational HEADERS frame is outbound stream activity;
+    // refresh the per-stream idle timer (mirrors Node's kUpdateTimer in
+    // additionalHeaders()).
+    this._unrefTimer();
+
     if (headers == undefined) {
       headers = {};
     } else if (!$isObject(headers) || $isArray(headers)) {
@@ -2989,6 +3042,10 @@ class ServerHttp2Stream extends Http2Stream {
     if (this.sentTrailers) {
       throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
     }
+
+    // Sending the response HEADERS frame is outbound stream activity; refresh
+    // the per-stream idle timer (mirrors Node's kUpdateTimer in respond()).
+    this._unrefTimer();
 
     // Raw (flat [name, value, ...] array) headers form: the pairs are encoded
     // on the wire in their given order; a default :status is prepended and a
@@ -3546,6 +3603,8 @@ class ServerHttp2Session extends Http2Session {
       flags: number,
     ) {
       if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
+      // A HEADERS frame is stream activity; refresh the per-stream idle timer.
+      stream._unrefTimer();
       let rawheaders = headersTuple[0];
       let headers = headersTuple[1];
       if (self.#strictFieldWhitespaceValidation) {
@@ -3705,10 +3764,11 @@ class ServerHttp2Session extends Http2Session {
     this.destroy(error);
   }
   #onTimeout() {
-    const parser = this.#parser;
-    if (parser) {
-      parser.forEachStream(emitTimeout);
-    }
+    // Per Node.js http2 semantics, a session-level (socket) idle timeout
+    // emits 'timeout' on the session ONLY. Individual Http2Streams each
+    // manage their own per-stream idle timers via Http2Stream.setTimeout.
+    // Do NOT broadcast to every stream here — that would surface spurious
+    // timeouts on completed/in-flight streams after a short socket idle.
     this.emit("timeout");
   }
   #onDrain() {
@@ -4072,9 +4132,6 @@ class ServerHttp2Session extends Http2Session {
     process.nextTick(emitEventNT, this, "close");
   }
 }
-function emitTimeout(session: ClientHttp2Session) {
-  session.emit("timeout");
-}
 function destroySelfOnEnd(this: Http2Stream) {
   this.destroy();
 }
@@ -4275,6 +4332,8 @@ class ClientHttp2Session extends Http2Session {
       flags: number,
     ) {
       if (!self || typeof stream !== "object" || stream.rstCode) return;
+      // A HEADERS frame is stream activity; refresh the per-stream idle timer.
+      stream._unrefTimer();
       let rawheaders = headersTuple[0];
       let headers = headersTuple[1];
       if (self.#strictFieldWhitespaceValidation) {
@@ -4520,10 +4579,11 @@ class ClientHttp2Session extends Http2Session {
     this.destroy(error);
   }
   #onTimeout() {
-    const parser = this.#parser;
-    if (parser) {
-      parser.forEachStream(emitTimeout);
-    }
+    // Per Node.js http2 semantics, a session-level (socket) idle timeout
+    // emits 'timeout' on the session ONLY. Individual Http2Streams each
+    // manage their own per-stream idle timers via Http2Stream.setTimeout.
+    // Do NOT broadcast to every stream here — that would surface spurious
+    // timeouts on completed/in-flight streams after a short socket idle.
     this.emit("timeout");
   }
   #onDrain() {

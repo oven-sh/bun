@@ -121,6 +121,10 @@ export default [
         fn: "getNextStream",
         length: 0,
       },
+      pushPromise: {
+        fn: "pushPromise",
+        length: 4,
+      },
     },
     finalize: true,
     construct: true,
@@ -145,6 +149,7 @@ export default [
       "onAltSvc",
       "onOrigin",
       "onFrameError",
+      "onStreamPush",
     ],
   }),
 ];

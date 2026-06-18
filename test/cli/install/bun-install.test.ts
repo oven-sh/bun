@@ -711,8 +711,8 @@ describe.concurrent("bun-install", () => {
 
       setContextHandler(ctx, async request => {
         expect(request.method).toBe("GET");
-        const { pathname } = new URL(request.url);
-        requestPaths.push(`${request.method} ${pathname}`);
+        const { pathname, search } = new URL(request.url);
+        requestPaths.push(`${request.method} ${pathname}${search}`);
 
         if (pathname === manifestPath) {
           expect(request.headers.get("accept")).toBe(

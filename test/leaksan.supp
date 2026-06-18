@@ -126,3 +126,8 @@ leak:WTF::RunLoop::dispatchAfter
 # LSAN's conservative stack scan no longer finds the pointers.
 leak:bun_runtime::cli::filter_run::run_scripts_with_filter
 leak:bun_runtime::cli::multi_run::run
+# test/js/node/inspector/inspector.test.ts — BunInspectorConnection objects are
+# deliberately never freed (cross-thread message queues may still reference
+# them); a node:inspector client that connects and disconnects before exit
+# leaves its connection behind.
+leak:Bun::BunInspectorConnection::create

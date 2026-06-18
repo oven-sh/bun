@@ -15,31 +15,39 @@ test("first use of process.nextTick during stack exhaustion does not break Worke
       process.on("uncaughtException", () => {});
       const workerPath = new URL("./worker.js", import.meta.url).href;
 
-      let done = false;
+      // constructNextTickFn reports its cleared exception via reportUncaughtExceptionAtEventLoop,
+      // which itself re-enters JS to invoke the uncaughtException listener above. Leave a handful
+      // of frames between the stack limit and the first Worker attempt so that re-entry does not
+      // trip the is_handling_uncaught_exception guard and exit(7), while remaining close enough
+      // that the nextTick initializer's module load still overflows.
+      const MIN_UNWOUND_FRAMES = 30;
+
+      let depth = 0, maxDepth = 0, done = false;
       function attemptWorker() {
         try {
           const w = new Worker(workerPath);
           w.terminate();
           return true;
         } catch (e) {
-          // Out of stack; retry in a shallower frame.
           if (e instanceof RangeError) return false;
           return true;
         }
       }
-
       function dive() {
-        try {
-          dive();
-        } catch {}
-        if (!done) done = attemptWorker();
+        depth++;
+        try { dive(); } catch { maxDepth = depth; }
+        if (!done && maxDepth - depth >= MIN_UNWOUND_FRAMES) done = attemptWorker();
+        depth--;
       }
       dive();
 
-      // With a healthy stack, constructing a Worker must succeed again.
+      // With a healthy stack, constructing a Worker must succeed again: queueNextTick
+      // re-runs constructNextTickFn, populating m_nextTickFunction and putDirect-ing
+      // the function over the stale undefined slot.
+      const before = typeof process.nextTick;
       const w = new Worker(workerPath);
       w.onmessage = () => {
-        console.log("WORKER_OK");
+        console.log("WORKER_OK before=" + before + " after=" + typeof process.nextTick);
         w.terminate();
         process.exit(0);
       };
@@ -64,5 +72,6 @@ test("first use of process.nextTick during stack exhaustion does not break Worke
     expect(stderr).toBe("");
   }
   expect(stdout).toContain("WORKER_OK");
+  expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });

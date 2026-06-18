@@ -883,6 +883,12 @@ describe("expect()", () => {
     expect(Object.freeze({ a: 1, b: null, c: 3 })).not.toEqual(Object.freeze({ a: 1, c: 3 }));
     // Differing defined values must still fail.
     expect(Object.freeze({ a: 1, b: undefined, c: 3 })).not.toEqual(Object.freeze({ a: 1, c: 4 }));
+
+    // toStrictEqual does not ignore undefined, so a differing key set is never equal.
+    expect(Object.freeze({ a: 1, c: 3 })).toStrictEqual(Object.freeze({ a: 1, c: 3 }));
+    expect(Object.freeze({ a: 1, b: undefined, c: 3 })).toStrictEqual(Object.freeze({ a: 1, b: undefined, c: 3 }));
+    expect(Object.freeze({ a: 1, b: undefined, c: 3 })).not.toStrictEqual(Object.freeze({ a: 1, c: 3 }));
+    expect(Object.freeze({ a: 1, c: 3 })).not.toStrictEqual(Object.freeze({ a: 1, b: undefined, c: 3 }));
   });
 
   // https://github.com/oven-sh/bun/issues/32485

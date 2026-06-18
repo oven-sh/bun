@@ -2516,7 +2516,9 @@ where
         // second calls short-circuit via the `terminated` flag and the
         // `deinit_scheduled` flag, so this is safe.
         if abrupt {
-            if self.has_listener() || (self.app.is_some() && !self.flags.contains(ServerFlags::TERMINATED)) {
+            if self.has_listener()
+                || (self.app.is_some() && !self.flags.contains(ServerFlags::TERMINATED))
+            {
                 self.stop(true);
             }
         } else if self.has_listener() {
@@ -2527,7 +2529,9 @@ where
     }
 
     pub fn dispose_from_js(&mut self) -> JSValue {
-        if self.has_listener() || (self.app.is_some() && !self.flags.contains(ServerFlags::TERMINATED)) {
+        if self.has_listener()
+            || (self.app.is_some() && !self.flags.contains(ServerFlags::TERMINATED))
+        {
             self.stop(true);
         }
         JSValue::UNDEFINED

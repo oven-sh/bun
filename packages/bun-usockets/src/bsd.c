@@ -881,6 +881,21 @@ ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
 #if !defined(_WIN32)
 #include <sys/uio.h>
 
+ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int count) {
+    /* POSIX writev fails with EINVAL above IOV_MAX (1024 on Linux/macOS); cap and
+     * let the caller's partial-write handling carry the remainder. */
+    if (count > 1024) {
+        count = 1024;
+    }
+    while (1) {
+        ssize_t written = writev(fd, (const struct iovec *)iov, count);
+        if (UNLIKELY(IS_EINTR(written))) {
+            continue;
+        }
+        return written;
+    }
+}
+
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
     struct iovec chunks[2];
 
@@ -900,6 +915,16 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
     }
 }
 #else
+ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int count) {
+    ssize_t total = 0;
+    for (int i = 0; i < count; i++) {
+        ssize_t written = bsd_send(fd, (const char *)iov[i].iov_base, (int)iov[i].iov_len);
+        if (written > 0) total += written;
+        if (written != (ssize_t)iov[i].iov_len) break;
+    }
+    return total > 0 ? total : -1;
+}
+
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
     ssize_t written = bsd_send(fd, header, header_length);
     if (written == header_length) {

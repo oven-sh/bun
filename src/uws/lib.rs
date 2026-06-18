@@ -580,24 +580,26 @@ pub mod ssl_wrapper {
             };
             // we already sent the ssl shutdown
             if Self::r(this).flags.sent_ssl_shutdown() || Self::r(this).flags.fatal_error() {
-                if fast_shutdown && !Self::r(this).flags.received_ssl_shutdown() {
-                    // The peer went away (raw EOF / destroy) after we had
-                    // already sent our shutdown, and its close_notify will
-                    // never arrive. A fast shutdown means we are done for
-                    // sure: mark received and run the close callback so the
-                    // owner's teardown (UpgradedDuplex::on_close ->
-                    // DuplexUpgradeContext::on_close -> deinit) actually
-                    // happens. Without this, a TLS-over-duplex socket whose
-                    // peer half-closes at the TCP level never tears down and
-                    // leaks its whole context graph (LeakSanitizer caught
-                    // this in test-tls-js-stream / test-tls-inception).
+                if fast_shutdown {
+                    // A fast shutdown is a full teardown — the owner calls it
+                    // right before detaching/freeing handlers.ctx (proxy tunnel
+                    // on response-complete; TLS-over-duplex on raw EOF).
+                    //
+                    // Run the close callback now, regardless of whether the
+                    // peer's close_notify has arrived: if it HAS (processed
+                    // mid handle_reading, which sets sent_ssl_shutdown before
+                    // flushing the final decrypted bytes), closed_notified may
+                    // still be unset and handle_reading's deferred
+                    // trigger_close_callback would otherwise fire on_close
+                    // into the freed ctx; if it has NOT (peer went away after
+                    // our shutdown), the TLS-over-duplex teardown chain
+                    // (UpgradedDuplex::on_close -> DuplexUpgradeContext::on_close
+                    // -> deinit) never runs and leaks the whole context graph.
                     // trigger_close_callback is idempotent (closed_notified).
                     Self::r(this).flags.set_received_ssl_shutdown(true);
                     Self::r(this).trigger_close_callback();
                     // Do not read self after the close callback: the owner's
-                    // teardown chain has started (deinit is deferred to the
-                    // next tick today, but nothing here should rely on that).
-                    // The answer is known - we just set it.
+                    // teardown chain has started.
                     return true;
                 }
                 return Self::r(this).flags.received_ssl_shutdown();

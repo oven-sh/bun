@@ -2301,6 +2301,21 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
+    /// Vectored raw write for plain-TCP sockets: all chunks reach the fd in one
+    /// writev. Callers guarantee this socket has no TLS layer (raw writes bypass
+    /// SSL framing). Updates bytes_written like the scalar path.
+    pub fn write_vectored_raw(&self, iov: &[bun_uws_sys::UsIoVec]) -> i32 {
+        let socket = self.socket.get();
+        if socket.is_shutdown() || socket.is_closed() {
+            return -1;
+        }
+        let res = socket.raw_writev(iov);
+        let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
+        self.bytes_written
+            .set(self.bytes_written.get() + uwrote as u64);
+        res
+    }
+
     pub fn write_maybe_corked(&self, buffer: &[u8]) -> i32 {
         let socket = self.socket.get();
         if socket.is_shutdown() || socket.is_closed() {

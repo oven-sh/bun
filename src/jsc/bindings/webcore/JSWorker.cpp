@@ -765,7 +765,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBod
 
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     if (!worker.isOnline()) {
-        promise->reject(vm, globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+        promise->reject(vm, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
         return JSValue::encode(promise);
     }
 
@@ -804,7 +804,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBod
     });
     if (!accepted) {
         delete promiseHandle;
-        promise->reject(vm, globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+        promise->reject(vm, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
     }
     return JSValue::encode(promise);
 }
@@ -816,7 +816,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startCpuProfileInter
     auto& worker = castedThis->wrapped();
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     if (!worker.isOnline()) {
-        promise->reject(vm, globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+        promise->reject(vm, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
         return JSValue::encode(promise);
     }
     auto* promiseHandle = new Strong<JSPromise>(vm, promise);
@@ -831,7 +831,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startCpuProfileInter
     });
     if (!accepted) {
         delete promiseHandle;
-        promise->reject(vm, globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+        promise->reject(vm, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
     }
     return JSValue::encode(promise);
 }
@@ -873,7 +873,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
     auto& worker = castedThis->wrapped();
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     if (!worker.isOnline()) {
-        promise->reject(vm, globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+        promise->reject(vm, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
         return JSValue::encode(promise);
     }
     auto* promiseHandle = new Strong<JSPromise>(vm, promise);
@@ -921,7 +921,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
     });
     if (!accepted) {
         delete promiseHandle;
-        promise->reject(vm, globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+        promise->reject(vm, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
     }
     return JSValue::encode(promise);
 }

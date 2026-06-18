@@ -1,7 +1,8 @@
 // Minimal port of node's lib/internal/async_hooks.js surface for
-// --expose-internals consumers (vendored node tests). Bun's createHook is a
-// stub whose callbacks never fire; what CAN be tracked honestly is whether
-// any hook is currently enabled, which is all enabledHooksExist() reports.
+// --expose-internals consumers (vendored node tests). Bun's createHook is
+// partially implemented (full init/before/after/destroy for timers, init for
+// TickObject); what is tracked here is only whether any hook is currently
+// enabled, which is all enabledHooksExist() reports.
 let activeHooks = 0;
 
 function enabledHooksExist() {

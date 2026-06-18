@@ -140,11 +140,37 @@ describe.concurrent("input sourcemap chaining for external .map references (#267
     });
     expect(result.success).toBe(true);
     const mapFile = result.outputs.find(o => o.path.endsWith(".map"));
+    expect(mapFile).toBeDefined();
     const map = await Bun.file(mapFile!.path).json();
     // The inner source must resolve through sourceRoot: dist/main.js +
     // ../src/main.ts -> src/main.ts (not dist/main.ts).
     expect(map.sources.some((s: string) => s.replaceAll("\\", "/").endsWith("src/main.ts"))).toBe(true);
     expect(map.sources.some((s: string) => s.replaceAll("\\", "/").endsWith("dist/main.ts"))).toBe(false);
+  });
+
+  test("URL-style inner source names are passed through verbatim", async () => {
+    using dir = tempDir("26713-url-sources", {
+      "main.js": `console.log("hi");\n//# sourceMappingURL=main.js.map\n`,
+      "main.js.map": JSON.stringify({
+        version: 3,
+        sources: ["webpack:///src/main.ts"],
+        sourcesContent: ['console.log("hi");\n'],
+        names: [],
+        mappings: "AAAA",
+      }),
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "main.js")],
+      sourcemap: "external",
+      outdir: join(String(dir), "out"),
+    });
+    expect(result.success).toBe(true);
+    const mapFile = result.outputs.find(o => o.path.endsWith(".map"));
+    expect(mapFile).toBeDefined();
+    const map = await Bun.file(mapFile!.path).json();
+    // webpack:// and similar URL schemes must survive untouched; joining
+    // them against a filesystem dir would mangle them.
+    expect(map.sources).toContain("webpack:///src/main.ts");
   });
 
   test("Bun.build with missing external .map falls back cleanly", async () => {
@@ -160,6 +186,7 @@ describe.concurrent("input sourcemap chaining for external .map references (#267
     // intermediate without the chain.
     expect(result.success).toBe(true);
     const mapFile = result.outputs.find(o => o.path.endsWith(".map"));
+    expect(mapFile).toBeDefined();
     const map = await Bun.file(mapFile!.path).json();
     expect(map.sources.some((s: string) => s.endsWith("main.js"))).toBe(true);
   });

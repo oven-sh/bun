@@ -3877,16 +3877,18 @@ fn collect_inner_sources(
     let mut path_buf = bun_paths::path_buffer_pool::get();
     for (i, name) in names.iter().enumerate() {
         let name: &[u8] = name.as_ref();
-        let abs: &[u8] =
-            if !base_dir.is_empty() && !bun_paths::resolve_path::Platform::AUTO.is_absolute(name) {
-                bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-                    base_dir,
-                    &mut **path_buf,
-                    &[name],
-                )
-            } else {
-                name
-            };
+        let abs: &[u8] = if !base_dir.is_empty()
+            && !bun_paths::resolve_path::Platform::AUTO.is_absolute(name)
+            && !bun_sourcemap::is_url_like_source_name(name)
+        {
+            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                base_dir,
+                &mut **path_buf,
+                &[name],
+            )
+        } else {
+            name
+        };
         let escaped = match ism.sources_content.get(i) {
             Some(content) if !content.is_empty() => {
                 let mut buf =

@@ -60,9 +60,7 @@ impl InputSourceMap {
         }
         // Skip remote / protocol-relative references; only local paths are
         // loadable during bundling.
-        if bun_core::strings::contains_comptime(url, b"://")
-            || bun_core::strings::has_prefix_comptime(url, b"//")
-        {
+        if is_url_like_source_name(url) {
             return None;
         }
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -74,6 +72,15 @@ impl InputSourceMap {
         let bytes = bun_sys::File::read_from(bun_core::Fd::cwd(), abs).ok()?;
         InputSourceMap::parse(&bytes)
     }
+}
+
+/// True for sourcemap `sources[]` entries / `sourceMappingURL` values that
+/// are URL-shaped (scheme or protocol-relative) rather than filesystem
+/// paths. These are passed through verbatim by the linker / dev server
+/// instead of being joined against an on-disk directory.
+pub fn is_url_like_source_name(name: &[u8]) -> bool {
+    bun_core::strings::contains_comptime(name, b"://")
+        || bun_core::strings::has_prefix_comptime(name, b"//")
 }
 
 /// Malformed input is indistinguishable from "no chain available" — callers

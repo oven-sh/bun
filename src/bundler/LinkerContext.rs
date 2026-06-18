@@ -1320,7 +1320,12 @@ fn write_sources_for(
         for name in ism.map.external_source_names.iter() {
             let name: &[u8] = name.as_ref();
             let rel_path_storage;
-            let rel_path: &[u8] = if is_file {
+            let rel_path: &[u8] = if !is_file || bun_sourcemap::is_url_like_source_name(name) {
+                // Non-file namespace, or a URL-style virtual name
+                // (`webpack://`, `ng://`, `//host/...`): pass through
+                // unchanged so DevTools sees the original identifier.
+                name
+            } else {
                 // Use `join_abs` to produce an absolute inner path (when
                 // the inner map emitted a relative source name) that can
                 // then be re-relativized against `chunk_abs_dir`.
@@ -1336,8 +1341,6 @@ fn write_sources_for(
                 rel_path_storage =
                     bun_paths::resolve_path::relative_alloc(chunk_abs_dir, abs_path)?;
                 &rel_path_storage
-            } else {
-                name
             };
 
             let mut quote_buf = MutableString::init(rel_path.len() + ", ".len() + 2)?;

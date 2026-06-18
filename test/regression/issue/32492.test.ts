@@ -25,9 +25,11 @@ test("concurrent bun build does not stall on worker-pool shutdown", async () => 
 
   const CONCURRENCY = 24;
   const ROUNDS = 16;
-  // A healthy bundle here is a few hundred ms even under ASAN + contention; the
-  // regression stalls for a fixed ~10s, so this threshold cleanly separates them.
-  const STALL_MS = 5000;
+  // The regression is a fixed 10s idle-futex timeout, so a stalled build always
+  // exceeds 10s regardless of machine speed. A healthy build is well under a
+  // second; keep the threshold high so 24-way oversubscription on a slow ASAN
+  // shard can't trip it, while staying comfortably below the 10s floor.
+  const STALL_MS = 9000;
 
   const buildOnce = async (round: number, i: number) => {
     const entry = entries[i % entries.length];

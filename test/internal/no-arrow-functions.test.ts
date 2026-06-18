@@ -36,8 +36,21 @@ const jsSources = globAllSources().js.filter(function (p) {
   return rel.startsWith("src/js/");
 });
 
+// Only count files tracked in HEAD: editors and `git stash` round-trips can
+// leave stray .ts files in the working tree, and those must not fail the
+// ratchet. CI runs against the committed tree, so every real file is covered.
+const tracked: Set<string> | null = (function () {
+  const r = Bun.spawnSync({
+    cmd: ["git", "-C", root, "ls-tree", "-r", "--name-only", "-z", "HEAD"],
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  if (!r.success) return null;
+  return new Set(r.stdout.toString().split("\0").filter(Boolean));
+})();
+
 function countArrows(source: string, content: string): [number, number[]] {
-  const kind = source.endsWith(".ts") || source.endsWith(".tsx") ? ts.ScriptKind.TS : ts.ScriptKind.JS;
+  const kind = source.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS;
   const sf = ts.createSourceFile(source, content, ts.ScriptTarget.Latest, true, kind);
   const lines: number[] = [];
   function walk(node: ts.Node) {
@@ -55,6 +68,7 @@ const counts: Record<string, number> = {};
 const locations: Record<string, number[]> = {};
 for (const abs of jsSources) {
   const source = path.relative(root, abs).replaceAll(path.sep, "/");
+  if (tracked !== null && !tracked.has(source)) continue;
   const content = await file(abs).text();
   const [n, lines] = countArrows(source, content);
   if (n > 0) {

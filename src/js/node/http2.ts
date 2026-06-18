@@ -60,6 +60,13 @@ const onServerStreamStartChannel = dc.channel("http2.server.stream.start");
 const onServerStreamErrorChannel = dc.channel("http2.server.stream.error");
 const onServerStreamFinishChannel = dc.channel("http2.server.stream.finish");
 const onServerStreamCloseChannel = dc.channel("http2.server.stream.close");
+// node:_http_server's HTTP server channels, for the allowHTTP1 fallback path.
+// response.created is published by the ServerResponse constructor; the other
+// two are published in connectionListenerHTTP1 so subscribers see the same
+// three events Node fires on this path. Same channel objects as
+// node:_http_server (keyed by name in diagnostics_channel's registry).
+const onHttp1RequestStartChannel = dc.channel("http.server.request.start");
+const onHttp1ResponseFinishChannel = dc.channel("http.server.response.finish");
 const { Readable } = Stream;
 type Http2ConnectOptions = {
   settings?: Settings;
@@ -5469,15 +5476,6 @@ function connectionListenerHTTP1(server, socket, options) {
   const ServerResponseClass = http1Options.ServerResponse || http.ServerResponse;
   const keepAliveTimeout = typeof server.keepAliveTimeout === "number" ? server.keepAliveTimeout : 5000;
 
-  // http.server.request.start / http.server.response.finish for the HTTP/1
-  // fallback path (allowHTTP1). response.created is published by the
-  // ServerResponse constructor; publish the other two here so subscribers see
-  // the same three events Node fires on this path. Same channel objects as
-  // node:_http_server (keyed by name in diagnostics_channel's registry).
-  const dc = require("node:diagnostics_channel");
-  const onRequestStartChannel = dc.channel("http.server.request.start");
-  const onResponseFinishChannel = dc.channel("http.server.response.finish");
-
   const connections = (server[kHttp1Connections] ??= new SafeSet());
   connections.add(socket);
   socket[kHttp1ActiveRequests] = 0;
@@ -5549,12 +5547,12 @@ function connectionListenerHTTP1(server, socket, options) {
     // Attached unconditionally to match Node's resOnFinish; the hasSubscribers
     // check happens inside.
     res.on("finish", () => {
-      if (onResponseFinishChannel.hasSubscribers) {
-        onResponseFinishChannel.publish({ request, response: res, socket, server });
+      if (onHttp1ResponseFinishChannel.hasSubscribers) {
+        onHttp1ResponseFinishChannel.publish({ request, response: res, socket, server });
       }
     });
-    if (onRequestStartChannel.hasSubscribers) {
-      onRequestStartChannel.publish({ request, response: res, socket, server });
+    if (onHttp1RequestStartChannel.hasSubscribers) {
+      onHttp1RequestStartChannel.publish({ request, response: res, socket, server });
     }
     server.emit("request", req, res);
     return 0;

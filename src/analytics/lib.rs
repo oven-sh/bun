@@ -515,30 +515,19 @@ pub mod generate_header {
 
         #[unsafe(no_mangle)]
         pub(crate) extern "C" fn Bun__isEpollPwait2SupportedOnLinuxKernel() -> i32 {
-            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            // Android's per-app seccomp policy does not whitelist
+            // epoll_pwait2 (bionic SYSCALLS.TXT only lists epoll_pwait).
+            // https://github.com/oven-sh/bun/issues/32489
+            #[cfg(not(target_os = "linux"))]
             {
                 0
             }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
+            #[cfg(target_os = "linux")]
             {
                 if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2
                     .get()
                     .unwrap_or(false)
                 {
-                    return 0;
-                }
-
-                // Android's per-app seccomp policy does not whitelist
-                // epoll_pwait2 (bionic SYSCALLS.TXT only lists epoll_pwait),
-                // and depending on the runtime shim the blocked call can
-                // fault inside libc rather than returning ENOSYS to the
-                // fallback in epoll_kqueue.c. Detect at runtime via the
-                // kernel release string (e.g. "5.15.180-android13-8-…")
-                // since a linux-glibc build running on Android via a shim
-                // is compiled with target_os = "linux".
-                // https://github.com/oven-sh/bun/issues/32489
-                let release = bun_core::ffi::c_field_bytes(&bun_core::ffi::cached_uname().release);
-                if bun_core::strings::index_of(release, b"-android").is_some() {
                     return 0;
                 }
 

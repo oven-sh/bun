@@ -10,7 +10,9 @@ function writeOnPrototype(stream) {
 }
 
 const file = path.join(os.tmpdir(), `bun-write-on-prototype-${process.pid}.txt`);
-// createWriteStream on fd 1/2 uses the same fast path as process.stdout/stderr.
+// A regular (non-fast-path) WriteStream: write() now lives on WriteStream.prototype
+// for every instance, so the invariant and the Writable.prototype.write fallback
+// must both hold here as well.
 const ws = fs.createWriteStream(file);
 
 const result = {

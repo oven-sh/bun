@@ -361,12 +361,21 @@ Server.prototype.closeAllConnections = function () {
 Server.prototype.getConnections = function (callback) {
   // Connections are tracked from the first parsed request on each socket
   // (the native server does not surface raw accepts to JS yet).
-  const count = this[kTrackedConnections]?.size ?? 0;
-  if (typeof callback === "function") {
-    process.nextTick(callback, null, count);
-  }
+  // Node passes the callback straight to process.nextTick, which throws
+  // ERR_INVALID_ARG_TYPE for non-functions.
+  process.nextTick(callback, null, this[kTrackedConnections]?.size ?? 0);
   return this;
 };
+
+// Node's http.Server inherits `_connections` from net.Server; surface the
+// same count here for code that reads the property directly.
+Object.defineProperty(Server.prototype, "_connections", {
+  __proto__: null,
+  configurable: true,
+  get() {
+    return this[kTrackedConnections]?.size ?? 0;
+  },
+});
 
 Server.prototype.closeIdleConnections = function () {
   const server = this[serverSymbol];

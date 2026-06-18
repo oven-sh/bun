@@ -1,5 +1,6 @@
 #include "root.h"
 
+#include "BunDebugger.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
@@ -618,7 +619,160 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     return JSValue::encode(JSBunInspectorConnection::create(vm, JSBunInspectorConnection::createStructure(vm, globalObject, globalObject->objectPrototype()), connection));
 }
 
-extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString, int isAutomatic, bool isUrlServer)
+// State shared between the main thread (node:inspector's open()/close()) and
+// the debugger thread, which reports the listening WebSocket URL (or a startup
+// error) and registers a callback that shuts the server down again.
+struct NodeInspectorState {
+    WTF::Lock lock;
+    WTF::Condition condition;
+    WTF::String url;
+    WTF::String error;
+    bool serverStarted { false };
+    // Owned by the debugger thread's VM; only created and cleared there.
+    JSC::Strong<JSC::Unknown> controlCallback {};
+};
+
+static NodeInspectorState& nodeInspectorState()
+{
+    static NodeInspectorState instance;
+    return instance;
+}
+
+// Called by internal/debugger.ts on the debugger thread once the node:inspector
+// server is listening (url, controlCallback) or failed to start ("", undefined, error).
+JSC_DECLARE_HOST_FUNCTION(jsFunctionReportNodeInspectorServerStarted);
+JSC_DEFINE_HOST_FUNCTION(jsFunctionReportNodeInspectorServerStarted, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String url = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue controlCallbackValue = callFrame->argument(1);
+    String error = callFrame->argument(2).isUndefined() ? String() : callFrame->argument(2).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto& state = nodeInspectorState();
+    {
+        Locker<Lock> locker(state.lock);
+        state.url = url.isolatedCopy();
+        state.error = error.isolatedCopy();
+        if (controlCallbackValue.isCallable()) {
+            state.controlCallback = { vm, controlCallbackValue };
+        }
+        state.serverStarted = true;
+        state.condition.notifyAll();
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" bool Debugger__startNodeInspectorServer(BunString* url, bool waitForConnection);
+extern "C" void Debugger__waitForNodeInspectorConnection();
+
+// node:inspector's inspector.open(): starts the debugger thread (if possible),
+// waits for its WebSocket server to come up, and returns the resolved ws://
+// URL. Returns null when an inspector is already active; throws when the
+// server failed to start.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_openNodeInspector, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String requestedUrl = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool waitForConnection = callFrame->argument(1).toBoolean(globalObject);
+
+    BunString urlString = Bun::toString(requestedUrl);
+    if (!Debugger__startNodeInspectorServer(&urlString, waitForConnection)) {
+        return JSValue::encode(jsNull());
+    }
+
+    auto& state = nodeInspectorState();
+    String resolvedUrl;
+    String error;
+    {
+        Locker<Lock> locker(state.lock);
+        // The debugger thread reports back as soon as Bun.serve is listening;
+        // the timeout is only a safety net so a debugger-thread crash cannot
+        // hang the caller forever.
+        while (!state.serverStarted) {
+            if (!state.condition.waitFor(state.lock, Seconds(30)))
+                break;
+        }
+        resolvedUrl = state.url.isolatedCopy();
+        error = state.error.isolatedCopy();
+    }
+
+    if (!error.isEmpty()) {
+        throwException(globalObject, scope, createError(globalObject, makeString("Failed to start inspector: "_s, error)));
+        return {};
+    }
+    if (resolvedUrl.isEmpty()) {
+        throwException(globalObject, scope, createError(globalObject, "Failed to start inspector: the inspector server did not start"_s));
+        return {};
+    }
+
+    return JSValue::encode(jsString(vm, resolvedUrl));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_waitForNodeInspectorConnection, (JSGlobalObject*, CallFrame*))
+{
+    Debugger__waitForNodeInspectorConnection();
+    return JSValue::encode(jsUndefined());
+}
+
+// Forwards a control message (close, breakpoint forwarded from the in-process
+// Session, ...) from the main thread to the node-inspector server running on
+// the debugger thread. Returns false when no server is active.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_postNodeInspectorControl, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String message = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto& state = nodeInspectorState();
+    {
+        Locker<Lock> locker(state.lock);
+        if (!state.serverStarted || state.url.isEmpty())
+            return JSValue::encode(jsBoolean(false));
+    }
+
+    if (!debuggerScriptExecutionContext)
+        return JSValue::encode(jsBoolean(false));
+
+    debuggerScriptExecutionContext->postTaskConcurrently([message = message.isolatedCopy()](ScriptExecutionContext& context) {
+        auto& state = nodeInspectorState();
+        JSC::JSValue controlCallback;
+        {
+            Locker<Lock> locker(state.lock);
+            controlCallback = state.controlCallback.get();
+        }
+        if (!controlCallback || !controlCallback.isCallable())
+            return;
+        auto* globalObject = context.jsGlobalObject();
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsString(globalObject->vm(), message));
+        JSC::call(globalObject, controlCallback.getObject(), arguments, "jsFunction_postNodeInspectorControl - controlCallback"_s);
+    });
+
+    return JSValue::encode(jsBoolean(true));
+}
+
+// Marks the node:inspector server closed so url() reports undefined and
+// further control messages are dropped. The server itself is shut down by a
+// "close" control message sent before this.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_markNodeInspectorClosed, (JSGlobalObject*, CallFrame*))
+{
+    auto& state = nodeInspectorState();
+    Locker<Lock> locker(state.lock);
+    state.url = String();
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString, int isAutomatic, bool isUrlServer, bool isNodeInspector)
 {
     if (!debuggerScriptExecutionContext)
         debuggerScriptExecutionContext = debuggerGlobalObject->scriptExecutionContext();
@@ -642,6 +796,8 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 0, String("disconnect"_s), jsFunctionDisconnect, ImplementationVisibility::Public));
     arguments.append(jsBoolean(isAutomatic));
     arguments.append(jsBoolean(isUrlServer));
+    arguments.append(jsBoolean(isNodeInspector));
+    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String("reportNodeInspectorServerStarted"_s), jsFunctionReportNodeInspectorServerStarted, ImplementationVisibility::Public));
 
     JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
     scope.assertNoException();
@@ -714,6 +870,7 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
     // Snapshot under the lock, release before calling into the inspector —
     // `willDestroyFrontendAndBackend` must not run with `inspectorConnectionsLock` held.
     Vector<BunInspectorConnection*, 8> toDisconnect;
+    bool hasEverConnected = false;
     {
         Locker<Lock> locker(inspectorConnectionsLock);
         if (!inspectorConnections)
@@ -725,6 +882,7 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
         if (it == inspectorConnections->end())
             return;
         for (auto* connection : it->value) {
+            hasEverConnected |= connection->hasEverConnected;
             if (connection->status == ConnectionStatus::Disconnected)
                 continue;
             connection->status = ConnectionStatus::Disconnected;
@@ -735,7 +893,11 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
         }
     }
 
-    if (toDisconnect.isEmpty())
+    // A controller that never had a frontend connect has no agents and is safe
+    // to destroy normally. One that did needs the leak workaround below even
+    // if every connection has already disconnected (e.g. inspector.close()
+    // before exit) — its destructor still trips the CheckedPtr ordering bug.
+    if (!hasEverConnected)
         return;
 
     for (auto* connection : toDisconnect)

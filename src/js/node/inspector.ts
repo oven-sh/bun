@@ -1,6 +1,6 @@
 // Hardcoded module "node:inspector" and "node:inspector/promises"
 // Profiler APIs are implemented; other inspector APIs are stubs.
-const { hideFromStack, throwNotImplemented } = require("internal/shared");
+const { hideFromStack } = require("internal/shared");
 const EventEmitter = require("node:events");
 const { pathToFileURL } = require("node:url");
 const { isAbsolute } = require("node:path");
@@ -14,22 +14,78 @@ const startPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunct
 const stopPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage", 0);
 const collectPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage", 0);
 
-function open() {
-  throwNotImplemented("node:inspector", 2445);
+// Native bindings for inspector.open(): they start Bun's debugger thread with a
+// WebSocket server that speaks the V8 Chrome DevTools Protocol (see
+// internal/debugger.ts and internal/inspector/cdp.ts).
+const openNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_openNodeInspector", 2);
+const waitForNodeInspectorConnection = $newCppFunction(
+  "BunDebugger.cpp",
+  "jsFunction_waitForNodeInspectorConnection",
+  0,
+);
+const postNodeInspectorControl = $newCppFunction("BunDebugger.cpp", "jsFunction_postNodeInspectorControl", 1);
+const markNodeInspectorClosed = $newCppFunction("BunDebugger.cpp", "jsFunction_markNodeInspectorClosed", 0);
+
+let activeInspectorUrl: string | undefined;
+
+function open(port?: number, host?: string, wait?: boolean) {
+  if (activeInspectorUrl !== undefined) {
+    throw new Error("Inspector is already activated. Close it with inspector.close() before activating it again.");
+  }
+  if (!Bun.isMainThread) {
+    throw new Error("inspector.open() is not supported in worker threads");
+  }
+
+  if (port !== undefined && port !== null) {
+    if (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65535) {
+      throw $ERR_OUT_OF_RANGE("port", ">= 0 and <= 65535", port);
+    }
+  }
+  const portNumber = port === undefined || port === null ? 9229 : port;
+  const hostname = typeof host === "string" && host.length > 0 ? host : "127.0.0.1";
+  // Bracket bare IPv6 hosts so they survive URL parsing.
+  const hostPart = hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
+  const requestedUrl = `ws://${hostPart}:${portNumber}/${globalThis.crypto.randomUUID()}`;
+
+  const resolvedUrl = openNodeInspector(requestedUrl, !!wait);
+  if (resolvedUrl === null) {
+    throw new Error("Inspector is already activated. Close it with inspector.close() before activating it again.");
+  }
+
+  activeInspectorUrl = resolvedUrl;
+  process.stderr.write(`Debugger listening on ${resolvedUrl}\nFor help, see: https://nodejs.org/en/docs/inspector\n`);
+
+  if (wait) {
+    waitForNodeInspectorConnection();
+  }
+
+  return {
+    __proto__: null,
+    [Symbol.dispose]() {
+      close();
+    },
+  };
 }
 
 function close() {
-  throwNotImplemented("node:inspector", 2445);
+  if (activeInspectorUrl === undefined) {
+    return;
+  }
+  postNodeInspectorControl(JSON.stringify({ type: "close" }));
+  markNodeInspectorClosed();
+  activeInspectorUrl = undefined;
 }
 
 function url() {
-  // Return undefined since that is allowed by the Node.js API
   // https://nodejs.org/api/inspector.html#inspectorurl
-  return undefined;
+  return activeInspectorUrl;
 }
 
 function waitForDebugger() {
-  throwNotImplemented("node:inspector", 2445);
+  if (activeInspectorUrl === undefined) {
+    throw new Error("Inspector was not activated");
+  }
+  waitForNodeInspectorConnection();
 }
 
 // Sessions with the Runtime domain enabled receive Runtime.consoleAPICalled
@@ -458,6 +514,27 @@ class Session extends EventEmitter {
         const scripts = collectCoverageScripts();
         if (scripts instanceof Error) return scripts;
         return { result: buildScriptCoverageList(scripts, false, false) };
+      }
+
+      // Configuration-only Debugger commands are forwarded to the inspector
+      // server started by inspector.open() (vitest --inspect-brk uses
+      // Debugger.enable + Debugger.setBreakpointByUrl to stop at the first
+      // test file). The forwarding is fire-and-forget: results such as
+      // breakpointId are not available in-process.
+      case "Debugger.enable":
+      case "Debugger.disable":
+      case "Debugger.setBreakpointByUrl":
+      case "Debugger.removeBreakpoint":
+      case "Debugger.setBreakpointsActive":
+      case "Debugger.setPauseOnExceptions":
+      case "Debugger.setSkipAllPauses":
+      case "Debugger.setAsyncCallStackDepth":
+      case "Debugger.setBlackboxPatterns": {
+        if (activeInspectorUrl === undefined) {
+          return new Error(`Inspector method "${method}" requires an active inspector (call inspector.open() first)`);
+        }
+        postNodeInspectorControl(JSON.stringify({ type: "command", method, params }));
+        return {};
       }
 
       default:

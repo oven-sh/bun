@@ -199,6 +199,7 @@ int main(int argc, char **argv) {
         stdout: c.expected,
         signalCode: null,
       });
+      if (out.exitCode !== 0) expect(out.stderr).toBe("");
       expect(out.exitCode).toBe(0);
     });
   }

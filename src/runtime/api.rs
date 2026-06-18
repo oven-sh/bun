@@ -119,6 +119,10 @@ pub mod js_bun_spawn_bindings;
 pub mod bun_terminal_body;
 
 // H2FrameParser — ~338 jsc refs (Strong, JsRef, host_fn getters, AbortSignal).
+// From-scratch node:http2 engine rewrite (will replace h2_frame_parser.rs).
+#[path = "api/bun/h2/mod.rs"]
+pub mod h2;
+
 #[path = "api/bun/h2_frame_parser.rs"]
 pub mod h2_frame_parser_body;
 

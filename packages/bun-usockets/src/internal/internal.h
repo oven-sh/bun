@@ -267,6 +267,10 @@ struct us_socket_t {
    * Used by Bun's `socket.upgradeTLS()` so the returned [raw, tls] pair's
    * `raw` half can observe ciphertext (node:net Duplex.ondata semantics). */
   unsigned char ssl_raw_tap : 1;
+  /* A graceful TLS shutdown arrived while batched ciphertext was still
+   * spilled (see ssl_flush_write_batch); the shutdown re-runs once the
+   * spill drains so those records are not cut off by our FIN/close_notify. */
+  unsigned char ssl_shutdown_after_spill : 1;
   /* Set while SSL_do_handshake/SSL_read is on the stack: JS run from inside
    * those calls (ALPN/SNI/keylog callbacks) may destroy the socket, and the
    * SSL must not be freed under BoringSSL's feet - the detach is deferred to

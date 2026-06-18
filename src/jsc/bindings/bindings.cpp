@@ -1008,12 +1008,18 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         if (!eql) return false;
     }
 
-    // for the remaining properties in the other object, make sure they are undefined
-    for (; i < propertyArrayLength2; i++) {
-        Identifier i2 = a2[i];
-        PropertyName propertyName2 = PropertyName(i2);
+    // Any enumerable key present in o2 but not o1 must be undefined for the objects
+    // to be equal. o2's extra keys may be interleaved before shared keys, so
+    // membership is tested by name against o1's key list rather than by a positional
+    // slice of a2.
+    const auto& propertyVector1 = a1.data()->propertyNameVector();
+    for (size_t j = 0; j < propertyArrayLength2; j++) {
+        const Identifier& i2 = a2[j];
+        if (propertyVector1.contains(i2)) {
+            continue;
+        }
 
-        JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName2);
+        JSValue prop2 = o2->getIfPropertyExists(globalObject, PropertyName(i2));
         RETURN_IF_EXCEPTION(scope, false);
 
         if (!prop2.isUndefined()) {
@@ -1308,13 +1314,19 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 }
             }
 
-            // for the remaining properties in the other object, make sure they are undefined
-            for (; i < propertyArrayLength2; i++) {
-                Identifier i2 = a2[i];
+            // Any enumerable key present in `right` but not `left` must be undefined for
+            // the errors to be equal. `right`'s extra keys may be interleaved before shared
+            // keys, so membership is tested by name against `left`'s key list rather than by
+            // a positional slice of a2.
+            const auto& propertyVector1 = a1.data()->propertyNameVector();
+            for (size_t j = 0; j < propertyArrayLength2; j++) {
+                const Identifier& i2 = a2[j];
                 if (i2 == vm.propertyNames->stack) continue;
-                PropertyName propertyName2 = PropertyName(i2);
+                if (propertyVector1.contains(i2)) {
+                    continue;
+                }
 
-                JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName2);
+                JSValue prop2 = right->getIfPropertyExists(globalObject, PropertyName(i2));
                 RETURN_IF_EXCEPTION(scope, {});
 
                 if (!prop2.isUndefined()) {

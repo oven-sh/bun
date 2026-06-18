@@ -849,6 +849,68 @@ describe("expect()", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/32485
+  test("toEqual ignores undefined properties on frozen objects (slow path)", () => {
+    // Frozen objects are not fast-property-enumerable, so they take deepEquals'
+    // slow path. An extra `undefined` key that is not last in enumeration order
+    // used to be flagged as a diff there.
+    expect(Object.freeze({ a: 1, b: undefined, c: 3 })).toEqual(Object.freeze({ a: 1, c: 3 }));
+    expect(Object.freeze({ a: 1, c: 3 })).toEqual(Object.freeze({ a: 1, b: undefined, c: 3 }));
+    expect(Object.freeze({ a: 1, b: undefined })).toEqual(Object.freeze({ a: 1 }));
+    expect(Object.freeze({ a: 1 })).toEqual(Object.freeze({ a: 1, b: undefined }));
+
+    // Nested objects, outer frozen (the originally reported shape).
+    expect(Object.freeze({ a: 1, b: undefined, nested: { d: 1, e: undefined } })).toEqual(
+      Object.freeze({ a: 1, nested: { d: 1 } }),
+    );
+    // Inner object also frozen: the slow path recurses into itself.
+    expect(Object.freeze({ a: 1, b: undefined, nested: Object.freeze({ d: 1, e: undefined }) })).toEqual(
+      Object.freeze({ a: 1, nested: Object.freeze({ d: 1 }) }),
+    );
+
+    // Via expect.arrayContaining, which compares with the expected array as the
+    // left-hand (fewer-keys) operand.
+    expect([Object.freeze({ a: 1, b: undefined, c: 3 })]).toEqual(
+      expect.arrayContaining([Object.freeze({ a: 1, c: 3 })]),
+    );
+    expect([Object.freeze({ a: 1, b: undefined, nested: { d: 1, e: undefined } })]).toEqual(
+      expect.arrayContaining([Object.freeze({ a: 1, nested: { d: 1 } })]),
+    );
+
+    // A genuinely extra, non-undefined key is still a difference.
+    expect(Object.freeze({ a: 1, b: 2, c: 3 })).not.toEqual(Object.freeze({ a: 1, c: 3 }));
+    expect(Object.freeze({ a: 1, c: 3 })).not.toEqual(Object.freeze({ a: 1, b: 2, c: 3 }));
+    expect(Object.freeze({ a: 1, b: null, c: 3 })).not.toEqual(Object.freeze({ a: 1, c: 3 }));
+    // Differing defined values must still fail.
+    expect(Object.freeze({ a: 1, b: undefined, c: 3 })).not.toEqual(Object.freeze({ a: 1, c: 4 }));
+  });
+
+  // https://github.com/oven-sh/bun/issues/32485
+  test("toEqual ignores undefined properties on Error objects (slow path)", () => {
+    // Errors are compared by a dedicated path that had the same positional bug:
+    // an extra `undefined` own property interleaved before a shared key.
+    const withExtra = () => {
+      const e = new Error("boom");
+      e.extra = undefined;
+      e.code = "E";
+      return e;
+    };
+    const withoutExtra = () => {
+      const e = new Error("boom");
+      e.code = "E";
+      return e;
+    };
+    expect(withoutExtra()).toEqual(withExtra());
+    expect(withExtra()).toEqual(withoutExtra());
+    expect([withExtra()]).toEqual(expect.arrayContaining([withoutExtra()]));
+
+    // A genuinely extra, non-undefined key is still a difference.
+    const withDefined = new Error("boom");
+    withDefined.extra = 1;
+    withDefined.code = "E";
+    expect(withoutExtra()).not.toEqual(withDefined);
+  });
+
   test("toThrow asymmetric matchers", () => {
     expect(() => {
       const err = new Error("foo");

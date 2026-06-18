@@ -883,6 +883,19 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         }
 
         if let Some(buffer) = arg.as_array_buffer(global) {
+            // Shared/resizable JS backing stores are not stable enough for a Rust
+            // `&[u8]`: another agent can mutate (or the owner resize) the bytes
+            // while the sink reads them. Snapshot into owned bytes before Rust
+            // forms a slice; the copy runs in C++, and the sink consumes the
+            // owned payload synchronously. Fixed unshared input keeps the
+            // borrowed fast path.
+            if (buffer.shared || buffer.resizable) && !buffer.is_detached() && buffer.byte_len > 0 {
+                let owned = snapshot_shared_array_buffer_bytes(global, &buffer)?;
+                return Ok(this
+                    .sink
+                    .write_bytes(&streams::Result::Owned(owned))
+                    .to_js(global));
+            }
             let slice = buffer.slice();
             if slice.is_empty() {
                 return Ok(JSValue::js_number(0.0));
@@ -1209,4 +1222,49 @@ pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_
         return;
     }
     bun_core::debug_warn!("Unknown sink type");
+}
+
+/// Copy a `SharedArrayBuffer`, growable `SharedArrayBuffer`, or resizable
+/// `ArrayBuffer` into owned bytes so a sink write never reads JS backing storage
+/// another agent can mutate through a Rust `&[u8]`. The copy is performed in C++
+/// (`Bun__createArrayBufferForCopy`) into a fresh non-shared buffer, so Rust only
+/// borrows stable, unshared memory before copying it into the returned `Vec`.
+pub(crate) fn snapshot_shared_array_buffer_bytes(
+    global: &JSGlobalObject,
+    buffer: &bun_jsc::ArrayBuffer,
+) -> bun_jsc::JsResult<Vec<u8>> {
+    let copy = bun_jsc::from_js_host_call(global, || {
+        // SAFETY: `Bun__createArrayBufferForCopy` copies `byte_len` bytes from
+        // `buffer.ptr` into a fresh, non-shared ArrayBuffer. Callers only reach
+        // this helper for a live, non-detached buffer with `byte_len > 0`
+        // (checked in `js_write`), so `ptr`/`byte_len` name a valid readable
+        // region and `global` is a live JSGlobalObject.
+        unsafe { Bun__createArrayBufferForCopy(global, buffer.ptr.cast(), buffer.byte_len) }
+    })?;
+    let copy_buffer = copy.as_array_buffer(global).ok_or_else(|| {
+        global.throw_invalid_arguments(format_args!(
+            "Failed to snapshot shared ArrayBuffer for sink write"
+        ))
+    })?;
+    // The snapshot only removes the aliasing hazard if the copy is itself a fixed,
+    // non-shared buffer of the requested length. If the C++ copy contract is ever
+    // violated, error out rather than fall back to reading shared/short input.
+    if copy_buffer.is_detached()
+        || copy_buffer.shared
+        || copy_buffer.resizable
+        || copy_buffer.byte_len != buffer.byte_len
+    {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "snapshot of shared ArrayBuffer did not produce a stable copy"
+        )));
+    }
+    Ok(copy_buffer.byte_slice().to_vec())
+}
+
+unsafe extern "C" {
+    fn Bun__createArrayBufferForCopy(
+        global: *const JSGlobalObject,
+        ptr: *const c_void,
+        len: usize,
+    ) -> JSValue;
 }

@@ -113,13 +113,16 @@ int main(int argc, char **argv) {
 
   const helperBin = tryBuild();
 
-  // Run `snippet` in a bun subprocess guarded by the seccomp helper, with
-  // epoll_pwait2 disabled. Returns null if the environment refused to
-  // install the seccomp filter (skip).
-  async function runUnderSeccomp(bin: string, snippet: string) {
+  // Run `snippet` in a bun subprocess guarded by the seccomp helper.
+  // Returns null if the environment refused to install the seccomp filter
+  // (skip).
+  async function runUnderSeccomp(bin: string, snippet: string, disableEpollPwait2: boolean) {
     await using proc = Bun.spawn({
       cmd: [bin, bunExe(), "-e", snippet],
-      env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2: "1" },
+      env: {
+        ...bunEnv,
+        BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2: disableEpollPwait2 ? "1" : undefined,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -128,56 +131,65 @@ int main(int argc, char **argv) {
     return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
 
-  test("BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2 gates the main loop", async () => {
-    if (helperBin == null) {
-      console.warn("SKIP epoll_pwait2 seccomp: cc or seccomp headers not available");
-      return;
-    }
+  const cases: Array<{ name: string; snippet: string; expected: string }> = [
+    {
+      name: "main loop",
+      // The setTimeout forces us_loop_run_bun_tick to wait on the epoll fd
+      // with a finite timeout, exercising bun_epoll_pwait2 on the main loop.
+      snippet: `await new Promise(r => setTimeout(r, 50));
+                console.log("timer-ok");`,
+      expected: "timer-ok",
+    },
+    {
+      name: "HTTP thread loop",
+      // fetch() runs on the dedicated HTTP thread, which owns its own
+      // us_loop_t; this exercises bun_epoll_pwait2 on that loop as well
+      // (the frame the issue reported faulting: HTTPThread.rs ->
+      // us_loop_run_bun_tick).
+      snippet: `await using server = Bun.serve({ port: 0, fetch: () => new Response("pong") });
+                const res = await fetch(server.url);
+                console.log("http-thread-ok:" + await res.text() + ":" + res.status);`,
+      expected: "http-thread-ok:pong:200",
+    },
+  ];
 
-    // The setTimeout forces us_loop_run_bun_tick to wait on the epoll fd
-    // with a finite timeout, exercising bun_epoll_pwait2 on the main loop.
-    const out = await runUnderSeccomp(
-      helperBin,
-      `await new Promise(r => setTimeout(r, 50));
-       console.log("timer-ok");`,
-    );
-    if (out == null) {
-      console.warn("SKIP epoll_pwait2 seccomp: seccomp not permitted in this environment");
-      return;
-    }
+  for (const c of cases) {
+    test(`BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2 gates the ${c.name}`, async () => {
+      if (helperBin == null) {
+        console.warn("SKIP epoll_pwait2 seccomp: cc or seccomp headers not available");
+        return;
+      }
 
-    expect({ stdout: out.stdout.trim(), signalCode: out.signalCode }).toEqual({
-      stdout: "timer-ok",
-      signalCode: null,
+      // Control run: same snippet WITHOUT the flag. Proves the seccomp
+      // filter is live and this path actually issues epoll_pwait2 on this
+      // host (kernel >= 5.11, not Android). If the control is not killed,
+      // the gate under test is already disabled by a different condition
+      // and the flagged run below would pass for the wrong reason.
+      const control = await runUnderSeccomp(helperBin, c.snippet, false);
+      if (control == null) {
+        console.warn("SKIP epoll_pwait2 seccomp: seccomp not permitted in this environment");
+        return;
+      }
+      if (control.signalCode !== "SIGSYS") {
+        console.warn(
+          `SKIP epoll_pwait2 seccomp: control run was not killed ` +
+            `(signal=${control.signalCode} exit=${control.exitCode}); ` +
+            `epoll_pwait2 is already disabled on this host`,
+        );
+        return;
+      }
+
+      const out = await runUnderSeccomp(helperBin, c.snippet, true);
+      if (out == null) {
+        console.warn("SKIP epoll_pwait2 seccomp: seccomp not permitted in this environment");
+        return;
+      }
+
+      expect({ stdout: out.stdout.trim(), signalCode: out.signalCode }).toEqual({
+        stdout: c.expected,
+        signalCode: null,
+      });
+      expect(out.exitCode).toBe(0);
     });
-    expect(out.exitCode).toBe(0);
-  });
-
-  test("BUN_FEATURE_FLAG_DISABLE_EPOLL_PWAIT2 gates the HTTP thread loop", async () => {
-    if (helperBin == null) {
-      console.warn("SKIP epoll_pwait2 seccomp: cc or seccomp headers not available");
-      return;
-    }
-
-    // fetch() runs on the dedicated HTTP thread, which owns its own
-    // us_loop_t; this exercises bun_epoll_pwait2 on that loop as well
-    // (the frame the issue reported faulting: HTTPThread.rs ->
-    // us_loop_run_bun_tick).
-    const out = await runUnderSeccomp(
-      helperBin,
-      `await using server = Bun.serve({ port: 0, fetch: () => new Response("pong") });
-       const res = await fetch(server.url);
-       console.log("http-thread-ok:" + await res.text() + ":" + res.status);`,
-    );
-    if (out == null) {
-      console.warn("SKIP epoll_pwait2 seccomp: seccomp not permitted in this environment");
-      return;
-    }
-
-    expect({ stdout: out.stdout.trim(), signalCode: out.signalCode }).toEqual({
-      stdout: "http-thread-ok:pong:200",
-      signalCode: null,
-    });
-    expect(out.exitCode).toBe(0);
-  });
+  }
 });

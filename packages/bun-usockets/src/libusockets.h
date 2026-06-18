@@ -538,6 +538,19 @@ void *us_socket_get_native_handle(us_socket_r s) nonnull_fn_decl;
 int us_socket_write(us_socket_r s, const char *nonnull_arg data, int length) nonnull_fn_decl;
 int us_socket_write2(us_socket_r s, const char *header, int header_length, const char *payload, int payload_length) nonnull_fn_decl;
 /* Bypass TLS — write raw bytes to the fd even if `s->ssl` is set. */
+/* Layout-compatible with struct iovec on POSIX; used by the vectored raw
+ * write below so headers and payload slices reach the kernel in one syscall
+ * without an intermediate copy. */
+struct us_iovec_t {
+    void *iov_base;
+    size_t iov_len;
+};
+
+/* Vectored variant of us_socket_raw_write: same closed/shutdown gating and
+ * partial-write poll handling, one writev for all chunks (sequential sends
+ * on platforms without writev). Returns total bytes written. */
+int us_socket_raw_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
+
 int us_socket_raw_write(us_socket_r s, const char *data, int length);
 /* Like us_socket_write, but additionally reports a fatal (non-would-block)
  * send error through *fatal_write_error so opted-in callers can fail the

@@ -1060,12 +1060,10 @@ JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 
 JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& scope, JSGlobalObject* globalObject, JSValue encodingValue)
 {
-    WTF::String encodingString = encodingValue.toWTFString(globalObject);
-    RELEASE_RETURN_IF_EXCEPTION(scope, {});
-
     WTF::StringBuilder builder;
     builder.append("Unknown encoding: "_s);
-    builder.append(encodingString);
+    JSValueToStringSafe(globalObject, builder, encodingValue);
+    RELEASE_RETURN_IF_EXCEPTION(scope, {});
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, builder.toString()));
     scope.release();
     return {};
@@ -1180,10 +1178,10 @@ JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope& throwScope, JSC::JSG
 
 JSC::EncodedJSValue CRYPTO_UNKNOWN_CIPHER(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& cipherName)
 {
-    WTF::StringBuilder builder;
-    builder.append("Unknown cipher: "_s);
-    builder.append(cipherName);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_UNKNOWN_CIPHER, builder.toString()));
+    // Node dropped the cipher name from the message (exact-match asserted by
+    // test-crypto-cipheriv-decipheriv.js and test-crypto-keygen.js).
+    UNUSED_PARAM(cipherName);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_UNKNOWN_CIPHER, "Unknown cipher"_s));
     throwScope.release();
     return {};
 }
@@ -1542,7 +1540,7 @@ static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalOb
     return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, msg);
 }
 
-static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, JSC::JSValue reason)
+static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, JSC::JSValue reason, ErrorCode code = ErrorCode::ERR_INVALID_ARG_VALUE)
 {
     ASSERT(name.isString());
     auto* jsNameString = name.toString(globalObject);
@@ -1568,7 +1566,7 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
         builder.append(" is invalid. Received "_s);
         JSValueToStringSafe(globalObject, builder, value, true);
         RETURN_IF_EXCEPTION(throwScope, {});
-        return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString());
+        return createError(globalObject, code, builder.toString());
     }
 
     auto* jsReasonString = reason.toString(globalObject);
@@ -1582,7 +1580,7 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     builder.append(". Received "_s);
     JSValueToStringSafe(globalObject, builder, value, true);
     RETURN_IF_EXCEPTION(throwScope, {});
-    return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString());
+    return createError(globalObject, code, builder.toString());
 }
 
 extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* globalObject, ErrorCode code, BunString* message)
@@ -1779,15 +1777,32 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSValue::encode(ERR_INVALID_ARG_VALUE(scope, globalObject, arg0, arg1, arg2));
     }
 
+    case Bun::ErrorCode::ERR_INVALID_ARG_VALUE_RangeError: {
+        JSValue arg0 = callFrame->argument(1);
+        JSValue arg1 = callFrame->argument(2);
+        JSValue arg2 = callFrame->argument(3);
+        return JSValue::encode(ERR_INVALID_ARG_VALUE(scope, globalObject, arg0, arg1, arg2, ErrorCode::ERR_INVALID_ARG_VALUE_RangeError));
+    }
+
+    case Bun::ErrorCode::ERR_STREAM_ITER_MISSING_FLAG: {
+        return JSC::JSValue::encode(createError(globalObject, error, "The stream/iter API requires the --experimental-stream-iter flag"_s));
+    }
+
+    case Bun::ErrorCode::ERR_OPERATION_FAILED: {
+        auto arg0 = callFrame->argument(1);
+        WTF::StringBuilder builder;
+        builder.append("Operation failed: "_s);
+        JSValueToStringSafe(globalObject, builder, arg0);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+    }
+
     case Bun::ErrorCode::ERR_UNKNOWN_ENCODING: {
         auto arg0 = callFrame->argument(1);
-        auto* jsString = arg0.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto param = jsString->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
         WTF::StringBuilder builder;
         builder.append("Unknown encoding: "_s);
-        builder.append(param);
+        JSValueToStringSafe(globalObject, builder, arg0);
+        RETURN_IF_EXCEPTION(scope, {});
         return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
     }
 

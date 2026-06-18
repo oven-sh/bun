@@ -28,6 +28,7 @@ describe.skipIf(!isLinux)("epoll_pwait2 disable gate", () => {
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -50,6 +51,12 @@ describe.skipIf(!isLinux)("epoll_pwait2 disable gate", () => {
 int main(int argc, char **argv) {
   if (argc < 2) return 2;
   if (MY_AUDIT_ARCH == 0) return 77; /* unsupported arch, skip */
+
+  /* The control run is deliberately killed by SIGSYS below; suppress the
+   * core file so the CI runner does not flag it as a crash. RLIMIT_CORE
+   * survives execvp. */
+  struct rlimit no_core = {0, 0};
+  setrlimit(RLIMIT_CORE, &no_core);
 
   struct sock_filter filter[] = {
     /* arch check */

@@ -583,10 +583,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
     }
-    // Reset the "has close been called" flag — Node allows listening
-    // again after close, so address()/close() need to behave normally
-    // on the fresh listen.
-    this[kServerClosed] = false;
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
@@ -922,6 +918,14 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       //   return promise;
       // },
     });
+
+    // Reset the "has close been called" flag — Node allows listening
+    // again after close, so address()/close() behave normally on the
+    // fresh listen. Done only after `Bun.serve()` succeeds: if it threw
+    // (e.g. EADDRINUSE) `serverSymbol` still points at the old draining
+    // handle, and leaving `kServerClosed` set keeps address()/close()
+    // reporting "not running" until that handle actually drains.
+    this[kServerClosed] = false;
 
     // Capture the Bun.serve handle for this listen generation so the
     // close callback can tell whether it's still the current one (see

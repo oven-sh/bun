@@ -3881,11 +3881,15 @@ fn collect_inner_sources(
             && !bun_paths::resolve_path::Platform::AUTO.is_absolute(name)
             && !bun_sourcemap::is_url_like_source_name(name)
         {
-            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+            // Inner source names come from arbitrary `.map` JSON; use
+            // the length-checked join so an overlong entry falls back
+            // to the raw name rather than panicking on the PathBuffer.
+            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
                 base_dir,
                 &mut **path_buf,
                 &[name],
             )
+            .unwrap_or(name)
         } else {
             name
         };

@@ -163,8 +163,8 @@ pub type Poll = IOWriter;
 // `&self`-derived `*mut FileSink` (the old `as_mut_ptr_for_rc` cast) carries
 // only a SharedReadOnly Stacked-Borrows tag — deallocating through it is UB,
 // and the compiler is then free to cache/reorder `*self` loads across those
-// re-entrant freeing calls. A `&mut self`-derived ptr would instead place a
-// Unique tag on the WHOLE FileSink (which embeds the writer), popping the writer's own
+// re-entrant freeing calls. A `&mut self`-derived ptr would instead place a Unique tag on
+// the WHOLE FileSink (which embeds the writer), popping the writer's own
 // `*mut Self` tag and tripping LLVM `noalias`. The fix: dispatch directly off
 // the canonical `*mut FileSink` — the heap-allocation pointer with full
 // write+dealloc provenance, the same one `init`/`create*` thread through
@@ -915,18 +915,13 @@ impl FileSink {
         // must not touch live JS cells.
 
         // Per-wrapper accounting is on `ref_count` directly: each path that
-        // hands `self` to C++ (`to_js` / `to_js_with_destructor` /
-        // `assign_to_stream`) takes a +1 via `self.ref_()`, and `finalize`'s
-        // `deref()` below releases it. `JsSinkType::construct` allocates with
-        // `ref_count=1` and that +1 belongs to the wrapper it's about to be
-        // stored in, so no extra `ref_()` there.
-        //
-        // The per-wrapper +1 is explicit so the protocol is locally
-        // verifiable (N wrappers ⇒ N `ref_()` ⇒ N `finalize` ⇒ N `deref()`),
-        // **but** that means callers that allocate via `init`/`create` and
-        // then `to_js()` must `deref()` once to release init's +1 (see
+        // hands `self` to C++ (`to_js` / `to_js_with_destructor`) takes a +1
+        // via `self.ref_()`, and `finalize`'s `deref()` below releases it.
+        // `JsSinkType::construct` allocates with `ref_count=1` and that +1
+        // belongs to the wrapper it's about to be stored in, so no extra
+        // `ref_()` there. Callers that allocate via `init`/`create` and then
+        // `to_js()` must `deref()` once to release init's +1 (see
         // `Blob::get_writer`).
-
         self.readable_stream.set(readable_stream::Strong::default());
         self.pending.set(streams::WritablePending::default());
         self.js_sink_ref.with_mut(|r| r.deinit());
@@ -1413,14 +1408,10 @@ impl FileSink {
         // JSValue bits back through this `void**`.
         let signal_ptr: *mut *mut c_void =
             unsafe { (&raw mut (*self.signal.as_ptr()).ptr).cast::<*mut c_void>() };
-        // Only the transient `_guard` above
-        // — NO per-wrapper +1 for the controller. df4f2c44 added a `ref_()`
-        // here, which was wrong: the JS builtins always call `controller.end()`/`.close()`
+        // No per-wrapper +1 for the controller (only the transient `_guard`
+        // above): the JS builtins always call `controller.end()`/`.close()`
         // (`${controller}__end/close` → `controller->detach()` → m_sinkPtr=null)
-        // before GC, so the controller's dtor never reaches `finalize` and
-        // that +1 was never balanced — pure leak on every `assign_to_stream`,
-        // plus an unconditional leak on the `to_error()` early-return below
-        // (the controller IS allocated before the throwing JS call).
+        // before GC, so the controller's dtor never reaches `finalize`.
         let promise_result = JSSink::assign_to_stream(global_this, stream.value, self, signal_ptr);
 
         if let Some(err) = promise_result.to_error() {

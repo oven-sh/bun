@@ -282,7 +282,6 @@ async function implementation() {
 #include <JavaScriptCore/WeakInlines.h>
 
 extern "C" void Bun__onSinkDestroyed(uintptr_t destructor, void* sinkPtr);
-
 namespace WebCore {
 using namespace JSC;
 

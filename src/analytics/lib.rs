@@ -537,8 +537,7 @@ pub mod generate_header {
                 // since a linux-glibc build running on Android via a shim
                 // is compiled with target_os = "linux".
                 // https://github.com/oven-sh/bun/issues/32489
-                let release =
-                    bun_core::ffi::c_field_bytes(&bun_core::ffi::cached_uname().release);
+                let release = bun_core::ffi::c_field_bytes(&bun_core::ffi::cached_uname().release);
                 if bun_core::strings::index_of(release, b"-android").is_some() {
                     return 0;
                 }

@@ -18,7 +18,15 @@
 /// # Safety
 /// Arguments must be valid for the syscall identified by `nr`.
 #[inline(always)]
-unsafe fn raw_syscall6(nr: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize, a6: usize) -> isize {
+unsafe fn raw_syscall6(
+    nr: usize,
+    a1: usize,
+    a2: usize,
+    a3: usize,
+    a4: usize,
+    a5: usize,
+    a6: usize,
+) -> isize {
     #[cfg(target_arch = "x86_64")]
     {
         let ret: isize;

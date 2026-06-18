@@ -173,6 +173,79 @@ it("process.env is spreadable and editable", () => {
   expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
+it("process.env coerces assigned values to strings like Node.js (#32496)", () => {
+  // Node stores only strings in process.env. Assigning a non-string coerces it
+  // via ToString, so code like `if ("X" in env) env.X.length` never sees a
+  // non-string. Bun previously stored the raw value.
+  process.env.BUN_ENV_COERCE_32496 = undefined;
+  expect("BUN_ENV_COERCE_32496" in process.env).toBe(true);
+  expect(process.env.BUN_ENV_COERCE_32496).toBe("undefined");
+
+  process.env.BUN_ENV_COERCE_32496 = null;
+  expect(process.env.BUN_ENV_COERCE_32496).toBe("null");
+
+  process.env.BUN_ENV_COERCE_32496 = 123;
+  expect(process.env.BUN_ENV_COERCE_32496).toBe("123");
+
+  process.env.BUN_ENV_COERCE_32496 = true;
+  expect(process.env.BUN_ENV_COERCE_32496).toBe("true");
+
+  process.env.BUN_ENV_COERCE_32496 = { toString: () => "stringified" };
+  expect(process.env.BUN_ENV_COERCE_32496).toBe("stringified");
+  delete process.env.BUN_ENV_COERCE_32496;
+
+  // Integer-like keys go through the indexed write path.
+  process.env[32496] = 123;
+  expect(process.env[32496]).toBe("123");
+  expect(typeof process.env[32496]).toBe("string");
+  delete process.env[32496];
+
+  // Symbols cannot be coerced to a string; Node throws for both Symbol values
+  // and Symbol keys.
+  expect(() => {
+    process.env.BUN_ENV_SYMBOL_32496 = Symbol("nope");
+  }).toThrow(TypeError);
+  expect("BUN_ENV_SYMBOL_32496" in process.env).toBe(false);
+  expect(() => {
+    process.env[Symbol("nope")] = "value";
+  }).toThrow(TypeError);
+});
+
+it("process.env coerces writes to startup variables (chalk supports-color) (#32496)", async () => {
+  // FORCE_COLOR exists at startup, so it is installed as a cached accessor
+  // rather than a plain property. The write path must still coerce. This mirrors
+  // chalk/supports-color's envForceColor(), the exact code from the bug report.
+  const fixture = `
+    process.env.FORCE_COLOR = undefined;
+    const env = process.env;
+    let forceColor;
+    if ("FORCE_COLOR" in env) {
+      forceColor =
+        env.FORCE_COLOR === "true" ? 1 :
+        env.FORCE_COLOR === "false" ? 0 :
+        env.FORCE_COLOR.length === 0 ? 1 : Math.min(Number.parseInt(env.FORCE_COLOR, 10), 3);
+    }
+    console.log(JSON.stringify({
+      value: process.env.FORCE_COLOR,
+      type: typeof process.env.FORCE_COLOR,
+      present: "FORCE_COLOR" in process.env,
+      forceColor: String(forceColor),
+    }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, FORCE_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout || "null"), stderr: stderr.includes("TypeError") }).toEqual({
+    stdout: { value: "undefined", type: "string", present: true, forceColor: "NaN" },
+    stderr: false,
+  });
+  expect(exitCode).toBe(0);
+});
+
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
   "darwin-x64": "70.1",
   "darwin-arm64": "72.1",

@@ -1,5 +1,6 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
+#include "JSEnvironmentVariableMap.h"
 
 #include "helpers.h"
 
@@ -344,6 +345,39 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 }
 #endif
 
+const JSC::ClassInfo JSEnvironmentVariableMap::s_info = { "EnvironmentVariableMap"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEnvironmentVariableMap) };
+
+bool JSEnvironmentVariableMap::put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSC::JSValue value, JSC::PutPropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Node coerces keys to strings and throws on Symbol keys.
+    if (propertyName.isSymbol()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);
+        return false;
+    }
+
+    // Node's process.env stores only strings: `process.env.X = v` behaves like
+    // `process.env.X = String(v)`. Coercing here keeps reads from ever seeing a
+    // non-string. toString() throws for Symbol values, matching Node.
+    JSString* string = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, slot));
+}
+
+bool JSEnvironmentVariableMap::putByIndex(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, unsigned propertyName, JSC::JSValue value, bool shouldThrow)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSString* string = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, propertyName, string, shouldThrow));
+}
+
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -351,12 +385,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
-    JSC::JSObject* object = nullptr;
-    if (count < 63) {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
-    } else {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype());
-    }
+    auto* structure = JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+    JSC::JSObject* object = JSEnvironmentVariableMap::create(vm, structure);
 
 #if OS(WINDOWS)
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);

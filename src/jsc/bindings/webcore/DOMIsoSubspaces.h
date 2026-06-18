@@ -42,6 +42,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMSyntheticModule;
     std::unique_ptr<IsoSubspace> m_subspaceForJSCommonJSModule;
     std::unique_ptr<IsoSubspace> m_subspaceForJSCommonJSExtensions;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSEnvironmentVariableMap;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockImplementation;
     std::unique_ptr<IsoSubspace> m_subspaceForJSModuleMock;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockFunction;

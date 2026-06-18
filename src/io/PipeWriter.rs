@@ -1562,11 +1562,8 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         // `&mut Self` derived from the parent's intrusive `writer` field
         // (`writer.with_mut(|w| w.end())`), writing `self.is_done`. With
         // `noalias`, LLVM may cache the pre-call `is_done`/`parent` and reuse
-        // them after the call. ASM-verified PROVEN_CACHED for the POSIX
-        // `_on_write` analogue (6b7f7cce697a); the Windows path was missed and
-        // surfaces as the #53265 `FileSink__finalize` Strong=0x1 crash plus
-        // `filesink.test.ts` hang (stale `is_done` → never closes / never
-        // resubmits). Launder so post-`on_write` reads see fresh state.
+        // them after the call. Launder so post-`on_write` reads see fresh
+        // state.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         let written = Self::r(this).pending_payload_size;
         Self::r(this).pending_payload_size = 0;
@@ -1635,7 +1632,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         // PORT_NOTES_PLAN R-2: launder `*this` for the same reason as the
         // Streaming sibling above — `close()` → `Parent::on_close` → JS may
         // re-enter via `with_mut(|w| ..)`; the post-call `(*this).parent()`
-        // must reload. NOALIAS_HUNT cluster E.
+        // must reload.
         // SAFETY: data was set to `self as *mut Self` in write(); libuv invokes
         // this callback on the single-threaded event loop with no other Rust
         // borrow of `*this` live, so this is the sole access path.
@@ -2081,11 +2078,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // (`writer.with_mut(|w| w.end())` or `.write(..)`), writing
         // `self.is_done` / `self.outgoing` / `self.parent`. With `noalias`,
         // LLVM may cache pre-call field loads and reuse them after the call.
-        // ASM-verified PROVEN_CACHED for the POSIX `_on_write` analogue
-        // (6b7f7cce697a); the Windows path was missed and surfaces as the
-        // #53265 `test-fs-promises-writefile.js` `FileSink__finalize`
-        // Strong=0x1 crash and `filesink.test.ts` timeout (stale `is_done` /
-        // `outgoing` → `process_send` never resubmits or resubmits forever).
         // Launder so all post-`on_write` field accesses see fresh state.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
 
@@ -2189,11 +2181,11 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // `callback_ctx` `&mut` itself isn't a fn parameter (no `noalias`
         // attribute), but `this.on_write_complete(..)` *passes* `&mut self`
         // and that callee parameter IS `noalias` — `on_write_complete` is
-        // already laundered (6f715148), so the success path is covered. The
-        // error path (`close()` → `on_error(this.parent())` → guard deref)
-        // reads `this.parent` after re-entry; route those through a
-        // black-boxed raw ptr so any inlined call chain cannot
-        // store-forward across the JS re-entry. NOALIAS_HUNT cluster E.
+        // already laundered, so the success path is covered. The error path
+        // (`close()` → `on_error(this.parent())` → guard deref) reads
+        // `this.parent` after re-entry; route those through a black-boxed raw
+        // ptr so any inlined call chain cannot store-forward across the JS
+        // re-entry.
         // SAFETY: data was set to `self as *mut Self` in process_send(); libuv
         // invokes this callback on the single-threaded event loop with no other
         // Rust borrow of `*this` live, so this is the sole access path.
@@ -2233,11 +2225,9 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // forming a fresh aliased `&mut Self`) and then read
         // `self.{get_fd, closed_without_reporting, is_done}` via
         // `close_without_reporting()`. With `&mut self` `noalias`, LLVM may
-        // forward pre-`on_error` field loads across the call. The
-        // `on_write_complete` launder (6f715148) covered the async-completion
-        // path but #53485 still crashes at `FileSink__finalize` Strong=0x1 on
-        // the large-iterable test, so launder this entry point too — it is
-        // also reached from `on_write_complete:2009` with a fresh `&mut`.
+        // forward pre-`on_error` field loads across the call. Launder this
+        // entry point too — it is reached from `on_write_complete` with a
+        // fresh `&mut`.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // `this` is the only access path to `*self` for the rest of this
         // function; every `r(this)` reborrow is sole-aliased on the JS thread.

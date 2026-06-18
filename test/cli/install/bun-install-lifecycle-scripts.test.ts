@@ -1718,6 +1718,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     test("bun pm ls --trusted uses default trusted list when trustedDependencies is not set", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
         packageJson,
@@ -1738,7 +1739,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           stdout: "pipe",
           stdin: "ignore",
           stderr: "pipe",
-          env,
+          env: testEnv,
         });
         const err = await stderr.text();
         expect(err).not.toContain("error:");
@@ -1755,7 +1756,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           stdout: "pipe",
           stdin: "ignore",
           stderr: "pipe",
-          env,
+          env: testEnv,
         });
         const out = await stdout.text();
         expect(await stderr.text()).toBe("");
@@ -1786,7 +1787,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           stdout: "pipe",
           stdin: "ignore",
           stderr: "pipe",
-          env,
+          env: testEnv,
         });
         const err = await stderr.text();
         expect(err).not.toContain("error:");
@@ -1800,7 +1801,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           stdout: "pipe",
           stdin: "ignore",
           stderr: "pipe",
-          env,
+          env: testEnv,
         });
         const out = await stdout.text();
         expect(await stderr.text()).toBe("");

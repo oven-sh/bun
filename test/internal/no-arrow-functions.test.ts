@@ -86,7 +86,9 @@ describe("no arrow functions in src/js", function () {
         throw new Error(
           `${source} has ${count} arrow functions, up from ${limit}.\n` +
             `Use named function declarations or function expressions in src/js instead of arrows.\n` +
-            (sample ? `New/existing arrows at:\n${sample}${lines.length > 10 ? `\n... and ${lines.length - 10} more` : ""}\n` : "") +
+            (sample
+              ? `New/existing arrows at:\n${sample}${lines.length > 10 ? `\n... and ${lines.length - 10} more` : ""}\n`
+              : "") +
             `If the new arrow is justified, update the inventory with \`bun ./test/internal/no-arrow-functions.test.ts\`.`,
         );
       } else if (count < limit) {

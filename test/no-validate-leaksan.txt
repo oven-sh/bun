@@ -453,3 +453,7 @@ test/js/third_party/prisma/prisma.test.ts
 # upgradeDuplexToTLS protos/server_name Box<[u8]> are owned by the JS-held
 # socket cell; tests that exit before a final GC report them as indirect leaks.
 test/js/node/tls/node-tls-connect.test.ts
+# Pre-existing leak in NAPI env teardown under BUN_DESTRUCT_VM_ON_EXIT: NapiEnv::addCleanupHook
+# (napi.h) leaks its cleanup-hook set bucket array when a NAPI module registers a hook;
+# vitest loads @rollup/rollup-linux-x64-gnu, which does.
+test/js/third_party/vitest/vitest.test.ts

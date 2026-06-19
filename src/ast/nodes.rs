@@ -163,7 +163,7 @@ pub(crate) const fn empty_arena_str() -> ArenaStr {
 // (~100 types, 12 downstream crates) — that cascade is the follow-up round
 // once `StoreRef` itself carries `'arena`.
 // Layout matches `StoreSlice<u8>`: `packed(4)` lowers `NonNull<u8>` to align 4
-// so the field at 12 bytes instead of 16. The `u32` length keeps the 4 GB
+// so the struct is 12 bytes instead of 16. The `u32` length keeps the 4 GB
 // source-file limit explicit.
 #[derive(Copy, Clone)]
 #[repr(C, packed(4))]
@@ -427,7 +427,7 @@ impl<T> StoreSlice<T> {
     /// borrow with another `slice()`/`slice_mut()` of the same allocation.
     #[inline]
     pub fn slice_mut<'a>(self) -> &'a mut [T] {
-        // SAFETY: StoreSlice invariant — `ptr()` is non-null, points at `len`
+        // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
         // initialized `T` valid for the arena lifetime; uniqueness is upheld
         // by the single-threaded visitor contract (same as `StoreRef::DerefMut`).
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }

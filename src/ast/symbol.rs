@@ -207,9 +207,8 @@ symbol_flag_accessors! {
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
 }
 
-// The size of `Symbol` is not load-bearing (no FFI, no serialization), so
-// there is intentionally no layout assert here.
 const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);
+const _: () = assert!(core::mem::size_of::<Symbol>() <= 48);
 
 const INVALID_CHUNK_INDEX: u32 = u32::MAX;
 pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;

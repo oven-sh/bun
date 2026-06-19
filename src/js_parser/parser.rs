@@ -1865,9 +1865,7 @@ pub mod prefill {
 
     pub mod string {
         use super::*;
-        pub(crate) fn children() -> E::String {
-            E::String::from_static(b"children")
-        }
+        pub(crate) const CHILDREN: E::String = E::String::from_static(b"children");
     }
 
     pub mod data {

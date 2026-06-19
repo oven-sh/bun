@@ -1611,14 +1611,7 @@ impl EString {
 // Ordering / equality / const-literal / rope-mutation helpers.
 // `string_z`/`to_zig_string` remain gated on `bun_core::ZStr` arena constructors.
 impl EString {
-    pub const EMPTY: EString = EString {
-        data: Str::EMPTY,
-        prefer_template: false,
-        next: None,
-        end: None,
-        rope_len: 0,
-        is_utf16: false,
-    };
+    pub const EMPTY: EString = EString::from_static(b"");
 
     pub fn is_identifier(&mut self, bump: &Bump) -> bool {
         if !self.is_utf8() {

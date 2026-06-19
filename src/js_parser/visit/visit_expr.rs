@@ -524,7 +524,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         e_.children.truncate(last_child as usize);
                     }
 
-                    let children_key = p.new_expr(prefill::string::children(), expr.loc);
+                    let children_key = p.new_expr(prefill::string::CHILDREN, expr.loc);
 
                     // Optimization: if the only non-child prop is a spread object
                     // we can just pass the object as the first argument

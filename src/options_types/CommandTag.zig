@@ -39,6 +39,7 @@ pub const Tag = enum {
     AuditCommand,
     WhyCommand,
     FuzzilliCommand,
+    ExplainCommand,
 
     /// Used by crash reports.
     ///
@@ -77,6 +78,7 @@ pub const Tag = enum {
             .AuditCommand => 'A',
             .WhyCommand => 'W',
             .FuzzilliCommand => 'F',
+            .ExplainCommand => 'E',
         };
     }
 

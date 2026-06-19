@@ -386,6 +386,8 @@ pub mod update_command;
 pub mod update_interactive_command;
 #[path = "why_command.rs"]
 pub mod why_command;
+#[path = "explain_command.rs"]
+pub mod explain_command;
 pub use filter_run as FilterRun;
 #[path = "multi_run.rs"]
 pub mod multi_run;

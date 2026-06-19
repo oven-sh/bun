@@ -91,6 +91,7 @@ pub const PackCommand = @import("./pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./init_command.zig").InitCommand;
 pub const WhyCommand = @import("./why_command.zig").WhyCommand;
+pub const ExplainCommand = @import("./explain_command.zig").ExplainCommand;
 pub const FuzzilliCommand = @import("./fuzzilli_command.zig").FuzzilliCommand;
 pub const ReplCommand = @import("./repl_command.zig").ReplCommand;
 
@@ -487,6 +488,7 @@ pub const Command = struct {
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .PackageManagerCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
+            RootCommandMatcher.case("explain") => .ExplainCommand,
             RootCommandMatcher.case("fuzzilli") => if (bun.Environment.enable_fuzzilli)
                 .FuzzilliCommand
             else
@@ -692,6 +694,11 @@ pub const Command = struct {
             .WhyCommand => {
                 const ctx = try Command.init(allocator, log, .WhyCommand);
                 try WhyCommand.exec(ctx);
+                return;
+            },
+            .ExplainCommand => {
+                const ctx = try Command.init(allocator, log, .ExplainCommand);
+                try ExplainCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -1157,6 +1164,22 @@ pub const Command = struct {
                     \\  <d>$<r> <b><green>bun why<r> <blue>react<r>
                     \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
                     \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
+                    \\
+                    \\Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
+                    \\
+                ;
+
+                Output.pretty(intro_text, .{});
+                Output.flush();
+            },
+            .ExplainCommand => {
+                const intro_text =
+                    \\<b>Usage<r>: <b><green>bun explain<r> <d>(deprecated)<r>
+                    \\
+                    \\<b>bun explain<r> <d>has been removed. Use<r> <b><green>bun why<r> <d>instead.<r>
+                    \\
+                    \\<b>Examples:<r>
+                    \\  <d>$<r> <b><green>bun why<r> <blue>react<r>
                     \\
                     \\Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
                     \\

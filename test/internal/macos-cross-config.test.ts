@@ -238,9 +238,7 @@ describe("baseline build config", () => {
   // on Ivy Bridge. resolveConfig() must refuse to produce one. Runs on every
   // host — the guard is host-agnostic (fires for native and cross darwin).
   test("rejects a prebuilt baseline macOS build", () => {
-    expect(() => resolveDarwin({ arch: "x64", baseline: true })).toThrow(
-      /baseline builds are not supported for macOS/,
-    );
+    expect(() => resolveDarwin({ arch: "x64", baseline: true })).toThrow(/baseline builds are not supported for macOS/);
   });
 
   test("allows a baseline macOS build with local WebKit (compiled for Nehalem)", () => {

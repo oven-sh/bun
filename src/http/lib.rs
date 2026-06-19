@@ -1808,17 +1808,18 @@ impl<'a> HTTPClient<'a> {
     pub fn retry_from_h2(&mut self) {
         debug_assert!(self.h2.is_none());
         self.unregister_abort_tracker();
+        // No owner buffer means the request is already terminal (see
+        // `InternalState::get_body_buffer`); there is nowhere to deliver a
+        // retried response.
+        let Some(body_out) = self.state.body_out_str else {
+            return;
+        };
         self.flags.protocol = Protocol::Http1_1;
         self.h2_retries += 1;
         let body = core::mem::replace(
             &mut self.state.original_request_body,
             HTTPRequestBody::Bytes(b""),
         );
-        // Copy the NonNull, do NOT `.take()`: `state.reset()` preserves
-        // `body_out_str`, and `start()` immediately rewrites `state`, so
-        // nulling the field here only introduces a window where
-        // `body_out_str == None`. Matches the Zig reference (`.?` read).
-        let body_out = self.state.body_out_str.unwrap();
         self.state.reset();
         self.start(body, body_out::as_mut(body_out));
     }
@@ -1892,19 +1893,19 @@ impl<'a> HTTPClient<'a> {
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
         {
-            self.allow_retry = false;
-            // we need to retry the request, clean up the response message buffer and start again
-            self.state.response_message_buffer = MutableString::default();
-            let body = core::mem::replace(
-                &mut self.state.original_request_body,
-                HTTPRequestBody::Bytes(b""),
-            );
-            // Copy the NonNull, do NOT `.take()`: `start()` immediately
-            // rewrites `state`, so nulling the field here only introduces a
-            // window where `body_out_str == None`. Matches the Zig reference
-            // (`.?` read).
-            let body_out = self.state.body_out_str.unwrap();
-            self.start(body, body_out::as_mut(body_out));
+            // No owner buffer means the request is already terminal (see
+            // `InternalState::get_body_buffer`); there is nowhere to deliver
+            // a retried response.
+            if let Some(body_out) = self.state.body_out_str {
+                self.allow_retry = false;
+                // we need to retry the request, clean up the response message buffer and start again
+                self.state.response_message_buffer = MutableString::default();
+                let body = core::mem::replace(
+                    &mut self.state.original_request_body,
+                    HTTPRequestBody::Bytes(b""),
+                );
+                self.start(body, body_out::as_mut(body_out));
+            }
             return;
         }
 

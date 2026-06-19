@@ -263,7 +263,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     pub fn new_external_symbol(&mut self, name: &[u8]) -> Result<Ref, OOM> {
         let ref_ = self.new_symbol(SymbolKind::Other, name)?;
         let sym = self.get_symbol(ref_);
-        sym.must_not_be_renamed = true;
+        sym.set_must_not_be_renamed(true);
         Ok(ref_)
     }
 

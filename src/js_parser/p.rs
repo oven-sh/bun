@@ -3424,7 +3424,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         //   assert(obj.foo === 2)
                         //
                         if scope_kind == js_ast::scope::Kind::With {
-                            self.symbols[symbol_idx].must_not_be_renamed = true;
+                            self.symbols[symbol_idx].set_must_not_be_renamed(true);
                         }
 
                         if let Some(member_in_scope) =
@@ -4931,7 +4931,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         // If these are both functions, remove the overwritten declaration
                         if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
-                            self.symbols[symbol_idx].remove_overwritten_function_declaration = true;
+                            self.symbols[symbol_idx]
+                                .set_remove_overwritten_function_declaration(true);
                         }
                     }
                     MR::BecomePrivateGetSetPair => {
@@ -5157,7 +5158,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //     continue;
                 // }
 
-                self.symbols[member.1.ref_.inner_index() as usize].must_not_be_renamed = true;
+                self.symbols[member.1.ref_.inner_index() as usize].set_must_not_be_renamed(true);
             }
         }
 
@@ -5365,7 +5366,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if m.is_empty() {
                         None
                     } else {
-                        Some(Box::new(m))
+                        Some(bun_alloc::ast_box(m))
                     }
                 },
                 declared_symbols: self.declared_symbols.to_owned_slice(),

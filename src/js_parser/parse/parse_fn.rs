@@ -364,7 +364,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     arguments_str,
                 )
                 .expect("unreachable");
-            p.symbols[func.arguments_ref.inner_index() as usize].must_not_be_renamed = true;
+            p.symbols[func.arguments_ref.inner_index() as usize].set_must_not_be_renamed(true);
         }
 
         p.lexer.expect(T::TCloseParen)?;

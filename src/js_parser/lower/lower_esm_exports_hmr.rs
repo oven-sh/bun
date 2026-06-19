@@ -578,7 +578,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             let symbol = &p.symbols[ref_.inner_index() as usize];
             (
                 symbol.kind,
-                symbol.has_been_assigned_to,
+                symbol.has_been_assigned_to(),
                 symbol.original_name,
             )
         };

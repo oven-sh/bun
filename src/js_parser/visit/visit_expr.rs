@@ -244,7 +244,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.commonjs_module_exports_assigned_deoptimized = true;
             }
 
-            p.symbols[result.r#ref.inner_index() as usize].has_been_assigned_to = true;
+            p.symbols[result.r#ref.inner_index() as usize].set_has_been_assigned_to(true);
         }
 
         let mut original_name: Option<&[u8]> = None;

@@ -681,14 +681,9 @@ pub mod parse_worker {
                     s.chunk_index.load(core::sync::atomic::Ordering::Relaxed),
                 ),
                 nested_scope_slot: s.nested_scope_slot,
-                did_keep_name: s.did_keep_name,
-                must_start_with_capital_letter_for_jsx: s.must_start_with_capital_letter_for_jsx,
                 kind,
-                must_not_be_renamed: s.must_not_be_renamed,
                 import_item_status,
-                private_symbol_must_be_lowered: s.private_symbol_must_be_lowered,
-                remove_overwritten_function_declaration: s.remove_overwritten_function_declaration,
-                has_been_assigned_to: s.has_been_assigned_to,
+                flags: s.flags,
             });
         }
         out

@@ -1145,7 +1145,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .declare_symbol(SymbolKind::Other, bind_loc, name)
                                 .unwrap_or(id_ref);
                             self.symbols[field_symbol_ref.inner_index() as usize]
-                                .must_not_be_renamed = true;
+                                .set_must_not_be_renamed(true);
                             let field_ident = self.new_expr(
                                 E::Identifier {
                                     ref_: field_symbol_ref,

@@ -328,6 +328,16 @@ pub struct AstAlloc;
 /// `Vec` whose backing buffer lives in the thread-local AST allocation state.
 pub type AstVec<T> = Vec<T, AstAlloc>;
 
+/// `Box` whose header lives in the thread-local AST allocation state.
+/// `AstAlloc::deallocate` is a no-op, so the header is reclaimed by spill-heap
+/// reset rather than `Drop` — same lifetime story as `AstVec`.
+pub type AstBox<T> = Box<T, AstAlloc>;
+
+#[inline]
+pub fn ast_box<T>(value: T) -> AstBox<T> {
+    Box::new_in(value, AstAlloc)
+}
+
 use crate::alloc_result;
 
 #[inline(always)]

@@ -76,18 +76,9 @@ pub struct Symbol {
     /// Do not use this directly. Use `nestedScopeSlot()` instead.
     pub nested_scope_slot: u32,
 
-    pub did_keep_name: bool,
-
-    pub must_start_with_capital_letter_for_jsx: bool,
-
     /// The kind of symbol. This is used to determine how to print the symbol
     /// and how to deal with conflicts, renaming, etc.
     pub kind: Kind,
-
-    /// Certain symbols must not be renamed or minified. For example, the
-    /// "arguments" variable is declared by the runtime for every function.
-    /// Renaming can also break any identifier used inside a "with" statement.
-    pub must_not_be_renamed: bool,
 
     /// We automatically generate import items for property accesses off of
     /// namespace imports. This lets us remove the expensive namespace imports
@@ -108,65 +99,109 @@ pub struct Symbol {
     /// undefined, which this status is also used for.
     pub import_item_status: ImportItemStatus,
 
-    /// --- Not actually used yet -----------------------------------------------
-    /// Sometimes we lower private symbols even if they are supported. For example,
-    /// consider the following TypeScript code:
-    ///
-    ///   class Foo {
-    ///     #foo = 123
-    ///     bar = this.#foo
-    ///   }
-    ///
-    /// If "useDefineForClassFields: false" is set in "tsconfig.json", then "bar"
-    /// must use assignment semantics instead of define semantics. We can compile
-    /// that to this code:
-    ///
-    ///   class Foo {
-    ///     constructor() {
-    ///       this.#foo = 123;
-    ///       this.bar = this.#foo;
-    ///     }
-    ///     #foo;
-    ///   }
-    ///
-    /// However, we can't do the same for static fields:
-    ///
-    ///   class Foo {
-    ///     static #foo = 123
-    ///     static bar = this.#foo
-    ///   }
-    ///
-    /// Compiling these static fields to something like this would be invalid:
-    ///
-    ///   class Foo {
-    ///     static #foo;
-    ///   }
-    ///   Foo.#foo = 123;
-    ///   Foo.bar = Foo.#foo;
-    ///
-    /// Thus "#foo" must be lowered even though it's supported. Another case is
-    /// when we're converting top-level class declarations to class expressions
-    /// to avoid the TDZ and the class shadowing symbol is referenced within the
-    /// class body:
-    ///
-    ///   class Foo {
-    ///     static #foo = Foo
-    ///   }
-    ///
-    /// This cannot be converted into something like this:
-    ///
-    ///   var Foo = class {
-    ///     static #foo;
-    ///   };
-    ///   Foo.#foo = Foo;
-    ///
-    /// --- Not actually used yet -----------------------------------------------
-    pub private_symbol_must_be_lowered: bool,
+    /// Packed boolean state — see [`SymbolFlags`]. Six former `bool` fields
+    /// collapsed into one byte.
+    pub flags: SymbolFlags,
+}
 
-    pub remove_overwritten_function_declaration: bool,
+bitflags::bitflags! {
+    #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
+    pub struct SymbolFlags: u8 {
+        const DID_KEEP_NAME = 1 << 0;
 
-    /// Used in HMR to decide when live binding code is needed.
-    pub has_been_assigned_to: bool,
+        const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;
+
+        /// Certain symbols must not be renamed or minified. For example, the
+        /// "arguments" variable is declared by the runtime for every function.
+        /// Renaming can also break any identifier used inside a "with" statement.
+        const MUST_NOT_BE_RENAMED = 1 << 2;
+
+        /// --- Not actually used yet -----------------------------------------------
+        /// Sometimes we lower private symbols even if they are supported. For example,
+        /// consider the following TypeScript code:
+        ///
+        ///   class Foo {
+        ///     #foo = 123
+        ///     bar = this.#foo
+        ///   }
+        ///
+        /// If "useDefineForClassFields: false" is set in "tsconfig.json", then "bar"
+        /// must use assignment semantics instead of define semantics. We can compile
+        /// that to this code:
+        ///
+        ///   class Foo {
+        ///     constructor() {
+        ///       this.#foo = 123;
+        ///       this.bar = this.#foo;
+        ///     }
+        ///     #foo;
+        ///   }
+        ///
+        /// However, we can't do the same for static fields:
+        ///
+        ///   class Foo {
+        ///     static #foo = 123
+        ///     static bar = this.#foo
+        ///   }
+        ///
+        /// Compiling these static fields to something like this would be invalid:
+        ///
+        ///   class Foo {
+        ///     static #foo;
+        ///   }
+        ///   Foo.#foo = 123;
+        ///   Foo.bar = Foo.#foo;
+        ///
+        /// Thus "#foo" must be lowered even though it's supported. Another case is
+        /// when we're converting top-level class declarations to class expressions
+        /// to avoid the TDZ and the class shadowing symbol is referenced within the
+        /// class body:
+        ///
+        ///   class Foo {
+        ///     static #foo = Foo
+        ///   }
+        ///
+        /// This cannot be converted into something like this:
+        ///
+        ///   var Foo = class {
+        ///     static #foo;
+        ///   };
+        ///   Foo.#foo = Foo;
+        ///
+        /// --- Not actually used yet -----------------------------------------------
+        const PRIVATE_SYMBOL_MUST_BE_LOWERED = 1 << 3;
+
+        const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
+
+        /// Used in HMR to decide when live binding code is needed.
+        const HAS_BEEN_ASSIGNED_TO = 1 << 5;
+    }
+}
+
+macro_rules! symbol_flag_accessors {
+    ($($getter:ident, $setter:ident => $flag:ident;)*) => {
+        impl Symbol {
+            $(
+                #[inline]
+                pub fn $getter(&self) -> bool {
+                    self.flags.contains(SymbolFlags::$flag)
+                }
+                #[inline]
+                pub fn $setter(&mut self, v: bool) {
+                    self.flags.set(SymbolFlags::$flag, v)
+                }
+            )*
+        }
+    };
+}
+
+symbol_flag_accessors! {
+    did_keep_name, set_did_keep_name => DID_KEEP_NAME;
+    must_start_with_capital_letter_for_jsx, set_must_start_with_capital_letter_for_jsx => MUST_START_WITH_CAPITAL_LETTER_FOR_JSX;
+    must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
+    private_symbol_must_be_lowered, set_private_symbol_must_be_lowered => PRIVATE_SYMBOL_MUST_BE_LOWERED;
+    remove_overwritten_function_declaration, set_remove_overwritten_function_declaration => REMOVE_OVERWRITTEN_FUNCTION_DECLARATION;
+    has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
 }
 
 // The size of `Symbol` is not load-bearing (no FFI, no serialization), so
@@ -185,14 +220,9 @@ impl Default for Symbol {
             use_count_estimate: 0,
             chunk_index: AtomicU32::new(INVALID_CHUNK_INDEX),
             nested_scope_slot: INVALID_NESTED_SCOPE_SLOT,
-            did_keep_name: true,
-            must_start_with_capital_letter_for_jsx: false,
             kind: Kind::Other,
-            must_not_be_renamed: false,
             import_item_status: ImportItemStatus::None,
-            private_symbol_must_be_lowered: false,
-            remove_overwritten_function_declaration: false,
-            has_been_assigned_to: false,
+            flags: SymbolFlags::DID_KEEP_NAME,
         }
     }
 }
@@ -234,7 +264,7 @@ impl Symbol {
     pub fn slot_namespace(&self) -> SlotNamespace {
         let kind = self.kind;
 
-        if kind == Kind::Unbound || self.must_not_be_renamed {
+        if kind == Kind::Unbound || self.must_not_be_renamed() {
             return SlotNamespace::MustNotBeRenamed;
         }
 
@@ -384,9 +414,9 @@ pub type NestedList = Vec<Vec<Symbol>>;
 impl Symbol {
     pub fn merge_contents_with(&mut self, old: &mut Symbol) {
         self.use_count_estimate += old.use_count_estimate;
-        if old.must_not_be_renamed {
+        if old.must_not_be_renamed() {
             self.original_name = old.original_name;
-            self.must_not_be_renamed = true;
+            self.set_must_not_be_renamed(true);
         }
 
         // TODO: MustStartWithCapitalLetterForJSX

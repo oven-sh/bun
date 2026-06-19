@@ -978,9 +978,10 @@ TLSSocket.prototype.getSession = function getSession() {
 TLSSocket.prototype.getEphemeralKeyInfo = function getEphemeralKeyInfo() {
   const info = this._handle?.getEphemeralKeyInfo?.();
   if (info == null) return info;
-  // Node always returns an object shaped { type, name, size } (each undefined
-  // when there is no ephemeral key, e.g. a non-(EC)DHE key exchange).
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/_tls_wrap.js#L1437
+  // Empirically node always surfaces all three keys here (values undefined when
+  // absent): a client socket on a TLS 1.3 ECDHE session observes
+  // Object.keys(...) === ['type','name','size'] under node v26.3.0, so the
+  // reshape below is required for key-set parity with our native return.
   return { type: info.type, name: info.name, size: info.size };
 };
 

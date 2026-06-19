@@ -1277,16 +1277,43 @@ it("auto-allocated byte stream chunks are zero-filled before being exposed to th
   reader.cancel();
 });
 
-it("reader.cancel() settles a pending BYOB read with done: true (whatwg ReadableStreamCancel step 5)", async () => {
-  const stream = new ReadableStream({
+it("ReadableStream BYOB read pending at close() + respond(0) returns a zero-length view of the caller's buffer", async () => {
+  // Spec EOF pattern for byte sources: controller.close() leaves the pending
+  // BYOB read unsettled; byobRequest.respond(0) then resolves it with a
+  // zero-length view over the caller's (transferred) buffer, returning the
+  // buffer for reuse. Only cancel() resolves pending reads with undefined.
+  let ctrl;
+  const rs = new ReadableStream({
     type: "bytes",
-    pull() {},
-    cancel() {},
+    start(c) {
+      ctrl = c;
+    },
   });
-  const reader = stream.getReader({ mode: "byob" });
-  const pendingRead = reader.read(new Uint8Array(16));
-  await reader.cancel("test reason");
-  const result = await pendingRead;
-  expect(result.done).toBe(true);
-  expect(result.value).toBeUndefined();
+  const reader = rs.getReader({ mode: "byob" });
+  const pending = reader.read(new Uint8Array(new ArrayBuffer(16)));
+  ctrl.close();
+  ctrl.byobRequest.respond(0);
+  const { value, done } = await pending;
+  expect(done).toBe(true);
+  expect(value).toBeInstanceOf(Uint8Array);
+  expect(value.byteLength).toBe(0);
+  // The caller's 16-byte buffer comes back (transferred) for reuse.
+  expect(value.buffer.byteLength).toBe(16);
+  await reader.closed;
+});
+
+it("ReadableStream BYOB read pending at cancel() resolves with undefined", async () => {
+  // Spec (ReadableStreamCancel step 6): pending readIntoRequests get their
+  // close steps with undefined - { value: undefined, done: true }.
+  const rs = new ReadableStream({
+    type: "bytes",
+    start() {},
+  });
+  const reader = rs.getReader({ mode: "byob" });
+  const pending = reader.read(new Uint8Array(16));
+  await reader.cancel("bye");
+  const { value, done } = await pending;
+  expect(done).toBe(true);
+  expect(value).toBeUndefined();
+  await reader.closed;
 });

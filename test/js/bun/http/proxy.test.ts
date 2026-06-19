@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isASAN, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import net from "node:net";
@@ -915,6 +915,126 @@ test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", asy
     await once(originServer, "close");
   }
 });
+
+// Use-after-free in the proxy tunnel close path: when the final response
+// bytes and the TLS close_notify arrive in one TCP batch, SSLWrapper's
+// handle_reading sets sent_ssl_shutdown before flushing the decrypted bytes.
+// The data callback completes the response, and the done path's
+// ProxyTunnel.shutdown() hit SSLWrapper.shutdown()'s already-shut-down early
+// return without marking the wrapper closed_notified, so after the client was
+// freed handle_reading still fired on_close into the stale handlers.ctx.
+// Only deterministic under ASAN; release builds read freed-but-intact memory.
+test.skipIf(!isASAN)(
+  "response + close_notify in one packet via HTTPS proxy tunnel does not use-after-free the client",
+  async () => {
+    const fixture = `
+      const net = require("node:net");
+      const tlsCert = ${JSON.stringify({ cert: tlsCert.cert, key: tlsCert.key })};
+
+      // HTTPS origin: fixed-length response, then immediate end() so the
+      // close_notify alert directly follows the application-data record.
+      const origin = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: tlsCert,
+        socket: {
+          data(socket) {
+            socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 5\\r\\nConnection: close\\r\\n\\r\\nhello");
+            socket.end();
+          },
+          error() {},
+        },
+      });
+
+      // CONNECT proxy that coalesces the tail of the tunnel: after the
+      // client's second post-CONNECT flight (TLS 1.3 Finished + HTTP request;
+      // no HelloRetryRequest happens between two BoringSSL peers),
+      // origin->client bytes are held. The origin finishes its stream with
+      // close_notify, a tiny alert record (~19 bytes of payload vs 79+ for
+      // the response/session-ticket records), so once the held byte stream
+      // ends on a complete alert-sized record everything (tickets + response
+      // + close_notify) is delivered to the client in ONE write, making the
+      // fetch client process last-data-then-EOF in a single onData pump.
+      const proxy = net.createServer(client => {
+        let upstream = null;
+        let clientFlights = 0;
+        let head = Buffer.alloc(0);
+        let held = Buffer.alloc(0);
+        const tryFlush = () => {
+          let o = 0;
+          let lastIsAlertSized = false;
+          while (o + 5 <= held.length) {
+            const len = held.readUInt16BE(o + 3);
+            if (o + 5 + len > held.length) return; // incomplete record
+            lastIsAlertSized = len <= 40;
+            o += 5 + len;
+          }
+          if (o !== held.length || !lastIsAlertSized) return;
+          client.write(held);
+          held = Buffer.alloc(0);
+          client.end();
+        };
+        client.on("error", () => {});
+        client.on("close", () => upstream?.destroy());
+        client.on("data", chunk => {
+          if (!upstream) {
+            head = Buffer.concat([head, chunk]);
+            const end = head.indexOf("\\r\\n\\r\\n");
+            if (end === -1) return;
+            const leftover = head.subarray(end + 4);
+            upstream = net.connect(origin.port, "127.0.0.1", () => {
+              client.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+              if (leftover.length) upstream.write(leftover);
+            });
+            upstream.on("error", () => {});
+            upstream.on("data", data => {
+              if (clientFlights >= 2) {
+                held = Buffer.concat([held, data]);
+                tryFlush();
+              } else {
+                client.write(data);
+              }
+            });
+            return;
+          }
+          clientFlights++;
+          upstream.write(chunk);
+        });
+      });
+
+      proxy.listen(0, "127.0.0.1", async () => {
+        const res = await fetch("https://localhost:" + origin.port + "/", {
+          proxy: "http://127.0.0.1:" + proxy.address().port,
+          keepalive: false,
+          tls: { ca: tlsCert.cert, rejectUnauthorized: false },
+        });
+        const text = await res.text();
+        console.log(text);
+        process.exit(0);
+      });
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: {
+        ...bunEnv,
+        // the explicit per-request proxy must not be bypassed or rerouted by
+        // ambient proxy configuration on CI hosts
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(stdout).toBe("hello\n");
+    expect(exitCode).toBe(0);
+  },
+);
 
 // Sentry BUN-2V7Z: debug_assert!(!socket.is_shutdown()/is_closed()) in the
 // ProxyHeaders arm of on_writable (and the matching assert in

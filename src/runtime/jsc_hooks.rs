@@ -3461,6 +3461,24 @@ fn get_hardcoded_module(
                 ..ResolvedSource::default()
             }))
         }
+        HardcodedModule::NodeStreamIter => {
+            // Gated behind `--experimental-stream-iter` (node parity: the
+            // module resolves only when the flag was passed on the CLI;
+            // without it `node:stream/iter` reports "No such built-in
+            // module" and bare `stream/iter` falls through to filesystem
+            // resolution).
+            if !bun_resolve_builtins::stream_iter_enabled() {
+                return None;
+            }
+            Some(js_synthetic_module(b"node:stream/iter", specifier))
+        }
+        HardcodedModule::NodeZlibIter => {
+            // Same `--experimental-stream-iter` gate as `node:stream/iter`.
+            if !bun_resolve_builtins::stream_iter_enabled() {
+                return None;
+            }
+            Some(js_synthetic_module(b"node:zlib/iter", specifier))
+        }
         HardcodedModule::BunInternalForTesting => {
             // Gated behind `--expose-internals` (release) / always-on (debug).
             if !cfg!(debug_assertions) {

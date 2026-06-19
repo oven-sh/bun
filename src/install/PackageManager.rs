@@ -1927,8 +1927,13 @@ pub fn init(
 
         // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
         // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
+        // Non-absolute values are skipped: `join_abs_string_buf_z` requires
+        // an absolute base (asserts on Windows, mangles on POSIX).
         let mut global_len: usize = 0;
-        if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
+        if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME
+            .get_not_empty()
+            .filter(|p| bun_paths::is_absolute(p))
+        {
             let p =
                 resolve_path::join_abs_string_buf_z::<platform::Auto>(xdg_dir, &mut buf, &parts);
             if bun_sys::exists_z(p) {
@@ -1936,7 +1941,10 @@ pub fn init(
             }
         }
         if global_len == 0 {
-            if let Some(home_dir) = bun_core::env_var::HOME.get_not_empty() {
+            if let Some(home_dir) = bun_core::env_var::HOME
+                .get_not_empty()
+                .filter(|p| bun_paths::is_absolute(p))
+            {
                 global_len = resolve_path::join_abs_string_buf_z::<platform::Auto>(
                     home_dir, &mut buf, &parts,
                 )

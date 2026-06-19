@@ -1814,7 +1814,11 @@ impl<'a> HTTPClient<'a> {
             &mut self.state.original_request_body,
             HTTPRequestBody::Bytes(b""),
         );
-        let body_out = self.state.body_out_str.take().unwrap();
+        // Copy the NonNull, do NOT `.take()`: `state.reset()` preserves
+        // `body_out_str`, and `start()` immediately rewrites `state`, so
+        // nulling the field here only introduces a window where
+        // `body_out_str == None`. Matches the Zig reference (`.?` read).
+        let body_out = self.state.body_out_str.unwrap();
         self.state.reset();
         self.start(body, body_out::as_mut(body_out));
     }
@@ -1895,7 +1899,11 @@ impl<'a> HTTPClient<'a> {
                 &mut self.state.original_request_body,
                 HTTPRequestBody::Bytes(b""),
             );
-            let body_out = self.state.body_out_str.take().unwrap();
+            // Copy the NonNull, do NOT `.take()`: `start()` immediately
+            // rewrites `state`, so nulling the field here only introduces a
+            // window where `body_out_str == None`. Matches the Zig reference
+            // (`.?` read).
+            let body_out = self.state.body_out_str.unwrap();
             self.start(body, body_out::as_mut(body_out));
             return;
         }
@@ -4123,9 +4131,10 @@ impl<'a> HTTPClient<'a> {
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
             if self.state.encoding.is_compressed() {
-                let body_out = self.state.body_out_str.unwrap();
-                self.state
-                    .decompress_bytes(incoming_data, body_out::as_mut(body_out), true)?;
+                if let Some(body_out) = self.state.body_out_str {
+                    self.state
+                        .decompress_bytes(incoming_data, body_out::as_mut(body_out), true)?;
+                }
             } else {
                 self.state
                     .get_body_buffer()

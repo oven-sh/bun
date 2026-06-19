@@ -253,6 +253,11 @@ export const linearFifoOrderedRemoveProbe = $newZigFunction(
   "TestingAPIs.orderedRemoveProbe",
   1,
 ) as (scenario: number) => number[];
+export const httpInternalStateBodyBufferProbe = $newZigFunction(
+  "runtime/http_internal_state_testing.zig",
+  "bodyBufferProbe",
+  0,
+) as () => boolean;
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
 interface setSocketOptionsFn {

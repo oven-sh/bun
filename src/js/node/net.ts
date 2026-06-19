@@ -131,6 +131,7 @@ const kRealListen = Symbol("kRealListen");
 const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
+const kSyncWriteFd = Symbol("kSyncWriteFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
@@ -1343,6 +1344,43 @@ function Socket(options?) {
   if (options?.fd !== undefined) {
     const { fd } = options;
     validateInt32(fd, "fd", 0);
+    // Adopt pipe/character-device/file fds with synchronous writes. Matches
+    // node's effective semantics for stdio-style sockets: writes to a pipe
+    // complete inline, so data survives an immediate process.exit().
+    // Gated on an explicit `writable: true` (how node's own stdio wraps fds,
+    // e.g. new Socket({ fd: 2, readable: false, writable: true })): a bare
+    // { fd } is the connect({ fd }) path (child_process extra stdio), which
+    // attaches a native duplex handle in Socket.prototype.connect - adopting
+    // here would end its readable side and stomp its write path.
+    // Network-socket fds are not supported (handle adoption needs native
+    // support); those keep the previous validated-but-inert behavior.
+    if (options.writable === true) {
+      let stats;
+      try {
+        stats = require("node:fs").fstatSync(fd);
+      } catch {
+        // Node: createHandle -> uv_guess_handle returns UV_UNKNOWN_HANDLE
+        // for an fd it cannot fstat, then throws ERR_INVALID_FD_TYPE.
+        throw $ERR_INVALID_FD_TYPE("UNKNOWN");
+      }
+      // isSocket() covers stdio handed to a child as a socketpair (how spawn
+      // implements pipes on unix); writable-only adoption with sync write(2)
+      // is correct there too.
+      if (
+        stats.isFIFO() ||
+        stats.isCharacterDevice() ||
+        stats.isFile() ||
+        (stats.isSocket() && options.readable !== true)
+      ) {
+        this[kSyncWriteFd] = fd;
+        this._write = fdSyncWrite;
+        this._writev = fdSyncWritev;
+        if (options.readable !== true) {
+          this.push(null);
+          this.read(0);
+        }
+      }
+    }
   }
 
   if (socket instanceof Socket) {
@@ -1760,6 +1798,25 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     upgraded.destroy?.();
   }
 
+  // Close an fd adopted for synchronous writes (node closes the wrapping
+  // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and
+  // other wrappers share them, matching SyncWriteStream's autoClose gate.
+  const syncFd = this[kSyncWriteFd];
+  if (syncFd !== undefined) {
+    this[kSyncWriteFd] = undefined;
+    // Drop the instance overrides so a later connect() on this (reusable)
+    // socket goes through the fresh handle's normal write path.
+    delete this._write;
+    delete this._writev;
+    if (syncFd > 2) {
+      try {
+        require("node:fs").closeSync(syncFd);
+      } catch {
+        // Already closed by the peer/user; nothing to release.
+      }
+    }
+  }
+
   for (let s = this; s !== null; s = s._parent) {
     clearTimeout(s[kTimeout]);
   }
@@ -1858,7 +1915,7 @@ Object.defineProperty(Socket.prototype, "pending", {
 
 Socket.prototype.resume = function resume() {
   if (!this.connecting) {
-    this._handle?.resume();
+    this._handle?.resume?.();
   }
   // Restore the hold pause() removed - even while still connecting, so the
   // pause-then-resume sequence is symmetric. Gated on the pause flag so a
@@ -1873,7 +1930,7 @@ Socket.prototype.resume = function resume() {
 
 Socket.prototype.pause = function pause() {
   if (!this.destroyed) {
-    this._handle?.pause();
+    this._handle?.pause?.();
     // libuv only counts a stream handle as active - and therefore as keeping
     // the event loop alive - while it is reading. A paused socket lets the
     // process exit; resume() re-refs it unless the user explicitly unref'd.
@@ -1939,7 +1996,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 
 Socket.prototype.read = function read(size) {
   if (!this.connecting) {
-    this._handle?.resume();
+    this._handle?.resume?.();
     // Restarting kernel reads makes the handle hold the loop open again;
     // mirror resume()'s re-ref or a paused-then-read() socket waits for
     // data without keeping the process alive.
@@ -1956,7 +2013,7 @@ Socket.prototype._read = function _read(size) {
   if (this.connecting || !socket) {
     this.once("connect", () => this._read(size));
   } else {
-    socket?.resume();
+    socket?.resume?.();
     // See read() above - the Readable machinery's pull path must also
     // restore the handle's hold on the loop.
     if (this[kPausedUnref] && !this[kUserUnrefed]) {
@@ -2040,6 +2097,44 @@ Object.defineProperty(Socket.prototype, "remoteFamily", {
     return this._getpeername().family;
   },
 });
+
+function fdSyncWrite(chunk, encoding, callback) {
+  const fs = require("node:fs");
+  try {
+    const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+    let offset = 0;
+    while (offset < buf.length) {
+      offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
+    }
+    // No native handle on this path, so feed bytesWritten/_bytesDispatched
+    // directly (node accounts these via the libuv handle).
+    this[kBytesWritten] = (this[kBytesWritten] || 0) + offset;
+    callback();
+  } catch (err) {
+    callback(err);
+  }
+}
+
+function fdSyncWritev(data, callback) {
+  const fs = require("node:fs");
+  try {
+    let total = 0;
+    for (let i = 0; i < data.length; i++) {
+      const { chunk, encoding } = data[i];
+      const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+      let offset = 0;
+      while (offset < buf.length) {
+        offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
+      }
+      total += offset;
+    }
+    // See fdSyncWrite: no native handle to account these on.
+    this[kBytesWritten] = (this[kBytesWritten] || 0) + total;
+    callback();
+  } catch (err) {
+    callback(err);
+  }
+}
 
 Socket.prototype.resetAndDestroy = function resetAndDestroy() {
   if (this._handle) {

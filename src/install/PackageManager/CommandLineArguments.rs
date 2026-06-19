@@ -169,6 +169,7 @@ pub static PM_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
         clap::param!("-a, --all"),
+        clap::param!("--trusted"),
         clap::param!("--json                              Output in JSON format"),
         // clap::param!("--filter <STR>...                      Pack each matching workspace"),
         clap::param!(

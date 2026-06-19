@@ -658,10 +658,10 @@ export const bunOnlyFlags: Flag[] = [
 
   // ─── Bun-target-specific ───
   {
-    flag: ["-fconstexpr-steps=2542484", "-fconstexpr-depth=54"],
+    flag: ["-fconstexpr-steps=6000000", "-fconstexpr-depth=54"],
     when: c => c.unix,
     lang: "cxx",
-    desc: "Raise constexpr limits (JSC uses heavy constexpr)",
+    desc: "Raise constexpr limits (JSC uses heavy constexpr; the embedded module registry literals are large)",
   },
   {
     flag: ["-fno-pic", "-fno-pie"],
@@ -993,12 +993,6 @@ export const linkerFlags: Flag[] = [
       // callBigIntConstructor with constructBigInt → "not a constructor",
       // and broke expect.any(Constructor); see commit 218430c731. Mirrors
       // Linux `-Wl,-icf=safe`.
-      //
-      // (This was temporarily /OPT:NOICF so PDB symbolication stayed
-      // unfolded while chasing the Windows-only `Strong<Impl>* corrupted
-      // (0x1)` crash in the fs/promises writeFile async-iterable path under
-      // `panic = "abort"` — flip it back locally if that investigation needs
-      // an unfolded PDB again.)
       "/OPT:SAFEICF",
       // String-literal tail merging (lld-specific; MSVC link.exe has no
       // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.

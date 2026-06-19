@@ -2730,10 +2730,13 @@ fn codegen_assignment_target(cx: &mut Context, pattern: &LvalueRef) -> Result<Ex
                         ObjectPropertyOrSpread::Spread(spread) => {
                             let inner =
                                 codegen_assignment_target(cx, &LvalueRef::Place(&spread.place))?;
+                            // PropertyKind::Spread already makes the printer emit `...`;
+                            // wrapping `inner` in E::Spread here double-prints (`......rest`).
+                            // Matches codegen_object_pattern below which passes the value unwrapped.
                             G::Property {
                                 kind: G::PropertyKind::Spread,
                                 flags: flags::Property::IsSpread.into(),
-                                value: Some(Expr::init(E::Spread { value: inner }, loc)),
+                                value: Some(inner),
                                 ..Default::default()
                             }
                         }

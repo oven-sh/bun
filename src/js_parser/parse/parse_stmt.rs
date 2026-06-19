@@ -1416,7 +1416,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.expect_contextual_keyword(b"as")?;
                 stmt = S::Import {
                     namespace_ref: p.store_name_in_ref(p.lexer.identifier)?,
-                    star_name_loc: Some(p.lexer.loc()),
+                    star_name_loc: p.lexer.loc(),
                     import_record_index: u32::MAX,
                     ..Default::default()
                 };
@@ -1467,7 +1467,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     import_record_index: u32::MAX,
                     default_name: Some(LocRef {
                         loc: p.lexer.loc(),
-                        ref_: Some(p.store_name_in_ref(default_name)?),
+                        ref_: p.store_name_in_ref(default_name)?,
                     }),
                     ..Default::default()
                 };
@@ -1502,7 +1502,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.expect_contextual_keyword(b"as")?;
                     stmt = S::Import {
                         namespace_ref: p.store_name_in_ref(p.lexer.identifier)?,
-                        star_name_loc: Some(p.lexer.loc()),
+                        star_name_loc: p.lexer.loc(),
                         import_record_index: u32::MAX,
                         phase_defer: true,
                         ..Default::default()
@@ -1591,7 +1591,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.lexer.next()?;
                             p.lexer.expect_contextual_keyword(b"as")?;
                             stmt.namespace_ref = p.store_name_in_ref(p.lexer.identifier)?;
-                            stmt.star_name_loc = Some(p.lexer.loc());
+                            stmt.star_name_loc = p.lexer.loc();
                             p.lexer.expect(T::TIdentifier)?;
                         }
                         // "import defaultItem, {item1, item2} from 'path'"
@@ -1645,7 +1645,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let _name = LocRef {
             loc: label_loc,
-            ref_: Some(label_ref),
+            ref_: label_ref,
         };
         let mut nested_opts = ParseStatementOptions::default();
 

@@ -1117,7 +1117,7 @@ mod draft {
                 ExprData::EBoolean(b) => {
                     write!(writer, "{}", if b.value { "true" } else { "false" })
                 }
-                ExprData::ENumber(n) => write!(writer, "{}", n.value),
+                ExprData::ENumber(n) => write!(writer, "{}", n.value()),
                 ExprData::EString(s) => {
                     write!(writer, "{}", bstr::BStr::new(&s.data))
                 }

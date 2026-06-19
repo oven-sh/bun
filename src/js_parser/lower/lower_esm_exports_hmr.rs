@@ -159,17 +159,12 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         let Some(symbol) = f.func.name else {
                             break 'fast_refresh_edge_case;
                         };
-                        let name = p.symbols
-                            [symbol.ref_.expect("infallible: ref bound").inner_index() as usize]
-                            .original_name;
+                        let name = p.symbols[symbol.ref_.inner_index() as usize].original_name;
                         if ReactRefresh::is_componentish_name(name.slice()) {
                             // Lower to a function statement, and reference the function in the export list.
                             self.export_props.push(G::Property {
                                 key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
-                                value: Some(Expr::init_identifier(
-                                    symbol.ref_.expect("infallible: ref bound"),
-                                    stmt.loc,
-                                )),
+                                value: Some(Expr::init_identifier(symbol.ref_, stmt.loc)),
                                 ..Default::default()
                             });
                             break 'stmt *s;
@@ -184,12 +179,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         js_ast::StmtData::SClass(c) => {
                             c.class.can_be_moved()
                                 && (if let Some(name) = c.class.class_name {
-                                    p.symbols[name
-                                        .ref_
-                                        .expect("infallible: ref bound")
-                                        .inner_index()
-                                        as usize]
-                                        .use_count_estimate
+                                    p.symbols[name.ref_.inner_index() as usize].use_count_estimate
                                         == 0
                                 } else {
                                     true
@@ -197,10 +187,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         }
                         js_ast::StmtData::SFunction(f) => {
                             if let Some(name) = f.func.name {
-                                p.symbols[name.ref_.expect("infallible: ref bound").inner_index()
-                                    as usize]
-                                    .use_count_estimate
-                                    == 0
+                                p.symbols[name.ref_.inner_index() as usize].use_count_estimate == 0
                             } else {
                                 true
                             }
@@ -276,14 +263,11 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
                             value: Some(Expr::init_identifier(
                                 match s.data {
-                                    js_ast::StmtData::SClass(class) => class
-                                        .class
-                                        .class_name
-                                        .unwrap()
-                                        .ref_
-                                        .expect("infallible: ref bound"),
+                                    js_ast::StmtData::SClass(class) => {
+                                        class.class.class_name.unwrap().ref_
+                                    }
                                     js_ast::StmtData::SFunction(func) => {
-                                        func.func.name.unwrap().ref_.expect("infallible: ref bound")
+                                        func.func.name.unwrap().ref_
                                     }
                                     _ => unreachable!(),
                                 },
@@ -301,12 +285,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     break 'stmt stmt;
                 }
 
-                let class_name_ref = st
-                    .class
-                    .class_name
-                    .unwrap()
-                    .ref_
-                    .expect("infallible: ref bound");
+                let class_name_ref = st.class.class_name.unwrap().ref_;
                 // Export as CommonJS
                 self.export_props.push(G::Property {
                     key: Some(Expr::init(
@@ -334,19 +313,13 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
                 st.func.flags.remove(bun_ast::flags::Function::IsExport);
 
-                self.visit_ref_to_export(
-                    p,
-                    st.func.name.unwrap().ref_.expect("infallible: ref bound"),
-                    None,
-                    stmt.loc,
-                    false,
-                )?;
+                self.visit_ref_to_export(p, st.func.name.unwrap().ref_, None, stmt.loc, false)?;
 
                 break 'stmt stmt;
             }
             js_ast::StmtData::SExportClause(st) => {
                 for item in st.items.iter() {
-                    let ref_ = item.name.ref_.expect("infallible: ref bound");
+                    let ref_ = item.name.ref_;
                     self.visit_ref_to_export(p, ref_, Some(item.alias), item.name.loc, false)?;
                 }
 
@@ -358,12 +331,12 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     st.import_record_index,
                     st.namespace_ref,
                     st.items,
-                    Some(stmt.loc),
+                    stmt.loc,
                     None,
                     stmt.loc,
                 )?;
                 for item in st.items.slice_mut().iter_mut() {
-                    let ref_ = item.name.ref_.expect("infallible: ref bound");
+                    let ref_ = item.name.ref_;
                     let symbol = &mut p.symbols[ref_.inner_index() as usize];
                     // Always set the namespace alias using the deduplicated import
                     // record. When two `export { ... } from` statements reference
@@ -371,12 +344,12 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // and its items are merged into the first. The symbols may
                     // already have a namespace_alias from ImportScanner pointing at
                     // the now-unused record, so we must update it.
-                    symbol.namespace_alias = Some(G::NamespaceAlias {
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
                         namespace_ref: deduped.namespace_ref,
                         alias: item.original_name,
                         import_record_index: deduped.import_record_index,
                         ..Default::default()
-                    });
+                    }));
                     self.visit_ref_to_export(
                         p,
                         ref_,
@@ -400,7 +373,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     st.import_record_index,
                     st.namespace_ref,
                     bun_ast::StoreSlice::EMPTY,
-                    Some(stmt.loc),
+                    stmt.loc,
                     None,
                     stmt.loc,
                 )?;
@@ -456,7 +429,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         import_record_index: u32,
         namespace_ref: Ref,
         items: js_ast::StoreSlice<js_ast::ClauseItem>,
-        star_name_loc: Option<bun_ast::Loc>,
+        star_name_loc: bun_ast::Loc,
         default_name: Option<js_ast::LocRef>,
         loc: bun_ast::Loc,
     ) -> Result<DeduplicatedImportResult, AllocError> {
@@ -531,9 +504,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     p.symbol_uses.swap_remove(&namespace_ref);
                 }
             }
-            if stmt.star_name_loc.is_none() {
-                if let Some(stl) = star_name_loc {
-                    stmt.star_name_loc = Some(stl);
+            if stmt.star_name_loc.is_empty() {
+                if let Some(stl) = star_name_loc.to_nullable() {
+                    stmt.star_name_loc = stl;
                 }
             }
             if stmt.default_name.is_none() {
@@ -605,7 +578,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             let symbol = &p.symbols[ref_.inner_index() as usize];
             (
                 symbol.kind,
-                symbol.has_been_assigned_to,
+                symbol.has_been_assigned_to(),
                 symbol.original_name,
             )
         };

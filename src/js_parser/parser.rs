@@ -668,46 +668,30 @@ pub struct JSXImportSymbols {
 impl JSXImportSymbols {
     pub(crate) fn get(&self, name: &[u8]) -> Option<Ref> {
         if name == b"jsx" {
-            return self.jsx.map(|jsx| jsx.ref_.expect("infallible: ref bound"));
+            return self.jsx.map(|jsx| jsx.ref_);
         }
         if name == b"jsxDEV" {
-            return self
-                .jsx_dev
-                .map(|jsx| jsx.ref_.expect("infallible: ref bound"));
+            return self.jsx_dev.map(|jsx| jsx.ref_);
         }
         if name == b"jsxs" {
-            return self
-                .jsxs
-                .map(|jsxs| jsxs.ref_.expect("infallible: ref bound"));
+            return self.jsxs.map(|jsxs| jsxs.ref_);
         }
         if name == b"Fragment" {
-            return self
-                .fragment
-                .map(|f| f.ref_.expect("infallible: ref bound"));
+            return self.fragment.map(|f| f.ref_);
         }
         if name == b"createElement" {
-            return self
-                .create_element
-                .map(|c| c.ref_.expect("infallible: ref bound"));
+            return self.create_element.map(|c| c.ref_);
         }
         None
     }
 
     pub(crate) fn get_with_tag(&self, tag: JSXImport) -> Option<Ref> {
         match tag {
-            JSXImport::Jsx => self.jsx.map(|jsx| jsx.ref_.expect("infallible: ref bound")),
-            JSXImport::JsxDEV => self
-                .jsx_dev
-                .map(|jsx| jsx.ref_.expect("infallible: ref bound")),
-            JSXImport::Jsxs => self
-                .jsxs
-                .map(|jsxs| jsxs.ref_.expect("infallible: ref bound")),
-            JSXImport::Fragment => self
-                .fragment
-                .map(|f| f.ref_.expect("infallible: ref bound")),
-            JSXImport::CreateElement => self
-                .create_element
-                .map(|c| c.ref_.expect("infallible: ref bound")),
+            JSXImport::Jsx => self.jsx.map(|jsx| jsx.ref_),
+            JSXImport::JsxDEV => self.jsx_dev.map(|jsx| jsx.ref_),
+            JSXImport::Jsxs => self.jsxs.map(|jsxs| jsxs.ref_),
+            JSXImport::Fragment => self.fragment.map(|f| f.ref_),
+            JSXImport::CreateElement => self.create_element.map(|c| c.ref_),
         }
     }
 
@@ -1873,19 +1857,15 @@ impl<'a> ParseStatementOptions<'a> {
 pub mod prefill {
     use super::*;
 
-    pub mod string_literal {
-        pub(crate) const CHILDREN: [u8; 8] = *b"children";
-    }
-
     pub mod value {
         use super::*;
         pub const E_THIS: E::This = E::This {};
-        pub(crate) const ZERO: E::Number = E::Number { value: 0.0 };
+        pub(crate) const ZERO: E::Number = E::Number::new(0.0);
     }
 
     pub mod string {
         use super::*;
-        pub(crate) const CHILDREN: E::String = E::String::from_static(&string_literal::CHILDREN);
+        pub(crate) const CHILDREN: E::String = E::String::from_static(b"children");
     }
 
     pub mod data {

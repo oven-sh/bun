@@ -230,6 +230,61 @@ test("inspector.close() followed by inspector.open() starts a new server", async
   expect(summary.finalUrl).toBeNull();
 });
 
+// A failed inspector.open() (port already in use) must not leave the process
+// unable to open the inspector: a later open() retries on the same debugger
+// thread.
+const failedOpenRetryFixture = `
+import inspector from "node:inspector";
+
+const blocker = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("") });
+
+let firstError = null;
+try {
+  inspector.open(blocker.port, "127.0.0.1", false);
+} catch (error) {
+  firstError = error.message;
+}
+const urlAfterFailure = inspector.url() ?? null;
+
+inspector.open(0, "127.0.0.1", false);
+const url = inspector.url();
+const version = await (await fetch("http://" + new URL(url).host + "/json/version")).json();
+inspector.close();
+blocker.stop(true);
+
+console.log(
+  JSON.stringify({
+    firstError,
+    urlAfterFailure,
+    url,
+    protocolVersion: version["Protocol-Version"],
+    finalUrl: inspector.url() ?? null,
+  }),
+);
+`;
+
+test("inspector.open() can be retried after a failed start", async () => {
+  using dir = tempDir("inspector-failed-open", {
+    "fixture.mjs": failedOpenRetryFixture,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+
+  const summary = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  expect(summary.firstError).toContain("Failed to start inspector");
+  expect(summary.urlAfterFailure).toBeNull();
+  expect(summary.url).toStartWith("ws://127.0.0.1:");
+  expect(summary.protocolVersion).toBe("1.1");
+  expect(summary.finalUrl).toBeNull();
+});
+
 // waitForDebugger() must block until a client sends Runtime.runIfWaitingForDebugger,
 // even when open() was called without `wait`. The client marks a global before
 // resuming, so the fixture can tell whether it actually waited.

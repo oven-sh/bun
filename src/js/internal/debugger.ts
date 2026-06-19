@@ -124,14 +124,7 @@ export default function (
     // thread (which prints Node's "Debugger listening on ..." line), and a
     // control callback lets the inspected thread close the server or forward
     // commands from the in-process inspector.Session.
-    let debug: Debugger;
-    try {
-      debug = new Debugger(executionContextId, url, createBackend, send, close, true);
-    } catch (error) {
-      reportNodeInspectorServerStarted("", undefined, `${(error as Error)?.message ?? error}`);
-      return;
-    }
-
+    let debug: Debugger | undefined;
     let sessionBackend: Backend | undefined;
     let sessionAdapter: any;
     const control = (message: string) => {
@@ -146,16 +139,17 @@ export default function (
           sessionBackend?.close();
           sessionBackend = undefined;
           sessionAdapter = undefined;
-          debug.stop();
+          debug?.stop();
           return;
         case "open": {
-          // inspector.open() after inspector.close(): start a new server on
-          // this already-running debugger thread and report its URL back.
+          // inspector.open() after inspector.close() or after a failed start:
+          // start a new server on this already-running debugger thread and
+          // report its URL back.
           try {
             debug = new Debugger(executionContextId, parsed.url, createBackend, send, close, true);
             reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
           } catch (error) {
-            reportNodeInspectorServerStarted("", undefined, `${(error as Error)?.message ?? error}`);
+            reportNodeInspectorServerStarted("", control, `${(error as Error)?.message ?? error}`);
           }
           return;
         }
@@ -164,6 +158,7 @@ export default function (
           // inspector.Session (e.g. Debugger.setBreakpointByUrl from vitest
           // --inspect-brk). Responses stay on this thread; the in-process
           // Session treats these as fire-and-forget.
+          if (!debug) return;
           if (!sessionAdapter) {
             let adapter: any;
             sessionBackend = debug.createSessionBackend((...messages: string[]) => {
@@ -185,6 +180,16 @@ export default function (
         }
       }
     };
+
+    try {
+      debug = new Debugger(executionContextId, url, createBackend, send, close, true);
+    } catch (error) {
+      // Register the control callback even though the server failed to start
+      // (e.g. the port is in use), so a later inspector.open() can retry with
+      // an "open" control message on this already-running debugger thread.
+      reportNodeInspectorServerStarted("", control, `${(error as Error)?.message ?? error}`);
+      return;
+    }
 
     reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
     return;

@@ -288,9 +288,9 @@ describe.skipIf(isWindows)("fs.glob symlink semantics (matches Node)", () => {
       matches.push(file);
       if (matches.length > 3) break; // guard: the bug emitted an unbounded stream
     }
-    expect(matches).toEqual([path.join("src", "foo.test.ts")]);
+    expect(matches).toStrictEqual([path.join("src", "foo.test.ts")]);
     // globSync takes the same path.
-    expect(fs.globSync("**/*.test.ts", { cwd: path.join(root, "a") })).toEqual([path.join("src", "foo.test.ts")]);
+    expect(fs.globSync("**/*.test.ts", { cwd: path.join(root, "a") })).toStrictEqual([path.join("src", "foo.test.ts")]);
   });
 
   it("a wildcard segment does not descend into a directory symlink", () => {
@@ -300,7 +300,7 @@ describe.skipIf(isWindows)("fs.glob symlink semantics (matches Node)", () => {
     fs.symlinkSync("dir", path.join(root, "link"), "dir");
     // `*` matches both `dir` and `link`, but the walk only descends the
     // real directory — the symlink is not crossed.
-    expect(fs.globSync("*/*.txt", { cwd: root })).toEqual([path.join("dir", "inside.txt")]);
+    expect(fs.globSync("*/*.txt", { cwd: root })).toStrictEqual([path.join("dir", "inside.txt")]);
   });
 
   it("a literal path segment still traverses a directory symlink", () => {
@@ -310,7 +310,7 @@ describe.skipIf(isWindows)("fs.glob symlink semantics (matches Node)", () => {
       "dir/inside.txt": "x",
     });
     fs.symlinkSync("dir", path.join(root, "link"), "dir");
-    expect(fs.globSync("link/*.txt", { cwd: root })).toEqual([path.join("link", "inside.txt")]);
+    expect(fs.globSync("link/*.txt", { cwd: root })).toStrictEqual([path.join("link", "inside.txt")]);
   });
 
   it("matches a symlink that points at a file", () => {
@@ -318,6 +318,6 @@ describe.skipIf(isWindows)("fs.glob symlink semantics (matches Node)", () => {
       "target.txt": "t",
     });
     fs.symlinkSync("target.txt", path.join(root, "alias.txt"), "file");
-    expect(fs.globSync("*.txt", { cwd: root }).sort()).toEqual(["alias.txt", "target.txt"]);
+    expect(fs.globSync("*.txt", { cwd: root }).sort()).toStrictEqual(["alias.txt", "target.txt"]);
   });
 });

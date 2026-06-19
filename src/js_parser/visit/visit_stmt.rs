@@ -1433,7 +1433,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         alias: js_ast::StoreStr::new(key),
                                         alias_loc: bin.left.loc,
                                         name: js_ast::LocRef {
-                                            ref_: ref_,
+                                            ref_,
                                             loc: last_loc,
                                         },
                                         ..Default::default()

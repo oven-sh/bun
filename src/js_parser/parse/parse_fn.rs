@@ -59,7 +59,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text)?;
             name = Some(js_ast::LocRef {
                 loc: name_loc,
-                ref_: ref_,
+                ref_,
             });
         }
 
@@ -444,7 +444,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             name = Some(js_ast::LocRef {
                 loc: name_loc,
-                ref_: ref_,
+                ref_,
             });
 
             p.lexer.next()?;

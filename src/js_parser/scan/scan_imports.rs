@@ -397,7 +397,7 @@ impl<'a> ImportScanner<'a> {
                                     js_ast::NamedImport {
                                         alias: Some(js_ast::StoreStr::new(*alias)),
                                         alias_loc: item.loc,
-                                        namespace_ref: namespace_ref,
+                                        namespace_ref,
                                         import_record_index: st.import_record_index,
                                         local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                         alias_is_star: false,
@@ -465,7 +465,7 @@ impl<'a> ImportScanner<'a> {
                                 js_ast::NamedImport {
                                     alias: Some(raw_str(b"default")),
                                     alias_loc: default.loc,
-                                    namespace_ref: namespace_ref,
+                                    namespace_ref,
                                     import_record_index: st.import_record_index,
                                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,
@@ -483,7 +483,7 @@ impl<'a> ImportScanner<'a> {
                                 js_ast::NamedImport {
                                     alias: Some(item.alias),
                                     alias_loc: name.loc,
-                                    namespace_ref: namespace_ref,
+                                    namespace_ref,
                                     import_record_index: st.import_record_index,
                                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,
@@ -514,7 +514,7 @@ impl<'a> ImportScanner<'a> {
                                 js_ast::NamedImport {
                                     alias: Some(item.alias),
                                     alias_loc: name.loc,
-                                    namespace_ref: namespace_ref,
+                                    namespace_ref,
                                     import_record_index: st.import_record_index,
                                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,

@@ -350,15 +350,11 @@ pub enum Data {
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
-// Every payload
-// variant is either a `StoreRef<T>` (`#[repr(transparent)] NonNull<T>`, 8 bytes,
-// niche-carrying) or a ZST, so the union is one pointer word and the repr(Rust)
-// discriminant packs alongside it for `Data` = 16. `Stmt` = `Data` (16, align 8)
-// + `Loc` (i32) → 20 → 24 after tail padding. The `Option<Data>` assert proves
-// the niche fires (33 variants < 256 + every pointer variant contributes a
-// NonNull niche), so `Option<Stmt>` / `Option<Data>` add no discriminant word.
-// Adding `#[repr(C)]`/`#[repr(u8)]` to `Data` or a nullable `*mut T` payload
-// would break this — the asserts catch it.
+// Every payload variant is either a `StoreRef<T>` (8 bytes, align 4) or a ZST,
+// so `Data` = 1-byte discriminant + 8-byte payload → 12 at align 4. `Stmt` =
+// `Data` (12, align 4) + `Loc` (i32) → 16. `Option<Data>`/`Option<Stmt>`
+// niche-pack via spare discriminant values (33 variants < 256); a
+// `#[repr(C)]`/`#[repr(u32)]` on `Data` would break it.
 const _: () = assert!(core::mem::size_of::<Data>() == 12);
 const _: () = assert!(core::mem::align_of::<Data>() == 4);
 const _: () = assert!(

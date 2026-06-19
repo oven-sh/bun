@@ -494,7 +494,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
                         clause_items.push(bun_ast::ClauseItem {
                             name: bun_ast::LocRef {
-                                ref_: ref_,
+                                ref_,
                                 loc: bun_ast::Loc::EMPTY,
                             },
                             alias,

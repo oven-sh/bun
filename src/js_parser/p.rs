@@ -2162,7 +2162,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 original_name: js_ast::StoreStr::new(alias_name),
                 alias_loc: bun_ast::Loc::default(),
                 name: LocRef {
-                    ref_: ref_,
+                    ref_,
                     loc: bun_ast::Loc::default(),
                 },
             };
@@ -2190,7 +2190,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::NamedImport {
                     alias: Some(js_ast::StoreStr::new(alias_name)),
                     alias_loc: bun_ast::Loc::default(),
-                    namespace_ref: namespace_ref,
+                    namespace_ref,
                     import_record_index: import_record_i,
                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                     alias_is_star: false,
@@ -2323,7 +2323,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     js_ast::NamedImport {
                         alias: Some(js_ast::StoreStr::new(entry.name)),
                         alias_loc: bun_ast::Loc::EMPTY,
-                        namespace_ref: namespace_ref,
+                        namespace_ref,
                         import_record_index,
                         local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                         alias_is_star: false,

@@ -190,17 +190,23 @@ const _: () = assert!(core::mem::align_of::<Ref>() == 4);
 /// We mask to 31 bits for `source_index`, 28 for `inner_index`.
 pub type RefInt = u32;
 
+// Little-endian only: bits()/from_bits_inner() rely on `{lo, hi}` byte order
+// matching a native u64 read. Every Bun target is LE.
+const _: () = assert!(cfg!(target_endian = "little"));
+
 impl Ref {
     #[inline(always)]
     const fn bits(self) -> u64 {
-        (self.hi as u64) << 32 | self.lo as u64
+        // SAFETY: `Ref` is `repr(C)` `{lo: u32, hi: u32}` — 8 bytes, no
+        // padding, fully initialized. On LE the byte image is exactly
+        // `(hi << 32) | lo`. One `mov` instead of two loads + shift|or, which
+        // matters because `Ref` is the hot `HashMap` key in the renamer.
+        unsafe { core::mem::transmute::<Ref, u64>(self) }
     }
     #[inline(always)]
     const fn from_bits_inner(b: u64) -> Ref {
-        Ref {
-            lo: b as u32,
-            hi: (b >> 32) as u32,
-        }
+        // SAFETY: inverse of `bits()` — every u64 bit pattern is a valid `Ref`.
+        unsafe { core::mem::transmute::<u64, Ref>(b) }
     }
 
     const INNER_MASK: u64 = (1u64 << 31) - 1;

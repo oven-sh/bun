@@ -225,7 +225,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             *clause = ClauseItem {
                 name: LocRef {
                     loc: Loc::EMPTY,
-                    ref_: ref_,
+                    ref_,
                 },
                 original_name: bun_ast::StoreStr::new(import_id),
                 alias: bun_ast::StoreStr::new(import_id),

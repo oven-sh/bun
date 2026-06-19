@@ -1738,16 +1738,11 @@ pub enum Data {
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
-// The identifier-family flags are packed into `Ref`'s spare bits (see
-// `E::Identifier` doc), so every inline payload is ≤ 8 bytes; with the
-// repr(Rust) discriminant that rounds to 16. `Expr` = `Data` (16, align 8) +
-// `Loc` (i32) → 20 → 24 after tail padding.
-//
-// The `Option<Data>` assert proves Rust's niche optimization fires: the enum
-// has spare discriminant values (47 variants < 256, and every pointer variant
-// contributes a NonNull niche), so `None` packs into an unused bit-pattern
-// rather than adding a word. If a future variant adds `#[repr(C)]`/`#[repr(u32)]`
-// or a nullable `*mut T` payload, this assert catches the size regression.
+// Every payload — `StoreRef<T>` and the inline identifier/`Number`/etc.
+// structs — is ≤ 8 bytes at align 4, so `Data` = 1-byte discriminant + 8-byte
+// payload → 12 at align 4. `Expr` = `Data` (12, align 4) + `Loc` (i32) → 16.
+// `Option<Data>`/`Option<Expr>` niche-pack via spare discriminant values
+// (47 variants < 256); a `#[repr(C)]`/`#[repr(u32)]` on `Data` would break it.
 const _: () = assert!(core::mem::size_of::<Data>() == 12); // Do not increase the size of Expr
 const _: () = assert!(core::mem::align_of::<Data>() == 4);
 const _: () = assert!(core::mem::size_of::<Expr>() == 16);

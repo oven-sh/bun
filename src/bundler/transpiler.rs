@@ -2017,10 +2017,7 @@ fn parse_data_loader<'a>(
                         value: Some(prop.value.expect("infallible: prop has value")),
                     };
                     export_clauses[count] = bun_ast::ClauseItem {
-                        name: bun_ast::LocRef {
-                            ref_: ref_,
-                            loc: key_loc,
-                        },
+                        name: bun_ast::LocRef { ref_, loc: key_loc },
                         alias: bun_ast::StoreStr::new(name),
                         alias_loc: key_loc,
                         ..Default::default()

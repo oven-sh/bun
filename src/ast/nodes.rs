@@ -20,24 +20,23 @@ pub use crate::flags as Flags;
 // `Copy`, `Deref`/`DerefMut`. The pointee lives until the owning Store/arena
 // is `reset()`; callers must not hold a `StoreRef` across that boundary.
 //
-// Layout: 48-bit pointer split as `hi` (bits 16..48) + `lo` (bits 0..16),
-// giving 8 bytes at align 4. The align-4 part is what lets `expr::Data` /
-// `stmt::Data` drop to align 4 and `Expr`/`Stmt`/`Binding` pack into 16 bytes.
-// `hi` is `NonZeroU32` so `Option<StoreRef<T>>` keeps its niche: every
-// arena/heap/static address on a supported target is ≥ 64 KiB (the OS reserves
-// the low pages), so bits 16..48 of a real pointer are never all zero.
+// Layout: the address stored as two adjacent `u32` halves (little-endian byte
+// order matches a native `u64`), giving 8 bytes at **align 4**. The align-4
+// part is what lets `expr::Data`/`stmt::Data` drop to align 4 and `Expr`/
+// `Stmt`/`Binding` pack into 16 bytes. `as_ptr()` is a single `transmute` →
+// one `mov`, so derefs cost the same as a `NonNull<T>`. No niche; the handful
+// of `Option<StoreRef<T>>` storage sites (Scope.parent, EString.next/end,
+// Property.class_static_block) pay 4 B for the discriminant.
 // ───────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
 pub struct StoreRef<T> {
-    hi: core::num::NonZeroU32,
-    lo: u16,
+    addr: [u32; 2],
     _marker: core::marker::PhantomData<NonNull<T>>,
 }
 
 const _: () = assert!(core::mem::size_of::<StoreRef<u8>>() == 8);
 const _: () = assert!(core::mem::align_of::<StoreRef<u8>>() == 4);
-const _: () = assert!(core::mem::size_of::<Option<StoreRef<u8>>>() == 8);
 
 // SAFETY: `StoreRef` is a thin pointer into a single-threaded bump arena.
 // We assert Send/Sync so payload types embedding `Option<StoreRef<T>>`
@@ -57,27 +56,18 @@ impl<T> StoreRef<T> {
     #[inline(always)]
     fn pack(p: *mut T) -> Self {
         let bits = p as usize as u64;
-        debug_assert!(
-            bits >> 48 == 0,
-            "StoreRef: pointer exceeds 48-bit user-space range",
-        );
-        debug_assert!(
-            bits >> 16 != 0,
-            "StoreRef: pointer in low 64 KiB (null or zero page)",
-        );
         StoreRef {
-            // SAFETY: every arena/heap/static address on a supported target is
-            // ≥ 64 KiB (OS reserves the low pages), so bits 16..48 are non-zero
-            // — checked by the debug_assert above.
-            hi: unsafe { core::num::NonZeroU32::new_unchecked((bits >> 16) as u32) },
-            lo: bits as u16,
+            addr: [bits as u32, (bits >> 32) as u32],
             _marker: core::marker::PhantomData,
         }
     }
 
     #[inline(always)]
     pub fn as_ptr(self) -> *mut T {
-        (((self.hi.get() as u64) << 16) | self.lo as u64) as usize as *mut T
+        // SAFETY: `addr` is `[u32; 2]` — 8 bytes, no padding, fully
+        // initialized. On LE the byte image of `[lo, hi]` is exactly the
+        // original `usize` from `pack()`. One `mov`, same cost as `NonNull`.
+        unsafe { core::mem::transmute::<[u32; 2], usize>(self.addr) as *mut T }
     }
 
     #[inline]
@@ -155,7 +145,7 @@ impl<T> From<NonNull<T>> for StoreRef<T> {
 impl<T> PartialEq for StoreRef<T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.hi == other.hi && self.lo == other.lo
+        self.addr == other.addr
     }
 }
 impl<T> Eq for StoreRef<T> {}

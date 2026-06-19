@@ -637,18 +637,38 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
 /// ticking the event loop, until a frontend connects to the inspector.
 // HOST_EXPORT(Debugger__waitForNodeInspectorConnection, c)
 pub fn wait_for_node_inspector_connection() {
+    // Like Node, return immediately once any frontend has resolved the wait by
+    // sending Runtime.runIfWaitingForDebugger; otherwise block until one does,
+    // regardless of whether inspector.open() was called with `wait`.
+    if NODE_INSPECTOR_WAIT_RESOLVED.load(Ordering::Acquire) {
+        return;
+    }
     let this = VirtualMachine::get();
     {
         let Some(dbg) = this.debugger_mut() else {
             return;
         };
         if dbg.wait_for_connection == Wait::Off {
-            return;
+            // Mirror `create()`: the ref pairs with the unref in `did_connect`.
+            dbg.wait_for_connection = Wait::Forever;
+            dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
         }
         dbg.must_block_until_connected = true;
     }
     Debugger::wait_for_debugger_if_necessary(VirtualMachine::get_mut_ptr());
 }
+
+/// `inspector.open()` re-opening a previously closed server: the next
+/// `open(port, host, true)` / `waitForDebugger()` must wait for a client of
+/// the new server, not return because an earlier client resolved the wait.
+// HOST_EXPORT(Debugger__resetNodeInspectorWaitResolved, c)
+pub fn reset_node_inspector_wait_resolved() {
+    NODE_INSPECTOR_WAIT_RESOLVED.store(false, Ordering::Release);
+}
+
+/// Set when any inspector frontend resolves the wait-for-debugger state
+/// (Inspector.initialized / Runtime.runIfWaitingForDebugger).
+static NODE_INSPECTOR_WAIT_RESOLVED: AtomicBool = AtomicBool::new(false);
 
 // HOST_EXPORT(Debugger__didConnect, c)
 pub fn did_connect() {
@@ -659,6 +679,7 @@ pub fn did_connect() {
     let Some(dbg) = this.debugger.as_deref_mut() else {
         return;
     };
+    NODE_INSPECTOR_WAIT_RESOLVED.store(true, Ordering::Release);
     if dbg.wait_for_connection != Wait::Off {
         dbg.wait_for_connection = Wait::Off;
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));

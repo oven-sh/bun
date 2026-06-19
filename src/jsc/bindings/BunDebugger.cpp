@@ -12,6 +12,7 @@
 #include "debug-helpers.h"
 #include "BunInjectedScriptHost.h"
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+#include <wtf/JSONValues.h>
 
 #include "InspectorLifecycleAgent.h"
 #include "InspectorTestReporterAgent.h"
@@ -553,9 +554,19 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
 {
 
     auto* globalObject = ScriptExecutionContext::getScriptExecutionContext(scriptId)->jsGlobalObject();
-    globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
-    globalObject->m_inspectorDebuggable = BunJSGlobalObjectDebuggable::create(*globalObject);
-    globalObject->m_inspectorDebuggable->init();
+    // JSGlobalObject::init() installs a default controller and debuggable, so
+    // they are always non-null here; Bun must replace them with its own
+    // (BunInjectedScriptHost, and BunJSGlobalObjectDebuggable's
+    // unpauseForResolvedAutomaticInspection hook that resolves
+    // wait-for-debugger). Re-entrant calls — inspector.waitForDebugger() after
+    // inspector.open() — must not recreate the controller while a frontend is
+    // connected, which would orphan that connection; in that case the Bun
+    // controller is already installed from the earlier call.
+    if (!globalObject->m_inspectorController || !globalObject->inspectorController().frontendRouter().hasFrontends()) {
+        globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
+        globalObject->m_inspectorDebuggable = BunJSGlobalObjectDebuggable::create(*globalObject);
+        globalObject->m_inspectorDebuggable->init();
+    }
 
     globalObject->setInspectable(true);
 
@@ -669,11 +680,39 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportNodeInspectorServerStarted, (JSGlobalOb
 
 extern "C" bool Debugger__startNodeInspectorServer(BunString* url, bool waitForConnection);
 extern "C" void Debugger__waitForNodeInspectorConnection();
+extern "C" void Debugger__resetNodeInspectorWaitResolved();
 
-// node:inspector's inspector.open(): starts the debugger thread (if possible),
-// waits for its WebSocket server to come up, and returns the resolved ws://
-// URL. Returns null when an inspector is already active; throws when the
-// server failed to start.
+// Posts a control message to the node-inspector server's debugger thread
+// without checking whether the server is currently listening (the reopen path
+// runs while it is closed).
+static bool postNodeInspectorControlMessage(const String& message)
+{
+    if (!debuggerScriptExecutionContext)
+        return false;
+
+    debuggerScriptExecutionContext->postTaskConcurrently([message = message.isolatedCopy()](ScriptExecutionContext& context) {
+        auto& state = nodeInspectorState();
+        JSC::JSValue controlCallback;
+        {
+            Locker<Lock> locker(state.lock);
+            controlCallback = state.controlCallback.get();
+        }
+        if (!controlCallback || !controlCallback.isCallable())
+            return;
+        auto* globalObject = context.jsGlobalObject();
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsString(globalObject->vm(), message));
+        JSC::call(globalObject, controlCallback.getObject(), arguments, "postNodeInspectorControlMessage - controlCallback"_s);
+    });
+
+    return true;
+}
+
+// node:inspector's inspector.open(): starts the debugger thread (or asks the
+// existing one to open a new server after inspector.close()), waits for the
+// WebSocket server to come up, and returns the resolved ws:// URL. Returns
+// null when an inspector is already active; throws when the server failed to
+// start.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_openNodeInspector, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -683,12 +722,40 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_openNodeInspector, (JSGlobalObject * globalO
     RETURN_IF_EXCEPTION(scope, {});
     bool waitForConnection = callFrame->argument(1).toBoolean(globalObject);
 
-    BunString urlString = Bun::toString(requestedUrl);
-    if (!Debugger__startNodeInspectorServer(&urlString, waitForConnection)) {
-        return JSValue::encode(jsNull());
+    auto& state = nodeInspectorState();
+    bool reopen = false;
+    {
+        Locker<Lock> locker(state.lock);
+        if (state.serverStarted && !state.url.isEmpty()) {
+            // A node:inspector server is already listening.
+            return JSValue::encode(jsNull());
+        }
+        if (state.serverStarted && state.controlCallback) {
+            // Previously opened and then closed: the debugger thread is still
+            // running, so ask it to start a new server instead of spawning one.
+            reopen = true;
+            state.serverStarted = false;
+            state.error = String();
+        }
     }
 
-    auto& state = nodeInspectorState();
+    if (reopen) {
+        // A client of the previous server resolved the wait; the new server's
+        // wait state starts fresh.
+        Debugger__resetNodeInspectorWaitResolved();
+        auto controlMessage = JSON::Object::create();
+        controlMessage->setString("type"_s, "open"_s);
+        controlMessage->setString("url"_s, requestedUrl);
+        if (!postNodeInspectorControlMessage(controlMessage->toJSONString())) {
+            return JSValue::encode(jsNull());
+        }
+    } else {
+        BunString urlString = Bun::toString(requestedUrl);
+        if (!Debugger__startNodeInspectorServer(&urlString, waitForConnection)) {
+            return JSValue::encode(jsNull());
+        }
+    }
+
     String resolvedUrl;
     String error;
     {
@@ -740,25 +807,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_postNodeInspectorControl, (JSGlobalObject * 
             return JSValue::encode(jsBoolean(false));
     }
 
-    if (!debuggerScriptExecutionContext)
-        return JSValue::encode(jsBoolean(false));
-
-    debuggerScriptExecutionContext->postTaskConcurrently([message = message.isolatedCopy()](ScriptExecutionContext& context) {
-        auto& state = nodeInspectorState();
-        JSC::JSValue controlCallback;
-        {
-            Locker<Lock> locker(state.lock);
-            controlCallback = state.controlCallback.get();
-        }
-        if (!controlCallback || !controlCallback.isCallable())
-            return;
-        auto* globalObject = context.jsGlobalObject();
-        MarkedArgumentBuffer arguments;
-        arguments.append(jsString(globalObject->vm(), message));
-        JSC::call(globalObject, controlCallback.getObject(), arguments, "jsFunction_postNodeInspectorControl - controlCallback"_s);
-    });
-
-    return JSValue::encode(jsBoolean(true));
+    return JSValue::encode(jsBoolean(postNodeInspectorControlMessage(message)));
 }
 
 // Marks the node:inspector server closed so url() reports undefined and

@@ -14,8 +14,16 @@ test("inspector.close() is a no-op when the inspector is not open", () => {
   expect(() => inspector.close()).not.toThrow();
 });
 
-test("inspector.waitForDebugger() throws when the inspector is not active", () => {
-  expect(() => inspector.waitForDebugger()).toThrow("Inspector was not activated");
+test("inspector.waitForDebugger() throws ERR_INSPECTOR_NOT_ACTIVE when the inspector is not active", () => {
+  let error: any;
+  try {
+    inspector.waitForDebugger();
+  } catch (caught) {
+    error = caught;
+  }
+  expect(error).toBeDefined();
+  expect(error.code).toBe("ERR_INSPECTOR_NOT_ACTIVE");
+  expect(error.message).toBe("Inspector is not active");
 });
 
 // inspector.open() starts a WebSocket server speaking the V8 Chrome DevTools
@@ -25,6 +33,7 @@ test("inspector.waitForDebugger() throws when the inspector is not active", () =
 const openInspectorFixture = `
 import inspector from "node:inspector";
 import assert from "node:assert";
+import http from "node:http";
 
 assert.strictEqual(inspector.url(), undefined);
 inspector.open(0, "127.0.0.1", false);
@@ -40,6 +49,26 @@ try {
 const httpBase = "http://" + new URL(url).host;
 const version = await (await fetch(httpBase + "/json/version")).json();
 const list = await (await fetch(httpBase + "/json/list")).json();
+
+// /json/list reflects the request's Host header (port-forwards, tunnels), like Node.
+const listWithHost = await new Promise((resolve, reject) => {
+  http
+    .get(
+      {
+        host: "127.0.0.1",
+        port: Number(new URL(url).port),
+        path: "/json/list",
+        headers: { Host: "tunnel.example:9229" },
+      },
+      response => {
+        let body = "";
+        response.on("data", chunk => (body += chunk));
+        response.on("end", () => resolve(JSON.parse(body)));
+        response.on("error", reject);
+      },
+    )
+    .on("error", reject);
+});
 
 const ws = new WebSocket(url);
 const pending = new Map();
@@ -81,6 +110,7 @@ console.log(
     alreadyActivatedError,
     version,
     list,
+    listWithHostUrl: listWithHost[0]?.webSocketDebuggerUrl,
     executionContextCreated: events.some(event => event.method === "Runtime.executionContextCreated"),
     scriptParsedCount: events.filter(event => event.method === "Debugger.scriptParsed").length,
     debuggerEnable: debuggerEnable.result,
@@ -122,6 +152,7 @@ test("inspector.open() serves the DevTools protocol and /json discovery endpoint
       devtoolsFrontendUrl: expect.stringContaining("devtools://"),
     }),
   ]);
+  expect(summary.listWithHostUrl).toBe(`ws://tunnel.example:9229${new URL(summary.url).pathname}`);
   expect(summary.executionContextCreated).toBe(true);
   expect(summary.scriptParsedCount).toBeGreaterThan(0);
   expect(summary.debuggerEnable).toEqual({ debuggerId: expect.any(String) });
@@ -129,6 +160,138 @@ test("inspector.open() serves the DevTools protocol and /json discovery endpoint
   expect(summary.consoleEventType).toBe("log");
   expect(summary.unknownError).toEqual({ code: -32601, message: "'Totally.bogus' wasn't found" });
   expect(summary.urlAfterClose).toBeNull();
+});
+
+// Node supports close() followed by open() again; a second open() while one is
+// active throws ERR_INSPECTOR_ALREADY_ACTIVATED.
+const reopenInspectorFixture = `
+import inspector from "node:inspector";
+
+inspector.open(0, "127.0.0.1", false);
+const firstUrl = inspector.url();
+
+let alreadyActiveCode = null;
+try {
+  inspector.open(0, "127.0.0.1", false);
+} catch (error) {
+  alreadyActiveCode = error.code;
+}
+
+inspector.close();
+const closedUrl = inspector.url() ?? null;
+
+inspector.open(0, "127.0.0.1", false);
+const secondUrl = inspector.url();
+const version = await (await fetch("http://" + new URL(secondUrl).host + "/json/version")).json();
+inspector.close();
+
+console.log(
+  JSON.stringify({
+    firstUrl,
+    alreadyActiveCode,
+    closedUrl,
+    secondUrl,
+    protocolVersion: version["Protocol-Version"],
+    finalUrl: inspector.url() ?? null,
+  }),
+);
+`;
+
+test("inspector.close() followed by inspector.open() starts a new server", async () => {
+  using dir = tempDir("inspector-reopen", {
+    "fixture.mjs": reopenInspectorFixture,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+
+  const summary = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  expect(summary.firstUrl).toStartWith("ws://127.0.0.1:");
+  expect(summary.alreadyActiveCode).toBe("ERR_INSPECTOR_ALREADY_ACTIVATED");
+  expect(summary.closedUrl).toBeNull();
+  expect(summary.secondUrl).toStartWith("ws://127.0.0.1:");
+  expect(summary.secondUrl).not.toBe(summary.firstUrl);
+  expect(summary.protocolVersion).toBe("1.1");
+  expect(summary.finalUrl).toBeNull();
+});
+
+// waitForDebugger() must block until a client sends Runtime.runIfWaitingForDebugger,
+// even when open() was called without `wait`. The client marks a global before
+// resuming, so the fixture can tell whether it actually waited.
+const waitForDebuggerFixture = `
+import inspector from "node:inspector";
+
+inspector.open(0, "127.0.0.1", false);
+process.stderr.write("WAITING_FOR_DEBUGGER\\n");
+inspector.waitForDebugger();
+const resumedByClient = globalThis.__resumed_by_client === true;
+console.log(JSON.stringify({ resumedByClient }));
+process.exit(resumedByClient ? 0 : 7);
+`;
+
+test("inspector.waitForDebugger() blocks until a client resumes the process", async () => {
+  using dir = tempDir("inspector-wait", {
+    "fixture.mjs": waitForDebuggerFixture,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  // Read stderr incrementally: the fixture blocks in waitForDebugger(), so the
+  // stream cannot be awaited to completion before acting as the client.
+  const decoder = new TextDecoder();
+  const reader = proc.stderr.getReader();
+  let stderrText = "";
+  let wsUrl: string | undefined;
+  while (!wsUrl || !stderrText.includes("WAITING_FOR_DEBUGGER")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stderrText += decoder.decode(value);
+    wsUrl ??= stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+  }
+  expect(wsUrl).toBeDefined();
+
+  const ws = new WebSocket(wsUrl!);
+  const opened = Promise.withResolvers<void>();
+  ws.onopen = () => opened.resolve();
+  ws.onerror = error => opened.reject(error);
+  await opened.promise;
+  // Mark the process before resuming it so the fixture can verify it really
+  // waited for this client.
+  ws.send(
+    JSON.stringify({
+      id: 1,
+      method: "Runtime.evaluate",
+      params: { expression: "globalThis.__resumed_by_client = true" },
+    }),
+  );
+  ws.send(JSON.stringify({ id: 2, method: "Runtime.runIfWaitingForDebugger", params: {} }));
+
+  // Keep draining stderr so the pipe cannot fill while the fixture finishes.
+  const drained = (async () => {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderrText += decoder.decode(value);
+    }
+  })();
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  await drained;
+  ws.close();
+
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ resumedByClient: true });
+  expect(exitCode).toBe(0);
 });
 
 test("Runtime.consoleAPICalled is emitted while the Runtime domain is enabled", () => {

@@ -30,7 +30,7 @@ let activeInspectorUrl: string | undefined;
 
 function open(port?: number, host?: string, wait?: boolean) {
   if (activeInspectorUrl !== undefined) {
-    throw new Error("Inspector is already activated. Close it with inspector.close() before activating it again.");
+    throw $ERR_INSPECTOR_ALREADY_ACTIVATED();
   }
   if (!Bun.isMainThread) {
     throw new Error("inspector.open() is not supported in worker threads");
@@ -38,7 +38,7 @@ function open(port?: number, host?: string, wait?: boolean) {
 
   if (port !== undefined && port !== null) {
     if (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65535) {
-      throw $ERR_OUT_OF_RANGE("port", ">= 0 and <= 65535", port);
+      throw $ERR_OUT_OF_RANGE("port", ">= 0 && <= 65535", port);
     }
   }
   const portNumber = port === undefined || port === null ? 9229 : port;
@@ -49,7 +49,7 @@ function open(port?: number, host?: string, wait?: boolean) {
 
   const resolvedUrl = openNodeInspector(requestedUrl, !!wait);
   if (resolvedUrl === null) {
-    throw new Error("Inspector is already activated. Close it with inspector.close() before activating it again.");
+    throw $ERR_INSPECTOR_ALREADY_ACTIVATED();
   }
 
   activeInspectorUrl = resolvedUrl;
@@ -83,7 +83,7 @@ function url() {
 
 function waitForDebugger() {
   if (activeInspectorUrl === undefined) {
-    throw new Error("Inspector was not activated");
+    throw $ERR_INSPECTOR_NOT_ACTIVE();
   }
   waitForNodeInspectorConnection();
 }

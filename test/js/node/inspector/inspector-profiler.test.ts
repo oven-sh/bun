@@ -573,7 +573,7 @@ describe("node:inspector", () => {
     });
 
     test("waitForDebugger() throws when the inspector is not active", () => {
-      expect(() => inspector.waitForDebugger()).toThrow("Inspector was not activated");
+      expect(() => inspector.waitForDebugger()).toThrow("Inspector is not active");
     });
   });
 });

@@ -2561,6 +2561,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s));
     case ErrorCode::ERR_DIR_CLOSED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_DIR_CLOSED, "Directory handle was closed"_s));
+    case ErrorCode::ERR_INSPECTOR_ALREADY_ACTIVATED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_ALREADY_ACTIVATED, "Inspector is already activated. Close it with inspector.close() before activating it again."_s));
+    case ErrorCode::ERR_INSPECTOR_NOT_ACTIVE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_NOT_ACTIVE, "Inspector is not active"_s));
     case ErrorCode::ERR_SERVER_ALREADY_LISTEN:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SERVER_ALREADY_LISTEN, "Listen method has been called more than once without closing."_s));
     case ErrorCode::ERR_SOCKET_CLOSED:

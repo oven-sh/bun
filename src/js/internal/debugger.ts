@@ -148,6 +148,17 @@ export default function (
           sessionAdapter = undefined;
           debug.stop();
           return;
+        case "open": {
+          // inspector.open() after inspector.close(): start a new server on
+          // this already-running debugger thread and report its URL back.
+          try {
+            debug = new Debugger(executionContextId, parsed.url, createBackend, send, close, true);
+            reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
+          } catch (error) {
+            reportNodeInspectorServerStarted("", undefined, `${(error as Error)?.message ?? error}`);
+          }
+          return;
+        }
         case "command": {
           // A CDP command forwarded from the inspected thread's in-process
           // inspector.Session (e.g. Debugger.setBreakpointByUrl from vitest
@@ -418,10 +429,13 @@ class Debugger {
   }
 
   // Node-shaped /json/list payload describing the single debuggable target.
-  #nodeInspectorTargets(): unknown[] {
+  // `host` is the request's Host header: a client reaching the server through a
+  // tunnel or port-forward needs URLs for the address it actually connected to,
+  // not the bind address, matching Node's discovery endpoints.
+  #nodeInspectorTargets(host: string | null): unknown[] {
     const { hostname, port, pathname } = this.#url!;
     const id = pathname.slice(1);
-    const wsAddress = `${hostname}:${port}${pathname}`;
+    const wsAddress = `${host || `${hostname}:${port}`}${pathname}`;
     return [
       {
         description: "bun instance",
@@ -456,7 +470,7 @@ class Debugger {
         // to find the WebSocket URL. Only served for node:inspector servers; the
         // Bun-protocol inspector has no CDP-speaking clients to discover it.
         if (this.#nodeInspector) {
-          return Response.json(this.#nodeInspectorTargets());
+          return Response.json(this.#nodeInspectorTargets(headers.get("Host")));
         }
         break;
     }

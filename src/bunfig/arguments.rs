@@ -20,13 +20,16 @@ use crate::bunfig::Bunfig;
 fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
     let paths: [&[u8]; 1] = [b".bunfig.toml"];
 
-    if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get() {
+    if let Some(data_dir) = env_var::XDG_CONFIG_HOME
+        .get()
+        .filter(|p| bun_paths::is_absolute(p))
+    {
         return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
             data_dir, &mut **buf, &paths,
         ));
     }
 
-    if let Some(home_dir) = env_var::HOME.get() {
+    if let Some(home_dir) = env_var::HOME.get().filter(|p| bun_paths::is_absolute(p)) {
         return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
             home_dir, &mut **buf, &paths,
         ));

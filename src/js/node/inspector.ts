@@ -1,5 +1,8 @@
 // Hardcoded module "node:inspector" and "node:inspector/promises"
-// Profiler APIs are implemented; other inspector APIs are stubs.
+// Implemented: the in-process Session (Profiler CPU profiles and precise
+// coverage, Runtime console notifications, forwarded Debugger.* configuration),
+// and open()/url()/close()/waitForDebugger() backed by a Chrome DevTools
+// Protocol WebSocket server. Breakpoint pausing is not supported yet.
 const { hideFromStack } = require("internal/shared");
 const EventEmitter = require("node:events");
 const { pathToFileURL } = require("node:url");

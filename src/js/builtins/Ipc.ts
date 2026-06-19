@@ -212,7 +212,7 @@ export function serialize(_message, _handle, _options) {
  * @returns {void}
  */
 export function parseHandle(target, serialized, fd) {
-  const emit = $newZigFunction("ipc.zig", "emitHandleIPCMessage", 3);
+  const emit = $newNativeFunction("ipc.zig", "emitHandleIPCMessage", 3);
   const net = require("node:net");
   // const dgram = require("node:dgram");
   switch (serialized.type) {

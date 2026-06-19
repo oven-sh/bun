@@ -1,5 +1,5 @@
 const { Duplex } = require("node:stream");
-const upgradeDuplexToTLS = $newZigFunction("runtime/socket/socket.zig", "jsUpgradeDuplexToTLS", 2);
+const upgradeDuplexToTLS = $newNativeFunction("runtime/socket/socket.zig", "jsUpgradeDuplexToTLS", 2);
 
 interface NativeHandle {
   resume(): void;

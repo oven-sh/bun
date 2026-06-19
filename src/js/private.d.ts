@@ -217,7 +217,7 @@ declare function $cpp<T = any>(filename: NativeFilenameCPP, symbol: string): T;
  * Call a native zig binding function, getting whatever it returns.
  *
  * This is more like a macro; it is replaced with a WebKit intrisic during
- * codegen. Passing a template parameter will break codegen. Prefer `$zig(...)
+ * codegen. Passing a template parameter will break codegen. Prefer `$native(...)
  * as Foo` instead.
  *
  * Binding files are located in `src/jsc/bindings`

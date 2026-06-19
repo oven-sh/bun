@@ -76,8 +76,8 @@ const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 
-const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
-const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
+const getBunServerAllClosedPromise = $newNativeFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
+const sendHelper = $newNativeFunction("node_cluster_binding.zig", "sendHelperChild", 3);
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");

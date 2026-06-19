@@ -1,5 +1,5 @@
 //! JSC bridges for `src/install/hosted_git_info.zig`. Aliased back so call
-//! sites and `$newZigFunction("hosted_git_info.zig", …)` are unchanged.
+//! sites and `$newNativeFunction("hosted_git_info.zig", …)` are unchanged.
 
 pub fn hostedGitInfoToJS(self: *const hgi.HostedGitInfo, go: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     const obj = jsc.JSValue.createEmptyObject(go, 6);

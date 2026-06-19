@@ -628,8 +628,8 @@ function spawnSync(file, args, options) {
 
   return result;
 }
-const etimedoutErrorCode = $newZigFunction("node_util_binding.zig", "etimedoutErrorCode", 0);
-const enobufsErrorCode = $newZigFunction("node_util_binding.zig", "enobufsErrorCode", 0);
+const etimedoutErrorCode = $newNativeFunction("node_util_binding.zig", "etimedoutErrorCode", 0);
+const enobufsErrorCode = $newNativeFunction("node_util_binding.zig", "enobufsErrorCode", 0);
 
 /**
  * Spawns a file as a shell synchronously.

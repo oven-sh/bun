@@ -152,7 +152,7 @@ function bound(binding) {
   };
 }
 
-const out = bound($zig("node_os.zig", "createNodeOsBinding"));
+const out = bound($native("node_os.zig", "createNodeOsBinding"));
 
 symbolToStringify(out, "arch");
 symbolToStringify(out, "availableParallelism");

@@ -3,7 +3,7 @@ const { kHandle } = require("internal/shared");
 
 let net;
 
-const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperPrimary", 4);
+const sendHelper = $newNativeFunction("node_cluster_binding.zig", "sendHelperPrimary", 4);
 
 const ArrayIsArray = Array.isArray;
 

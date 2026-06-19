@@ -19,7 +19,7 @@ const { isAnyArrayBuffer } = require("node:util/types");
 const eos = require("internal/streams/end-of-stream");
 const { kEosNodeSynchronousCallback } = eos;
 
-const normalizeEncoding = $newZigFunction("node_util_binding.zig", "normalizeEncoding", 1);
+const normalizeEncoding = $newNativeFunction("node_util_binding.zig", "normalizeEncoding", 1);
 
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeMap = Array.prototype.map;

@@ -1,7 +1,7 @@
 //! `crate::dispatch::js2native` — flat re-export landing pad for the
 //! `JS2Zig__*` thunks emitted into `generated_js2native.rs`.
 //!
-//! `src/codegen/generate-js2native.ts::rustTarget()` routes every `$zig(...)`
+//! `src/codegen/generate-js2native.ts::rustTarget()` routes every `$native(...)`
 //! call site whose source file lives **outside** `src/runtime/` through
 //! `crate::dispatch::js2native::<mangled>` instead of the file's own crate
 //! path. `bun_runtime` is the highest-tier crate (already depends on every

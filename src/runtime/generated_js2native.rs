@@ -8,7 +8,7 @@
 //!
 //! Mirrors `generated_classes.rs` exactly: thunks dispatch through a
 //! `Js2NativeImpl` trait whose default method bodies panic with a "not yet
-//! ported" message; porting a `$zig()` call site means overriding the
+//! ported" message; porting a `$native()` call site means overriding the
 //! matching method on `Js2Native`.
 #![allow(
     non_snake_case,

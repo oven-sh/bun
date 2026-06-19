@@ -65,7 +65,7 @@ function setServers(servers) {
   return setServersOn(servers, dns);
 }
 
-const getRuntimeDefaultResultOrderOption = $newZigFunction(
+const getRuntimeDefaultResultOrderOption = $newNativeFunction(
   "runtime/dns_jsc/dns.zig",
   "Resolver.getRuntimeDefaultResultOrderOption",
   0,
@@ -73,7 +73,7 @@ const getRuntimeDefaultResultOrderOption = $newZigFunction(
 
 function newResolver(options) {
   if (!newResolver.zig) {
-    newResolver.zig = $newZigFunction("runtime/dns_jsc/dns.zig", "Resolver.newResolver", 1);
+    newResolver.zig = $newNativeFunction("runtime/dns_jsc/dns.zig", "Resolver.newResolver", 1);
   }
   return newResolver.zig(options);
 }

@@ -34,7 +34,7 @@ use crate::jsc::JSValue;
 // ─── JS-facing surface (`impl All { set_timeout / clear_* / … }`) ────────────
 // Named `timer` so codegen (`generated_js2native.rs`) resolves
 // `crate::timer::timer::internal_bindings::timer_clock_ms` per the
-// `$zig(Timer.zig, …)` → `crate::<dir>::<file>` path-mapping.
+// `$native(Timer.zig, …)` → `crate::<dir>::<file>` path-mapping.
 
 #[path = "Timer.rs"]
 pub mod timer;

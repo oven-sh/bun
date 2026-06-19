@@ -11,7 +11,7 @@
 //!
 //! Lives in `bun_runtime` (not `bun_collections`) because it needs the JSC
 //! types; `bun_runtime` already depends on both `bun_collections` and
-//! `bun_jsc`. Registered via `$newZigFunction("collections/linear_fifo.zig",
+//! `bun_jsc`. Registered via `$newNativeFunction("collections/linear_fifo.zig",
 //! "TestingAPIs.orderedRemoveProbe", 1)` — the `.zig` path is only the codegen
 //! key; the implementation is this Rust function (see `dispatch_js2native.rs`).
 

@@ -1,7 +1,7 @@
 //! JSC host fns extracted from `src/install/npm.zig` so that `install/` has
 //! no `JSValue`/`JSGlobalObject`/`CallFrame` references. Each enum keeps a
 //! `pub const jsFunction… = @import(...)` alias so call sites and the
-//! `$newZigFunction("npm.zig", "…")` codegen path are unchanged.
+//! `$newNativeFunction("npm.zig", "…")` codegen path are unchanged.
 
 pub fn operatingSystemIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const args = callframe.arguments_old(1);

@@ -1539,6 +1539,9 @@ dependencies = [
  "bun_ast",
  "bun_collections",
  "bun_core",
+ "enumset",
+ "rustc-hash",
+ "smallvec",
 ]
 
 [[package]]

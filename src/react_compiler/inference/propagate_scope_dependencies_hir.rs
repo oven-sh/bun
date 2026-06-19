@@ -13,7 +13,9 @@
 //! - `src/HIR/DeriveMinimalDependenciesHIR.ts`
 
 use crate::collections::IndexMap;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
+
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::hir::environment::Environment;
 use crate::hir::visitors::{ScopeBlockInfo, ScopeBlockTraversal};
@@ -44,7 +46,7 @@ pub fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut Enviro
         let (working, registry) =
             collect_hoistable_and_propagate(func, env, &temporaries, &hoistable_objects);
         // Convert to scope-keyed map with full dependency paths
-        let mut keyed: HashMap<ScopeId, Vec<ReactiveScopeDependency>> = HashMap::new();
+        let mut keyed: HashMap<ScopeId, Vec<ReactiveScopeDependency>> = HashMap::default();
         for (_block_id, block) in &func.body.blocks {
             if let Terminal::Scope {
                 scope,
@@ -129,10 +131,10 @@ fn find_temporaries_used_outside_declaring_scope(
     func: &HirFunction,
     env: &Environment,
 ) -> HashSet<DeclarationId> {
-    let mut declarations: HashMap<DeclarationId, ScopeId> = HashMap::new();
-    let mut pruned_scopes: HashSet<ScopeId> = HashSet::new();
+    let mut declarations: HashMap<DeclarationId, ScopeId> = HashMap::default();
+    let mut pruned_scopes: HashSet<ScopeId> = HashSet::default();
     let mut traversal = ScopeBlockTraversal::new();
-    let mut used_outside_declaring_scope: HashSet<DeclarationId> = HashSet::new();
+    let mut used_outside_declaring_scope: HashSet<DeclarationId> = HashSet::default();
 
     let handle_place = |place_id: IdentifierId,
                         declarations: &HashMap<DeclarationId, ScopeId>,
@@ -229,7 +231,7 @@ fn collect_temporaries_sidemap(
     env: &Environment,
     used_outside_declaring_scope: &HashSet<DeclarationId>,
 ) -> HashMap<IdentifierId, ReactiveScopeDependency> {
-    let mut temporaries = HashMap::new();
+    let mut temporaries = HashMap::default();
     collect_temporaries_sidemap_impl(
         func,
         env,
@@ -423,10 +425,10 @@ enum ProcessedInstr {
 
 fn collect_optional_chain_sidemap(func: &HirFunction, env: &Environment) -> OptionalChainSidemap {
     let mut ctx = OptionalTraversalContext {
-        seen_optionals: HashSet::new(),
-        processed_instrs_in_optional: HashSet::new(),
-        temporaries_read_in_optional: HashMap::new(),
-        hoistable_objects: HashMap::new(),
+        seen_optionals: HashSet::default(),
+        processed_instrs_in_optional: HashSet::default(),
+        temporaries_read_in_optional: HashMap::default(),
+        hoistable_objects: HashMap::default(),
     };
 
     traverse_function_optional(func, env, &mut ctx);
@@ -804,7 +806,7 @@ impl PropertyPathRegistry {
     fn new() -> Self {
         Self {
             nodes: Vec::new(),
-            roots: HashMap::new(),
+            roots: HashMap::default(),
         }
     }
 
@@ -819,8 +821,8 @@ impl PropertyPathRegistry {
         }
         let idx = self.nodes.len();
         self.nodes.push(PropertyPathNode {
-            properties: HashMap::new(),
-            optional_properties: HashMap::new(),
+            properties: HashMap::default(),
+            optional_properties: HashMap::default(),
             parent: None,
             full_path: ReactiveScopeDependency {
                 identifier: identifier_id,
@@ -858,8 +860,8 @@ impl PropertyPathRegistry {
         let mut new_path = parent_full_path.path.clone();
         new_path.push(entry.clone());
         self.nodes.push(PropertyPathNode {
-            properties: HashMap::new(),
-            optional_properties: HashMap::new(),
+            properties: HashMap::default(),
+            optional_properties: HashMap::default(),
             parent: Some(parent_idx),
             full_path: ReactiveScopeDependency {
                 identifier: parent_full_path.identifier,
@@ -978,7 +980,7 @@ fn collect_hoistable_property_loads(
             })
             .collect()
     } else {
-        HashSet::new()
+        HashSet::default()
     };
 
     let assumed_invoked_fns = get_assumed_invoked_functions(func, env);
@@ -1079,7 +1081,8 @@ fn collect_hoistable_property_loads_impl(
 /// The `temporaries` map is shared across recursive calls (matching TS behavior where
 /// the same Map is passed to recursive invocations for inner functions).
 fn get_assumed_invoked_functions(func: &HirFunction, env: &Environment) -> HashSet<FunctionId> {
-    let mut temporaries: HashMap<IdentifierId, (FunctionId, HashSet<FunctionId>)> = HashMap::new();
+    let mut temporaries: HashMap<IdentifierId, (FunctionId, HashSet<FunctionId>)> =
+        HashMap::default();
     get_assumed_invoked_functions_impl(func, env, &mut temporaries)
 }
 
@@ -1088,7 +1091,7 @@ fn get_assumed_invoked_functions_impl(
     env: &Environment,
     temporaries: &mut HashMap<IdentifierId, (FunctionId, HashSet<FunctionId>)>,
 ) -> HashSet<FunctionId> {
-    let mut hoistable: HashSet<FunctionId> = HashSet::new();
+    let mut hoistable: HashSet<FunctionId> = HashSet::default();
 
     // Step 1: Collect identifier to function expression mappings
     for (_block_id, block) in &func.body.blocks {
@@ -1096,8 +1099,10 @@ fn get_assumed_invoked_functions_impl(
             let instr = &func.instructions[instr_id.0 as usize];
             match &instr.value {
                 InstructionValue::FunctionExpression { lowered_func, .. } => {
-                    temporaries
-                        .insert(instr.lvalue.identifier, (lowered_func.func, HashSet::new()));
+                    temporaries.insert(
+                        instr.lvalue.identifier,
+                        (lowered_func.func, HashSet::default()),
+                    );
                 }
                 InstructionValue::StoreLocal {
                     value: val, lvalue, ..
@@ -1231,7 +1236,7 @@ fn collect_non_nulls_in_blocks(
         }
     }
 
-    let mut nodes: HashMap<BlockId, BlockInfo> = HashMap::new();
+    let mut nodes: HashMap<BlockId, BlockInfo> = HashMap::default();
 
     for (block_id, block) in &func.body.blocks {
         let mut assumed = known_non_null.clone();
@@ -1306,7 +1311,7 @@ fn collect_non_nulls_in_blocks(
                     let inner_assumed = get_assumed_invoked_functions(inner_func, env);
                     let inner_ctx = CollectHoistableContext {
                         temporaries: ctx.temporaries,
-                        known_immutable_identifiers: &HashSet::new(),
+                        known_immutable_identifiers: &HashSet::default(),
                         hoistable_from_optionals: ctx.hoistable_from_optionals,
                         nested_fn_immutable_context: Some(&nested_fn_immutable_context),
                         assumed_invoked_fns: &inner_assumed,
@@ -1349,31 +1354,43 @@ fn propagate_non_null(
     nodes: &HashMap<BlockId, BlockInfo>,
     registry: &mut PropertyPathRegistry,
 ) -> HashMap<BlockId, BTreeSet<usize>> {
+    let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
+    // BlockIds are environment-wide; size dense vectors to this function's max id.
+    let vec_len = block_ids
+        .iter()
+        .map(|b| b.0 as usize)
+        .max()
+        .map(|m| m + 1)
+        .unwrap_or(0);
+
     // Build successor map. Use BTreeSet to iterate successors in sorted BlockId
     // order, matching the TS Set<BlockId> insertion order (blocks are created in
     // ascending BlockId order).
-    let mut block_successors: HashMap<BlockId, BTreeSet<BlockId>> = HashMap::new();
+    let mut block_successors: Vec<BTreeSet<BlockId>> = vec![BTreeSet::new(); vec_len];
     for (block_id, block) in &func.body.blocks {
         for pred in &block.preds {
-            block_successors.entry(*pred).or_default().insert(*block_id);
+            block_successors[pred.0 as usize].insert(*block_id);
         }
     }
 
-    // Clone nodes into mutable working set
-    let mut working: HashMap<BlockId, BTreeSet<usize>> = nodes
-        .iter()
-        .map(|(k, v)| (*k, v.assumed_non_null_objects.clone()))
-        .collect();
+    // Clone nodes into mutable working set, indexed by BlockId.
+    let mut working: Vec<Option<BTreeSet<usize>>> = vec![None; vec_len];
+    for (k, v) in nodes {
+        working[k.0 as usize] = Some(v.assumed_non_null_objects.clone());
+    }
 
-    let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
     let mut reversed_block_ids = block_ids.clone();
     reversed_block_ids.reverse();
+
+    let mut traversal_state: Vec<Option<TraversalState>> = vec![None; vec_len];
 
     for _ in 0..100 {
         let mut changed = false;
 
         // Forward pass (using predecessors)
-        let mut traversal_state: HashMap<BlockId, TraversalState> = HashMap::new();
+        for s in traversal_state.iter_mut() {
+            *s = None;
+        }
         for &block_id in &block_ids {
             let block_changed = recursively_propagate_non_null(
                 block_id,
@@ -1388,7 +1405,9 @@ fn propagate_non_null(
         }
 
         // Backward pass (using successors)
-        traversal_state.clear();
+        for s in traversal_state.iter_mut() {
+            *s = None;
+        }
         for &block_id in &reversed_block_ids {
             let block_changed = recursively_propagate_non_null(
                 block_id,
@@ -1407,7 +1426,10 @@ fn propagate_non_null(
         }
     }
 
-    working
+    block_ids
+        .into_iter()
+        .filter_map(|id| working[id.0 as usize].take().map(|set| (id, set)))
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1425,23 +1447,23 @@ enum PropagationDirection {
 fn recursively_propagate_non_null(
     node_id: BlockId,
     direction: PropagationDirection,
-    traversal_state: &mut HashMap<BlockId, TraversalState>,
-    working: &mut HashMap<BlockId, BTreeSet<usize>>,
+    traversal_state: &mut [Option<TraversalState>],
+    working: &mut [Option<BTreeSet<usize>>],
     func: &HirFunction,
-    block_successors: &HashMap<BlockId, BTreeSet<BlockId>>,
+    block_successors: &[BTreeSet<BlockId>],
     registry: &mut PropertyPathRegistry,
 ) -> bool {
     // Avoid re-visiting computed or currently active nodes
-    if traversal_state.contains_key(&node_id) {
+    if traversal_state[node_id.0 as usize].is_some() {
         return false;
     }
-    traversal_state.insert(node_id, TraversalState::Active);
+    traversal_state[node_id.0 as usize] = Some(TraversalState::Active);
 
     let neighbors: Vec<BlockId> = match direction {
-        PropagationDirection::Backward => block_successors
-            .get(&node_id)
-            .map(|s| s.iter().copied().collect())
-            .unwrap_or_default(),
+        PropagationDirection::Backward => block_successors[node_id.0 as usize]
+            .iter()
+            .copied()
+            .collect(),
         PropagationDirection::Forward => func
             .body
             .blocks
@@ -1452,7 +1474,7 @@ fn recursively_propagate_non_null(
 
     let mut changed = false;
     for &neighbor in &neighbors {
-        if !traversal_state.contains_key(&neighbor) {
+        if traversal_state[neighbor.0 as usize].is_none() {
             let neighbor_changed = recursively_propagate_non_null(
                 neighbor,
                 direction,
@@ -1469,8 +1491,8 @@ fn recursively_propagate_non_null(
     // Compute intersection of 'done' neighbors only (filter out 'active' = cycle nodes)
     let done_neighbor_sets: Vec<BTreeSet<usize>> = neighbors
         .iter()
-        .filter(|n| traversal_state.get(n) == Some(&TraversalState::Done))
-        .filter_map(|n| working.get(n).cloned())
+        .filter(|n| traversal_state[n.0 as usize] == Some(TraversalState::Done))
+        .filter_map(|n| working[n.0 as usize].clone())
         .collect();
 
     let neighbor_intersection = if done_neighbor_sets.is_empty() {
@@ -1481,18 +1503,18 @@ fn recursively_propagate_non_null(
         iter.fold(first, |acc, s| acc.intersection(&s).copied().collect())
     };
 
-    let prev_objects = working.get(&node_id).cloned().unwrap_or_default();
+    let prev_objects = working[node_id.0 as usize].clone().unwrap_or_default();
     let mut merged: BTreeSet<usize> = prev_objects
         .union(&neighbor_intersection)
         .copied()
         .collect();
     reduce_maybe_optional_chains(&mut merged, registry);
 
-    working.insert(node_id, merged.clone());
-    traversal_state.insert(node_id, TraversalState::Done);
-
     // Compare with previous value — can't just check size due to reduce_maybe_optional_chains
     changed |= prev_objects != merged;
+    working[node_id.0 as usize] = Some(merged);
+    traversal_state[node_id.0 as usize] = Some(TraversalState::Done);
+
     changed
 }
 
@@ -1516,7 +1538,7 @@ fn collect_hoistable_and_propagate(
             })
             .collect()
     } else {
-        HashSet::new()
+        HashSet::default()
     };
 
     let ctx = CollectHoistableContext {
@@ -1539,7 +1561,7 @@ fn key_by_scope_id(
     func: &HirFunction,
     block_keyed: &HashMap<BlockId, BlockInfo>,
 ) -> HashMap<ScopeId, BlockInfo> {
-    let mut keyed: HashMap<ScopeId, BlockInfo> = HashMap::new();
+    let mut keyed: HashMap<ScopeId, BlockInfo> = HashMap::default();
     for (_block_id, block) in &func.body.blocks {
         if let Terminal::Scope {
             scope,
@@ -1627,7 +1649,7 @@ impl ReactiveScopeDependencyTreeHIR {
         hoistable_objects: impl Iterator<Item = &'a ReactiveScopeDependency>,
         _env: &Environment,
     ) -> Self {
-        let mut hoistable_roots: HashMap<IdentifierId, (HoistableNode, bool)> = HashMap::new();
+        let mut hoistable_roots: HashMap<IdentifierId, (HoistableNode, bool)> = HashMap::default();
 
         // Sort hoistable objects so that entries with optional first path come
         // before non-optional ones. This matches the TS behavior where
@@ -1650,7 +1672,7 @@ impl ReactiveScopeDependencyTreeHIR {
                 };
                 (
                     HoistableNode {
-                        properties: HashMap::new(),
+                        properties: HashMap::default(),
                         access_type,
                     },
                     dep.reactive,
@@ -1670,7 +1692,7 @@ impl ReactiveScopeDependencyTreeHIR {
                     .or_insert_with(|| {
                         Box::new(HoistableNodeEntry {
                             node: HoistableNode {
-                                properties: HashMap::new(),
+                                properties: HashMap::default(),
                                 access_type,
                             },
                         })
@@ -1827,8 +1849,8 @@ impl<'a> DependencyCollectionContext<'a> {
         processed_instrs_in_optional: &'a HashSet<ProcessedInstr>,
     ) -> Self {
         Self {
-            declarations: HashMap::new(),
-            reassignments: HashMap::new(),
+            declarations: HashMap::default(),
+            reassignments: HashMap::default(),
             scope_stack: Vec::new(),
             dep_stack: Vec::new(),
             deps: IndexMap::new(),

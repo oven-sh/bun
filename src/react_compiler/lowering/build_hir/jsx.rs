@@ -241,7 +241,18 @@ pub(super) fn lower_jsx_call(
     let opening_loc = convert_loc(tag_expr.loc);
     let closing_loc = convert_loc(call.close_paren_loc);
 
-    let tag = lower_jsx_element_name(builder, tag_expr)?;
+    // `<>...</>` arrives here as `jsx(Fragment, {children})` with the
+    // auto-imported jsx-runtime `Fragment` symbol as the tag. Upstream sees a
+    // `JSXFragment` AST node (no tag at all), so it never records the Fragment
+    // identifier as a scope dependency. Detect that symbol and emit
+    // `JsxFragment` to match — otherwise every fragment costs an extra memo
+    // slot for the never-changing `$[n] !== Fragment` guard.
+    let is_fragment = is_jsx_runtime_fragment(builder, tag_expr);
+    let tag = if is_fragment {
+        None
+    } else {
+        Some(lower_jsx_element_name(builder, tag_expr)?)
+    };
 
     // Detect automatic vs classic runtime by the shape of args[1] and arity.
     // Automatic always passes an E::Object as args[1] with children packed inside;
@@ -378,6 +389,10 @@ pub(super) fn lower_jsx_call(
         }
     }
 
+    let Some(tag) = tag else {
+        return Ok(InstructionValue::JsxFragment { children, loc });
+    };
+
     Ok(InstructionValue::JsxExpression {
         tag,
         props,
@@ -390,6 +405,22 @@ pub(super) fn lower_jsx_call(
         opening_loc,
         closing_loc,
     })
+}
+
+/// True when `tag` is the auto-imported jsx-runtime `Fragment` symbol minted by
+/// the parser's visit pass for `<>...</>`. A user-written
+/// `import { Fragment } from "react"` is a real import (present in
+/// `import_bindings`, absent from `module_scope().generated`) and stays a
+/// regular component tag — matching upstream, which only special-cases the
+/// `JSXFragment` syntax form.
+fn is_jsx_runtime_fragment(builder: &HirBuilder, tag: &Expr) -> bool {
+    let ref_ = match tag.data {
+        ExprData::EIdentifier(id) => id.ref_,
+        ExprData::EImportIdentifier(id) => id.ref_,
+        _ => return false,
+    };
+    let host = builder.host();
+    host.ref_name(ref_) == b"Fragment" && host.module_scope().generated.contains(&ref_)
 }
 
 /// The visit pass packs children into the props object as either a single

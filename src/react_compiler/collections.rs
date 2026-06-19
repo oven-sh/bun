@@ -20,6 +20,14 @@ use core::slice;
 use bun_alloc::AstAlloc;
 use bun_collections::array_hash_map::{ArrayHashMap, AutoContext, MapEntry};
 
+/// Unordered map/set keyed by small `Copy` ids — `std`'s SipHash is the wrong
+/// default for dense `u32` newtypes. The `disallowed_types` lint is satisfied:
+/// the hasher is `FxBuildHasher`, not `RandomState`.
+#[allow(clippy::disallowed_types)]
+pub type FxHashMap<K, V> = std::collections::HashMap<K, V, rustc_hash::FxBuildHasher>;
+#[allow(clippy::disallowed_types)]
+pub type FxHashSet<K> = std::collections::HashSet<K, rustc_hash::FxBuildHasher>;
+
 type Inner<K, V> = ArrayHashMap<K, V, AutoContext, AstAlloc>;
 
 pub type Entry<'a, K, V> = MapEntry<'a, K, V, AutoContext, AstAlloc>;

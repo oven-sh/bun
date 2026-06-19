@@ -167,15 +167,7 @@ function shouldSkip(relPath: string, pragmas: Pragmas): string | null {
 // Known divergences from upstream — Bun produces a different (or no) result.
 // Grow this from CI; each entry must say why.
 // `__proto__: null`: a fixture named "constructor" exists.
-const FRAGMENT_AS_TAG =
-  "Bun runs post-JSX-transform: `<>` is `jsx(Fragment, ...)`, so Fragment is " +
-  "memoized as a tag dep (one extra slot per fragment) where upstream's JsxFragment has no tag";
-const TODO: Record<string, string> = {
-  __proto__: null,
-  "name-anonymous-functions": FRAGMENT_AS_TAG,
-  "renaming-jsx-tag-lowercase": FRAGMENT_AS_TAG,
-  "repro-no-declarations-in-reactive-scope-with-early-return": FRAGMENT_AS_TAG,
-} as any;
+const TODO: Record<string, string> = { __proto__: null } as any;
 
 type Fixture = {
   name: string;

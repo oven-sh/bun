@@ -21,38 +21,43 @@ struct State {
 }
 
 struct SSABuilder {
-    states: HashMap<BlockId, State>,
+    /// Indexed by `BlockId.0`.
+    states: Vec<Option<State>>,
     current: Option<BlockId>,
-    unsealed_preds: HashMap<BlockId, u32>,
-    block_preds: HashMap<BlockId, Vec<BlockId>>,
+    /// Indexed by `BlockId.0`.
+    unsealed_preds: Vec<Option<u32>>,
+    /// Indexed by `BlockId.0`. Empty Vec = no preds / not registered.
+    block_preds: Vec<Vec<BlockId>>,
     unknown: HashSet<IdentifierId>,
     context: HashSet<IdentifierId>,
-    pending_phis: HashMap<BlockId, Vec<Phi>>,
+    /// Indexed by `BlockId.0`.
+    pending_phis: Vec<Vec<Phi>>,
     processed_functions: Vec<FunctionId>,
 }
 
 impl SSABuilder {
-    fn new(blocks: &IndexMap<BlockId, BasicBlock>) -> Self {
-        let mut block_preds = HashMap::new();
+    fn new(blocks: &IndexMap<BlockId, BasicBlock>, num_blocks: usize) -> Self {
+        let mut block_preds: Vec<Vec<BlockId>> = vec![Vec::new(); num_blocks];
         for (id, block) in blocks {
-            block_preds.insert(*id, block.preds.iter().copied().collect());
+            block_preds[id.0 as usize] = block.preds.iter().copied().collect();
         }
+        let mut states = Vec::with_capacity(num_blocks);
+        states.resize_with(num_blocks, || None);
         SSABuilder {
-            states: HashMap::new(),
+            states,
             current: None,
-            unsealed_preds: HashMap::new(),
+            unsealed_preds: vec![None; num_blocks],
             block_preds,
             unknown: HashSet::new(),
             context: HashSet::new(),
-            pending_phis: HashMap::new(),
+            pending_phis: vec![Vec::new(); num_blocks],
             processed_functions: Vec::new(),
         }
     }
 
     fn define_function(&mut self, func: &HirFunction) {
         for (id, block) in &func.body.blocks {
-            self.block_preds
-                .insert(*id, block.preds.iter().copied().collect());
+            self.block_preds[id.0 as usize] = block.preds.iter().copied().collect();
         }
     }
 
@@ -60,8 +65,8 @@ impl SSABuilder {
         let current = self
             .current
             .expect("we need to be in a block to access state!");
-        self.states
-            .get_mut(&current)
+        self.states[current.0 as usize]
+            .as_mut()
             .expect("state not found for current block")
     }
 
@@ -159,20 +164,22 @@ impl SSABuilder {
         block_id: BlockId,
         env: &mut Environment,
     ) -> IdentifierId {
-        if let Some(state) = self.states.get(&block_id) {
+        if let Some(state) = &self.states[block_id.0 as usize] {
             if let Some(&new_id) = state.defs.get(&old_place.identifier) {
                 return new_id;
             }
         }
 
-        let preds = self.block_preds.get(&block_id).cloned().unwrap_or_default();
+        let preds = &self.block_preds[block_id.0 as usize];
 
         if preds.is_empty() {
             self.unknown.insert(old_place.identifier);
             return old_place.identifier;
         }
+        let preds_len = preds.len();
+        let first_pred = preds[0];
 
-        let unsealed = self.unsealed_preds.get(&block_id).copied().unwrap_or(0);
+        let unsealed = self.unsealed_preds[block_id.0 as usize].unwrap_or(0);
         if unsealed > 0 {
             let new_id = self.make_id(old_place.identifier, env);
             let new_place = Place {
@@ -181,7 +188,7 @@ impl SSABuilder {
                 reactive: old_place.reactive,
                 loc: old_place.loc,
             };
-            let state = self.states.get_mut(&block_id).unwrap();
+            let state = self.states[block_id.0 as usize].as_mut().unwrap();
             state.incomplete_phis.push(IncompletePhi {
                 old_place: old_place.clone(),
                 new_place,
@@ -190,11 +197,10 @@ impl SSABuilder {
             return new_id;
         }
 
-        if preds.len() == 1 {
-            let pred = preds[0];
-            let new_id = self.get_id_at(old_place, pred, env);
-            self.states
-                .get_mut(&block_id)
+        if preds_len == 1 {
+            let new_id = self.get_id_at(old_place, first_pred, env);
+            self.states[block_id.0 as usize]
+                .as_mut()
                 .unwrap()
                 .defs
                 .insert(old_place.identifier, new_id);
@@ -202,8 +208,8 @@ impl SSABuilder {
         }
 
         let new_id = self.make_id(old_place.identifier, env);
-        self.states
-            .get_mut(&block_id)
+        self.states[block_id.0 as usize]
+            .as_mut()
             .unwrap()
             .defs
             .insert(old_place.identifier, new_id);
@@ -224,7 +230,7 @@ impl SSABuilder {
         new_place: &Place,
         env: &mut Environment,
     ) {
-        let preds = self.block_preds.get(&block_id).cloned().unwrap_or_default();
+        let preds = self.block_preds[block_id.0 as usize].clone();
 
         let mut pred_defs: IndexMap<BlockId, Place> = IndexMap::new();
         for pred_block_id in &preds {
@@ -245,13 +251,12 @@ impl SSABuilder {
             operands: pred_defs,
         };
 
-        self.pending_phis.entry(block_id).or_default().push(phi);
+        self.pending_phis[block_id.0 as usize].push(phi);
     }
 
     fn fix_incomplete_phis(&mut self, block_id: BlockId, env: &mut Environment) {
-        let incomplete_phis: Vec<IncompletePhi> = self
-            .states
-            .get_mut(&block_id)
+        let incomplete_phis: Vec<IncompletePhi> = self.states[block_id.0 as usize]
+            .as_mut()
             .unwrap()
             .incomplete_phis
             .drain(..)
@@ -263,13 +268,10 @@ impl SSABuilder {
 
     fn start_block(&mut self, block_id: BlockId) {
         self.current = Some(block_id);
-        self.states.insert(
-            block_id,
-            State {
-                defs: HashMap::new(),
-                incomplete_phis: Vec::new(),
-            },
-        );
+        self.states[block_id.0 as usize] = Some(State {
+            defs: HashMap::new(),
+            incomplete_phis: Vec::new(),
+        });
     }
 }
 
@@ -278,7 +280,8 @@ impl SSABuilder {
 // =============================================================================
 
 pub fn enter_ssa(func: &mut HirFunction, env: &mut Environment) -> Result<(), CompilerDiagnostic> {
-    let mut builder = SSABuilder::new(&func.body.blocks);
+    let num_blocks = env.next_block_id_counter as usize;
+    let mut builder = SSABuilder::new(&func.body.blocks, num_blocks);
     let root_entry = func.body.entry;
     enter_ssa_impl(func, &mut builder, env, root_entry)?;
 
@@ -290,14 +293,16 @@ pub fn enter_ssa(func: &mut HirFunction, env: &mut Environment) -> Result<(), Co
 
 fn apply_pending_phis(func: &mut HirFunction, env: &mut Environment, builder: &mut SSABuilder) {
     for (block_id, block) in func.body.blocks.iter_mut() {
-        if let Some(phis) = builder.pending_phis.remove(block_id) {
+        let phis = std::mem::take(&mut builder.pending_phis[block_id.0 as usize]);
+        if !phis.is_empty() {
             block.phis.extend(phis);
         }
     }
     for fid in &builder.processed_functions.clone() {
         let inner_func = &mut env.functions[fid.0 as usize];
         for (block_id, block) in inner_func.body.blocks.iter_mut() {
-            if let Some(phis) = builder.pending_phis.remove(block_id) {
+            let phis = std::mem::take(&mut builder.pending_phis[block_id.0 as usize]);
+            if !phis.is_empty() {
                 block.phis.extend(phis);
             }
         }
@@ -465,7 +470,7 @@ fn enter_ssa_impl(
                     .unwrap()
                     .preds
                     .clear();
-                builder.block_preds.insert(inner_entry, Vec::new());
+                builder.block_preds[inner_entry.0 as usize] = Vec::new();
             }
         }
 
@@ -479,18 +484,13 @@ fn enter_ssa_impl(
         let terminal_ref = &func.body.blocks.get(&block_id).unwrap().terminal;
         let successors = visitors::each_terminal_successor(terminal_ref);
         for output_id in successors {
-            let output_preds_len = builder
-                .block_preds
-                .get(&output_id)
-                .map(|p| p.len() as u32)
-                .unwrap_or(0);
+            let output_preds_len = builder.block_preds[output_id.0 as usize].len() as u32;
 
-            let count = if builder.unsealed_preds.contains_key(&output_id) {
-                builder.unsealed_preds[&output_id] - 1
-            } else {
-                output_preds_len - 1
+            let count = match builder.unsealed_preds[output_id.0 as usize] {
+                Some(prev) => prev - 1,
+                None => output_preds_len - 1,
             };
-            builder.unsealed_preds.insert(output_id, count);
+            builder.unsealed_preds[output_id.0 as usize] = Some(count);
 
             if count == 0 && visited_blocks.contains(&output_id) {
                 builder.fix_incomplete_phis(output_id, env);

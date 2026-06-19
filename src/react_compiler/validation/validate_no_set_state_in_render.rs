@@ -54,8 +54,7 @@ fn validate_impl(
     enable_use_keyed_state: bool,
     unconditional_set_state_functions: &mut HashSet<IdentifierId>,
 ) -> Result<Vec<CompilerDiagnostic>, CompilerDiagnostic> {
-    let unconditional_blocks: HashSet<BlockId> =
-        compute_unconditional_blocks(func, next_block_id_counter)?;
+    let unconditional_blocks = compute_unconditional_blocks(func, next_block_id_counter)?;
     let mut active_manual_memo_id: Option<u32> = None;
     let mut errors: Vec<CompilerDiagnostic> = Vec::new();
 

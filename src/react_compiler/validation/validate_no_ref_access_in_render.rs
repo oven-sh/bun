@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory, SourceLocation,
@@ -278,8 +278,8 @@ impl Env {
     fn new() -> Self {
         Self {
             changed: false,
-            data: HashMap::new(),
-            temporaries: HashMap::new(),
+            data: HashMap::default(),
+            temporaries: HashMap::default(),
         }
     }
 
@@ -648,7 +648,7 @@ fn validate_no_ref_access_in_render_impl(
     }
 
     // Collect identifiers that are interpolated as JSX children
-    let mut interpolated_as_jsx: HashSet<IdentifierId> = HashSet::new();
+    let mut interpolated_as_jsx: HashSet<IdentifierId> = HashSet::default();
     for (_, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
@@ -904,7 +904,7 @@ fn validate_no_ref_access_in_render_impl(
                                 }
                             } else if hook_kind.is_none() && instr.effects.is_some() {
                                 let mut visited_effects: HashSet<(IdentifierId, bool)> =
-                                    HashSet::new();
+                                    HashSet::default();
                                 for effect in instr.effects.as_ref().unwrap() {
                                     let (place, ref_passed): (&Place, bool) = match effect {
                                         AliasingEffect::Freeze { value, .. } => (value, false),

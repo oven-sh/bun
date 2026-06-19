@@ -12,10 +12,10 @@
 //! inferMutationAliasingRanges, rewriteInstructionKindsBasedOnReassignment,
 //! and inferReactiveScopeVariables on each inner function.
 
+use crate::collections::FxHashSet as HashSet;
 use crate::collections::IndexMap;
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 use crate::hir::environment::Environment;
-use std::collections::HashSet;
 
 use crate::hir::{
     AliasingEffect, AstAlloc, BlockId, Effect, EvaluationOrder, FunctionId, HIR, HirFunction,
@@ -141,7 +141,7 @@ where
 
     // Phase 2: Populate the Effect of each context variable to use in inferring
     // the outer function. Corresponds to TS Phase 2 in lowerWithMutationAliasing.
-    let mut captured_or_mutated: HashSet<IdentifierId> = HashSet::new();
+    let mut captured_or_mutated: HashSet<IdentifierId> = HashSet::default();
     for effect in &function_effects {
         match effect {
             AliasingEffect::Assign { from, .. }

@@ -9,7 +9,7 @@
 //! Uses the Cooper/Harvey/Kennedy algorithm from
 //! https://www.cs.rice.edu/~keith/Embed/dom.pdf
 
-use std::collections::{HashMap, HashSet};
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 
@@ -112,7 +112,7 @@ fn build_reverse_graph(
     let exit_id = BlockId(next_block_id_counter);
 
     // Build initial nodes with reversed edges
-    let mut raw_nodes: HashMap<BlockId, Node> = HashMap::new();
+    let mut raw_nodes: HashMap<BlockId, Node> = HashMap::default();
 
     // Create exit node
     raw_nodes.insert(
@@ -120,8 +120,8 @@ fn build_reverse_graph(
         Node {
             id: exit_id,
             index: 0,
-            preds: HashSet::new(),
-            succs: HashSet::new(),
+            preds: HashSet::default(),
+            succs: HashSet::default(),
         },
     );
 
@@ -150,7 +150,7 @@ fn build_reverse_graph(
     }
 
     // DFS from exit to compute RPO
-    let mut visited = HashSet::new();
+    let mut visited = HashSet::default();
     let mut postorder = Vec::new();
     dfs_postorder(exit_id, &raw_nodes, &mut visited, &mut postorder);
 
@@ -158,7 +158,7 @@ fn build_reverse_graph(
     postorder.reverse();
 
     let mut nodes = Vec::with_capacity(postorder.len());
-    let mut node_index = HashMap::new();
+    let mut node_index = HashMap::default();
     for (idx, id) in postorder.into_iter().enumerate() {
         let mut node = raw_nodes.remove(&id).unwrap();
         node.index = idx;
@@ -197,7 +197,7 @@ fn dfs_postorder(
 fn compute_immediate_dominators(
     graph: &Graph,
 ) -> Result<HashMap<BlockId, BlockId>, CompilerDiagnostic> {
-    let mut doms: HashMap<BlockId, BlockId> = HashMap::new();
+    let mut doms: HashMap<BlockId, BlockId> = HashMap::default();
     doms.insert(graph.entry, graph.entry);
 
     let mut changed = true;
@@ -279,8 +279,8 @@ pub fn post_dominator_frontier(
     target_id: BlockId,
 ) -> HashSet<BlockId> {
     let target_post_dominators = post_dominators_of(func, post_dominators, target_id);
-    let mut visited = HashSet::new();
-    let mut frontier = HashSet::new();
+    let mut visited = HashSet::default();
+    let mut frontier = HashSet::default();
 
     let mut to_visit: Vec<BlockId> = target_post_dominators.iter().copied().collect();
     to_visit.push(target_id);
@@ -306,8 +306,8 @@ pub fn post_dominators_of(
     post_dominators: &PostDominator,
     target_id: BlockId,
 ) -> HashSet<BlockId> {
-    let mut result = HashSet::new();
-    let mut visited = HashSet::new();
+    let mut result = HashSet::default();
+    let mut visited = HashSet::default();
     let mut queue = vec![target_id];
 
     while let Some(current_id) = queue.pop() {
@@ -340,7 +340,7 @@ pub fn compute_unconditional_blocks(
     func: &HirFunction,
     next_block_id_counter: u32,
 ) -> Result<HashSet<BlockId>, CompilerDiagnostic> {
-    let mut unconditional = HashSet::new();
+    let mut unconditional = HashSet::default();
     let dominators = compute_post_dominator_tree(func, next_block_id_counter, false)?;
     let exit = dominators.exit;
     let mut current: Option<BlockId> = Some(func.body.entry);

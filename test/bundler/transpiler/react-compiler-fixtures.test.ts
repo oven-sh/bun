@@ -49,10 +49,14 @@ const PRAGMA_TOKEN_RE = /@(\w+)(?:[:(\s]+["']?([\w.$-]+)["']?\)?)?/g;
 
 function parsePragmas(source: string): Pragmas {
   const out: Pragmas = new Map();
-  // Upstream only scans the leading comment block; 40 lines is plenty.
+  // Upstream (and `leading_comment_pragma` in program.rs) only scans the leading
+  // run of `//` lines and stops at the first non-comment, non-blank line — so a
+  // mid-body `// @ts-ignore` is never mistaken for a config pragma.
   for (const line of source.split("\n", 40)) {
-    if (!/^\s*\/\//.test(line)) continue;
-    for (const m of line.matchAll(PRAGMA_TOKEN_RE)) {
+    const t = line.trim();
+    if (t === "") continue;
+    if (!t.startsWith("//")) break;
+    for (const m of t.matchAll(PRAGMA_TOKEN_RE)) {
       out.set(m[1], (m[2] ?? "true").trim());
     }
   }
@@ -66,6 +70,13 @@ const IGNORED_PRAGMAS = new Set([
   "evaluator",
   "enablePropagateDepsInHIR",
   "enableNewMutationAliasingModel",
+  // sprout (eval harness) directive — controls whether the non-Forget baseline
+  // is evaluated, not how the compiler runs.
+  "disableNonForgetInSprout",
+  // legacy snap markers from before parseConfigPragma existed; upstream's
+  // current harness ignores them.
+  "xonly",
+  "Pass",
 ]);
 
 // Pragmas Bun's `parse_fixture_pragmas` (src/react_compiler/program.rs) reads
@@ -95,7 +106,9 @@ const HANDLED_PRAGMAS = new Set([
   "validateNoSetStateInEffects",
   "validateNoDerivedComputationsInEffects",
   "validateNoDerivedComputationsInEffectsExp",
+  "validateNoDerivedComputationsInEffects_exp",
   "validateNoJsxInTryStatements",
+  "validateNoJSXInTryStatements",
   "validateStaticComponents",
   "validateNoImpureFunctionsInRender",
   "validateNoFreezingKnownMutableFunctions",
@@ -139,6 +152,11 @@ const UNSUPPORTED_PRAGMAS = new Set([
   // Upstream test-only pass that walks the generated *Babel* AST post-codegen.
   // Bun emits bun_ast, so the pass is structurally unportable (DESIGN.md).
   "validateSourceLocations",
+  // Bails on `$FlowFixMe[react-rule-*]` suppressions. Bun has no Flow comment
+  // scanner, so the bailout never fires and error fixtures would mis-compare.
+  "enableFlowSuppressions",
+  // Selects upstream's pre-HIR reactive-scope fork that Bun never ported.
+  "enableReactiveScopesInHIR",
 ]);
 
 // Fixtures Bun's React Compiler integration cannot run yet.

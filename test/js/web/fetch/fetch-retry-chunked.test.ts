@@ -33,8 +33,7 @@ test("InternalState body-buffer accessors tolerate body_out_str == None", async 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
-  expect(stderr).not.toContain("unwrap");
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
 
 // End-to-end guard: drive the keep-alive retry path with a chunked,
@@ -74,7 +73,10 @@ test("chunked uncompressed body over a retried keep-alive connection", async () 
       }
     });
   });
-  await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
   const { port } = server.address() as AddressInfo;
   try {
     for (let i = 0; i < 40; i++) {

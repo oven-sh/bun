@@ -13,8 +13,10 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::hash_map::Entry;
 
-use crate::collections::IndexSet;
+use smallvec::SmallVec;
+
 use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerDiagnosticDetail;
 use crate::diagnostics::ErrorCategory;
@@ -46,6 +48,7 @@ use crate::hir::object_shape::FunctionSignature;
 use crate::hir::object_shape::HookKind;
 use crate::hir::type_config::ValueKind;
 use crate::hir::type_config::ValueReason;
+use crate::hir::type_config::ValueReasonSet;
 use crate::hir::visitors;
 
 // =============================================================================
@@ -94,7 +97,7 @@ pub fn infer_mutation_aliasing_effects(
         // Component: at most 2 params (props, ref)
         let params_len = func.params.len();
         if params_len > 0 {
-            infer_param(&func.params[0], &mut initial_state, &param_kind);
+            infer_param(&func.params[0], &mut initial_state, param_kind);
         }
         if params_len > 1 {
             let ref_place = match &func.params[1] {
@@ -113,7 +116,7 @@ pub fn infer_mutation_aliasing_effects(
         }
     } else {
         for param in &func.params {
-            infer_param(param, &mut initial_state, &param_kind);
+            infer_param(param, &mut initial_state, param_kind);
         }
     }
 
@@ -127,11 +130,8 @@ pub fn infer_mutation_aliasing_effects(
         block_id: BlockId,
         state: &InferenceState,
     ) {
-        if let Some(queued_state) = queued_states.get(&block_id) {
-            if let Some(merged) = queued_state.merge(state) {
-                queued_states.insert(block_id, merged);
-            }
-            // merge() == None means `state` adds nothing; queued entry is already correct.
+        if let Some(queued_state) = queued_states.get_mut(&block_id) {
+            queued_state.merge_from(state);
         } else if let Some(prev) = states_by_block.get(&block_id) {
             if let Some(next) = prev.merge(state) {
                 queued_states.insert(block_id, next);
@@ -254,16 +254,30 @@ impl ValueId {
 // AbstractValue
 // =============================================================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AbstractValue {
     kind: ValueKind,
-    reason: IndexSet<ValueReason>,
+    reason: ValueReasonSet,
 }
 
-fn hashset_of(r: ValueReason) -> IndexSet<ValueReason> {
-    let mut s = IndexSet::new();
-    s.insert(r);
-    s
+#[inline]
+fn hashset_of(r: ValueReason) -> ValueReasonSet {
+    ValueReasonSet::only(r)
+}
+
+/// Points-to set for an identifier. Typical cardinality is 1; phis with N
+/// predecessors merge N sets, so an inline capacity of 4 keeps the common case
+/// allocation-free and `InferenceState::clone` close to a memcpy.
+type ValueIdSet = SmallVec<[ValueId; 4]>;
+
+#[inline]
+fn value_id_set_insert(set: &mut ValueIdSet, v: ValueId) -> bool {
+    if set.contains(&v) {
+        false
+    } else {
+        set.push(v);
+        true
+    }
 }
 
 // =============================================================================
@@ -279,7 +293,7 @@ struct InferenceState {
     /// The kind of each value, based on its allocation site
     values: HashMap<ValueId, AbstractValue>,
     /// The set of values pointed to by each identifier
-    variables: HashMap<IdentifierId, HashSet<ValueId>>,
+    variables: HashMap<IdentifierId, ValueIdSet>,
     /// Tracks uninitialized identifier access errors (matches TS invariant).
     /// Uses Cell so it can be set from `&self` methods like `kind()`.
     /// Stores (IdentifierId, usage_loc) where usage_loc is the source location
@@ -318,15 +332,15 @@ impl InferenceState {
         let mut merged_kind: Option<AbstractValue> = None;
         for value_id in values {
             let kind = match self.values.get(value_id) {
-                Some(k) => k,
+                Some(k) => *k,
                 None => continue,
             };
             merged_kind = Some(match merged_kind {
-                Some(prev) => merge_abstract_values(&prev, kind),
-                None => kind.clone(),
+                Some(prev) => merge_abstract_values(prev, kind),
+                None => kind,
             });
         }
-        merged_kind.unwrap_or_else(|| AbstractValue {
+        merged_kind.unwrap_or(AbstractValue {
             kind: ValueKind::Mutable,
             reason: hashset_of(ValueReason::Other),
         })
@@ -337,8 +351,8 @@ impl InferenceState {
     }
 
     fn define(&mut self, place_id: IdentifierId, value_id: ValueId) {
-        let mut set = HashSet::new();
-        set.insert(value_id);
+        let mut set = ValueIdSet::new();
+        set.push(value_id);
         self.variables.insert(place_id, set);
     }
 
@@ -349,8 +363,8 @@ impl InferenceState {
                 // Create a stable value for uninitialized identifiers
                 // Use a deterministic ID based on the from identifier
                 let vid = ValueId(from.0 | 0x80000000);
-                let mut set = HashSet::new();
-                set.insert(vid);
+                let mut set = ValueIdSet::new();
+                set.push(vid);
                 if !self.values.contains_key(&vid) {
                     self.values.insert(
                         vid,
@@ -371,12 +385,12 @@ impl InferenceState {
             Some(v) => v.clone(),
             None => return,
         };
-        let prev_values = match self.variables.get(&place) {
-            Some(v) => v.clone(),
-            None => return,
+        let Some(prev) = self.variables.get_mut(&place) else {
+            return;
         };
-        let merged: HashSet<ValueId> = prev_values.union(&new_values).copied().collect();
-        self.variables.insert(place, merged);
+        for v in &new_values {
+            value_id_set_insert(prev, *v);
+        }
     }
 
     fn is_defined(&self, place_id: IdentifierId) -> bool {
@@ -395,10 +409,10 @@ impl InferenceState {
         let values = self.variables.get(&place_id)?;
         let mut merged_kind: Option<AbstractValue> = None;
         for value_id in values {
-            let kind = self.values.get(value_id)?;
+            let kind = *self.values.get(value_id)?;
             merged_kind = Some(match merged_kind {
-                Some(prev) => merge_abstract_values(&prev, kind),
-                None => kind.clone(),
+                Some(prev) => merge_abstract_values(prev, kind),
+                None => kind,
             });
         }
         merged_kind
@@ -480,53 +494,82 @@ impl InferenceState {
         }
     }
 
-    fn merge(&self, other: &InferenceState) -> Option<InferenceState> {
-        let mut next_values: Option<HashMap<ValueId, AbstractValue>> = None;
-        let mut next_variables: Option<HashMap<IdentifierId, HashSet<ValueId>>> = None;
+    /// Merge `other` into `self` in place. Returns `true` if `self` changed.
+    fn merge_from(&mut self, other: &InferenceState) -> bool {
+        let mut changed = false;
 
-        // Merge values present in both
-        for (id, this_value) in &self.values {
-            if let Some(other_value) = other.values.get(id) {
-                let merged = merge_abstract_values(this_value, other_value);
-                if merged.kind != this_value.kind
-                    || !is_superset(&this_value.reason, &merged.reason)
-                {
-                    let nv = next_values.get_or_insert_with(|| self.values.clone());
-                    nv.insert(*id, merged);
-                }
-            }
-        }
-        // Add values only in other
         for (id, other_value) in &other.values {
-            if !self.values.contains_key(id) {
-                let nv = next_values.get_or_insert_with(|| self.values.clone());
-                nv.insert(*id, other_value.clone());
-            }
-        }
-
-        // Merge variables present in both
-        for (id, this_values) in &self.variables {
-            if let Some(other_values) = other.variables.get(id) {
-                let mut has_new = false;
-                for ov in other_values {
-                    if !this_values.contains(ov) {
-                        has_new = true;
-                        break;
+            match self.values.entry(*id) {
+                Entry::Occupied(mut e) => {
+                    let this = *e.get();
+                    let merged = merge_abstract_values(this, *other_value);
+                    if merged != this {
+                        e.insert(merged);
+                        changed = true;
                     }
                 }
-                if has_new {
-                    let nvars = next_variables.get_or_insert_with(|| self.variables.clone());
-                    let merged: HashSet<ValueId> =
-                        this_values.union(other_values).copied().collect();
-                    nvars.insert(*id, merged);
+                Entry::Vacant(e) => {
+                    e.insert(*other_value);
+                    changed = true;
                 }
             }
         }
-        // Add variables only in other
+
         for (id, other_values) in &other.variables {
-            if !self.variables.contains_key(id) {
-                let nvars = next_variables.get_or_insert_with(|| self.variables.clone());
-                nvars.insert(*id, other_values.clone());
+            match self.variables.entry(*id) {
+                Entry::Occupied(mut e) => {
+                    let this_values = e.get_mut();
+                    for ov in other_values {
+                        if value_id_set_insert(this_values, *ov) {
+                            changed = true;
+                        }
+                    }
+                }
+                Entry::Vacant(e) => {
+                    e.insert(other_values.clone());
+                    changed = true;
+                }
+            }
+        }
+
+        changed
+    }
+
+    fn merge(&self, other: &InferenceState) -> Option<InferenceState> {
+        let mut next_values: Option<HashMap<ValueId, AbstractValue>> = None;
+        let mut next_variables: Option<HashMap<IdentifierId, ValueIdSet>> = None;
+
+        for (id, other_value) in &other.values {
+            match self.values.get(id) {
+                Some(this_value) => {
+                    let merged = merge_abstract_values(*this_value, *other_value);
+                    if merged != *this_value {
+                        let nv = next_values.get_or_insert_with(|| self.values.clone());
+                        nv.insert(*id, merged);
+                    }
+                }
+                None => {
+                    let nv = next_values.get_or_insert_with(|| self.values.clone());
+                    nv.insert(*id, *other_value);
+                }
+            }
+        }
+
+        for (id, other_values) in &other.variables {
+            match self.variables.get(id) {
+                Some(this_values) => {
+                    if other_values.iter().any(|ov| !this_values.contains(ov)) {
+                        let nvars = next_variables.get_or_insert_with(|| self.variables.clone());
+                        let merged = nvars.get_mut(id).unwrap();
+                        for ov in other_values {
+                            value_id_set_insert(merged, *ov);
+                        }
+                    }
+                }
+                None => {
+                    let nvars = next_variables.get_or_insert_with(|| self.variables.clone());
+                    nvars.insert(*id, other_values.clone());
+                }
             }
         }
 
@@ -547,11 +590,11 @@ impl InferenceState {
         phi_place_id: IdentifierId,
         phi_operands: &crate::collections::IndexMap<BlockId, Place>,
     ) {
-        let mut values: HashSet<ValueId> = HashSet::new();
+        let mut values = ValueIdSet::new();
         for (_, operand) in phi_operands {
             if let Some(operand_values) = self.variables.get(&operand.identifier) {
                 for v in operand_values {
-                    values.insert(*v);
+                    value_id_set_insert(&mut values, *v);
                 }
             }
             // If not found, it's a backedge that will be handled later by merge
@@ -560,10 +603,6 @@ impl InferenceState {
             self.variables.insert(phi_place_id, values);
         }
     }
-}
-
-fn is_superset(a: &IndexSet<ValueReason>, b: &IndexSet<ValueReason>) -> bool {
-    b.iter().all(|x| a.contains(x))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -729,16 +768,11 @@ fn hash_effect(effect: &AliasingEffect) -> String {
 // merge helpers
 // =============================================================================
 
-fn merge_abstract_values(a: &AbstractValue, b: &AbstractValue) -> AbstractValue {
-    let kind = merge_value_kinds(a.kind, b.kind);
-    if kind == a.kind && kind == b.kind && is_superset(&a.reason, &b.reason) {
-        return a.clone();
+fn merge_abstract_values(a: AbstractValue, b: AbstractValue) -> AbstractValue {
+    AbstractValue {
+        kind: merge_value_kinds(a.kind, b.kind),
+        reason: a.reason | b.reason,
     }
-    let mut reason = a.reason.clone();
-    for r in &b.reason {
-        reason.insert(*r);
-    }
-    AbstractValue { kind, reason }
 }
 
 fn merge_value_kinds(a: ValueKind, b: ValueKind) -> ValueKind {
@@ -961,13 +995,13 @@ fn find_non_mutated_destructure_spreads(
 // inferParam
 // =============================================================================
 
-fn infer_param(param: &ParamPattern, state: &mut InferenceState, param_kind: &AbstractValue) {
+fn infer_param(param: &ParamPattern, state: &mut InferenceState, param_kind: AbstractValue) {
     let place = match param {
         ParamPattern::Place(p) => p,
         ParamPattern::Spread(s) => &s.place,
     };
     let value_id = ValueId::new();
-    state.initialize(value_id, param_kind.clone());
+    state.initialize(value_id, param_kind);
     state.define(place.identifier, value_id);
 }
 
@@ -1156,7 +1190,7 @@ fn apply_signature(
                     }
                     let value_abstract = state.kind(mutate_value.identifier);
                     if value_abstract.kind == ValueKind::Frozen {
-                        let reason_str = get_write_error_reason(&value_abstract);
+                        let reason_str = get_write_error_reason(value_abstract);
                         let ident = &env.identifiers[mutate_value.identifier.0 as usize];
                         let variable = match &ident.name {
                             Some(crate::hir::IdentifierName::Named(n)) => {
@@ -1363,13 +1397,13 @@ fn apply_effect(
                 value_id,
                 AbstractValue {
                     kind: from_value.kind,
-                    reason: from_value.reason.clone(),
+                    reason: from_value.reason,
                 },
             );
             state.define(into.identifier, value_id);
             match from_value.kind {
                 ValueKind::Primitive | ValueKind::Global => {
-                    let first_reason = primary_reason(&from_value.reason);
+                    let first_reason = primary_reason(from_value.reason);
                     effects.push(AliasingEffect::Create {
                         value: from_value.kind,
                         into: into.clone(),
@@ -1377,7 +1411,7 @@ fn apply_effect(
                     });
                 }
                 ValueKind::Frozen => {
-                    let first_reason = primary_reason(&from_value.reason);
+                    let first_reason = primary_reason(from_value.reason);
                     effects.push(AliasingEffect::Create {
                         value: from_value.kind,
                         into: into.clone(),
@@ -1480,7 +1514,7 @@ fn apply_effect(
                     } else {
                         ValueKind::Frozen
                     },
-                    reason: IndexSet::new(),
+                    reason: ValueReasonSet::empty(),
                 },
             );
             state.define(into.identifier, value_id);
@@ -1592,7 +1626,7 @@ fn apply_effect(
                         value_id,
                         AbstractValue {
                             kind: from_value.kind,
-                            reason: from_value.reason.clone(),
+                            reason: from_value.reason,
                         },
                     );
                     state.define(into.identifier, value_id);
@@ -1608,7 +1642,7 @@ fn apply_effect(
                         value_id,
                         AbstractValue {
                             kind: from_value.kind,
-                            reason: from_value.reason.clone(),
+                            reason: from_value.reason,
                         },
                     );
                     state.define(into.identifier, value_id);
@@ -1935,7 +1969,7 @@ fn apply_effect(
                         func,
                     )?;
                 } else {
-                    let reason_str = get_write_error_reason(&abstract_value);
+                    let reason_str = get_write_error_reason(abstract_value);
                     let variable = match &ident.name {
                         Some(crate::hir::IdentifierName::Named(n)) => format!("`{}`", n),
                         _ => "value".to_string(),
@@ -3444,8 +3478,8 @@ fn compute_effects_for_aliasing_signature(
 /// since the primary reason is always inserted first, this effectively
 /// picks the most specific non-Other reason. We replicate this by
 /// preferring any non-Other reason over Other.
-fn primary_reason(reasons: &IndexSet<ValueReason>) -> ValueReason {
-    for &r in reasons {
+fn primary_reason(reasons: ValueReasonSet) -> ValueReason {
+    for r in reasons.iter() {
         if r != ValueReason::Other {
             return r;
         }
@@ -3453,33 +3487,33 @@ fn primary_reason(reasons: &IndexSet<ValueReason>) -> ValueReason {
     ValueReason::Other
 }
 
-fn get_write_error_reason(abstract_value: &AbstractValue) -> String {
-    if abstract_value.reason.contains(&ValueReason::Global) {
+fn get_write_error_reason(abstract_value: AbstractValue) -> String {
+    if abstract_value.reason.contains(ValueReason::Global) {
         "Modifying a variable defined outside a component or hook is not allowed. Consider using an effect".to_string()
-    } else if abstract_value.reason.contains(&ValueReason::JsxCaptured) {
+    } else if abstract_value.reason.contains(ValueReason::JsxCaptured) {
         "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX".to_string()
-    } else if abstract_value.reason.contains(&ValueReason::Context) {
+    } else if abstract_value.reason.contains(ValueReason::Context) {
         "Modifying a value returned from 'useContext()' is not allowed.".to_string()
     } else if abstract_value
         .reason
-        .contains(&ValueReason::KnownReturnSignature)
+        .contains(ValueReason::KnownReturnSignature)
     {
         "Modifying a value returned from a function whose return value should not be mutated"
             .to_string()
     } else if abstract_value
         .reason
-        .contains(&ValueReason::ReactiveFunctionArgument)
+        .contains(ValueReason::ReactiveFunctionArgument)
     {
         "Modifying component props or hook arguments is not allowed. Consider using a local variable instead".to_string()
-    } else if abstract_value.reason.contains(&ValueReason::State) {
+    } else if abstract_value.reason.contains(ValueReason::State) {
         "Modifying a value returned from 'useState()', which should not be modified directly. Use the setter function to update instead".to_string()
-    } else if abstract_value.reason.contains(&ValueReason::ReducerState) {
+    } else if abstract_value.reason.contains(ValueReason::ReducerState) {
         "Modifying a value returned from 'useReducer()', which should not be modified directly. Use the dispatch function to update instead".to_string()
-    } else if abstract_value.reason.contains(&ValueReason::Effect) {
+    } else if abstract_value.reason.contains(ValueReason::Effect) {
         "Modifying a value used previously in an effect function or as an effect dependency is not allowed. Consider moving the modification before calling useEffect()".to_string()
-    } else if abstract_value.reason.contains(&ValueReason::HookCaptured) {
+    } else if abstract_value.reason.contains(ValueReason::HookCaptured) {
         "Modifying a value previously passed as an argument to a hook is not allowed. Consider moving the modification before calling the hook".to_string()
-    } else if abstract_value.reason.contains(&ValueReason::HookReturn) {
+    } else if abstract_value.reason.contains(ValueReason::HookReturn) {
         "Modifying a value returned from a hook is not allowed. Consider moving the modification into the hook where the value is constructed".to_string()
     } else {
         "This modifies a variable that React considers immutable".to_string()

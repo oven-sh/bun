@@ -14,3 +14,5 @@ bun_ast = { path = "../ast" }
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
+enumset.workspace = true
+smallvec.workspace = true

@@ -49,5 +49,7 @@ pub fn body_buffer_probe(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResu
     // back by `process_body_buffer`.
     let len = state.get_body_buffer().list.len();
 
-    Ok(JSValue::js_boolean(!processed && len == b"hello world".len()))
+    Ok(JSValue::js_boolean(
+        !processed && len == b"hello world".len(),
+    ))
 }

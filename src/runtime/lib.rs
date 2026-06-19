@@ -34,10 +34,10 @@ pub mod shell;
 #[path = "api.rs"]
 pub mod api;
 pub mod dispatch;
+pub mod http_internal_state_testing;
 pub mod hw_exports;
 pub mod ipc_host;
 pub mod jsc_hooks;
-pub mod http_internal_state_testing;
 pub mod linear_fifo_testing;
 pub mod napi;
 #[path = "../bun.js.rs"]

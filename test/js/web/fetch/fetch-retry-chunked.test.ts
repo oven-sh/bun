@@ -14,8 +14,8 @@
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import net from "node:net";
 import type { AddressInfo } from "node:net";
+import net from "node:net";
 
 test("InternalState body-buffer accessors tolerate body_out_str == None", async () => {
   // Run in a subprocess so a Rust panic (the pre-fix behavior) is observed as
@@ -32,11 +32,7 @@ test("InternalState body-buffer accessors tolerate body_out_str == None", async 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
   expect(stderr).not.toContain("unwrap");
 });

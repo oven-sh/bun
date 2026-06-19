@@ -1099,6 +1099,15 @@ impl<'h> HirBuilder<'h> {
                 return Ok(VariableBinding::ModuleLocal { name });
             }
         }
+        // Module-scope generated symbols (jsx-runtime `jsx`/`jsxDEV`/`Fragment`,
+        // compiler-runtime `c`, etc.) are minted by the parser's visit pass after
+        // `collect_import_bindings` runs, so they are absent from both `members`
+        // and `import_bindings`. They are module-level imports, not locals —
+        // classify them as Global so inference initializes them as Frozen instead
+        // of tripping the "Expected value kind to be initialized" invariant.
+        if module_scope.generated.contains(&ref_) {
+            return Ok(VariableBinding::Global { name });
+        }
 
         let binding_kind = convert_binding_kind(sym.kind);
         let identifier_id = self.resolve_binding_with_loc(ref_, loc)?;

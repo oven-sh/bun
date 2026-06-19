@@ -13,7 +13,6 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::collections::hash_map::Entry;
 
 use smallvec::SmallVec;
 
@@ -63,14 +62,19 @@ pub fn infer_mutation_aliasing_effects(
     env: &mut Environment,
     is_function_expression: bool,
 ) -> Result<(), CompilerDiagnostic> {
-    let mut initial_state = InferenceState::empty(env, is_function_expression);
+    // ValueIds are dense and pass-local so `InferenceState.values` can be a
+    // flat Vec; allocation starts at 0 and continues via `Context.next_value_id`.
+    let mut next_value_id = 0u32;
+
+    let mut initial_state = InferenceState::empty(is_function_expression);
 
     // Map of blocks to the last (merged) incoming state that was processed
     let mut states_by_block: HashMap<BlockId, InferenceState> = HashMap::new();
 
     // Initialize context variables
     for ctx_place in &func.context {
-        let value_id = ValueId::new();
+        let value_id = ValueId(next_value_id);
+        next_value_id += 1;
         initial_state.initialize(
             value_id,
             AbstractValue {
@@ -97,14 +101,20 @@ pub fn infer_mutation_aliasing_effects(
         // Component: at most 2 params (props, ref)
         let params_len = func.params.len();
         if params_len > 0 {
-            infer_param(&func.params[0], &mut initial_state, param_kind);
+            infer_param(
+                &func.params[0],
+                &mut initial_state,
+                param_kind,
+                &mut next_value_id,
+            );
         }
         if params_len > 1 {
             let ref_place = match &func.params[1] {
                 ParamPattern::Place(p) => p,
                 ParamPattern::Spread(s) => &s.place,
             };
-            let value_id = ValueId::new();
+            let value_id = ValueId(next_value_id);
+            next_value_id += 1;
             initial_state.initialize(
                 value_id,
                 AbstractValue {
@@ -116,7 +126,7 @@ pub fn infer_mutation_aliasing_effects(
         }
     } else {
         for param in &func.params {
-            infer_param(param, &mut initial_state, param_kind);
+            infer_param(param, &mut initial_state, param_kind, &mut next_value_id);
         }
     }
 
@@ -133,7 +143,8 @@ pub fn infer_mutation_aliasing_effects(
         if let Some(queued_state) = queued_states.get_mut(&block_id) {
             queued_state.merge_from(state);
         } else if let Some(prev) = states_by_block.get(&block_id) {
-            if let Some(next) = prev.merge(state) {
+            let mut next = prev.clone();
+            if next.merge_from(state) {
                 queued_states.insert(block_id, next);
             }
         } else {
@@ -162,6 +173,8 @@ pub fn infer_mutation_aliasing_effects(
         function_values: HashMap::new(),
         function_signature_cache: HashMap::new(),
         aliasing_config_temp_cache: HashMap::new(),
+        next_value_id,
+        fallback_value_ids: HashMap::new(),
     };
 
     let mut iteration_count = 0;
@@ -237,18 +250,11 @@ pub fn infer_mutation_aliasing_effects(
 // =============================================================================
 
 /// Unique allocation-site identifier, replacing TS's object-identity on InstructionValue.
+///
+/// IDs are dense and pass-local (allocated via `Context.next_value_id`) so
+/// `InferenceState.values` can be a flat Vec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct ValueId(u32);
-
-use std::sync::atomic::AtomicU32;
-use std::sync::atomic::Ordering;
-static NEXT_VALUE_ID: AtomicU32 = AtomicU32::new(1);
-
-impl ValueId {
-    fn new() -> Self {
-        ValueId(NEXT_VALUE_ID.fetch_add(1, Ordering::Relaxed))
-    }
-}
 
 // =============================================================================
 // AbstractValue
@@ -285,30 +291,39 @@ fn value_id_set_insert(set: &mut ValueIdSet, v: ValueId) -> bool {
 // =============================================================================
 
 /// The abstract state tracked during inference.
-/// Uses interior mutability via a struct with direct fields (no Rc needed since
-/// we always have exclusive access in the pass).
+///
+/// `values` is a dense Vec indexed by `ValueId.0` (pass-local, starts at 0) so
+/// `clone()` is a memcpy of small `Copy` cells and `merge_from()` is an
+/// elementwise loop. `variables` stays a HashMap because `IdentifierId` indexes
+/// the environment-wide identifier table, which is far larger than the set of
+/// identifiers any one function actually touches.
 #[derive(Debug, Clone)]
 struct InferenceState {
     is_function_expression: bool,
-    /// The kind of each value, based on its allocation site
-    values: HashMap<ValueId, AbstractValue>,
-    /// The set of values pointed to by each identifier
+    /// Kind of each allocation site, indexed by `ValueId.0`. `None` = unset.
+    values: Vec<Option<AbstractValue>>,
+    /// Points-to set per identifier.
     variables: HashMap<IdentifierId, ValueIdSet>,
-    /// Tracks uninitialized identifier access errors (matches TS invariant).
-    /// Uses Cell so it can be set from `&self` methods like `kind()`.
-    /// Stores (IdentifierId, usage_loc) where usage_loc is the source location
-    /// of the Place that triggered the uninitialized access.
     uninitialized_access: std::cell::Cell<Option<(IdentifierId, Option<SourceLocation>)>>,
 }
 
 impl InferenceState {
-    fn empty(_env: &Environment, is_function_expression: bool) -> Self {
+    fn empty(is_function_expression: bool) -> Self {
         InferenceState {
             is_function_expression,
-            values: HashMap::new(),
+            values: Vec::new(),
             variables: HashMap::new(),
             uninitialized_access: std::cell::Cell::new(None),
         }
+    }
+
+    #[inline]
+    fn value_slot(&mut self, id: ValueId) -> &mut Option<AbstractValue> {
+        let i = id.0 as usize;
+        if i >= self.values.len() {
+            self.values.resize(i + 1, None);
+        }
+        &mut self.values[i]
     }
 
     /// Check the kind of a place, recording the usage location for error reporting.
@@ -331,8 +346,8 @@ impl InferenceState {
         };
         let mut merged_kind: Option<AbstractValue> = None;
         for value_id in values {
-            let kind = match self.values.get(value_id) {
-                Some(k) => *k,
+            let kind = match self.values.get(value_id.0 as usize).copied().flatten() {
+                Some(k) => k,
                 None => continue,
             };
             merged_kind = Some(match merged_kind {
@@ -347,7 +362,7 @@ impl InferenceState {
     }
 
     fn initialize(&mut self, value_id: ValueId, kind: AbstractValue) {
-        self.values.insert(value_id, kind);
+        *self.value_slot(value_id) = Some(kind);
     }
 
     fn define(&mut self, place_id: IdentifierId, value_id: ValueId) {
@@ -356,23 +371,19 @@ impl InferenceState {
         self.variables.insert(place_id, set);
     }
 
-    fn assign(&mut self, into: IdentifierId, from: IdentifierId) {
+    fn assign(&mut self, into: IdentifierId, from: IdentifierId, context: &mut Context) {
         let values = match self.variables.get(&from) {
             Some(v) => v.clone(),
             None => {
-                // Create a stable value for uninitialized identifiers
-                // Use a deterministic ID based on the from identifier
-                let vid = ValueId(from.0 | 0x80000000);
+                let fallback = context.fallback_value_id(from);
                 let mut set = ValueIdSet::new();
-                set.push(vid);
-                if !self.values.contains_key(&vid) {
-                    self.values.insert(
-                        vid,
-                        AbstractValue {
-                            kind: ValueKind::Mutable,
-                            reason: hashset_of(ValueReason::Other),
-                        },
-                    );
+                set.push(fallback);
+                let slot = self.value_slot(fallback);
+                if slot.is_none() {
+                    *slot = Some(AbstractValue {
+                        kind: ValueKind::Mutable,
+                        reason: hashset_of(ValueReason::Other),
+                    });
                 }
                 set
             }
@@ -393,29 +404,16 @@ impl InferenceState {
         }
     }
 
+    #[inline]
     fn is_defined(&self, place_id: IdentifierId) -> bool {
         self.variables.contains_key(&place_id)
     }
 
     fn values_for(&self, place_id: IdentifierId) -> Vec<ValueId> {
         match self.variables.get(&place_id) {
-            Some(values) => values.iter().copied().collect(),
+            Some(values) => values.to_vec(),
             None => Vec::new(),
         }
-    }
-
-    #[allow(dead_code)]
-    fn kind_opt(&self, place_id: IdentifierId) -> Option<AbstractValue> {
-        let values = self.variables.get(&place_id)?;
-        let mut merged_kind: Option<AbstractValue> = None;
-        for value_id in values {
-            let kind = *self.values.get(value_id)?;
-            merged_kind = Some(match merged_kind {
-                Some(prev) => merge_abstract_values(prev, kind),
-                None => kind,
-            });
-        }
-        merged_kind
     }
 
     fn kind(&self, place_id: IdentifierId) -> AbstractValue {
@@ -423,11 +421,7 @@ impl InferenceState {
     }
 
     fn freeze(&mut self, place_id: IdentifierId, reason: ValueReason) -> bool {
-        // Check if defined first to avoid recording uninitialized access error.
-        // Freeze on undefined identifiers is a no-op — this matches the TS
-        // behavior where freeze() is never called on undefined identifiers
-        // (the invariant in kind() catches this before freeze is reached).
-        if !self.variables.contains_key(&place_id) {
+        if !self.is_defined(place_id) {
             return false;
         }
         let value = self.kind(place_id);
@@ -444,16 +438,10 @@ impl InferenceState {
     }
 
     fn freeze_value(&mut self, value_id: ValueId, reason: ValueReason) {
-        self.values.insert(
-            value_id,
-            AbstractValue {
-                kind: ValueKind::Frozen,
-                reason: hashset_of(reason),
-            },
-        );
-        // Note: In TS, this also transitively freezes FunctionExpression captures
-        // if enableTransitivelyFreezeFunctionExpressions is set. We skip that here
-        // since we don't have access to the function arena from within state.
+        *self.value_slot(value_id) = Some(AbstractValue {
+            kind: ValueKind::Frozen,
+            reason: hashset_of(reason),
+        });
     }
 
     #[allow(dead_code)]
@@ -498,18 +486,21 @@ impl InferenceState {
     fn merge_from(&mut self, other: &InferenceState) -> bool {
         let mut changed = false;
 
-        for (id, other_value) in &other.values {
-            match self.values.entry(*id) {
-                Entry::Occupied(mut e) => {
-                    let this = *e.get();
-                    let merged = merge_abstract_values(this, *other_value);
+        if other.values.len() > self.values.len() {
+            self.values.resize(other.values.len(), None);
+        }
+        for (i, ov) in other.values.iter().enumerate() {
+            let Some(ov) = *ov else { continue };
+            match self.values[i] {
+                Some(this) => {
+                    let merged = merge_abstract_values(this, ov);
                     if merged != this {
-                        e.insert(merged);
+                        self.values[i] = Some(merged);
                         changed = true;
                     }
                 }
-                Entry::Vacant(e) => {
-                    e.insert(*other_value);
+                None => {
+                    self.values[i] = Some(ov);
                     changed = true;
                 }
             }
@@ -517,7 +508,7 @@ impl InferenceState {
 
         for (id, other_values) in &other.variables {
             match self.variables.entry(*id) {
-                Entry::Occupied(mut e) => {
+                std::collections::hash_map::Entry::Occupied(mut e) => {
                     let this_values = e.get_mut();
                     for ov in other_values {
                         if value_id_set_insert(this_values, *ov) {
@@ -525,7 +516,7 @@ impl InferenceState {
                         }
                     }
                 }
-                Entry::Vacant(e) => {
+                std::collections::hash_map::Entry::Vacant(e) => {
                     e.insert(other_values.clone());
                     changed = true;
                 }
@@ -533,56 +524,6 @@ impl InferenceState {
         }
 
         changed
-    }
-
-    fn merge(&self, other: &InferenceState) -> Option<InferenceState> {
-        let mut next_values: Option<HashMap<ValueId, AbstractValue>> = None;
-        let mut next_variables: Option<HashMap<IdentifierId, ValueIdSet>> = None;
-
-        for (id, other_value) in &other.values {
-            match self.values.get(id) {
-                Some(this_value) => {
-                    let merged = merge_abstract_values(*this_value, *other_value);
-                    if merged != *this_value {
-                        let nv = next_values.get_or_insert_with(|| self.values.clone());
-                        nv.insert(*id, merged);
-                    }
-                }
-                None => {
-                    let nv = next_values.get_or_insert_with(|| self.values.clone());
-                    nv.insert(*id, *other_value);
-                }
-            }
-        }
-
-        for (id, other_values) in &other.variables {
-            match self.variables.get(id) {
-                Some(this_values) => {
-                    if other_values.iter().any(|ov| !this_values.contains(ov)) {
-                        let nvars = next_variables.get_or_insert_with(|| self.variables.clone());
-                        let merged = nvars.get_mut(id).unwrap();
-                        for ov in other_values {
-                            value_id_set_insert(merged, *ov);
-                        }
-                    }
-                }
-                None => {
-                    let nvars = next_variables.get_or_insert_with(|| self.variables.clone());
-                    nvars.insert(*id, other_values.clone());
-                }
-            }
-        }
-
-        if next_variables.is_none() && next_values.is_none() {
-            None
-        } else {
-            Some(InferenceState {
-                is_function_expression: self.is_function_expression,
-                values: next_values.unwrap_or_else(|| self.values.clone()),
-                variables: next_variables.unwrap_or_else(|| self.variables.clone()),
-                uninitialized_access: std::cell::Cell::new(None),
-            })
-        }
     }
 
     fn infer_phi(
@@ -645,6 +586,11 @@ struct Context {
     /// Keyed by (lvalue_identifier_id, temp_name) to ensure stable allocation
     /// across fixpoint iterations.
     aliasing_config_temp_cache: HashMap<(IdentifierId, String), Place>,
+    /// Pass-local ValueId allocator.
+    next_value_id: u32,
+    /// Stable per-identifier fallback ValueIds for the read-before-define paths
+    /// (`assign()` from an undefined source, lvalue default).
+    fallback_value_ids: HashMap<IdentifierId, ValueId>,
 }
 
 impl Context {
@@ -653,13 +599,30 @@ impl Context {
         self.interned_effects.entry(hash).or_insert(effect).clone()
     }
 
+    fn new_value_id(&mut self) -> ValueId {
+        let id = ValueId(self.next_value_id);
+        self.next_value_id += 1;
+        id
+    }
+
+    fn fallback_value_id(&mut self, id: IdentifierId) -> ValueId {
+        if let Some(v) = self.fallback_value_ids.get(&id) {
+            return *v;
+        }
+        let v = self.new_value_id();
+        self.fallback_value_ids.insert(id, v);
+        v
+    }
+
     /// Get or create a stable ValueId for a given effect, ensuring fixpoint convergence.
     fn get_or_create_value_id(&mut self, effect: &AliasingEffect) -> ValueId {
         let hash = hash_effect(effect);
-        *self
-            .effect_value_id_cache
-            .entry(hash)
-            .or_insert_with(ValueId::new)
+        if let Some(v) = self.effect_value_id_cache.get(&hash) {
+            return *v;
+        }
+        let v = self.new_value_id();
+        self.effect_value_id_cache.insert(hash, v);
+        v
     }
 }
 
@@ -995,12 +958,18 @@ fn find_non_mutated_destructure_spreads(
 // inferParam
 // =============================================================================
 
-fn infer_param(param: &ParamPattern, state: &mut InferenceState, param_kind: AbstractValue) {
+fn infer_param(
+    param: &ParamPattern,
+    state: &mut InferenceState,
+    param_kind: AbstractValue,
+    next_value_id: &mut u32,
+) {
     let place = match param {
         ParamPattern::Place(p) => p,
         ParamPattern::Spread(s) => &s.place,
     };
-    let value_id = ValueId::new();
+    let value_id = ValueId(*next_value_id);
+    *next_value_id += 1;
     state.initialize(value_id, param_kind);
     state.define(place.identifier, value_id);
 }
@@ -1255,7 +1224,7 @@ fn apply_signature(
     // The TS version asserts this as an invariant, but the Rust port may have
     // edge cases where effects don't cover the lvalue (e.g. missing signature entries).
     if !state.is_defined(instr.lvalue.identifier) {
-        let vid = ValueId(instr.lvalue.identifier.0 | 0x80000000);
+        let vid = context.fallback_value_id(instr.lvalue.identifier);
         state.initialize(
             vid,
             AbstractValue {
@@ -1297,7 +1266,7 @@ fn freeze_function_captures_transitive(
         for ctx_id in ctx_ids {
             // Replicate InferenceState::freeze() logic inline —
             // we need to recurse with context/env which freeze() doesn't have.
-            if !state.variables.contains_key(&ctx_id) {
+            if !state.is_defined(ctx_id) {
                 continue;
             }
             let kind = state.kind(ctx_id).kind;
@@ -1618,10 +1587,14 @@ fn apply_effect(
                     )?;
                     let cache_key =
                         format!("Assign_frozen:{}:{}", from.identifier.0, into.identifier.0);
-                    let value_id = *context
-                        .effect_value_id_cache
-                        .entry(cache_key)
-                        .or_insert_with(ValueId::new);
+                    let value_id = match context.effect_value_id_cache.get(&cache_key) {
+                        Some(v) => *v,
+                        None => {
+                            let v = context.new_value_id();
+                            context.effect_value_id_cache.insert(cache_key, v);
+                            v
+                        }
+                    };
                     state.initialize(
                         value_id,
                         AbstractValue {
@@ -1634,10 +1607,14 @@ fn apply_effect(
                 ValueKind::Global | ValueKind::Primitive => {
                     let cache_key =
                         format!("Assign_copy:{}:{}", from.identifier.0, into.identifier.0);
-                    let value_id = *context
-                        .effect_value_id_cache
-                        .entry(cache_key)
-                        .or_insert_with(ValueId::new);
+                    let value_id = match context.effect_value_id_cache.get(&cache_key) {
+                        Some(v) => *v,
+                        None => {
+                            let v = context.new_value_id();
+                            context.effect_value_id_cache.insert(cache_key, v);
+                            v
+                        }
+                    };
                     state.initialize(
                         value_id,
                         AbstractValue {
@@ -1648,7 +1625,7 @@ fn apply_effect(
                     state.define(into.identifier, value_id);
                 }
                 _ => {
-                    state.assign(into.identifier, from.identifier);
+                    state.assign(into.identifier, from.identifier, context);
                     effects.push(effect.clone());
                 }
             }

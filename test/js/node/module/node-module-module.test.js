@@ -26,6 +26,20 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });
 
+  test("native module functions are not constructors", () => {
+    // Constructing these used to crash instead of throwing.
+    const compile = new Module("not-a-constructor-test")._compile;
+    expect(typeof compile).toBe("function");
+    expect(() => new compile()).toThrow(TypeError);
+    expect(() => Reflect.construct(compile, [])).toThrow(TypeError);
+    expect(() => new Module.runMain()).toThrow(TypeError);
+    expect(() => Reflect.construct(Module.runMain, [])).toThrow(TypeError);
+    expect(() => new Module._resolveFilename("fs")).toThrow(TypeError);
+    expect(() => Reflect.construct(Module._resolveFilename, ["fs"])).toThrow(TypeError);
+    // Calling still works.
+    expect(Module._resolveFilename("fs")).toBe("fs");
+  });
+
   test("createRequire trailing slash", () => {
     const req = createRequire(import.meta.dir + "/");
     expect(req.resolve("./node-module-module.test.js")).toBe(
@@ -73,6 +87,41 @@ describe.concurrent("node-module-module", () => {
       ospath(root + "node_modules"),
     ]);
   });
+
+  test("_nodeModulePaths() does not leak the input string", async () => {
+    // 20 components keeps the joined path well under macOS PATH_MAX (1024)
+    // while generating 21 result strings per call, so the leak signal
+    // dominates RSS noise within a few thousand iterations.
+    const code = /* js */ `
+        const m = require("module");
+        const comp = Buffer.alloc(30, "a").toString();
+        const base = "/" + Array(20).fill(comp).join("/");
+        for (let i = 0; i < 200; i++) m._nodeModulePaths(base + i);
+        Bun.gc(true); Bun.gc(true);
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 5000; i++) m._nodeModulePaths(base + i);
+        Bun.gc(true); Bun.gc(true); Bun.gc(true);
+        process.stdout.write(String((process.memoryUsage.rss() - before) / 1024 / 1024));
+      `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", code],
+      env: {
+        ...bunEnv,
+        // Disable ASAN's free-quarantine so the RSS delta reflects live
+        // allocations only; harmless on non-ASAN builds.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const growthMB = Number(stdout.trim());
+    if (!Number.isFinite(growthMB)) {
+      throw new Error(`subprocess did not report growth\nstdout: ${stdout}\nstderr: ${stderr}\nexit: ${exitCode}`);
+    }
+    expect(growthMB).toBeLessThan(25);
+    expect(exitCode).toBe(0);
+  }, 20_000);
 
   test("Module.wrap", () => {
     var mod = { exports: {} };

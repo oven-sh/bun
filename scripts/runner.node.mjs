@@ -79,7 +79,9 @@ const integrationTimeout = 5 * 60_000;
 
 function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) return 60_000;
+  if (testPath.includes("test-cluster-")) return 60_000; // cluster IPC + socket-handle passing is process-heavy under runner concurrency
   if (testPath.includes("-docker-")) return 60_000;
+  if (testPath.includes("test-stdin-pipe-large")) return 60_000; // pipes 1MB stdin->stdout through an extra child process; slow under runner concurrency
   if (!isCI) return 60_000; // everything slower in debug mode
   if (options["step"]?.includes("-asan-")) return 60_000;
   return 20_000;
@@ -166,6 +168,11 @@ const { values: options, positionals: filters } = parseArgs({
     ["parallel"]: {
       type: "boolean",
       default: false,
+    },
+    /** Write per-file results as JSON to this path (for test-fix workflows). */
+    ["results-json"]: {
+      type: "string",
+      default: undefined,
     },
   },
 });
@@ -353,7 +360,10 @@ const skipsForLeaksan = (() => {
  * @returns {boolean}
  */
 const shouldValidateExceptions = test => {
-  return !(skipsForExceptionValidation.includes(test) || skipsForExceptionValidation.includes("test/" + test));
+  // Skip-list entries use `/`; on Windows callers pass `\`-separated paths
+  // (path.relative) which never match. Normalize before lookup.
+  const t = test.replaceAll(sep, "/");
+  return !(skipsForExceptionValidation.includes(t) || skipsForExceptionValidation.includes("test/" + t));
 };
 
 /**
@@ -410,9 +420,62 @@ function getTestModifiers(testPath) {
 }
 
 /**
+ * Smoke-checks that this agent actually matches the platform the CI step was
+ * generated for. The step exports EXPECTED_PLATFORM_* (see getTestBunStep in
+ * .buildkite/ci.mjs); we compare against the same utils the agent uses to
+ * emit its tags. Catches misrouted jobs (e.g. a macOS 26 step landing on a
+ * macOS 15 box) before any test runs, instead of producing silently-wrong
+ * results for a whole shard.
+ */
+function assertExpectedPlatform() {
+  const expectedOs = process.env["EXPECTED_PLATFORM_OS"];
+  if (!expectedOs) {
+    return; // step does not declare expectations (e.g. local runs)
+  }
+
+  const checks = [
+    ["os", expectedOs, getOs()],
+    ["arch", process.env["EXPECTED_PLATFORM_ARCH"], getArch()],
+    ["abi", process.env["EXPECTED_PLATFORM_ABI"], getAbi()],
+    ["distro", process.env["EXPECTED_PLATFORM_DISTRO"], getDistro()],
+  ];
+
+  const expectedRelease = process.env["EXPECTED_PLATFORM_RELEASE"];
+  if (expectedRelease) {
+    // Major-version prefix match: "26" accepts "26.4", "25.04" accepts "25.04.1".
+    const actualRelease = getDistroVersion();
+    const ok = actualRelease === expectedRelease || `${actualRelease}.`.startsWith(`${expectedRelease}.`);
+    checks.push(["release", expectedRelease, ok ? expectedRelease : actualRelease]);
+  }
+
+  // Fail closed: a declared expectation with no detectable actual value is a
+  // mismatch (e.g. a musl step on a box where the ABI probe fails).
+  const mismatches = checks.filter(([, expected, actual]) => expected && expected !== actual);
+  if (mismatches.length) {
+    const details = mismatches
+      .map(([k, e, a]) => `${k}: step expects "${e}", agent is ${a ? `"${a}"` : "(undetected)"}`)
+      .join("\n  ");
+    console.error(`Platform smoke check FAILED, this job landed on the wrong agent:\n  ${details}`);
+    process.exit(1);
+  }
+
+  !isQuiet &&
+    console.log(
+      "Platform check:",
+      checks
+        .filter(([, e]) => e)
+        .map(([k, e]) => `${k}=${e}`)
+        .join(" "),
+      "(ok)",
+    );
+}
+
+/**
  * @returns {Promise<TestResult[]>}
  */
 async function runTests() {
+  assertExpectedPlatform();
+
   let execPath;
   if (options["step"]) {
     execPath = await getExecPathFromBuildKite(options["step"], options["build-id"]);
@@ -431,17 +494,63 @@ async function runTests() {
   const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
 
-  // Kick off only the docker services this shard's tests need (mysql/postgres/
-  // redis/minio/…) so they've initialized by the time any test's ensure() runs.
-  // warmup-ci.ts maps test paths → services and does one `compose up -d` (no
-  // --wait); ensure()'s own `up --wait` is the synchronization point and
-  // returns fast when the container is already healthy. Linux-only — macOS /
-  // Windows CI don't run docker tests. Runs in the background while
-  // getVendorTests below installs vendor deps.
+  // Start the docker-service coordinator (test/docker/coordinator.ts). It
+  // owns every `docker compose` invocation for this shard — `compose up` is
+  // not concurrency-safe, so exactly one process runs it — and prestarts the
+  // services this shard's tests need (mysql/postgres/redis/minio/…) in the
+  // background while getVendorTests below installs vendor deps. Tests reach
+  // it through the unix socket in BUN_DOCKER_COORDINATOR (inherited by every
+  // spawned test process); ensure() waits for the coordinator's ready message
+  // instead of shelling out to compose itself. Without the env var, ensure()
+  // falls back to running compose directly. Linux-only — macOS / Windows CI
+  // don't run docker tests. Lifetime is tied to this process via the stdin
+  // pipe.
   if (isCI && isLinux && spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0) {
-    spawn(execPath, [join(cwd, "test", "docker", "warmup-ci.ts"), ...tests], {
-      stdio: ["ignore", "inherit", "inherit"],
-    }).on("error", err => console.warn("docker warmup spawn failed:", err.message));
+    const coordinatorSocket = join(tmpdir(), `bun-docker-${process.pid}.sock`);
+    const coordinator = spawn(execPath, [join(cwd, "test", "docker", "coordinator.ts"), ...tests], {
+      stdio: ["pipe", "pipe", "inherit"],
+      env: { ...process.env, BUN_DOCKER_COORDINATOR_SOCKET: coordinatorSocket },
+    });
+    coordinator.on("error", err => console.warn("docker coordinator spawn failed:", err.message));
+    process.once("exit", () => coordinator.kill());
+
+    // Don't point tests at the socket until it's actually listening; if the
+    // coordinator never gets there, tests use the direct-compose fallback.
+    const ready = await new Promise(resolve => {
+      const timer = setTimeout(() => resolve(false), 15_000);
+      timer.unref?.();
+      let buffered = "";
+      coordinator.stdout.on("data", chunk => {
+        process.stdout.write(chunk);
+        if (buffered !== null) {
+          buffered += chunk;
+          if (buffered.includes("COORDINATOR_READY")) {
+            buffered = null;
+            clearTimeout(timer);
+            resolve(true);
+          }
+        }
+      });
+      coordinator.once("exit", () => {
+        clearTimeout(timer);
+        resolve(false);
+      });
+      coordinator.once("error", () => {
+        clearTimeout(timer);
+        resolve(false);
+      });
+    });
+    if (ready) {
+      process.env.BUN_DOCKER_COORDINATOR = coordinatorSocket;
+    } else {
+      console.warn("docker coordinator did not become ready; tests will run compose directly");
+      coordinator.kill();
+    }
+    // Never keep the runner alive on the coordinator's account; it exits on
+    // stdin EOF when the runner is gone.
+    coordinator.unref();
+    coordinator.stdin?.unref?.();
+    coordinator.stdout?.unref?.();
   }
 
   /** @type {VendorTest[] | undefined} */
@@ -639,7 +748,7 @@ async function runTests() {
               env.BUN_DESTRUCT_VM_ON_EXIT = "1";
               env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
               // prettier-ignore
-              env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+              env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -909,6 +1018,23 @@ async function runTests() {
         console.log(`${getAnsi("yellow")}- ${testPath}${getAnsi("reset")}`);
       }
     }
+  }
+
+  // Dump per-file results as JSON for post-processing (test-fix workflows
+  // shard from this). Opt-in via --results-json so CI output is unchanged.
+  if (cliOptions["results-json"]) {
+    const all = [...okResults, ...flakyResults, ...failedResults].map(r => ({
+      testPath: r.testPath,
+      ok: r.ok,
+      status: r.status,
+      error: r.error,
+      exitCode: r.exitCode,
+      signalCode: r.signalCode,
+      duration: r.duration,
+      stdoutPreview: r.stdoutPreview?.slice?.(-4000),
+    }));
+    writeFileSync(cliOptions["results-json"], JSON.stringify(all, null, 2));
+    !isQuiet && console.log(`Wrote ${all.length} results to ${cliOptions["results-json"]}`);
   }
 
   // Exclude flaky tests from the final results
@@ -1364,7 +1490,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const timeout = getTestTimeout(testPath);
-  const perTestTimeout = Math.ceil(timeout / 2);
+  // ASAN builds run 5-10x slower (instrumentation + the agent only exposes
+  // 2 of its 8 vCPUs); without a wider per-test timeout, install/git tests
+  // that spawn many subprocesses time out on otherwise-healthy runs.
+  const isAsan = basename(execPath).includes("asan");
+  const perTestTimeout = Math.ceil(timeout / 2) * (isAsan ? 3 : 1);
   const absPath = join(opts["cwd"], testPath);
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
   const args = opts["args"] ?? [];
@@ -1403,7 +1533,14 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     env.BUN_DESTRUCT_VM_ON_EXIT = "1";
     env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
     // prettier-ignore
-    env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+    env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+  }
+  if (basename(execPath).includes("asan")) {
+    // ASAN test processes are slow and memory-heavy; if the bun test runner is
+    // SIGKILLed (timeout, OOM) its spawned subprocesses keep running and pile
+    // up, eventually OOM-killing the agent. --no-orphans makes every spawned
+    // bun exit when its parent dies AND SIGKILL its own descendants on exit.
+    env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
   }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1442,7 +1579,11 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
  * @returns {number}
  */
 function getTestTimeout(testPath) {
-  if (/integration|3rd_party|docker|bun-install-registry|v8|bundler_compile/i.test(testPath)) {
+  if (
+    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic/i.test(
+      testPath,
+    )
+  ) {
     return integrationTimeout;
   }
   return testTimeout;
@@ -2374,6 +2515,7 @@ function isAlwaysFailure(error) {
     error.includes("illegal instruction") ||
     error.includes("unchecked exception") ||
     error.includes("sigtrap") ||
+    error.includes("sigabrt") ||
     error.includes("sigkill") ||
     error.includes("error: addresssanitizer") ||
     error.includes("internal assertion failure") ||

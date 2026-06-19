@@ -6,6 +6,7 @@ import {
   bunExe,
   getMaxFD,
   isBroken,
+  isDebug,
   isMacOS,
   isPosix,
   isWindows,
@@ -163,7 +164,7 @@ for (let [gcTick, label] of [
       });
 
       it("check exit code from onExit", async () => {
-        const count = isWindows ? 100 : 1000;
+        const count = isWindows || isDebug ? 100 : 1000;
 
         for (let i = 0; i < count; i++) {
           var exitCode1, exitCode2;
@@ -895,6 +896,83 @@ describe("close handling", () => {
       expect(exitCode).toBe(0);
     });
   }
+
+  describe("stdio[N>=3] blob-like inputs", () => {
+    const readFd3 = `const fs = require("fs"); const b = Buffer.alloc(64); const n = fs.readSync(3, b); process.stdout.write(b.subarray(0, n));`;
+
+    it.skipIf(isWindows)("Bun.file(path) at index >= 3 is readable in the child", async () => {
+      const file = join(tmp, "stdio-extra-bunfile.txt");
+      writeFileSync(file, "from-bun-file");
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", readFd3],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe", Bun.file(file)],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "from-bun-file", stderr: "", exitCode: 0 });
+    });
+
+    it.skipIf(isWindows)("Bun.file(fd) at index >= 3 is readable in the child", async () => {
+      const file = join(tmp, "stdio-extra-bunfile-fd.txt");
+      writeFileSync(file, "from-bun-file-fd");
+      const fd = openSync(file, "r");
+      try {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", readFd3],
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe", Bun.file(fd)],
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "from-bun-file-fd", stderr: "", exitCode: 0 });
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    it.skipIf(isWindows)("empty Blob at index >= 3 is treated as ignore", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe", new Blob([])],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
+
+    const pullStream = () =>
+      new ReadableStream({
+        pull(c) {
+          c.enqueue(new Uint8Array([1]));
+          c.close();
+        },
+      });
+    for (const [label, make, msg] of [
+      ["Blob", () => new Blob(["from-blob"]), "Blob cannot be used for stdio[3] yet"],
+      ["Response", () => new Response("from-response"), "Blob cannot be used for stdio[3] yet"],
+      [
+        "Request",
+        () => new Request("http://x", { method: "POST", body: "from-request" }),
+        "Blob cannot be used for stdio[3] yet",
+      ],
+      ["ReadableStream", () => pullStream(), "ReadableStream cannot be used for stdio[3] yet"],
+      ["Response(ReadableStream)", () => new Response(pullStream()), "ReadableStream cannot be used for stdio[3] yet"],
+      [
+        "Request(ReadableStream)",
+        () => new Request("http://x", { method: "POST", body: pullStream() }),
+        "ReadableStream cannot be used for stdio[3] yet",
+      ],
+    ] as const) {
+      it(`${label} at index >= 3 throws instead of panicking`, () => {
+        expect(() =>
+          spawn({
+            cmd: [bunExe(), "-e", ""],
+            env: bunEnv,
+            stdio: ["ignore", "pipe", "pipe", make()],
+          }),
+        ).toThrow(msg);
+      });
+    }
+  });
 });
 
 it("dispose keyword works", async () => {

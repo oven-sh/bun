@@ -227,7 +227,8 @@ namespace uWS
             {
                 for (Header *h = headers; (++h)->key.length();)
                 {
-                    if (h->key.length() == lowerCasedHeader.length() && !strncmp(h->key.data(), lowerCasedHeader.data(), lowerCasedHeader.length()))
+                    /* Stored keys keep their wire casing */
+                    if (h->key.length() == lowerCasedHeader.length() && !strncasecmp(h->key.data(), lowerCasedHeader.data(), lowerCasedHeader.length()))
                     {
                         return h->value;
                     }
@@ -251,7 +252,7 @@ namespace uWS
             }
 
             for (Header *h = headers; (++h)->key.length();) {
-                if (h->key.length() == 17 && !strncmp(h->key.data(), "transfer-encoding", 17)) {
+                if (h->key.length() == 17 && !strncasecmp(h->key.data(), "transfer-encoding", 17)) {
                     // Parse comma-separated values, ensuring "chunked" is last if present
                     const auto value = h->value;
                     size_t pos = 0;
@@ -295,7 +296,10 @@ namespace uWS
                         return te;
                     }
 
-                    te.has = lastTokenLen > 0;
+                    /* Present even when the value names no transfer coding: treating
+                     * an empty/whitespace-only field as absent would fall back to
+                     * Content-Length framing (request smuggling; RFC 9112 6.3). */
+                    te.has = true;
 
                     // Check if the last token is "chunked"
                     if (lastTokenLen == 7 && strncasecmp(value.data() + lastTokenStart, "chunked", 7) == 0) [[likely]] {
@@ -316,6 +320,27 @@ namespace uWS
         std::string_view getFullUrl()
         {
             return headers->value;
+        }
+
+        std::string_view getUrlForRouting()
+        {
+            std::string_view url = getUrl();
+            if (url.length() && url[0] != '/') {
+                size_t schemeLength = 0;
+                if (url.length() >= 7 && strncasecmp(url.data(), "http://", 7) == 0) {
+                    schemeLength = 7;
+                } else if (url.length() >= 8 && strncasecmp(url.data(), "https://", 8) == 0) {
+                    schemeLength = 8;
+                }
+                if (schemeLength) {
+                    size_t pathStart = url.find('/', schemeLength);
+                    if (pathStart == std::string_view::npos) {
+                        return "/";
+                    }
+                    return url.substr(pathStart);
+                }
+            }
+            return url;
         }
 
         /* Hack: this should be getMethod */
@@ -443,13 +468,14 @@ namespace uWS
                 | (c == '*') | (c == '!')) || ((c >= 48) & (c <= 57)) || ((c <= 39) & (c >= 35));
         }
 
-        static inline bool isFieldNameByteFastLowercased(unsigned char &in) {
+        /* Header names keep their original wire casing; lookups go through
+         * the case-insensitive getHeader(). */
+        static inline bool isFieldNameByte(unsigned char in) {
             /* Most common is lowercase alpha and hyphen */
             if (((in >= 97) & (in <= 122)) | (in == '-')) [[likely]] {
                 return true;
             /* Second is upper case alpha */
             } else if ((in >= 65) & (in <= 90)) [[unlikely]] {
-                in |= 32;
                 return true;
             /* These are rarely used but still valid */
             } else if (isUnlikelyFieldNameByte(in)) [[unlikely]] {
@@ -462,7 +488,6 @@ namespace uWS
             /* Best case fast path (particularly useful with clang) */
             while (true) {
                 while ((*p >= 65) & (*p <= 90)) [[likely]] {
-                    *p |= 32;
                     p++;
                 }
                 while (((*p >= 97) & (*p <= 122))) [[likely]] {
@@ -480,7 +505,7 @@ namespace uWS
             }
 
             /* Generic */
-            while (isFieldNameByteFastLowercased(*(unsigned char *)p)) {
+            while (isFieldNameByte(*(unsigned char *)p)) {
                 p++;
             }
             return p;
@@ -570,8 +595,9 @@ namespace uWS
             }
 
 
-            bool isHTTPMethod = (__builtin_expect(data[1] == '/', 1));
-            bool isConnect = !isHTTPMethod && ((data - start) == 7 && memcmp(start, "CONNECT", 7) == 0);
+            /* RFC 9112 3: exactly one SP separates method and request-target */
+            bool isHTTPMethod = (__builtin_expect(data[0] == 32 && data[1] == '/', 1));
+            bool isConnect = !isHTTPMethod && ((data - start) == 7 && data[0] == 32 && memcmp(start, "CONNECT", 7) == 0);
             /* Also accept proxy-style absolute URLs (http://... or https://...) as valid request targets */
             bool isProxyStyleURL = !isHTTPMethod && !isConnect && data[0] == 32 && isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1;
             if (isHTTPMethod || isConnect || isProxyStyleURL) [[likely]] {
@@ -750,6 +776,12 @@ namespace uWS
                     /* Error: invalid chars in field name */
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
                 }
+                /* RFC 9112 5.1: field-name is a non-empty token. An empty name would also
+                 * collide with the end-of-headers sentinel and hide later headers from the
+                 * Content-Length / Transfer-Encoding request-smuggling checks. */
+                if (headers->key.length() == 0) {
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
+                }
                 postPaddedBuffer++;
 
                 preliminaryValue = postPaddedBuffer;
@@ -860,8 +892,11 @@ namespace uWS
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
-            /* Break if no host header (but we can have empty string which is different from nullptr) */
-            if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()) {
+            /* Break if no host header (but we can have empty string which is different from nullptr).
+             * Upgrade and CONNECT requests are exempt: Node.js dispatches them through the
+             * 'upgrade'/'connect' events before its Host requirement is enforced. */
+            if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()
+                && !isConnectRequest && !req->getHeader("upgrade").data()) {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
             }
 
@@ -878,7 +913,7 @@ namespace uWS
             std::string_view contentLengthString;
             if (req->bf.mightHave("content-length")) {
                 for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
-                    if (h->key.length() == 14 && !strncmp(h->key.data(), "content-length", 14)) {
+                    if (h->key.length() == 14 && !strncasecmp(h->key.data(), "content-length", 14)) {
                         if (contentLengthString.data() == nullptr) {
                             if (h->value.length() == 0) {
                                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH);
@@ -948,7 +983,12 @@ namespace uWS
                     /* Go ahead and parse it (todo: better heuristics for emitting FIN to the app level) */
                     std::string_view dataToConsume(data, length);
                     for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes)) {
-                        dataHandler(user, chunk, chunk.length() == 0);
+                        void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
+                        if (returnedUser != user) {
+                            /* The data handler closed or shut down the socket; stop parsing
+                             * so we do not dispatch pipelined requests on a dead socket. */
+                            return HttpParserResult::success(consumedTotal, returnedUser);
+                        }
                     }
                     if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) [[unlikely]] {
                         // TODO: what happen if we already responded?
@@ -962,12 +1002,16 @@ namespace uWS
             } else if (contentLengthStringLen) {
                 if constexpr (!ConsumeMinimally) {
                     unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
-                    dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);
+                    void *returnedUser = dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);
                     remainingStreamingBytes -= emittable;
 
                     data += emittable;
                     length -= emittable;
                     consumedTotal += emittable;
+
+                    if (returnedUser != user) {
+                        return HttpParserResult::success(consumedTotal, returnedUser);
+                    }
                 }
             } else if(isConnectRequest) {
                 // This only serves to mark that the connect request read all headers
@@ -979,7 +1023,10 @@ namespace uWS
                 break;
             } else {
                 /* If we came here without a body; emit an empty data chunk to signal no data */
-                dataHandler(user, {}, true);
+                void *returnedUser = dataHandler(user, {}, true);
+                if (returnedUser != user) {
+                    return HttpParserResult::success(consumedTotal, returnedUser);
+                }
             }
 
             /* Consume minimally should break as easrly as possible */
@@ -1004,7 +1051,10 @@ public:
                  /* It's either chunked or with a content-length */
                 std::string_view dataToConsume(data, length);
                 for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes)) {
-                    dataHandler(user, chunk, chunk.length() == 0);
+                    void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
+                    if (returnedUser != user) {
+                        return HttpParserResult::success(0, returnedUser);
+                    }
                 }
                 if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING);
@@ -1067,7 +1117,10 @@ public:
                         /* It's either chunked or with a content-length */
                         std::string_view dataToConsume(data, length);
                         for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes)) {
-                            dataHandler(user, chunk, chunk.length() == 0);
+                            void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
+                            if (returnedUser != user) {
+                                return HttpParserResult::success(0, returnedUser);
+                            }
                         }
                         if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
                             return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING);

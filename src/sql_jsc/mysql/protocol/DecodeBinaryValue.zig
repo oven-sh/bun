@@ -30,6 +30,16 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             }
             return SQLDataCell{ .tag = .int4, .value = .{ .int4 = try reader.int(i16) } };
         },
+        .MYSQL_TYPE_YEAR => {
+            // Binary protocol sends YEAR as a fixed 2-byte unsigned field;
+            // column_length is the display width (4), not the wire size.
+            if (raw) {
+                var data = try reader.read(2);
+                defer data.deinit();
+                return SQLDataCell.raw(&data);
+            }
+            return SQLDataCell{ .tag = .uint4, .value = .{ .uint4 = try reader.int(u16) } };
+        },
         .MYSQL_TYPE_INT24 => {
             if (raw) {
                 var data = try reader.read(3);
@@ -136,11 +146,26 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             else => error.InvalidBinaryValue,
         },
 
+        // NEWDECIMAL is always sent as an ASCII decimal string regardless of the
+        // column's BINARY flag / charset. Computed decimals (SUM/AVG/arithmetic/CAST)
+        // carry the BINARY flag and charset 63, so the binary-charset heuristic in the
+        // string/blob arm below would wrongly return them as a Buffer.
+        .MYSQL_TYPE_NEWDECIMAL => {
+            if (raw) {
+                var data = try reader.encodeLenString();
+                defer data.deinit();
+                return SQLDataCell.raw(&data);
+            }
+            var string_data = try reader.encodeLenString();
+            defer string_data.deinit();
+            const slice = string_data.slice();
+            return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+        },
+
         // When the column contains a binary string we return a Buffer otherwise a string
         .MYSQL_TYPE_ENUM,
         .MYSQL_TYPE_SET,
         .MYSQL_TYPE_GEOMETRY,
-        .MYSQL_TYPE_NEWDECIMAL,
         .MYSQL_TYPE_STRING,
         .MYSQL_TYPE_VARCHAR,
         .MYSQL_TYPE_VAR_STRING,

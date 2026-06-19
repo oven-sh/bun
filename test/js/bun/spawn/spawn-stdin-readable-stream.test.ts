@@ -1,4 +1,5 @@
 import { spawn } from "bun";
+import { fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isCI } from "harness";
 
@@ -277,6 +278,47 @@ describe("spawn stdin ReadableStream", () => {
 
     // Process should exit normally (the stream error happens after data is sent)
     expect(await proc.exited).toBe(0);
+  });
+
+  test("erroring the stdin ReadableStream does not surface an unhandled rejection", async () => {
+    // Regression: once ReadableStream locked-state detection works, the FileSink
+    // teardown's stream.cancel() reaches readableStreamCancel, which returns a
+    // rejected promise for an already-errored stream. That promise must be marked
+    // handled, otherwise the stored error surfaces as an uncaught rejection in the
+    // parent process. Run it in a child so a stray rejection lands on its stderr.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let uncaught = 0;
+        process.on("unhandledRejection", () => { uncaught++; });
+        const stream = new ReadableStream({
+          async start(controller) {
+            controller.enqueue("hi\\n");
+            await Bun.sleep(10);
+            controller.error(new Error("stdin stream boom"));
+          },
+        });
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "process.stdin.pipe(process.stdout)"],
+          stdin: stream,
+          stdout: "ignore",
+        });
+        await child.exited;
+        await Bun.sleep(50);
+        console.log("uncaught=" + uncaught);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("stdin stream boom");
+    expect(stdout.trim()).toBe("uncaught=0");
+    expect(exitCode).toBe(0);
   });
 
   test("ReadableStream with process that exits immediately", async () => {
@@ -596,5 +638,70 @@ describe("spawn stdin ReadableStream", () => {
     // Check that we're not leaking objects
     await expectMaxObjectTypeCount(expect, "ReadableStream", 10);
     await expectMaxObjectTypeCount(expect, "Subprocess", 5);
+  });
+
+  // Regression: src/runtime/api/bun/subprocess/Writable.zig:115/193
+  // (`pipe.assignToStream(...)`) — Zig's `FileSink.create` returns rc=1 which is
+  // *transferred* into `Writable{ .pipe = pipe }`; `assignToStream` itself is
+  // ref-neutral (`ref(); defer deref()`). A port that takes an extra +1 inside
+  // `assign_to_stream` (and/or in `to_js`) leaves the native FileSink at rc>=1
+  // even after the stream completes, the Subprocess is finalized, and all JS
+  // wrappers are GC'd — leaking the IOWriter buffers and fd for the life of the
+  // process. `heapStats()` only counts JS wrappers, so the test above does not
+  // catch this; we must check the native live counter directly.
+  // TODO(zig-rust-divergence): Rust port leaks one FileSink per spawn here;
+  // see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
+  test.todo("does not leak native FileSink when ReadableStream is used as stdin", async () => {
+    async function once(i: number) {
+      const stream = new ReadableStream({
+        async pull(controller) {
+          await Bun.sleep(0);
+          controller.enqueue(`iteration ${i}`);
+          controller.close();
+        },
+      });
+
+      const proc = spawn({
+        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+        stdin: stream,
+        stdout: "pipe",
+        stderr: "ignore",
+        env: bunEnv,
+      });
+
+      // Touch `.stdin` so `Writable.toJS` runs (the path that creates the JS
+      // wrapper around the already-stored pipe).
+      void proc.stdin;
+
+      const [text] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(text).toBe(`iteration ${i}`);
+    }
+
+    // Warm up so any lazily-created sinks (and their JS wrappers) are present
+    // in the baseline.
+    await once(-1);
+    Bun.gc(true);
+    await Bun.sleep(1);
+
+    const baseline = fileSinkInternals.liveCount();
+    const iterations = 8;
+
+    for (let i = 0; i < iterations; i++) {
+      await once(i);
+    }
+
+    // Allow controller/sink JS wrappers to be collected so their finalizers
+    // release the refs they legitimately hold.
+    for (let i = 0; i < 50; i++) {
+      Bun.gc(true);
+      if (fileSinkInternals.liveCount() <= baseline + 1) break;
+      await Bun.sleep(10);
+    }
+
+    // With correct ref-transfer semantics every native FileSink reaches rc=0
+    // and is freed once GC reclaims the wrappers. With an over-ref, every
+    // iteration leaks one native FileSink (delta == iterations). Allow one
+    // straggler whose wrapper has not yet been finalized.
+    expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
   });
 });

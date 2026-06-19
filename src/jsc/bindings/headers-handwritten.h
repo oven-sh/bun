@@ -47,7 +47,7 @@ enum class BunStringTag : uint8_t {
     Empty = 4,
 };
 
-/// Mirrors `bun.uws.ResponseKind` in src/uws_sys/uws.zig.
+/// Mirrors `ResponseKind` in src/uws/lib.rs.
 enum class UWSResponseKind : int32_t {
     TCP = 0,
     SSL = 1,
@@ -82,6 +82,10 @@ typedef struct BunString {
     WTF::String toWTFString(NonNullTag) const;
 
     WTF::String transferToWTFString();
+
+    // Consumes this BunString and returns a JS string value. Leaves *this Dead
+    // so a Rust-side OwnedString::Drop deref becomes a no-op.
+    JSC::JSValue transferToJS(JSC::JSGlobalObject* globalObject);
 
     // This one usually will clone the raw bytes.
     WTF::String toWTFString() const;
@@ -248,7 +252,7 @@ const JSErrorCode JSErrorCodeOutOfMemoryError = 8;
 const JSErrorCode JSErrorCodeStackOverflow = 253;
 const JSErrorCode JSErrorCodeUserErrorCode = 254;
 
-// Must be kept in sync with bun.schema.api.Loader in schema.zig
+// Must be kept in sync with Loader in src/options_types/schema.rs
 typedef uint8_t BunLoaderType;
 const BunLoaderType BunLoaderTypeNone = 254;
 const BunLoaderType BunLoaderTypeJSX = 1;
@@ -322,6 +326,7 @@ typedef struct JSC::JSUint8Array JSC::JSUint8Array;
 
 extern "C" void Bun__WTFStringImpl__deref(WTF::StringImpl* impl);
 extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl);
+extern "C" void Bun__WTFStringImpl__destroy(WTF::StringImpl* impl);
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, BunString*);
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunString*);
 extern "C" void BunString__toWTFString(BunString*);
@@ -402,7 +407,7 @@ extern "C" const char* Bun__version;
 extern "C" const char* Bun__version_with_sha;
 
 // Version exports removed - now handled by CMake-generated header (bun_dependency_versions.h)
-// Only keep the ones still exported from Zig
+// Only keep the ones still exported from native code
 extern "C" const char* Bun__versions_uws;
 extern "C" const char* Bun__versions_usockets;
 

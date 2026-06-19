@@ -1,0 +1,55 @@
+disallowed-methods = [
+  { path = "std::fs::read", reason = "use bun_sys::file" },
+  { path = "std::fs::write", reason = "use bun_sys::file" },
+  { path = "std::fs::read_to_string", reason = "use bun_sys::file" },
+  { path = "std::fs::remove_file", reason = "use bun_sys::file" },
+  { path = "std::fs::remove_dir_all", reason = "use bun_sys::dir" },
+  { path = "std::fs::create_dir", reason = "use bun_sys::dir" },
+  { path = "std::fs::create_dir_all", reason = "use bun_sys::dir" },
+  { path = "std::fs::metadata", reason = "use bun_sys::file" },
+  { path = "std::fs::canonicalize", reason = "use bun_paths" },
+  { path = "std::env::var", reason = "use bun_core::env_var" },
+  { path = "std::env::var_os", reason = "use bun_core::env_var" },
+  { path = "std::thread::spawn", reason = "use bun_threading::spawn_named or ThreadPool" },
+  { path = "std::mem::zeroed", reason = "use MaybeUninit; zeroed is UB for most Bun types" },
+  { path = "bun_core::output::pretty_fmt_rt", reason = "const format strings must use pretty_fmt!/write_pretty! (compile-time rewrite); the runtime walk is only for templates built at runtime — allow with justification" },
+  { path = "bun_core::output::pretty_fmt_args", reason = "const format strings must use pretty_fmt!/write_pretty! (compile-time rewrite); the runtime walk is only for templates built at runtime — allow with justification" },
+  { path = "bun_core::output::pretty_fmt_runtime", reason = "const format strings must use pretty_fmt!/write_pretty! (compile-time rewrite); the runtime walk is only for templates built at runtime — allow with justification" },
+  { path = "bun_core::output::pretty", reason = "renders args then tag-walks the rendered bytes (allocates twice, mangles user-controlled '<'); use the pretty! macro — allow only for runtime-built payloads, with justification" },
+  { path = "bun_core::output::prettyln", reason = "renders args then tag-walks the rendered bytes; use the prettyln! macro — allow only for runtime-built payloads, with justification" },
+  { path = "bun_core::output::pretty_error", reason = "renders args then tag-walks the rendered bytes; use the pretty_error! macro — allow only for runtime-built payloads, with justification" },
+  { path = "bun_core::output::pretty_errorln", reason = "renders args then tag-walks the rendered bytes; use the pretty_errorln! macro — allow only for runtime-built payloads, with justification" },
+  { path = "bun_core::output::warn", reason = "renders args then tag-walks the rendered bytes; use the warn! macro — allow only for runtime-built payloads, with justification" },
+  { path = "bun_core::output::note", reason = "renders args then tag-walks the rendered bytes; use the note! macro — allow only for runtime-built payloads, with justification" },
+  { path = "bun_core::output::debug_warn", reason = "renders args then tag-walks the rendered bytes; use the debug_warn! macro — allow only for runtime-built payloads, with justification" },
+  { path = "bun_core::output::debug", reason = "renders args then tag-walks the rendered bytes; use scoped_log!/debug logging macros — allow only for runtime-built payloads, with justification" },
+  { path = "alloc::string::String::from_utf8", reason = "keep data as bytes; for display use bstr::BStr, for JS-visible strings use bun_core::String::clone_utf8" },
+  { path = "alloc::string::String::from_utf8_lossy", reason = "silently corrupts non-UTF-8 bytes and allocates; keep data as bytes (bstr::BStr for Display)" },
+]
+
+disallowed-types = [
+  { path = "std::sync::Mutex", reason = "use bun_threading::Mutex" },
+  { path = "std::sync::RwLock", reason = "use bun_threading::RwLock" },
+  { path = "parking_lot::Mutex", reason = "use bun_threading::Mutex" },
+  { path = "parking_lot::RwLock", reason = "use bun_threading::RwLock" },
+  { path = "parking_lot::RawMutex", reason = "use bun_threading::Mutex" },
+  { path = "std::collections::HashMap", reason = "use bun_collections (wyhash)" },
+  { path = "std::collections::HashSet", reason = "use bun_collections (wyhash)" },
+  { path = "std::fs::File", reason = "use bun_sys::File" },
+  { path = "std::process::Command", reason = "use bun_core::util::spawn_sync_inherit (CLI helpers) or bun_spawn_sys (full control)" },
+]
+
+disallowed-macros = [
+  { path = "std::println", reason = "use bun_core::output" },
+  { path = "std::eprintln", reason = "use bun_core::output" },
+  { path = "std::print", reason = "use bun_core::output" },
+  { path = "std::eprint", reason = "use bun_core::output" },
+  { path = "std::dbg", reason = "remove before commit" },
+]
+
+pass-by-value-size-limit = 64
+stack-size-threshold = 131072
+enum-variant-size-threshold = 128
+too-large-for-stack = 4096
+avoid-breaking-exported-api = false
+accept-comment-above-attributes = true

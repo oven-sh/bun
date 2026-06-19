@@ -228,7 +228,6 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "picohttpparser"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_PICOHTTPPARSER)), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "uwebsockets"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_UWS)), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_WEBKIT)), 0);
-    // Zig version from CMake-generated header
     object->putDirect(vm, JSC::Identifier::fromString(vm, "zig"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_ZIG)), 0);
 
     // Use commit hash for zlib to match test expectations
@@ -246,7 +245,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 
     // Use commit hash for zstd (semantic version extraction not working yet)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "zstd"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_ZSTD_HASH)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsOwnedString(vm, String("13.6.233.10-node.18"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_V8_VERSION)))), 0);
 #if OS(WINDOWS)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsOwnedString(vm, String::fromLatin1(uv_version_string()))), 0);
 #else
@@ -453,7 +452,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     CString utf8;
 
     // Support embedded .node files
-    // See StandaloneModuleGraph.zig for what this "$bunfs" thing is
+    // See src/standalone_graph/StandaloneModuleGraph.rs for what this "$bunfs" thing is
 #if OS(WINDOWS)
 #define StandaloneModuleGraph__base_path "B:/~BUN/"_s
 #else
@@ -701,7 +700,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #endif
 
     // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
-    // (bun/src/env.zig:36) and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
+    // and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
     auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(dlsym(handle, "napi_register_module_v1"));
 
     auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
@@ -1048,6 +1047,7 @@ static const NeverDestroyed<String>* getSignalNames()
         MAKE_STATIC_STRING_IMPL("SIGIO"),
         MAKE_STATIC_STRING_IMPL("SIGINFO"),
         MAKE_STATIC_STRING_IMPL("SIGSYS"),
+        MAKE_STATIC_STRING_IMPL("SIGBREAK"),
     };
 
     return signalNames;
@@ -1062,12 +1062,16 @@ static void loadSignalNumberMap()
         signalNameToNumberMap = new HashMap<String, int>();
         signalNameToNumberMap->reserveInitialCapacity(31);
 #if OS(WINDOWS)
-        // libuv supported signals
+        // libuv-supported console-control signals on Windows:
+        // CTRL_C_EVENT → SIGINT, CTRL_BREAK_EVENT → SIGBREAK,
+        // CTRL_CLOSE_EVENT → SIGHUP, plus SIGWINCH on console resize.
+        signalNameToNumberMap->add(signalNames[0], SIGHUP);
         signalNameToNumberMap->add(signalNames[1], SIGINT);
         signalNameToNumberMap->add(signalNames[2], SIGQUIT);
         signalNameToNumberMap->add(signalNames[9], SIGKILL);
         signalNameToNumberMap->add(signalNames[15], SIGTERM);
         signalNameToNumberMap->add(signalNames[27], SIGWINCH);
+        signalNameToNumberMap->add(signalNames[31], SIGBREAK);
 #else
         signalNameToNumberMap->add(signalNames[0], SIGHUP);
         signalNameToNumberMap->add(signalNames[1], SIGINT);
@@ -1488,6 +1492,9 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #ifdef SIGSYS
             signalNumberToNameMap->add(SIGSYS, signalNames[30]);
 #endif
+#ifdef SIGBREAK
+            signalNumberToNameMap->add(SIGBREAK, signalNames[31]);
+#endif
         });
 
         if (!signalToContextIdsMap) {
@@ -1754,8 +1761,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
     // extensions: POSIX_SPAWN_SETEXEC makes posix_spawn(2) behave like a more
     // featureful execve(2) (replace the current image rather than fork), and
     // POSIX_SPAWN_CLOEXEC_DEFAULT atomically closes every descriptor that
-    // isn't explicitly inherited via file actions. This mirrors
-    // reloadProcess() in src/bun.zig.
+    // isn't explicitly inherited via file actions.
     posix_spawnattr_t attrs;
     posix_spawn_file_actions_t actions;
     posix_spawnattr_init(&attrs);
@@ -2445,7 +2451,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
 static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    // auto* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto process = uncheckedDowncast<Process>(processObject);
 
     auto* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 10);
@@ -2488,13 +2493,26 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     //      v8_use_snapshot: 1
     //    }
     // }
+    // Lazy property builder: exceptions must not propagate into
+    // reifyStaticProperty, which performs no exception check.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSObject* config = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     JSC::JSObject* variables = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+    JSC::JSArray* shareableBuiltins = JSC::constructEmptyArray(globalObject, nullptr);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return JSC::jsUndefined();
+    }
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "v8_enable_i8n_support"_s), JSC::jsNumber(1), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_lto"_s), JSC::jsBoolean(false), 0);
+    // Node 26's common.gypi evaluates enable_thin_lto/lto_jobs conditions; gyp
+    // hard-fails on undefined variables, so node-gyp builds need them present.
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_thin_lto"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "lto_jobs"_s), JSC::jsString(vm, String(""_s)), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_module_version"_s), JSC::jsNumber(REPORTED_NODEJS_ABI_VERSION), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "napi_build_version"_s), JSC::jsNumber(Napi::DEFAULT_NAPI_VERSION), 0);
-    variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_builtin_shareable_builtins"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_builtin_shareable_builtins"_s), shareableBuiltins, 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_byteorder"_s), JSC::jsString(vm, String("little"_s)), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "clang"_s), JSC::jsNumber(0), 0);
 
@@ -2508,6 +2526,10 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "debug_nghttp2"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "debug_node"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_lto"_s), JSC::jsBoolean(false), 0);
+    // Node 26's common.gypi evaluates enable_thin_lto/lto_jobs conditions; gyp
+    // hard-fails on undefined variables, so node-gyp builds need them present.
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_thin_lto"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "lto_jobs"_s), JSC::jsString(vm, String(""_s)), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_pgo_generate"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_pgo_use"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "error_on_warn"_s), JSC::jsBoolean(false), 0);
@@ -2515,12 +2537,20 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "napi_build_version"_s), JSC::jsNumber(Napi::DEFAULT_NAPI_VERSION), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "nasm_version"_s), JSC::jsNumber(2), 0);
 #elif OS(MACOS)
+    // Real Node on macOS reports clang=1; common.gypi only applies
+    // CLANG_CXX_LANGUAGE_STANDARD (gnu++20) to addon builds when clang==1,
+    // and Apple clang's default standard is far older.
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "clang"_s), JSC::jsNumber(1), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "control_flow_guard"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "coverage"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "dcheck_always_on"_s), JSC::jsNumber(0), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "debug_nghttp2"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "debug_node"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_lto"_s), JSC::jsBoolean(false), 0);
+    // Node 26's common.gypi evaluates enable_thin_lto/lto_jobs conditions; gyp
+    // hard-fails on undefined variables, so node-gyp builds need them present.
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_thin_lto"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "lto_jobs"_s), JSC::jsString(vm, String(""_s)), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_pgo_generate"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_pgo_use"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "error_on_warn"_s), JSC::jsBoolean(false), 0);
@@ -2535,6 +2565,10 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "debug_nghttp2"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "debug_node"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_lto"_s), JSC::jsBoolean(false), 0);
+    // Node 26's common.gypi evaluates enable_thin_lto/lto_jobs conditions; gyp
+    // hard-fails on undefined variables, so node-gyp builds need them present.
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_thin_lto"_s), JSC::jsBoolean(false), 0);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "lto_jobs"_s), JSC::jsString(vm, String(""_s)), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_pgo_generate"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_pgo_use"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "error_on_warn"_s), JSC::jsBoolean(false), 0);
@@ -2718,14 +2752,20 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
     auto* globalObject = processObject->globalObject();
     if (Bun__GlobalObject__hasIPC(globalObject)) {
         auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        // Lazy property builder: exceptions must not propagate into
+        // reifyStaticProperty, which performs no exception check.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
         JSC::JSFunction* getControl = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetChannelCodeGenerator(vm), globalObject);
         JSC::MarkedArgumentBuffer args;
         JSC::CallData callData = JSC::getCallData(getControl);
 
         auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getControl, callData, globalObject->globalThis(), args);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            return jsUndefined();
+        }
         return result;
     } else {
         return jsUndefined();
@@ -2779,7 +2819,6 @@ static JSValue constructExecPath(VM& vm, JSObject* processObject)
     return JSValue::decode(Bun__Process__getExecPath(globalObject));
 }
 
-// get from zig
 extern "C" EncodedJSValue Bun__Process__getArgv(JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -2920,7 +2959,16 @@ static JSValue constructRevision(VM& vm, JSObject* processObject)
 static JSValue constructEnv(VM& vm, JSObject* processObject)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(processObject->globalObject());
-    return globalObject->processEnvObject();
+    // Lazy property builder: exceptions must not propagate into
+    // reifyStaticProperty, which performs no exception check.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue env = globalObject->processEnvObject();
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return JSC::jsUndefined();
+    }
+    return env;
 }
 
 #if !OS(WINDOWS)
@@ -3250,7 +3298,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     auto* zigGlobal = defaultGlobalObject(globalObject);
     Bun__Process__exit(zigGlobal, exitCode);
     // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
-    // Zig WebWorker.exit() it called requests JSC termination (guarded so it's a
+    // WebWorker exit path it called requests JSC termination (guarded so it's a
     // no-op when re-entered from a process.on('exit') handler).
     throwScope.release();
     return JSC::JSValue::encode(jsUndefined());
@@ -3768,7 +3816,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * g
 
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
 {
-    return JSC::constructEmptyArray(processObject->globalObject(), nullptr);
+    // Lazy property builder: exceptions must not propagate into
+    // reifyStaticProperty, which performs no exception check.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSArray* array = JSC::constructEmptyArray(processObject->globalObject(), nullptr);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(processObject->globalObject(), exception);
+        return JSC::jsUndefined();
+    }
+    return array;
 }
 
 static JSValue Process_stubEmptySet(VM& vm, JSObject* processObject)
@@ -3891,17 +3948,25 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
 // return require.cache.get(Bun.main)
 static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Lazy property builder: exceptions must not propagate into
+    // reifyStaticProperty, which performs no exception check.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(processObject->globalObject());
     auto* bun = globalObject->bunObject();
-    RETURN_IF_EXCEPTION(scope, {});
     auto& builtinNames = Bun::builtinNames(vm);
     JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
-    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return JSC::jsUndefined();
+    }
     auto* requireMap = globalObject->requireMap();
-    RETURN_IF_EXCEPTION(scope, {});
     JSValue mainModule = requireMap->get(globalObject, mainValue);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return JSC::jsUndefined();
+    }
     return mainModule;
 }
 
@@ -3923,7 +3988,15 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
+    // Lazy property builder: exceptions must not propagate into
+    // reifyStaticProperty, which performs no exception check.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return JSC::jsUndefined();
+    }
     if (nextTickFunction && nextTickFunction.isObject()) {
         this->m_nextTickFunction.set(vm, this, nextTickFunction.getObject());
     }

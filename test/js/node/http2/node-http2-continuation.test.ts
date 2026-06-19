@@ -419,3 +419,66 @@ describe("HTTP/2 CONTINUATION frames - Server Side", () => {
     }
   });
 });
+
+// RFC 7540 Section 6.2: HEADERS frames may carry padding, but CONTINUATION
+// frames may not. When the encoded header block lands just under the frame
+// size limit, applying padding must not push the frame-splitting arithmetic
+// past the end of the encoded header buffer.
+describe("HTTP/2 HEADERS padding near the frame-size boundary", () => {
+  let paddingServer: ServerInfo;
+
+  before(async () => {
+    paddingServer = await startNodeServer();
+  });
+
+  after(() => {
+    paddingServer?.close();
+  });
+
+  test(
+    "client with PADDING_STRATEGY_MAX sends header blocks just under the frame size",
+    { timeout: 30_000 },
+    async () => {
+      // Sweep the HPACK-encoded header block size across the default
+      // 16384-byte frame boundary. "A" Huffman-encodes to 6 bits, so each
+      // 330-character step grows the encoded block by ~248 bytes. The range
+      // in which the maximum padding strategy yields non-zero padding while
+      // the padded block no longer fits in a single HEADERS frame is 255
+      // bytes wide ([maxFrameSize - 255, maxFrameSize - 1]), so a sweep with
+      // a sub-255-byte step that starts below that range and ends above it is
+      // guaranteed to place at least one request inside it. Each probe uses a
+      // fresh connection so the HPACK dynamic table cannot shrink later
+      // encodings.
+      for (let valueLength = 21000; valueLength <= 22320; valueLength += 330) {
+        const client = http2.connect(paddingServer.url, {
+          ...TLS_OPTIONS,
+          rejectUnauthorized: false,
+          paddingStrategy: http2.constants.PADDING_STRATEGY_MAX,
+          settings: {
+            maxHeaderListSize: 256 * 1024,
+          },
+        });
+
+        try {
+          const response = await makeRequest(client, {
+            ":method": "GET",
+            ":path": "/",
+            ":scheme": "https",
+            ":authority": `127.0.0.1:${paddingServer.port}`,
+            "x-filler": Buffer.alloc(valueLength, "A").toString(),
+          });
+
+          assert.ok(response.data, `Should receive response data for valueLength=${valueLength}`);
+          const parsed = JSON.parse(response.data);
+          assert.strictEqual(
+            parsed.receivedHeaders,
+            1,
+            `Server should decode the single filler header for valueLength=${valueLength}`,
+          );
+        } finally {
+          client.close();
+        }
+      }
+    },
+  );
+});

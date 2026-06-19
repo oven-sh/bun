@@ -1,6 +1,6 @@
 /**
  * lsquic — Litespeed's QUIC and HTTP/3 implementation. Powers Bun.serve's
- * `h3: true` listener.
+ * `http3: true` listener.
  *
  * DirectBuild: ~85 .c files from src/liblsquic. The upstream build runs a
  * Perl script to generate lsquic_versions_to_string.c at configure time;

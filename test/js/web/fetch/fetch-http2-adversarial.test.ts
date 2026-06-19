@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { bunEnv, bunExe, tls } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, tls } from "harness";
 import { once } from "node:events";
 import nodetls from "node:tls";
 
@@ -157,8 +157,9 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         const out = JSON.parse(stdout.trim());
         // Connection should error well before the ~80 MB of CONTINUATION payload
         // accumulates. Allow generous slack for TLS/allocator overhead.
+        // ASAN's quarantine retains freed allocations so widen the threshold there.
         expect(out.result).toBe("HTTP2HeaderListTooLarge");
-        expect(out.growth).toBeLessThan(64 * 1024 * 1024);
+        expect(out.growth).toBeLessThan((isASAN ? 256 : 64) * 1024 * 1024);
         expect(exitCode).toBe(0);
       },
     );
@@ -435,4 +436,86 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
       },
     );
   });
+});
+
+// ─── session-key regressions ─────────────────────────────────────────────────
+// The TLS handshake verifies the peer against the Host-header override when one
+// is present (get_tls_hostname), so the override must be part of the HTTP/2
+// session key — mirroring the HTTP/1.1 keep-alive pool's proxy_auth_hash.
+test("HTTP/2 session keyed by a Host header override is not reused for a request without one", async () => {
+  await withAdversarialServer(
+    {
+      onStream: (socket, id) => {
+        // 200 + END_STREAM|END_HEADERS for every request on every connection.
+        socket.write(frame(1, 5, id, hpackStatus200));
+      },
+    },
+    async (url, state) => {
+      const h2 = { protocol: "http2" as const, tls: { rejectUnauthorized: false } };
+      const errcode = (e: any) => e.code || e.name;
+
+      // 1. Request with a Host override: TLS verification (when enabled) runs
+      //    against "other.example", not the URL hostname.
+      const a = await fetch(url, { ...h2, headers: { Host: "other.example" } }).then(r => r.status, errcode);
+      expect(a).toBe(200);
+      expect(state.connections).toBe(1);
+
+      // 2. A request without an override expects verification against the URL
+      //    hostname. It must not multiplex onto the session that was verified
+      //    against the override — a fresh connection is required.
+      const b = await fetch(url, h2).then(r => r.status, errcode);
+      expect(b).toBe(200);
+      expect(state.connections).toBe(2);
+
+      // 3. Same override again → same session key → the first session is
+      //    reused and no third connection is opened.
+      const c = await fetch(url, { ...h2, headers: { Host: "other.example" } }).then(r => r.status, errcode);
+      expect(c).toBe(200);
+      expect(state.connections).toBe(2);
+    },
+  );
+});
+
+// HPACK is length-prefixed, so a header NAME can carry CR/LF/NUL/':'/space.
+// Such a name must never reach the JS-visible Response.headers (where the
+// standard proxy idiom `new Response(body, { headers })` would copy it onto a
+// downstream HTTP/1.1 wire); the stream must fail with a protocol error.
+test("rejects HTTP/2 response header names that are not RFC 9110 tokens", async () => {
+  let reqNum = 0;
+  await withAdversarialServer(
+    {
+      onStream: (socket, id) => {
+        reqNum++;
+        if (reqNum === 1) {
+          // Literal header whose NAME embeds CR LF and a colon.
+          socket.write(frame(1, 5, id, Buffer.concat([hpackStatus200, hpackLit("x-a\r\nset-cookie: pwn=1", "v")])));
+        } else {
+          // Control: an ordinary lowercase token name still goes through.
+          socket.write(frame(1, 5, id, Buffer.concat([hpackStatus200, hpackLit("x-ok", "yes")])));
+        }
+      },
+    },
+    async url => {
+      const h2 = { protocol: "http2" as const, tls: { rejectUnauthorized: false } };
+      const errcode = (e: any) => e.code || e.name;
+
+      const out = await fetch(url, h2).then(
+        r => ({ status: r.status, names: [...r.headers.keys()].join(",") }),
+        e => ({ err: errcode(e) }),
+      );
+      // The injected name must never surface in the Headers object…
+      if ("names" in out) {
+        expect(out.names).not.toContain("set-cookie");
+        expect(out.names).not.toContain("\r");
+        expect(out.names).not.toContain("\n");
+      }
+      // …and the stream must fail with a protocol error rather than deliver.
+      expect("err" in out && out.err).toBe("HTTP2ProtocolError");
+
+      // The legitimate case still works.
+      const ok = await fetch(url, h2);
+      expect(ok.headers.get("x-ok")).toBe("yes");
+      expect(ok.status).toBe(200);
+    },
+  );
 });

@@ -366,6 +366,42 @@ describe("errors", () => {
     }).toThrow("plugin target must be one of 'node', 'bun' or 'browser'");
   });
 
+  it("handles 'target' that throws while being coerced to a string", () => {
+    let called = false;
+    const opts = {
+      setup: () => {
+        called = true;
+      },
+      target: {
+        [Symbol.toPrimitive]: () => ({}),
+      },
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow("Symbol.toPrimitive returned an object");
+    expect(called).toBe(false);
+  });
+
+  it("handles a 'target' whose toString throws", () => {
+    let called = false;
+    const opts = {
+      setup: () => {
+        called = true;
+      },
+      target: {
+        toString() {
+          throw new Error("target toString error");
+        },
+      },
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow("target toString error");
+    expect(called).toBe(false);
+  });
+
   it("invalid loaders throw", () => {
     const invalidLoaders = ["blah", "blah2", "blah3", "blah4"];
     const inputs = ["body { background: red; }", "<h1>hi</h1>", '{"hi": "there"}', "hi"];

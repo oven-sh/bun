@@ -64,6 +64,22 @@ void JSNodeHTTPServerSocket::close()
     }
 }
 
+void JSNodeHTTPServerSocket::upgradeToTunnelMode()
+{
+    if (!socket || us_socket_is_closed(socket)) {
+        return;
+    }
+    /* Reuse the CONNECT plumbing so the parser stops interpreting subsequent
+     * bytes as HTTP and routes them to the ondata callback as opaque data. */
+    if (is_ssl) {
+        auto* httpResponseData = (uWS::HttpResponseData<true>*)us_socket_ext(socket);
+        httpResponseData->isConnectRequest = true;
+    } else {
+        auto* httpResponseData = (uWS::HttpResponseData<false>*)us_socket_ext(socket);
+        httpResponseData->isConnectRequest = true;
+    }
+}
+
 bool JSNodeHTTPServerSocket::isClosed() const
 {
     return !socket || us_socket_is_closed(socket);
@@ -145,38 +161,44 @@ void JSNodeHTTPServerSocket::onClose()
 
     WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
 
-    if (scriptExecutionContext) {
-        scriptExecutionContext->postTask([self = this](ScriptExecutionContext& context) {
-            WTF::NakedPtr<JSC::Exception> exception;
-            auto* globalObject = defaultGlobalObject(context.globalObject());
-            auto* thisObject = self;
-            auto* callbackObject = thisObject->functionToCallOnClose.get();
-            if (!callbackObject) {
-                if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
-                    Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
-                }
-                thisObject->detach();
-                return;
-            }
-            auto callData = JSC::getCallData(callbackObject);
-            MarkedArgumentBuffer args;
-            EnsureStillAliveScope ensureStillAlive(self);
+    if (!scriptExecutionContext || globalObject->isShuttingDown()) {
+        if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+            Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
+        }
+        this->detach();
+        return;
+    }
 
-            if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
-                if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
-                    Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
-                }
-
-                profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
-
-                if (auto* ptr = exception.get()) {
-                    exception.clear();
-                    globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
-                }
+    scriptExecutionContext->postTask([self = this](ScriptExecutionContext& context) {
+        WTF::NakedPtr<JSC::Exception> exception;
+        auto* globalObject = defaultGlobalObject(context.globalObject());
+        auto* thisObject = self;
+        auto* callbackObject = thisObject->functionToCallOnClose.get();
+        if (!callbackObject) {
+            if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+                Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
             }
             thisObject->detach();
-        });
-    }
+            return;
+        }
+        auto callData = JSC::getCallData(callbackObject);
+        MarkedArgumentBuffer args;
+        EnsureStillAliveScope ensureStillAlive(self);
+
+        if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
+            if (auto* res = thisObject->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+                Bun__NodeHTTPResponse_onClose(res->m_ctx, JSValue::encode(res));
+            }
+
+            profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
+
+            if (auto* ptr = exception.get()) {
+                exception.clear();
+                globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
+            }
+        }
+        thisObject->detach();
+    });
 }
 
 void JSNodeHTTPServerSocket::onDrain()

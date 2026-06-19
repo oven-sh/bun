@@ -42,8 +42,10 @@ for (const [name, copy] of impls) {
       });
 
       const e = await copyShouldThrow(basename + "/from", basename + "/result");
-      expect(e.code).toBe("EISDIR");
-      expect(e.path).toBe(join(basename, "from"));
+      expect(e.code).toBe("ERR_FS_EISDIR");
+      // The path field echoes the caller's string verbatim (node does not
+      // resolve or normalize it), so expect the same concatenation we passed.
+      expect(e.path).toBe(basename + "/from");
     });
 
     test("recursive directory structure - no destination", async () => {
@@ -136,8 +138,9 @@ for (const [name, copy] of impls) {
         force: false,
         errorOnExist: true,
       });
-      expect(e.code).toBe("EEXIST");
-      expect(e.path).toBe(join(basename, "result", "a.txt"));
+      expect(e.code).toBe("ERR_FS_CP_EEXIST");
+      // As above, the path field carries the caller's string verbatim.
+      expect(e.path).toBe(basename + "/result/a.txt");
 
       assertContent(basename + "/result/a.txt", "win");
     });
@@ -267,6 +270,10 @@ for (const [name, copy] of impls) {
 
       await copy(basename + "/from", basename + "/result", {
         filter: (src: string) => {
+          // cp joins child paths with the platform separator, so on Windows
+          // the filter sees backslash-separated paths; normalize for the
+          // assertion.
+          src = src.replaceAll("\\", "/");
           return src.endsWith("/from") || src.includes("a.txt");
         },
         recursive: true,
@@ -353,7 +360,15 @@ for (const [name, copy] of impls) {
         "hey": "hi",
       });
 
-      await copy(basename + "/hey", basename + "/hey");
+      // node rejects copying a file onto itself with ERR_FS_CP_EINVAL;
+      // the regression this guards against is throwing EBUSY instead.
+      let err: any;
+      try {
+        await copy(basename + "/hey", basename + "/hey");
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("ERR_FS_CP_EINVAL");
     });
   });
 }
@@ -520,7 +535,7 @@ test.skipIf(!isPosix)(
             console.log("UNEXPECTED-SUCCESS");
             process.exit(1);
           } catch (e) {
-            if (e?.code !== "EISDIR") {
+            if (e?.code !== "ERR_FS_CP_NON_DIR_TO_DIR") {
               console.log("UNEXPECTED-ERROR:" + (e?.code ?? e?.message));
               process.exit(1);
             }

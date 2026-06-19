@@ -5,6 +5,7 @@
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "headers-handwritten.h"
+#include "webcore/HTTPHeaderMap.h"
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
 
@@ -17,6 +18,18 @@ extern "C" void BunString__toThreadSafe(BunString* str);
 namespace Bun {
 
 using namespace JSC;
+
+// Exercises WebCore::lowercaseHeaderName — the Highway-SIMD-backed header-name
+// lowercasing used by the Headers iterator — directly from JS so a test can
+// check it against a scalar reference across lengths and alignments.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_lowercaseHeaderNameSIMD, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto string = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(JSC::jsString(vm, WebCore::lowercaseHeaderName(string)));
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_arrayBufferViewHasBuffer, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -47,6 +60,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_lsanDoLeakCheck, (JSC::JSGlobalObject * glob
     return encodedJSUndefined();
 }
 
+// Side-effect-free report of whether this binary was compiled with
+// AddressSanitizer. Lets the test harness detect ASAN without running a
+// stop-the-world leak check (see jsFunction_lsanDoLeakCheck).
+JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+#if ASAN_ENABLED
+    return JSValue::encode(jsBoolean(true));
+#else
+    return JSValue::encode(jsBoolean(false));
+#endif
+}
+
 // Returns the net refcount change on the *original* StringImpl after a
 // BunString owning one ref to it is passed through BunString__toThreadSafe
 // and then released. A correct implementation must return 0; a positive
@@ -60,7 +85,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta, (JSC::J
 
     const unsigned before = original->refCount();
 
-    // Give the BunString its own ref, mirroring how a Zig-side bun.String
+    // Give the BunString its own ref, mirroring how a Rust-side bun.String
     // owns one reference to the underlying StringImpl.
     original->ref();
     BunString str = { BunStringTag::WTFStringImpl, { .wtf = original.ptr() } };

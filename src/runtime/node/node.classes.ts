@@ -3,6 +3,7 @@ import { define, InvalidThisBehavior } from "../../codegen/class-definitions";
 export default [
   define({
     name: "DNSResolver",
+    rustPath: "crate::dns_jsc::Resolver",
     construct: false,
     noConstructor: true,
     finalize: true,
@@ -130,8 +131,10 @@ export default [
   }),
   define({
     name: "Timeout",
+    rustPath: "crate::timer::TimeoutObject",
     construct: true,
     finalize: true,
+    sharedThis: true,
     configurable: false,
     klass: {},
     JSType: "0b11101110",
@@ -199,8 +202,10 @@ export default [
   }),
   define({
     name: "Immediate",
+    rustPath: "crate::timer::ImmediateObject",
     construct: true,
     finalize: true,
+    sharedThis: true,
     configurable: false,
     klass: {},
     JSType: "0b11101110",
@@ -238,6 +243,7 @@ export default [
   }),
   define({
     name: "NodeJSFS",
+    rustPath: "crate::node::node_fs_binding::Binding",
     construct: true,
     noConstructor: true,
     finalize: true,

@@ -364,8 +364,7 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIssued, (JSGlobalObject 
 
     auto check = thisObject->checkIssued(globalObject, issuer);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!check) return JSValue::encode(jsUndefined());
-    return JSValue::encode(issuer);
+    return JSValue::encode(jsBoolean(check));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckPrivateKey, (JSGlobalObject * globalObject, CallFrame* callFrame))

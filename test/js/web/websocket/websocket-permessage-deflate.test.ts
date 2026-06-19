@@ -248,3 +248,70 @@ test.skip("WebSocket client rejects compressed control frames", async () => {
   // This test would require a custom server that sends invalid compressed control frames
   // Skip for now as it requires low-level WebSocket frame manipulation
 });
+
+test("server enforces maxPayloadLength on compressed messages inflated through the fast path", async () => {
+  // The server limits messages to 1024 bytes. A compressed frame is tiny on the
+  // wire but can inflate to 4000 bytes, which is over the configured limit yet
+  // still small enough to fit the inflater's 4096-byte fast-path output buffer.
+  // The server must drop the connection instead of delivering the oversized
+  // message to the handler.
+  const serverReceived: number[] = [];
+
+  using server = serve({
+    port: 0,
+    fetch(req, server) {
+      if (server.upgrade(req)) {
+        return;
+      }
+      return new Response("Not found", { status: 404 });
+    },
+    websocket: {
+      perMessageDeflate: true,
+      maxPayloadLength: 1024,
+      message(ws, message) {
+        const text = typeof message === "string" ? message : message.toString();
+        serverReceived.push(text.length);
+        ws.send(text, true);
+      },
+    },
+  });
+
+  const client = new WebSocket(`ws://localhost:${server.port}`);
+
+  await new Promise((resolve, reject) => {
+    client.onopen = resolve;
+    client.onerror = reject;
+  });
+  expect(client.extensions).toContain("permessage-deflate");
+
+  // Tiny async event queue so we can await each client-side event in order
+  // without timers.
+  const events: string[] = [];
+  let notify = () => {};
+  const record = (event: string) => {
+    events.push(event);
+    notify();
+  };
+  const waitForEventCount = async (count: number) => {
+    while (events.length < count) {
+      await new Promise<void>(resolve => {
+        notify = resolve;
+      });
+    }
+  };
+  client.onmessage = event => record(`message:${event.data.length}`);
+  client.onclose = () => record("close");
+
+  // A compressible message within the limit is still delivered and echoed back.
+  client.send(Buffer.alloc(900, "B").toString());
+  await waitForEventCount(1);
+  expect(events[0]).toBe("message:900");
+
+  // A compressible message that inflates past the limit must not be delivered;
+  // the server drops the connection instead of echoing it back.
+  client.send(Buffer.alloc(4000, "A").toString());
+  await waitForEventCount(2);
+  expect(events[1]).toBe("close");
+
+  expect(serverReceived).toEqual([900]);
+});

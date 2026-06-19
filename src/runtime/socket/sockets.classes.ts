@@ -65,6 +65,10 @@ function generate(ssl) {
         fn: "getTLSTicket",
         length: 0,
       },
+      setKeyCert: {
+        fn: "setKeyCert",
+        length: 1,
+      },
       exportKeyingMaterial: {
         fn: "exportKeyingMaterial",
         length: 3,
@@ -101,6 +105,18 @@ function generate(ssl) {
       setNoDelay: {
         fn: "setNoDelay",
         length: 1,
+      },
+      setTypeOfService: {
+        fn: "setTypeOfService",
+        length: 1,
+      },
+      getTypeOfService: {
+        fn: "getTypeOfService",
+        length: 0,
+      },
+      resumeSNI: {
+        fn: "resumeSNI",
+        length: 2,
       },
       setKeepAlive: {
         fn: "setKeepAlive",
@@ -250,6 +266,8 @@ export default [
   generate(false),
   define({
     name: "Listener",
+    // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
+    sharedThis: true,
     noConstructor: true,
     JSType: "0b11101110",
     proto: {
@@ -311,6 +329,7 @@ export default [
     JSType: "0b11101110",
     finalize: true,
     construct: true,
+    sharedThis: true,
     values: ["on_data", "on_drain", "on_error"],
     proto: {
       send: {

@@ -1,6 +1,9 @@
 const delta = 1;
 const initialRuns = 10_000;
 let runs = initialRuns;
+// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
+// run far higher under bun-asan; widen the threshold to avoid false positives.
+const isASAN = process.execPath.includes("bun-asan");
 
 function usage() {
   return process.memoryUsage.rss();
@@ -89,7 +92,7 @@ async function batch(iterations) {
       }
     }
 
-    if (delta > 20) {
+    if (delta > (isASAN ? 256 : 20)) {
       throw new Error("Memory leak detected");
     }
   }

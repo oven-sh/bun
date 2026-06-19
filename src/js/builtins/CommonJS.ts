@@ -209,7 +209,7 @@ function loadEsmIntoCjs__dead(resolvedSpecifier: string) {
         // - we've never fetched it
         // - a fetch is in progress
         (!$isPromise(fetch) ||
-          ($getPromiseInternalField(fetch, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending))
+          ($peekPromiseStatus(fetch)) === 0))
     ) {
       // force it to be no longer pending
       $fulfillModuleSync(key);
@@ -225,7 +225,7 @@ function loadEsmIntoCjs__dead(resolvedSpecifier: string) {
 
     if (state < $ModuleLink && $isPromise(fetch)) {
       // This will probably never happen, but just in case
-      if (($getPromiseInternalField(fetch, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending) {
+      if (($peekPromiseStatus(fetch)) === 0) {
         registry.$delete(resolvedSpecifier);
 
         throw new TypeError(`require() async module "${key}" is unsupported. use "await import()" instead.`);
@@ -233,21 +233,20 @@ function loadEsmIntoCjs__dead(resolvedSpecifier: string) {
 
       // this pulls it out of the promise without delaying by a tick
       // the promise is already fulfilled by $fulfillModuleSync
-      const sourceCodeObject = $getPromiseInternalField(fetch, $promiseFieldReactionsOrResult);
+      const sourceCodeObject = $peekPromiseSettledValue(fetch);
       moduleRecordPromise = loader.parseModule(key, sourceCodeObject);
     }
     let mod = entry?.module;
 
     if (moduleRecordPromise && $isPromise(moduleRecordPromise)) {
-      let reactionsOrResult = $getPromiseInternalField(moduleRecordPromise, $promiseFieldReactionsOrResult);
-      let flags = $getPromiseInternalField(moduleRecordPromise, $promiseFieldFlags);
-      let state = flags & $promiseStateMask;
+      let reactionsOrResult = $peekPromiseSettledValue(moduleRecordPromise);
+      let state = $peekPromiseStatus(moduleRecordPromise);
       // this branch should never happen, but just to be safe
-      if (state === $promiseStatePending || (reactionsOrResult && $isPromise(reactionsOrResult))) {
+      if (state === 0 || (reactionsOrResult && $isPromise(reactionsOrResult))) {
         registry.$delete(resolvedSpecifier);
 
         throw new TypeError(`require() async module "${key}" is unsupported. use "await import()" instead.`);
-      } else if (state === $promiseStateRejected) {
+      } else if (state === 2) {
         if (!reactionsOrResult?.message) {
           throw new TypeError(
             `${

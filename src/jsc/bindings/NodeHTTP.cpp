@@ -21,6 +21,7 @@
 #include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <wtf/text/MakeString.h>
 #include "JSSocketAddressDTO.h"
 #include "node/JSNodeHTTPServerSocket.h"
 #include "node/JSNodeHTTPServerSocketPrototype.h"
@@ -110,6 +111,63 @@ static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject
     return JSValue::encode(tuple);
 }
 
+enum class RequestHeaderKind : uint8_t {
+    Joinable,
+    Singleton,
+    Cookie,
+    SetCookie,
+};
+
+static RequestHeaderKind requestHeaderKind(WebCore::HTTPHeaderName name)
+{
+    switch (name) {
+    case WebCore::HTTPHeaderName::SetCookie:
+        return RequestHeaderKind::SetCookie;
+    case WebCore::HTTPHeaderName::Cookie:
+        return RequestHeaderKind::Cookie;
+    case WebCore::HTTPHeaderName::Age:
+    case WebCore::HTTPHeaderName::Authorization:
+    case WebCore::HTTPHeaderName::ContentLength:
+    case WebCore::HTTPHeaderName::ContentType:
+    case WebCore::HTTPHeaderName::ETag:
+    case WebCore::HTTPHeaderName::Expires:
+    case WebCore::HTTPHeaderName::Host:
+    case WebCore::HTTPHeaderName::IfModifiedSince:
+    case WebCore::HTTPHeaderName::IfUnmodifiedSince:
+    case WebCore::HTTPHeaderName::LastModified:
+    case WebCore::HTTPHeaderName::Location:
+    case WebCore::HTTPHeaderName::ProxyAuthorization:
+    case WebCore::HTTPHeaderName::Referer:
+    case WebCore::HTTPHeaderName::UserAgent:
+        return RequestHeaderKind::Singleton;
+    default:
+        return RequestHeaderKind::Joinable;
+    }
+}
+
+static RequestHeaderKind requestHeaderKind(const WTF::String& lowercasedName)
+{
+    if (lowercasedName == "from"_s || lowercasedName == "max-forwards"_s || lowercasedName == "retry-after"_s || lowercasedName == "server"_s)
+        return RequestHeaderKind::Singleton;
+    return RequestHeaderKind::Joinable;
+}
+
+// Builds the value for a duplicated, non-singleton request header: the
+// existing value, the kind's separator, and the new value as one flat
+// string — never a rope.
+static JSString* joinedRequestHeaderValue(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSString* existing, RequestHeaderKind kind, const WTF::String& value)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto existingValue = existing->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    String merged = tryMakeString(existingValue.data, kind == RequestHeaderKind::Cookie ? "; "_s : ", "_s, value);
+    if (merged.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    return jsString(vm, merged);
+}
+
 static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -128,18 +186,13 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         args.append(methodString);
     }
 
-    size_t size = 0;
-    for (auto it = request->begin(); it != request->end(); ++it) {
-        size++;
-    }
-
-    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(size, static_cast<size_t>(JSFinalObject::maxInlineCapacity)));
-    RETURN_IF_EXCEPTION(scope, void());
-    JSC::JSArray* setCookiesHeaderArray = nullptr;
-    JSC::JSString* setCookiesHeaderString = nullptr;
+    // Only the rawHeaders flat array is built here. The IncomingMessage
+    // constructor rebuilds `headers` lazily from rawHeaders with Node.js's
+    // duplicate-handling rules (joining, cookie/set-cookie rules,
+    // joinDuplicateHeaders), so a native headers object would be allocated and
+    // then thrown away on every request - the slot is passed as undefined.
     MarkedArgumentBuffer arrayValues;
-
-    args.append(headersObject);
+    HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
 
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
@@ -150,43 +203,29 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
             memcpy(data.data(), pair.second.data(), pair.second.length());
 
         HTTPHeaderName name;
-
         JSString* jsValue = jsString(vm, value);
-
-        HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
-        Identifier nameIdentifier;
         JSString* nameString = nullptr;
 
         if (WebCore::findHTTPHeaderName(nameView, name)) {
-            nameString = identifiers.stringFor(globalObject, name);
-            nameIdentifier = identifiers.identifierFor(vm, name);
-        } else {
-            WTF::String wtfString = nameView.toString();
-            nameString = jsString(vm, wtfString);
-            nameIdentifier = Identifier::fromString(vm, wtfString.convertToASCIILowercase());
-        }
-
-        if (name == WebCore::HTTPHeaderName::SetCookie) {
-            if (!setCookiesHeaderArray) {
-                setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
-                RETURN_IF_EXCEPTION(scope, );
-                setCookiesHeaderString = nameString;
-                headersObject->putDirect(vm, nameIdentifier, setCookiesHeaderArray, 0);
-                RETURN_IF_EXCEPTION(scope, void());
+            // rawHeaders keeps the wire casing; reuse the cached (lowercase)
+            // string only when the client already sent it lowercased.
+            const auto& cachedName = WTF::httpHeaderNameStringImpl(name);
+            if (nameView == StringView(cachedName)) {
+                nameString = identifiers.stringFor(globalObject, name);
+            } else {
+                nameString = jsString(vm, nameView.toString());
             }
-            arrayValues.append(setCookiesHeaderString);
-            arrayValues.append(jsValue);
-            setCookiesHeaderArray->push(globalObject, jsValue);
-            RETURN_IF_EXCEPTION(scope, void());
-
         } else {
-            headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, jsValue);
-            RETURN_IF_EXCEPTION(scope, void());
-            arrayValues.append(nameString);
-            arrayValues.append(jsValue);
-            RETURN_IF_EXCEPTION(scope, void());
+            nameString = jsString(vm, nameView.toString());
         }
+
+        arrayValues.append(nameString);
+        arrayValues.append(jsValue);
     }
+
+    // The headers slot: unused by the IncomingMessage native fast-path (see
+    // _http_incoming.ts), kept for argument-position compatibility.
+    args.append(jsUndefined());
 
     JSC::JSArray* array;
     {
@@ -338,10 +377,15 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         HTTPHeaderName name;
         WTF::String nameString;
         WTF::String lowercasedNameString;
+        bool knownHeader = WebCore::findHTTPHeaderName(nameView, name);
+        bool isSetCookie = false;
 
-        if (WebCore::findHTTPHeaderName(nameView, name)) {
-            nameString = WTF::httpHeaderNameStringImpl(name);
-            lowercasedNameString = nameString;
+        if (knownHeader) {
+            lowercasedNameString = WTF::httpHeaderNameStringImpl(name);
+            // rawHeaders keeps the wire casing; reuse the canonical string
+            // only when the client already sent it lowercased.
+            nameString = nameView == StringView(lowercasedNameString) ? lowercasedNameString : nameView.toString();
+            isSetCookie = name == WebCore::HTTPHeaderName::SetCookie;
         } else {
             nameString = nameView.toString();
             lowercasedNameString = nameString.convertToASCIILowercase();
@@ -349,7 +393,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
 
         JSString* jsValue = jsString(vm, value);
 
-        if (name == WebCore::HTTPHeaderName::SetCookie) {
+        if (isSetCookie) {
             if (!setCookiesHeaderArray) {
                 setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
@@ -363,7 +407,39 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
             RETURN_IF_EXCEPTION(scope, {});
 
         } else {
-            headersObject->putDirect(vm, Identifier::fromString(vm, lowercasedNameString), jsValue, 0);
+            Identifier nameIdentifier = Identifier::fromString(vm, lowercasedNameString);
+            if (std::optional<uint32_t> index = parseIndex(nameIdentifier)) [[unlikely]] {
+                // Index-shaped names store through the indexed path. A numeric
+                // name is never a known header name, so duplicates comma-join.
+                JSValue existing = headersObject->getDirectIndex(globalObject, index.value());
+                RETURN_IF_EXCEPTION(scope, {});
+                JSValue valueToPut = jsValue;
+                if (existing) [[unlikely]] {
+                    valueToPut = joinedRequestHeaderValue(globalObject, vm, asString(existing), RequestHeaderKind::Joinable, value);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+                headersObject->putDirectIndex(globalObject, index.value(), valueToPut);
+            } else {
+                // Locate the property the same way putDirect's replace path
+                // would, before storing anything: on a duplicate the first
+                // value is still intact at the returned offset.
+                PropertyOffset offset = headersObject->getDirectOffset(vm, nameIdentifier);
+                if (offset != invalidOffset) [[unlikely]] {
+                    // Duplicate header name, Node's rules: singleton headers
+                    // keep the first value (nothing to store), Cookie joins
+                    // with "; ", everything else joins with ", ".
+                    RequestHeaderKind kind = knownHeader ? requestHeaderKind(name) : requestHeaderKind(lowercasedNameString);
+                    if (kind != RequestHeaderKind::Singleton) {
+                        JSString* merged = joinedRequestHeaderValue(globalObject, vm, asString(headersObject->getDirect(offset)), kind, value);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        headersObject->structure()->didReplaceProperty(offset);
+                        headersObject->putDirectOffset(vm, offset, merged);
+                    }
+                } else {
+                    headersObject->putDirect(vm, nameIdentifier, jsValue, 0);
+                }
+            }
+            RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(globalObject, i++, jsString(vm, nameString));
             array->putDirectIndex(globalObject, i++, jsValue);
             RETURN_IF_EXCEPTION(scope, {});
@@ -604,9 +680,72 @@ static void NodeHTTPServer__writeHead(
     }
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
+    // node:http's ServerResponse owns the Date header entirely (it honors
+    // res.sendDate / removeHeader("date") in JS), so never let uWS write its
+    // own Date header for these responses.
+    response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+
+    // 204/304 responses must not carry any body framing, even when the user
+    // explicitly set a Transfer-Encoding header (Node.js suppresses the
+    // chunked framing and closes the connection for those).
+    if (statusMessageLength >= 3 && (memcmp(statusMessage, "204", 3) == 0 || memcmp(statusMessage, "304", 3) == 0)
+        && (statusMessageLength == 3 || statusMessage[3] == ' ')) {
+        response->getHttpResponseData()->noBodyStatus = true;
+    }
+
     if (headersObject) {
         if (auto* fetchHeaders = dynamicDowncast<WebCore::JSFetchHeaders>(headersObject)) {
             writeFetchHeadersToUWSResponse<isSSL>(fetchHeaders->wrapped(), response);
+            return;
+        }
+
+        // A flat [name, value, name, value, ...] array. Used by node:http's
+        // ServerResponse so that repeated header names (multiple Set-Cookie or
+        // duplicate Content-Length values, etc.) are written as separate
+        // header lines exactly as Node.js does.
+        if (auto* pairsArray = dynamicDowncast<JSC::JSArray>(headersObject)) {
+            auto* httpResponseData = response->getHttpResponseData();
+            unsigned length = pairsArray->length();
+            for (unsigned i = 0; i + 1 < length; i += 2) {
+                JSValue nameValue = pairsArray->getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, void());
+                JSValue headerValue = pairsArray->getIndex(globalObject, i + 1);
+                RETURN_IF_EXCEPTION(scope, void());
+
+                String name = nameValue.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, void());
+                String value = headerValue.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, void());
+
+                // node:http marks framing decisions with a NUL-named sentinel
+                // pair instead of a real header: value "1" = close-delimited
+                // (the user removed the framing headers), value "2" = no body
+                // (HEAD - suppress all body framing like 204/304).
+                if (name.length() == 1 && name[0] == 0) {
+                    if (value == "2"_s) {
+                        httpResponseData->noBodyStatus = true;
+                    } else {
+                        httpResponseData->closeDelimited = true;
+                    }
+                    continue;
+                }
+
+                WebCore::HTTPHeaderName headerName;
+                if (WebCore::findHTTPHeaderName(StringView(name), headerName)) {
+                    if (headerName == WebCore::HTTPHeaderName::ContentLength) {
+                        if (!(httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+                            httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+                            response->writeMark();
+                        }
+                    } else if (headerName == WebCore::HTTPHeaderName::Date) {
+                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+                    } else if (headerName == WebCore::HTTPHeaderName::TransferEncoding) {
+                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
+                    }
+                }
+
+                writeResponseHeader<isSSL>(response, name, value);
+            }
             return;
         }
 
@@ -887,8 +1026,29 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
             RETURN_IF_EXCEPTION(scope, {});
             const auto name = nameString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            if (WTF::equalIgnoringASCIICase(name, "set-cookie"_s)) {
-                RELEASE_AND_RETURN(scope, fetchHeadersGetSetCookie(globalObject, vm, impl));
+
+            // Resolve the name to its known header enum once. A known name then
+            // takes the HTTPHeaderName fast path (HTTPHeaderMap::get) and skips
+            // the isValidHTTPToken scan plus the second findHTTPHeaderName
+            // lookup that FetchHeaders::get(StringView) would otherwise perform.
+            WebCore::HTTPHeaderName headerName;
+            if (WebCore::findHTTPHeaderName(name, headerName)) {
+                if (headerName == WebCore::HTTPHeaderName::SetCookie) {
+                    // Node's getHeader returns undefined for an absent header;
+                    // Headers.getSetCookie()'s empty array is only correct once
+                    // at least one Set-Cookie value exists.
+                    if (impl->getSetCookieHeaders().isEmpty()) {
+                        return JSValue::encode(jsUndefined());
+                    }
+                    RELEASE_AND_RETURN(scope, fetchHeadersGetSetCookie(globalObject, vm, impl));
+                }
+
+                String value = impl->fastGet(headerName);
+                if (value.isEmpty()) {
+                    return JSValue::encode(jsUndefined());
+                }
+
+                return JSC::JSValue::encode(jsString(vm, value));
             }
 
             WebCore::ExceptionOr<String> res = impl->get(name);
@@ -929,6 +1089,20 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
             if (valueValue.isUndefined())
                 return JSValue::encode(jsUndefined());
 
+            // Resolve the header name to its known enum once. Known names then
+            // take the HTTPHeaderName overload of FetchHeaders::set, which skips
+            // the isValidHTTPToken scan (an enum name is a valid token by
+            // construction) and the second findHTTPHeaderName lookup that
+            // HTTPHeaderMap::set(const String&, ...) would otherwise perform.
+            WebCore::HTTPHeaderName headerName;
+            const bool isKnownHeaderName = WebCore::findHTTPHeaderName(StringView(name), headerName);
+            const auto setHeader = [&](const String& value) {
+                if (isKnownHeaderName)
+                    impl->set(headerName, value);
+                else
+                    impl->set(name, value);
+            };
+
             // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
             // Fall through to the single-value path in that case.
             if (auto* array = dynamicDowncast<JSArray>(valueValue)) {
@@ -938,7 +1112,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                     RETURN_IF_EXCEPTION(scope, {});
                     auto value = item.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
-                    impl->set(name, value);
+                    setHeader(value);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 for (unsigned i = 1; i < length; ++i) {
@@ -955,7 +1129,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
 
             auto value = valueValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            impl->set(name, value);
+            setHeader(value);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(jsUndefined());
         }

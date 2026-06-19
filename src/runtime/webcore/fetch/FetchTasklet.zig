@@ -187,6 +187,12 @@ pub const FetchTasklet = struct {
     fn clearSink(this: *FetchTasklet) void {
         if (this.sink) |sink| {
             this.sink = null;
+            // Detach the JS side first so that, if the sink's JS wrapper still
+            // holds the other ref (deref() below won't drop the count to 0, so it
+            // won't run deinit/detachJS), the wrapper stops being rooted by
+            // #js_this and the cached ondrain closure (+ stream graph) can be
+            // collected. detachJS runs no JS callbacks, safe during deinit.
+            sink.detachJS();
             sink.deref();
         }
         if (this.request_body_streaming_buffer) |buffer| {
@@ -471,6 +477,18 @@ pub const FetchTasklet = struct {
             this.mutex.unlock();
             // if we are not done we wait until the next call
             if (is_done) {
+                // The HTTP response has been fully received. If the request body
+                // is still uploading through a ResumableSink (e.g. its underlying
+                // source's `pull` awaits a timer, so a chunk arrives after the
+                // sink paused on backpressure), the HTTP layer will never drain it
+                // again — `ondrain` never fires, so the JS drainReaderIntoSink
+                // continuation (which captures the reader/stream graph) and the
+                // startRequestStream ref would leak forever. Cancel the sink so
+                // the JS side releases the reader and writeEndRequest drops that
+                // ref. cancel is a no-op if the sink already finished.
+                if (this.sink) |sink| {
+                    sink.cancel(.js_undefined);
+                }
                 var poll_ref = this.poll_ref;
                 this.poll_ref = .{};
                 poll_ref.unref(vm);
@@ -993,6 +1011,14 @@ pub const FetchTasklet = struct {
 
     fn ignoreRemainingResponseBody(this: *FetchTasklet) void {
         log("ignoreRemainingResponseBody", .{});
+        // The response is being abandoned. If the request body is still uploading
+        // through a ResumableSink, detach its JS wrapper so the cached `ondrain`
+        // closure (and the reader/stream graph it captures) becomes collectible
+        // instead of leaking. detachJS runs no JS callbacks, so it is safe even
+        // on the GC-finalizer caller (Bun__FetchResponse_finalize).
+        if (this.sink) |sink| {
+            sink.detachJS();
+        }
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
         if (this.http) |http_| {

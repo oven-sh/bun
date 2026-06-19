@@ -3,6 +3,7 @@
 
 const { jest } = Bun;
 const { kEmptyObject, throwNotImplemented } = require("internal/shared");
+const { validateBoolean, validateInteger, validateObject } = require("internal/validators");
 
 const kDefaultName = "<anonymous>";
 const kDefaultFunction = () => {};
@@ -12,71 +13,360 @@ function run() {
   throwNotImplemented("run()", 5090, "Use `bun:test` in the interim.");
 }
 
-// Minimal `mock` tracker — enough for Node's own test suite (notably
-// test/parallel/test-sqlite-*.{js,mjs}) which only uses `mock.fn()`,
-// `spy.mock.calls[i].arguments`, and `spy.mock.callCount()`. The full
-// MockTracker API (timers, getters, method mocking, restore/reset) is
-// still #5090.
+// Port of Node.js lib/internal/test_runner/mock/mock.js (v26.3.0):
+//   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/test_runner/mock/mock.js
+// API reference: https://nodejs.org/api/test.html#class-mocktracker
+let trackMockCall: (ctx: MockFunctionContext, thisArg: unknown, args: unknown[], target: unknown) => unknown;
+
 class MockFunctionContext {
-  calls: { arguments: unknown[]; result?: unknown; error?: unknown; this: unknown }[];
-  #impl: Function;
-  constructor(impl: Function) {
-    this.calls = [];
-    this.#impl = impl;
+  #calls: unknown[];
+  #implementation: Function | undefined;
+  #original: Function;
+  #onceImplementations: Map<number, Function>;
+  #restore: (() => void) | undefined;
+  #times: number;
+
+  constructor(
+    original: Function,
+    implementation: Function | undefined,
+    restore?: () => void,
+    times: number = Infinity,
+  ) {
+    this.#calls = [];
+    this.#original = original;
+    this.#implementation = implementation;
+    this.#onceImplementations = new Map();
+    this.#restore = restore;
+    this.#times = times;
   }
-  callCount() {
-    return this.calls.length;
+
+  get calls() {
+    return Array.from(this.#calls);
   }
-  mockImplementation(impl: Function) {
-    this.#impl = impl;
+
+  callCount(): number {
+    return this.#calls.length;
   }
+
+  mockImplementation(implementation: Function) {
+    if (!$isCallable(implementation)) {
+      throw $ERR_INVALID_ARG_TYPE("implementation", "function", implementation);
+    }
+    this.#implementation = implementation;
+  }
+
+  mockImplementationOnce(implementation: Function, onCall?: number) {
+    if (!$isCallable(implementation)) {
+      throw $ERR_INVALID_ARG_TYPE("implementation", "function", implementation);
+    }
+    // node validates the call index: an integer no earlier than the next call
+    const nextCall = this.#calls.length;
+    const call = onCall ?? nextCall;
+    validateInteger(call, "onCall", nextCall);
+    this.#onceImplementations.set(call, implementation);
+  }
+
   resetCalls() {
-    this.calls.length = 0;
+    this.#calls = [];
   }
-  _invoke(thisArg: unknown, args: unknown[]) {
-    const record: any = { arguments: args, this: thisArg };
-    try {
-      record.result = this.#impl.$apply(thisArg, args);
-      this.calls.push(record);
-      return record.result;
-    } catch (e) {
-      record.error = e;
-      this.calls.push(record);
-      throw e;
+
+  restore() {
+    // node semantics: a method mock reinstalls the original descriptor but the
+    // context keeps its implementation (calling the detached mock function
+    // still uses it); a bare fn mock reverts to calling the original. Queued
+    // once-implementations survive, and restore() stays re-runnable so a
+    // still-tracked context can be restored again by reset().
+    if (this.#restore !== undefined) {
+      this.#restore();
+    } else {
+      this.#implementation = undefined;
     }
+  }
+
+  static {
+    trackMockCall = function trackMockCall(
+      ctx: MockFunctionContext,
+      thisArg: unknown,
+      args: unknown[],
+      target: unknown,
+    ) {
+      const callIndex = ctx.#calls.length;
+      let implementation = ctx.#onceImplementations.get(callIndex);
+      if (implementation !== undefined) {
+        ctx.#onceImplementations.delete(callIndex);
+      } else {
+        implementation = ctx.#implementation ?? ctx.#original;
+      }
+      // options.times: revert to the original behavior once the mock has
+      // been used `times` times (node decides this before invoking, so the
+      // current call still uses the mocked implementation).
+      if (callIndex + 1 === ctx.#times) {
+        ctx.restore();
+      }
+      // node records the call in a finally *after* invoking, so a reentrant
+      // implementation observes callCount() === N (not N+1), recursive calls
+      // record in completion order, and the stack is captured post-invoke.
+      let result: unknown;
+      let error: unknown;
+      try {
+        result =
+          target === undefined
+            ? (implementation as Function).$apply(thisArg, args)
+            : Reflect.construct(implementation as Function, args, target as Function);
+        return result;
+      } catch (e) {
+        error = e;
+        throw e;
+      } finally {
+        ctx.#calls.push({
+          arguments: args,
+          error,
+          result,
+          stack: new Error(),
+          target,
+          this: thisArg,
+        });
+      }
+    };
   }
 }
 
-class MockTracker {
-  fn(original: Function = kDefaultFunction, impl: Function = original) {
-    const ctx = new MockFunctionContext(impl);
-    function spy(this: unknown, ...args: unknown[]) {
-      return ctx._invoke(this, args);
-    }
-    Object.defineProperty(spy, "mock", { value: ctx, enumerable: true });
-    // Preserve .length so code that inspects the spy's declared arity
-    // (sqlite's aggregate() infers varargs from it) sees the original.
-    Object.defineProperty(spy, "length", { value: original.length, configurable: true });
-    return spy;
+function createMockFunction(
+  original: Function,
+  implementation: Function | undefined,
+  restore?: () => void,
+  times: number = Infinity,
+) {
+  const context = new MockFunctionContext(original, implementation, restore, times);
+  kMockContexts.push(context);
+  function mockFunction(this: unknown, ...args: unknown[]) {
+    return trackMockCall(context, this, args, new.target);
   }
-  method() {
-    throwNotImplemented("mock.method()", 5090, "Use `bun:test` in the interim.");
-  }
-  getter() {
-    throwNotImplemented("mock.getter()", 5090, "Use `bun:test` in the interim.");
-  }
-  setter() {
-    throwNotImplemented("mock.setter()", 5090, "Use `bun:test` in the interim.");
-  }
-  reset() {}
-  restoreAll() {}
-  get timers() {
-    throwNotImplemented("mock.timers", 5090, "Use `bun:test` in the interim.");
-    return undefined;
-  }
+  Object.defineProperty(mockFunction, "mock", {
+    value: context,
+    writable: false,
+    enumerable: false,
+  });
+  Object.defineProperty(mockFunction, "length", {
+    value: original.length,
+    configurable: true,
+  });
+  Object.defineProperty(mockFunction, "name", {
+    value: original.name,
+    configurable: true,
+  });
+  return mockFunction;
 }
 
-const mock = new MockTracker();
+const kMockContexts: MockFunctionContext[] = [];
+
+function validateTimes(value: unknown, name: string) {
+  if (value === Infinity) {
+    return;
+  }
+  validateInteger(value, name, 1);
+}
+
+function mockFn(original?: Function | object, implementation?: Function | object, options?: object) {
+  if (original !== null && original !== undefined && !$isCallable(original) && typeof original === "object") {
+    options = implementation as object;
+    implementation = original;
+    original = undefined;
+  }
+  if (
+    implementation !== null &&
+    implementation !== undefined &&
+    !$isCallable(implementation) &&
+    typeof implementation === "object"
+  ) {
+    options = implementation as object;
+    implementation = undefined;
+  }
+  if (original !== undefined && !$isCallable(original)) {
+    throw $ERR_INVALID_ARG_TYPE("original", "function", original);
+  }
+  if (implementation !== undefined && !$isCallable(implementation)) {
+    throw $ERR_INVALID_ARG_TYPE("implementation", "function", implementation);
+  }
+  if (options !== undefined) {
+    validateObject(options, "options");
+  }
+  const { times = Infinity } = (options ?? kEmptyObject) as { times?: number };
+  validateTimes(times, "options.times");
+  return createMockFunction(
+    (original as Function) ?? function () {},
+    implementation as Function | undefined,
+    undefined,
+    times,
+  );
+}
+
+function mockMethod(
+  objectOrFunction: object | Function,
+  methodName: PropertyKey,
+  implementation?: Function | object,
+  options?: { getter?: boolean; setter?: boolean } | object,
+) {
+  if (
+    implementation !== null &&
+    implementation !== undefined &&
+    !$isCallable(implementation) &&
+    typeof implementation === "object"
+  ) {
+    options = implementation;
+    implementation = undefined;
+  }
+  if (implementation !== undefined && !$isCallable(implementation)) {
+    throw $ERR_INVALID_ARG_TYPE("implementation", "function", implementation);
+  }
+  if ((typeof objectOrFunction !== "object" || objectOrFunction === null) && !$isCallable(objectOrFunction)) {
+    throw $ERR_INVALID_ARG_TYPE("object", "object", objectOrFunction);
+  }
+  if (typeof methodName !== "string" && typeof methodName !== "symbol") {
+    throw $ERR_INVALID_ARG_TYPE("methodName", ["string", "symbol"], methodName);
+  }
+  if (options !== undefined) {
+    validateObject(options, "options");
+  }
+  const {
+    getter = false,
+    setter = false,
+    times = Infinity,
+  } = (options ?? kEmptyObject) as {
+    getter?: boolean;
+    setter?: boolean;
+    times?: number;
+  };
+  validateBoolean(getter, "options.getter");
+  validateBoolean(setter, "options.setter");
+  validateTimes(times, "options.times");
+  if (setter && getter) {
+    throw $ERR_INVALID_ARG_VALUE("options.setter", setter, "cannot be used with 'options.getter'");
+  }
+
+  // Find the descriptor on the object or its prototype chain.
+  let target: object | null = objectOrFunction;
+  let descriptor: PropertyDescriptor | undefined;
+  while (target !== null) {
+    descriptor = Object.getOwnPropertyDescriptor(target, methodName);
+    if (descriptor !== undefined) break;
+    target = Object.getPrototypeOf(target);
+  }
+  if (descriptor === undefined) {
+    throw $ERR_INVALID_ARG_VALUE("methodName", methodName, "must be a method");
+  }
+
+  let original: Function;
+  if (getter) {
+    if (!$isCallable(descriptor.get)) {
+      throw $ERR_INVALID_ARG_VALUE("methodName", methodName, "must be a getter");
+    }
+    original = descriptor.get;
+  } else if (setter) {
+    if (!$isCallable(descriptor.set)) {
+      throw $ERR_INVALID_ARG_VALUE("methodName", methodName, "must be a setter");
+    }
+    original = descriptor.set;
+  } else {
+    if (!$isCallable(descriptor.value)) {
+      throw $ERR_INVALID_ARG_VALUE("methodName", methodName, "must be a method");
+    }
+    original = descriptor.value;
+  }
+
+  const restore = function restore() {
+    Object.defineProperty(objectOrFunction, methodName, descriptor!);
+  };
+  const mocked = createMockFunction(original, implementation as Function | undefined, restore, times);
+
+  const mockDescriptor: PropertyDescriptor = {
+    configurable: descriptor.configurable,
+    enumerable: descriptor.enumerable,
+  };
+  if (getter || setter) {
+    if (getter) {
+      mockDescriptor.get = mocked;
+      mockDescriptor.set = descriptor.set;
+    } else {
+      mockDescriptor.get = descriptor.get;
+      mockDescriptor.set = mocked;
+    }
+  } else {
+    mockDescriptor.value = mocked;
+    mockDescriptor.writable = descriptor.writable;
+  }
+  Object.defineProperty(objectOrFunction, methodName, mockDescriptor);
+  return mocked;
+}
+
+const mock = {
+  fn: mockFn,
+  method: mockMethod,
+  getter(
+    objectOrFunction: object | Function,
+    methodName: PropertyKey,
+    implementation?: Function | object,
+    options?: object,
+  ) {
+    // Shift implementation -> options *before* spreading, or the shift inside
+    // mockMethod would clobber the getter flag (node does the same).
+    if (
+      implementation !== null &&
+      implementation !== undefined &&
+      !$isCallable(implementation) &&
+      typeof implementation === "object"
+    ) {
+      options = implementation;
+      implementation = undefined;
+    }
+    const { getter = true } = (options ?? kEmptyObject) as { getter?: boolean };
+    if (getter === false) {
+      throw $ERR_INVALID_ARG_VALUE("options.getter", getter, "cannot be false");
+    }
+    return mockMethod(objectOrFunction, methodName, implementation as Function | undefined, {
+      ...options,
+      getter,
+    });
+  },
+  setter(
+    objectOrFunction: object | Function,
+    methodName: PropertyKey,
+    implementation?: Function | object,
+    options?: object,
+  ) {
+    if (
+      implementation !== null &&
+      implementation !== undefined &&
+      !$isCallable(implementation) &&
+      typeof implementation === "object"
+    ) {
+      options = implementation;
+      implementation = undefined;
+    }
+    const { setter = true } = (options ?? kEmptyObject) as { setter?: boolean };
+    if (setter === false) {
+      throw $ERR_INVALID_ARG_VALUE("options.setter", setter, "cannot be false");
+    }
+    return mockMethod(objectOrFunction, methodName, implementation as Function | undefined, {
+      ...options,
+      setter,
+    });
+  },
+  reset() {
+    // restoreAll() plus disassociating the mocks from the tracker, like node.
+    mock.restoreAll();
+    kMockContexts.length = 0;
+  },
+  restoreAll() {
+    // Restores method mocks to their original descriptor and makes bare
+    // mock.fn() mocks call their original function again, like node. Unlike
+    // reset(), the mocks stay associated with the tracker.
+    for (const ctx of kMockContexts) ctx.restore();
+  },
+  module() {
+    throwNotImplemented("mock.module()", 5090, "Use `bun:test` in the interim.");
+  },
+};
 
 function fileSnapshot(_value: unknown, _path: string, _options: { serializers?: Function[] } = kEmptyObject) {
   throwNotImplemented("fileSnapshot()", 5090, "Use `bun:test` in the interim.");
@@ -160,9 +450,11 @@ class TestContext {
   }
 
   get mock() {
-    // Node gives each TestContext its own tracker so `t.after` can
-    // restore; the shim is stateless enough that sharing one is fine
-    // for now (nothing to restore when only fn() is implemented).
+    // Node gives each TestContext its own MockTracker so `t.after`
+    // can automatically restoreAll(); we currently share the module-
+    // level tracker, which is enough for Node's own test suite
+    // (notably test/parallel/test-sqlite-*.{js,mjs} which only reads
+    // `t.mock.fn()`). Per-context tracking is #5090 follow-up.
     return mock;
   }
 

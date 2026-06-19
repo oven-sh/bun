@@ -854,7 +854,7 @@ export function assignStreamIntoResumableSink(stream, sink) {
     }
 
     // Native ResumableSink invokes this as (undefined, reason) — see
-    // ResumableSink.cancel in ResumableSink.zig. The first slot is unused
+    // the native ResumableSink.cancel. The first slot is unused
     // here (we close over `stream`), but the parameter is required so the
     // abort reason lands in the right argument.
     function cancelStream(_, reason: Error | null) {
@@ -1606,6 +1606,20 @@ export function readableStreamCancel(stream: ReadableStream, reason: any) {
   if (state === $streamErrored) return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
   $readableStreamClose(stream);
 
+  // Spec (ReadableStreamCancel step 6): perform each pending readIntoRequest's
+  // close steps with undefined, i.e. resolve { value: undefined, done: true }.
+  // This lives here and not in readableStreamClose - at ordinary close a BYOB
+  // read stays pending until the source responds with byobRequest.respond(0).
+  const reader = $getByIdDirectPrivate(stream, "reader");
+  if (reader && $isReadableStreamBYOBReader(reader)) {
+    const readIntoRequests = $getByIdDirectPrivate(reader, "readIntoRequests");
+    if (readIntoRequests?.isNotEmpty()) {
+      $putByIdDirectPrivate(reader, "readIntoRequests", $createFIFO());
+      for (var request = readIntoRequests.shift(); request; request = readIntoRequests.shift())
+        $fulfillPromise(request, { value: undefined, done: true });
+    }
+  }
+
   const controller = $getByIdDirectPrivate(stream, "readableStreamController");
   if (controller === null) return Promise.$resolve();
 
@@ -1675,8 +1689,18 @@ export function readableStreamClose(stream) {
         $fulfillPromise(request, { value: undefined, done: true });
     }
   }
+  // Note: pending BYOB readIntoRequests are intentionally NOT drained here.
+  // Spec (ReadableStreamClose) only handles default readers; a BYOB read
+  // pending at close stays pending until the source calls
+  // byobRequest.respond(0), which returns a zero-length view of the caller's
+  // (transferred) buffer. The drain-with-undefined step belongs to
+  // ReadableStreamCancel only.
 
-  $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "closedPromiseCapability").resolve.$call();
+  // Direct streams store an empty `{}` sentinel in the reader slot (see
+  // $readDirectStream) to mark themselves locked without a real reader, so it
+  // has no closedPromiseCapability to resolve.
+  const closedPromiseCapability = $getByIdDirectPrivate(reader, "closedPromiseCapability");
+  if (closedPromiseCapability) closedPromiseCapability.resolve.$call();
 }
 
 export function readableStreamFulfillReadRequest(stream, chunk, done) {
@@ -1823,7 +1847,7 @@ export function readableStreamFromAsyncIterator(target, fn) {
 
         if ($isPromise(promise) && $isPromiseFulfilled(promise)) {
           clearImmediate(immediateTask);
-          ({ value, done } = $getPromiseInternalField(promise, $promiseFieldReactionsOrResult));
+          ({ value, done } = $peekPromiseSettledValue(promise));
           $assert(!$isPromise(value), "Expected a value, not a promise");
         } else {
           immediateTask = setImmediate(() => immediateTask && controller?.flush?.(true));
@@ -2036,7 +2060,18 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
     #getInternalBuffer(chunkSize) {
       var chunk = this.$data;
-      if (!chunk || chunk.length < chunkSize) {
+      // #handleNumberResult stores the unfilled tail (view.subarray(result))
+      // here, so consecutive reads write into advancing offsets of the same
+      // backing ArrayBuffer and the enqueued chunks share it. Rotate only
+      // when there is no buffer or autoAllocateChunkSize has grown past the
+      // one we allocated — the tail itself is reused until a read fills it
+      // exactly and #handleNumberResult sets $data = undefined. The previous
+      // check was `chunk.length < chunkSize`, which is true after any
+      // nonzero read, so every pull allocated a fresh 256KB-2MB Gigacage
+      // buffer while the previous one was still pinned by the consumer's
+      // subarray — on Windows that drove commit charge to tens of GB before
+      // VirtualAlloc(MEM_COMMIT) failed in pas_compact_heap_reservation.
+      if (!chunk || chunk.buffer.byteLength < chunkSize) {
         this.$data = chunk = new Uint8Array(chunkSize);
       }
       return chunk;

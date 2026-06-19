@@ -1074,7 +1074,7 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             JSFunction* runMainFunction = JSFunction::create(
                 init.vm, init.owner, 2, "runMain"_s,
                 jsFunctionRunMain, JSC::ImplementationVisibility::Public,
-                JSC::NoIntrinsic, jsFunctionRunMain);
+                JSC::NoIntrinsic);
             init.set(runMainFunction);
         });
 
@@ -1083,7 +1083,7 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             JSFunction* resolveFilenameFunction = JSFunction::create(
                 init.vm, init.owner, 2, "_resolveFilename"_s,
                 jsFunctionResolveFileName, JSC::ImplementationVisibility::Public,
-                JSC::NoIntrinsic, jsFunctionResolveFileName);
+                JSC::NoIntrinsic);
             init.set(resolveFilenameFunction);
         });
 
@@ -1092,7 +1092,7 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             JSFunction* resolveFilenameFunction = JSFunction::create(
                 init.vm, init.owner, 2, "_compile"_s,
                 functionJSCommonJSModule_compile, JSC::ImplementationVisibility::Public,
-                JSC::NoIntrinsic, functionJSCommonJSModule_compile);
+                JSC::NoIntrinsic);
             init.set(resolveFilenameFunction);
         });
 
@@ -1131,6 +1131,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
     return JSValue::encode(
         jsBoolean(defaultGlobalObject(globalObject)
                 ->hasOverriddenModuleResolveFilenameFunction));
+}
+
+extern "C" bool Bun__streamIterEnabled();
+
+// $cpp("NodeModuleModule.cpp", "createStreamIterEnabledFlag"): the write-once
+// `--experimental-stream-iter` CLI bit, so builtins don't have to consult the
+// user-mutable `process.execArgv`.
+JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*)
+{
+    return JSC::jsBoolean(Bun__streamIterEnabled());
 }
 
 } // namespace Bun

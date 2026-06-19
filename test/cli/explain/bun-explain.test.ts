@@ -1,75 +1,148 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+
+let i = 0;
 
 describe.concurrent("bun explain", () => {
-  it("should print deprecation to stderr and exit 1 (no args)", async () => {
-    using dir = tempDir("explain-no-args", {});
+  // Set up a tempDir with a known package.json + lockfile so each test runs in a
+  // closed fixture (avoids reading the host cwd or the test process's real deps).
+  async function setupFixture() {
+    const testDir = tempDirWithFiles(`explain-${i++}`, {
+      "package.json": JSON.stringify(
+        {
+          name: "explain-test",
+          version: "1.0.0",
+          dependencies: {
+            lodash: "^4.17.21",
+          },
+        },
+        null,
+        2,
+      ),
+    });
+
+    const install = spawn({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: testDir,
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(await install.exited).toBe(0);
+
+    return testDir;
+  }
+
+  // TS-1: alias wired, no-args.
+  // `bun explain` with no args exits 1 and prints WhyCommand's usage text (which
+  // begins with the `bun why v...` version line at why_command.zig:191). Proves
+  // the matcher routed "explain" to .WhyCommand rather than AutoCommand.
+  it("exits 1 and prints bun why usage on no args", async () => {
+    const testDir = await setupFixture();
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "explain"],
-      cwd: String(dir),
+      cwd: testDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
     const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    expect(err).toContain("bun explain");
-    expect(err).toContain("removed");
-    expect(err).toContain("bun why");
-    expect(out).toBe("");
+    const combined = out + err;
+    // Assert content before exit code for diagnostic clarity on failure.
+    expect(combined).toContain("bun why");
     expect(code).toBe(1);
   });
 
-  it("should print deprecation to stderr and exit 1 (with args)", async () => {
-    using dir = tempDir("explain-with-args", {});
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "explain", "react"],
-      cwd: String(dir),
+  // TS-2: alias wired, with package arg.
+  // `bun explain <pkg>` exits 0 and prints a dep tree whose root is <pkg>.
+  it("shows direct dependency for a known package", async () => {
+    const testDir = await setupFixture();
+    const { stdout, exited } = spawn({
+      cmd: [bunExe(), "explain", "lodash"],
+      cwd: testDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    expect(err).toContain("bun explain");
-    expect(err).toContain("bun why");
-    expect(out).toBe("");
-    expect(code).toBe(1);
+    expect(await exited).toBe(0);
+    const output = await stdout.text();
+    expect(output).toContain("lodash@");
   });
 
-  it("should print deprecation to stderr and exit 1 (with flags)", async () => {
-    using dir = tempDir("explain-with-flags", {});
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "explain", "--top"],
-      cwd: String(dir),
+  // TS-3: alias wired, with --top flag.
+  // `bun explain <pkg> --top` exits 0 — the alias inherits WhyCommand's flag handling.
+  it("accepts --top flag and exits 0", async () => {
+    const testDir = await setupFixture();
+    const { stdout, exited } = spawn({
+      cmd: [bunExe(), "explain", "lodash", "--top"],
+      cwd: testDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    expect(err).toContain("bun explain");
-    expect(err).toContain("bun why");
-    expect(out).toBe("");
-    expect(code).toBe(1);
+    expect(await exited).toBe(0);
+    const output = await stdout.text();
+    expect(output).toContain("lodash@");
   });
 
-  it("should print help-style message and exit 0 on --help", async () => {
-    using dir = tempDir("explain-help", {});
+  // TS-4: alias wired, --help.
+  // `bun explain --help` exits 0 and prints WhyCommand's help arm (which reads
+  // "bun why" throughout). The --help short-circuit at Arguments.parse is
+  // name-agnostic, so the alias inherits WhyCommand's help text for free.
+  it("prints bun why help and exits 0 on --help", async () => {
+    const testDir = await setupFixture();
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "explain", "--help"],
-      cwd: String(dir),
+      cwd: testDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
     const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    // Help goes to stdout via tagPrintHelp → Output.pretty (per why/help convention).
-    const helpText = out + err;
-    expect(helpText).toContain("bun explain");
-    expect(helpText).toContain("bun why");
+    const combined = out + err;
+    expect(combined).toContain("bun why");
+    expect(combined).toContain("Usage");
     expect(code).toBe(0);
+  });
+
+  // TS-5: cross-command equivalence.
+  // `bun explain <pkg>` and `bun why <pkg>` produce byte-identical output in the
+  // same fixture. The strongest assertion that the alias is exact, not merely
+  // "same behavior in shape".
+  it("produces byte-identical output to bun why for the same args", async () => {
+    const testDir = await setupFixture();
+    const explain = spawn({
+      cmd: [bunExe(), "explain", "lodash"],
+      cwd: testDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const why = spawn({
+      cmd: [bunExe(), "why", "lodash"],
+      cwd: testDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // Assert content (the triple) before exit code for diagnostic clarity.
+    const [explainOut, explainErr, explainCode] = await Promise.all([
+      explain.stdout.text(),
+      explain.stderr.text(),
+      explain.exited,
+    ]);
+    const [whyOut, whyErr, whyCode] = await Promise.all([why.stdout.text(), why.stderr.text(), why.exited]);
+
+    expect({ stdout: explainOut, stderr: explainErr, exitCode: explainCode }).toEqual({
+      stdout: whyOut,
+      stderr: whyErr,
+      exitCode: whyCode,
+    });
   });
 });

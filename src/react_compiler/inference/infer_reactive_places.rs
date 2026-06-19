@@ -23,7 +23,7 @@ use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
 use crate::hir::{
     BlockId, Effect, FunctionId, HirFunction, IdentifierId, InstructionValue, ParamPattern,
-    Terminal, Type, is_ref_or_ref_value,
+    Terminal, Type,
 };
 
 use crate::utils::DisjointSet;
@@ -42,30 +42,7 @@ pub fn infer_reactive_places(
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
     let mut aliased_identifiers = find_disjoint_mutable_values(func, env);
-    // Ref-typed identifiers (BuiltInUseRefId / BuiltInRefValue) are stable by
-    // construction: useRef() returns the same object on every render and
-    // `.current` reads/writes are not reactive. Precompute the set so the
-    // ReactivityMap can short-circuit both `is_reactive` and `mark_reactive`
-    // for these — otherwise ref-mutations summarized onto FunctionExpression
-    // context places (Effect::Capture/Store/Mutate) would mark the ref reactive
-    // via the mutable-operand path and inflate scope dependencies.
-    let mut ref_typed: HashSet<IdentifierId> = env
-        .identifiers
-        .iter()
-        .enumerate()
-        .filter(|(_, ident)| is_ref_or_ref_value(&env.types[ident.type_.0 as usize]))
-        .map(|(i, _)| IdentifierId(i as u32))
-        .collect();
-    // Function parameters are always reactive even if ref-typed (the outer ref
-    // box may differ across renders); pruning happens in pruneNonReactiveDependencies.
-    for param in &func.params {
-        let id = match param {
-            ParamPattern::Place(p) => p.identifier,
-            ParamPattern::Spread(s) => s.place.identifier,
-        };
-        ref_typed.remove(&id);
-    }
-    let mut reactive_map = ReactivityMap::new(&mut aliased_identifiers, ref_typed);
+    let mut reactive_map = ReactivityMap::new(&mut aliased_identifiers);
     let mut stable_sidemap = StableSidemap::new();
 
     // Mark all function parameters as reactive
@@ -78,11 +55,8 @@ pub fn infer_reactive_places(
     }
 
     // Compute control dominators
-    let post_dominators = crate::hir::dominator::compute_post_dominator_tree(
-        func,
-        env.next_block_id().0,
-        false,
-    )?;
+    let post_dominators =
+        crate::hir::dominator::compute_post_dominator_tree(func, env.next_block_id().0, false)?;
 
     // Collect block IDs for iteration
     let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
@@ -260,34 +234,23 @@ struct ReactivityMap<'a> {
     has_changes: bool,
     reactive: HashSet<IdentifierId>,
     aliased_identifiers: &'a mut DisjointSet<IdentifierId>,
-    ref_typed: HashSet<IdentifierId>,
 }
 
 impl<'a> ReactivityMap<'a> {
-    fn new(
-        aliased_identifiers: &'a mut DisjointSet<IdentifierId>,
-        ref_typed: HashSet<IdentifierId>,
-    ) -> Self {
+    fn new(aliased_identifiers: &'a mut DisjointSet<IdentifierId>) -> Self {
         ReactivityMap {
             has_changes: false,
             reactive: HashSet::new(),
             aliased_identifiers,
-            ref_typed,
         }
     }
 
     fn is_reactive(&mut self, id: IdentifierId) -> bool {
-        if self.ref_typed.contains(&id) {
-            return false;
-        }
         let canonical = self.aliased_identifiers.find_opt(id).unwrap_or(id);
         self.reactive.contains(&canonical)
     }
 
     fn mark_reactive(&mut self, id: IdentifierId) {
-        if self.ref_typed.contains(&id) {
-            return;
-        }
         let canonical = self.aliased_identifiers.find_opt(id).unwrap_or(id);
         if self.reactive.insert(canonical) {
             self.has_changes = true;
@@ -734,14 +697,11 @@ fn apply_reactive_flags_replay(
 fn build_reactive_id_set(reactive_map: &mut ReactivityMap) -> HashSet<IdentifierId> {
     let mut result = HashSet::new();
     for &id in &reactive_map.reactive {
-        if !reactive_map.ref_typed.contains(&id) {
-            result.insert(id);
-        }
+        result.insert(id);
     }
     let reactive = &reactive_map.reactive;
-    let ref_typed = &reactive_map.ref_typed;
     reactive_map.aliased_identifiers.for_each(|id, canonical| {
-        if reactive.contains(&canonical) && !ref_typed.contains(&id) {
+        if reactive.contains(&canonical) {
             result.insert(id);
         }
     });

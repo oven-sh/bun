@@ -4,33 +4,38 @@
 //! before the React Compiler runs (see `src/js_parser/visit/visit_expr.rs::e_jsx_element`).
 //! This module decodes that call shape back into the HIR `JsxExpression` instruction.
 
-use bun_ast::expr::Data as ExprData;
-use bun_ast::{E, Expr, G, Loc};
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::{
     BuiltinTag, InstructionValue, JsxAttribute, JsxTag, Place, PrimitiveValue, PropertyLiteral,
     SourceLocation,
 };
+use bun_ast::expr::Data as ExprData;
+use bun_ast::{E, Expr, G, Loc};
 
 use super::expr::lower_expression;
 use super::{lower_expression_to_temporary, lower_identifier, lower_value_to_temporary};
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
-fn estring_to_string(s: &E::EString, loc: &Option<SourceLocation>) -> Result<String, CompilerError> {
+fn estring_to_string(
+    s: &E::EString,
+    loc: &Option<SourceLocation>,
+) -> Result<String, CompilerError> {
     if s.is_utf16 {
         Ok(String::from_utf16_lossy(s.slice16()))
     } else {
-        core::str::from_utf8(s.slice8()).map(str::to_owned).map_err(|_| {
-            let mut err = CompilerError::new();
-            err.push_error_detail(CompilerErrorDetail {
-                category: ErrorCategory::Todo,
-                reason: "(BuildHIR::lowerJsx) non-utf8 string".to_string(),
-                description: None,
-                loc: *loc,
-                suggestions: None,
-            });
-            err
-        })
+        core::str::from_utf8(s.slice8())
+            .map(str::to_owned)
+            .map_err(|_| {
+                let mut err = CompilerError::new();
+                err.push_error_detail(CompilerErrorDetail {
+                    category: ErrorCategory::Todo,
+                    reason: "(BuildHIR::lowerJsx) non-utf8 string".to_string(),
+                    description: None,
+                    loc: *loc,
+                    suggestions: None,
+                });
+                err
+            })
     }
 }
 
@@ -129,9 +134,15 @@ pub(super) fn lower_jsx_member_expression(
             // Use identifier's own loc for the place, but member expression's loc for the instruction
             let place = lower_identifier(builder, id.ref_, id_loc)?;
             let load_value = if builder.is_context_identifier(id.ref_) {
-                InstructionValue::LoadContext { place, loc: expr_loc }
+                InstructionValue::LoadContext {
+                    place,
+                    loc: expr_loc,
+                }
             } else {
-                InstructionValue::LoadLocal { place, loc: expr_loc }
+                InstructionValue::LoadLocal {
+                    place,
+                    loc: expr_loc,
+                }
             };
             lower_value_to_temporary(builder, load_value)?
         }
@@ -139,9 +150,15 @@ pub(super) fn lower_jsx_member_expression(
             let id_loc = convert_loc(expr.target.loc);
             let place = lower_identifier(builder, id.ref_, id_loc)?;
             let load_value = if builder.is_context_identifier(id.ref_) {
-                InstructionValue::LoadContext { place, loc: expr_loc }
+                InstructionValue::LoadContext {
+                    place,
+                    loc: expr_loc,
+                }
             } else {
-                InstructionValue::LoadLocal { place, loc: expr_loc }
+                InstructionValue::LoadLocal {
+                    place,
+                    loc: expr_loc,
+                }
             };
             lower_value_to_temporary(builder, load_value)?
         }
@@ -244,6 +261,42 @@ pub(super) fn lower_jsx_call(
         let ExprData::EObject(obj) = &props_arg.unwrap().data else {
             unreachable!()
         };
+
+        // visit_expr.rs only wraps `children` in a synthetic E::Array when
+        // `is_static_jsx` is true; for a single non-spread child the child
+        // expression (which may itself be a user-authored array) is passed
+        // through verbatim. Recover that bit so lower_jsx_children knows
+        // whether an EArray is the transform's container or a real child.
+        let is_static_children = if args.len() == 6 {
+            matches!(args[3].data, ExprData::EBoolean(b) if b.value)
+        } else {
+            match &call.target.data {
+                ExprData::EIdentifier(id) => builder
+                    .ref_name(id.ref_)
+                    .map(|n| n.starts_with("jsxs"))
+                    .unwrap_or(false),
+                ExprData::EImportIdentifier(id) => builder
+                    .ref_name(id.ref_)
+                    .map(|n| n.starts_with("jsxs"))
+                    .unwrap_or(false),
+                _ => false,
+            }
+        };
+
+        // `key` was hoisted out of the props object into args[2] by the visit
+        // pass. Lower it BEFORE children so instruction order matches JSX
+        // source order (attributes precede children) — upstream build_hir.rs
+        // lowers opening_element.attributes before children.
+        if let Some(key_arg) = args.get(2) {
+            if !matches!(key_arg.data, ExprData::EUndefined(_)) {
+                let place = lower_expression_to_temporary(builder, key_arg)?;
+                props.push(JsxAttribute::Attribute {
+                    name: "key".to_string(),
+                    place,
+                });
+            }
+        }
+
         for prop in obj.properties.iter() {
             if matches!(prop.kind, G::PropertyKind::Spread) {
                 let value = prop.value.as_ref().ok_or_else(|| {
@@ -253,7 +306,9 @@ pub(super) fn lower_jsx_call(
                 props.push(JsxAttribute::SpreadAttribute { argument });
                 continue;
             }
-            let Some(key_expr) = prop.key.as_ref() else { continue };
+            let Some(key_expr) = prop.key.as_ref() else {
+                continue;
+            };
             let ExprData::EString(key_str) = &key_expr.data else {
                 builder.record_error(CompilerErrorDetail {
                     category: ErrorCategory::Todo,
@@ -266,26 +321,17 @@ pub(super) fn lower_jsx_call(
             };
             let key_loc = convert_loc(key_expr.loc);
             let name = estring_to_string(key_str, &key_loc)?;
-            let Some(value_expr) = prop.value.as_ref() else { continue };
+            let Some(value_expr) = prop.value.as_ref() else {
+                continue;
+            };
 
             if name == "children" {
-                lower_jsx_children(builder, value_expr, &mut children)?;
+                lower_jsx_children(builder, value_expr, is_static_children, &mut children)?;
                 continue;
             }
 
             let place = lower_expression_to_temporary(builder, value_expr)?;
             props.push(JsxAttribute::Attribute { name, place });
-        }
-
-        // `key` was hoisted out of the props object into args[2] by the visit pass.
-        if let Some(key_arg) = args.get(2) {
-            if !matches!(key_arg.data, ExprData::EUndefined(_)) {
-                let place = lower_expression_to_temporary(builder, key_arg)?;
-                props.push(JsxAttribute::Attribute {
-                    name: "key".to_string(),
-                    place,
-                });
-            }
         }
         // args[3..6] (isStatic, source, self) are dev-only metadata; ignore.
     } else {
@@ -301,7 +347,9 @@ pub(super) fn lower_jsx_call(
                         props.push(JsxAttribute::SpreadAttribute { argument });
                         continue;
                     }
-                    let Some(key_expr) = prop.key.as_ref() else { continue };
+                    let Some(key_expr) = prop.key.as_ref() else {
+                        continue;
+                    };
                     let ExprData::EString(key_str) = &key_expr.data else {
                         builder.record_error(CompilerErrorDetail {
                             category: ErrorCategory::Todo,
@@ -315,7 +363,9 @@ pub(super) fn lower_jsx_call(
                     };
                     let key_loc = convert_loc(key_expr.loc);
                     let name = estring_to_string(key_str, &key_loc)?;
-                    let Some(value_expr) = prop.value.as_ref() else { continue };
+                    let Some(value_expr) = prop.value.as_ref() else {
+                        continue;
+                    };
                     let place = lower_expression_to_temporary(builder, value_expr)?;
                     props.push(JsxAttribute::Attribute { name, place });
                 }
@@ -347,23 +397,26 @@ pub(super) fn lower_jsx_call(
 fn lower_jsx_children(
     builder: &mut HirBuilder,
     value: &Expr,
+    is_static_children: bool,
     out: &mut Vec<Place>,
 ) -> Result<(), CompilerError> {
-    if let ExprData::EArray(arr) = &value.data {
-        for item in arr.items.iter() {
-            match &item.data {
-                ExprData::EMissing(_) => {}
-                ExprData::ESpread(spread) => {
-                    out.push(lower_expression_to_temporary(builder, &spread.value)?);
-                }
-                _ => {
-                    out.push(lower_expression_to_temporary(builder, item)?);
+    if is_static_children {
+        if let ExprData::EArray(arr) = &value.data {
+            for item in arr.items.iter() {
+                match &item.data {
+                    ExprData::EMissing(_) => {}
+                    ExprData::ESpread(spread) => {
+                        out.push(lower_expression_to_temporary(builder, &spread.value)?);
+                    }
+                    _ => {
+                        out.push(lower_expression_to_temporary(builder, item)?);
+                    }
                 }
             }
+            return Ok(());
         }
-    } else {
-        out.push(lower_expression_to_temporary(builder, value)?);
     }
+    out.push(lower_expression_to_temporary(builder, value)?);
     Ok(())
 }
 

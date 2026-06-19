@@ -4,9 +4,6 @@
 //! `&dyn Host` (which exposes `symbols()/module_scope()/import_records()`)
 //! instead, since Bun's parser already resolved every reference to a `Ref`.
 
-use bun_ast::{self as ast, E, G, Loc, Ref, Symbol, symbol};
-use indexmap::IndexMap;
-use indexmap::IndexSet;
 use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerDiagnosticDetail;
 use crate::diagnostics::CompilerError;
@@ -17,6 +14,9 @@ use crate::hir::environment::Environment;
 use crate::hir::visitors::each_terminal_successor;
 use crate::hir::visitors::terminal_fallthrough;
 use crate::hir::*;
+use bun_ast::{self as ast, E, G, Loc, Ref, Symbol, symbol};
+use indexmap::IndexMap;
+use indexmap::IndexSet;
 
 use crate::program::Host;
 
@@ -292,6 +292,12 @@ pub struct HirBuilder<'h> {
     /// and any inner function scope, that are referenced from an inner function scope.
     /// These need StoreContext/LoadContext instead of StoreLocal/LoadLocal.
     context_identifiers: RefSet,
+    /// ES-module import bindings keyed by clause-item `Ref`. Populated from the
+    /// module's `SImport` statements before lowering so `resolve_identifier`
+    /// can return `ImportSpecifier`/`ImportDefault`/`ImportNamespace` (and thus
+    /// reach `Environment::resolve_module_type`) when `Symbol::namespace_alias`
+    /// is absent — which it is for plain `import {x} from 'm'` outside HMR.
+    import_bindings: IndexMap<Ref, VariableBinding>,
     /// Set of scope ids matched to synthetic blocks/functions.
     #[allow(
         clippy::disallowed_types,
@@ -336,6 +342,7 @@ impl<'h> HirBuilder<'h> {
             component_scope,
             scope_stack: vec![function_scope],
             context_identifiers,
+            import_bindings: IndexMap::new(),
             #[allow(
                 clippy::disallowed_types,
                 reason = "vendored react_compiler_hir HashSet<ScopeId> contract"
@@ -371,6 +378,14 @@ impl<'h> HirBuilder<'h> {
 
     pub fn host(&self) -> &'h dyn Host {
         self.host
+    }
+
+    pub fn set_import_bindings(&mut self, bindings: IndexMap<Ref, VariableBinding>) {
+        self.import_bindings = bindings;
+    }
+
+    pub fn import_bindings(&self) -> &IndexMap<Ref, VariableBinding> {
+        &self.import_bindings
     }
 
     pub fn function_scope(&self) -> &'h ast::Scope {
@@ -904,9 +919,7 @@ impl<'h> HirBuilder<'h> {
     pub fn ref_name(&self, ref_: Ref) -> Result<String, CompilerError> {
         core::str::from_utf8(self.host.ref_name(ref_))
             .map(str::to_owned)
-            .map_err(|_| {
-                CompilerError::from(CompilerDiagnostic::todo("non-utf8 identifier", None))
-            })
+            .map_err(|_| CompilerError::from(CompilerDiagnostic::todo("non-utf8 identifier", None)))
     }
 
     /// Map a `Ref` to an HIR IdentifierId.
@@ -1020,9 +1033,7 @@ impl<'h> HirBuilder<'h> {
             )));
         };
         let name = core::str::from_utf8(sym.original_name.slice())
-            .map_err(|_| {
-                CompilerError::from(CompilerDiagnostic::todo("non-utf8 identifier", loc))
-            })?
+            .map_err(|_| CompilerError::from(CompilerDiagnostic::todo("non-utf8 identifier", loc)))?
             .to_owned();
 
         use symbol::Kind as Sk;
@@ -1056,13 +1067,18 @@ impl<'h> HirBuilder<'h> {
                     }
                 }
                 // `namespace_alias` is only populated by `scan_imports` (after
-                // visit) or under HMR, so it is usually absent here. We still
-                // know this binding is an import (`Sk::Import`), not a module-
-                // local declaration: classify as `Global` so
-                // `Environment::get_global_declaration` consults the React
-                // globals table by local name. `ModuleLocal` is reserved for
-                // true module-scope declarations below, which must NOT pick up
-                // built-in hook return shapes when they shadow a React API.
+                // visit) or under HMR, so it is usually absent here. Consult
+                // the `Ref → ImportSpecifier/Default/Namespace` map collected
+                // from the module's `SImport` clauses so
+                // `Environment::get_global_declaration` can route through
+                // `resolve_module_type` for typed modules (e.g. shared-runtime
+                // `graphql` → Primitive). Falling back to `Global` keeps the
+                // React-globals-by-local-name behaviour for unmapped imports;
+                // `ModuleLocal` stays reserved for true module-scope
+                // declarations below.
+                if let Some(binding) = self.import_bindings.get(&ref_) {
+                    return Ok(binding.clone());
+                }
                 return Ok(VariableBinding::Global { name });
             }
             _ => {}
@@ -1087,10 +1103,12 @@ impl<'h> HirBuilder<'h> {
     /// enclosing function scope).
     pub fn is_context_identifier(&self, ref_: Ref) -> bool {
         let ref_ = self.resolve_ref(ref_);
-        if let Some(member) = self
-            .symbol(ref_)
-            .and_then(|sym| self.host.module_scope().members.get(sym.original_name.slice()))
-        {
+        if let Some(member) = self.symbol(ref_).and_then(|sym| {
+            self.host
+                .module_scope()
+                .members
+                .get(sym.original_name.slice())
+        }) {
             if member.ref_ == ref_ {
                 return false;
             }

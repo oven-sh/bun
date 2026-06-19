@@ -1539,7 +1539,6 @@ dependencies = [
  "bun_ast",
  "bun_collections",
  "bun_core",
- "indexmap",
 ]
 
 [[package]]

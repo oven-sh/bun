@@ -513,6 +513,41 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.keys.capacity()
     }
 
+    /// Consume the map and return its key/value columns in insertion order.
+    /// The cached-hash column and index accelerator are dropped.
+    #[inline]
+    pub fn into_entries(self) -> (Vec<K, A>, Vec<V, A>) {
+        (self.keys, self.values)
+    }
+
+    /// Order-preserving in-place filter (`indexmap::IndexMap::retain` parity).
+    /// Entries for which `keep` returns `false` are dropped; survivors keep
+    /// their relative insertion order. O(n); rebuilds the index accelerator.
+    pub fn retain<F: FnMut(&K, &mut V) -> bool>(&mut self, mut keep: F) {
+        let len = self.keys.len();
+        let mut write = 0usize;
+        for read in 0..len {
+            if keep(&self.keys[read], &mut self.values[read]) {
+                if read != write {
+                    self.keys.swap(read, write);
+                    self.values.swap(read, write);
+                    self.hashes.swap(read, write);
+                }
+                write += 1;
+            }
+        }
+        if write == len {
+            return;
+        }
+        self.keys.truncate(write);
+        self.values.truncate(write);
+        self.hashes.truncate(write);
+        self.drop_index();
+        if write > INDEX_THRESHOLD {
+            self.rebuild_index();
+        }
+    }
+
     /// Remove and return the last entry in insertion order, or `None` when
     /// empty. O(1); patches the index in place so subsequent lookups stay O(1).
     pub fn pop(&mut self) -> Option<KV<K, V>> {
@@ -1210,6 +1245,18 @@ impl<'a, K, V, C, A: MapAllocator> MapEntry<'a, K, V, C, A> {
             MapEntry::Occupied(o) => o.into_mut(),
             MapEntry::Vacant(v) => v.insert(f()),
         }
+    }
+    pub fn or_default(self) -> &'a mut V
+    where
+        V: Default,
+    {
+        self.or_insert_with(V::default)
+    }
+    pub fn and_modify<F: FnOnce(&mut V)>(mut self, f: F) -> Self {
+        if let MapEntry::Occupied(ref mut o) = self {
+            f(o.get_mut());
+        }
+        self
     }
 }
 

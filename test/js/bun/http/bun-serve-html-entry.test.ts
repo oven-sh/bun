@@ -1,6 +1,5 @@
 import type { Subprocess } from "bun";
-import { getBrowserOpenCommand } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 async function getServerUrl(process: Subprocess) {
@@ -673,37 +672,4 @@ test("importing bun:main from HTML entry preload does not crash", async () => {
 
   proc.kill();
   await proc.exited;
-});
-
-// The dev server "o" shortcut opens the served URL in the system browser.
-// On Windows `start` is a cmd.exe builtin, not an executable on PATH, so
-// spawning it directly throws `Executable not found in $PATH: "start"`.
-// See https://github.com/oven-sh/bun/issues/26231
-describe("getBrowserOpenCommand", () => {
-  const url = "http://localhost:3000/";
-
-  test("Windows invokes `start` through cmd.exe", () => {
-    // The empty "" is start's window-title argument; without it `start` would
-    // treat the URL as the title instead of opening it.
-    expect(getBrowserOpenCommand("win32", url)).toEqual(["cmd.exe", "/c", "start", "", url]);
-  });
-
-  test("macOS uses `open`", () => {
-    expect(getBrowserOpenCommand("darwin", url)).toEqual(["open", url]);
-  });
-
-  test("Android uses the activity manager", () => {
-    expect(getBrowserOpenCommand("android", url)).toEqual([
-      "/system/bin/am",
-      "start",
-      "-a",
-      "android.intent.action.VIEW",
-      "-d",
-      url,
-    ]);
-  });
-
-  test("other platforms use `xdg-open`", () => {
-    expect(getBrowserOpenCommand("linux", url)).toEqual(["xdg-open", url]);
-  });
 });

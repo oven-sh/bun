@@ -399,6 +399,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// populated before visit pass starts.
     pub react_refresh: ReactRefresh<'a>,
 
+    /// only applicable when `.options.features.react_compiler` is set.
+    /// populated before visit pass starts; `take()`n at each post-visit
+    /// hook site so a `ReactCompilerHost(&mut P)` can borrow alongside it.
+    pub react_compiler: Option<Box<bun_react_compiler::ReactCompilerState>>,
+
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
     pub server_components_wrap_ref: Ref,
@@ -9199,6 +9204,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             enclosing_namespace_arg_ref: None,
             jsx_imports: crate::JSXImportSymbols::default(),
             react_refresh: ReactRefresh::default(),
+            react_compiler: None,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             import_records_for_current_part: BumpVec::new_in(arena),

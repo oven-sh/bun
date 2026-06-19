@@ -120,6 +120,7 @@ pub mod js_bundler {
         pub entry_points: StringSet,
         pub hot: bool,
         pub react_fast_refresh: bool,
+        pub react_compiler: bool,
         pub define: StringMap,
         pub loaders: Option<api::LoaderMap>,
         pub dir: OwnedString,
@@ -175,6 +176,7 @@ pub mod js_bundler {
                 entry_points: StringSet::default(),
                 hot: false,
                 react_fast_refresh: false,
+                react_compiler: false,
                 define: StringMap::init(false),
                 loaders: None,
                 dir: OwnedString::default(),
@@ -590,6 +592,12 @@ pub mod js_bundler {
                 config.get_boolean_loose(global_this, "reactFastRefresh")?
             {
                 this.react_fast_refresh = react_fast_refresh;
+            }
+
+            if let Some(react_compiler) =
+                config.get_boolean_loose(global_this, "reactCompiler")?
+            {
+                this.react_compiler = react_compiler;
             }
 
             let mut has_out_dir = false;

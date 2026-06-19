@@ -1,0 +1,18 @@
+[package]
+name = "bun_react_compiler"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_ast = { path = "../ast" }
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+
+indexmap = "2"

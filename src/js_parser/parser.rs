@@ -201,6 +201,9 @@ pub mod Runtime {
         /// Enable the React Fast Refresh transform. What this does exactly
         /// is documented in js_parser, search for `const ReactRefresh`
         pub react_fast_refresh: bool,
+        /// Run the React Compiler (auto-memoization) over the parsed AST
+        /// before the visit pass.
+        pub react_compiler: bool,
         /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
         /// It can be enabled on the command line with --format=internal_bake_dev
         ///
@@ -301,6 +304,7 @@ pub mod Runtime {
         fn default() -> Self {
             Self {
                 react_fast_refresh: false,
+                react_compiler: false,
                 hot_module_reloading: false,
                 server_components: ServerComponentsMode::None,
                 is_macro_runtime: false,
@@ -384,7 +388,8 @@ pub mod Runtime {
         pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 17] = [
+            let bools: [bool; 18] = [
+                self.react_compiler,
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,

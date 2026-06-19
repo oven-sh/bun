@@ -2525,6 +2525,8 @@ pub mod parse_worker {
             output_format == options::Format::Esm && !opts.features.hot_module_reloading;
         opts.features.react_fast_refresh =
             topts.react_fast_refresh && loader.is_jsx() && !source.path.is_node_module();
+        opts.features.react_compiler =
+            topts.react_compiler && loader.is_jsx() && !source.path.is_node_module();
 
         opts.features.server_components = if topts.server_components {
             use bun_ast::runtime::ServerComponentsMode as SC;

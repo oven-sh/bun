@@ -1,0 +1,82 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`bundler react-compiler/SimpleComponent 1`] = `
+"// entry.jsx
+import { jsxDEV } from "react/jsx-dev-runtime";
+import { c as _c } from "react/compiler-runtime";
+function Hello(t0) {
+  const $ = _c(2);
+  const { name } = t0;
+  let t1;
+  if ($[0] !== name) {
+    t1 = /* @__PURE__ */ jsxDEV("div", {
+      children: [
+        "Hello ",
+        name
+      ]
+    }, undefined, true, undefined, this);
+    $[0] = name;
+    $[1] = t1;
+  } else {
+    t1 = $[1];
+  }
+  return t1;
+}
+export {
+  Hello
+};
+"
+`;
+
+exports[`bundler react-compiler/ComponentWithHooks 1`] = `
+"// entry.jsx
+import { useState } from "react";
+import { jsxDEV } from "react/jsx-dev-runtime";
+import { c as _c } from "react/compiler-runtime";
+function Counter(t0) {
+  const $ = _c(5);
+  const { step } = t0;
+  const [count, setCount] = useState(0);
+  const doubled = count * 2;
+  let t1;
+  if ($[0] !== step) {
+    t1 = () => setCount((c) => c + step);
+    $[0] = step;
+    $[1] = t1;
+  } else {
+    t1 = $[1];
+  }
+  const onClick = t1;
+  let t2;
+  if ($[2] !== doubled || $[3] !== onClick) {
+    t2 = /* @__PURE__ */ jsxDEV("button", {
+      onClick,
+      children: doubled
+    }, undefined, false, undefined, this);
+    $[2] = doubled;
+    $[3] = onClick;
+    $[4] = t2;
+  } else {
+    t2 = $[4];
+  }
+  return t2;
+}
+export {
+  Counter
+};
+"
+`;
+
+exports[`bundler react-compiler/NonComponentUntouched 1`] = `
+"// entry.jsx
+import { jsxDEV } from "react/jsx-dev-runtime";
+function helper(name) {
+  return /* @__PURE__ */ jsxDEV("div", {
+    children: name
+  }, undefined, false, undefined, this);
+}
+export {
+  helper
+};
+"
+`;

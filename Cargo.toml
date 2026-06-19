@@ -97,6 +97,7 @@ members = [
   "src/simdutf_sys",
   "src/which",
   "src/transpiler",
+  "src/react_compiler",
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",

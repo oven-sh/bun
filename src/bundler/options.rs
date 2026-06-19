@@ -1260,6 +1260,7 @@ pub struct BundleOptions<'a> {
     pub server_components: bool,
     pub hot_module_reloading: bool,
     pub react_fast_refresh: bool,
+    pub react_compiler: bool,
     pub inject: Option<Box<[Box<[u8]>]>>,
     // `bun_url::URL<'a>` borrows its input string; the owned variant keeps the
     // struct self-contained.
@@ -1475,6 +1476,7 @@ impl<'a> BundleOptions<'a> {
             server_components: self.server_components,
             hot_module_reloading: self.hot_module_reloading,
             react_fast_refresh: self.react_fast_refresh,
+            react_compiler: self.react_compiler,
             inject: self.inject.clone(),
             origin: self.origin.clone(),
             // The owning handle stays with the parent; copying it here would
@@ -1767,6 +1769,7 @@ impl<'a> BundleOptions<'a> {
             server_components: false,
             hot_module_reloading: false,
             react_fast_refresh: false,
+            react_compiler: false,
             inject: None,
             origin: bun_url::OwnedURL::from_href(Box::default()),
             output_dir_handle: None,
@@ -2096,6 +2099,7 @@ pub struct TransformOptions {
     pub resolve_dir: Box<[u8]>,
     pub jsx: Option<jsx::Pragma>,
     pub react_fast_refresh: bool,
+    pub react_compiler: bool,
     pub inject: Option<Box<[Box<[u8]>]>>,
     pub origin: &'static [u8],
     pub preserve_symlinks: bool,
@@ -2156,6 +2160,7 @@ impl TransformOptions {
                 None
             },
             react_fast_refresh: false,
+            react_compiler: false,
             inject: None,
             origin: b"",
             preserve_symlinks: false,

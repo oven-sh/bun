@@ -233,6 +233,7 @@ export interface BundlerTestInput {
   minifyWhitespace?: boolean;
   splitting?: boolean;
   serverComponents?: boolean;
+  reactCompiler?: boolean;
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
   unsupportedJSFeatures?: string[];
@@ -497,6 +498,7 @@ function expectBundled(
     run,
     runtimeFiles,
     serverComponents = false,
+    reactCompiler = false,
     skipOnEsbuild,
     snapshotSourceMap,
     sourceMap,
@@ -785,6 +787,7 @@ function expectBundled(
               assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, assetNaming],
               splitting && `--splitting`,
               serverComponents && "--server-components",
+              reactCompiler && "--react-compiler",
               outbase && `--root=${outbase}`,
               banner && `--banner="${banner}"`, // TODO: --banner-css=*
               footer && `--footer="${footer}"`,

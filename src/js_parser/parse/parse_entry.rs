@@ -859,8 +859,15 @@ impl<'a> Parser<'a> {
                 ..Default::default()
             };
             let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts);
+            let import_bindings = bun_react_compiler::collect_import_bindings(
+                stmts,
+                p.import_records.items(),
+                p.symbols.as_slice(),
+            );
             p.react_compiler = Some(Box::new(bun_react_compiler::ReactCompilerState::new(
-                rc_options, opt_out,
+                rc_options,
+                opt_out,
+                import_bindings,
             )));
         }
 

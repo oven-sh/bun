@@ -28,9 +28,11 @@ use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::environment_config::EnvironmentConfig;
 
 use crate::codegen::{self, Codegen, CodegenFunction, OutlinedFunction};
+use crate::hir::VariableBinding;
 use crate::imports::ProgramContext;
 use crate::lowering::{self, FunctionNode};
 use crate::program::Host;
+use indexmap::IndexMap;
 
 /// Run the compilation pipeline on a single function.
 #[allow(clippy::too_many_arguments)]
@@ -42,6 +44,7 @@ pub fn compile_fn(
     fn_type: ReactFunctionType,
     env_config: &EnvironmentConfig,
     context: &mut ProgramContext,
+    import_bindings: &IndexMap<bun_ast::Ref, VariableBinding>,
 ) -> Result<CodegenFunction, CompilerError> {
     let mut env = Environment::with_config(env_config.clone());
     env.fn_type = fn_type;
@@ -54,7 +57,7 @@ pub fn compile_fn(
     let known: HashSet<String> = context.known_referenced_names().iter().cloned().collect();
     env.seed_uid_known_names(&known);
 
-    let mut hir = lowering::lower(func, fn_name, &*host, &mut env)?;
+    let mut hir = lowering::lower(func, fn_name, &*host, &mut env, import_bindings)?;
 
     // Copy renames from lowering to context (keep on env for codegen to apply to type annotations)
     if !env.renames.is_empty() {
@@ -127,6 +130,7 @@ pub fn compile_fn(
                 fn_type,
                 env_config,
                 context,
+                import_bindings,
             ) {
                 Ok(compiled) => {
                     compiled_outlined.push(OutlinedFunction {
@@ -168,6 +172,7 @@ pub fn compile_outlined_fn(
     fn_type: ReactFunctionType,
     env_config: &EnvironmentConfig,
     context: &mut ProgramContext,
+    import_bindings: &IndexMap<bun_ast::Ref, VariableBinding>,
 ) -> Result<CodegenFunction, CompilerError> {
     use bun_alloc::AstAlloc;
     use bun_ast::{G, Loc, StoreSlice, flags};
@@ -209,7 +214,7 @@ pub fn compile_outlined_fn(
     };
 
     let func_node = FunctionNode::Function(&outlined_decl);
-    let mut hir = lowering::lower(&func_node, fn_name, &*host, &mut env)?;
+    let mut hir = lowering::lower(&func_node, fn_name, &*host, &mut env, import_bindings)?;
 
     if env.has_invariant_errors() {
         return Err(env.take_invariant_errors());

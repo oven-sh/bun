@@ -29,9 +29,11 @@ use crate::codegen::CodegenFunction;
 
 bun_core::declare_scope!(react_compiler, hidden);
 use crate::compile_result::{CompileDiagnostic, CompileOutput};
+use crate::hir::VariableBinding;
 use crate::imports::{ProgramContext, add_imports_to_program, validate_restricted_imports};
 use crate::lowering::FunctionNode;
 use crate::pipeline;
+use indexmap::IndexMap;
 
 /// JSX runtime symbols the compiler may need to reference in generated code.
 /// Mirrors `bun_js_parser::JSXImport` without the crate dependency.
@@ -116,6 +118,87 @@ fn collect_body_directives(stmts: &[Stmt]) -> Vec<&[u8]> {
 /// module-scope opt-out before constructing [`ReactCompilerState`].
 pub fn has_module_scope_opt_out(stmts: &[Stmt]) -> bool {
     find_directive_disabling_memoization(&collect_body_directives(stmts)).is_some()
+}
+
+/// Build the `Ref → ImportSpecifier/Default/Namespace` map from the module's
+/// top-level `SImport` statements. `HirBuilder::resolve_identifier` consults
+/// this when `Symbol::namespace_alias` is absent (the common case during the
+/// visit pass — `scan_imports` populates that field only after visiting), so
+/// imported bindings reach `Environment::resolve_module_type` instead of
+/// degrading to `Global`.
+pub fn collect_import_bindings(
+    stmts: &[Stmt],
+    records: &[ImportRecord],
+    symbols: &[Symbol],
+) -> IndexMap<Ref, VariableBinding> {
+    let mut out = IndexMap::new();
+    for stmt in stmts {
+        let StmtData::SImport(import) = &stmt.data else {
+            continue;
+        };
+        let import = import.get();
+        let Some(record) = records.get(import.import_record_index as usize) else {
+            continue;
+        };
+        let Ok(module) = core::str::from_utf8(record.path.text) else {
+            continue;
+        };
+        let local_name = |ref_: Ref| -> Option<String> {
+            let sym = symbols.get(ref_.inner_index() as usize)?;
+            core::str::from_utf8(sym.original_name.slice())
+                .ok()
+                .map(str::to_owned)
+        };
+        if import.star_name_loc.is_some() {
+            if let Some(name) = local_name(import.namespace_ref) {
+                out.insert(
+                    import.namespace_ref,
+                    VariableBinding::ImportNamespace {
+                        name,
+                        module: module.to_owned(),
+                    },
+                );
+            }
+        }
+        if let Some(default) = import.default_name {
+            if let Some(ref_) = default.ref_ {
+                if let Some(name) = local_name(ref_) {
+                    out.insert(
+                        ref_,
+                        VariableBinding::ImportDefault {
+                            name,
+                            module: module.to_owned(),
+                        },
+                    );
+                }
+            }
+        }
+        for item in import.items.slice() {
+            let Some(ref_) = item.name.ref_ else { continue };
+            let Some(name) = local_name(ref_) else {
+                continue;
+            };
+            let Ok(imported) = core::str::from_utf8(item.alias.slice()) else {
+                continue;
+            };
+            out.insert(
+                ref_,
+                if imported == "default" {
+                    VariableBinding::ImportDefault {
+                        name,
+                        module: module.to_owned(),
+                    }
+                } else {
+                    VariableBinding::ImportSpecifier {
+                        name,
+                        module: module.to_owned(),
+                        imported: imported.to_owned(),
+                    }
+                },
+            );
+        }
+    }
+    out
 }
 
 fn find_directive_enabling_memoization<'a>(directives: &[&'a [u8]]) -> Option<&'a [u8]> {
@@ -707,6 +790,7 @@ pub struct ReactCompilerState {
     context: ProgramContext,
     diagnostics: Vec<CompileDiagnostic>,
     outlined_decls: Vec<Stmt>,
+    import_bindings: IndexMap<Ref, VariableBinding>,
     /// `Some` once a fatal (panic-threshold or Config-category) error has been
     /// hit; subsequent `maybe_compile_*` calls become no-ops.
     fatal: Option<CompileOutput>,
@@ -720,7 +804,11 @@ impl ReactCompilerState {
     /// (`ProgramContext::init_from_scope`, restricted-import validation) is
     /// deferred to the first `maybe_compile_*` call so the parser can set
     /// `p.react_compiler = Some(..)` without a `&mut p` borrow conflict.
-    pub fn new(options: ReactCompilerOptions, has_module_scope_opt_out: bool) -> Self {
+    pub fn new(
+        options: ReactCompilerOptions,
+        has_module_scope_opt_out: bool,
+        import_bindings: IndexMap<Ref, VariableBinding>,
+    ) -> Self {
         bun_core::scoped_log!(
             react_compiler,
             "ReactCompilerState::new opt_out={}",
@@ -738,6 +826,7 @@ impl ReactCompilerState {
             context,
             diagnostics: Vec::new(),
             outlined_decls: Vec::new(),
+            import_bindings,
             fatal: None,
             any_compiled: false,
             did_lazy_init: false,
@@ -963,6 +1052,7 @@ fn maybe_compile_node(
         fn_type,
         &state.env_config,
         &mut state.context,
+        &state.import_bindings,
     ) {
         Err(err) => {
             bun_core::scoped_log!(react_compiler, "  -> compile_fn err: {:?}", err);

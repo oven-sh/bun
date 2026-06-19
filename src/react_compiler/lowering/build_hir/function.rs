@@ -60,6 +60,7 @@ pub(super) fn lower_function(
     let parent_bindings = builder.bindings().clone();
     let parent_used_names = builder.used_names().clone();
     let context_ids = builder.context_identifiers().clone();
+    let import_bindings = builder.import_bindings().clone();
 
     // Gather captured context
     let captured_context = gather_captured_context(
@@ -90,6 +91,7 @@ pub(super) fn lower_function(
         parent_function_scope,
         component_scope,
         &context_ids,
+        &import_bindings,
         false, // nested function
     )?;
 
@@ -121,6 +123,7 @@ pub(super) fn lower_function_declaration(
     let parent_bindings = builder.bindings().clone();
     let parent_used_names = builder.used_names().clone();
     let context_ids = builder.context_identifiers().clone();
+    let import_bindings = builder.import_bindings().clone();
 
     // Gather captured context
     let captured_context = gather_captured_context(
@@ -150,6 +153,7 @@ pub(super) fn lower_function_declaration(
         parent_function_scope,
         component_scope,
         &context_ids,
+        &import_bindings,
         false, // nested function
     )?;
 
@@ -247,6 +251,7 @@ pub(super) fn lower_function_for_object_method(
     let parent_bindings = builder.bindings().clone();
     let parent_used_names = builder.used_names().clone();
     let context_ids = builder.context_identifiers().clone();
+    let import_bindings = builder.import_bindings().clone();
 
     let captured_context = gather_captured_context(
         builder.host(),
@@ -275,6 +280,7 @@ pub(super) fn lower_function_for_object_method(
         parent_function_scope,
         component_scope,
         &context_ids,
+        &import_bindings,
         false, // nested function
     )?;
 

@@ -58,6 +58,7 @@ pub fn lower(
     _id: Option<&str>,
     host: &dyn Host,
     env: &mut Environment,
+    import_bindings: &IndexMap<Ref, VariableBinding>,
 ) -> Result<HirFunction, CompilerError> {
     // Extract params, body, generator, is_async, loc, scope_id, and the AST function's own id
     // Note: `id` param may include inferred names (e.g., from `const Foo = () => {}`),
@@ -110,6 +111,7 @@ pub fn lower(
         scope,
         scope, // component_scope = function_scope for top-level
         &context_identifiers,
+        import_bindings,
         true, // is_top_level
     )?;
 
@@ -130,6 +132,7 @@ pub(super) fn lower_inner<'h>(
     function_scope: &'h ast::Scope,
     component_scope: &'h ast::Scope,
     context_identifiers: &RefSet,
+    import_bindings: &IndexMap<Ref, VariableBinding>,
     is_top_level: bool,
 ) -> Result<
     (
@@ -159,6 +162,7 @@ pub(super) fn lower_inner<'h>(
         None,
         parent_used_names,
     );
+    builder.set_import_bindings(import_bindings.clone());
 
     // Enter the function's own lexical scopes so `resolve_ref` walks from the
     // right starting point (parser keys `FunctionArgs` at the open-paren loc

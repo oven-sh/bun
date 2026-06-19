@@ -211,6 +211,8 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
+export const getBrowserOpenCommand = require("internal/openInBrowser").getBrowserOpenCommand;
+
 // Userland access to node-internal modules for vendored node tests that
 // declare `// Flags: --expose-internals` (served via the require interceptor
 // in test/js/node/test/common/index.js). Static requires only — the builtin

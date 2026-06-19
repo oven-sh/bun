@@ -242,11 +242,21 @@ pub mod open {
         Output::flush();
     }
 
-    /// Spawn `OPENER url` with inherited stdio and fall back to printing the
-    /// URL when the spawn fails or the opener exits non-zero (e.g. headless/CI
-    /// environments).
+    /// Open `url` with the system default handler (inherited stdio), falling
+    /// back to printing the URL when the spawn fails or the opener exits
+    /// non-zero (e.g. headless/CI environments).
+    ///
+    /// On Windows `start` is a cmd.exe builtin, not an executable on PATH, so it
+    /// must be invoked through cmd.exe. The empty "" is start's window-title
+    /// argument; without it `start` treats the URL as the title.
     pub(crate) fn open_url(url: &[u8]) {
-        match bun_core::spawn_sync_inherit(&[OPENER, url]) {
+        #[cfg(windows)]
+        let status =
+            bun_core::spawn_sync_inherit(&[&b"cmd.exe"[..], &b"/c"[..], &b"start"[..], &b""[..], url]);
+        #[cfg(not(windows))]
+        let status = bun_core::spawn_sync_inherit(&[OPENER, url]);
+
+        match status {
             Ok(status) if status.is_ok() => {}
             _ => fallback(url),
         }

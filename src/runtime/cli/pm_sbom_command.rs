@@ -10,10 +10,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, strings};
-use bun_install::integrity::{DIGEST_BUF_LEN, Integrity, Tag as IntegrityTag};
-use bun_install::lockfile::{Lockfile, PackageIDSlice, package::PackageColumns as _};
+use bun_install::integrity::{Integrity, Tag as IntegrityTag};
+use bun_install::lockfile::{Lockfile, package::PackageColumns as _};
 use bun_install::resolution::Tag as ResolutionTag;
-use bun_install::{PackageID, PackageManager, invalid_package_id};
+use bun_install::{ExternalSlice, INVALID_PACKAGE_ID, PackageID, PackageManager};
 use bun_jsc::uuid::UUID;
 use bun_paths::{PathBuffer, platform, resolve_path};
 use bun_sys::Fd;
@@ -269,7 +269,7 @@ impl<'a> Generator<'a> {
                 let deps = pkg_dependencies[parent as usize].get(deps_buf);
                 let resolved = pkg_dep_resolutions[parent as usize].get(resolutions_buf);
                 for (dep, &child) in deps.iter().zip(resolved.iter()) {
-                    if child == invalid_package_id || child as usize >= pkg_len || child == parent {
+                    if child == INVALID_PACKAGE_ID || child as usize >= pkg_len || child == parent {
                         continue;
                     }
                     // `is_optional()` excludes optional peer deps (it checks
@@ -599,7 +599,7 @@ impl<'a> Generator<'a> {
             );
         }
         if let Some(alg) = cyclonedx_hash_alg(comp.integrity.tag) {
-            let mut hex_buf = [0u8; DIGEST_BUF_LEN * 2];
+            let mut hex_buf = [0u8; MAX_DIGEST_HEX_LEN];
             let hex = hex_digest(&comp.integrity, &mut hex_buf);
             let _ = write!(
                 w,
@@ -718,7 +718,7 @@ impl<'a> Generator<'a> {
             );
         }
         if let Some(alg) = spdx_hash_alg(comp.integrity.tag) {
-            let mut hex_buf = [0u8; DIGEST_BUF_LEN * 2];
+            let mut hex_buf = [0u8; MAX_DIGEST_HEX_LEN];
             let hex = hex_digest(&comp.integrity, &mut hex_buf);
             let _ = write!(
                 w,
@@ -816,7 +816,7 @@ enum RelType {
 
 fn collect_deps(
     comp: &mut Component,
-    pkg_dep_resolutions: &[PackageIDSlice],
+    pkg_dep_resolutions: &[ExternalSlice<PackageID>],
     resolutions_buf: &[PackageID],
     pkg_len: usize,
 ) {
@@ -828,7 +828,7 @@ fn collect_deps(
         // Skip invalid/out-of-range, and self-edges (e.g. `"pkg": "file:."`)
         // to match the BFS scope loop and avoid emitting a reflexive
         // `A dependsOn A` / `A DEPENDS_ON A` edge in the output.
-        if resolved_id == invalid_package_id
+        if resolved_id == INVALID_PACKAGE_ID
             || resolved_id as usize >= pkg_len
             || resolved_id == comp.package_id
         {
@@ -976,6 +976,9 @@ fn spdx_hash_alg(tag: IntegrityTag) -> Option<&'static str> {
         _ => None,
     }
 }
+
+/// Largest supported digest is SHA-512 (64 bytes) → 128 hex chars.
+const MAX_DIGEST_HEX_LEN: usize = 128;
 
 fn hex_digest<'a>(integrity: &Integrity, out: &'a mut [u8]) -> &'a [u8] {
     const HEX: &[u8; 16] = b"0123456789abcdef";

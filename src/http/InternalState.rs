@@ -400,10 +400,10 @@ impl<'a> InternalState<'a> {
             return Ok(false);
         }
 
-        // not `self.body_out_mut()` — `decompress_bytes` below takes
-        // `&mut self` alongside `body_out_str`; the accessor would tie the
-        // borrow to `self`. The free `body_out::as_mut` yields an unbounded
-        // `&mut` to the disjoint caller-owned allocation.
+        // `decompress_bytes` below takes `&mut self` alongside `body_out_str`,
+        // so a `&mut self` accessor would tie the borrow to `self`. The free
+        // `body_out::as_mut` yields an unbounded `&mut` to the disjoint
+        // caller-owned allocation.
         let Some(body_out_ptr) = self.body_out_str else {
             // No owner buffer attached (see `get_body_buffer`). There is
             // nowhere to deliver decoded bytes; put the buffer back so the

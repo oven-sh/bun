@@ -64,8 +64,10 @@ function prebuiltSuffix(cfg: Config): string {
   if (cfg.linux && cfg.abi === "android") s += "-android";
   // Baseline WebKit artifacts (-march=nehalem, /arch:SSE2 ICU) exist for
   // Linux amd64 (glibc + musl) and Windows amd64. No baseline variant for
-  // arm64 or macOS. Suffix order matches the release asset names:
-  // bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
+  // arm64 or macOS: a prebuilt baseline macOS build is rejected up front in
+  // resolveConfig() (no Nehalem macOS WebKit exists — oven-sh/bun#32511), so
+  // this suffix is never requested for darwin. Suffix order matches the
+  // release asset names: bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
   if (cfg.baseline && cfg.x64) s += "-baseline";
   if (cfg.debug) s += "-debug";
   else if (cfg.lto) s += "-lto";

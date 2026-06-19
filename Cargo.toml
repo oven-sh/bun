@@ -449,3 +449,6 @@ bun_runtime = { path = "src/runtime", default-features = false }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
+
+[profile.release.package.bun_react_compiler]
+opt-level = "s"

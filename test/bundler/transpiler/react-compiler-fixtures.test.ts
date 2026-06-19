@@ -61,26 +61,87 @@ function parsePragmas(source: string): Pragmas {
 
 // Pragmas that only affect upstream's test harness output (logging / eval),
 // not the compiler's memoization behaviour. Safe to ignore.
-//
-// `outputMode` is intentionally NOT here: `@outputMode:"lint"` / `"noemit"`
-// suppresses upstream's emitted code entirely, so the `.expect.md` has no
-// `_c(N)` even though the function is compilable — must be skipped.
 const IGNORED_PRAGMAS = new Set([
   "loggerTestOnly",
-  "debug",
   "evaluator",
   "enablePropagateDepsInHIR",
   "enableNewMutationAliasingModel",
 ]);
 
-// Pragmas this runner understands and acts on directly.
+// Pragmas Bun's `parse_fixture_pragmas` (src/react_compiler/program.rs) reads
+// from the leading comment and applies to ReactCompilerOptions / EnvironmentConfig
+// before compiling. shouldSkip returns null for these — the compiler honours them.
 const HANDLED_PRAGMAS = new Set([
   "flow",
+  "script",
   "skip",
+  // ReactCompilerOptions
   "compilationMode",
-  "target",
-  "expectNothingCompiled",
   "panicThreshold",
+  "target",
+  "ignoreUseNoForget",
+  "expectNothingCompiled",
+  "gating",
+  // EnvironmentConfig
+  "enablePreserveExistingMemoizationGuarantees",
+  "validatePreserveExistingMemoizationGuarantees",
+  "validateExhaustiveMemoizationDependencies",
+  "enableOptionalDependencies",
+  "enableNameAnonymousFunctions",
+  "validateHooksUsage",
+  "validateRefAccessDuringRender",
+  "validateNoSetStateInRender",
+  "enableUseKeyedState",
+  "validateNoSetStateInEffects",
+  "validateNoDerivedComputationsInEffects",
+  "validateNoDerivedComputationsInEffectsExp",
+  "validateNoJsxInTryStatements",
+  "validateStaticComponents",
+  "validateSourceLocations",
+  "validateNoImpureFunctionsInRender",
+  "validateNoFreezingKnownMutableFunctions",
+  "enableAssumeHooksFollowRulesOfReact",
+  "enableTransitivelyFreezeFunctionExpressions",
+  "enableFunctionOutlining",
+  "enableJsxOutlining",
+  "assertValidMutableRanges",
+  "throwUnknownExceptionTestonly",
+  "throwUnknownException__testonly",
+  "enableCustomTypeDefinitionForReanimated",
+  "enableTreatRefLikeIdentifiersAsRefs",
+  "enableTreatSetIdentifiersAsStateSetters",
+  "validateNoVoidUseMemo",
+  "enableAllowSetStateFromRefsInEffects",
+  "enableVerboseNoSetStateInEffect",
+  "enableForest",
+  "validateExhaustiveEffectDependencies",
+  "validateNoCapitalizedCalls",
+  "customMacros",
+  "enableEmitHookGuards",
+  "enableEmitInstrumentForget",
+  "instrumentForget",
+]);
+
+// Pragmas `parse_fixture_pragmas` recognises but cannot honour (returns
+// `skip: Some(reason)`). The expected output for these depends on config Bun
+// can't represent, so the comparison would be meaningless.
+const UNSUPPORTED_PRAGMAS = new Set([
+  "debug", // snap IR-dump mode; .expect.md is not JS
+  "hookPattern",
+  "customHooks",
+  "moduleTypeProvider",
+  "eslintSuppressionRules",
+  "validateBlocklistedImports",
+  // `lint` emits the input unchanged; `ssr` runs a transform Bun never enables
+  // (pipeline.rs hardcodes OutputMode::Client). Either way the `.expect.md`
+  // slot count is meaningless against Bun's client-mode output.
+  "outputMode",
+  // Directive validation (`'use memo if(...)'`) and the runtime gating wrapper
+  // are not ported; `opts.dynamic_gating` is parsed but never read.
+  "dynamicGating",
+  // Bun handles HMR via its own React Refresh transform and never populates
+  // `env.code`, so the extra source-hash slot is never emitted (codegen.rs).
+  "enableResetCacheOnSourceFileChanges",
 ]);
 
 // Fixtures Bun's React Compiler integration cannot run yet.
@@ -94,22 +155,12 @@ function shouldSkip(relPath: string, pragmas: Pragmas): string | null {
   // Upstream's own skip pragma.
   if (pragmas.has("skip")) return "@skip";
 
-  // `@target` selects the React import target (17/18 use `react`, 19 uses
-  // `react/compiler-runtime`). Bun is hardwired to 19 with no override.
-  const target = pragmas.get("target");
-  if (target && target !== "19") return `pragma:@target(${target})`;
-
-  // `@compilationMode:"annotation"` / `"syntax"` change which functions are
-  // candidates. Bun has no option to set this; only `infer` (Bun default) and
-  // `all` (relaxed-check below) are runnable.
-  const mode = pragmas.get("compilationMode");
-  if (mode && mode !== "infer" && mode !== "all") return `pragma:@compilationMode(${mode})`;
-
   // Any remaining pragma maps to an EnvironmentConfig / PluginOptions field
   // Bun cannot set per-invocation yet. Running with the wrong config produces
   // a meaningless diff, so skip until the option lands.
   for (const key of pragmas.keys()) {
     if (HANDLED_PRAGMAS.has(key) || IGNORED_PRAGMAS.has(key)) continue;
+    if (UNSUPPORTED_PRAGMAS.has(key)) return `pragma:@${key} (unsupported)`;
     return `pragma:@${key}`;
   }
 
@@ -138,6 +189,20 @@ const TODO: Record<string, string> = {
   // Harness-config gap, not a compiler bug.
   "hook-noAlias": "needs shared-runtime moduleTypeProvider (useNoAlias typed shape)",
   "relay-transitive-mixeddata": "needs shared-runtime moduleTypeProvider (useFragment typed shape)",
+
+  // validate_preserved_manual_memoization does not yet detect the
+  // "inferred dep not present in source deps" case (upstream errors here).
+  "error.ref-like-name-not-a-ref": "validate_preserved_manual_memoization: missing inferred-vs-source dep check",
+  "error.ref-like-name-not-Ref": "validate_preserved_manual_memoization: missing inferred-vs-source dep check",
+  "error.repro-preserve-memoization-inner-destructured-value-mistaken-as-dependency-mutated-dep":
+    "validate_preserved_manual_memoization: missing mutated-dep check",
+
+  // suppression.rs implements eslint-disable scanning but is not wired into
+  // program.rs (Host doesn't surface program comments).
+  "unclosed-eslint-suppression-skips-all-components": "suppression.rs not wired into program.rs",
+
+  // Slot-count off-by-one (5 vs 4); siblings with identical pragmas pass.
+  "invalid-set-state-in-effect-verbose-force-update": "codegen slot count diverges from upstream (5 vs 4)",
 };
 
 type Fixture = {

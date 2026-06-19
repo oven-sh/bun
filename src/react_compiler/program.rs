@@ -15,7 +15,9 @@
 
 use crate::diagnostics::{CompilerError, CompilerErrorOrDiagnostic, ErrorCategory};
 use crate::hir::ReactFunctionType;
-use crate::hir::environment_config::EnvironmentConfig;
+use crate::hir::environment_config::{
+    EnvironmentConfig, ExhaustiveEffectDepsMode, ExternalFunctionConfig, InstrumentationConfig,
+};
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
@@ -215,25 +217,306 @@ fn find_directive_disabling_memoization<'a>(directives: &[&'a [u8]]) -> Option<&
         .copied()
 }
 
-/// Port of upstream `parseConfigPragmaForTests` (`Utils/TestUtils.ts`) for the
-/// `@compilationMode` key only. Upstream's fixture corpus is generated with a
-/// default of `"all"` and individual fixtures override via a leading
-/// `// @compilationMode:"infer"` or `// @compilationMode(infer)` comment.
-fn parse_compilation_mode_pragma(source: &[u8]) -> Option<String> {
-    const KEY: &[u8] = b"@compilationMode";
-    let mut i = bun_core::strings::index_of(source, KEY)?;
-    i += KEY.len();
-    let rest = source.get(i..)?;
-    let (open, close) = match rest.first()? {
-        b':' => (b'"', b'"'),
-        b'(' => (b'(', b')'),
-        _ => return None,
+// -----------------------------------------------------------------------
+// Fixture pragma parsing
+//
+// Port of upstream `parseConfigPragmaForTests` (`Utils/TestUtils.ts`).
+// Fixtures opt into config via leading `// @key` / `// @key:value` comments;
+// upstream additionally accepts `@key(value)` in some places, so both are
+// recognized. Values are `true` / `false` / `"string"` / bare-ident; complex
+// keys (`@gating`, `@enableEmitHookGuards`, …) fall back to upstream's
+// hardcoded test defaults when given without a value.
+// -----------------------------------------------------------------------
+
+/// Outcome of [`parse_fixture_pragmas`].
+#[derive(Debug, Default)]
+pub struct PragmaParseResult {
+    /// `Some(key)` when the source uses a pragma the port can't honor; the
+    /// fixture runner should skip output comparison for that file.
+    pub skip: Option<&'static str>,
+}
+
+/// Iterator over `(key, value)` pairs in a pragma string. Mirrors upstream's
+/// `splitPragma`: split on `@`, then split each entry on the first `:` (or
+/// `(` for the `@key(value)` form).
+fn split_pragma(pragma: &[u8]) -> impl Iterator<Item = (&[u8], Option<&[u8]>)> {
+    pragma.split(|&b| b == b'@').skip(1).filter_map(|entry| {
+        let entry = trim_ascii(entry);
+        if entry.is_empty() {
+            return None;
+        }
+        if let Some(i) = entry.iter().position(|&b| b == b':' || b == b'(') {
+            let key = &entry[..i];
+            let mut val = &entry[i + 1..];
+            if entry[i] == b'(' {
+                if let Some(close) = val.iter().position(|&b| b == b')') {
+                    val = &val[..close];
+                }
+            }
+            Some((key, Some(trim_ascii(val))))
+        } else {
+            let key = entry
+                .iter()
+                .position(|b| b.is_ascii_whitespace())
+                .map_or(entry, |i| &entry[..i]);
+            Some((key, None))
+        }
+    })
+}
+
+fn trim_ascii(mut s: &[u8]) -> &[u8] {
+    while let [first, rest @ ..] = s {
+        if first.is_ascii_whitespace() {
+            s = rest
+        } else {
+            break;
+        }
+    }
+    while let [rest @ .., last] = s {
+        if last.is_ascii_whitespace() {
+            s = rest
+        } else {
+            break;
+        }
+    }
+    s
+}
+
+/// Upstream's `tryParseTestPragmaValue`: `"..."` → string contents; otherwise
+/// the raw bytes (callers handle `true`/`false` separately).
+fn pragma_string_value(val: &[u8]) -> Option<String> {
+    let s = if val.len() >= 2 && val[0] == b'"' && val[val.len() - 1] == b'"' {
+        &val[1..val.len() - 1]
+    } else {
+        val
     };
-    let start = rest.iter().position(|&c| c == open)? + 1;
-    let len = rest.get(start..)?.iter().position(|&c| c == close)?;
-    core::str::from_utf8(&rest[start..start + len])
-        .ok()
-        .map(str::to_owned)
+    core::str::from_utf8(s).ok().map(str::to_owned)
+}
+
+fn pragma_bool(val: Option<&[u8]>) -> Option<bool> {
+    match val {
+        None | Some(b"true") => Some(true),
+        Some(b"false") => Some(false),
+        _ => None,
+    }
+}
+
+/// Collect the leading `//`-comment lines of `source` into a single buffer for
+/// pragma scanning. Stops at the first non-comment, non-blank line.
+fn leading_comment_pragma(source: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for line in source.split(|&b| b == b'\n') {
+        let t = trim_ascii(line);
+        if t.is_empty() {
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix(b"//") {
+            out.extend_from_slice(rest);
+            out.push(b' ');
+        } else {
+            break;
+        }
+    }
+    out
+}
+
+/// Parse `// @key[:value]` pragmas from the leading comment block of `source`
+/// and apply them to `opts` (and `opts.environment`) in place.
+pub fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptions) -> PragmaParseResult {
+    let pragma = leading_comment_pragma(source);
+    let mut skip: Option<&'static str> = None;
+    let env = &mut opts.environment;
+
+    macro_rules! env_bool {
+        ($field:ident, $val:expr) => {
+            if let Some(b) = pragma_bool($val) {
+                env.$field = b
+            }
+        };
+    }
+
+    for (key, val) in split_pragma(&pragma) {
+        match key {
+            // ---- PluginOptions ---------------------------------------------
+            b"compilationMode" => {
+                if let Some(v) = val.and_then(pragma_string_value) {
+                    opts.compilation_mode = Some(v);
+                }
+            }
+            b"panicThreshold" => {
+                if let Some(v) = val.and_then(pragma_string_value) {
+                    opts.panic_threshold = Some(v);
+                }
+            }
+            b"target" => {
+                if let Some(v) = val.and_then(pragma_string_value) {
+                    opts.target = Some(v);
+                }
+            }
+            b"outputMode" => {
+                if let Some(v) = val.and_then(pragma_string_value) {
+                    opts.output_mode = Some(v);
+                }
+            }
+            b"gating" => {
+                // Upstream's `testComplexPluginOptionDefaults`.
+                opts.gating = Some(ExternalFunctionConfig {
+                    source: "ReactForgetFeatureFlag".to_owned(),
+                    import_specifier_name: "isForgetEnabled_Fixtures".to_owned(),
+                });
+                if val.is_some_and(|v| v.first() == Some(&b'{')) {
+                    skip.get_or_insert("gating");
+                }
+            }
+            b"dynamicGating" => {
+                if let Some(v) = val.and_then(pragma_string_value) {
+                    opts.dynamic_gating = Some(v);
+                } else {
+                    skip.get_or_insert("dynamicGating");
+                }
+            }
+            b"ignoreUseNoForget" => {
+                if let Some(b) = pragma_bool(val) {
+                    opts.ignore_use_no_forget = b
+                }
+            }
+            b"eslintSuppressionRules" => skip = Some("eslintSuppressionRules"),
+            b"loggerTestOnly" => {
+                opts.logger_test_only = true;
+                skip.get_or_insert("loggerTestOnly");
+            }
+            b"expectNothingCompiled" => {
+                opts.expect_nothing_compiled = true;
+            }
+            b"debug" => skip = Some("debug"),
+            b"flow" | b"script" => {} // language/sourceType markers, handled by the runner
+
+            // ---- EnvironmentConfig: Option<bool> ----------------------------
+            b"enableResetCacheOnSourceFileChanges" => {
+                env.enable_reset_cache_on_source_file_changes = pragma_bool(val);
+            }
+
+            // ---- EnvironmentConfig: bool -----------------------------------
+            b"enablePreserveExistingMemoizationGuarantees" => {
+                env_bool!(enable_preserve_existing_memoization_guarantees, val)
+            }
+            b"validatePreserveExistingMemoizationGuarantees" => {
+                env_bool!(validate_preserve_existing_memoization_guarantees, val)
+            }
+            b"validateExhaustiveMemoizationDependencies" => {
+                env_bool!(validate_exhaustive_memoization_dependencies, val)
+            }
+            b"enableOptionalDependencies" => env_bool!(enable_optional_dependencies, val),
+            b"enableNameAnonymousFunctions" => env_bool!(enable_name_anonymous_functions, val),
+            b"validateHooksUsage" => env_bool!(validate_hooks_usage, val),
+            b"validateRefAccessDuringRender" => env_bool!(validate_ref_access_during_render, val),
+            b"validateNoSetStateInRender" => env_bool!(validate_no_set_state_in_render, val),
+            b"enableUseKeyedState" => env_bool!(enable_use_keyed_state, val),
+            b"validateNoSetStateInEffects" => env_bool!(validate_no_set_state_in_effects, val),
+            b"validateNoDerivedComputationsInEffects" => {
+                env_bool!(validate_no_derived_computations_in_effects, val)
+            }
+            b"validateNoDerivedComputationsInEffectsExp" => {
+                env_bool!(validate_no_derived_computations_in_effects_exp, val)
+            }
+            b"validateNoJsxInTryStatements" => env_bool!(validate_no_jsx_in_try_statements, val),
+            b"validateStaticComponents" => env_bool!(validate_static_components, val),
+            b"validateSourceLocations" => env_bool!(validate_source_locations, val),
+            b"validateNoImpureFunctionsInRender" => {
+                env_bool!(validate_no_impure_functions_in_render, val)
+            }
+            b"validateNoFreezingKnownMutableFunctions" => {
+                env_bool!(validate_no_freezing_known_mutable_functions, val)
+            }
+            b"enableAssumeHooksFollowRulesOfReact" => {
+                env_bool!(enable_assume_hooks_follow_rules_of_react, val)
+            }
+            b"enableTransitivelyFreezeFunctionExpressions" => {
+                env_bool!(enable_transitively_freeze_function_expressions, val)
+            }
+            b"enableFunctionOutlining" => env_bool!(enable_function_outlining, val),
+            b"enableJsxOutlining" => env_bool!(enable_jsx_outlining, val),
+            b"assertValidMutableRanges" => env_bool!(assert_valid_mutable_ranges, val),
+            b"throwUnknownExceptionTestonly" | b"throwUnknownException__testonly" => {
+                env_bool!(throw_unknown_exception_testonly, val)
+            }
+            b"enableCustomTypeDefinitionForReanimated" => {
+                env_bool!(enable_custom_type_definition_for_reanimated, val)
+            }
+            b"enableTreatRefLikeIdentifiersAsRefs" => {
+                env_bool!(enable_treat_ref_like_identifiers_as_refs, val)
+            }
+            b"enableTreatSetIdentifiersAsStateSetters" => {
+                env_bool!(enable_treat_set_identifiers_as_state_setters, val)
+            }
+            b"validateNoVoidUseMemo" => env_bool!(validate_no_void_use_memo, val),
+            b"enableAllowSetStateFromRefsInEffects" => {
+                env_bool!(enable_allow_set_state_from_refs_in_effects, val)
+            }
+            b"enableVerboseNoSetStateInEffect" => {
+                env_bool!(enable_verbose_no_set_state_in_effect, val)
+            }
+            b"enableForest" => env_bool!(enable_forest, val),
+
+            // ---- EnvironmentConfig: enums / lists / complex -----------------
+            b"validateExhaustiveEffectDependencies" => {
+                env.validate_exhaustive_effect_dependencies = match val {
+                    None | Some(b"true") | Some(b"\"all\"") | Some(b"all") => {
+                        ExhaustiveEffectDepsMode::All
+                    }
+                    Some(b"false") | Some(b"\"off\"") | Some(b"off") => {
+                        ExhaustiveEffectDepsMode::Off
+                    }
+                    Some(b"\"missingOnly\"") | Some(b"missingOnly") => {
+                        ExhaustiveEffectDepsMode::MissingOnly
+                    }
+                    Some(b"\"extraOnly\"") | Some(b"extraOnly") => {
+                        ExhaustiveEffectDepsMode::ExtraOnly
+                    }
+                    _ => env.validate_exhaustive_effect_dependencies,
+                };
+            }
+            b"validateNoCapitalizedCalls" => {
+                env.validate_no_capitalized_calls = Some(Vec::new());
+            }
+            b"validateBlocklistedImports" => {
+                skip.get_or_insert("validateBlocklistedImports");
+            }
+            b"customMacros" => {
+                if let Some(v) = val.and_then(pragma_string_value) {
+                    let head = v.split('.').next().unwrap_or(&v).to_owned();
+                    env.custom_macros = Some(vec![head]);
+                } else {
+                    skip.get_or_insert("customMacros");
+                }
+            }
+            b"enableEmitHookGuards" => {
+                env.enable_emit_hook_guards = Some(ExternalFunctionConfig {
+                    source: "react-compiler-runtime".to_owned(),
+                    import_specifier_name: "$dispatcherGuard".to_owned(),
+                });
+            }
+            b"enableEmitInstrumentForget" | b"instrumentForget" => {
+                env.enable_emit_instrument_forget = Some(InstrumentationConfig {
+                    fn_: ExternalFunctionConfig {
+                        source: "react-compiler-runtime".to_owned(),
+                        import_specifier_name: "useRenderCounter".to_owned(),
+                    },
+                    gating: Some(ExternalFunctionConfig {
+                        source: "react-compiler-runtime".to_owned(),
+                        import_specifier_name: "shouldInstrument".to_owned(),
+                    }),
+                    global_gating: Some("DEV".to_owned()),
+                });
+            }
+            b"hookPattern" | b"customHooks" | b"moduleTypeProvider" => {
+                skip.get_or_insert("hookPattern/customHooks/moduleTypeProvider");
+            }
+            _ => {}
+        }
+    }
+
+    PragmaParseResult { skip }
 }
 
 // -----------------------------------------------------------------------
@@ -843,15 +1126,13 @@ impl ReactCompilerState {
         }
         self.did_lazy_init = true;
 
-        // A leading `// @compilationMode` pragma overrides the configured mode.
-        // When neither the option nor the pragma is set, leave it `None` so
-        // `get_react_function_type` falls through to the production default
-        // (`"infer"`).
+        // Leading `// @key[:value]` pragmas override configured options. Only
+        // applied when `compilation_mode` was not explicitly set (i.e. fixture
+        // context); production callers always pass a mode.
         if self.options.compilation_mode.is_none() {
-            if let Some(mode) = parse_compilation_mode_pragma(host.source()) {
-                self.options.compilation_mode = Some(mode.clone());
-                self.context.opts.compilation_mode = Some(mode);
-            }
+            let _ = parse_fixture_pragmas(host.source(), &mut self.options);
+            self.context.opts.compilation_mode = self.options.compilation_mode.clone();
+            self.env_config = self.options.environment.clone();
         }
 
         self.context.init_from_scope(host.symbols());

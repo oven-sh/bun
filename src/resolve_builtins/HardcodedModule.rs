@@ -91,6 +91,8 @@ pub enum HardcodedModule {
     NodeStreamWeb,
     #[strum(serialize = "node:string_decoder")]
     NodeStringDecoder,
+    #[strum(serialize = "node:sqlite")]
+    NodeSqlite,
     #[strum(serialize = "node:test")]
     NodeTest,
     #[strum(serialize = "node:timers")]
@@ -219,6 +221,7 @@ bun_core::comptime_string_map! {
         b"node:module" => HardcodedModule::NodeModule,
         b"node:net" => HardcodedModule::NodeNet,
         b"node:readline" => HardcodedModule::NodeReadline,
+        b"node:sqlite" => HardcodedModule::NodeSqlite,
         b"node:test" => HardcodedModule::NodeTest,
         b"node:os" => HardcodedModule::NodeOs,
         b"node:path" => HardcodedModule::NodePath,
@@ -437,6 +440,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry!("node:worker_threads"),
     node_entry!("node:zlib"),
     // New Node.js builtins only resolve from the prefixed one.
+    node_entry_only_prefix!("node:sqlite"),
     node_entry_only_prefix!("node:test"),
     //
     node_entry!("assert"),

@@ -190,12 +190,10 @@ pub fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
                             if let InstructionValue::JsxExpression { props, .. } = &mut instr.value
                             {
                                 props.retain(|prop| match prop {
-                                    crate::hir::JsxAttribute::SpreadAttribute {
-                                        ..
-                                    } => true,
-                                    crate::hir::JsxAttribute::Attribute {
-                                        name, ..
-                                    } => !is_known_event_handler(&tag_name, name) && name != "ref",
+                                    crate::hir::JsxAttribute::SpreadAttribute { .. } => true,
+                                    crate::hir::JsxAttribute::Attribute { name, .. } => {
+                                        !is_known_event_handler(&tag_name, name) && name != "ref"
+                                    }
                                 });
                             }
                         }

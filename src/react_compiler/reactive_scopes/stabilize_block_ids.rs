@@ -12,11 +12,11 @@
 
 use std::collections::HashMap;
 
-use indexmap::IndexSet;
 use crate::hir::{
     BlockId, ReactiveFunction, ReactiveScopeBlock, ReactiveTerminal, ReactiveTerminalStatement,
     environment::Environment,
 };
+use indexmap::IndexSet;
 
 use crate::reactive_scopes::visitors::{
     ReactiveFunctionTransform, ReactiveFunctionVisitor, transform_reactive_function,

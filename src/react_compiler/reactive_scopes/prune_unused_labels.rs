@@ -15,7 +15,9 @@ use crate::hir::{
     ReactiveTerminalTargetKind, environment::Environment,
 };
 
-use crate::reactive_scopes::visitors::{ReactiveFunctionTransform, Transformed, transform_reactive_function};
+use crate::reactive_scopes::visitors::{
+    ReactiveFunctionTransform, Transformed, transform_reactive_function,
+};
 
 /// Prune unused labels from a reactive function.
 pub fn prune_unused_labels(

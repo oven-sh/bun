@@ -15,12 +15,12 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::hir::cfg_utils::mark_predecessors;
 use crate::hir::visitors;
 use crate::hir::{
     AliasingEffect, BlockId, BlockKind, Effect, GENERATED_SOURCE, HirFunction, Instruction,
     InstructionId, InstructionValue, Place, Terminal,
 };
-use crate::hir::cfg_utils::mark_predecessors;
 use crate::ssa::enter_ssa::placeholder_function;
 
 /// Merge consecutive blocks in the function's CFG, including inner functions.

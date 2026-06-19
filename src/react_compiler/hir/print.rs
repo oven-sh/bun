@@ -1427,7 +1427,9 @@ impl<'a> PrintFormatter<'a> {
                         self.indent();
                         for (i, dep) in d.iter().enumerate() {
                             let root_str = match &dep.root {
-                                crate::hir::ManualMemoDependencyRoot::Global { identifier_name } => {
+                                crate::hir::ManualMemoDependencyRoot::Global {
+                                    identifier_name,
+                                } => {
                                     format!("Global(\"{}\")", identifier_name)
                                 }
                                 crate::hir::ManualMemoDependencyRoot::NamedLocal {

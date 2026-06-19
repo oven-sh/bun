@@ -10,7 +10,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use indexmap::IndexMap;
 use crate::hir::environment::Environment;
 use crate::hir::{
     BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, HIR, HirFunction, IdentifierId,
@@ -19,6 +18,7 @@ use crate::hir::{
     ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern, Pattern, Place, ReactFunctionType,
     ReturnVariant, Terminal,
 };
+use indexmap::IndexMap;
 
 /// Outline JSX expressions in inner functions into separate outlined components.
 ///

@@ -9,7 +9,6 @@
 
 use std::collections::HashMap;
 
-
 use crate::hir::Effect;
 use crate::hir::type_config::{TypeConfig, ValueKind};
 

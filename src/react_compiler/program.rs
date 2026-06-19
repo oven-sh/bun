@@ -13,6 +13,9 @@
 //! original in place; a final `finish()` call emits the runtime import and
 //! any outlined function decls as a separate `Part`.
 
+use crate::diagnostics::{CompilerError, CompilerErrorOrDiagnostic, ErrorCategory};
+use crate::hir::ReactFunctionType;
+use crate::hir::environment_config::EnvironmentConfig;
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
@@ -20,9 +23,6 @@ use bun_ast::{
     self as ast, E, Expr, G, ImportKind, ImportRecord, Loc, Ref, S, Scope, Stmt, StmtOrExpr,
     StoreSlice, Symbol, b, flags,
 };
-use crate::diagnostics::{CompilerError, CompilerErrorOrDiagnostic, ErrorCategory};
-use crate::hir::ReactFunctionType;
-use crate::hir::environment_config::EnvironmentConfig;
 
 use crate::ReactCompilerOptions;
 use crate::codegen::CodegenFunction;
@@ -632,7 +632,11 @@ fn apply_to_gfn(target: &mut G::Fn, codegen_fn: CodegenFunction) {
         loc: target.body.loc,
         stmts: leak_stmts(codegen_fn.body),
     };
-    set_flag(&mut target.flags, flags::Function::IsAsync, codegen_fn.is_async);
+    set_flag(
+        &mut target.flags,
+        flags::Function::IsAsync,
+        codegen_fn.is_async,
+    );
     set_flag(
         &mut target.flags,
         flags::Function::IsGenerator,
@@ -763,7 +767,11 @@ impl ReactCompilerState {
 
         self.context.init_from_scope(host.symbols());
 
-        let restricted = self.options.environment.validate_blocklisted_imports.clone();
+        let restricted = self
+            .options
+            .environment
+            .validate_blocklisted_imports
+            .clone();
         if let Some(err) = validate_restricted_imports(host.import_records(), &restricted) {
             if let Some(fatal) =
                 handle_error(err, None, Loc::EMPTY, &mut self.diagnostics, &self.options)
@@ -939,7 +947,8 @@ fn maybe_compile_node(
         return None;
     }
 
-    let fn_name: Option<String> = name.and_then(|n| core::str::from_utf8(n).ok().map(str::to_owned));
+    let fn_name: Option<String> =
+        name.and_then(|n| core::str::from_utf8(n).ok().map(str::to_owned));
 
     // SAFETY: the arena is owned by the `Host` implementor (the parser's `P`)
     // and outlives the `&mut dyn Host` borrow for the duration of this call.

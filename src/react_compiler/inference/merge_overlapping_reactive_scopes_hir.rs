@@ -21,9 +21,7 @@ use std::collections::HashMap;
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::visitors::{each_instruction_lvalue_ids, each_terminal_operand_ids};
-use crate::hir::{
-    EvaluationOrder, HirFunction, IdentifierId, InstructionValue, ScopeId, Type,
-};
+use crate::hir::{EvaluationOrder, HirFunction, IdentifierId, InstructionValue, ScopeId, Type};
 use crate::utils::DisjointSet;
 
 // =============================================================================
@@ -348,8 +346,7 @@ pub fn merge_overlapping_reactive_scopes_hir(func: &mut HirFunction, env: &mut E
     // When scope.range is updated, ALL identifiers referencing that range object
     // automatically see the new values. We use MutableRangeId to identify which
     // identifiers share the same logical range as a root scope.
-    let mut original_root_range_ids: HashMap<ScopeId, crate::hir::MutableRangeId> =
-        HashMap::new();
+    let mut original_root_range_ids: HashMap<ScopeId, crate::hir::MutableRangeId> = HashMap::new();
     for (_, root_id) in &scope_groups {
         if !original_root_range_ids.contains_key(root_id) {
             let range_id = env.scopes[root_id.0 as usize].range.id;

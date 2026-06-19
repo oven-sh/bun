@@ -8,10 +8,12 @@
 
 use indexmap::{IndexMap, IndexSet};
 
-use bun_alloc::{AstAlloc, AstVec};
-use bun_ast::{ClauseItem, ImportKind, ImportRecord, Loc, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol};
 use crate::diagnostics::{
     CompilerError, CompilerErrorDetail, ErrorCategory, Position, SourceLocation,
+};
+use bun_alloc::{AstAlloc, AstVec};
+use bun_ast::{
+    ClauseItem, ImportKind, ImportRecord, Loc, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol,
 };
 
 use crate::options::ReactCompilerOptions;
@@ -280,7 +282,10 @@ fn convert_loc(loc: Loc) -> Option<SourceLocation> {
         column: 0,
         index: Some(loc.start as u32),
     };
-    Some(SourceLocation { start: pos, end: pos })
+    Some(SourceLocation {
+        start: pos,
+        end: pos,
+    })
 }
 
 /// Insert import declarations into the program body.
@@ -290,7 +295,11 @@ fn convert_loc(loc: Loc) -> Option<SourceLocation> {
 /// its `ImportRecord` registered via `host.add_import_record`. Emitting a second
 /// import statement for an already-imported module is valid JS; the bundler's
 /// linker (not the printer) merges import records when bundling.
-pub(crate) fn add_imports_to_program(stmts: &mut Vec<Stmt>, host: &mut dyn Host, context: &ProgramContext) {
+pub(crate) fn add_imports_to_program(
+    stmts: &mut Vec<Stmt>,
+    host: &mut dyn Host,
+    context: &ProgramContext,
+) {
     if context.imports.is_empty() {
         return;
     }

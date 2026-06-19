@@ -42,15 +42,15 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::hir::cfg_utils::{
+    create_temporary_place, get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
+};
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::{
     BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, GENERATED_SOURCE, GotoVariant,
     HirFunction, IdentifierId, IdentifierName, Instruction, InstructionId, InstructionKind,
     InstructionValue, LValue, Place, Terminal,
-};
-use crate::hir::cfg_utils::{
-    create_temporary_place, get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
 };
 
 use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;

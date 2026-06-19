@@ -12,7 +12,9 @@ use std::collections::HashMap;
 
 use crate::hir::Effect;
 use crate::hir::Type;
-use crate::hir::type_config::{AliasingEffectConfig, AliasingSignatureConfig, ValueKind, ValueReason};
+use crate::hir::type_config::{
+    AliasingEffectConfig, AliasingSignatureConfig, ValueKind, ValueReason,
+};
 
 // =============================================================================
 // Shape ID constants (matching TS ObjectShape.ts)

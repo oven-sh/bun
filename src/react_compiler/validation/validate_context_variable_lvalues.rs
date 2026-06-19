@@ -5,9 +5,7 @@ use crate::diagnostics::{
 };
 use crate::hir::environment::Environment;
 use crate::hir::visitors::{each_instruction_value_lvalue, each_pattern_operand};
-use crate::hir::{
-    FunctionId, HirFunction, Identifier, IdentifierId, InstructionValue, Place,
-};
+use crate::hir::{FunctionId, HirFunction, Identifier, IdentifierId, InstructionValue, Place};
 
 /// Variable reference kind: local, context, or destructure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1260,8 +1260,7 @@ fn collect_non_nulls_in_blocks(
                 {
                     for dep in deps {
                         if let crate::hir::ManualMemoDependencyRoot::NamedLocal {
-                            value: val,
-                            ..
+                            value: val, ..
                         } = &dep.root
                         {
                             if !is_immutable_at_instr(val.identifier, instr.id, env, ctx) {

@@ -284,8 +284,8 @@ pub(crate) fn find_disjoint_mutable_values(
                 .map(|iid| func.instructions[iid.0 as usize].id)
                 .unwrap_or(block.terminal.evaluation_order());
 
-            let is_phi_mutated_after_creation = phi_range.start.0 + 1 != phi_range.end.0
-                && phi_range.end > first_instr_id;
+            let is_phi_mutated_after_creation =
+                phi_range.start.0 + 1 != phi_range.end.0 && phi_range.end > first_instr_id;
             // A phi operand defined at or after the phi's block is a loop
             // back-edge: the variable is reassigned within the loop (eg a
             // counter `a++` or `a = a + 1`). The reassignment must count as

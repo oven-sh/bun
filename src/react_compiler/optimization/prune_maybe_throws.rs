@@ -15,11 +15,11 @@ use std::collections::HashMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory, GENERATED_SOURCE,
 };
-use crate::hir::{BlockId, HirFunction, Instruction, InstructionValue, Terminal};
 use crate::hir::cfg_utils::{
     get_reverse_postordered_blocks, mark_instruction_ids, remove_dead_do_while_statements,
     remove_unnecessary_try_catch, remove_unreachable_for_updates,
 };
+use crate::hir::{BlockId, HirFunction, Instruction, InstructionValue, Terminal};
 
 use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
 

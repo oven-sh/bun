@@ -14,9 +14,7 @@
 use std::collections::HashSet;
 
 use crate::hir::environment::Environment;
-use crate::hir::{
-    FunctionId, HirFunction, IdentifierId, InstructionValue, NonLocalBinding,
-};
+use crate::hir::{FunctionId, HirFunction, IdentifierId, InstructionValue, NonLocalBinding};
 use crate::ssa::enter_ssa::placeholder_function;
 
 /// Outline anonymous function expressions that have no captured context variables.

@@ -1260,11 +1260,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && let Some(mut rc) = p.react_compiler.take()
         {
             for decl in data.decls.slice_mut() {
-                let Some(init) = &mut decl.value else { continue };
+                let Some(init) = &mut decl.value else {
+                    continue;
+                };
                 let name = match decl.binding.data {
-                    js_ast::binding::Data::BIdentifier(b) => {
-                        Some(p.symbols[b.r#ref.inner_index() as usize].original_name.slice().to_vec())
-                    }
+                    js_ast::binding::Data::BIdentifier(b) => Some(
+                        p.symbols[b.r#ref.inner_index() as usize]
+                            .original_name
+                            .slice()
+                            .to_vec(),
+                    ),
                     _ => None,
                 };
                 bun_react_compiler::maybe_compile_expr(
@@ -1458,9 +1463,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.visit_expr(&mut data.value);
 
-        if is_top_level
-            && let Some(mut rc) = p.react_compiler.take()
-        {
+        if is_top_level && let Some(mut rc) = p.react_compiler.take() {
             bun_react_compiler::maybe_compile_expr(
                 &mut rc,
                 &mut crate::react_compiler_host::ReactCompilerHost::new(p),

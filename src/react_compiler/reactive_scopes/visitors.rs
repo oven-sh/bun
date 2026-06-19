@@ -123,10 +123,8 @@ pub trait ReactiveFunctionVisitor {
                 self.visit_value(*seq_id, inner, state);
             }
             ReactiveValue::Instruction(instr_value) => {
-                let operands = crate::hir::visitors::each_instruction_value_operand(
-                    instr_value,
-                    self.env(),
-                );
+                let operands =
+                    crate::hir::visitors::each_instruction_value_operand(instr_value, self.env());
                 for place in &operands {
                     self.visit_place(id, place, state);
                 }
@@ -452,10 +450,8 @@ pub trait ReactiveFunctionTransform {
             ReactiveValue::Instruction(instr_value) => {
                 // Collect operands before visiting to avoid borrow conflict
                 // (self.env() borrows self immutably, self.visit_place() needs &mut self).
-                let operands = crate::hir::visitors::each_instruction_value_operand(
-                    instr_value,
-                    self.env(),
-                );
+                let operands =
+                    crate::hir::visitors::each_instruction_value_operand(instr_value, self.env());
                 for place in &operands {
                     self.visit_place(id, place, state)?;
                 }
@@ -750,9 +746,9 @@ pub trait ReactiveFunctionTransform {
                 ReactiveStatement::Instruction(ReactiveInstruction {
                     id: EvaluationOrder(0),
                     lvalue: None,
-                    value: ReactiveValue::Instruction(
-                        crate::hir::InstructionValue::Debugger { loc: None },
-                    ),
+                    value: ReactiveValue::Instruction(crate::hir::InstructionValue::Debugger {
+                        loc: None,
+                    }),
                     effects: None,
                     loc: None,
                 }),

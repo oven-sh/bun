@@ -1371,8 +1371,7 @@ fn validate_effect_non_exp(
                     return Vec::new();
                 }
             }
-            crate::hir::Terminal::If { test, .. }
-            | crate::hir::Terminal::Branch { test, .. } => {
+            crate::hir::Terminal::If { test, .. } | crate::hir::Terminal::Branch { test, .. } => {
                 if dep_values.contains_key(&test.identifier) {
                     return Vec::new();
                 }

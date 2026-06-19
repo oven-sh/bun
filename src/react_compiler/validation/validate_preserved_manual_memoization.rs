@@ -93,10 +93,7 @@ fn visit_statement(stmt: &ReactiveStatement, state: &mut VisitorState) {
     }
 }
 
-fn visit_terminal(
-    terminal: &crate::hir::ReactiveTerminalStatement,
-    state: &mut VisitorState,
-) {
+fn visit_terminal(terminal: &crate::hir::ReactiveTerminalStatement, state: &mut VisitorState) {
     use crate::hir::ReactiveTerminal;
     match &terminal.terminal {
         ReactiveTerminal::If {
@@ -170,10 +167,7 @@ fn visit_scope(scope_block: &ReactiveScopeBlock, state: &mut VisitorState) {
     }
 }
 
-fn visit_pruned_scope(
-    pruned: &crate::hir::PrunedReactiveScopeBlock,
-    state: &mut VisitorState,
-) {
+fn visit_pruned_scope(pruned: &crate::hir::PrunedReactiveScopeBlock, state: &mut VisitorState) {
     visit_block(&pruned.instructions, state);
     state.pruned_scopes.insert(pruned.scope);
 }
@@ -594,11 +588,15 @@ fn compare_deps(
     {
         CompareDependencyResult::Ok
     } else if is_subpath {
-        if source.path.iter().any(|t| {
-            t.property == crate::hir::PropertyLiteral::String("current".to_string())
-        }) || inferred.path.iter().any(|t| {
-            t.property == crate::hir::PropertyLiteral::String("current".to_string())
-        }) {
+        if source
+            .path
+            .iter()
+            .any(|t| t.property == crate::hir::PropertyLiteral::String("current".to_string()))
+            || inferred
+                .path
+                .iter()
+                .any(|t| t.property == crate::hir::PropertyLiteral::String("current".to_string()))
+        {
             CompareDependencyResult::RefAccessDifference
         } else {
             CompareDependencyResult::Subpath

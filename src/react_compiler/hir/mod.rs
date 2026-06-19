@@ -45,13 +45,13 @@ pub mod reactive;
 pub mod type_config;
 pub mod visitors;
 
-use indexmap::IndexMap;
-use indexmap::IndexSet;
 pub use crate::diagnostics::CompilerDiagnostic;
 pub use crate::diagnostics::ErrorCategory;
 pub use crate::diagnostics::GENERATED_SOURCE;
 pub use crate::diagnostics::Position;
 pub use crate::diagnostics::SourceLocation;
+use indexmap::IndexMap;
+use indexmap::IndexSet;
 pub use reactive::*;
 
 // =============================================================================

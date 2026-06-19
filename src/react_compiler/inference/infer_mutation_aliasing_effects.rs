@@ -14,7 +14,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use indexmap::IndexSet;
 use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerDiagnosticDetail;
 use crate::diagnostics::ErrorCategory;
@@ -45,6 +44,7 @@ use crate::hir::object_shape::HookKind;
 use crate::hir::type_config::ValueKind;
 use crate::hir::type_config::ValueReason;
 use crate::hir::visitors;
+use indexmap::IndexSet;
 
 // =============================================================================
 // Public entry point
@@ -877,8 +877,7 @@ fn find_non_mutated_destructure_spreads(
                     match &lvalue.pattern {
                         crate::hir::Pattern::Object(obj_pat) => {
                             for prop in &obj_pat.properties {
-                                if let crate::hir::ObjectPropertyOrSpread::Spread(s) = prop
-                                {
+                                if let crate::hir::ObjectPropertyOrSpread::Spread(s) = prop {
                                     candidate_non_mutating_spreads
                                         .insert(s.place.identifier, s.place.identifier);
                                 }
@@ -1736,8 +1735,7 @@ fn apply_effect(
                 }
 
                 // Legacy signature
-                let mut todo_errors: Vec<crate::diagnostics::CompilerErrorDetail> =
-                    Vec::new();
+                let mut todo_errors: Vec<crate::diagnostics::CompilerErrorDetail> = Vec::new();
                 let legacy_effects = compute_effects_for_legacy_signature(
                     state,
                     sig,
@@ -1887,9 +1885,7 @@ fn apply_effect(
                     && context.hoisted_context_declarations.contains_key(&decl_id)
                 {
                     let variable = match &ident.name {
-                        Some(crate::hir::IdentifierName::Named(n)) => {
-                            Some(format!("`{}`", n))
-                        }
+                        Some(crate::hir::IdentifierName::Named(n)) => Some(format!("`{}`", n)),
                         _ => None,
                     };
                     let hoisted_access = context
@@ -1919,16 +1915,16 @@ fn apply_effect(
                             );
                         }
                     }
-                    diagnostic.details.push(
-                        crate::diagnostics::CompilerDiagnosticDetail::Error {
+                    diagnostic
+                        .details
+                        .push(crate::diagnostics::CompilerDiagnosticDetail::Error {
                             loc: value.loc,
                             message: Some(format!(
                                 "{} is declared here",
                                 variable.as_deref().unwrap_or("variable")
                             )),
                             identifier_name: None,
-                        },
-                    );
+                        });
                     apply_effect(
                         context,
                         state,
@@ -1952,13 +1948,13 @@ fn apply_effect(
                         "This value cannot be modified",
                         Some(reason_str),
                     );
-                    diagnostic.details.push(
-                        crate::diagnostics::CompilerDiagnosticDetail::Error {
+                    diagnostic
+                        .details
+                        .push(crate::diagnostics::CompilerDiagnosticDetail::Error {
                             loc: value.loc,
                             message: Some(format!("{} cannot be modified", variable)),
                             identifier_name: None,
-                        },
-                    );
+                        });
 
                     if let AliasingEffect::Mutate {
                         reason: Some(MutationReason::AssignCurrentProperty),
@@ -2303,9 +2299,7 @@ fn compute_signature_for_instruction(
                     let prop_ty = &env.types
                         [env.identifiers[prop_place.identifier.0 as usize].type_.0 as usize];
                     if let Type::Function { return_type, .. } = prop_ty {
-                        if crate::hir::is_jsx_type(return_type)
-                            || is_phi_with_jsx(return_type)
-                        {
+                        if crate::hir::is_jsx_type(return_type) || is_phi_with_jsx(return_type) {
                             effects.push(AliasingEffect::Render {
                                 place: prop_place.clone(),
                             });
@@ -2502,13 +2496,13 @@ fn compute_signature_for_instruction(
                     variable
                 )),
             );
-            diagnostic.details.push(
-                crate::diagnostics::CompilerDiagnosticDetail::Error {
+            diagnostic
+                .details
+                .push(crate::diagnostics::CompilerDiagnosticDetail::Error {
                     loc: instr.loc,
                     message: Some(format!("{} cannot be reassigned", variable)),
                     identifier_name: None,
-                },
-            );
+                });
             effects.push(AliasingEffect::MutateGlobal {
                 place: sg_value.clone(),
                 error: diagnostic,
@@ -2607,13 +2601,13 @@ fn compute_effects_for_legacy_signature(
                 }
             )),
         );
-        diagnostic.details.push(
-            crate::diagnostics::CompilerDiagnosticDetail::Error {
+        diagnostic
+            .details
+            .push(crate::diagnostics::CompilerDiagnosticDetail::Error {
                 loc: _loc.copied(),
                 message: Some("Cannot call impure function".to_string()),
                 identifier_name: None,
-            },
-        );
+            });
         effects.push(AliasingEffect::Impure {
             place: receiver.clone(),
             error: diagnostic,
@@ -2752,10 +2746,7 @@ fn get_argument_effect(
     sig_effect: Effect,
     is_spread: bool,
     spread_loc: Option<SourceLocation>,
-) -> (
-    Effect,
-    Option<crate::diagnostics::CompilerErrorDetail>,
-) {
+) -> (Effect, Option<crate::diagnostics::CompilerErrorDetail>) {
     if !is_spread {
         (sig_effect, None)
     } else if sig_effect == Effect::Mutate || sig_effect == Effect::ConditionallyMutate {
@@ -2937,13 +2928,24 @@ fn compute_effects_for_aliasing_signature_config(
                             v.loc,
                         ));
                     }
-                    effects.push(AliasingEffect::Freeze { value: v, reason: *reason });
+                    effects.push(AliasingEffect::Freeze {
+                        value: v,
+                        reason: *reason,
+                    });
                 }
             }
-            crate::hir::type_config::AliasingEffectConfig::Create { into, value, reason } => {
+            crate::hir::type_config::AliasingEffectConfig::Create {
+                into,
+                value,
+                reason,
+            } => {
                 let intos = substitutions.get(into).cloned().unwrap_or_default();
                 for v in intos {
-                    effects.push(AliasingEffect::Create { into: v, value: *value, reason: *reason });
+                    effects.push(AliasingEffect::Create {
+                        into: v,
+                        value: *value,
+                        reason: *reason,
+                    });
                 }
             }
             crate::hir::type_config::AliasingEffectConfig::CreateFrom { from, into } => {
@@ -2951,7 +2953,10 @@ fn compute_effects_for_aliasing_signature_config(
                 let intos = substitutions.get(into).cloned().unwrap_or_default();
                 for f in &froms {
                     for t in &intos {
-                        effects.push(AliasingEffect::CreateFrom { from: f.clone(), into: t.clone() });
+                        effects.push(AliasingEffect::CreateFrom {
+                            from: f.clone(),
+                            into: t.clone(),
+                        });
                     }
                 }
             }
@@ -2960,7 +2965,10 @@ fn compute_effects_for_aliasing_signature_config(
                 let intos = substitutions.get(into).cloned().unwrap_or_default();
                 for f in &froms {
                     for t in &intos {
-                        effects.push(AliasingEffect::Assign { from: f.clone(), into: t.clone() });
+                        effects.push(AliasingEffect::Assign {
+                            from: f.clone(),
+                            into: t.clone(),
+                        });
                     }
                 }
             }
@@ -2969,7 +2977,10 @@ fn compute_effects_for_aliasing_signature_config(
                 let intos = substitutions.get(into).cloned().unwrap_or_default();
                 for f in &froms {
                     for t in &intos {
-                        effects.push(AliasingEffect::Alias { from: f.clone(), into: t.clone() });
+                        effects.push(AliasingEffect::Alias {
+                            from: f.clone(),
+                            into: t.clone(),
+                        });
                     }
                 }
             }
@@ -2978,7 +2989,10 @@ fn compute_effects_for_aliasing_signature_config(
                 let intos = substitutions.get(into).cloned().unwrap_or_default();
                 for f in &froms {
                     for t in &intos {
-                        effects.push(AliasingEffect::Capture { from: f.clone(), into: t.clone() });
+                        effects.push(AliasingEffect::Capture {
+                            from: f.clone(),
+                            into: t.clone(),
+                        });
                     }
                 }
             }
@@ -2987,7 +3001,10 @@ fn compute_effects_for_aliasing_signature_config(
                 let intos = substitutions.get(into).cloned().unwrap_or_default();
                 for f in &froms {
                     for t in &intos {
-                        effects.push(AliasingEffect::ImmutableCapture { from: f.clone(), into: t.clone() });
+                        effects.push(AliasingEffect::ImmutableCapture {
+                            from: f.clone(),
+                            into: t.clone(),
+                        });
                     }
                 }
             }
@@ -2996,23 +3013,38 @@ fn compute_effects_for_aliasing_signature_config(
                 for v in values {
                     effects.push(AliasingEffect::Impure {
                         place: v,
-                        error: CompilerDiagnostic::new(ErrorCategory::Purity, "Impure function call", None),
+                        error: CompilerDiagnostic::new(
+                            ErrorCategory::Purity,
+                            "Impure function call",
+                            None,
+                        ),
                     });
                 }
             }
             crate::hir::type_config::AliasingEffectConfig::Mutate { value } => {
                 let values = substitutions.get(value).cloned().unwrap_or_default();
                 for v in values {
-                    effects.push(AliasingEffect::Mutate { value: v, reason: None });
+                    effects.push(AliasingEffect::Mutate {
+                        value: v,
+                        reason: None,
+                    });
                 }
             }
-            crate::hir::type_config::AliasingEffectConfig::MutateTransitiveConditionally { value } => {
+            crate::hir::type_config::AliasingEffectConfig::MutateTransitiveConditionally {
+                value,
+            } => {
                 let values = substitutions.get(value).cloned().unwrap_or_default();
                 for v in values {
                     effects.push(AliasingEffect::MutateTransitiveConditionally { value: v });
                 }
             }
-            crate::hir::type_config::AliasingEffectConfig::Apply { receiver: r, function: f, mutates_function, args: a, into: i } => {
+            crate::hir::type_config::AliasingEffectConfig::Apply {
+                receiver: r,
+                function: f,
+                mutates_function,
+                args: a,
+                into: i,
+            } => {
                 let recv = substitutions.get(r).and_then(|v| v.first()).cloned();
                 let func = substitutions.get(f).and_then(|v| v.first()).cloned();
                 let into = substitutions.get(i).and_then(|v| v.first()).cloned();
@@ -3030,10 +3062,14 @@ fn compute_effects_for_aliasing_signature_config(
                                     }
                                 }
                             }
-                            crate::hir::type_config::ApplyArgConfig::Spread { place: name, .. } => {
+                            crate::hir::type_config::ApplyArgConfig::Spread {
+                                place: name, ..
+                            } => {
                                 if let Some(places) = substitutions.get(name) {
                                     if let Some(p) = places.first() {
-                                        apply_args.push(PlaceOrSpreadOrHole::Spread(crate::hir::SpreadPattern { place: p.clone() }));
+                                        apply_args.push(PlaceOrSpreadOrHole::Spread(
+                                            crate::hir::SpreadPattern { place: p.clone() },
+                                        ));
                                     }
                                 }
                             }
@@ -3522,9 +3558,7 @@ fn format_type_for_print(ty: &Type) -> String {
 
 fn is_phi_with_jsx(ty: &Type) -> bool {
     if let Type::Phi { operands } = ty {
-        operands
-            .iter()
-            .any(|op| crate::hir::is_jsx_type(op))
+        operands.iter().any(|op| crate::hir::is_jsx_type(op))
     } else {
         false
     }
@@ -3637,9 +3671,7 @@ fn each_pattern_items(pattern: &crate::hir::Pattern) -> Vec<PatternItem<'_>> {
         crate::hir::Pattern::Array(arr) => {
             for el in &arr.items {
                 match el {
-                    crate::hir::ArrayPatternElement::Place(p) => {
-                        items.push(PatternItem::Place(p))
-                    }
+                    crate::hir::ArrayPatternElement::Place(p) => items.push(PatternItem::Place(p)),
                     crate::hir::ArrayPatternElement::Spread(s) => {
                         items.push(PatternItem::Spread(&s.place))
                     }

@@ -1,17 +1,15 @@
 //! Port of build_hir.rs lines 2304–4256 — see mod.rs.
 
-use bun_ast::expr::Data as ExprData;
-use bun_ast::stmt::Data;
-use bun_ast::{self as ast, Binding, Expr, G, Ref, Stmt, b, s};
-use crate::diagnostics::{
-    CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory,
-};
+use crate::diagnostics::{CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::{
     ArrayPattern, ArrayPatternElement, BinaryOperator, BlockKind, Case, Effect, EvaluationOrder,
     GotoVariant, InstructionKind, InstructionValue, LValue, LValuePattern, ObjectPattern,
     ObjectProperty, ObjectPropertyOrSpread, ObjectPropertyType, Pattern, Place, PrimitiveValue,
     ReturnVariant, SourceLocation, SpreadPattern, Terminal, VariableBinding,
 };
+use bun_ast::expr::Data as ExprData;
+use bun_ast::stmt::Data;
+use bun_ast::{self as ast, Binding, Expr, G, Ref, Stmt, b, s};
 
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
@@ -75,11 +73,7 @@ fn lower_block_statement_inner(
 // `DeclareContext` + `addHoistedIdentifier`, after `lowerAssignment` already
 // emitted a `StoreLocal` for it. Replicate just enough of that scan here so
 // `validateContextVariableLValues` observes the same Local→Context conflict.
-fn catch_param_referenced_in_nested_fn(
-    builder: &HirBuilder,
-    target: Ref,
-    body: &[Stmt],
-) -> bool {
+fn catch_param_referenced_in_nested_fn(builder: &HirBuilder, target: Ref, body: &[Stmt]) -> bool {
     body.iter()
         .any(|s| ref_in_nested_fn_stmt(builder, target, s, 0))
 }
@@ -106,8 +100,7 @@ fn ref_in_nested_fn_stmt(builder: &HirBuilder, target: Ref, stmt: &Stmt, depth: 
         Data::SIf(i) => {
             ref_in_nested_fn_expr(builder, target, &i.test_, depth)
                 || ref_in_nested_fn_stmt(builder, target, &i.yes, depth)
-                || i
-                    .no
+                || i.no
                     .as_ref()
                     .is_some_and(|n| ref_in_nested_fn_stmt(builder, target, n, depth))
         }
@@ -115,12 +108,10 @@ fn ref_in_nested_fn_stmt(builder: &HirBuilder, target: Ref, stmt: &Stmt, depth: 
             f.init
                 .as_ref()
                 .is_some_and(|s| ref_in_nested_fn_stmt(builder, target, s, depth))
-                || f
-                    .test_
+                || f.test_
                     .as_ref()
                     .is_some_and(|e| ref_in_nested_fn_expr(builder, target, e, depth))
-                || f
-                    .update
+                || f.update
                     .as_ref()
                     .is_some_and(|e| ref_in_nested_fn_expr(builder, target, e, depth))
                 || ref_in_nested_fn_stmt(builder, target, &f.body, depth)
@@ -149,8 +140,7 @@ fn ref_in_nested_fn_stmt(builder: &HirBuilder, target: Ref, stmt: &Stmt, depth: 
                     c.value
                         .as_ref()
                         .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth))
-                        || c
-                            .body
+                        || c.body
                             .slice()
                             .iter()
                             .any(|s| ref_in_nested_fn_stmt(builder, target, s, depth))
@@ -208,8 +198,7 @@ fn ref_in_nested_fn_binding(
             (p.flags.contains(ast::flags::Property::IsComputed)
                 && ref_in_nested_fn_expr(builder, target, &p.key, depth))
                 || ref_in_nested_fn_binding(builder, target, &p.value, depth)
-                || p
-                    .default_value
+                || p.default_value
                     .as_ref()
                     .is_some_and(|d| ref_in_nested_fn_expr(builder, target, d, depth))
         }),
@@ -232,12 +221,7 @@ fn ref_in_nested_fn_func(builder: &HirBuilder, target: Ref, func: &G::Fn, depth:
         .any(|s| ref_in_nested_fn_stmt(builder, target, s, depth))
 }
 
-fn ref_in_nested_fn_class(
-    builder: &HirBuilder,
-    target: Ref,
-    class: &G::Class,
-    depth: u32,
-) -> bool {
+fn ref_in_nested_fn_class(builder: &HirBuilder, target: Ref, class: &G::Class, depth: u32) -> bool {
     class
         .extends
         .as_ref()
@@ -250,16 +234,13 @@ fn ref_in_nested_fn_class(
                     .any(|s| ref_in_nested_fn_stmt(builder, target, s, depth + 1));
             }
             (p.flags.contains(ast::flags::Property::IsComputed)
-                && p
-                    .key
+                && p.key
                     .as_ref()
                     .is_some_and(|k| ref_in_nested_fn_expr(builder, target, k, depth)))
-                || p
-                    .value
+                || p.value
                     .as_ref()
                     .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth))
-                || p
-                    .initializer
+                || p.initializer
                     .as_ref()
                     .is_some_and(|i| ref_in_nested_fn_expr(builder, target, i, depth))
         })
@@ -269,9 +250,7 @@ fn ref_in_nested_fn_class(
 fn ref_in_nested_fn_expr(builder: &HirBuilder, target: Ref, e: &Expr, depth: u32) -> bool {
     match &e.data {
         ExprData::EIdentifier(id) => depth > 0 && builder.resolve_ref(id.ref_) == target,
-        ExprData::EImportIdentifier(id) => {
-            depth > 0 && builder.resolve_ref(id.ref_) == target
-        }
+        ExprData::EImportIdentifier(id) => depth > 0 && builder.resolve_ref(id.ref_) == target,
         ExprData::EBinary(b) => {
             ref_in_nested_fn_expr(builder, target, &b.left, depth)
                 || ref_in_nested_fn_expr(builder, target, &b.right, depth)
@@ -299,16 +278,13 @@ fn ref_in_nested_fn_expr(builder: &HirBuilder, target: Ref, e: &Expr, depth: u32
             .any(|i| ref_in_nested_fn_expr(builder, target, i, depth)),
         ExprData::EObject(o) => o.properties.iter().any(|p| {
             (p.flags.contains(ast::flags::Property::IsComputed)
-                && p
-                    .key
+                && p.key
                     .as_ref()
                     .is_some_and(|k| ref_in_nested_fn_expr(builder, target, k, depth)))
-                || p
-                    .value
+                || p.value
                     .as_ref()
                     .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth))
-                || p
-                    .initializer
+                || p.initializer
                     .as_ref()
                     .is_some_and(|i| ref_in_nested_fn_expr(builder, target, i, depth))
         }),
@@ -325,15 +301,13 @@ fn ref_in_nested_fn_expr(builder: &HirBuilder, target: Ref, e: &Expr, depth: u32
         }
         ExprData::ECall(c) => {
             ref_in_nested_fn_expr(builder, target, &c.target, depth)
-                || c
-                    .args
+                || c.args
                     .iter()
                     .any(|a| ref_in_nested_fn_expr(builder, target, a, depth))
         }
         ExprData::ENew(n) => {
             ref_in_nested_fn_expr(builder, target, &n.target, depth)
-                || n
-                    .args
+                || n.args
                     .iter()
                     .any(|a| ref_in_nested_fn_expr(builder, target, a, depth))
         }
@@ -362,13 +336,11 @@ fn ref_in_nested_fn_expr(builder: &HirBuilder, target: Ref, e: &Expr, depth: u32
                     p.value
                         .as_ref()
                         .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth))
-                        || p
-                            .initializer
+                        || p.initializer
                             .as_ref()
                             .is_some_and(|i| ref_in_nested_fn_expr(builder, target, i, depth))
                 })
-                || j
-                    .children
+                || j.children
                     .iter()
                     .any(|c| ref_in_nested_fn_expr(builder, target, c, depth))
         }
@@ -1201,75 +1173,75 @@ pub(crate) fn lower_statement(
             }
 
             // Set up handler binding if catch has a param
-            let handler_binding_info: Option<(Place, Binding)> =
-                if let Some(param) = &handler_clause.binding {
-                    // Check for destructuring in catch clause params.
-                    // Match TS behavior: Babel doesn't register destructured catch bindings
-                    // in its scope, so resolveIdentifier fails and records an invariant error.
-                    let is_destructuring =
-                        matches!(param.data, b::B::BObject(_) | b::B::BArray(_));
-                    if is_destructuring {
-                        // Iterate the pattern to find all identifier locs for error reporting
-                        fn collect_identifier_locs(
-                            pat: &Binding,
-                            locs: &mut Vec<Option<SourceLocation>>,
-                        ) {
-                            match pat.data {
-                                b::B::BIdentifier(_) => {
-                                    locs.push(convert_loc(pat.loc));
-                                }
-                                b::B::BObject(obj) => {
-                                    for prop in obj.properties() {
-                                        collect_identifier_locs(&prop.value, locs);
-                                    }
-                                }
-                                b::B::BArray(arr) => {
-                                    for elem in arr.items() {
-                                        collect_identifier_locs(&elem.binding, locs);
-                                    }
-                                }
-                                b::B::BMissing(_) => {}
+            let handler_binding_info: Option<(Place, Binding)> = if let Some(param) =
+                &handler_clause.binding
+            {
+                // Check for destructuring in catch clause params.
+                // Match TS behavior: Babel doesn't register destructured catch bindings
+                // in its scope, so resolveIdentifier fails and records an invariant error.
+                let is_destructuring = matches!(param.data, b::B::BObject(_) | b::B::BArray(_));
+                if is_destructuring {
+                    // Iterate the pattern to find all identifier locs for error reporting
+                    fn collect_identifier_locs(
+                        pat: &Binding,
+                        locs: &mut Vec<Option<SourceLocation>>,
+                    ) {
+                        match pat.data {
+                            b::B::BIdentifier(_) => {
+                                locs.push(convert_loc(pat.loc));
                             }
+                            b::B::BObject(obj) => {
+                                for prop in obj.properties() {
+                                    collect_identifier_locs(&prop.value, locs);
+                                }
+                            }
+                            b::B::BArray(arr) => {
+                                for elem in arr.items() {
+                                    collect_identifier_locs(&elem.binding, locs);
+                                }
+                            }
+                            b::B::BMissing(_) => {}
                         }
-                        let mut id_locs = Vec::new();
-                        collect_identifier_locs(param, &mut id_locs);
-                        for id_loc in id_locs {
-                            builder.record_error(CompilerErrorDetail {
+                    }
+                    let mut id_locs = Vec::new();
+                    collect_identifier_locs(param, &mut id_locs);
+                    for id_loc in id_locs {
+                        builder.record_error(CompilerErrorDetail {
                                 reason: "(BuildHIR::lowerAssignment) Could not find binding for declaration.".to_string(),
                                 category: ErrorCategory::Invariant,
                                 loc: id_loc,
                                 description: None,
                                 suggestions: None,
                             })?;
-                        }
-                        None
-                    } else {
-                        let param_loc = convert_loc(param.loc);
-                        let id = builder.make_temporary(param_loc);
-                        promote_temporary(builder, id);
-                        let place = Place {
-                            identifier: id,
-                            effect: Effect::Unknown,
-                            reactive: false,
-                            loc: param_loc,
-                        };
-                        // Emit DeclareLocal for the catch binding
-                        lower_value_to_temporary(
-                            builder,
-                            InstructionValue::DeclareLocal {
-                                lvalue: LValue {
-                                    kind: InstructionKind::Catch,
-                                    place: place.clone(),
-                                },
-                                type_annotation: None,
-                                loc: param_loc,
-                            },
-                        )?;
-                        Some((place, *param))
                     }
-                } else {
                     None
-                };
+                } else {
+                    let param_loc = convert_loc(param.loc);
+                    let id = builder.make_temporary(param_loc);
+                    promote_temporary(builder, id);
+                    let place = Place {
+                        identifier: id,
+                        effect: Effect::Unknown,
+                        reactive: false,
+                        loc: param_loc,
+                    };
+                    // Emit DeclareLocal for the catch binding
+                    lower_value_to_temporary(
+                        builder,
+                        InstructionValue::DeclareLocal {
+                            lvalue: LValue {
+                                kind: InstructionKind::Catch,
+                                place: place.clone(),
+                            },
+                            type_annotation: None,
+                            loc: param_loc,
+                        },
+                    )?;
+                    Some((place, *param))
+                }
+            } else {
+                None
+            };
 
             // Create the handler (catch) block
             let handler_binding_for_block = handler_binding_info.clone();
@@ -1632,8 +1604,7 @@ pub(super) fn lower_assignment_binding(
     match target.data {
         b::B::BIdentifier(id) => {
             let id_loc = convert_loc(target.loc);
-            let result =
-                lower_identifier_for_assignment(builder, loc, id_loc, kind, id.r#ref)?;
+            let result = lower_identifier_for_assignment(builder, loc, id_loc, kind, id.r#ref)?;
             match result {
                 None => {
                     // Error already recorded
@@ -1768,11 +1739,7 @@ pub(super) fn lower_assignment_binding(
                         } else {
                             items.push(ArrayPatternElement::Place(temp.clone()));
                         }
-                        followups.push((
-                            temp,
-                            &element.binding,
-                            element.default_value.as_ref(),
-                        ));
+                        followups.push((temp, &element.binding, element.default_value.as_ref()));
                     }
                 }
             }

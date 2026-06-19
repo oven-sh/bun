@@ -4,14 +4,14 @@
 //! walking the AST with scope tracking to find variables that cross
 //! function boundaries.
 
-use bun_ast::expr::Data;
-use bun_ast::stmt::Data as StmtData;
-use bun_ast::{self as ast, AssignTarget, Expr, G, Loc, OpCode, Ref, Stmt, StmtOrExpr, b::B};
 use crate::diagnostics::CompilerError;
 use crate::diagnostics::CompilerErrorDetail;
 use crate::diagnostics::ErrorCategory;
 use crate::diagnostics::SourceLocation;
 use crate::hir::environment::Environment;
+use bun_ast::expr::Data;
+use bun_ast::stmt::Data as StmtData;
+use bun_ast::{self as ast, AssignTarget, Expr, G, Loc, OpCode, Ref, Stmt, StmtOrExpr, b::B};
 
 use super::FunctionNode;
 use super::hir_builder::convert_loc;
@@ -120,7 +120,8 @@ impl<'a> ContextIdentifierVisitor<'a> {
             Some(_) => self.depth(),
             None => return,
         };
-        self.inner_references.push((self.resolve_ref(ref_), fn_depth));
+        self.inner_references
+            .push((self.resolve_ref(ref_), fn_depth));
     }
 
     fn handle_reassignment_identifier(&mut self, ref_: Ref) {

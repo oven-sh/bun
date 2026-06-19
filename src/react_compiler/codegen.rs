@@ -185,7 +185,9 @@ pub fn codegen_function(
             E::Call {
                 target: use_memo_cache,
                 args: AstAlloc::vec_from_iter([Expr::init(
-                    E::Number { value: cache_count as f64 },
+                    E::Number {
+                        value: cache_count as f64,
+                    },
                     loc,
                 )]),
                 ..Default::default()
@@ -216,9 +218,7 @@ pub fn codegen_function(
     // Instrument forget: emit instrumentation call at the top of the function body
     let emit_instrument_forget = cx.env.config.enable_emit_instrument_forget.clone();
     if let Some(ref instrument_config) = emit_instrument_forget {
-        if func.id.is_some()
-            && cx.env.output_mode == crate::hir::environment::OutputMode::Client
-        {
+        if func.id.is_some() && cx.env.output_mode == crate::hir::environment::OutputMode::Client {
             let instrument_fn_local = cx
                 .env
                 .instrument_fn_name
@@ -235,7 +235,11 @@ pub fn codegen_function(
 
             let if_test = match (gating_expr, global_gating_expr) {
                 (Some(gating), Some(global)) => Expr::init(
-                    E::Binary { op: OpCode::BinLogicalAnd, left: global, right: gating },
+                    E::Binary {
+                        op: OpCode::BinLogicalAnd,
+                        left: global,
+                        right: gating,
+                    },
                     Loc::EMPTY,
                 ),
                 (Some(gating), None) => gating,
@@ -293,7 +297,10 @@ pub fn codegen_function(
             identifiers,
         );
         let codegen = codegen_reactive_function(&mut outlined_cx, &reactive_fn_mut)?;
-        outlined.push(OutlinedFunction { func: codegen, fn_type: entry.fn_type });
+        outlined.push(OutlinedFunction {
+            func: codegen,
+            fn_type: entry.fn_type,
+        });
     }
     compiled.outlined = outlined;
 
@@ -413,7 +420,9 @@ fn codegen_reactive_function(
     let mut directives: Vec<Stmt> = Vec::with_capacity(func.directives.len());
     for d in &func.directives {
         directives.push(Stmt::alloc(
-            S::Directive { value: store_str(d.as_bytes()) },
+            S::Directive {
+                value: store_str(d.as_bytes()),
+            },
             Loc::EMPTY,
         ));
     }
@@ -435,7 +444,10 @@ fn codegen_reactive_function(
 
     let id = func.id.as_ref().map(|name| {
         let r = cx.cg.ref_for_name(name);
-        LocRef { loc: convert_loc(func.loc), ref_: Some(r) }
+        LocRef {
+            loc: convert_loc(func.loc),
+            ref_: Some(r),
+        }
     });
 
     Ok(CodegenFunction {
@@ -509,7 +521,10 @@ fn codegen_block_no_reset(
                 let scope_block = codegen_block_no_reset(cx, instructions)?;
                 statements.extend(scope_block);
             }
-            ReactiveStatement::Scope(ReactiveScopeBlock { scope, instructions }) => {
+            ReactiveStatement::Scope(ReactiveScopeBlock {
+                scope,
+                instructions,
+            }) => {
                 let temp_snapshot = cx.temp.clone();
                 codegen_reactive_scope(cx, &mut statements, *scope, instructions)?;
                 cx.temp = temp_snapshot;
@@ -530,7 +545,10 @@ fn codegen_block_no_reset(
                         let label_ref = cx.cg.ref_for_label(label.id);
                         statements.push(Stmt::alloc(
                             S::Label {
-                                name: LocRef { loc: Loc::EMPTY, ref_: Some(label_ref) },
+                                name: LocRef {
+                                    loc: Loc::EMPTY,
+                                    ref_: Some(label_ref),
+                                },
                                 stmt: inner,
                             },
                             Loc::EMPTY,
@@ -581,7 +599,12 @@ fn codegen_reactive_scope(
         Expr::init(
             E::Index {
                 target: cache_ident(),
-                index: Expr::init(E::Number { value: index as f64 }, loc),
+                index: Expr::init(
+                    E::Number {
+                        value: index as f64,
+                    },
+                    loc,
+                ),
                 optional_chain: None,
             },
             loc,
@@ -603,7 +626,11 @@ fn codegen_reactive_scope(
         let dep_value = codegen_dependency(cx, dep)?;
         cache_store_stmts.push(expr_stmt(
             Expr::init(
-                E::Binary { op: OpCode::BinAssign, left: cache_slot(index), right: dep_value },
+                E::Binary {
+                    op: OpCode::BinAssign,
+                    left: cache_slot(index),
+                    right: dep_value,
+                },
                 loc,
             ),
             loc,
@@ -679,7 +706,11 @@ fn codegen_reactive_scope(
             .into_iter()
             .reduce(|acc, expr| {
                 Expr::init(
-                    E::Binary { op: OpCode::BinLogicalOr, left: acc, right: expr },
+                    E::Binary {
+                        op: OpCode::BinLogicalOr,
+                        left: acc,
+                        right: expr,
+                    },
                     loc,
                 )
             })
@@ -691,7 +722,11 @@ fn codegen_reactive_scope(
     for (name_ref, index, value) in &cache_loads {
         cache_store_stmts.push(expr_stmt(
             Expr::init(
-                E::Binary { op: OpCode::BinAssign, left: cache_slot(*index), right: *value },
+                E::Binary {
+                    op: OpCode::BinAssign,
+                    left: cache_slot(*index),
+                    right: *value,
+                },
                 loc,
             ),
             loc,
@@ -721,7 +756,9 @@ fn codegen_reactive_scope(
     );
     statements.push(memo_stmt);
 
-    let early_return_value = cx.env.scopes[scope_id.0 as usize].early_return_value.clone();
+    let early_return_value = cx.env.scopes[scope_id.0 as usize]
+        .early_return_value
+        .clone();
     if let Some(ref early_return) = early_return_value {
         let early_ident = &cx.env.identifiers[early_return.value.0 as usize];
         let name = match &early_ident.name {
@@ -746,7 +783,12 @@ fn codegen_reactive_scope(
                     loc,
                 ),
                 yes: block_stmt(
-                    vec![Stmt::alloc(S::Return { value: Some(name_expr) }, loc)],
+                    vec![Stmt::alloc(
+                        S::Return {
+                            value: Some(name_expr),
+                        },
+                        loc,
+                    )],
                     loc,
                 ),
                 no: None,
@@ -767,25 +809,41 @@ fn codegen_terminal(
     terminal: &ReactiveTerminal,
 ) -> Result<Option<Stmt>, CompilerError> {
     match terminal {
-        ReactiveTerminal::Break { target, target_kind, loc, .. } => {
+        ReactiveTerminal::Break {
+            target,
+            target_kind,
+            loc,
+            ..
+        } => {
             if *target_kind == ReactiveTerminalTargetKind::Implicit {
                 return Ok(None);
             }
             let label = if *target_kind == ReactiveTerminalTargetKind::Labeled {
                 let r = cx.cg.ref_for_label(*target);
-                Some(LocRef { loc: Loc::EMPTY, ref_: Some(r) })
+                Some(LocRef {
+                    loc: Loc::EMPTY,
+                    ref_: Some(r),
+                })
             } else {
                 None
             };
             Ok(Some(Stmt::alloc(S::Break { label }, convert_loc(*loc))))
         }
-        ReactiveTerminal::Continue { target, target_kind, loc, .. } => {
+        ReactiveTerminal::Continue {
+            target,
+            target_kind,
+            loc,
+            ..
+        } => {
             if *target_kind == ReactiveTerminalTargetKind::Implicit {
                 return Ok(None);
             }
             let label = if *target_kind == ReactiveTerminalTargetKind::Labeled {
                 let r = cx.cg.ref_for_label(*target);
-                Some(LocRef { loc: Loc::EMPTY, ref_: Some(r) })
+                Some(LocRef {
+                    loc: Loc::EMPTY,
+                    ref_: Some(r),
+                })
             } else {
                 None
             };
@@ -806,7 +864,13 @@ fn codegen_terminal(
                 convert_loc(*loc),
             )))
         }
-        ReactiveTerminal::If { test, consequent, alternate, loc, .. } => {
+        ReactiveTerminal::If {
+            test,
+            consequent,
+            alternate,
+            loc,
+            ..
+        } => {
             let test_expr = codegen_place_to_expression(cx, test)?;
             let stmt_loc = convert_loc(*loc);
             let consequent_block = codegen_block(cx, consequent)?;
@@ -829,7 +893,9 @@ fn codegen_terminal(
                 stmt_loc,
             )))
         }
-        ReactiveTerminal::Switch { test, cases, loc, .. } => {
+        ReactiveTerminal::Switch {
+            test, cases, loc, ..
+        } => {
             let test_expr = codegen_place_to_expression(cx, test)?;
             let stmt_loc = convert_loc(*loc);
             let mut switch_cases: AstVec<Case> = AstAlloc::vec_with_capacity(cases.len());
@@ -849,7 +915,11 @@ fn codegen_terminal(
                     Some(b) => leak_stmts(vec![block_stmt(b, stmt_loc)]),
                     None => StmtNodeList::EMPTY,
                 };
-                switch_cases.push(Case { loc: stmt_loc, value: test, body: consequent });
+                switch_cases.push(Case {
+                    loc: stmt_loc,
+                    value: test,
+                    body: consequent,
+                });
             }
             Ok(Some(Stmt::alloc(
                 S::Switch {
@@ -860,25 +930,48 @@ fn codegen_terminal(
                 stmt_loc,
             )))
         }
-        ReactiveTerminal::DoWhile { loop_block, test, loc, .. } => {
+        ReactiveTerminal::DoWhile {
+            loop_block,
+            test,
+            loc,
+            ..
+        } => {
             let test_expr = codegen_instruction_value_to_expression(cx, test)?;
             let stmt_loc = convert_loc(*loc);
             let body = codegen_block(cx, loop_block)?;
             Ok(Some(Stmt::alloc(
-                S::DoWhile { body: block_stmt(body, stmt_loc), test_: test_expr },
+                S::DoWhile {
+                    body: block_stmt(body, stmt_loc),
+                    test_: test_expr,
+                },
                 stmt_loc,
             )))
         }
-        ReactiveTerminal::While { test, loop_block, loc, .. } => {
+        ReactiveTerminal::While {
+            test,
+            loop_block,
+            loc,
+            ..
+        } => {
             let test_expr = codegen_instruction_value_to_expression(cx, test)?;
             let stmt_loc = convert_loc(*loc);
             let body = codegen_block(cx, loop_block)?;
             Ok(Some(Stmt::alloc(
-                S::While { test_: test_expr, body: block_stmt(body, stmt_loc) },
+                S::While {
+                    test_: test_expr,
+                    body: block_stmt(body, stmt_loc),
+                },
                 stmt_loc,
             )))
         }
-        ReactiveTerminal::For { init, test, update, loop_block, loc, .. } => {
+        ReactiveTerminal::For {
+            init,
+            test,
+            update,
+            loop_block,
+            loc,
+            ..
+        } => {
             let init_val = codegen_for_init(cx, init)?;
             let test_expr = codegen_instruction_value_to_expression(cx, test)?;
             let update_expr = update
@@ -897,17 +990,30 @@ fn codegen_terminal(
                 stmt_loc,
             )))
         }
-        ReactiveTerminal::ForIn { init, loop_block, loc, .. } => {
-            codegen_for_in(cx, init, loop_block, *loc)
-        }
-        ReactiveTerminal::ForOf { init, test, loop_block, loc, .. } => {
-            codegen_for_of(cx, init, test, loop_block, *loc)
-        }
+        ReactiveTerminal::ForIn {
+            init,
+            loop_block,
+            loc,
+            ..
+        } => codegen_for_in(cx, init, loop_block, *loc),
+        ReactiveTerminal::ForOf {
+            init,
+            test,
+            loop_block,
+            loc,
+            ..
+        } => codegen_for_of(cx, init, test, loop_block, *loc),
         ReactiveTerminal::Label { block, .. } => {
             let body = codegen_block(cx, block)?;
             Ok(Some(block_stmt(body, Loc::EMPTY)))
         }
-        ReactiveTerminal::Try { block, handler_binding, handler, loc, .. } => {
+        ReactiveTerminal::Try {
+            block,
+            handler_binding,
+            handler,
+            loc,
+            ..
+        } => {
             let stmt_loc = convert_loc(*loc);
             let catch_param = match handler_binding.as_ref() {
                 Some(binding) => {
@@ -972,7 +1078,10 @@ fn codegen_for_in(
             init: Stmt::alloc(
                 S::Local {
                     kind: var_decl_kind,
-                    decls: decl_list([G::Decl { binding: lval, value: None }]),
+                    decls: decl_list([G::Decl {
+                        binding: lval,
+                        value: None,
+                    }]),
                     ..Default::default()
                 },
                 stmt_loc,
@@ -991,7 +1100,11 @@ fn codegen_for_of(
     loop_block: &ReactiveBlock,
     loc: Option<DiagSourceLocation>,
 ) -> Result<Option<Stmt>, CompilerError> {
-    let ReactiveValue::SequenceExpression { instructions: init_instrs, .. } = init else {
+    let ReactiveValue::SequenceExpression {
+        instructions: init_instrs,
+        ..
+    } = init
+    else {
         return Err(invariant_err(
             "Expected a sequence expression init for for..of",
             None,
@@ -1008,7 +1121,11 @@ fn codegen_for_of(
         return Err(invariant_err("Expected GetIterator in for..of init", None));
     };
 
-    let ReactiveValue::SequenceExpression { instructions: test_instrs, .. } = test else {
+    let ReactiveValue::SequenceExpression {
+        instructions: test_instrs,
+        ..
+    } = test
+    else {
         return Err(invariant_err(
             "Expected a sequence expression test for for..of",
             None,
@@ -1037,7 +1154,10 @@ fn codegen_for_of(
             init: Stmt::alloc(
                 S::Local {
                     kind: var_decl_kind,
-                    decls: decl_list([G::Decl { binding: lval, value: None }]),
+                    decls: decl_list([G::Decl {
+                        binding: lval,
+                        value: None,
+                    }]),
                     ..Default::default()
                 },
                 stmt_loc,
@@ -1056,12 +1176,14 @@ fn extract_for_in_of_lval(
     loc: Option<DiagSourceLocation>,
 ) -> Result<(Binding, S::Kind), CompilerError> {
     let (lval, kind) = match instr_value {
-        InstructionValue::StoreLocal { lvalue, .. } => {
-            (codegen_lvalue(cx, &LvalueRef::Place(&lvalue.place))?, lvalue.kind)
-        }
-        InstructionValue::Destructure { lvalue, .. } => {
-            (codegen_lvalue(cx, &LvalueRef::Pattern(&lvalue.pattern))?, lvalue.kind)
-        }
+        InstructionValue::StoreLocal { lvalue, .. } => (
+            codegen_lvalue(cx, &LvalueRef::Place(&lvalue.place))?,
+            lvalue.kind,
+        ),
+        InstructionValue::Destructure { lvalue, .. } => (
+            codegen_lvalue(cx, &LvalueRef::Pattern(&lvalue.pattern))?,
+            lvalue.kind,
+        ),
         InstructionValue::StoreContext { .. } => {
             cx.record_error(CompilerErrorDetail {
                 category: ErrorCategory::Todo,
@@ -1140,7 +1262,10 @@ fn codegen_for_init(cx: &mut Context, init: &ReactiveValue) -> Result<Option<Stm
                     kind = S::Kind::KLet;
                 }
                 for d in var_decl.decls.iter() {
-                    declarators.push(G::Decl { binding: d.binding, value: d.value });
+                    declarators.push(G::Decl {
+                        binding: d.binding,
+                        value: d.value,
+                    });
                 }
             } else {
                 let mut err = CompilerError::new();
@@ -1166,7 +1291,11 @@ fn codegen_for_init(cx: &mut Context, init: &ReactiveValue) -> Result<Option<Stm
             ));
         }
         Ok(Some(Stmt::alloc(
-            S::Local { kind, decls: declarators, ..Default::default() },
+            S::Local {
+                kind,
+                decls: declarators,
+                ..Default::default()
+            },
             Loc::EMPTY,
         )))
     } else {
@@ -1246,7 +1375,9 @@ fn codegen_store_or_declare(
     value: &InstructionValue,
 ) -> Result<Option<Stmt>, CompilerError> {
     match value {
-        InstructionValue::StoreLocal { lvalue, value: val, .. } => {
+        InstructionValue::StoreLocal {
+            lvalue, value: val, ..
+        } => {
             let mut kind = lvalue.kind;
             if cx.has_declared(lvalue.place.identifier) {
                 kind = InstructionKind::Reassign;
@@ -1254,18 +1385,34 @@ fn codegen_store_or_declare(
             let rhs = codegen_place_to_expression(cx, val)?;
             emit_store(cx, instr, kind, &LvalueRef::Place(&lvalue.place), Some(rhs))
         }
-        InstructionValue::StoreContext { lvalue, value: val, .. } => {
+        InstructionValue::StoreContext {
+            lvalue, value: val, ..
+        } => {
             let rhs = codegen_place_to_expression(cx, val)?;
-            emit_store(cx, instr, lvalue.kind, &LvalueRef::Place(&lvalue.place), Some(rhs))
+            emit_store(
+                cx,
+                instr,
+                lvalue.kind,
+                &LvalueRef::Place(&lvalue.place),
+                Some(rhs),
+            )
         }
         InstructionValue::DeclareLocal { lvalue, .. }
         | InstructionValue::DeclareContext { lvalue, .. } => {
             if cx.has_declared(lvalue.place.identifier) {
                 return Ok(None);
             }
-            emit_store(cx, instr, lvalue.kind, &LvalueRef::Place(&lvalue.place), None)
+            emit_store(
+                cx,
+                instr,
+                lvalue.kind,
+                &LvalueRef::Place(&lvalue.place),
+                None,
+            )
         }
-        InstructionValue::Destructure { lvalue, value: val, .. } => {
+        InstructionValue::Destructure {
+            lvalue, value: val, ..
+        } => {
             let kind = lvalue.kind;
             for place in crate::hir::visitors::each_pattern_operand(&lvalue.pattern) {
                 let ident = &cx.env.identifiers[place.identifier.0 as usize];
@@ -1274,7 +1421,13 @@ fn codegen_store_or_declare(
                 }
             }
             let rhs = codegen_place_to_expression(cx, val)?;
-            emit_store(cx, instr, kind, &LvalueRef::Pattern(&lvalue.pattern), Some(rhs))
+            emit_store(
+                cx,
+                instr,
+                kind,
+                &LvalueRef::Pattern(&lvalue.pattern),
+                Some(rhs),
+            )
         }
         _ => unreachable!(),
     }
@@ -1301,7 +1454,10 @@ fn emit_store(
             Ok(Some(Stmt::alloc(
                 S::Local {
                     kind: S::Kind::KConst,
-                    decls: decl_list([G::Decl { binding: lval, value }]),
+                    decls: decl_list([G::Decl {
+                        binding: lval,
+                        value,
+                    }]),
                     ..Default::default()
                 },
                 stmt_loc,
@@ -1324,7 +1480,10 @@ fn emit_store(
             match rhs.data {
                 ExprData::EFunction(func_expr) => {
                     let mut func: G::Fn = G::Fn {
-                        name: Some(LocRef { loc: lval.loc, ref_: Some(fn_id.r#ref) }),
+                        name: Some(LocRef {
+                            loc: lval.loc,
+                            ref_: Some(fn_id.r#ref),
+                        }),
                         open_parens_loc: stmt_loc,
                         args: func_expr.func.args,
                         body: G::FnBody {
@@ -1355,7 +1514,10 @@ fn emit_store(
             Ok(Some(Stmt::alloc(
                 S::Local {
                     kind: S::Kind::KLet,
-                    decls: decl_list([G::Decl { binding: lval, value }]),
+                    decls: decl_list([G::Decl {
+                        binding: lval,
+                        value,
+                    }]),
                     ..Default::default()
                 },
                 stmt_loc,
@@ -1367,7 +1529,11 @@ fn emit_store(
             };
             let lval = codegen_assignment_target(cx, lvalue)?;
             let expr = Expr::init(
-                E::Binary { op: OpCode::BinAssign, left: lval, right: rhs },
+                E::Binary {
+                    op: OpCode::BinAssign,
+                    left: lval,
+                    right: rhs,
+                },
                 stmt_loc,
             );
             if let Some(ref lvalue_place) = instr.lvalue {
@@ -1464,7 +1630,12 @@ fn codegen_instruction_value(
             }
             Ok(result)
         }
-        ReactiveValue::LogicalExpression { operator, left, right, .. } => {
+        ReactiveValue::LogicalExpression {
+            operator,
+            left,
+            right,
+            ..
+        } => {
             let left_expr = codegen_instruction_value_to_expression(cx, left)?;
             let right_expr = codegen_instruction_value_to_expression(cx, right)?;
             Ok(Expr::init(
@@ -1476,16 +1647,29 @@ fn codegen_instruction_value(
                 Loc::EMPTY,
             ))
         }
-        ReactiveValue::ConditionalExpression { test, consequent, alternate, .. } => {
+        ReactiveValue::ConditionalExpression {
+            test,
+            consequent,
+            alternate,
+            ..
+        } => {
             let test_expr = codegen_instruction_value_to_expression(cx, test)?;
             let cons_expr = codegen_instruction_value_to_expression(cx, consequent)?;
             let alt_expr = codegen_instruction_value_to_expression(cx, alternate)?;
             Ok(Expr::init(
-                E::If { test_: test_expr, yes: cons_expr, no: alt_expr },
+                E::If {
+                    test_: test_expr,
+                    yes: cons_expr,
+                    no: alt_expr,
+                },
                 Loc::EMPTY,
             ))
         }
-        ReactiveValue::SequenceExpression { instructions, value, .. } => {
+        ReactiveValue::SequenceExpression {
+            instructions,
+            value,
+            ..
+        } => {
             let block_items: Vec<ReactiveStatement> = instructions
                 .iter()
                 .map(|i| ReactiveStatement::Instruction(i.clone()))
@@ -1528,13 +1712,19 @@ fn codegen_instruction_value(
                 let first = it.next().unwrap();
                 Ok(it.fold(first, |acc, next| {
                     Expr::init(
-                        E::Binary { op: OpCode::BinComma, left: acc, right: next },
+                        E::Binary {
+                            op: OpCode::BinComma,
+                            left: acc,
+                            right: next,
+                        },
                         Loc::EMPTY,
                     )
                 }))
             }
         }
-        ReactiveValue::OptionalExpression { value, optional, .. } => {
+        ReactiveValue::OptionalExpression {
+            value, optional, ..
+        } => {
             let opt_value = codegen_instruction_value_to_expression(cx, value)?;
             let chain = Some(if *optional {
                 OptionalChain::Start
@@ -1575,7 +1765,12 @@ fn codegen_base_instruction_value(
         InstructionValue::Primitive { value, loc } => {
             Ok(codegen_primitive_value(cx, value, convert_loc(*loc)))
         }
-        InstructionValue::BinaryExpression { operator, left, right, .. } => {
+        InstructionValue::BinaryExpression {
+            operator,
+            left,
+            right,
+            ..
+        } => {
             let left_expr = codegen_place_to_expression(cx, left)?;
             let right_expr = codegen_place_to_expression(cx, right)?;
             Ok(Expr::init(
@@ -1587,7 +1782,9 @@ fn codegen_base_instruction_value(
                 loc,
             ))
         }
-        InstructionValue::UnaryExpression { operator, value, .. } => {
+        InstructionValue::UnaryExpression {
+            operator, value, ..
+        } => {
             let arg = codegen_place_to_expression(cx, value)?;
             Ok(Expr::init(
                 E::Unary {
@@ -1606,17 +1803,23 @@ fn codegen_base_instruction_value(
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;
             let call_expr = Expr::init(
-                E::Call { target: callee_expr, args: arguments, ..Default::default() },
+                E::Call {
+                    target: callee_expr,
+                    args: arguments,
+                    ..Default::default()
+                },
                 loc,
             );
             Ok(maybe_wrap_hook_call(cx, call_expr, callee.identifier))
         }
-        InstructionValue::MethodCall { receiver: _, property, args, .. } => {
+        InstructionValue::MethodCall {
+            receiver: _,
+            property,
+            args,
+            ..
+        } => {
             let member_expr = codegen_place_to_expression(cx, property)?;
-            if !matches!(
-                member_expr.data,
-                ExprData::EDot(_) | ExprData::EIndex(_)
-            ) {
+            if !matches!(member_expr.data, ExprData::EDot(_) | ExprData::EIndex(_)) {
                 let mut err = CompilerError::new();
                 err.push_diagnostic(
                     CompilerDiagnostic::new(
@@ -1634,7 +1837,11 @@ fn codegen_base_instruction_value(
             }
             let arguments = codegen_arguments(cx, args)?;
             let call_expr = Expr::init(
-                E::Call { target: member_expr, args: arguments, ..Default::default() },
+                E::Call {
+                    target: member_expr,
+                    args: arguments,
+                    ..Default::default()
+                },
                 loc,
             );
             Ok(maybe_wrap_hook_call(cx, call_expr, property.identifier))
@@ -1643,7 +1850,11 @@ fn codegen_base_instruction_value(
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;
             Ok(Expr::init(
-                E::New { target: callee_expr, args: arguments, ..Default::default() },
+                E::New {
+                    target: callee_expr,
+                    args: arguments,
+                    ..Default::default()
+                },
                 loc,
             ))
         }
@@ -1661,16 +1872,29 @@ fn codegen_base_instruction_value(
                     ArrayElement::Hole => elems.push(Expr::init(E::Missing {}, loc)),
                 }
             }
-            Ok(Expr::init(E::Array { items: elems, ..Default::default() }, loc))
+            Ok(Expr::init(
+                E::Array {
+                    items: elems,
+                    ..Default::default()
+                },
+                loc,
+            ))
         }
         InstructionValue::ObjectExpression { properties, .. } => {
             codegen_object_expression(cx, properties, loc)
         }
-        InstructionValue::PropertyLoad { object, property, .. } => {
+        InstructionValue::PropertyLoad {
+            object, property, ..
+        } => {
             let obj = codegen_place_to_expression(cx, object)?;
             Ok(property_access_expr(obj, property, loc, None))
         }
-        InstructionValue::PropertyStore { object, property, value, .. } => {
+        InstructionValue::PropertyStore {
+            object,
+            property,
+            value,
+            ..
+        } => {
             let obj = codegen_place_to_expression(cx, object)?;
             let val = codegen_place_to_expression(cx, value)?;
             Ok(Expr::init(
@@ -1682,7 +1906,9 @@ fn codegen_base_instruction_value(
                 loc,
             ))
         }
-        InstructionValue::PropertyDelete { object, property, .. } => {
+        InstructionValue::PropertyDelete {
+            object, property, ..
+        } => {
             let obj = codegen_place_to_expression(cx, object)?;
             Ok(Expr::init(
                 E::Unary {
@@ -1693,15 +1919,26 @@ fn codegen_base_instruction_value(
                 loc,
             ))
         }
-        InstructionValue::ComputedLoad { object, property, .. } => {
+        InstructionValue::ComputedLoad {
+            object, property, ..
+        } => {
             let obj = codegen_place_to_expression(cx, object)?;
             let prop = codegen_place_to_expression(cx, property)?;
             Ok(Expr::init(
-                E::Index { target: obj, index: prop, optional_chain: None },
+                E::Index {
+                    target: obj,
+                    index: prop,
+                    optional_chain: None,
+                },
                 loc,
             ))
         }
-        InstructionValue::ComputedStore { object, property, value, .. } => {
+        InstructionValue::ComputedStore {
+            object,
+            property,
+            value,
+            ..
+        } => {
             let obj = codegen_place_to_expression(cx, object)?;
             let prop = codegen_place_to_expression(cx, property)?;
             let val = codegen_place_to_expression(cx, value)?;
@@ -1709,7 +1946,11 @@ fn codegen_base_instruction_value(
                 E::Binary {
                     op: OpCode::BinAssign,
                     left: Expr::init(
-                        E::Index { target: obj, index: prop, optional_chain: None },
+                        E::Index {
+                            target: obj,
+                            index: prop,
+                            optional_chain: None,
+                        },
                         loc,
                     ),
                     right: val,
@@ -1717,14 +1958,20 @@ fn codegen_base_instruction_value(
                 loc,
             ))
         }
-        InstructionValue::ComputedDelete { object, property, .. } => {
+        InstructionValue::ComputedDelete {
+            object, property, ..
+        } => {
             let obj = codegen_place_to_expression(cx, object)?;
             let prop = codegen_place_to_expression(cx, property)?;
             Ok(Expr::init(
                 E::Unary {
                     op: OpCode::UnDelete,
                     value: Expr::init(
-                        E::Index { target: obj, index: prop, optional_chain: None },
+                        E::Index {
+                            target: obj,
+                            index: prop,
+                            optional_chain: None,
+                        },
                         loc,
                     ),
                     flags: E::UnaryFlags::empty(),
@@ -1737,16 +1984,20 @@ fn codegen_base_instruction_value(
             raw.push(b'/');
             raw.extend_from_slice(pattern.as_bytes());
             raw.push(b'/');
-            let flags_offset = if flags.is_empty() {
-                None
-            } else {
-                Some(u16::try_from(raw.len()).map_err(|_| {
-                    invariant_err("RegExp pattern exceeds u16 flags_offset", None)
-                })?)
-            };
+            let flags_offset =
+                if flags.is_empty() {
+                    None
+                } else {
+                    Some(u16::try_from(raw.len()).map_err(|_| {
+                        invariant_err("RegExp pattern exceeds u16 flags_offset", None)
+                    })?)
+                };
             raw.extend_from_slice(flags.as_bytes());
             Ok(Expr::init(
-                E::RegExp { value: store_str(&raw), flags_offset },
+                E::RegExp {
+                    value: store_str(&raw),
+                    flags_offset,
+                },
                 loc,
             ))
         }
@@ -1754,7 +2005,9 @@ fn codegen_base_instruction_value(
             match (meta.as_str(), property.as_str()) {
                 ("import", "meta") => Ok(Expr::init(E::ImportMeta {}, loc)),
                 ("new", "target") => Ok(Expr::init(
-                    E::NewTarget { range: ast::Range { loc, len: 0 } },
+                    E::NewTarget {
+                        range: ast::Range { loc, len: 0 },
+                    },
                     loc,
                 )),
                 (m, p) => Err(invariant_err(
@@ -1774,7 +2027,9 @@ fn codegen_base_instruction_value(
             codegen_place_to_expression(cx, iterator)
         }
         InstructionValue::NextPropertyOf { value, .. } => codegen_place_to_expression(cx, value),
-        InstructionValue::PostfixUpdate { operation, lvalue, .. } => {
+        InstructionValue::PostfixUpdate {
+            operation, lvalue, ..
+        } => {
             let arg = codegen_place_to_expression(cx, lvalue)?;
             Ok(Expr::init(
                 E::Unary {
@@ -1785,7 +2040,9 @@ fn codegen_base_instruction_value(
                 loc,
             ))
         }
-        InstructionValue::PrefixUpdate { operation, lvalue, .. } => {
+        InstructionValue::PrefixUpdate {
+            operation, lvalue, ..
+        } => {
             let arg = codegen_place_to_expression(cx, lvalue)?;
             Ok(Expr::init(
                 E::Unary {
@@ -1805,7 +2062,11 @@ fn codegen_base_instruction_value(
             let lval = codegen_assignment_target(cx, &LvalueRef::Place(&lvalue.place))?;
             let rhs = codegen_place_to_expression(cx, value)?;
             Ok(Expr::init(
-                E::Binary { op: OpCode::BinAssign, left: lval, right: rhs },
+                E::Binary {
+                    op: OpCode::BinAssign,
+                    left: lval,
+                    right: rhs,
+                },
                 loc,
             ))
         }
@@ -1813,7 +2074,11 @@ fn codegen_base_instruction_value(
             let rhs = codegen_place_to_expression(cx, value)?;
             let left = cx.ident_expr(name, loc);
             Ok(Expr::init(
-                E::Binary { op: OpCode::BinAssign, left, right: rhs },
+                E::Binary {
+                    op: OpCode::BinAssign,
+                    left,
+                    right: rhs,
+                },
                 loc,
             ))
         }
@@ -1835,7 +2100,9 @@ fn codegen_base_instruction_value(
                 loc,
             ))
         }
-        InstructionValue::TemplateLiteral { subexprs, quasis, .. } => {
+        InstructionValue::TemplateLiteral {
+            subexprs, quasis, ..
+        } => {
             let mut quasis_it = quasis.iter();
             let head_q = quasis_it
                 .next()
@@ -1850,7 +2117,11 @@ fn codegen_base_instruction_value(
                 });
             }
             Ok(Expr::init(
-                E::Template { tag: None, head, parts: StoreSlice::new_mut(parts.leak()) },
+                E::Template {
+                    tag: None,
+                    head,
+                    parts: StoreSlice::new_mut(parts.leak()),
+                },
                 loc,
             ))
         }
@@ -2014,7 +2285,13 @@ fn codegen_function_expression(
         });
         let wrapped = Expr::init(
             E::Index {
-                target: Expr::init(E::Object { properties: props, ..Default::default() }, loc),
+                target: Expr::init(
+                    E::Object {
+                        properties: props,
+                        ..Default::default()
+                    },
+                    loc,
+                ),
                 index: string_expr(hint, loc),
                 optional_chain: None,
             },
@@ -2045,12 +2322,13 @@ fn codegen_object_expression(
                 match obj_prop.property_type {
                     ObjectPropertyType::Property => {
                         let value = codegen_place_to_expression(cx, &obj_prop.place)?;
-                        let is_shorthand = matches!(obj_prop.key, ObjectPropertyKey::Identifier { .. })
-                            && matches!(
-                                (key.data, value.data),
-                                (ExprData::EString(k), ExprData::EIdentifier(_v))
-                                    if name_matches_ref(cx, k.get(), value)
-                            );
+                        let is_shorthand =
+                            matches!(obj_prop.key, ObjectPropertyKey::Identifier { .. })
+                                && matches!(
+                                    (key.data, value.data),
+                                    (ExprData::EString(k), ExprData::EIdentifier(_v))
+                                        if name_matches_ref(cx, k.get(), value)
+                                );
                         let mut prop_flags = flags::PROPERTY_NONE;
                         if computed {
                             prop_flags |= flags::Property::IsComputed;
@@ -2111,7 +2389,10 @@ fn codegen_object_expression(
                                     name: None,
                                     open_parens_loc: loc,
                                     args: leak_args(fn_result.params),
-                                    body: G::FnBody { loc, stmts: leak_stmts(fn_result.body) },
+                                    body: G::FnBody {
+                                        loc,
+                                        stmts: leak_stmts(fn_result.body),
+                                    },
                                     flags: fn_flags,
                                     ..Default::default()
                                 },
@@ -2144,7 +2425,10 @@ fn codegen_object_expression(
         }
     }
     Ok(Expr::init(
-        E::Object { properties: ast_properties, ..Default::default() },
+        E::Object {
+            properties: ast_properties,
+            ..Default::default()
+        },
         loc,
     ))
 }
@@ -2172,7 +2456,9 @@ fn codegen_object_property_key(
         ObjectPropertyKey::Identifier { name } => Ok(string_expr(name, Loc::EMPTY)),
         ObjectPropertyKey::Computed { name } => codegen_place_to_expression(cx, name),
         ObjectPropertyKey::Number { name } => Ok(Expr::init(
-            E::Number { value: name.value() },
+            E::Number {
+                value: name.value(),
+            },
             Loc::EMPTY,
         )),
     }
@@ -2219,7 +2505,13 @@ fn codegen_jsx_expression(
     }
 
     Ok(codegen_jsx_call(
-        cx, tag_value, properties, child_nodes, key_value, elem_loc, close_loc,
+        cx,
+        tag_value,
+        properties,
+        child_nodes,
+        key_value,
+        elem_loc,
+        close_loc,
     ))
 }
 
@@ -2247,7 +2539,11 @@ fn codegen_jsx_call(
         properties.push(G::Property {
             key: Some(children_key),
             value: Some(Expr::init(
-                E::Array { items: children, is_single_line, ..Default::default() },
+                E::Array {
+                    items: children,
+                    is_single_line,
+                    ..Default::default()
+                },
                 close_loc,
             )),
             ..Default::default()
@@ -2260,11 +2556,18 @@ fn codegen_jsx_call(
         });
     }
 
-    let args_len = if is_dev { 6 } else { 2 + usize::from(key_value.is_some()) };
+    let args_len = if is_dev {
+        6
+    } else {
+        2 + usize::from(key_value.is_some())
+    };
     let mut args: ExprNodeList = AstAlloc::vec_with_capacity(args_len);
     args.push(tag_value);
     args.push(Expr::init(
-        E::Object { properties, ..Default::default() },
+        E::Object {
+            properties,
+            ..Default::default()
+        },
         loc,
     ));
 
@@ -2275,7 +2578,12 @@ fn codegen_jsx_call(
     }
 
     if is_dev {
-        args.push(Expr::init(E::Boolean { value: is_static_jsx }, loc));
+        args.push(Expr::init(
+            E::Boolean {
+                value: is_static_jsx,
+            },
+            loc,
+        ));
         args.push(Expr::init(E::Undefined {}, loc));
         args.push(Expr::init(E::This {}, loc));
     }
@@ -2385,12 +2693,16 @@ fn codegen_assignment_target(cx: &mut Context, pattern: &LvalueRef) -> Result<Ex
                                 codegen_assignment_target(cx, &LvalueRef::Place(&spread.place))?;
                             Expr::init(E::Spread { value: inner }, loc)
                         }
-                        crate::hir::ArrayPatternElement::Hole => {
-                            Expr::init(E::Missing {}, loc)
-                        }
+                        crate::hir::ArrayPatternElement::Hole => Expr::init(E::Missing {}, loc),
                     });
                 }
-                Ok(Expr::init(E::Array { items, ..Default::default() }, loc))
+                Ok(Expr::init(
+                    E::Array {
+                        items,
+                        ..Default::default()
+                    },
+                    loc,
+                ))
             }
             Pattern::Object(obj) => {
                 let loc = convert_loc(obj.loc);
@@ -2426,7 +2738,13 @@ fn codegen_assignment_target(cx: &mut Context, pattern: &LvalueRef) -> Result<Ex
                         }
                     });
                 }
-                Ok(Expr::init(E::Object { properties, ..Default::default() }, loc))
+                Ok(Expr::init(
+                    E::Object {
+                        properties,
+                        ..Default::default()
+                    },
+                    loc,
+                ))
             }
         },
         LvalueRef::Spread(spread) => {
@@ -2436,7 +2754,10 @@ fn codegen_assignment_target(cx: &mut Context, pattern: &LvalueRef) -> Result<Ex
     }
 }
 
-fn codegen_array_pattern(cx: &mut Context, pattern: &ArrayPattern) -> Result<Binding, CompilerError> {
+fn codegen_array_pattern(
+    cx: &mut Context,
+    pattern: &ArrayPattern,
+) -> Result<Binding, CompilerError> {
     let loc = convert_loc(pattern.loc);
     let mut has_spread = false;
     let mut items: ArenaVec<ArrayBinding> =
@@ -2458,7 +2779,10 @@ fn codegen_array_pattern(cx: &mut Context, pattern: &ArrayPattern) -> Result<Bin
             }
             crate::hir::ArrayPatternElement::Hole => {
                 items.push(ArrayBinding {
-                    binding: Binding { loc: Loc::EMPTY, data: b::B::BMissing(b::Missing {}) },
+                    binding: Binding {
+                        loc: Loc::EMPTY,
+                        data: b::B::BMissing(b::Missing {}),
+                    },
                     default_value: None,
                 });
             }
@@ -2558,12 +2882,16 @@ fn convert_identifier(
             let description = format!("identifier {} is unnamed", identifier_id.0);
             let mut err = CompilerError::new();
             err.push_diagnostic(
-                CompilerDiagnostic::new(ErrorCategory::Invariant, reason.clone(), Some(description))
-                    .with_detail(CompilerDiagnosticDetail::Error {
-                        loc: None,
-                        message: Some(reason),
-                        identifier_name: None,
-                    }),
+                CompilerDiagnostic::new(
+                    ErrorCategory::Invariant,
+                    reason.clone(),
+                    Some(description),
+                )
+                .with_detail(CompilerDiagnosticDetail::Error {
+                    loc: None,
+                    message: Some(reason),
+                    identifier_name: None,
+                }),
             );
             return Err(err);
         }
@@ -2779,17 +3107,29 @@ fn string_expr(s: &str, loc: Loc) -> Expr {
 
 #[inline]
 fn expr_stmt(value: Expr, loc: Loc) -> Stmt {
-    Stmt::alloc(S::SExpr { value, does_not_affect_tree_shaking: false }, loc)
+    Stmt::alloc(
+        S::SExpr {
+            value,
+            does_not_affect_tree_shaking: false,
+        },
+        loc,
+    )
 }
 
 #[inline]
 fn empty_stmt() -> Stmt {
-    Stmt { loc: Loc::EMPTY, data: StmtData::SEmpty(S::Empty {}) }
+    Stmt {
+        loc: Loc::EMPTY,
+        data: StmtData::SEmpty(S::Empty {}),
+    }
 }
 
 fn block_stmt(body: Vec<Stmt>, loc: Loc) -> Stmt {
     Stmt::alloc(
-        S::Block { stmts: leak_stmts(body), close_brace_loc: Loc::EMPTY },
+        S::Block {
+            stmts: leak_stmts(body),
+            close_brace_loc: Loc::EMPTY,
+        },
         loc,
     )
 }
@@ -2881,7 +3221,11 @@ fn codegen_primitive_value(cx: &mut Context, value: &PrimitiveValue, loc: Loc) -
                     inf
                 } else {
                     Expr::init(
-                        E::Unary { op: OpCode::UnNeg, value: inf, flags: E::UnaryFlags::empty() },
+                        E::Unary {
+                            op: OpCode::UnNeg,
+                            value: inf,
+                            flags: E::UnaryFlags::empty(),
+                        },
                         loc,
                     )
                 }
@@ -2896,7 +3240,9 @@ fn codegen_primitive_value(cx: &mut Context, value: &PrimitiveValue, loc: Loc) -
     }
 }
 
-fn get_instruction_value(reactive_value: &ReactiveValue) -> Result<&InstructionValue, CompilerError> {
+fn get_instruction_value(
+    reactive_value: &ReactiveValue,
+) -> Result<&InstructionValue, CompilerError> {
     match reactive_value {
         ReactiveValue::Instruction(iv) => Ok(iv),
         _ => Err(invariant_err("Expected base instruction value", None)),
@@ -2908,7 +3254,11 @@ fn invariant(
     reason: &str,
     loc: Option<DiagSourceLocation>,
 ) -> Result<(), CompilerError> {
-    if !condition { Err(invariant_err(reason, loc)) } else { Ok(()) }
+    if !condition {
+        Err(invariant_err(reason, loc))
+    } else {
+        Ok(())
+    }
 }
 
 fn invariant_err(reason: &str, loc: Option<DiagSourceLocation>) -> CompilerError {
@@ -3001,7 +3351,11 @@ fn maybe_wrap_hook_call(cx: &mut Context, call_expr: Expr, callee_id: Identifier
 fn is_hook_identifier(cx: &Context, identifier_id: IdentifierId) -> bool {
     let identifier = &cx.env.identifiers[identifier_id.0 as usize];
     let type_ = &cx.env.types[identifier.type_.0 as usize];
-    cx.env.get_hook_kind_for_type(type_).ok().flatten().is_some()
+    cx.env
+        .get_hook_kind_for_type(type_)
+        .ok()
+        .flatten()
+        .is_some()
 }
 
 fn wrap_hook_call_with_guard(
@@ -3035,10 +3389,18 @@ fn wrap_hook_call_with_guard(
             body_loc: loc,
             body: leak_stmts(vec![
                 guard_call(before),
-                Stmt::alloc(S::Return { value: Some(call_expr) }, loc),
+                Stmt::alloc(
+                    S::Return {
+                        value: Some(call_expr),
+                    },
+                    loc,
+                ),
             ]),
             catch_: None,
-            finally: Some(Finally { loc, stmts: leak_stmts(vec![guard_call(after)]) }),
+            finally: Some(Finally {
+                loc,
+                stmts: leak_stmts(vec![guard_call(after)]),
+            }),
         },
         loc,
     );
@@ -3046,7 +3408,10 @@ fn wrap_hook_call_with_guard(
     let iife = Expr::init(
         E::Function {
             func: G::Fn {
-                body: G::FnBody { loc, stmts: leak_stmts(vec![try_stmt]) },
+                body: G::FnBody {
+                    loc,
+                    stmts: leak_stmts(vec![try_stmt]),
+                },
                 ..Default::default()
             },
         },
@@ -3054,7 +3419,11 @@ fn wrap_hook_call_with_guard(
     );
 
     Expr::init(
-        E::Call { target: iife, args: AstAlloc::vec(), ..Default::default() },
+        E::Call {
+            target: iife,
+            args: AstAlloc::vec(),
+            ..Default::default()
+        },
         loc,
     )
 }
@@ -3093,7 +3462,10 @@ fn create_function_body_hook_guard(
             body_loc: loc,
             body: leak_stmts(try_body),
             catch_: None,
-            finally: Some(Finally { loc, stmts: leak_stmts(vec![guard_call(after)]) }),
+            finally: Some(Finally {
+                loc,
+                stmts: leak_stmts(vec![guard_call(after)]),
+            }),
         },
         loc,
     )

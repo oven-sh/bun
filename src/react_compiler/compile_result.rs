@@ -1,6 +1,9 @@
 //! Port of `react_compiler/entrypoint/compile_result.rs`.
 
-#![allow(unreachable_pub, reason = "ported types consumed by sibling stubs not yet wired")]
+#![allow(
+    unreachable_pub,
+    reason = "ported types consumed by sibling stubs not yet wired"
+)]
 
 use crate::diagnostics::{CompilerError, SourceLocation};
 use crate::hir::ReactFunctionType;

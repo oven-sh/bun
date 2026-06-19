@@ -18,7 +18,9 @@ use crate::hir::{
     ReactiveTerminalStatement, ReactiveTerminalTargetKind, ReactiveValue, environment::Environment,
 };
 
-use crate::reactive_scopes::visitors::{ReactiveFunctionTransform, Transformed, transform_reactive_function};
+use crate::reactive_scopes::visitors::{
+    ReactiveFunctionTransform, Transformed, transform_reactive_function,
+};
 
 /// The sentinel string used to detect early returns.
 /// TS: `EARLY_RETURN_SENTINEL` from CodegenReactiveFunction.

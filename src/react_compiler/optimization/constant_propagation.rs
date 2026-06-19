@@ -27,15 +27,15 @@
 use std::collections::HashMap;
 
 use crate::diagnostics::JsString;
+use crate::hir::cfg_utils::{
+    get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
+    remove_dead_do_while_statements, remove_unnecessary_try_catch, remove_unreachable_for_updates,
+};
 use crate::hir::environment::Environment;
 use crate::hir::{
     BinaryOperator, BlockKind, FloatValue, FunctionId, GotoVariant, HirFunction, IdentifierId,
     InstructionValue, NonLocalBinding, Phi, Place, PrimitiveValue, PropertyLiteral, SourceLocation,
     Terminal, UnaryOperator, UpdateOperator, format_js_number,
-};
-use crate::hir::cfg_utils::{
-    get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
-    remove_dead_do_while_statements, remove_unnecessary_try_catch, remove_unreachable_for_updates,
 };
 use crate::ssa::enter_ssa::placeholder_function;
 
@@ -663,10 +663,8 @@ fn evaluate_instruction(
                     .iter()
                     .enumerate()
                     .filter_map(|(i, dep)| {
-                        if let crate::hir::ManualMemoDependencyRoot::NamedLocal {
-                            value,
-                            ..
-                        } = &dep.root
+                        if let crate::hir::ManualMemoDependencyRoot::NamedLocal { value, .. } =
+                            &dep.root
                         {
                             let pv = read(constants, value);
                             if matches!(pv, Some(Constant::Primitive { .. })) {
@@ -683,8 +681,7 @@ fn evaluate_instruction(
                     } = func.instructions[instr_id.0 as usize].value
                     {
                         if let crate::hir::ManualMemoDependencyRoot::NamedLocal {
-                            constant,
-                            ..
+                            constant, ..
                         } = &mut deps[idx].root
                         {
                             *constant = true;

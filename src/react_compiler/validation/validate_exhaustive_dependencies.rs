@@ -989,18 +989,19 @@ fn collect_dependencies(
                                                         loc,
                                                         ..
                                                     } => ManualMemoDependency {
-                                                        root: ManualMemoDependencyRoot::NamedLocal {
-                                                            value: Place {
-                                                                identifier: *identifier,
-                                                                effect:
-                                                                    crate::hir::Effect::Read,
-                                                                reactive: cb
-                                                                    .reactive
-                                                                    .contains(identifier),
-                                                                loc: *loc,
+                                                        root:
+                                                            ManualMemoDependencyRoot::NamedLocal {
+                                                                value: Place {
+                                                                    identifier: *identifier,
+                                                                    effect:
+                                                                        crate::hir::Effect::Read,
+                                                                    reactive: cb
+                                                                        .reactive
+                                                                        .contains(identifier),
+                                                                    loc: *loc,
+                                                                },
+                                                                constant: false,
                                                             },
-                                                            constant: false,
-                                                        },
                                                         path: path.clone(),
                                                         loc: *loc,
                                                     },
@@ -1103,18 +1104,19 @@ fn collect_dependencies(
                                                         loc,
                                                         ..
                                                     } => ManualMemoDependency {
-                                                        root: ManualMemoDependencyRoot::NamedLocal {
-                                                            value: Place {
-                                                                identifier: *identifier,
-                                                                effect:
-                                                                    crate::hir::Effect::Read,
-                                                                reactive: cb
-                                                                    .reactive
-                                                                    .contains(identifier),
-                                                                loc: *loc,
+                                                        root:
+                                                            ManualMemoDependencyRoot::NamedLocal {
+                                                                value: Place {
+                                                                    identifier: *identifier,
+                                                                    effect:
+                                                                        crate::hir::Effect::Read,
+                                                                    reactive: cb
+                                                                        .reactive
+                                                                        .contains(identifier),
+                                                                    loc: *loc,
+                                                                },
+                                                                constant: false,
                                                             },
-                                                            constant: false,
-                                                        },
                                                         path: path.clone(),
                                                         loc: *loc,
                                                     },

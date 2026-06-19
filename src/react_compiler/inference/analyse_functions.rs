@@ -12,9 +12,9 @@
 //! inferMutationAliasingRanges, rewriteInstructionKindsBasedOnReassignment,
 //! and inferReactiveScopeVariables on each inner function.
 
-use indexmap::IndexMap;
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 use crate::hir::environment::Environment;
+use indexmap::IndexMap;
 use std::collections::HashSet;
 
 use crate::hir::{
@@ -108,7 +108,9 @@ where
     analyse_functions(func, env, debug_logger)?;
 
     // inferMutationAliasingEffects on the inner function
-    crate::inference::infer_mutation_aliasing_effects::infer_mutation_aliasing_effects(func, env, true)?;
+    crate::inference::infer_mutation_aliasing_effects::infer_mutation_aliasing_effects(
+        func, env, true,
+    )?;
 
     // Check for invariant errors (e.g., uninitialized value kind)
     // In TS, these throw from within inferMutationAliasingEffects, aborting
@@ -122,11 +124,12 @@ where
 
     // inferMutationAliasingRanges — returns the externally-visible function effects
     let function_effects =
-        crate::inference::infer_mutation_aliasing_ranges::infer_mutation_aliasing_ranges(func, env, true)?;
+        crate::inference::infer_mutation_aliasing_ranges::infer_mutation_aliasing_ranges(
+            func, env, true,
+        )?;
 
     // rewriteInstructionKindsBasedOnReassignment
-    if let Err(err) = crate::ssa::rewrite_instruction_kinds_based_on_reassignment(func, env)
-    {
+    if let Err(err) = crate::ssa::rewrite_instruction_kinds_based_on_reassignment(func, env) {
         env.errors.merge(err);
         return Ok(());
     }

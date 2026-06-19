@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use indexmap::IndexMap;
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::*;
+use indexmap::IndexMap;
 
 // =============================================================================
 // SSABuilder

@@ -14,10 +14,6 @@
 //! | 6242–6468 | `jsx` (`lower_jsx_*`) |
 //! | 4257–4361, 5985–6241 | this file: `lower()` entry + `lower_inner()` driver |
 
-use bun_ast::expr::Data as ExprData;
-use bun_ast::stmt::Data as StmtData;
-use bun_ast::{self as ast, Expr, G, Loc, Ref, Stmt, StmtOrExpr, b};
-use indexmap::IndexMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
 };
@@ -26,6 +22,10 @@ use crate::hir::{
     InstructionValue, ParamPattern, Place, PrimitiveValue, ReactFunctionType, ReturnVariant,
     SourceLocation, SpreadPattern, Terminal, VariableBinding, environment::Environment,
 };
+use bun_ast::expr::Data as ExprData;
+use bun_ast::stmt::Data as StmtData;
+use bun_ast::{self as ast, Expr, G, Loc, Ref, Stmt, StmtOrExpr, b};
+use indexmap::IndexMap;
 
 use super::find_context_identifiers::find_context_identifiers;
 use super::hir_builder::{
@@ -231,11 +231,13 @@ pub(super) fn lower_inner<'h>(
                                     name
                                 )),
                             )
-                            .with_detail(CompilerDiagnosticDetail::Error {
-                                loc: param_loc,
-                                message: Some("Could not find binding".to_string()),
-                                identifier_name: None,
-                            }),
+                            .with_detail(
+                                CompilerDiagnosticDetail::Error {
+                                    loc: param_loc,
+                                    message: Some("Could not find binding".to_string()),
+                                    identifier_name: None,
+                                },
+                            ),
                         );
                     }
                 }

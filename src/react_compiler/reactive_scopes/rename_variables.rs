@@ -49,11 +49,7 @@ impl Scopes {
         }
     }
 
-    fn visit_identifier(
-        &mut self,
-        identifier_id: crate::hir::IdentifierId,
-        env: &Environment,
-    ) {
+    fn visit_identifier(&mut self, identifier_id: crate::hir::IdentifierId, env: &Environment) {
         let identifier = &env.identifiers[identifier_id.0 as usize];
         let original_name = match &identifier.name {
             Some(name) => name.clone(),

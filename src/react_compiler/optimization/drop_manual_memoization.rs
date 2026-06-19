@@ -35,9 +35,9 @@ use crate::hir::Place;
 use crate::hir::PlaceOrSpread;
 use crate::hir::PropertyLiteral;
 use crate::hir::SourceLocation;
-use crate::hir::environment::Environment;
 use crate::hir::cfg_utils::create_temporary_place;
 use crate::hir::cfg_utils::mark_instruction_ids;
+use crate::hir::environment::Environment;
 
 // =============================================================================
 // Types

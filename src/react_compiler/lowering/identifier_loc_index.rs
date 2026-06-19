@@ -18,8 +18,8 @@
 
 #![allow(dead_code)]
 
-use bun_ast::Ref;
 use crate::hir::SourceLocation;
+use bun_ast::Ref;
 
 /// Source location and context flags for a single identifier reference.
 ///

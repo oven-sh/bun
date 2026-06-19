@@ -594,9 +594,7 @@ pub mod js_bundler {
                 this.react_fast_refresh = react_fast_refresh;
             }
 
-            if let Some(react_compiler) =
-                config.get_boolean_loose(global_this, "reactCompiler")?
-            {
+            if let Some(react_compiler) = config.get_boolean_loose(global_this, "reactCompiler")? {
                 this.react_compiler = react_compiler;
             }
 

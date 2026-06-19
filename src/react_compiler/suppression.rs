@@ -97,7 +97,10 @@ fn matches_eslint_enable(value: &str, rule_names: &[String]) -> bool {
 /// Check if a comment value matches a Flow suppression pattern.
 /// Matches: $FlowFixMe[react-rule, $FlowFixMe_xxx[react-rule,
 ///          $FlowExpectedError[react-rule, $FlowIssue[react-rule
-#[allow(clippy::manual_strip, reason = "kept byte-identical with upstream for /sync-react-compiler")]
+#[allow(
+    clippy::manual_strip,
+    reason = "kept byte-identical with upstream for /sync-react-compiler"
+)]
 fn matches_flow_suppression(value: &str) -> bool {
     // Find "$Flow" anywhere in the value
     let Some(idx) = value.find("$Flow") else {

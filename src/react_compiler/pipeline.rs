@@ -177,7 +177,8 @@ pub fn compile_outlined_fn(
     env.output_mode = OutputMode::Client;
 
     // Build a FunctionDeclaration from the codegen output
-    let mut params: bun_alloc::AstVec<G::Arg> = AstAlloc::vec_with_capacity(codegen_fn.params.len());
+    let mut params: bun_alloc::AstVec<G::Arg> =
+        AstAlloc::vec_with_capacity(codegen_fn.params.len());
     for p in codegen_fn.params {
         params.push(p);
     }
@@ -239,13 +240,7 @@ fn run_hir_passes(
     hir: &mut crate::hir::HirFunction,
     env: &mut Environment,
     context: &mut ProgramContext,
-) -> Result<
-    (
-        crate::hir::reactive::ReactiveFunction,
-        HashSet<String>,
-    ),
-    CompilerError,
-> {
+) -> Result<(crate::hir::reactive::ReactiveFunction, HashSet<String>), CompilerError> {
     crate::optimization::prune_maybe_throws(hir, &mut env.functions)?;
 
     crate::validation::validate_context_variable_lvalues(hir, env)?;
@@ -355,8 +350,7 @@ fn run_hir_passes(
         crate::inference::infer_reactive_scope_variables(hir, env)?;
     }
 
-    let fbt_operands =
-        crate::inference::memoize_fbt_and_macro_operands_in_same_scope(hir, env);
+    let fbt_operands = crate::inference::memoize_fbt_and_macro_operands_in_same_scope(hir, env);
 
     if env.config.enable_jsx_outlining {
         crate::optimization::outline_jsx(hir, env);
@@ -396,22 +390,15 @@ fn run_hir_passes(
     crate::reactive_scopes::prune_non_escaping_scopes(&mut reactive_fn, env)?;
     crate::reactive_scopes::prune_non_reactive_dependencies(&mut reactive_fn, env);
     crate::reactive_scopes::prune_unused_scopes(&mut reactive_fn, env)?;
-    crate::reactive_scopes::merge_reactive_scopes_that_invalidate_together(
-        &mut reactive_fn,
-        env,
-    )?;
+    crate::reactive_scopes::merge_reactive_scopes_that_invalidate_together(&mut reactive_fn, env)?;
     crate::reactive_scopes::prune_always_invalidating_scopes(&mut reactive_fn, env)?;
     crate::reactive_scopes::propagate_early_returns(&mut reactive_fn, env);
     crate::reactive_scopes::prune_unused_lvalues(&mut reactive_fn, env);
     crate::reactive_scopes::promote_used_temporaries(&mut reactive_fn, env);
-    crate::reactive_scopes::extract_scope_declarations_from_destructuring(
-        &mut reactive_fn,
-        env,
-    )?;
+    crate::reactive_scopes::extract_scope_declarations_from_destructuring(&mut reactive_fn, env)?;
     crate::reactive_scopes::stabilize_block_ids(&mut reactive_fn, env);
 
-    let unique_identifiers =
-        crate::reactive_scopes::rename_variables(&mut reactive_fn, env);
+    let unique_identifiers = crate::reactive_scopes::rename_variables(&mut reactive_fn, env);
 
     for name in &unique_identifiers {
         context.add_new_reference(name.clone());

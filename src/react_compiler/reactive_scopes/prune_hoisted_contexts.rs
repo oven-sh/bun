@@ -17,7 +17,9 @@ use crate::hir::{
     environment::Environment,
 };
 
-use crate::reactive_scopes::visitors::{ReactiveFunctionTransform, Transformed, transform_reactive_function};
+use crate::reactive_scopes::visitors::{
+    ReactiveFunctionTransform, Transformed, transform_reactive_function,
+};
 
 // =============================================================================
 // Public entry point

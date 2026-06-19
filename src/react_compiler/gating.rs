@@ -8,11 +8,13 @@
 //
 // Ported from `Entrypoint/Gating.ts`.
 
-use bun_alloc::{Arena, AstAlloc};
-use bun_ast::stmt::Data as StmtData;
-use bun_ast::{Binding, Expr, Loc, LocRef, Ref, Stmt, StmtOrExpr, StoreSlice, b, e as E, flags, g as G, s as S};
 use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::ErrorCategory;
+use bun_alloc::{Arena, AstAlloc};
+use bun_ast::stmt::Data as StmtData;
+use bun_ast::{
+    Binding, Expr, Loc, LocRef, Ref, Stmt, StmtOrExpr, StoreSlice, b, e as E, flags, g as G, s as S,
+};
 
 use super::imports::ProgramContext;
 use super::program::Host;
@@ -209,11 +211,10 @@ fn insert_additional_function_declaration(
         }
     };
 
-    let original_fn_name = original_fn_ref
-        .func
-        .name
-        .and_then(|n| n.ref_)
-        .expect("Expected function declaration referenced elsewhere to have a named identifier");
+    let original_fn_name =
+        original_fn_ref.func.name.and_then(|n| n.ref_).expect(
+            "Expected function declaration referenced elsewhere to have a named identifier",
+        );
     let _compiled_id = compiled
         .name
         .and_then(|n| n.ref_)
@@ -465,7 +466,9 @@ fn get_fn_decl_name_from_export_default(stmt: &Stmt) -> Option<Ref> {
 
 /// Extract a CompiledFunctionNode from a statement (for building the
 /// "original" side of the gating expression).
-fn extract_function_node_from_stmt(stmt: &Stmt) -> Result<CompiledFunctionNode, CompilerDiagnostic> {
+fn extract_function_node_from_stmt(
+    stmt: &Stmt,
+) -> Result<CompiledFunctionNode, CompilerDiagnostic> {
     match stmt.data {
         StmtData::SFunction(mut fd) => Ok(CompiledFunctionNode::FunctionDeclaration(
             core::mem::take(&mut fd.func),

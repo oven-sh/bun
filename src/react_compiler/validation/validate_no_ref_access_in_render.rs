@@ -538,7 +538,13 @@ fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env)
 
 pub fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
     let mut ref_env = Env::new();
-    collect_temporaries_sidemap(func, &mut ref_env, &env.identifiers, &env.types, &env.functions);
+    collect_temporaries_sidemap(
+        func,
+        &mut ref_env,
+        &env.identifiers,
+        &env.types,
+        &env.functions,
+    );
     let mut errors: Vec<CompilerDiagnostic> = Vec::new();
     validate_no_ref_access_in_render_impl(
         func,
@@ -905,9 +911,9 @@ fn validate_no_ref_access_in_render_impl(
                                         AliasingEffect::Mutate { value, .. }
                                         | AliasingEffect::MutateTransitive { value }
                                         | AliasingEffect::MutateConditionally { value }
-                                        | AliasingEffect::MutateTransitiveConditionally {
-                                            value,
-                                        } => (value, true),
+                                        | AliasingEffect::MutateTransitiveConditionally { value } => {
+                                            (value, true)
+                                        }
                                         AliasingEffect::Render { place } => (place, true),
                                         AliasingEffect::Capture { from, .. }
                                         | AliasingEffect::Alias { from, .. }

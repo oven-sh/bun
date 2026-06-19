@@ -4,9 +4,7 @@ use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory, SourceLocation,
 };
 use crate::hir::environment::Environment;
-use crate::hir::visitors::{
-    each_instruction_value_operand_with_functions, each_terminal_operand,
-};
+use crate::hir::visitors::{each_instruction_value_operand_with_functions, each_terminal_operand};
 use crate::hir::{
     FunctionId, HirFunction, IdentifierId, InstructionValue, ParamPattern, Place, PlaceOrSpread,
     ReturnVariant, Terminal,

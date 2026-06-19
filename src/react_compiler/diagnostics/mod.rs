@@ -18,7 +18,6 @@ pub mod js_string;
 
 pub use js_string::JsString;
 
-
 /// Error categories matching the TS ErrorCategory enum
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorCategory {

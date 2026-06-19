@@ -13,7 +13,6 @@
 
 use std::fmt;
 
-
 /// Invariant: `Repr::Utf8` holds every well-formed value and `Repr::Wtf16`
 /// only ill-formed ones (at least one unpaired surrogate). The derived
 /// `PartialEq`/`Hash` are only sound under this invariant: a well-formed

@@ -183,9 +183,7 @@ fn collect_promotable_value(
     match value {
         ReactiveValue::Instruction(instr_value) => {
             // Visit operands
-            for place in
-                crate::hir::visitors::each_instruction_value_operand(instr_value, env)
-            {
+            for place in crate::hir::visitors::each_instruction_value_operand(instr_value, env) {
                 collect_promotable_place(&place, state, active_scopes, env);
             }
             // Check for JSX tag
@@ -666,9 +664,7 @@ fn promote_interposed_instruction(
                     }
 
                     // Visit operands
-                    for place in
-                        crate::hir::visitors::each_instruction_value_operand(iv, env)
-                    {
+                    for place in crate::hir::visitors::each_instruction_value_operand(iv, env) {
                         promote_interposed_place(&place, state, inter_state, consts, env);
                     }
 
@@ -702,9 +698,7 @@ fn promote_interposed_instruction(
                         consts.insert(lvalue.place.identifier);
                     }
                     // Visit operands
-                    for place in
-                        crate::hir::visitors::each_instruction_value_operand(iv, env)
-                    {
+                    for place in crate::hir::visitors::each_instruction_value_operand(iv, env) {
                         promote_interposed_place(&place, state, inter_state, consts, env);
                     }
                 }
@@ -724,9 +718,7 @@ fn promote_interposed_instruction(
                         }
                     }
                     // Visit operands
-                    for place in
-                        crate::hir::visitors::each_instruction_value_operand(iv, env)
-                    {
+                    for place in crate::hir::visitors::each_instruction_value_operand(iv, env) {
                         promote_interposed_place(&place, state, inter_state, consts, env);
                     }
                 }
@@ -743,9 +735,7 @@ fn promote_interposed_instruction(
                         }
                     }
                     // Visit operands
-                    for place in
-                        crate::hir::visitors::each_instruction_value_operand(iv, env)
-                    {
+                    for place in crate::hir::visitors::each_instruction_value_operand(iv, env) {
                         promote_interposed_place(&place, state, inter_state, consts, env);
                     }
                 }
@@ -754,17 +744,13 @@ fn promote_interposed_instruction(
                         globals.insert(lvalue.identifier);
                     }
                     // Visit operands
-                    for place in
-                        crate::hir::visitors::each_instruction_value_operand(iv, env)
-                    {
+                    for place in crate::hir::visitors::each_instruction_value_operand(iv, env) {
                         promote_interposed_place(&place, state, inter_state, consts, env);
                     }
                 }
                 _ => {
                     // Default: visit operands
-                    for place in
-                        crate::hir::visitors::each_instruction_value_operand(iv, env)
-                    {
+                    for place in crate::hir::visitors::each_instruction_value_operand(iv, env) {
                         promote_interposed_place(&place, state, inter_state, consts, env);
                     }
                 }

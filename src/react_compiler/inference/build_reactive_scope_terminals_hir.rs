@@ -14,7 +14,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use indexmap::IndexMap;
 use crate::hir::BasicBlock;
 use crate::hir::BlockId;
 use crate::hir::EvaluationOrder;
@@ -23,13 +22,14 @@ use crate::hir::HirFunction;
 use crate::hir::IdentifierId;
 use crate::hir::ScopeId;
 use crate::hir::Terminal;
+use crate::hir::cfg_utils::get_reverse_postordered_blocks;
+use crate::hir::cfg_utils::mark_instruction_ids;
+use crate::hir::cfg_utils::mark_predecessors;
 use crate::hir::environment::Environment;
 use crate::hir::visitors::each_instruction_lvalue_ids;
 use crate::hir::visitors::each_instruction_operand_ids;
 use crate::hir::visitors::each_terminal_operand_ids;
-use crate::hir::cfg_utils::get_reverse_postordered_blocks;
-use crate::hir::cfg_utils::mark_instruction_ids;
-use crate::hir::cfg_utils::mark_predecessors;
+use indexmap::IndexMap;
 
 // =============================================================================
 // getScopes

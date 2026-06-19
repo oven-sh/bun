@@ -1,11 +1,9 @@
 //! Port of build_hir.rs lines 1–662 and 4362–5509 — see mod.rs.
 
+use crate::diagnostics::{CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory};
+use crate::hir::*;
 use bun_ast::expr::Data;
 use bun_ast::{self as ast, Expr, G, Loc, OpCode, OptionalChain, Ref};
-use crate::diagnostics::{
-    CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory,
-};
-use crate::hir::*;
 
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
@@ -22,9 +20,9 @@ pub(super) fn convert_opt_loc(loc: Loc) -> Option<SourceLocation> {
 }
 
 pub(super) fn utf8_owned(bytes: &[u8]) -> Result<String, CompilerError> {
-    core::str::from_utf8(bytes).map(str::to_owned).map_err(|_| {
-        CompilerError::from(CompilerDiagnostic::todo("non-utf8 identifier", None))
-    })
+    core::str::from_utf8(bytes)
+        .map(str::to_owned)
+        .map_err(|_| CompilerError::from(CompilerDiagnostic::todo("non-utf8 identifier", None)))
 }
 
 // =============================================================================
@@ -207,7 +205,10 @@ pub(super) fn convert_update_operator(op: OpCode) -> Option<(UpdateOperator, boo
 // Helper functions
 // =============================================================================
 
-pub(super) fn build_temporary_place(builder: &mut HirBuilder, loc: Option<SourceLocation>) -> Place {
+pub(super) fn build_temporary_place(
+    builder: &mut HirBuilder,
+    loc: Option<SourceLocation>,
+) -> Place {
     let id = builder.make_temporary(loc);
     Place {
         identifier: id,
@@ -541,8 +542,7 @@ pub(super) fn lower_assignment(
         Data::EIdentifier(_) | Data::EImportIdentifier(_) => {
             let ref_ = assignment_target_ref(target).unwrap();
             let id_loc = convert_loc(target.loc);
-            let result =
-                lower_identifier_for_assignment(builder, loc, id_loc, kind, ref_)?;
+            let result = lower_identifier_for_assignment(builder, loc, id_loc, kind, ref_)?;
             match result {
                 None => Ok(None),
                 Some(IdentifierForAssignment::Global { name }) => {
@@ -815,7 +815,9 @@ pub(super) fn lower_assignment(
 
             for prop in pattern.properties.iter() {
                 if matches!(prop.kind, G::PropertyKind::Spread) {
-                    let Some(arg) = prop.value.as_ref() else { continue };
+                    let Some(arg) = prop.value.as_ref() else {
+                        continue;
+                    };
                     let rest_loc = convert_loc(arg.loc);
                     if let Some(ref_) = assignment_target_ref(arg) {
                         let is_context = builder.is_context_identifier(ref_);
@@ -827,10 +829,9 @@ pub(super) fn lower_assignment(
                                 builder, rest_loc, rest_loc, kind, ref_,
                             )? {
                                 Some(IdentifierForAssignment::Place(place)) => {
-                                    properties
-                                        .push(ObjectPropertyOrSpread::Spread(SpreadPattern {
-                                            place,
-                                        }));
+                                    properties.push(ObjectPropertyOrSpread::Spread(
+                                        SpreadPattern { place },
+                                    ));
                                 }
                                 Some(IdentifierForAssignment::Global { .. }) => {
                                     builder.record_error(CompilerErrorDetail {
@@ -878,13 +879,17 @@ pub(super) fn lower_assignment(
                     continue;
                 }
 
-                let Some(key_expr) = prop.key.as_ref() else { continue };
+                let Some(key_expr) = prop.key.as_ref() else {
+                    continue;
+                };
                 let key = match lower_object_property_key(builder, key_expr, false)? {
                     Some(k) => k,
                     None => continue,
                 };
 
-                let Some(val) = prop.value.as_ref() else { continue };
+                let Some(val) = prop.value.as_ref() else {
+                    continue;
+                };
                 // `{a = 1} = x` parses as a Property with `initializer`; treat it
                 // as `{a: a = 1}` by deferring to a followup AssignmentPattern.
                 let target_expr = val;
@@ -894,12 +899,10 @@ pub(super) fn lower_assignment(
                     let id_loc = convert_loc(target_expr.loc);
                     let is_context = builder.is_context_identifier(ref_);
                     let can_use_direct = !force_temporaries
-                        && (matches!(assignment_style, AssignmentStyle::Assignment)
-                            || !is_context);
+                        && (matches!(assignment_style, AssignmentStyle::Assignment) || !is_context);
                     if can_use_direct {
-                        match lower_identifier_for_assignment(
-                            builder, id_loc, id_loc, kind, ref_,
-                        )? {
+                        match lower_identifier_for_assignment(builder, id_loc, id_loc, kind, ref_)?
+                        {
                             Some(IdentifierForAssignment::Place(place)) => {
                                 properties.push(ObjectPropertyOrSpread::Property(ObjectProperty {
                                     key,
@@ -975,9 +978,7 @@ pub(super) fn lower_assignment(
             lower_assignment(builder, pat_loc, kind, &b.left, temp, assignment_style)
         }
 
-        Data::ESpread(s) => {
-            lower_assignment(builder, loc, kind, &s.value, value, assignment_style)
-        }
+        Data::ESpread(s) => lower_assignment(builder, loc, kind, &s.value, value, assignment_style),
 
         _ => {
             builder.record_error(CompilerErrorDetail {
@@ -1419,8 +1420,7 @@ pub(super) fn lower_optional_call_expression_impl(
         let callee = &call.target;
         match (&callee.data, optional_chain_of(callee)) {
             (Data::ECall(_), Some(_)) => {
-                let value =
-                    lower_optional_call_expression_impl(builder, callee, Some(alternate))?;
+                let value = lower_optional_call_expression_impl(builder, callee, Some(alternate))?;
                 let value_place = lower_value_to_temporary(builder, value)?;
                 callee_info = Some(CalleeInfo::CallExpression {
                     callee: value_place,

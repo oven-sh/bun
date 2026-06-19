@@ -19,7 +19,9 @@ use crate::hir::{
     environment::Environment,
 };
 
-use crate::reactive_scopes::visitors::{ReactiveFunctionTransform, Transformed, transform_reactive_function};
+use crate::reactive_scopes::visitors::{
+    ReactiveFunctionTransform, Transformed, transform_reactive_function,
+};
 
 /// Prunes scopes that always invalidate because they depend on unmemoized
 /// always-invalidating values.

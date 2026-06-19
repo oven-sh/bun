@@ -1,20 +1,21 @@
 //! Port of build_hir.rs lines 5510–5984 and 6469–6552 — see mod.rs.
 
-use bun_ast::expr::Data;
-use bun_ast::{self as ast, E, Expr, G, Loc, Ref};
-use indexmap::IndexMap;
 use crate::diagnostics::{
-    CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, JsString,
-    SourceLocation,
+    CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, JsString, SourceLocation,
 };
 use crate::hir::{
     Effect, FunctionExpressionType, InstructionKind, InstructionValue, LValue, LoweredFunction,
     ObjectProperty, ObjectPropertyKey, ObjectPropertyType, Place, VariableBinding,
 };
+use bun_ast::expr::Data;
+use bun_ast::{self as ast, E, Expr, G, Loc, Ref};
+use indexmap::IndexMap;
 
 use super::super::hir_builder::{HirBuilder, convert_loc};
 use super::FunctionNode;
-use super::{gather_captured_context, lower_expression_to_temporary, lower_inner, lower_value_to_temporary};
+use super::{
+    gather_captured_context, lower_expression_to_temporary, lower_inner, lower_value_to_temporary,
+};
 
 pub(super) fn lower_function_to_value(
     builder: &mut HirBuilder<'_>,
@@ -61,8 +62,12 @@ pub(super) fn lower_function(
     let context_ids = builder.context_identifiers().clone();
 
     // Gather captured context
-    let captured_context =
-        gather_captured_context(builder.host(), &func, builder.current_scope(), component_scope);
+    let captured_context = gather_captured_context(
+        builder.host(),
+        &func,
+        builder.current_scope(),
+        component_scope,
+    );
     let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
         for (k, v) in captured_context {
@@ -118,8 +123,12 @@ pub(super) fn lower_function_declaration(
     let context_ids = builder.context_identifiers().clone();
 
     // Gather captured context
-    let captured_context =
-        gather_captured_context(builder.host(), &func, builder.current_scope(), component_scope);
+    let captured_context = gather_captured_context(
+        builder.host(),
+        &func,
+        builder.current_scope(),
+        component_scope,
+    );
     let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
         for (k, v) in captured_context {
@@ -165,11 +174,7 @@ pub(super) fn lower_function_declaration(
     // upstream scope-walk + node-based fallback chain collapses to a direct
     // `Ref` lookup.
     if let Some(name_ref) = func_name_ref {
-        let ident_loc = func_decl
-            .name
-            .as_ref()
-            .map(|n| n.loc)
-            .and_then(convert_loc);
+        let ident_loc = func_decl.name.as_ref().map(|n| n.loc).and_then(convert_loc);
         let is_context = builder.is_context_binding(name_ref);
         let binding = builder.resolve_identifier(name_ref, ident_loc)?;
         match binding {
@@ -243,8 +248,12 @@ pub(super) fn lower_function_for_object_method(
     let parent_used_names = builder.used_names().clone();
     let context_ids = builder.context_identifiers().clone();
 
-    let captured_context =
-        gather_captured_context(builder.host(), &func, builder.current_scope(), component_scope);
+    let captured_context = gather_captured_context(
+        builder.host(),
+        &func,
+        builder.current_scope(),
+        component_scope,
+    );
     let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
         for (k, v) in captured_context {
@@ -284,8 +293,8 @@ pub(super) fn lower_object_method(
     let key_expr = method.key.as_ref();
     let method_loc = key_expr.map(|k| k.loc).unwrap_or(Loc::EMPTY);
 
-    let is_method = matches!(method.kind, G::PropertyKind::Normal)
-        && method.flags.contains(PF::IsMethod);
+    let is_method =
+        matches!(method.kind, G::PropertyKind::Normal) && method.flags.contains(PF::IsMethod);
     if !is_method {
         let kind_str = match method.kind {
             G::PropertyKind::Get => "get",
@@ -307,9 +316,14 @@ pub(super) fn lower_object_method(
 
     let computed = method.flags.contains(PF::IsComputed);
     let key = match key_expr {
-        Some(k) => lower_object_property_key(builder, k, computed)?
-            .unwrap_or(ObjectPropertyKey::String { name: String::new() }),
-        None => ObjectPropertyKey::String { name: String::new() },
+        Some(k) => {
+            lower_object_property_key(builder, k, computed)?.unwrap_or(ObjectPropertyKey::String {
+                name: String::new(),
+            })
+        }
+        None => ObjectPropertyKey::String {
+            name: String::new(),
+        },
     };
 
     let Some(value) = method.value.as_ref() else {
@@ -336,10 +350,7 @@ pub(super) fn lower_object_method(
     let lowered_func = lower_function_for_object_method(builder, &f.func, value.loc)?;
 
     let loc = convert_loc(method_loc);
-    let method_value = InstructionValue::ObjectMethod {
-        loc,
-        lowered_func,
-    };
+    let method_value = InstructionValue::ObjectMethod { loc, lowered_func };
     let method_place = lower_value_to_temporary(builder, method_value)?;
 
     Ok(Some(ObjectProperty {
@@ -413,13 +424,11 @@ fn estring_to_marker_string(s: &E::EString, loc: Loc) -> Result<String, Compiler
             .map_err(|_| {
                 CompilerError::from(
                     CompilerDiagnostic::new(ErrorCategory::Todo, "non-utf8 property key", None)
-                        .with_detail(
-                            crate::diagnostics::CompilerDiagnosticDetail::Error {
-                                loc: convert_loc(loc),
-                                message: None,
-                                identifier_name: None,
-                            },
-                        ),
+                        .with_detail(crate::diagnostics::CompilerDiagnosticDetail::Error {
+                            loc: convert_loc(loc),
+                            message: None,
+                            identifier_name: None,
+                        }),
                 )
             })
     }
@@ -437,4 +446,3 @@ fn is_identifier(s: &[u8]) -> bool {
         .iter()
         .all(|&c| c.is_ascii_alphanumeric() || c == b'_' || c == b'$')
 }
-

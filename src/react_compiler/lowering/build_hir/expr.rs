@@ -1,11 +1,11 @@
 //! Port of build_hir.rs lines 663–2303 and 6553–6713 — see mod.rs.
 
-use bun_ast::expr::Data;
-use bun_ast::{self as ast, E, Expr, G, Loc, OpCode, OptionalChain, Ref, symbol};
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, JsString,
 };
 use crate::hir::*;
+use bun_ast::expr::Data;
+use bun_ast::{self as ast, E, Expr, G, Loc, OpCode, OptionalChain, Ref, symbol};
 
 use super::function::{lower_function_to_value, lower_object_method};
 use super::helpers::{
@@ -121,9 +121,10 @@ pub(crate) fn lower_expression(
             for prop in obj.properties.iter() {
                 use ast::flags::Property as PF;
                 if matches!(prop.kind, G::PropertyKind::Spread) {
-                    let value = prop.value.as_ref().ok_or_else(|| {
-                        CompilerDiagnostic::todo("spread without value", loc)
-                    })?;
+                    let value = prop
+                        .value
+                        .as_ref()
+                        .ok_or_else(|| CompilerDiagnostic::todo("spread without value", loc))?;
                     let place = lower_expression_to_temporary(builder, value)?;
                     properties.push(ObjectPropertyOrSpread::Spread(SpreadPattern { place }));
                     continue;
@@ -136,9 +137,10 @@ pub(crate) fn lower_expression(
                     }
                     continue;
                 }
-                let key_expr = prop.key.as_ref().ok_or_else(|| {
-                    CompilerDiagnostic::todo("object property without key", loc)
-                })?;
+                let key_expr = prop
+                    .key
+                    .as_ref()
+                    .ok_or_else(|| CompilerDiagnostic::todo("object property without key", loc))?;
                 let computed = prop.flags.contains(PF::IsComputed);
                 let key = match lower_object_property_key(builder, key_expr, computed)? {
                     Some(k) => k,
@@ -356,20 +358,15 @@ fn lower_binary(
 
     match bin.op {
         BinComma => lower_sequence(builder, bin, loc),
-        BinLogicalOr | BinLogicalAnd | BinNullishCoalescing => {
-            lower_logical(builder, bin, loc)
-        }
+        BinLogicalOr | BinLogicalAnd | BinNullishCoalescing => lower_logical(builder, bin, loc),
         BinAssign => lower_simple_assignment(builder, bin, loc),
-        BinAddAssign | BinSubAssign | BinMulAssign | BinDivAssign | BinRemAssign
-        | BinPowAssign | BinShlAssign | BinShrAssign | BinUShrAssign | BinBitwiseOrAssign
-        | BinBitwiseAndAssign | BinBitwiseXorAssign => {
-            lower_compound_assignment(builder, bin, loc)
-        }
+        BinAddAssign | BinSubAssign | BinMulAssign | BinDivAssign | BinRemAssign | BinPowAssign
+        | BinShlAssign | BinShrAssign | BinUShrAssign | BinBitwiseOrAssign
+        | BinBitwiseAndAssign | BinBitwiseXorAssign => lower_compound_assignment(builder, bin, loc),
         BinNullishCoalescingAssign | BinLogicalOrAssign | BinLogicalAndAssign => {
             builder.record_error(CompilerErrorDetail {
-                reason:
-                    "Logical assignment operators (||=, &&=, ??=) are not yet supported"
-                        .to_string(),
+                reason: "Logical assignment operators (||=, &&=, ??=) are not yet supported"
+                    .to_string(),
                 category: ErrorCategory::Todo,
                 loc,
                 description: None,
@@ -601,10 +598,7 @@ fn lower_sequence(
     let place = build_temporary_place(builder, loc);
 
     let sequence_block = builder.try_enter(BlockKind::Sequence, |builder, _block_id| {
-        fn flatten_comma(
-            builder: &mut HirBuilder,
-            e: &Expr,
-        ) -> Result<Place, CompilerError> {
+        fn flatten_comma(builder: &mut HirBuilder, e: &Expr) -> Result<Place, CompilerError> {
             if let Data::EBinary(b) = &e.data {
                 if b.op == OpCode::BinComma {
                     flatten_comma(builder, &b.left)?;
@@ -998,9 +992,7 @@ fn lower_unary(
                 Ok(unsupported_node("UnaryExpression", loc))
             }
         },
-        UnPreInc | UnPreDec | UnPostInc | UnPostDec => {
-            lower_update(builder, unary, loc)
-        }
+        UnPreInc | UnPreDec | UnPostInc | UnPostDec => lower_update(builder, unary, loc),
         _ => {
             let Some(operator) = super::helpers::convert_unary_operator(unary.op) else {
                 return Err(todo_err("EUnary op", loc));
@@ -1181,9 +1173,8 @@ fn lower_template(
         if !parts.is_empty() {
             builder.record_error(CompilerErrorDetail {
                 category: ErrorCategory::Todo,
-                reason:
-                    "(BuildHIR::lowerExpression) Handle tagged template with interpolations"
-                        .to_string(),
+                reason: "(BuildHIR::lowerExpression) Handle tagged template with interpolations"
+                    .to_string(),
                 description: None,
                 loc,
                 suggestions: None,
@@ -1310,10 +1301,8 @@ fn is_reorderable_expression(
         | Data::EBoolean(_)
         | Data::EBigInt(_) => true,
         Data::EUnary(unary) => {
-            matches!(
-                unary.op,
-                OpCode::UnNot | OpCode::UnPos | OpCode::UnNeg
-            ) && is_reorderable_expression(builder, &unary.value, allow_local_identifiers)
+            matches!(unary.op, OpCode::UnNot | OpCode::UnPos | OpCode::UnNeg)
+                && is_reorderable_expression(builder, &unary.value, allow_local_identifiers)
         }
         Data::EBinary(bin) => match bin.op {
             OpCode::BinLogicalOr | OpCode::BinLogicalAnd | OpCode::BinNullishCoalescing => {

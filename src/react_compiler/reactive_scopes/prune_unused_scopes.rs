@@ -12,7 +12,9 @@ use crate::hir::{
     ReactiveTerminal, ReactiveTerminalStatement, environment::Environment,
 };
 
-use crate::reactive_scopes::visitors::{ReactiveFunctionTransform, Transformed, transform_reactive_function};
+use crate::reactive_scopes::visitors::{
+    ReactiveFunctionTransform, Transformed, transform_reactive_function,
+};
 
 struct State {
     has_return_statement: bool,

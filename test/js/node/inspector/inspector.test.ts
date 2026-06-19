@@ -50,25 +50,30 @@ const httpBase = "http://" + new URL(url).host;
 const version = await (await fetch(httpBase + "/json/version")).json();
 const list = await (await fetch(httpBase + "/json/list")).json();
 
-// /json/list reflects the request's Host header (port-forwards, tunnels), like Node.
-const listWithHost = await new Promise((resolve, reject) => {
-  http
-    .get(
-      {
-        host: "127.0.0.1",
-        port: Number(new URL(url).port),
-        path: "/json/list",
-        headers: { Host: "tunnel.example:9229" },
-      },
-      response => {
-        let body = "";
-        response.on("data", chunk => (body += chunk));
-        response.on("end", () => resolve(JSON.parse(body)));
-        response.on("error", reject);
-      },
-    )
-    .on("error", reject);
-});
+// /json/list reflects a localhost/IP-literal Host header (port-forwards,
+// tunnels), like Node, but never reflects other hostnames into the response.
+function fetchListWithHost(hostHeader) {
+  return new Promise((resolve, reject) => {
+    http
+      .get(
+        {
+          host: "127.0.0.1",
+          port: Number(new URL(url).port),
+          path: "/json/list",
+          headers: { Host: hostHeader },
+        },
+        response => {
+          let body = "";
+          response.on("data", chunk => (body += chunk));
+          response.on("end", () => resolve(JSON.parse(body)));
+          response.on("error", reject);
+        },
+      )
+      .on("error", reject);
+  });
+}
+const listWithIpHost = await fetchListWithHost("127.0.0.1:19229");
+const listWithDnsHost = await fetchListWithHost("tunnel.example:9229");
 
 const ws = new WebSocket(url);
 const pending = new Map();
@@ -110,7 +115,8 @@ console.log(
     alreadyActivatedError,
     version,
     list,
-    listWithHostUrl: listWithHost[0]?.webSocketDebuggerUrl,
+    listWithIpHostUrl: listWithIpHost[0]?.webSocketDebuggerUrl,
+    listWithDnsHostUrl: listWithDnsHost[0]?.webSocketDebuggerUrl,
     executionContextCreated: events.some(event => event.method === "Runtime.executionContextCreated"),
     scriptParsedCount: events.filter(event => event.method === "Debugger.scriptParsed").length,
     debuggerEnable: debuggerEnable.result,
@@ -152,7 +158,10 @@ test("inspector.open() serves the DevTools protocol and /json discovery endpoint
       devtoolsFrontendUrl: expect.stringContaining("devtools://"),
     }),
   ]);
-  expect(summary.listWithHostUrl).toBe(`ws://tunnel.example:9229${new URL(summary.url).pathname}`);
+  // Node reflects localhost/IP-literal Host headers into /json/list; other
+  // hostnames must not be reflected (Bun falls back to the bind address).
+  expect(summary.listWithIpHostUrl).toBe(`ws://127.0.0.1:19229${new URL(summary.url).pathname}`);
+  expect(summary.listWithDnsHostUrl).toBe(summary.url);
   expect(summary.executionContextCreated).toBe(true);
   expect(summary.scriptParsedCount).toBeGreaterThan(0);
   expect(summary.debuggerEnable).toEqual({ debuggerId: expect.any(String) });

@@ -431,11 +431,15 @@ class Debugger {
   // Node-shaped /json/list payload describing the single debuggable target.
   // `host` is the request's Host header: a client reaching the server through a
   // tunnel or port-forward needs URLs for the address it actually connected to,
-  // not the bind address, matching Node's discovery endpoints.
+  // not the bind address, matching Node's discovery endpoints. Node only honors
+  // Host values that are localhost or IP literals (it rejects other hostnames
+  // to prevent DNS rebinding); anything else falls back to the bind address
+  // instead of being reflected into the response.
   #nodeInspectorTargets(host: string | null): unknown[] {
     const { hostname, port, pathname } = this.#url!;
     const id = pathname.slice(1);
-    const wsAddress = `${host || `${hostname}:${port}`}${pathname}`;
+    const requestHost = host !== null && isAllowedHostHeader(host) ? host : null;
+    const wsAddress = `${requestHost || `${hostname}:${port}`}${pathname}`;
     return [
       {
         description: "bun instance",
@@ -793,6 +797,13 @@ function isOriginAllowed(origin: string | null): boolean {
     return true;
   }
   return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname);
+}
+
+// Host header values the /json discovery endpoints may reflect into their
+// responses: "localhost", an IPv4 literal, or a bracketed IPv6 literal, each
+// with an optional port — the same set Node's inspector accepts.
+function isAllowedHostHeader(host: string): boolean {
+  return /^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:]+\])(:\d{1,5})?$/i.test(host);
 }
 
 function randomId() {

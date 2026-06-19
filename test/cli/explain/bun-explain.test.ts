@@ -1,14 +1,21 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 let i = 0;
 
 describe.concurrent("bun explain", () => {
-  // Set up a tempDir with a known package.json + lockfile so each test runs in a
-  // closed fixture (avoids reading the host cwd or the test process's real deps).
+  // Set up a hermetic tempDir with a known package.json + pre-checked-in
+  // bun.lock fixture (avoids reading the host cwd or the test process's
+  // real deps; also avoids live npm-registry access). Returns a disposable
+  // string — each test declares `using dir = await setupFixture()` to
+  // auto-clean the temp dir on scope exit. The `bun.lock` fixture was
+  // generated once by running `bun install --lockfile-only` against a fresh
+  // tempDir with the same package.json and committed at
+  // `fixture/bun.lock`; regenerate it manually if lodash resolution changes.
   async function setupFixture() {
-    const testDir = tempDirWithFiles(`explain-${i++}`, {
+    const lockfile = await Bun.file(import.meta.dir + "/fixture/bun.lock").text();
+    return tempDir(`explain-${i++}`, {
       "package.json": JSON.stringify(
         {
           name: "explain-test",
@@ -20,18 +27,8 @@ describe.concurrent("bun explain", () => {
         null,
         2,
       ),
+      "bun.lock": lockfile,
     });
-
-    const install = spawn({
-      cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: testDir,
-      env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-    expect(await install.exited).toBe(0);
-
-    return testDir;
   }
 
   // TS-1: alias wired, no-args.
@@ -39,10 +36,10 @@ describe.concurrent("bun explain", () => {
   // begins with the `bun why v...` version line at why_command.zig:191). Proves
   // the matcher routed "explain" to .WhyCommand rather than AutoCommand.
   it("exits 1 and prints bun why usage on no args", async () => {
-    const testDir = await setupFixture();
+    using dir = await setupFixture();
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "explain"],
-      cwd: testDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -58,10 +55,10 @@ describe.concurrent("bun explain", () => {
   // TS-2: alias wired, with package arg.
   // `bun explain <pkg>` exits 0 and prints a dep tree whose root is <pkg>.
   it("shows direct dependency for a known package", async () => {
-    const testDir = await setupFixture();
+    using dir = await setupFixture();
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "explain", "lodash"],
-      cwd: testDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -75,10 +72,10 @@ describe.concurrent("bun explain", () => {
   // TS-3: alias wired, with --top flag.
   // `bun explain <pkg> --top` exits 0 — the alias inherits WhyCommand's flag handling.
   it("accepts --top flag and exits 0", async () => {
-    const testDir = await setupFixture();
+    using dir = await setupFixture();
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "explain", "lodash", "--top"],
-      cwd: testDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -94,10 +91,10 @@ describe.concurrent("bun explain", () => {
   // "bun why" throughout). The --help short-circuit at Arguments.parse is
   // name-agnostic, so the alias inherits WhyCommand's help text for free.
   it("prints bun why help and exits 0 on --help", async () => {
-    const testDir = await setupFixture();
+    using dir = await setupFixture();
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "explain", "--help"],
-      cwd: testDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -115,17 +112,17 @@ describe.concurrent("bun explain", () => {
   // same fixture. The strongest assertion that the alias is exact, not merely
   // "same behavior in shape".
   it("produces byte-identical output to bun why for the same args", async () => {
-    const testDir = await setupFixture();
+    using dir = await setupFixture();
     const explain = spawn({
       cmd: [bunExe(), "explain", "lodash"],
-      cwd: testDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const why = spawn({
       cmd: [bunExe(), "why", "lodash"],
-      cwd: testDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

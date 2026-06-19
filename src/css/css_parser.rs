@@ -1294,10 +1294,7 @@ mod rule_parsers {
         }
         fn record_composes(&mut self, composes: &mut Composes) {
             for ref_ in self.composes_refs.slice() {
-                let entry = self
-                    .composes
-                    .entry(*ref_)
-                    .or_insert_with(ComposesEntry::default);
+                let entry = self.composes.entry(*ref_).or_default();
                 entry.composes.push(composes.deep_clone(self.arena));
             }
         }

@@ -524,7 +524,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         e_.children.truncate(last_child as usize);
                     }
 
-                    let children_key = p.new_expr(prefill::string::CHILDREN, expr.loc);
+                    let children_key = p.new_expr(prefill::string::children(), expr.loc);
 
                     // Optimization: if the only non-child prop is a spread object
                     // we can just pass the object as the first argument
@@ -1059,9 +1059,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if p.options.features.minify_syntax {
             if let Some(number) = index.data.as_e_number() {
-                if number.value >= 0.0
-                    && number.value < (usize::MAX as f64)
-                    && number.value % 1.0 == 0.0
+                if number.value() >= 0.0
+                    && number.value() < (usize::MAX as f64)
+                    && number.value() % 1.0 == 0.0
                 {
                     // "foo"[2] -> "o"
                     if let Some(str_) = target.data.as_e_string() {
@@ -1088,7 +1088,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     } else if let Some(array) = target.data.as_e_array() {
                         // [x][0] -> x
-                        if array.items.len_u32() == 1 && number.value == 0.0 {
+                        if array.items.len_u32() == 1 && number.value() == 0.0 {
                             let inlined = *array.items.at(0);
                             if inlined.can_be_inlined_from_property_access() {
                                 *e = inlined;
@@ -1097,7 +1097,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         // ['a', 'b', 'c'][1] -> 'b'
-                        let int: usize = number.value as usize;
+                        let int: usize = number.value() as usize;
                         if int < array.items.len_u32() as usize
                             && p.expr_can_be_removed_if_unused(&target)
                         {
@@ -1273,9 +1273,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.should_fold_typescript_constant_expressions {
                             if let Some(value) = SideEffects::to_number(&e_.value.data) {
                                 *e = p.new_expr(
-                                    E::Number {
-                                        value: f64::from(!float_to_int32(value)),
-                                    },
+                                    E::Number::new(f64::from(!float_to_int32(value))),
                                     expr.loc,
                                 );
                                 return;
@@ -1290,13 +1288,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     Op::UnPos => {
                         if let Some(num) = SideEffects::to_number(&e_.value.data) {
-                            *e = p.new_expr(E::Number { value: num }, expr.loc);
+                            *e = p.new_expr(E::Number::new(num), expr.loc);
                             return;
                         }
                     }
                     Op::UnNeg => {
                         if let Some(num) = SideEffects::to_number(&e_.value.data) {
-                            *e = p.new_expr(E::Number { value: -num }, expr.loc);
+                            *e = p.new_expr(E::Number::new(-num), expr.loc);
                             return;
                         }
                     }
@@ -1503,7 +1501,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
                 if is_call_target && e_.yes.has_value_for_this_in_call() {
                     *e = p
-                        .new_expr(E::Number { value: 0.0 }, e_.test_.loc)
+                        .new_expr(E::Number::new(0.0), e_.test_.loc)
                         .join_with_comma(e_.yes);
                     return;
                 }
@@ -1531,7 +1529,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
                 if is_call_target && e_.no.has_value_for_this_in_call() {
                     *e = p
-                        .new_expr(E::Number { value: 0.0 }, e_.test_.loc)
+                        .new_expr(E::Number::new(0.0), e_.test_.loc)
                         .join_with_comma(e_.no);
                     return;
                 }
@@ -2315,16 +2313,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let str_ = target_str.data;
                         let arg1 = e_.args.at(0).unwrap_inlined();
                         if let Data::ENumber(n) = &arg1.data {
-                            let float = n.value;
+                            let float = n.value();
                             if float % 1.0 == 0.0 && float < (str_.len() as f64) && float >= 0.0 {
                                 let char_ = str_[float as usize];
                                 if char_ < 0x80 {
-                                    *e = p.new_expr(
-                                        E::Number {
-                                            value: f64::from(char_),
-                                        },
-                                        expr.loc,
-                                    );
+                                    *e = p.new_expr(E::Number::new(f64::from(char_)), expr.loc);
                                     return;
                                 }
                             }
@@ -2574,8 +2567,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: current_scope is a live arena ptr while the parser exists.
             && !p.current_scope().contains_direct_eval
             && e_.func.name.is_some()
-            && e_.func.name.unwrap().ref_.is_some()
-            && p.symbols[e_.func.name.unwrap().ref_.expect("infallible: ref bound").inner_index() as usize]
+            && !e_.func.name.unwrap().ref_.is_empty()
+            && p.symbols[e_.func.name.unwrap().ref_.inner_index() as usize]
                 .use_count_estimate
                 == 0
         {
@@ -2601,7 +2594,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             final_expr = p.keep_expr_symbol_name(
                 final_expr,
                 // SAFETY: original_name is arena-owned, valid for 'a.
-                p.symbols[name.ref_.expect("infallible: ref bound").inner_index() as usize]
+                p.symbols[name.ref_.inner_index() as usize]
                     .original_name
                     .slice(),
             );
@@ -2643,8 +2636,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: current_scope is a live arena ptr while the parser exists.
             && !p.current_scope().contains_direct_eval
             && e_.class_name.is_some()
-            && e_.class_name.unwrap().ref_.is_some()
-            && p.symbols[e_.class_name.unwrap().ref_.expect("infallible: ref bound").inner_index() as usize]
+            && !e_.class_name.unwrap().ref_.is_empty()
+            && p.symbols[e_.class_name.unwrap().ref_.inner_index() as usize]
                 .use_count_estimate
                 == 0
         {

@@ -99,12 +99,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         self.fn_only_data_visit = FnOnlyDataVisit {
             is_this_nested: true,
-            arguments_ref: func.arguments_ref,
+            arguments_ref: func.arguments_ref.to_nullable(),
             ..Default::default()
         };
 
         if let Some(name) = func.name {
-            if let Some(name_ref) = name.ref_ {
+            if let Some(name_ref) = name.ref_.to_nullable() {
                 self.record_declared_symbol(name_ref);
                 let symbol_name = self.load_name_from_ref(name_ref);
                 if is_eval_or_arguments(symbol_name) {
@@ -344,7 +344,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         self.imports_to_convert_from_require
                                             [req.unwrapped_id as usize]
                                             .namespace
-                                            .ref_ = Some(ref_);
+                                            .ref_ = ref_;
                                         self.import_items_for_namespace
                                             .insert(ref_, ImportItemForNamespaceMap::default());
                                         continue 'outer;
@@ -802,7 +802,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.visit_ts_decorators(&mut class.ts_decorators);
 
         if let Some(name) = class.class_name {
-            self.record_declared_symbol(name.ref_.expect("infallible: ref bound"));
+            self.record_declared_symbol(name.ref_);
         }
 
         self.push_scope_for_visit_pass(ScopeKind::ClassName, name_scope_loc)
@@ -826,7 +826,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Use "const" for this symbol to match JavaScript run-time semantics. You
         // are not allowed to assign to this symbol (it throws a TypeError).
         if let Some(name) = class.class_name {
-            let name_ref = name.ref_.expect("infallible: ref bound");
+            let name_ref = name.ref_;
             shadow_ref.set(name_ref);
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
@@ -836,7 +836,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .put(
                     original_name,
                     ScopeMember {
-                        ref_: name.ref_.unwrap_or(Ref::NONE),
+                        ref_: name.ref_,
                         loc: name.loc,
                     },
                 )
@@ -1182,7 +1182,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if class.class_name.is_none() {
             let sr = shadow_ref.get();
             class.class_name = Some(LocRef {
-                ref_: Some(sr),
+                ref_: sr,
                 loc: name_scope_loc,
             });
             self.record_declared_symbol(sr);
@@ -1281,14 +1281,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // Annex B of the JavaScript standard.
                             // SAFETY: current_scope is a valid arena ptr for the parse.
                             if !p.current_scope().kind_stops_hoisting()
-                                && p.symbols[data
-                                    .func
-                                    .name
-                                    .unwrap()
-                                    .ref_
-                                    .expect("infallible: ref bound")
-                                    .inner_index()
-                                    as usize]
+                                && p.symbols[data.func.name.unwrap().ref_.inner_index() as usize]
                                     .kind
                                     == SymbolKind::HoistedFunction
                             {
@@ -1332,7 +1325,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // means neither identifier can be renamed to something else. So in that
                             // case we give up and do not preserve the semantics of the original code.
                             let name = data.func.name.unwrap();
-                            let name_ref = name.ref_.expect("infallible: ref bound");
+                            let name_ref = name.ref_;
                             // SAFETY: current_scope is a valid arena ptr for the parse.
                             if p.current_scope().contains_direct_eval {
                                 if let Some(hoisted_ref) =

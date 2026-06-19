@@ -2714,13 +2714,13 @@ impl PackageManifest {
 
                             if let Some(file_count_) = dist.expr.as_property(b"fileCount") {
                                 if let JSON::ExprData::ENumber(n) = &file_count_.expr.data {
-                                    package_version.file_count = n.value as u32;
+                                    package_version.file_count = n.value() as u32;
                                 }
                             }
 
                             if let Some(file_count_) = dist.expr.as_property(b"unpackedSize") {
                                 if let JSON::ExprData::ENumber(n) = &file_count_.expr.data {
-                                    package_version.unpacked_size = n.value as u32;
+                                    package_version.unpacked_size = n.value() as u32;
                                 }
                             }
 

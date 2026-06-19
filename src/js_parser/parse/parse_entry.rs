@@ -1198,10 +1198,7 @@ impl<'a> Parser<'a> {
                     let (ns_ref, ns_loc, import_record_id) = {
                         let deferred_import = &p.imports_to_convert_from_require[i];
                         (
-                            deferred_import
-                                .namespace
-                                .ref_
-                                .expect("infallible: ref bound"),
+                            deferred_import.namespace.ref_,
                             deferred_import.namespace.loc,
                             deferred_import.import_record_id,
                         )
@@ -1213,7 +1210,7 @@ impl<'a> Parser<'a> {
 
                     import_part_stmts[0] = Stmt::alloc(
                         S::Import {
-                            star_name_loc: Some(ns_loc),
+                            star_name_loc: ns_loc,
                             import_record_index: import_record_id,
                             namespace_ref: ns_ref,
                             default_name: None,
@@ -1374,7 +1371,6 @@ impl<'a> Parser<'a> {
                                             && p.imports_to_convert_from_require.as_slice()[0]
                                                 .namespace
                                                 .ref_
-                                                .unwrap()
                                                 .eql(id.ref_)
                                         {
                                             // We know it's 0 because there is only one import in the whole file
@@ -1451,8 +1447,7 @@ impl<'a> Parser<'a> {
                                             p.imports_to_convert_from_require.as_slice()
                                                 [req.unwrapped_id as usize]
                                                 .namespace
-                                                .ref_
-                                                .unwrap();
+                                                .ref_;
 
                                         let stmt_loc = stmt.loc;
                                         part.stmts = {
@@ -1990,7 +1985,7 @@ impl<'a> Parser<'a> {
                     if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
                         clauses.push(js_ast::ClauseItem {
                             name: js_ast::LocRef {
-                                ref_: Some(r),
+                                ref_: r,
                                 loc: bun_ast::Loc::EMPTY,
                             },
                             alias: js_ast::StoreStr::new(symbol_name.as_bytes()),
@@ -2018,7 +2013,7 @@ impl<'a> Parser<'a> {
                         items: clauses,
                         import_record_index: import_record_id,
                         default_name: None,
-                        star_name_loc: None,
+                        star_name_loc: bun_ast::Loc::EMPTY,
                         is_single_line: false,
                         phase_defer: false,
                     },

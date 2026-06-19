@@ -333,7 +333,7 @@ pub fn post_process_js_chunk(
                             );
 
                             if let Some(name) = &s.default_name {
-                                if let Some(name_ref) = name.ref_ {
+                                if let Some(name_ref) = name.ref_.to_nullable() {
                                     let local_name_id = {
                                         let local_name = chunk.renamer.name_for_symbol(name_ref);
                                         mi.str(local_name)
@@ -354,7 +354,7 @@ pub fn post_process_js_chunk(
 
                             // `S::Import.items: StoreSlice<ClauseItem>` — safe `Deref`.
                             for item in s.items.iter() {
-                                if let Some(name_ref) = item.name.ref_ {
+                                if let Some(name_ref) = item.name.ref_.to_nullable() {
                                     let local_name_id = {
                                         let local_name = chunk.renamer.name_for_symbol(name_ref);
                                         mi.str(local_name)
@@ -938,7 +938,7 @@ pub fn generate_entry_point_tail_js<'a>(
                         S::ExportDefault {
                             default_name: bun_ast::LocRef {
                                 loc: bun_ast::Loc::EMPTY,
-                                ref_: Some(ast.wrapper_ref),
+                                ref_: ast.wrapper_ref,
                             },
                             value: StmtOrExpr::Expr(Expr::init(
                                 E::Call {
@@ -1112,7 +1112,7 @@ pub fn generate_entry_point_tail_js<'a>(
 
                                 items.push(bun_ast::ClauseItem {
                                     name: bun_ast::LocRef {
-                                        ref_: Some(temp_ref),
+                                        ref_: temp_ref,
                                         loc: bun_ast::Loc::EMPTY,
                                     },
                                     alias: bun_ast::StoreStr::new(alias),
@@ -1145,7 +1145,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                 //
                                 items.push(bun_ast::ClauseItem {
                                     name: bun_ast::LocRef {
-                                        ref_: Some(resolved_export_data.import_ref),
+                                        ref_: resolved_export_data.import_ref,
                                         loc: resolved_export_data.name_loc,
                                     },
                                     alias: bun_ast::StoreStr::new(alias),
@@ -1179,10 +1179,7 @@ pub fn generate_entry_point_tail_js<'a>(
                                     S::Return {
                                         value: Some(Expr::init(
                                             E::Identifier {
-                                                ref_: export_item
-                                                    .name
-                                                    .ref_
-                                                    .expect("infallible: ref bound"),
+                                                ref_: export_item.name.ref_,
                                                 ..Default::default()
                                             },
                                             export_item.name.loc,
@@ -1225,7 +1222,7 @@ pub fn generate_entry_point_tail_js<'a>(
                             stmts.push(Stmt::alloc(
                                 S::ExportDefault {
                                     default_name: bun_ast::LocRef {
-                                        ref_: Some(Ref::NONE),
+                                        ref_: Ref::NONE,
                                         loc: bun_ast::Loc::EMPTY,
                                     },
                                     value: StmtOrExpr::Expr(Expr::init(

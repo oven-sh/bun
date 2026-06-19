@@ -17,13 +17,27 @@ pub use crate::flags as Flags;
 // ───────────────────────────────────────────────────────────────────────────
 // StoreRef — arena-owned pointer into a node Store / bump arena.
 //
-// Thin `NonNull<T>` newtype — `Copy`, `Deref`/`DerefMut`. The pointee lives
-// until the owning Store/arena is `reset()`; callers must not hold a `StoreRef`
-// across that boundary.
+// `Copy`, `Deref`/`DerefMut`. The pointee lives until the owning Store/arena
+// is `reset()`; callers must not hold a `StoreRef` across that boundary.
+//
+// Layout: 48-bit pointer split as `hi` (bits 16..48) + `lo` (bits 0..16),
+// giving 8 bytes at align 4. The align-4 part is what lets `expr::Data` /
+// `stmt::Data` drop to align 4 and `Expr`/`Stmt`/`Binding` pack into 16 bytes.
+// `hi` is `NonZeroU32` so `Option<StoreRef<T>>` keeps its niche: every
+// arena/heap/static address on a supported target is ≥ 64 KiB (the OS reserves
+// the low pages), so bits 16..48 of a real pointer are never all zero.
 // ───────────────────────────────────────────────────────────────────────────
 
-#[repr(transparent)]
-pub struct StoreRef<T>(NonNull<T>);
+#[repr(C)]
+pub struct StoreRef<T> {
+    hi: core::num::NonZeroU32,
+    lo: u16,
+    _marker: core::marker::PhantomData<NonNull<T>>,
+}
+
+const _: () = assert!(core::mem::size_of::<StoreRef<u8>>() == 8);
+const _: () = assert!(core::mem::align_of::<StoreRef<u8>>() == 4);
+const _: () = assert!(core::mem::size_of::<Option<StoreRef<u8>>>() == 8);
 
 // SAFETY: `StoreRef` is a thin pointer into a single-threaded bump arena.
 // We assert Send/Sync so payload types embedding `Option<StoreRef<T>>`
@@ -40,9 +54,35 @@ unsafe impl<T: Send> Send for StoreRef<T> {}
 unsafe impl<T: Sync> Sync for StoreRef<T> {}
 
 impl<T> StoreRef<T> {
+    #[inline(always)]
+    fn pack(p: *mut T) -> Self {
+        let bits = p as usize as u64;
+        debug_assert!(
+            bits >> 48 == 0,
+            "StoreRef: pointer exceeds 48-bit user-space range",
+        );
+        debug_assert!(
+            bits >> 16 != 0,
+            "StoreRef: pointer in low 64 KiB (null or zero page)",
+        );
+        StoreRef {
+            // SAFETY: every arena/heap/static address on a supported target is
+            // ≥ 64 KiB (OS reserves the low pages), so bits 16..48 are non-zero
+            // — checked by the debug_assert above.
+            hi: unsafe { core::num::NonZeroU32::new_unchecked((bits >> 16) as u32) },
+            lo: bits as u16,
+            _marker: core::marker::PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    pub fn as_ptr(self) -> *mut T {
+        (((self.hi.get() as u64) << 16) | self.lo as u64) as usize as *mut T
+    }
+
     #[inline]
-    pub const fn from_non_null(p: NonNull<T>) -> Self {
-        StoreRef(p)
+    pub fn from_non_null(p: NonNull<T>) -> Self {
+        Self::pack(p.as_ptr())
     }
     /// Wrap a raw pointer. Panics if `p` is null. Alignment and arena-lifetime
     /// are caller-tracked just like the already-safe `from_non_null` /
@@ -50,12 +90,13 @@ impl<T> StoreRef<T> {
     /// guarding here was non-null, which we now check.
     #[inline]
     pub fn from_raw(p: *mut T) -> Self {
-        StoreRef(NonNull::new(p).expect("StoreRef::from_raw: null pointer"))
+        assert!(!p.is_null(), "StoreRef::from_raw: null pointer");
+        Self::pack(p)
     }
     /// Wrap a `bumpalo::Bump::alloc` result.
     #[inline]
     pub fn from_bump(r: &mut T) -> Self {
-        StoreRef(NonNull::from(r))
+        Self::pack(core::ptr::from_mut(r))
     }
     /// Consume a `Box<T>` whose payload must outlive every Store reset.
     /// Ownership transfers to the returned `StoreRef`; the allocation is
@@ -63,21 +104,16 @@ impl<T> StoreRef<T> {
     /// for arena-backed nodes.
     #[inline]
     pub fn from_box(b: Box<T>) -> Self {
-        StoreRef(bun_core::heap::into_raw_nn(b))
-    }
-    #[inline]
-    pub const fn as_ptr(self) -> *mut T {
-        self.0.as_ptr()
+        Self::pack(bun_core::heap::into_raw_nn(b).as_ptr())
     }
     /// Wrap a `&'static T` (compile-time/global singleton — e.g. Prefill
     /// constants). Mutation through the resulting `StoreRef` is UB.
     #[inline]
-    pub const fn from_static(r: &'static T) -> Self {
-        // SAFETY: `r` is a non-null, aligned, dereferenceable `'static`
-        // reference. Provenance is shared/read-only: the pointee is *never*
-        // written through — `DerefMut` on a `StoreRef` produced here is UB and
-        // callers must not do so (audited: only `Deref`/`get()` reads occur).
-        StoreRef(unsafe { NonNull::new_unchecked(core::ptr::from_ref(r).cast_mut()) })
+    pub fn from_static(r: &'static T) -> Self {
+        // Provenance is shared/read-only: the pointee is *never* written
+        // through — `DerefMut` on a `StoreRef` produced here is UB and callers
+        // must not do so (audited: only `Deref`/`get()` reads occur).
+        Self::pack(core::ptr::from_ref(r).cast_mut())
     }
     /// Borrow the pointee (explicit form of `Deref`).
     #[inline]
@@ -97,7 +133,7 @@ impl<T> Deref for StoreRef<T> {
     #[inline]
     fn deref(&self) -> &T {
         // SAFETY: StoreRef invariant — points into a live Store/arena block.
-        unsafe { self.0.as_ref() }
+        unsafe { &*self.as_ptr() }
     }
 }
 impl<T> DerefMut for StoreRef<T> {
@@ -106,20 +142,20 @@ impl<T> DerefMut for StoreRef<T> {
         // SAFETY: StoreRef invariant. AST nodes are mutated in-place during
         // visiting; no two `StoreRef` to the same node are deref'd `&mut`
         // simultaneously in single-threaded parser/visitor passes.
-        unsafe { self.0.as_mut() }
+        unsafe { &mut *self.as_ptr() }
     }
 }
 impl<T> From<NonNull<T>> for StoreRef<T> {
     #[inline]
     fn from(p: NonNull<T>) -> Self {
-        StoreRef(p)
+        StoreRef::from_non_null(p)
     }
 }
 /// Pointer-identity comparison.
 impl<T> PartialEq for StoreRef<T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.hi == other.hi && self.lo == other.lo
     }
 }
 impl<T> Eq for StoreRef<T> {}
@@ -149,12 +185,18 @@ pub(crate) const fn empty_arena_str() -> ArenaStr {
 // already imposes. Avoids cascading `<'arena>` through `Expr`/`Stmt`/`Data`
 // (~100 types, 12 downstream crates) — that cascade is the follow-up round
 // once `StoreRef` itself carries `'arena`.
+// Layout matches `StoreSlice<u8>`: 48-bit pointer (`u32` + `u16`) + `u32`
+// length → 12 bytes, align 4.
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct StoreStr {
-    ptr: core::ptr::NonNull<u8>,
-    len: usize,
+    ptr_lo: u32,
+    ptr_hi: u16,
+    len: u32,
 }
+
+const _: () = assert!(core::mem::size_of::<StoreStr>() == 12);
+const _: () = assert!(core::mem::align_of::<StoreStr>() == 4);
 
 // SAFETY: same rationale as `StoreRef` — points into a single-threaded bump
 // arena. Asserted Send/Sync so payload types can sit in
@@ -167,31 +209,42 @@ unsafe impl Sync for StoreStr {}
 
 impl StoreStr {
     pub const EMPTY: StoreStr = StoreStr {
-        ptr: core::ptr::NonNull::<u8>::dangling(),
+        ptr_lo: 1,
+        ptr_hi: 0,
         len: 0,
     };
+
+    #[inline(always)]
+    const fn ptr(self) -> *const u8 {
+        (((self.ptr_hi as u64) << 32) | self.ptr_lo as u64) as usize as *const u8
+    }
 
     /// Wrap an arena-owned (or `'static`) slice. Safe: no lifetime is forged;
     /// the pointer is stored raw and re-borrowed under the `StoreRef` contract
     /// (valid until the owning arena resets).
     #[inline]
-    pub const fn new(s: &[u8]) -> Self {
-        match core::ptr::NonNull::new(s.as_ptr().cast_mut()) {
-            Some(ptr) => StoreStr { ptr, len: s.len() },
-            // Only the (ptr=null, len=0) empty-slice edge needs this; Rust
-            // `&[u8]` never has a null ptr, but be defensive for const-eval.
-            None => StoreStr::EMPTY,
+    pub fn new(s: &[u8]) -> Self {
+        debug_assert!(s.len() <= u32::MAX as usize);
+        let bits = s.as_ptr() as usize as u64;
+        debug_assert!(
+            bits >> 48 == 0,
+            "StoreStr: pointer exceeds 48-bit user-space range",
+        );
+        StoreStr {
+            ptr_lo: bits as u32,
+            ptr_hi: (bits >> 32) as u16,
+            len: s.len() as u32,
         }
     }
 
     #[inline]
     pub const fn as_ptr(self) -> *const u8 {
-        self.ptr.as_ptr()
+        self.ptr()
     }
 
     #[inline]
     pub const fn raw_len(self) -> usize {
-        self.len
+        self.len as usize
     }
 
     /// Re-borrow as `&[u8]`. Same safety contract as `StoreRef::get`: the
@@ -200,21 +253,16 @@ impl StoreStr {
     /// to a stack temporary — mirrors `StoreRef::Deref`'s arena contract.
     #[inline]
     pub fn slice<'a>(self) -> &'a [u8] {
-        // SAFETY: StoreStr invariant — `ptr` is non-null, points at `len`
+        // SAFETY: StoreStr invariant — `ptr()` is non-null, points at `len`
         // initialized bytes valid for the arena lifetime (or `'static`); caller
         // must not outlive the owning arena (same as `StoreRef`).
-        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        unsafe { core::slice::from_raw_parts(self.ptr(), self.len as usize) }
     }
 
     #[inline]
     pub fn as_raw(self) -> *const [u8] {
-        core::ptr::slice_from_raw_parts(self.ptr.as_ptr(), self.len)
+        core::ptr::slice_from_raw_parts(self.ptr(), self.len as usize)
     }
-
-    // (former `from_raw(*const [u8])` removed — the StoreSlice migration is
-    // complete; `js_printer::renamer::NameStr` now constructs via the safe
-    // `StoreStr::new(&[u8])`, so the raw-fat-pointer back-door has no
-    // remaining callers.)
 }
 
 impl Default for StoreStr {
@@ -311,15 +359,27 @@ impl core::fmt::Debug for StoreStr {
 //
 // Generalizes `StoreStr` to `[T]` for AST list fields (`E::Arrow.args`,
 // per-node `[Stmt]`/`[Expr]` views, …) that borrow from the parse arena.
-// Same contract as `StoreRef`/`StoreStr`: safe `::new`,
-// raw `NonNull<T>` + `u32` length, `Deref<Target=[T]>`, valid until the
-// owning arena resets. The `u32` length keeps the field at 12 bytes
-// on 64-bit instead of 16 — relevant for hot AST nodes.
+// Same contract as `StoreRef`/`StoreStr`: safe `::new`, `Deref<Target=[T]>`,
+// valid until the owning arena resets.
+//
+// Layout: the pointer is split into `u32` low + `u16` high (48 bits total)
+// alongside a `u32` length, giving 12 bytes at align 4 instead of the 16
+// bytes a full `NonNull<T>` + `u32` would occupy after padding. User-space
+// virtual addresses are ≤48 bits on every supported target, so the high 16
+// bits of an arena pointer are always zero — same invariant `TaggedPtr`
+// (src/ptr/tagged_pointer.rs) already relies on. Both halves and `len` land
+// at naturally-aligned offsets (0, 4, 8), so reconstructing the pointer is
+// two plain loads + shift|or, no unaligned access.
 #[repr(C)]
 pub struct StoreSlice<T> {
-    ptr: core::ptr::NonNull<T>,
+    ptr_lo: u32,
+    ptr_hi: u16,
     len: u32,
+    _marker: core::marker::PhantomData<NonNull<T>>,
 }
+
+const _: () = assert!(core::mem::size_of::<StoreSlice<u8>>() == 12);
+const _: () = assert!(core::mem::align_of::<StoreSlice<u8>>() == 4);
 
 // Manual Copy/Clone: derive would add a spurious `T: Copy` bound.
 impl<T> Copy for StoreSlice<T> {}
@@ -343,23 +403,41 @@ unsafe impl<T: Sync> Sync for StoreSlice<T> {}
 
 impl<T> StoreSlice<T> {
     pub const EMPTY: StoreSlice<T> = StoreSlice {
-        ptr: core::ptr::NonNull::<T>::dangling(),
+        // Same address `NonNull::<T>::dangling()` would yield: non-null and
+        // aligned for `T`, so `from_raw_parts(ptr(), 0)` is sound.
+        ptr_lo: core::mem::align_of::<T>() as u32,
+        ptr_hi: 0,
         len: 0,
+        _marker: core::marker::PhantomData,
     };
+
+    #[inline(always)]
+    fn from_raw(ptr: *mut T, len: u32) -> Self {
+        let bits = ptr as usize as u64;
+        debug_assert!(
+            bits >> 48 == 0,
+            "StoreSlice: pointer exceeds 48-bit user-space range",
+        );
+        StoreSlice {
+            ptr_lo: bits as u32,
+            ptr_hi: (bits >> 32) as u16,
+            len,
+            _marker: core::marker::PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    const fn ptr(self) -> *mut T {
+        (((self.ptr_hi as u64) << 32) | self.ptr_lo as u64) as usize as *mut T
+    }
 
     /// Wrap an arena-owned (or `'static`) slice. Safe: no lifetime is forged;
     /// the pointer is stored raw and re-borrowed under the `StoreRef` contract
     /// (valid until the owning arena resets).
     #[inline]
-    pub const fn new(s: &[T]) -> Self {
+    pub fn new(s: &[T]) -> Self {
         debug_assert!(s.len() <= u32::MAX as usize);
-        match core::ptr::NonNull::new(s.as_ptr().cast_mut()) {
-            Some(ptr) => StoreSlice {
-                ptr,
-                len: s.len() as u32,
-            },
-            None => StoreSlice::EMPTY,
-        }
+        StoreSlice::from_raw(s.as_ptr().cast_mut(), s.len() as u32)
     }
 
     /// Wrap an arena-owned mutable slice (e.g. `bump.alloc_slice_*`). Same
@@ -368,18 +446,12 @@ impl<T> StoreSlice<T> {
     #[inline]
     pub fn new_mut(s: &mut [T]) -> Self {
         debug_assert!(s.len() <= u32::MAX as usize);
-        match core::ptr::NonNull::new(s.as_mut_ptr()) {
-            Some(ptr) => StoreSlice {
-                ptr,
-                len: s.len() as u32,
-            },
-            None => StoreSlice::EMPTY,
-        }
+        StoreSlice::from_raw(s.as_mut_ptr(), s.len() as u32)
     }
 
     #[inline]
     pub const fn as_ptr(self) -> *const T {
-        self.ptr.as_ptr()
+        self.ptr()
     }
 
     #[inline]
@@ -393,10 +465,10 @@ impl<T> StoreSlice<T> {
     /// not tied to a stack temporary.
     #[inline]
     pub fn slice<'a>(self) -> &'a [T] {
-        // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
+        // SAFETY: StoreSlice invariant — `ptr()` is non-null, points at `len`
         // initialized `T` valid for the arena lifetime (or `'static`); caller
         // must not outlive the owning arena (same as `StoreRef`).
-        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
+        unsafe { core::slice::from_raw_parts(self.ptr(), self.len as usize) }
     }
 
     /// Re-borrow as `&mut [T]`. Same `StoreRef` contract as [`slice`]: the
@@ -409,10 +481,10 @@ impl<T> StoreSlice<T> {
     /// borrow with another `slice()`/`slice_mut()` of the same allocation.
     #[inline]
     pub fn slice_mut<'a>(self) -> &'a mut [T] {
-        // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
+        // SAFETY: StoreSlice invariant — `ptr()` is non-null, points at `len`
         // initialized `T` valid for the arena lifetime; uniqueness is upheld
         // by the single-threaded visitor contract (same as `StoreRef::DerefMut`).
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
+        unsafe { core::slice::from_raw_parts_mut(self.ptr(), self.len as usize) }
     }
 
     /// Shorten the slice in place. Panics if `new_len > len`.
@@ -554,17 +626,16 @@ pub enum AssignTarget {
 #[derive(Copy, Clone)]
 pub struct LocRef {
     pub loc: crate::Loc,
-
-    // TODO: remove this optional and make Ref a function getter
-    // That will make this struct 128 bits instead of 192 bits and we can remove some heap allocations
-    pub ref_: Option<Ref>,
+    pub ref_: Ref,
 }
+
+const _: () = assert!(core::mem::size_of::<LocRef>() == 12);
 
 impl Default for LocRef {
     fn default() -> Self {
         Self {
             loc: crate::Loc::EMPTY,
-            ref_: None,
+            ref_: Ref::NONE,
         }
     }
 }
@@ -1177,8 +1248,8 @@ pub struct NamedImport {
     /// This field is used by the bundler to match imports with their corresponding
     /// exports and for error reporting when imports can't be resolved.
     pub alias: Option<ArenaStr>,
-    pub alias_loc: Option<crate::Loc>,
-    pub namespace_ref: Option<Ref>,
+    pub alias_loc: crate::Loc,
+    pub namespace_ref: Ref,
     pub import_record_index: u32,
 
     /// If true, the alias refers to the entire export namespace object of a
@@ -1197,8 +1268,8 @@ impl Default for NamedImport {
         Self {
             local_parts_with_uses: bun_alloc::AstAlloc::vec(),
             alias: None,
-            alias_loc: None,
-            namespace_ref: None,
+            alias_loc: crate::Loc::EMPTY,
+            namespace_ref: Ref::NONE,
             import_record_index: 0,
             alias_is_star: false,
             is_exported: false,

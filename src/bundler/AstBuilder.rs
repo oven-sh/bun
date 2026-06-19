@@ -73,7 +73,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     pub fn init(bump: &'bump Bump, source: &'a Source, hot_reloading: bool) -> Result<Self, OOM> {
         let scope: *mut Scope = bump.alloc(Scope {
             kind: ScopeKind::Entry,
-            label_ref: None,
+            label_ref: Ref::NONE,
             parent: None,
             ..Default::default()
         });
@@ -127,7 +127,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         self.current_scope_mut().children.ensure_unused_capacity(1);
         let scope: *mut Scope = self.bump.alloc(Scope {
             kind,
-            label_ref: None,
+            label_ref: Ref::NONE,
             parent: NonNull::new(self.current_scope).map(bun_ast::StoreRef::from),
             ..Default::default()
         });
@@ -225,7 +225,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             *clause = ClauseItem {
                 name: LocRef {
                     loc: Loc::EMPTY,
-                    ref_: Some(ref_),
+                    ref_: ref_,
                 },
                 original_name: bun_ast::StoreStr::new(import_id),
                 alias: bun_ast::StoreStr::new(import_id),
@@ -364,13 +364,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         self.import_records_for_current_part
                             .push(st.import_record_index);
                         for item in st.items.slice() {
-                            let ref_ = item.name.ref_.expect("infallible: ref bound");
+                            let ref_ = item.name.ref_;
                             self.named_imports.put(
                                 ref_,
                                 bun_ast::NamedImport {
                                     alias: Some(item.alias),
-                                    alias_loc: Some(item.alias_loc),
-                                    namespace_ref: Some(st.namespace_ref),
+                                    alias_loc: item.alias_loc,
+                                    namespace_ref: st.namespace_ref,
                                     import_record_index: st.import_record_index,
                                     alias_is_star: false,
                                     is_exported: false,
@@ -412,7 +412,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                     }
                     bun_ast::StmtData::SExportDefault(st) => {
                         // ImportScanner: recordExport("default", default_name.ref)
-                        let default_ref = st.default_name.ref_.expect("infallible: ref bound");
+                        let default_ref = st.default_name.ref_;
                         self.record_export(st.default_name.loc, b"default", default_ref)?;
                         // convertStmt: AstBuilder only emits the `.expr` arm
                         // (`registerClientReference(...)`), which is not
@@ -517,13 +517,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         self.import_records_for_current_part
                             .push(st.import_record_index);
                         for item in st.items.slice() {
-                            let ref_ = item.name.ref_.expect("infallible: ref bound");
+                            let ref_ = item.name.ref_;
                             self.named_imports.put(
                                 ref_,
                                 bun_ast::NamedImport {
                                     alias: Some(item.alias),
-                                    alias_loc: Some(item.name.loc),
-                                    namespace_ref: Some(st.namespace_ref),
+                                    alias_loc: item.name.loc,
+                                    namespace_ref: st.namespace_ref,
                                     import_record_index: st.import_record_index,
                                     alias_is_star: false,
                                     is_exported: false,
@@ -539,7 +539,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         }
                     }
                     bun_ast::StmtData::SExportDefault(st) => {
-                        let default_ref = st.default_name.ref_.expect("infallible: ref bound");
+                        let default_ref = st.default_name.ref_;
                         self.record_export(st.default_name.loc, b"default", default_ref)?;
                     }
                     _ => {}

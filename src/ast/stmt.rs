@@ -359,10 +359,11 @@ pub enum Data {
 // NonNull niche), so `Option<Stmt>` / `Option<Data>` add no discriminant word.
 // Adding `#[repr(C)]`/`#[repr(u8)]` to `Data` or a nullable `*mut T` payload
 // would break this — the asserts catch it.
-const _: () = assert!(core::mem::size_of::<Data>() == 16);
+const _: () = assert!(core::mem::size_of::<Data>() == 12);
+const _: () = assert!(core::mem::align_of::<Data>() == 4);
 const _: () = assert!(
-    core::mem::size_of::<Stmt>() <= 24,
-    "Expected Stmt to be <= 24 bytes"
+    core::mem::size_of::<Stmt>() == 16,
+    "Expected Stmt to be 16 bytes"
 );
 const _: () = assert!(
     core::mem::size_of::<Option<Data>>() == core::mem::size_of::<Data>(),

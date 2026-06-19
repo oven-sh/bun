@@ -57,8 +57,9 @@ impl Default for B {
 // so `Option<B>` packs into the same 16 bytes via the NonNull niche (and
 // would continue to even under a future `#[repr(u8)]`, unlike the prior
 // `*mut T` form which relied solely on spare-tag-value niche).
-const _: () = assert!(core::mem::size_of::<B>() == 16);
-const _: () = assert!(core::mem::size_of::<super::binding::Binding>() == 24);
+const _: () = assert!(core::mem::size_of::<B>() == 12);
+const _: () = assert!(core::mem::align_of::<B>() == 4);
+const _: () = assert!(core::mem::size_of::<super::binding::Binding>() == 16);
 const _: () = assert!(
     core::mem::size_of::<Option<B>>() == core::mem::size_of::<B>(),
     "B lost its niche — check for #[repr] or oversized inline payload"

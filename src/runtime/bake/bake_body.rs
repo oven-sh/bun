@@ -1486,8 +1486,10 @@ pub(crate) fn add_import_meta_defines(
 
     use bun_bundler::defines::DefineData;
 
-    static MODE_DEVELOPMENT: EString = EString::from_static(b"development");
-    static MODE_PRODUCTION: EString = EString::from_static(b"production");
+    static MODE_DEVELOPMENT: std::sync::LazyLock<EString> =
+        std::sync::LazyLock::new(|| EString::from_static(b"development"));
+    static MODE_PRODUCTION: std::sync::LazyLock<EString> =
+        std::sync::LazyLock::new(|| EString::from_static(b"production"));
 
     // The following are from Vite: https://vitejs.dev/guide/env-and-mode
     // Note that it is not currently possible to have mixed
@@ -1504,8 +1506,8 @@ pub(crate) fn add_import_meta_defines(
     define.insert(
         b"import.meta.env.MODE",
         DefineData::init_static_string(match mode {
-            Mode::Development => &MODE_DEVELOPMENT,
-            Mode::ProductionDynamic | Mode::ProductionStatic => &MODE_PRODUCTION,
+            Mode::Development => &*MODE_DEVELOPMENT,
+            Mode::ProductionDynamic | Mode::ProductionStatic => &*MODE_PRODUCTION,
         }),
     )?;
     define.insert(

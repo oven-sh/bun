@@ -35,10 +35,8 @@ pub(crate) use bun_ast::ExprData as DefineValue;
 pub struct Globals;
 impl Globals {
     pub const UNDEFINED: bun_ast::E::Undefined = bun_ast::E::Undefined;
-    pub const NAN: bun_ast::E::Number = bun_ast::E::Number { value: f64::NAN };
-    pub const INFINITY: bun_ast::E::Number = bun_ast::E::Number {
-        value: f64::INFINITY,
-    };
+    pub const NAN: bun_ast::E::Number = bun_ast::E::Number::new(f64::NAN);
+    pub const INFINITY: bun_ast::E::Number = bun_ast::E::Number::new(f64::INFINITY);
 
     #[inline]
     pub fn undefined_data() -> ExprData {
@@ -321,19 +319,23 @@ impl DefineExt for Define {
 /// `NODE_ENV` overrides like `staging`, JSON object/array literals, …), which
 /// falls through to the general `parse_env_json` path in `DefineData::parse`.
 fn const_default_define_value(value_str: &[u8]) -> Option<ExprData> {
-    static DEVELOPMENT: bun_ast::E::EString = bun_ast::E::EString::from_static(b"development");
-    static PRODUCTION: bun_ast::E::EString = bun_ast::E::EString::from_static(b"production");
-    static TEST: bun_ast::E::EString = bun_ast::E::EString::from_static(b"test");
+    use std::sync::LazyLock;
+    static DEVELOPMENT: LazyLock<bun_ast::E::EString> =
+        LazyLock::new(|| bun_ast::E::EString::from_static(b"development"));
+    static PRODUCTION: LazyLock<bun_ast::E::EString> =
+        LazyLock::new(|| bun_ast::E::EString::from_static(b"production"));
+    static TEST: LazyLock<bun_ast::E::EString> =
+        LazyLock::new(|| bun_ast::E::EString::from_static(b"test"));
     if value_str == b"\"development\"" {
         Some(ExprData::EString(bun_ast::StoreRef::from_static(
-            &DEVELOPMENT,
+            &*DEVELOPMENT,
         )))
     } else if value_str == b"\"production\"" {
         Some(ExprData::EString(bun_ast::StoreRef::from_static(
-            &PRODUCTION,
+            &*PRODUCTION,
         )))
     } else if value_str == b"\"test\"" {
-        Some(ExprData::EString(bun_ast::StoreRef::from_static(&TEST)))
+        Some(ExprData::EString(bun_ast::StoreRef::from_static(&*TEST)))
     } else if value_str == b"true" {
         Some(ExprData::EBoolean(bun_ast::E::Boolean { value: true }))
     } else if value_str == b"false" {

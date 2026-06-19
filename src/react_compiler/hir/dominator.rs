@@ -9,7 +9,7 @@
 //! Uses the Cooper/Harvey/Kennedy algorithm from
 //! https://www.cs.rice.edu/~keith/Embed/dom.pdf
 
-use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
+use crate::collections::{FxHashSet as HashSet, IdMap};
 
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 
@@ -24,7 +24,7 @@ use crate::hir::{BlockId, HirFunction, Terminal};
 pub struct PostDominator {
     /// The exit node (synthetic node representing function exit).
     pub exit: BlockId,
-    nodes: HashMap<BlockId, BlockId>,
+    nodes: IdMap<BlockId, BlockId>,
 }
 
 impl PostDominator {
@@ -33,7 +33,7 @@ impl PostDominator {
     pub fn get(&self, id: BlockId) -> Option<BlockId> {
         let dominator = self
             .nodes
-            .get(&id)
+            .get(id)
             .expect("Unknown node in post-dominator tree");
         if *dominator == id {
             None
@@ -59,12 +59,12 @@ struct Graph {
     /// Nodes stored in iteration order (RPO for reverse graph).
     nodes: Vec<Node>,
     /// Map from BlockId to index in the nodes vec.
-    node_index: HashMap<BlockId, usize>,
+    node_index: IdMap<BlockId, usize>,
 }
 
 impl Graph {
     fn get_node(&self, id: BlockId) -> &Node {
-        let idx = self.node_index[&id];
+        let idx = *self.node_index.get(id).unwrap();
         &self.nodes[idx]
     }
 }
@@ -112,7 +112,7 @@ fn build_reverse_graph(
     let exit_id = BlockId(next_block_id_counter);
 
     // Build initial nodes with reversed edges
-    let mut raw_nodes: HashMap<BlockId, Node> = HashMap::default();
+    let mut raw_nodes: IdMap<BlockId, Node> = IdMap::default();
 
     // Create exit node
     raw_nodes.insert(
@@ -135,7 +135,7 @@ fn build_reverse_graph(
 
         if is_return || (is_throw && include_throws_as_exit_node) {
             preds_set.insert(exit_id);
-            raw_nodes.get_mut(&exit_id).unwrap().succs.insert(*id);
+            raw_nodes.get_mut(exit_id).unwrap().succs.insert(*id);
         }
 
         raw_nodes.insert(
@@ -158,9 +158,9 @@ fn build_reverse_graph(
     postorder.reverse();
 
     let mut nodes = Vec::with_capacity(postorder.len());
-    let mut node_index = HashMap::default();
+    let mut node_index = IdMap::default();
     for (idx, id) in postorder.into_iter().enumerate() {
-        let mut node = raw_nodes.remove(&id).unwrap();
+        let mut node = raw_nodes.remove(id).unwrap();
         node.index = idx;
         node_index.insert(id, idx);
         nodes.push(node);
@@ -175,14 +175,14 @@ fn build_reverse_graph(
 
 fn dfs_postorder(
     id: BlockId,
-    nodes: &HashMap<BlockId, Node>,
+    nodes: &IdMap<BlockId, Node>,
     visited: &mut HashSet<BlockId>,
     postorder: &mut Vec<BlockId>,
 ) {
     if !visited.insert(id) {
         return;
     }
-    if let Some(node) = nodes.get(&id) {
+    if let Some(node) = nodes.get(id) {
         for &succ in &node.succs {
             dfs_postorder(succ, nodes, visited, postorder);
         }
@@ -196,8 +196,8 @@ fn dfs_postorder(
 
 fn compute_immediate_dominators(
     graph: &Graph,
-) -> Result<HashMap<BlockId, BlockId>, CompilerDiagnostic> {
-    let mut doms: HashMap<BlockId, BlockId> = HashMap::default();
+) -> Result<IdMap<BlockId, BlockId>, CompilerDiagnostic> {
+    let mut doms: IdMap<BlockId, BlockId> = IdMap::default();
     doms.insert(graph.entry, graph.entry);
 
     let mut changed = true;
@@ -211,23 +211,14 @@ fn compute_immediate_dominators(
             // Find first processed predecessor
             let mut new_idom: Option<BlockId> = None;
             for &pred in &node.preds {
-                if doms.contains_key(&pred) {
+                if doms.contains_key(pred) {
                     new_idom = Some(pred);
                     break;
                 }
             }
             let mut new_idom = match new_idom {
                 Some(idom) => idom,
-                None => {
-                    return Err(CompilerDiagnostic::new(
-                        ErrorCategory::Invariant,
-                        format!(
-                            "At least one predecessor must have been visited for block {:?}",
-                            node.id
-                        ),
-                        None,
-                    ));
-                }
+                None => return Err(no_processed_pred(node.id)),
             };
 
             // Intersect with other processed predecessors
@@ -235,12 +226,12 @@ fn compute_immediate_dominators(
                 if pred == new_idom {
                     continue;
                 }
-                if doms.contains_key(&pred) {
+                if doms.contains_key(pred) {
                     new_idom = intersect(pred, new_idom, graph, &doms);
                 }
             }
 
-            if doms.get(&node.id) != Some(&new_idom) {
+            if doms.get(node.id) != Some(&new_idom) {
                 doms.insert(node.id, new_idom);
                 changed = true;
             }
@@ -249,20 +240,33 @@ fn compute_immediate_dominators(
     Ok(doms)
 }
 
-fn intersect(a: BlockId, b: BlockId, graph: &Graph, doms: &HashMap<BlockId, BlockId>) -> BlockId {
+fn intersect(a: BlockId, b: BlockId, graph: &Graph, doms: &IdMap<BlockId, BlockId>) -> BlockId {
     let mut block1 = graph.get_node(a);
     let mut block2 = graph.get_node(b);
     while block1.id != block2.id {
         while block1.index > block2.index {
-            let dom = doms[&block1.id];
+            let dom = *doms.get(block1.id).unwrap();
             block1 = graph.get_node(dom);
         }
         while block2.index > block1.index {
-            let dom = doms[&block2.id];
+            let dom = *doms.get(block2.id).unwrap();
             block2 = graph.get_node(dom);
         }
     }
     block1.id
+}
+
+#[cold]
+#[inline(never)]
+fn no_processed_pred(id: BlockId) -> CompilerDiagnostic {
+    CompilerDiagnostic::new(
+        ErrorCategory::Invariant,
+        format!(
+            "At least one predecessor must have been visited for block {:?}",
+            id
+        ),
+        None,
+    )
 }
 
 // =============================================================================

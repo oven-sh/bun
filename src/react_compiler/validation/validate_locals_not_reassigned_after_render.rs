@@ -5,8 +5,9 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
+use crate::collections::IdMap;
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
 use crate::hir::environment::Environment;
 use crate::hir::visitors::{
@@ -91,7 +92,7 @@ fn get_context_reassignment(
     diagnostics: &mut Vec<CompilerDiagnostic>,
 ) -> Option<Place> {
     // Maps identifiers to the place that they reassign
-    let mut reassigning_functions: HashMap<IdentifierId, Place> = HashMap::new();
+    let mut reassigning_functions: IdMap<IdentifierId, Place> = IdMap::new();
 
     for (_block_id, block) in &func.body.blocks {
         for &instruction_id in &block.instructions {
@@ -121,7 +122,7 @@ fn get_context_reassignment(
                     if reassignment.is_none() {
                         for context_place in &inner_function.context {
                             if let Some(reassignment_place) =
-                                reassigning_functions.get(&context_place.identifier)
+                                reassigning_functions.get(context_place.identifier)
                             {
                                 reassignment = Some(reassignment_place.clone());
                                 break;
@@ -165,7 +166,7 @@ fn get_context_reassignment(
                 }
 
                 InstructionValue::StoreLocal { lvalue, value, .. } => {
-                    if let Some(reassignment_place) = reassigning_functions.get(&value.identifier) {
+                    if let Some(reassignment_place) = reassigning_functions.get(value.identifier) {
                         let reassignment_place = reassignment_place.clone();
                         reassigning_functions
                             .insert(lvalue.place.identifier, reassignment_place.clone());
@@ -174,7 +175,7 @@ fn get_context_reassignment(
                 }
 
                 InstructionValue::LoadLocal { place, .. } => {
-                    if let Some(reassignment_place) = reassigning_functions.get(&place.identifier) {
+                    if let Some(reassignment_place) = reassigning_functions.get(place.identifier) {
                         reassigning_functions
                             .insert(instr.lvalue.identifier, reassignment_place.clone());
                     }
@@ -201,7 +202,7 @@ fn get_context_reassignment(
                     }
 
                     // Propagate reassigning function info through StoreContext
-                    if let Some(reassignment_place) = reassigning_functions.get(&value.identifier) {
+                    if let Some(reassignment_place) = reassigning_functions.get(value.identifier) {
                         let reassignment_place = reassignment_place.clone();
                         reassigning_functions
                             .insert(lvalue.place.identifier, reassignment_place.clone());
@@ -249,7 +250,7 @@ fn get_context_reassignment(
                         );
 
                         if let Some(reassignment_place) =
-                            reassigning_functions.get(&operand.identifier).cloned()
+                            reassigning_functions.get(operand.identifier).cloned()
                         {
                             if operand.effect == Effect::Freeze {
                                 // Functions that reassign local variables are inherently
@@ -271,7 +272,7 @@ fn get_context_reassignment(
 
         // Check terminal operands for reassigning functions
         for operand in each_terminal_operand(&block.terminal) {
-            if let Some(reassignment_place) = reassigning_functions.get(&operand.identifier) {
+            if let Some(reassignment_place) = reassigning_functions.get(operand.identifier) {
                 return Some(reassignment_place.clone());
             }
         }

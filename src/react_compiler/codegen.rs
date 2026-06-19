@@ -17,6 +17,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::collections::IdMap;
 use bun_alloc::{Arena, ArenaVec, AstAlloc, AstVec};
 use bun_ast::{
     self as ast, ArrayBinding, Binding, Case, Catch, E, Expr, ExprData, ExprNodeList, Finally, G,
@@ -103,7 +104,7 @@ pub struct Codegen<'h> {
     pub host: &'h mut dyn Host,
     pub arena: &'h Arena,
     name_to_ref: HashMap<String, Ref>,
-    label_to_ref: HashMap<BlockId, Ref>,
+    label_to_ref: IdMap<BlockId, Ref>,
 }
 
 impl<'h> Codegen<'h> {
@@ -116,7 +117,7 @@ impl<'h> Codegen<'h> {
             host,
             arena,
             name_to_ref: used_names.into_iter().collect(),
-            label_to_ref: HashMap::new(),
+            label_to_ref: IdMap::new(),
         }
     }
 
@@ -131,7 +132,7 @@ impl<'h> Codegen<'h> {
     }
 
     fn ref_for_label(&mut self, id: BlockId) -> Ref {
-        if let Some(&r) = self.label_to_ref.get(&id) {
+        if let Some(&r) = self.label_to_ref.get(id) {
             return r;
         }
         let r = self.host.new_generated(codegen_label(id).as_bytes());
@@ -311,7 +312,7 @@ pub fn codegen_function(
 // Context
 // =============================================================================
 
-type Temporaries = HashMap<DeclarationId, Option<Expr>>;
+type Temporaries = IdMap<DeclarationId, Option<Expr>>;
 
 struct Context<'a, 'h> {
     env: &'a mut Environment,
@@ -321,7 +322,7 @@ struct Context<'a, 'h> {
     next_cache_index: u32,
     declarations: HashSet<DeclarationId>,
     temp: Temporaries,
-    object_methods: HashMap<IdentifierId, (InstructionValue, Option<DiagSourceLocation>)>,
+    object_methods: IdMap<IdentifierId, (InstructionValue, Option<DiagSourceLocation>)>,
     unique_identifiers: HashSet<String>,
     synthesized_names: HashMap<String, String>,
 }
@@ -339,8 +340,8 @@ impl<'a, 'h> Context<'a, 'h> {
             fn_name,
             next_cache_index: 0,
             declarations: HashSet::new(),
-            temp: HashMap::new(),
-            object_methods: HashMap::new(),
+            temp: IdMap::new(),
+            object_methods: IdMap::new(),
             unique_identifiers,
             synthesized_names: HashMap::new(),
         }
@@ -1268,20 +1269,7 @@ fn codegen_for_init(cx: &mut Context, init: &ReactiveValue) -> Result<Option<Stm
                     });
                 }
             } else {
-                let mut err = CompilerError::new();
-                err.push_diagnostic(
-                    CompilerDiagnostic::new(
-                        ErrorCategory::Invariant,
-                        "Expected a variable declaration".to_string(),
-                        Some(format!("Got {}", <&str>::from(instr.data.tag()))),
-                    )
-                    .with_detail(CompilerDiagnosticDetail::Error {
-                        loc: None,
-                        message: Some("Expected a variable declaration".to_string()),
-                        identifier_name: None,
-                    }),
-                );
-                return Err(err);
+                return Err(for_init_decl_err(<&str>::from(instr.data.tag())));
             }
         }
         if declarators.is_empty() {
@@ -1820,20 +1808,7 @@ fn codegen_base_instruction_value(
         } => {
             let member_expr = codegen_place_to_expression(cx, property)?;
             if !matches!(member_expr.data, ExprData::EDot(_) | ExprData::EIndex(_)) {
-                let mut err = CompilerError::new();
-                err.push_diagnostic(
-                    CompilerDiagnostic::new(
-                        ErrorCategory::Invariant,
-                        "[Codegen] Internal error: MethodCall::property must be an unpromoted + unmemoized MemberExpression",
-                        None,
-                    )
-                    .with_detail(CompilerDiagnosticDetail::Error {
-                        loc: property.loc,
-                        message: Some(format!("Got: '{:?}'", member_expr.data.tag())),
-                        identifier_name: None,
-                    }),
-                );
-                return Err(err);
+                return Err(method_call_property_err(property.loc, member_expr));
             }
             let arguments = codegen_arguments(cx, args)?;
             let call_expr = Expr::init(
@@ -2346,8 +2321,7 @@ fn codegen_object_expression(
                         });
                     }
                     ObjectPropertyType::Method => {
-                        let method_data =
-                            cx.object_methods.get(&obj_prop.place.identifier).cloned();
+                        let method_data = cx.object_methods.get(obj_prop.place.identifier).cloned();
                         let Some((InstructionValue::ObjectMethod { lowered_func, .. }, _)) =
                             method_data
                         else {
@@ -2853,12 +2827,12 @@ fn codegen_object_pattern(
 
 fn codegen_place_to_expression(cx: &mut Context, place: &Place) -> Result<Expr, CompilerError> {
     let ident = &cx.env.identifiers[place.identifier.0 as usize];
-    if let Some(tmp) = cx.temp.get(&ident.declaration_id) {
+    if let Some(tmp) = cx.temp.get(ident.declaration_id) {
         if let Some(val) = tmp {
             return Ok(*val);
         }
     }
-    if ident.name.is_none() && !cx.temp.contains_key(&ident.declaration_id) {
+    if ident.name.is_none() && !cx.temp.contains_key(ident.declaration_id) {
         return Err(invariant_err(
             &format!(
                 "[Codegen] No value found for temporary, identifier id={}",
@@ -2880,24 +2854,7 @@ fn convert_identifier(
         Some(crate::hir::IdentifierName::Named(n)) => (n.clone(), ident.loc),
         Some(crate::hir::IdentifierName::Promoted(n)) => (n.clone(), ident.loc),
         None => {
-            let reason =
-                "Expected temporaries to be promoted to named identifiers in an earlier pass"
-                    .to_string();
-            let description = format!("identifier {} is unnamed", identifier_id.0);
-            let mut err = CompilerError::new();
-            err.push_diagnostic(
-                CompilerDiagnostic::new(
-                    ErrorCategory::Invariant,
-                    reason.clone(),
-                    Some(description),
-                )
-                .with_detail(CompilerDiagnosticDetail::Error {
-                    loc: None,
-                    message: Some(reason),
-                    identifier_name: None,
-                }),
-            );
-            return Err(err);
+            return Err(unnamed_identifier_err(identifier_id.0));
         }
     };
     Ok((cx.cg.ref_for_name(&name), convert_loc(loc)))
@@ -3265,6 +3222,8 @@ fn invariant(
     }
 }
 
+#[cold]
+#[inline(never)]
 fn invariant_err(reason: &str, loc: Option<DiagSourceLocation>) -> CompilerError {
     let mut err = CompilerError::new();
     err.push_diagnostic(
@@ -3279,6 +3238,8 @@ fn invariant_err(reason: &str, loc: Option<DiagSourceLocation>) -> CompilerError
     err
 }
 
+#[cold]
+#[inline(never)]
 fn invariant_err_with_detail_message(
     reason: &str,
     message: &str,
@@ -3293,6 +3254,65 @@ fn invariant_err_with_detail_message(
                 identifier_name: None,
             },
         ),
+    );
+    err
+}
+
+#[cold]
+#[inline(never)]
+fn for_init_decl_err(tag: &str) -> CompilerError {
+    let mut err = CompilerError::new();
+    err.push_diagnostic(
+        CompilerDiagnostic::new(
+            ErrorCategory::Invariant,
+            "Expected a variable declaration".to_string(),
+            Some(format!("Got {tag}")),
+        )
+        .with_detail(CompilerDiagnosticDetail::Error {
+            loc: None,
+            message: Some("Expected a variable declaration".to_string()),
+            identifier_name: None,
+        }),
+    );
+    err
+}
+
+#[cold]
+#[inline(never)]
+fn method_call_property_err(loc: Option<DiagSourceLocation>, member_expr: Expr) -> CompilerError {
+    let mut err = CompilerError::new();
+    err.push_diagnostic(
+        CompilerDiagnostic::new(
+            ErrorCategory::Invariant,
+            "[Codegen] Internal error: MethodCall::property must be an unpromoted + unmemoized MemberExpression",
+            None,
+        )
+        .with_detail(CompilerDiagnosticDetail::Error {
+            loc,
+            message: Some(format!("Got: '{:?}'", member_expr.data.tag())),
+            identifier_name: None,
+        }),
+    );
+    err
+}
+
+#[cold]
+#[inline(never)]
+fn unnamed_identifier_err(id: u32) -> CompilerError {
+    let reason =
+        "Expected temporaries to be promoted to named identifiers in an earlier pass".to_string();
+    let mut err = CompilerError::new();
+    err.push_diagnostic(
+        CompilerDiagnostic::new(
+            ErrorCategory::Invariant,
+            reason.clone(),
+            Some(format!("identifier {id} is unnamed")),
+        )
+        .with_detail(CompilerDiagnosticDetail::Error {
+            loc: None,
+            message: Some(reason),
+            identifier_name: None,
+        }),
     );
     err
 }

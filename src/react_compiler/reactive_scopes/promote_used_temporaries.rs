@@ -8,9 +8,9 @@
 //!
 //! Corresponds to `src/ReactiveScopes/PromoteUsedTemporaries.ts`.
 
-use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::collections::IdMap;
 use crate::hir::DeclarationId;
 use crate::hir::FunctionId;
 use crate::hir::IdentifierId;
@@ -37,7 +37,7 @@ use crate::hir::environment::Environment;
 struct State {
     tags: HashSet<DeclarationId>,
     promoted: HashSet<DeclarationId>,
-    pruned: HashMap<DeclarationId, PrunedInfo>,
+    pruned: IdMap<DeclarationId, PrunedInfo>,
 }
 
 struct PrunedInfo {
@@ -55,7 +55,7 @@ pub fn promote_used_temporaries(func: &mut ReactiveFunction, env: &mut Environme
     let mut state = State {
         tags: HashSet::new(),
         promoted: HashSet::new(),
-        pruned: HashMap::new(),
+        pruned: IdMap::new(),
     };
 
     // Phase 1: collect promotable temporaries (jsx tags, pruned scope usage)
@@ -90,7 +90,7 @@ pub fn promote_used_temporaries(func: &mut ReactiveFunction, env: &mut Environme
             }
         }
     }
-    let mut inter_state: HashMap<IdentifierId, (IdentifierId, bool)> = HashMap::new();
+    let mut inter_state: IdMap<IdentifierId, (IdentifierId, bool)> = IdMap::new();
     promote_interposed_block(
         &func.body,
         &mut state,
@@ -155,7 +155,7 @@ fn collect_promotable_place(
 ) {
     if !active_scopes.is_empty() {
         let identifier = &env.identifiers[place.identifier.0 as usize];
-        if let Some(pruned) = state.pruned.get_mut(&identifier.declaration_id) {
+        if let Some(pruned) = state.pruned.get_mut(identifier.declaration_id) {
             if let Some(last) = active_scopes.last() {
                 if !pruned.active_scopes.contains(last) {
                     pruned.used_outside_scope = true;
@@ -359,7 +359,7 @@ fn promote_temporaries_block(block: &ReactiveBlock, state: &mut State, env: &mut
                 for (id, decl_id) in decls {
                     let identifier = &env.identifiers[id.0 as usize];
                     if identifier.name.is_none() {
-                        if let Some(pruned) = state.pruned.get(&decl_id) {
+                        if let Some(pruned) = state.pruned.get(decl_id) {
                             if pruned.used_outside_scope {
                                 promote_identifier(id, state, env);
                             }
@@ -553,7 +553,7 @@ fn visit_hir_function_for_promotion(func_id: FunctionId, state: &mut State, env:
 fn promote_interposed_block(
     block: &ReactiveBlock,
     state: &mut State,
-    inter_state: &mut HashMap<IdentifierId, (IdentifierId, bool)>,
+    inter_state: &mut IdMap<IdentifierId, (IdentifierId, bool)>,
     consts: &mut HashSet<IdentifierId>,
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,
@@ -593,11 +593,11 @@ fn promote_interposed_block(
 fn promote_interposed_place(
     place: &Place,
     state: &mut State,
-    inter_state: &mut HashMap<IdentifierId, (IdentifierId, bool)>,
+    inter_state: &mut IdMap<IdentifierId, (IdentifierId, bool)>,
     consts: &HashSet<IdentifierId>,
     env: &mut Environment,
 ) {
-    if let Some(&(id, needs_promotion)) = inter_state.get(&place.identifier) {
+    if let Some(&(id, needs_promotion)) = inter_state.get(place.identifier) {
         let identifier = &env.identifiers[id.0 as usize];
         if needs_promotion && identifier.name.is_none() && !consts.contains(&id) {
             promote_identifier(id, state, env);
@@ -608,7 +608,7 @@ fn promote_interposed_place(
 fn promote_interposed_instruction(
     instr: &ReactiveInstruction,
     state: &mut State,
-    inter_state: &mut HashMap<IdentifierId, (IdentifierId, bool)>,
+    inter_state: &mut IdMap<IdentifierId, (IdentifierId, bool)>,
     consts: &mut HashSet<IdentifierId>,
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,
@@ -676,11 +676,8 @@ fn promote_interposed_instruction(
                                 .is_some())
                     {
                         // Mark all tracked temporaries as needing promotion
-                        let keys: Vec<IdentifierId> = inter_state.keys().cloned().collect();
-                        for key in keys {
-                            if let Some(entry) = inter_state.get_mut(&key) {
-                                entry.1 = true;
-                            }
+                        for entry in inter_state.values_mut() {
+                            entry.1 = true;
                         }
                     }
                     if let Some(lvalue) = &instr.lvalue {
@@ -789,7 +786,7 @@ fn promote_interposed_instruction(
 fn promote_interposed_value(
     value: &ReactiveValue,
     state: &mut State,
-    inter_state: &mut HashMap<IdentifierId, (IdentifierId, bool)>,
+    inter_state: &mut IdMap<IdentifierId, (IdentifierId, bool)>,
     consts: &mut HashSet<IdentifierId>,
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,
@@ -833,7 +830,7 @@ fn promote_interposed_value(
 fn promote_interposed_terminal(
     stmt: &ReactiveTerminalStatement,
     state: &mut State,
-    inter_state: &mut HashMap<IdentifierId, (IdentifierId, bool)>,
+    inter_state: &mut IdMap<IdentifierId, (IdentifierId, bool)>,
     consts: &mut HashSet<IdentifierId>,
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,

@@ -8,9 +8,9 @@
 //!
 //! Corresponds to `src/ReactiveScopes/PruneNonEscapingScopes.ts`.
 
-use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::collections::IdMap;
 use crate::collections::IndexSet;
 use crate::hir::ArrayPatternElement;
 use crate::hir::DeclarationId;
@@ -76,7 +76,7 @@ pub fn prune_non_escaping_scopes(
     let mut transform = PruneScopesTransform {
         env,
         pruned_scopes: HashSet::new(),
-        reassignments: HashMap::new(),
+        reassignments: IdMap::new(),
     };
     let mut memoized_state = memoized;
     transform_reactive_function(func, &mut transform, &mut memoized_state)
@@ -138,18 +138,18 @@ struct ScopeNode {
 
 struct CollectState {
     /// Maps lvalues for LoadLocal to the identifier being loaded, to resolve indirections.
-    definitions: HashMap<DeclarationId, DeclarationId>,
-    identifiers: HashMap<DeclarationId, IdentifierNode>,
-    scopes: HashMap<ScopeId, ScopeNode>,
+    definitions: IdMap<DeclarationId, DeclarationId>,
+    identifiers: IdMap<DeclarationId, IdentifierNode>,
+    scopes: IdMap<ScopeId, ScopeNode>,
     escaping_values: IndexSet<DeclarationId>,
 }
 
 impl CollectState {
     fn new() -> Self {
         CollectState {
-            definitions: HashMap::new(),
-            identifiers: HashMap::new(),
-            scopes: HashMap::new(),
+            definitions: IdMap::new(),
+            identifiers: IdMap::new(),
+            scopes: IdMap::new(),
             escaping_values: IndexSet::new(),
         }
     }
@@ -194,7 +194,7 @@ impl CollectState {
             let _ = node;
             let identifier_node = self
                 .identifiers
-                .get_mut(&identifier)
+                .get_mut(identifier)
                 .expect("Expected identifier to be initialized");
             identifier_node.scopes.insert(scope_id);
         }
@@ -202,7 +202,7 @@ impl CollectState {
 
     /// Resolve an identifier through definitions (LoadLocal indirections).
     fn resolve(&self, id: DeclarationId) -> DeclarationId {
-        self.definitions.get(&id).copied().unwrap_or(id)
+        self.definitions.get(id).copied().unwrap_or(id)
     }
 }
 
@@ -1029,7 +1029,7 @@ impl<'a> ReactiveFunctionVisitor for CollectDependenciesVisitor<'a> {
             let identifier_node = state
                 .0
                 .identifiers
-                .get_mut(&decl)
+                .get_mut(decl)
                 .expect("Expected identifier to be initialized");
             for scope_id in &state.1 {
                 identifier_node.scopes.insert(*scope_id);
@@ -1049,7 +1049,7 @@ impl<'a> ReactiveFunctionVisitor for CollectDependenciesVisitor<'a> {
             let identifier_node = state
                 .0
                 .identifiers
-                .get_mut(&decl)
+                .get_mut(decl)
                 .expect("Expected identifier to be initialized");
             for s in &state.1 {
                 identifier_node.scopes.insert(*s);
@@ -1068,72 +1068,58 @@ impl<'a> ReactiveFunctionVisitor for CollectDependenciesVisitor<'a> {
 // computeMemoizedIdentifiers
 // =============================================================================
 
+type IdentNodeTuple = (
+    MemoizationLevel,
+    bool,
+    IndexSet<DeclarationId>,
+    IndexSet<ScopeId>,
+    bool,
+);
+
 fn compute_memoized_identifiers(state: &CollectState) -> HashSet<DeclarationId> {
     let mut memoized = HashSet::new();
 
     // We need mutable access to the nodes, so we clone the state into mutable structures
-    let mut identifier_nodes: HashMap<
-        DeclarationId,
-        (
-            MemoizationLevel,
-            bool,
-            IndexSet<DeclarationId>,
-            IndexSet<ScopeId>,
-            bool,
-        ),
-    > = state
-        .identifiers
-        .iter()
-        .map(|(id, node)| {
+    let mut identifier_nodes: IdMap<DeclarationId, IdentNodeTuple> = IdMap::new();
+    for (id, node) in state.identifiers.iter() {
+        identifier_nodes.insert(
+            id,
             (
-                *id,
-                (
-                    node.level,
-                    node.memoized,
-                    node.dependencies.clone(),
-                    node.scopes.clone(),
-                    node.seen,
-                ),
-            )
-        })
-        .collect();
+                node.level,
+                node.memoized,
+                node.dependencies.clone(),
+                node.scopes.clone(),
+                node.seen,
+            ),
+        );
+    }
 
-    let mut scope_nodes: HashMap<ScopeId, (Vec<DeclarationId>, bool)> = state
-        .scopes
-        .iter()
-        .map(|(id, node)| (*id, (node.dependencies.clone(), node.seen)))
-        .collect();
+    let mut scope_nodes: IdMap<ScopeId, (Vec<DeclarationId>, bool)> = IdMap::new();
+    for (id, node) in state.scopes.iter() {
+        scope_nodes.insert(id, (node.dependencies.clone(), node.seen));
+    }
 
     fn visit(
         id: DeclarationId,
         force_memoize: bool,
-        identifier_nodes: &mut HashMap<
-            DeclarationId,
-            (
-                MemoizationLevel,
-                bool,
-                IndexSet<DeclarationId>,
-                IndexSet<ScopeId>,
-                bool,
-            ),
-        >,
-        scope_nodes: &mut HashMap<ScopeId, (Vec<DeclarationId>, bool)>,
+        identifier_nodes: &mut IdMap<DeclarationId, IdentNodeTuple>,
+        scope_nodes: &mut IdMap<ScopeId, (Vec<DeclarationId>, bool)>,
         memoized: &mut HashSet<DeclarationId>,
     ) -> bool {
-        let Some(&(level, _, _, _, seen)) = identifier_nodes.get(&id) else {
+        let Some(&(level, _, _, _, seen)) = identifier_nodes.get(id) else {
             return false;
         };
         if seen {
-            return identifier_nodes.get(&id).unwrap().1;
+            return identifier_nodes.get(id).unwrap().1;
         }
 
         // Mark as seen, temporarily mark as non-memoized
-        identifier_nodes.get_mut(&id).unwrap().4 = true; // seen = true
-        identifier_nodes.get_mut(&id).unwrap().1 = false; // memoized = false
+        identifier_nodes.get_mut(id).unwrap().4 = true; // seen = true
+        identifier_nodes.get_mut(id).unwrap().1 = false; // memoized = false
 
         // Visit dependencies
         let deps: Vec<DeclarationId> = identifier_nodes
-            .get(&id)
+            .get(id)
             .unwrap()
             .2
             .iter()
@@ -1150,10 +1136,10 @@ fn compute_memoized_identifiers(state: &CollectState) -> HashSet<DeclarationId> 
                 && (has_memoized_dependency || force_memoize))
             || (level == MemoizationLevel::Unmemoized && force_memoize)
         {
-            identifier_nodes.get_mut(&id).unwrap().1 = true; // memoized = true
+            identifier_nodes.get_mut(id).unwrap().1 = true; // memoized = true
             memoized.insert(id);
             let scopes: Vec<ScopeId> = identifier_nodes
-                .get(&id)
+                .get(id)
                 .unwrap()
                 .3
                 .iter()
@@ -1163,34 +1149,25 @@ fn compute_memoized_identifiers(state: &CollectState) -> HashSet<DeclarationId> 
                 force_memoize_scope_dependencies(scope_id, identifier_nodes, scope_nodes, memoized);
             }
         }
-        identifier_nodes.get(&id).unwrap().1
+        identifier_nodes.get(id).unwrap().1
     }
 
     fn force_memoize_scope_dependencies(
         id: ScopeId,
-        identifier_nodes: &mut HashMap<
-            DeclarationId,
-            (
-                MemoizationLevel,
-                bool,
-                IndexSet<DeclarationId>,
-                IndexSet<ScopeId>,
-                bool,
-            ),
-        >,
-        scope_nodes: &mut HashMap<ScopeId, (Vec<DeclarationId>, bool)>,
+        identifier_nodes: &mut IdMap<DeclarationId, IdentNodeTuple>,
+        scope_nodes: &mut IdMap<ScopeId, (Vec<DeclarationId>, bool)>,
         memoized: &mut HashSet<DeclarationId>,
     ) {
         let seen = scope_nodes
-            .get(&id)
+            .get(id)
             .expect("Expected a node for all scopes")
             .1;
         if seen {
             return;
         }
-        scope_nodes.get_mut(&id).unwrap().1 = true; // seen = true
+        scope_nodes.get_mut(id).unwrap().1 = true; // seen = true
 
-        let deps: Vec<DeclarationId> = scope_nodes.get(&id).unwrap().0.clone();
+        let deps: Vec<DeclarationId> = scope_nodes.get(id).unwrap().0.clone();
         for dep in deps {
             visit(dep, true, identifier_nodes, scope_nodes, memoized);
         }
@@ -1218,7 +1195,7 @@ fn compute_memoized_identifiers(state: &CollectState) -> HashSet<DeclarationId> 
 struct PruneScopesTransform<'a> {
     env: &'a Environment,
     pruned_scopes: HashSet<ScopeId>,
-    reassignments: HashMap<DeclarationId, HashSet<IdentifierId>>,
+    reassignments: IdMap<DeclarationId, HashSet<IdentifierId>>,
 }
 
 impl<'a> ReactiveFunctionTransform for PruneScopesTransform<'a> {
@@ -1321,7 +1298,7 @@ impl<'a> ReactiveFunctionTransform for PruneScopesTransform<'a> {
                     let decl_id = self.env.identifiers[decl.identifier.0 as usize].declaration_id;
                     let decls: Vec<IdentifierId> = self
                         .reassignments
-                        .get(&decl_id)
+                        .get(decl_id)
                         .map(|ids| ids.iter().copied().collect())
                         .unwrap_or_else(|| vec![decl.identifier]);
 

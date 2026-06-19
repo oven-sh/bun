@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use crate::collections::IdMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
 };
@@ -25,7 +24,7 @@ impl std::fmt::Display for VarRefKind {
     }
 }
 
-type IdentifierKinds = HashMap<IdentifierId, (Place, VarRefKind)>;
+type IdentifierKinds = IdMap<IdentifierId, (Place, VarRefKind)>;
 
 /// Validates that context variable lvalues are used consistently.
 ///
@@ -51,7 +50,7 @@ pub fn validate_context_variable_lvalues_with_errors(
     identifiers: &[Identifier],
     errors: &mut CompilerError,
 ) -> Result<(), CompilerDiagnostic> {
-    let mut identifier_kinds: IdentifierKinds = HashMap::new();
+    let mut identifier_kinds: IdentifierKinds = IdMap::new();
     validate_context_variable_lvalues_impl(
         func,
         &mut identifier_kinds,
@@ -194,7 +193,7 @@ fn visit(
     env_identifiers: &[Identifier],
     errors: &mut CompilerError,
 ) -> Result<(), CompilerDiagnostic> {
-    if let Some((prev_place, prev_kind)) = identifiers.get(&place.identifier) {
+    if let Some((prev_place, prev_kind)) = identifiers.get(place.identifier) {
         let was_context = *prev_kind == VarRefKind::Context;
         let is_context = kind == VarRefKind::Context;
         if was_context != is_context {
@@ -218,22 +217,38 @@ fn visit(
                 );
                 return Ok(());
             }
-            let place_str = format_place(place, env_identifiers);
-            return Err(CompilerDiagnostic::new(
-                ErrorCategory::Invariant,
-                "Expected all references to a variable to be consistently local or context references",
-                Some(format!(
-                    "Identifier {} is referenced as a {} variable, but was previously referenced as a {} variable",
-                    place_str, kind, prev_kind
-                )),
-            )
-            .with_detail(CompilerDiagnosticDetail::Error {
-                loc: place.loc,
-                message: Some(format!("this is {}", prev_kind)),
-                identifier_name: None,
-            }));
+            return Err(inconsistent_ref_error(
+                place,
+                env_identifiers,
+                kind,
+                *prev_kind,
+            ));
         }
     }
     identifiers.insert(place.identifier, (place.clone(), kind));
     Ok(())
+}
+
+#[cold]
+#[inline(never)]
+fn inconsistent_ref_error(
+    place: &Place,
+    env_identifiers: &[Identifier],
+    kind: VarRefKind,
+    prev_kind: VarRefKind,
+) -> CompilerDiagnostic {
+    let place_str = format_place(place, env_identifiers);
+    CompilerDiagnostic::new(
+        ErrorCategory::Invariant,
+        "Expected all references to a variable to be consistently local or context references",
+        Some(format!(
+            "Identifier {} is referenced as a {} variable, but was previously referenced as a {} variable",
+            place_str, kind, prev_kind
+        )),
+    )
+    .with_detail(CompilerDiagnosticDetail::Error {
+        loc: place.loc,
+        message: Some(format!("this is {}", prev_kind)),
+        identifier_name: None,
+    })
 }

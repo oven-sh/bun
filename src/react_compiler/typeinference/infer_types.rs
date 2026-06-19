@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 
+use crate::collections::IdMap;
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 use crate::hir::environment::{Environment, is_hook_name};
 use crate::hir::object_shape::{
@@ -17,12 +18,13 @@ use crate::hir::object_shape::{
     BUILT_IN_OBJECT_ID, BUILT_IN_PROPS_ID, BUILT_IN_REF_VALUE_ID, BUILT_IN_SET_STATE_ID,
     BUILT_IN_USE_REF_ID, ShapeRegistry,
 };
+use crate::hir::visitors::{each_lvalue, each_operand};
 use crate::hir::{
     ArrayPatternElement, AstAlloc, BinaryOperator, FunctionId, HirFunction, HirVec, Identifier,
     IdentifierId, IdentifierName, InstructionId, InstructionKind, InstructionValue, JsxAttribute,
-    LoweredFunction, ManualMemoDependencyRoot, NonLocalBinding, ObjectPropertyKey,
-    ObjectPropertyOrSpread, ParamPattern, Pattern, PropertyLiteral, PropertyNameKind,
-    ReactFunctionType, SourceLocation, Terminal, Type, TypeId,
+    LoweredFunction, NonLocalBinding, ObjectPropertyKey, ObjectPropertyOrSpread, ParamPattern,
+    Pattern, PropertyLiteral, PropertyNameKind, ReactFunctionType, SourceLocation, Terminal, Type,
+    TypeId,
 };
 use crate::ssa::enter_ssa::placeholder_function;
 
@@ -294,14 +296,14 @@ fn type_equals(a: &Type, b: &Type) -> bool {
     }
 }
 
-fn set_name(names: &mut HashMap<IdentifierId, String>, id: IdentifierId, source: &Identifier) {
+fn set_name(names: &mut IdMap<IdentifierId, String>, id: IdentifierId, source: &Identifier) {
     if let Some(IdentifierName::Named(ref name)) = source.name {
         names.insert(id, name.clone());
     }
 }
 
-fn get_name(names: &HashMap<IdentifierId, String>, id: IdentifierId) -> String {
-    names.get(&id).cloned().unwrap_or_default()
+fn get_name(names: &IdMap<IdentifierId, String>, id: IdentifierId) -> String {
+    names.get(id).cloned().unwrap_or_default()
 }
 
 // =============================================================================
@@ -372,7 +374,7 @@ fn generate(
         }
     }
 
-    let mut names: HashMap<IdentifierId, String> = HashMap::new();
+    let mut names: IdMap<IdentifierId, String> = IdMap::new();
     let mut return_types: HirVec<Type> = AstAlloc::vec();
 
     for (_block_id, block) in &func.body.blocks {
@@ -474,7 +476,7 @@ fn generate_for_function_id(
 
     // TS creates a fresh `names` Map per recursive `generate` call, so inner
     // functions don't inherit or pollute the outer function's name mappings.
-    let mut inner_names: HashMap<IdentifierId, String> = HashMap::new();
+    let mut inner_names: IdMap<IdentifierId, String> = IdMap::new();
     let mut inner_return_types: HirVec<Type> = AstAlloc::vec();
 
     for (_block_id, block) in &inner.body.blocks {
@@ -538,7 +540,7 @@ fn generate_instruction_types(
     identifiers: &[Identifier],
     types: &mut HirVec<Type>,
     functions: &mut HirVec<HirFunction>,
-    names: &mut HashMap<IdentifierId, String>,
+    names: &mut IdMap<IdentifierId, String>,
     global_types: &HashMap<(u32, InstructionId), Type>,
     shapes: &ShapeRegistry,
     unifier: &mut Unifier,
@@ -974,10 +976,14 @@ fn apply_function(
             resolve_identifier(instr.lvalue.identifier, identifiers, types, unifier);
 
             // LValues from instruction values (StoreLocal, StoreContext, DeclareLocal, DeclareContext, Destructure)
-            apply_instruction_lvalues(&instr.value, identifiers, types, unifier);
+            each_lvalue(&instr.value, |p| {
+                resolve_identifier(p.identifier, identifiers, types, unifier)
+            });
 
             // Operands
-            apply_instruction_operands(&instr.value, identifiers, types, unifier);
+            each_operand(&instr.value, |p| {
+                resolve_identifier(p.identifier, identifiers, types, unifier)
+            });
 
             // Recurse into inner functions
             match &instr.value {
@@ -1016,304 +1022,6 @@ fn resolve_identifier(
     let current_type = types[type_id.0 as usize].clone();
     let resolved = unifier.get(&current_type);
     types[type_id.0 as usize] = resolved;
-}
-
-/// Resolve types for instruction lvalues (mirrors TS eachInstructionLValue).
-fn apply_instruction_lvalues(
-    value: &InstructionValue,
-    identifiers: &mut [Identifier],
-    types: &mut HirVec<Type>,
-    unifier: &Unifier,
-) {
-    match value {
-        InstructionValue::StoreLocal { lvalue, .. }
-        | InstructionValue::StoreContext { lvalue, .. } => {
-            resolve_identifier(lvalue.place.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::DeclareLocal { lvalue, .. }
-        | InstructionValue::DeclareContext { lvalue, .. } => {
-            resolve_identifier(lvalue.place.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::Destructure { lvalue, .. } => match &lvalue.pattern {
-            Pattern::Array(array_pattern) => {
-                for item in &array_pattern.items {
-                    match item {
-                        ArrayPatternElement::Place(place) => {
-                            resolve_identifier(place.identifier, identifiers, types, unifier);
-                        }
-                        ArrayPatternElement::Spread(spread) => {
-                            resolve_identifier(
-                                spread.place.identifier,
-                                identifiers,
-                                types,
-                                unifier,
-                            );
-                        }
-                        ArrayPatternElement::Hole => {}
-                    }
-                }
-            }
-            Pattern::Object(object_pattern) => {
-                for prop in &object_pattern.properties {
-                    match prop {
-                        ObjectPropertyOrSpread::Property(obj_prop) => {
-                            resolve_identifier(
-                                obj_prop.place.identifier,
-                                identifiers,
-                                types,
-                                unifier,
-                            );
-                        }
-                        ObjectPropertyOrSpread::Spread(spread) => {
-                            resolve_identifier(
-                                spread.place.identifier,
-                                identifiers,
-                                types,
-                                unifier,
-                            );
-                        }
-                    }
-                }
-            }
-        },
-        _ => {}
-    }
-}
-
-/// Resolve types for instruction operands (mirrors TS eachInstructionOperand).
-fn apply_instruction_operands(
-    value: &InstructionValue,
-    identifiers: &mut [Identifier],
-    types: &mut HirVec<Type>,
-    unifier: &Unifier,
-) {
-    match value {
-        InstructionValue::LoadLocal { place, .. } | InstructionValue::LoadContext { place, .. } => {
-            resolve_identifier(place.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::StoreLocal { value: val, .. } => {
-            resolve_identifier(val.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::StoreContext { value: val, .. } => {
-            resolve_identifier(val.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::StoreGlobal { value: val, .. } => {
-            resolve_identifier(val.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::Destructure { value: val, .. } => {
-            resolve_identifier(val.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::BinaryExpression { left, right, .. } => {
-            resolve_identifier(left.identifier, identifiers, types, unifier);
-            resolve_identifier(right.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::UnaryExpression { value: val, .. } => {
-            resolve_identifier(val.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::TypeCastExpression { value: val, .. } => {
-            resolve_identifier(val.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::CallExpression { callee, args, .. } => {
-            resolve_identifier(callee.identifier, identifiers, types, unifier);
-            for arg in args {
-                match arg {
-                    crate::hir::PlaceOrSpread::Place(p) => {
-                        resolve_identifier(p.identifier, identifiers, types, unifier);
-                    }
-                    crate::hir::PlaceOrSpread::Spread(s) => {
-                        resolve_identifier(s.place.identifier, identifiers, types, unifier);
-                    }
-                }
-            }
-        }
-        InstructionValue::MethodCall {
-            receiver,
-            property,
-            args,
-            ..
-        } => {
-            resolve_identifier(receiver.identifier, identifiers, types, unifier);
-            resolve_identifier(property.identifier, identifiers, types, unifier);
-            for arg in args {
-                match arg {
-                    crate::hir::PlaceOrSpread::Place(p) => {
-                        resolve_identifier(p.identifier, identifiers, types, unifier);
-                    }
-                    crate::hir::PlaceOrSpread::Spread(s) => {
-                        resolve_identifier(s.place.identifier, identifiers, types, unifier);
-                    }
-                }
-            }
-        }
-        InstructionValue::NewExpression { callee, args, .. } => {
-            resolve_identifier(callee.identifier, identifiers, types, unifier);
-            for arg in args {
-                match arg {
-                    crate::hir::PlaceOrSpread::Place(p) => {
-                        resolve_identifier(p.identifier, identifiers, types, unifier);
-                    }
-                    crate::hir::PlaceOrSpread::Spread(s) => {
-                        resolve_identifier(s.place.identifier, identifiers, types, unifier);
-                    }
-                }
-            }
-        }
-        InstructionValue::TaggedTemplateExpression { tag, .. } => {
-            resolve_identifier(tag.identifier, identifiers, types, unifier);
-            // The template quasi's subexpressions are not separate operands in this HIR
-        }
-        InstructionValue::PropertyLoad { object, .. } => {
-            resolve_identifier(object.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::PropertyStore {
-            object, value: val, ..
-        } => {
-            resolve_identifier(object.identifier, identifiers, types, unifier);
-            resolve_identifier(val.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::PropertyDelete { object, .. } => {
-            resolve_identifier(object.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::ComputedLoad {
-            object, property, ..
-        } => {
-            resolve_identifier(object.identifier, identifiers, types, unifier);
-            resolve_identifier(property.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::ComputedStore {
-            object,
-            property,
-            value: val,
-            ..
-        } => {
-            resolve_identifier(object.identifier, identifiers, types, unifier);
-            resolve_identifier(property.identifier, identifiers, types, unifier);
-            resolve_identifier(val.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::ComputedDelete {
-            object, property, ..
-        } => {
-            resolve_identifier(object.identifier, identifiers, types, unifier);
-            resolve_identifier(property.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::ObjectExpression { properties, .. } => {
-            for prop in properties {
-                match prop {
-                    ObjectPropertyOrSpread::Property(obj_prop) => {
-                        resolve_identifier(obj_prop.place.identifier, identifiers, types, unifier);
-                        if let ObjectPropertyKey::Computed { name } = &obj_prop.key {
-                            resolve_identifier(name.identifier, identifiers, types, unifier);
-                        }
-                    }
-                    ObjectPropertyOrSpread::Spread(spread) => {
-                        resolve_identifier(spread.place.identifier, identifiers, types, unifier);
-                    }
-                }
-            }
-        }
-        InstructionValue::ArrayExpression { elements, .. } => {
-            for elem in elements {
-                match elem {
-                    crate::hir::ArrayElement::Place(p) => {
-                        resolve_identifier(p.identifier, identifiers, types, unifier);
-                    }
-                    crate::hir::ArrayElement::Spread(s) => {
-                        resolve_identifier(s.place.identifier, identifiers, types, unifier);
-                    }
-                    crate::hir::ArrayElement::Hole => {}
-                }
-            }
-        }
-        InstructionValue::JsxExpression {
-            tag,
-            props,
-            children,
-            ..
-        } => {
-            if let crate::hir::JsxTag::Place(p) = tag {
-                resolve_identifier(p.identifier, identifiers, types, unifier);
-            }
-            for attr in props {
-                match attr {
-                    JsxAttribute::Attribute { place, .. } => {
-                        resolve_identifier(place.identifier, identifiers, types, unifier);
-                    }
-                    JsxAttribute::SpreadAttribute { argument } => {
-                        resolve_identifier(argument.identifier, identifiers, types, unifier);
-                    }
-                }
-            }
-            if let Some(children) = children {
-                for child in children {
-                    resolve_identifier(child.identifier, identifiers, types, unifier);
-                }
-            }
-        }
-        InstructionValue::JsxFragment { children, .. } => {
-            for child in children {
-                resolve_identifier(child.identifier, identifiers, types, unifier);
-            }
-        }
-        InstructionValue::FunctionExpression { .. } | InstructionValue::ObjectMethod { .. } => {
-            // Inner functions are handled separately via recursion in apply_function
-        }
-        InstructionValue::TemplateLiteral { subexprs, .. } => {
-            for sub in subexprs {
-                resolve_identifier(sub.identifier, identifiers, types, unifier);
-            }
-        }
-        InstructionValue::PrefixUpdate {
-            value: val, lvalue, ..
-        }
-        | InstructionValue::PostfixUpdate {
-            value: val, lvalue, ..
-        } => {
-            resolve_identifier(val.identifier, identifiers, types, unifier);
-            resolve_identifier(lvalue.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::Await { value: val, .. } => {
-            resolve_identifier(val.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::GetIterator { collection, .. } => {
-            resolve_identifier(collection.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::IteratorNext {
-            iterator,
-            collection,
-            ..
-        } => {
-            resolve_identifier(iterator.identifier, identifiers, types, unifier);
-            resolve_identifier(collection.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::NextPropertyOf { value: val, .. } => {
-            resolve_identifier(val.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::FinishMemoize { decl, .. } => {
-            resolve_identifier(decl.identifier, identifiers, types, unifier);
-        }
-        InstructionValue::StartMemoize { deps, .. } => {
-            // Resolve types for deps with NamedLocal kind (matching TS
-            // eachInstructionOperand which yields dep.root.value for NamedLocal deps)
-            if let Some(deps) = deps {
-                for dep in deps {
-                    if let ManualMemoDependencyRoot::NamedLocal { value, .. } = &dep.root {
-                        resolve_identifier(value.identifier, identifiers, types, unifier);
-                    }
-                }
-            }
-        }
-        InstructionValue::Primitive { .. }
-        | InstructionValue::JSXText { .. }
-        | InstructionValue::LoadGlobal { .. }
-        | InstructionValue::DeclareLocal { .. }
-        | InstructionValue::DeclareContext { .. }
-        | InstructionValue::RegExpLiteral { .. }
-        | InstructionValue::MetaProperty { .. }
-        | InstructionValue::Debugger { .. }
-        | InstructionValue::UnsupportedNode { .. } => {
-            // No operand places
-        }
-    }
 }
 
 // =============================================================================

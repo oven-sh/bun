@@ -66,6 +66,8 @@ pub(crate) fn is_always_reserved_word(s: &str) -> bool {
     )
 }
 
+#[cold]
+#[inline(never)]
 pub(crate) fn reserved_identifier_diagnostic(name: &str) -> CompilerDiagnostic {
     CompilerDiagnostic::new(
         ErrorCategory::Syntax,
@@ -928,7 +930,7 @@ impl<'h> HirBuilder<'h> {
     pub fn ref_name(&self, ref_: Ref) -> Result<String, CompilerError> {
         core::str::from_utf8(self.host.ref_name(ref_))
             .map(str::to_owned)
-            .map_err(|_| CompilerError::from(CompilerDiagnostic::todo("non-utf8 identifier", None)))
+            .map_err(|_| crate::diagnostics::cold_todo("non-utf8 identifier", None))
     }
 
     /// Map a `Ref` to an HIR IdentifierId.
@@ -1036,13 +1038,13 @@ impl<'h> HirBuilder<'h> {
     ) -> Result<VariableBinding, CompilerError> {
         let ref_ = self.resolve_ref(ref_);
         let Some(sym) = self.symbol(ref_) else {
-            return Err(CompilerError::from(CompilerDiagnostic::todo(
+            return Err(crate::diagnostics::cold_todo(
                 "Unresolved symbol reference",
                 loc,
-            )));
+            ));
         };
         let name = core::str::from_utf8(sym.original_name.slice())
-            .map_err(|_| CompilerError::from(CompilerDiagnostic::todo("non-utf8 identifier", loc)))?
+            .map_err(|_| crate::diagnostics::cold_todo("non-utf8 identifier", loc))?
             .to_owned();
 
         use symbol::Kind as Sk;

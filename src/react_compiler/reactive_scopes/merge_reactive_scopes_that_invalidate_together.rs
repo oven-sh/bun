@@ -8,8 +8,9 @@
 //!
 //! Corresponds to `src/ReactiveScopes/MergeReactiveScopesThatInvalidateTogether.ts`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
+use crate::collections::IdMap;
 use crate::diagnostics::CompilerError;
 use crate::hir::{
     DeclarationId, DependencyPathEntry, EvaluationOrder, HirVec, InstructionKind, InstructionValue,
@@ -36,14 +37,14 @@ pub fn merge_reactive_scopes_that_invalidate_together(
 ) -> Result<(), CompilerError> {
     // Pass 1: find last usage of each declaration
     let visitor = FindLastUsageVisitor { env: &*env };
-    let mut last_usage: HashMap<DeclarationId, EvaluationOrder> = HashMap::new();
+    let mut last_usage: IdMap<DeclarationId, EvaluationOrder> = IdMap::new();
     visit_reactive_function(func, &visitor, &mut last_usage);
 
     // Pass 2+3: merge scopes
     let mut transform = MergeTransform {
         env,
         last_usage,
-        temporaries: HashMap::new(),
+        temporaries: IdMap::new(),
     };
     let mut state: Option<HirVec<ReactiveScopeDependency>> = None;
     transform_reactive_function(func, &mut transform, &mut state)
@@ -59,7 +60,7 @@ struct FindLastUsageVisitor<'a> {
 }
 
 impl<'a> ReactiveFunctionVisitor for FindLastUsageVisitor<'a> {
-    type State = HashMap<DeclarationId, EvaluationOrder>;
+    type State = IdMap<DeclarationId, EvaluationOrder>;
 
     fn env(&self) -> &Environment {
         self.env
@@ -81,8 +82,8 @@ impl<'a> ReactiveFunctionVisitor for FindLastUsageVisitor<'a> {
 /// TS: `class Transform extends ReactiveFunctionTransform<ReactiveScopeDependencies | null>`
 struct MergeTransform<'a> {
     env: &'a mut Environment,
-    last_usage: HashMap<DeclarationId, EvaluationOrder>,
-    temporaries: HashMap<DeclarationId, DeclarationId>,
+    last_usage: IdMap<DeclarationId, EvaluationOrder>,
+    temporaries: IdMap<DeclarationId, DeclarationId>,
 }
 
 impl<'a> ReactiveFunctionTransform for MergeTransform<'a> {
@@ -212,7 +213,7 @@ impl<'a> MergeTransform<'a> {
                                                 .declaration_id;
                                             let mapped = self
                                                 .temporaries
-                                                .get(&value_decl)
+                                                .get(value_decl)
                                                 .copied()
                                                 .unwrap_or(value_decl);
                                             self.temporaries.insert(store_decl, mapped);
@@ -352,12 +353,11 @@ impl<'a> MergeTransform<'a> {
             let mut merged_scope = match &all_stmts[entry.from] {
                 ReactiveStatement::Scope(s) => s.clone(),
                 _ => {
-                    return Err(crate::diagnostics::CompilerDiagnostic::new(
-                        crate::diagnostics::ErrorCategory::Invariant,
+                    return Err(crate::diagnostics::cold_invariant(
                         "MergeConsecutiveScopes: Expected scope at starting index",
                         None,
-                    )
-                    .into());
+                        None,
+                    ));
                 }
             };
             index += 1;
@@ -398,7 +398,7 @@ impl<'a> MergeTransform<'a> {
 /// Updates scope declarations to remove any that are not used after the scope.
 fn update_scope_declarations(
     scope_id: ScopeId,
-    last_usage: &HashMap<DeclarationId, EvaluationOrder>,
+    last_usage: &IdMap<DeclarationId, EvaluationOrder>,
     env: &mut Environment,
 ) {
     let range_end = env.scopes[scope_id.0 as usize].range.end;
@@ -406,7 +406,7 @@ fn update_scope_declarations(
         .declarations
         .retain(|(_id, decl)| {
             let decl_declaration_id = env.identifiers[decl.identifier.0 as usize].declaration_id;
-            match last_usage.get(&decl_declaration_id) {
+            match last_usage.get(decl_declaration_id) {
                 Some(last_used_at) => *last_used_at >= range_end,
                 // If not tracked, keep the declaration (conservative)
                 None => true,
@@ -418,12 +418,12 @@ fn update_scope_declarations(
 fn are_lvalues_last_used_by_scope(
     scope_id: ScopeId,
     lvalues: &HashSet<DeclarationId>,
-    last_usage: &HashMap<DeclarationId, EvaluationOrder>,
+    last_usage: &IdMap<DeclarationId, EvaluationOrder>,
     env: &Environment,
 ) -> bool {
     let range_end = env.scopes[scope_id.0 as usize].range.end;
     for lvalue in lvalues {
-        if let Some(&last_used_at) = last_usage.get(lvalue) {
+        if let Some(&last_used_at) = last_usage.get(*lvalue) {
             if last_used_at >= range_end {
                 return false;
             }
@@ -437,7 +437,7 @@ fn can_merge_scopes(
     current_id: ScopeId,
     next_id: ScopeId,
     env: &Environment,
-    temporaries: &HashMap<DeclarationId, DeclarationId>,
+    temporaries: &IdMap<DeclarationId, DeclarationId>,
 ) -> bool {
     let current = &env.scopes[current_id.0 as usize];
     let next = &env.scopes[next_id.0 as usize];
@@ -483,8 +483,7 @@ fn can_merge_scopes(
             let dep_decl = env.identifiers[dep.identifier.0 as usize].declaration_id;
             current.declarations.iter().any(|(_key, decl)| {
                 let decl_decl_id = env.identifiers[decl.identifier.0 as usize].declaration_id;
-                decl_decl_id == dep_decl
-                    || temporaries.get(&dep_decl).copied() == Some(decl_decl_id)
+                decl_decl_id == dep_decl || temporaries.get(dep_decl).copied() == Some(decl_decl_id)
             })
         })
     {

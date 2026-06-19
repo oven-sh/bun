@@ -646,16 +646,10 @@ impl Environment {
             _ => None,
         };
         if let Some(shape_id) = shape_id {
-            let shape = self.shapes.get(shape_id).ok_or_else(|| {
-                CompilerDiagnostic::new(
-                    ErrorCategory::Invariant,
-                    format!(
-                        "[HIR] Forget internal error: cannot resolve shape {}",
-                        shape_id
-                    ),
-                    None,
-                )
-            })?;
+            let shape = self
+                .shapes
+                .get(shape_id)
+                .ok_or_else(|| shape_not_found(shape_id))?;
             if let Some(ty) = shape.properties.get(property) {
                 return Ok(Some(ty.clone()));
             }
@@ -687,16 +681,10 @@ impl Environment {
             _ => None,
         };
         if let Some(shape_id) = shape_id {
-            let shape = self.shapes.get(shape_id).ok_or_else(|| {
-                CompilerDiagnostic::new(
-                    ErrorCategory::Invariant,
-                    format!(
-                        "[HIR] Forget internal error: cannot resolve shape {}",
-                        shape_id
-                    ),
-                    None,
-                )
-            })?;
+            let shape = self
+                .shapes
+                .get(shape_id)
+                .ok_or_else(|| shape_not_found(shape_id))?;
             return Ok(shape.properties.get("*").cloned());
         }
         Ok(None)
@@ -713,16 +701,10 @@ impl Environment {
             _ => None,
         };
         if let Some(shape_id) = shape_id {
-            let shape = self.shapes.get(shape_id).ok_or_else(|| {
-                CompilerDiagnostic::new(
-                    ErrorCategory::Invariant,
-                    format!(
-                        "[HIR] Forget internal error: cannot resolve shape {}",
-                        shape_id
-                    ),
-                    None,
-                )
-            })?;
+            let shape = self
+                .shapes
+                .get(shape_id)
+                .ok_or_else(|| shape_not_found(shape_id))?;
             return Ok(shape.properties.get("*").cloned());
         }
         Ok(None)
@@ -739,16 +721,10 @@ impl Environment {
             _ => return Ok(None),
         };
         if let Some(shape_id) = shape_id {
-            let shape = self.shapes.get(shape_id).ok_or_else(|| {
-                CompilerDiagnostic::new(
-                    ErrorCategory::Invariant,
-                    format!(
-                        "[HIR] Forget internal error: cannot resolve shape {}",
-                        shape_id
-                    ),
-                    None,
-                )
-            })?;
+            let shape = self
+                .shapes
+                .get(shape_id)
+                .ok_or_else(|| shape_not_found(shape_id))?;
             return Ok(shape.function_type.as_ref());
         }
         Ok(None)
@@ -1035,6 +1011,19 @@ impl Default for Environment {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[cold]
+#[inline(never)]
+fn shape_not_found(shape_id: &str) -> CompilerDiagnostic {
+    CompilerDiagnostic::new(
+        ErrorCategory::Invariant,
+        format!(
+            "[HIR] Forget internal error: cannot resolve shape {}",
+            shape_id
+        ),
+        None,
+    )
 }
 
 /// Check if a name matches the React hook naming convention: `use[A-Z0-9]`.

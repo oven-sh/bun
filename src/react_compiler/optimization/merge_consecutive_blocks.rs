@@ -13,8 +13,9 @@
 //!
 //! Analogous to TS `HIR/MergeConsecutiveBlocks.ts`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
+use crate::collections::IdMap;
 use crate::hir::cfg_utils::mark_predecessors;
 use crate::hir::visitors;
 use crate::hir::{
@@ -187,14 +188,12 @@ pub fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [HirFunc
 
 /// Tracks which blocks have been merged and into which target.
 struct MergedBlocks {
-    map: HashMap<BlockId, BlockId>,
+    map: IdMap<BlockId, BlockId>,
 }
 
 impl MergedBlocks {
     fn new() -> Self {
-        Self {
-            map: HashMap::new(),
-        }
+        Self { map: IdMap::new() }
     }
 
     /// Record that `block` was merged into `into`.
@@ -207,7 +206,7 @@ impl MergedBlocks {
     /// Transitive: if A merged into B which merged into C, get(A) returns C.
     fn get(&self, block: BlockId) -> BlockId {
         let mut current = block;
-        while let Some(&target) = self.map.get(&current) {
+        while let Some(&target) = self.map.get(current) {
             current = target;
         }
         current

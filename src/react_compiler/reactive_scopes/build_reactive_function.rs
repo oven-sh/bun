@@ -10,7 +10,8 @@
 use std::collections::HashSet;
 
 use crate::diagnostics::{
-    CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory, SourceLocation,
+    CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory, SourceLocation, cold_invariant,
+    cold_todo,
 };
 use crate::hir::environment::Environment;
 use crate::hir::{
@@ -212,11 +213,7 @@ impl<'a> Context<'a> {
             .pop()
             .expect("Can only unschedule the last target");
         if last.id() != schedule_id {
-            return Err(CompilerDiagnostic::new(
-                ErrorCategory::Invariant,
-                "Can only unschedule the last target".to_string(),
-                None,
-            ));
+            return Err(cold_invariant("Can only unschedule the last target", None, None).into());
         }
         match &last {
             ControlFlowTarget::Loop {
@@ -471,11 +468,12 @@ impl<'a, 'b> Driver<'a, 'b> {
                         if self.cx.is_scheduled(case_block_id) {
                             // TS: asserts case.block === fallthrough, then skips (return)
                             if case_block_id != *fallthrough {
-                                return Err(CompilerDiagnostic::new(
-                                ErrorCategory::Invariant,
-                                "Unexpected 'switch' where a case is already scheduled and block is not the fallthrough".to_string(),
-                                None,
-                            ));
+                                return Err(cold_invariant(
+                                    "Unexpected 'switch' where a case is already scheduled and block is not the fallthrough",
+                                    None,
+                                    None,
+                                )
+                                .into());
                             }
                             continue;
                         }
@@ -536,11 +534,12 @@ impl<'a, 'b> Driver<'a, 'b> {
                     let loop_body = if let Some(lid) = loop_id {
                         self.traverse_block(lid)?
                     } else {
-                        return Err(CompilerDiagnostic::new(
-                            ErrorCategory::Invariant,
+                        return Err(cold_invariant(
                             "Unexpected 'do-while' where the loop is already scheduled",
                             None,
-                        ));
+                            None,
+                        )
+                        .into());
                     };
                     let test_result = self.visit_value_block(*test, *loc, None)?;
 
@@ -593,11 +592,12 @@ impl<'a, 'b> Driver<'a, 'b> {
                     let loop_body = if let Some(lid) = loop_id {
                         self.traverse_block(lid)?
                     } else {
-                        return Err(CompilerDiagnostic::new(
-                            ErrorCategory::Invariant,
+                        return Err(cold_invariant(
                             "Unexpected 'while' where the loop is already scheduled",
                             None,
-                        ));
+                            None,
+                        )
+                        .into());
                     };
 
                     self.cx.unschedule_all(&schedule_ids)?;
@@ -660,11 +660,12 @@ impl<'a, 'b> Driver<'a, 'b> {
                     let loop_body = if let Some(lid) = loop_id {
                         self.traverse_block(lid)?
                     } else {
-                        return Err(CompilerDiagnostic::new(
-                            ErrorCategory::Invariant,
+                        return Err(cold_invariant(
                             "Unexpected 'for' where the loop is already scheduled",
                             None,
-                        ));
+                            None,
+                        )
+                        .into());
                     };
 
                     self.cx.unschedule_all(&schedule_ids)?;
@@ -723,11 +724,12 @@ impl<'a, 'b> Driver<'a, 'b> {
                     let loop_body = if let Some(lid) = loop_id {
                         self.traverse_block(lid)?
                     } else {
-                        return Err(CompilerDiagnostic::new(
-                            ErrorCategory::Invariant,
+                        return Err(cold_invariant(
                             "Unexpected 'for-of' where the loop is already scheduled",
                             None,
-                        ));
+                            None,
+                        )
+                        .into());
                     };
 
                     self.cx.unschedule_all(&schedule_ids)?;
@@ -780,11 +782,12 @@ impl<'a, 'b> Driver<'a, 'b> {
                     let loop_body = if let Some(lid) = loop_id {
                         self.traverse_block(lid)?
                     } else {
-                        return Err(CompilerDiagnostic::new(
-                            ErrorCategory::Invariant,
+                        return Err(cold_invariant(
                             "Unexpected 'for-in' where the loop is already scheduled",
                             None,
-                        ));
+                            None,
+                        )
+                        .into());
                     };
 
                     self.cx.unschedule_all(&schedule_ids)?;
@@ -822,11 +825,12 @@ impl<'a, 'b> Driver<'a, 'b> {
                     }
 
                     if self.cx.is_scheduled(*label_block) {
-                        return Err(CompilerDiagnostic::new(
-                            ErrorCategory::Invariant,
-                            "Unexpected 'label' where the block is already scheduled".to_string(),
+                        return Err(cold_invariant(
+                            "Unexpected 'label' where the block is already scheduled",
                             None,
-                        ));
+                            None,
+                        )
+                        .into());
                     }
                     let label_body = self.traverse_block(*label_block)?;
 
@@ -964,11 +968,12 @@ impl<'a, 'b> Driver<'a, 'b> {
                     }
 
                     if self.cx.is_scheduled(*scope_block) {
-                        return Err(CompilerDiagnostic::new(
-                            ErrorCategory::Invariant,
-                            "Unexpected 'scope' where the block is already scheduled".to_string(),
+                        return Err(cold_invariant(
+                            "Unexpected 'scope' where the block is already scheduled",
                             None,
-                        ));
+                            None,
+                        )
+                        .into());
                     }
                     let scope_body = self.traverse_block(*scope_block)?;
 
@@ -998,11 +1003,12 @@ impl<'a, 'b> Driver<'a, 'b> {
                     }
 
                     if self.cx.is_scheduled(*scope_block) {
-                        return Err(CompilerDiagnostic::new(
-                            ErrorCategory::Invariant,
-                            "Unexpected 'scope' where the block is already scheduled".to_string(),
+                        return Err(cold_invariant(
+                            "Unexpected 'scope' where the block is already scheduled",
                             None,
-                        ));
+                            None,
+                        )
+                        .into());
                     }
                     let scope_body = self.traverse_block(*scope_block)?;
 
@@ -1042,11 +1048,9 @@ impl<'a, 'b> Driver<'a, 'b> {
                 }
 
                 Terminal::Unsupported { .. } => {
-                    return Err(CompilerDiagnostic::new(
-                        ErrorCategory::Invariant,
-                        "Unexpected unsupported terminal",
-                        None,
-                    ));
+                    return Err(
+                        cold_invariant("Unexpected unsupported terminal", None, None).into(),
+                    );
                 }
 
                 Terminal::Branch {
@@ -1068,12 +1072,12 @@ impl<'a, 'b> Driver<'a, 'b> {
                     };
 
                     if self.cx.is_scheduled(*alternate) {
-                        return Err(CompilerDiagnostic::new(
-                            ErrorCategory::Invariant,
-                            "Unexpected 'branch' where the alternate is already scheduled"
-                                .to_string(),
+                        return Err(cold_invariant(
+                            "Unexpected 'branch' where the alternate is already scheduled",
                             None,
-                        ));
+                            None,
+                        )
+                        .into());
                     }
                     let alternate_block = self.traverse_block(*alternate)?;
 
@@ -1145,16 +1149,7 @@ impl<'a, 'b> Driver<'a, 'b> {
             }
             Terminal::Goto { .. } => {
                 if instructions.is_empty() {
-                    return Err(CompilerDiagnostic::new(
-                        ErrorCategory::Invariant,
-                        "Unexpected empty block with `goto` terminal",
-                        Some(format!("Block bb{} is empty", block_id.0)),
-                    )
-                    .with_detail(CompilerDiagnosticDetail::Error {
-                        loc,
-                        message: Some("Unexpected empty block with `goto` terminal".to_string()),
-                        identifier_name: None,
-                    }));
+                    return Err(empty_goto_invariant(block_id, loc));
                 }
                 Ok(self.extract_value_block_result(&instructions, block_id_val, loc))
             }
@@ -1366,21 +1361,18 @@ impl<'a, 'b> Driver<'a, 'b> {
                     id: *id,
                 })
             }
-            Terminal::MaybeThrow { .. } => Err(CompilerDiagnostic::new(
-                ErrorCategory::Invariant,
+            Terminal::MaybeThrow { .. } => Err(cold_invariant(
                 "Unexpected maybe-throw in visit_value_block_terminal",
                 None,
-            )),
-            Terminal::Label { .. } => Err(CompilerDiagnostic::new(
-                ErrorCategory::Todo,
+                None,
+            )
+            .into()),
+            Terminal::Label { .. } => Err(cold_todo(
                 "Support labeled statements combined with value blocks is not yet implemented",
                 None,
-            )),
-            _ => Err(CompilerDiagnostic::new(
-                ErrorCategory::Invariant,
-                "Unsupported terminal kind in value block",
-                None,
-            )),
+            )
+            .into()),
+            _ => Err(cold_invariant("Unsupported terminal kind in value block", None, None).into()),
         }
     }
 
@@ -1570,11 +1562,12 @@ impl<'a, 'b> Driver<'a, 'b> {
         let (target_block, target_kind) = self.cx.get_break_target(block)?;
         if self.cx.scope_fallthroughs.contains(&target_block) {
             if target_kind != ReactiveTerminalTargetKind::Implicit {
-                return Err(CompilerDiagnostic::new(
-                    ErrorCategory::Invariant,
-                    "Expected reactive scope to implicitly break to fallthrough".to_string(),
+                return Err(cold_invariant(
+                    "Expected reactive scope to implicitly break to fallthrough",
                     None,
-                ));
+                    None,
+                )
+                .into());
             }
             return Ok(None);
         }
@@ -1643,6 +1636,21 @@ struct ValueTerminalResult {
     place: Place,
     fallthrough: BlockId,
     id: EvaluationOrder,
+}
+
+#[cold]
+#[inline(never)]
+fn empty_goto_invariant(block_id: BlockId, loc: Option<SourceLocation>) -> CompilerDiagnostic {
+    CompilerDiagnostic::new(
+        ErrorCategory::Invariant,
+        "Unexpected empty block with `goto` terminal",
+        Some(format!("Block bb{} is empty", block_id.0)),
+    )
+    .with_detail(CompilerDiagnosticDetail::Error {
+        loc,
+        message: Some("Unexpected empty block with `goto` terminal".to_string()),
+        identifier_name: None,
+    })
 }
 
 /// Helper to get loc from a terminal

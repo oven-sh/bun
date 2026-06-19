@@ -5,8 +5,9 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
+use crate::collections::IdMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory, SourceLocation,
 };
@@ -53,7 +54,7 @@ fn check_no_freezing_known_mutable_functions(
     env: &Environment,
 ) -> Vec<CompilerDiagnostic> {
     // Maps an identifier to the mutation effect that makes it "known mutable"
-    let mut context_mutation_effects: HashMap<IdentifierId, MutationInfo> = HashMap::new();
+    let mut context_mutation_effects: IdMap<IdentifierId, MutationInfo> = IdMap::new();
     let mut diagnostics: Vec<CompilerDiagnostic> = Vec::new();
 
     for (_block_id, block) in &func.body.blocks {
@@ -63,7 +64,7 @@ fn check_no_freezing_known_mutable_functions(
             match &instr.value {
                 InstructionValue::LoadLocal { place, .. } => {
                     // Propagate known mutation from the loaded place to the lvalue
-                    if let Some(mutation_info) = context_mutation_effects.get(&place.identifier) {
+                    if let Some(mutation_info) = context_mutation_effects.get(place.identifier) {
                         context_mutation_effects
                             .insert(instr.lvalue.identifier, mutation_info.clone());
                     }
@@ -72,7 +73,7 @@ fn check_no_freezing_known_mutable_functions(
                 InstructionValue::StoreLocal { lvalue, value, .. } => {
                     // Propagate known mutation from the stored value to both the
                     // instruction lvalue and the StoreLocal's target lvalue
-                    if let Some(mutation_info) = context_mutation_effects.get(&value.identifier) {
+                    if let Some(mutation_info) = context_mutation_effects.get(value.identifier) {
                         let mutation_info = mutation_info.clone();
                         context_mutation_effects
                             .insert(instr.lvalue.identifier, mutation_info.clone());
@@ -95,7 +96,7 @@ fn check_no_freezing_known_mutable_functions(
                                 | AliasingEffect::MutateTransitive { value, .. } => {
                                     // If the mutated value is already known-mutable, propagate
                                     if let Some(known_mutation) =
-                                        context_mutation_effects.get(&value.identifier)
+                                        context_mutation_effects.get(value.identifier)
                                     {
                                         context_mutation_effects.insert(
                                             instr.lvalue.identifier,
@@ -124,7 +125,7 @@ fn check_no_freezing_known_mutable_functions(
                                 | AliasingEffect::MutateTransitiveConditionally { value, .. } => {
                                     // Only propagate existing known mutations for conditional effects
                                     if let Some(known_mutation) =
-                                        context_mutation_effects.get(&value.identifier)
+                                        context_mutation_effects.get(value.identifier)
                                     {
                                         context_mutation_effects.insert(
                                             instr.lvalue.identifier,
@@ -170,45 +171,57 @@ fn check_no_freezing_known_mutable_functions(
 /// If an operand with Effect::Freeze is a known-mutable function, emit a diagnostic.
 fn check_operand_for_freeze_violation(
     operand: &Place,
-    context_mutation_effects: &HashMap<IdentifierId, MutationInfo>,
+    context_mutation_effects: &IdMap<IdentifierId, MutationInfo>,
     identifiers: &[Identifier],
     diagnostics: &mut Vec<CompilerDiagnostic>,
 ) {
     if operand.effect == Effect::Freeze {
-        if let Some(mutation_info) = context_mutation_effects.get(&operand.identifier) {
-            let identifier = &identifiers[mutation_info.value_identifier.0 as usize];
-            let variable_name = match &identifier.name {
-                Some(IdentifierName::Named(name)) => format!("`{}`", name),
-                _ => "a local variable".to_string(),
-            };
-
-            diagnostics.push(
-                CompilerDiagnostic::new(
-                    ErrorCategory::Immutability,
-                    "Cannot modify local variables after render completes",
-                    Some(format!(
-                        "This argument is a function which may reassign or mutate {} after render, \
-                         which can cause inconsistent behavior on subsequent renders. \
-                         Consider using state instead",
-                        variable_name
-                    )),
-                )
-                .with_detail(CompilerDiagnosticDetail::Error {
-                    loc: operand.loc,
-                    message: Some(format!(
-                        "This function may (indirectly) reassign or modify {} after render",
-                        variable_name
-                    )),
-                    identifier_name: None,
-                })
-                .with_detail(CompilerDiagnosticDetail::Error {
-                    loc: mutation_info.value_loc,
-                    message: Some(format!("This modifies {}", variable_name)),
-                    identifier_name: None,
-                }),
-            );
+        if let Some(mutation_info) = context_mutation_effects.get(operand.identifier) {
+            diagnostics.push(freeze_violation_diagnostic(
+                operand,
+                mutation_info,
+                identifiers,
+            ));
         }
     }
+}
+
+#[cold]
+#[inline(never)]
+fn freeze_violation_diagnostic(
+    operand: &Place,
+    mutation_info: &MutationInfo,
+    identifiers: &[Identifier],
+) -> CompilerDiagnostic {
+    let identifier = &identifiers[mutation_info.value_identifier.0 as usize];
+    let variable_name = match &identifier.name {
+        Some(IdentifierName::Named(name)) => format!("`{}`", name),
+        _ => "a local variable".to_string(),
+    };
+
+    CompilerDiagnostic::new(
+        ErrorCategory::Immutability,
+        "Cannot modify local variables after render completes",
+        Some(format!(
+            "This argument is a function which may reassign or mutate {} after render, \
+             which can cause inconsistent behavior on subsequent renders. \
+             Consider using state instead",
+            variable_name
+        )),
+    )
+    .with_detail(CompilerDiagnosticDetail::Error {
+        loc: operand.loc,
+        message: Some(format!(
+            "This function may (indirectly) reassign or modify {} after render",
+            variable_name
+        )),
+        identifier_name: None,
+    })
+    .with_detail(CompilerDiagnosticDetail::Error {
+        loc: mutation_info.value_loc,
+        message: Some(format!("This modifies {}", variable_name)),
+        identifier_name: None,
+    })
 }
 
 /// Check if an identifier's type is a ref or ref-like mutable type.

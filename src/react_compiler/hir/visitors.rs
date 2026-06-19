@@ -1763,3 +1763,274 @@ pub fn for_each_terminal_operand_mut(terminal: &mut Terminal, f: &mut impl FnMut
         | Terminal::PrunedScope { .. } => {}
     }
 }
+
+// =============================================================================
+// Borrowing callback variants (f(&Place) — no allocation, no clone)
+// =============================================================================
+
+/// Calls `f` on every operand `Place` in an `InstructionValue`.
+/// Does NOT descend into FunctionExpression/ObjectMethod context — callers handle those separately.
+#[inline(never)]
+pub fn each_operand(v: &InstructionValue, mut f: impl FnMut(&Place)) {
+    match v {
+        InstructionValue::NewExpression { callee, args, .. }
+        | InstructionValue::CallExpression { callee, args, .. } => {
+            f(callee);
+            for arg in args {
+                match arg {
+                    PlaceOrSpread::Place(p) => f(p),
+                    PlaceOrSpread::Spread(s) => f(&s.place),
+                }
+            }
+        }
+        InstructionValue::MethodCall {
+            receiver,
+            property,
+            args,
+            ..
+        } => {
+            f(receiver);
+            f(property);
+            for arg in args {
+                match arg {
+                    PlaceOrSpread::Place(p) => f(p),
+                    PlaceOrSpread::Spread(s) => f(&s.place),
+                }
+            }
+        }
+        InstructionValue::BinaryExpression { left, right, .. } => {
+            f(left);
+            f(right);
+        }
+        InstructionValue::DeclareContext { .. } | InstructionValue::DeclareLocal { .. } => {}
+        InstructionValue::LoadLocal { place, .. } | InstructionValue::LoadContext { place, .. } => {
+            f(place);
+        }
+        InstructionValue::StoreLocal { value, .. } => {
+            f(value);
+        }
+        InstructionValue::StoreContext { lvalue, value, .. } => {
+            f(&lvalue.place);
+            f(value);
+        }
+        InstructionValue::StoreGlobal { value, .. } => {
+            f(value);
+        }
+        InstructionValue::Destructure { value, .. } => {
+            f(value);
+        }
+        InstructionValue::PropertyLoad { object, .. }
+        | InstructionValue::PropertyDelete { object, .. } => {
+            f(object);
+        }
+        InstructionValue::PropertyStore { object, value, .. } => {
+            f(object);
+            f(value);
+        }
+        InstructionValue::ComputedLoad {
+            object, property, ..
+        }
+        | InstructionValue::ComputedDelete {
+            object, property, ..
+        } => {
+            f(object);
+            f(property);
+        }
+        InstructionValue::ComputedStore {
+            object,
+            property,
+            value,
+            ..
+        } => {
+            f(object);
+            f(property);
+            f(value);
+        }
+        InstructionValue::UnaryExpression { value, .. } => {
+            f(value);
+        }
+        InstructionValue::JsxExpression {
+            tag,
+            props,
+            children,
+            ..
+        } => {
+            if let JsxTag::Place(place) = tag {
+                f(place);
+            }
+            for attribute in props {
+                match attribute {
+                    JsxAttribute::Attribute { place, .. } => f(place),
+                    JsxAttribute::SpreadAttribute { argument, .. } => f(argument),
+                }
+            }
+            if let Some(children) = children {
+                for child in children {
+                    f(child);
+                }
+            }
+        }
+        InstructionValue::JsxFragment { children, .. } => {
+            for child in children {
+                f(child);
+            }
+        }
+        InstructionValue::ObjectExpression { properties, .. } => {
+            for property in properties {
+                match property {
+                    ObjectPropertyOrSpread::Property(prop) => {
+                        if let ObjectPropertyKey::Computed { name } = &prop.key {
+                            f(name);
+                        }
+                        f(&prop.place);
+                    }
+                    ObjectPropertyOrSpread::Spread(spread) => {
+                        f(&spread.place);
+                    }
+                }
+            }
+        }
+        InstructionValue::ArrayExpression { elements, .. } => {
+            for elem in elements {
+                match elem {
+                    ArrayElement::Place(p) => f(p),
+                    ArrayElement::Spread(s) => f(&s.place),
+                    ArrayElement::Hole => {}
+                }
+            }
+        }
+        InstructionValue::FunctionExpression { .. } | InstructionValue::ObjectMethod { .. } => {
+            // Context places require env access — callers handle separately.
+        }
+        InstructionValue::TaggedTemplateExpression { tag, .. } => {
+            f(tag);
+        }
+        InstructionValue::TypeCastExpression { value, .. } => {
+            f(value);
+        }
+        InstructionValue::TemplateLiteral { subexprs, .. } => {
+            for expr in subexprs {
+                f(expr);
+            }
+        }
+        InstructionValue::Await { value, .. } => {
+            f(value);
+        }
+        InstructionValue::GetIterator { collection, .. } => {
+            f(collection);
+        }
+        InstructionValue::IteratorNext {
+            iterator,
+            collection,
+            ..
+        } => {
+            f(iterator);
+            f(collection);
+        }
+        InstructionValue::NextPropertyOf { value, .. } => {
+            f(value);
+        }
+        InstructionValue::PostfixUpdate { value, .. }
+        | InstructionValue::PrefixUpdate { value, .. } => {
+            f(value);
+        }
+        InstructionValue::StartMemoize { deps, .. } => {
+            if let Some(deps) = deps {
+                for dep in deps {
+                    if let ManualMemoDependencyRoot::NamedLocal { value, .. } = &dep.root {
+                        f(value);
+                    }
+                }
+            }
+        }
+        InstructionValue::FinishMemoize { decl, .. } => {
+            f(decl);
+        }
+        InstructionValue::Debugger { .. }
+        | InstructionValue::RegExpLiteral { .. }
+        | InstructionValue::MetaProperty { .. }
+        | InstructionValue::LoadGlobal { .. }
+        | InstructionValue::UnsupportedNode { .. }
+        | InstructionValue::Primitive { .. }
+        | InstructionValue::JSXText { .. } => {}
+    }
+}
+
+/// Calls `f` on every operand `Place` in an `InstructionValue`, mutably.
+/// Alias of [`for_each_instruction_value_operand_mut`].
+#[inline(never)]
+pub fn each_operand_mut(v: &mut InstructionValue, mut f: impl FnMut(&mut Place)) {
+    for_each_instruction_value_operand_mut(v, &mut f);
+}
+
+/// Calls `f` on every lvalue `Place` in an `InstructionValue`.
+#[inline(never)]
+pub fn each_lvalue(v: &InstructionValue, mut f: impl FnMut(&Place)) {
+    match v {
+        InstructionValue::DeclareContext { lvalue, .. }
+        | InstructionValue::StoreContext { lvalue, .. }
+        | InstructionValue::DeclareLocal { lvalue, .. }
+        | InstructionValue::StoreLocal { lvalue, .. } => {
+            f(&lvalue.place);
+        }
+        InstructionValue::Destructure { lvalue, .. } => match &lvalue.pattern {
+            Pattern::Array(arr) => {
+                for item in &arr.items {
+                    match item {
+                        ArrayPatternElement::Place(p) => f(p),
+                        ArrayPatternElement::Spread(s) => f(&s.place),
+                        ArrayPatternElement::Hole => {}
+                    }
+                }
+            }
+            Pattern::Object(obj) => {
+                for property in &obj.properties {
+                    match property {
+                        ObjectPropertyOrSpread::Property(prop) => f(&prop.place),
+                        ObjectPropertyOrSpread::Spread(spread) => f(&spread.place),
+                    }
+                }
+            }
+        },
+        InstructionValue::PostfixUpdate { lvalue, .. }
+        | InstructionValue::PrefixUpdate { lvalue, .. } => {
+            f(lvalue);
+        }
+        InstructionValue::LoadLocal { .. }
+        | InstructionValue::LoadContext { .. }
+        | InstructionValue::Primitive { .. }
+        | InstructionValue::JSXText { .. }
+        | InstructionValue::BinaryExpression { .. }
+        | InstructionValue::NewExpression { .. }
+        | InstructionValue::CallExpression { .. }
+        | InstructionValue::MethodCall { .. }
+        | InstructionValue::UnaryExpression { .. }
+        | InstructionValue::TypeCastExpression { .. }
+        | InstructionValue::JsxExpression { .. }
+        | InstructionValue::ObjectExpression { .. }
+        | InstructionValue::ObjectMethod { .. }
+        | InstructionValue::ArrayExpression { .. }
+        | InstructionValue::JsxFragment { .. }
+        | InstructionValue::RegExpLiteral { .. }
+        | InstructionValue::MetaProperty { .. }
+        | InstructionValue::PropertyStore { .. }
+        | InstructionValue::PropertyLoad { .. }
+        | InstructionValue::PropertyDelete { .. }
+        | InstructionValue::ComputedStore { .. }
+        | InstructionValue::ComputedLoad { .. }
+        | InstructionValue::ComputedDelete { .. }
+        | InstructionValue::LoadGlobal { .. }
+        | InstructionValue::StoreGlobal { .. }
+        | InstructionValue::FunctionExpression { .. }
+        | InstructionValue::TaggedTemplateExpression { .. }
+        | InstructionValue::TemplateLiteral { .. }
+        | InstructionValue::Await { .. }
+        | InstructionValue::GetIterator { .. }
+        | InstructionValue::IteratorNext { .. }
+        | InstructionValue::NextPropertyOf { .. }
+        | InstructionValue::Debugger { .. }
+        | InstructionValue::StartMemoize { .. }
+        | InstructionValue::FinishMemoize { .. }
+        | InstructionValue::UnsupportedNode { .. } => {}
+    }
+}

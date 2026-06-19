@@ -15,8 +15,7 @@
 //! 3. MergeOverlappingReactiveScopes ensures scopes do not overlap.
 //! 4. BuildReactiveBlocks groups the statements for each scope.
 
-use std::collections::HashMap;
-
+use crate::collections::IdMap;
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
@@ -45,7 +44,7 @@ pub fn infer_reactive_scope_variables(
 
     // Phase 2: assign scopes
     // Maps each group root identifier to the ScopeId assigned to that group.
-    let mut scopes: HashMap<IdentifierId, ScopeState> = HashMap::new();
+    let mut scopes: IdMap<IdentifierId, ScopeState> = IdMap::new();
 
     scope_identifiers.for_each(|identifier_id, group_id| {
         let ident_range = env.identifiers[identifier_id.0 as usize]
@@ -86,12 +85,12 @@ pub fn infer_reactive_scope_variables(
     });
 
     // Set loc on each scope
-    for (_group_id, state) in &scopes {
+    for state in scopes.values() {
         env.scopes[state.scope_id.0 as usize].loc = state.loc;
     }
 
     // Update each identifier's mutable_range to match its scope's range
-    for (&_identifier_id, state) in &scopes {
+    for state in scopes.values() {
         let scope_range = env.scopes[state.scope_id.0 as usize].range.clone();
         // Find all identifiers with this scope and update their mutable_range
         // We iterate through all identifiers and check their scope
@@ -113,28 +112,36 @@ pub fn infer_reactive_scope_variables(
             EvaluationOrder(max_instruction.0.max(block.terminal.evaluation_order().0));
     }
 
-    for (_group_id, state) in &scopes {
+    for state in scopes.values() {
         let scope = &env.scopes[state.scope_id.0 as usize];
         if scope.range.start == EvaluationOrder(0)
             || scope.range.end == EvaluationOrder(0)
             || max_instruction == EvaluationOrder(0)
             || scope.range.end.0 > max_instruction.0 + 1
         {
-            return Err(CompilerDiagnostic::new(
-                ErrorCategory::Invariant,
-                &format!(
-                    "Invalid mutable range for scope: Scope @{} has range [{}:{}] but the valid range is [1:{}]",
-                    scope.id.0,
-                    scope.range.start.0,
-                    scope.range.end.0,
-                    max_instruction.0 + 1,
-                ),
-                None,
+            return Err(invalid_scope_range_err(
+                scope.id.0,
+                scope.range.start.0,
+                scope.range.end.0,
+                max_instruction.0 + 1,
             ));
         }
     }
 
     Ok(())
+}
+
+#[cold]
+#[inline(never)]
+fn invalid_scope_range_err(scope_id: u32, start: u32, end: u32, max: u32) -> CompilerDiagnostic {
+    CompilerDiagnostic::new(
+        ErrorCategory::Invariant,
+        &format!(
+            "Invalid mutable range for scope: Scope @{} has range [{}:{}] but the valid range is [1:{}]",
+            scope_id, start, end, max,
+        ),
+        None,
+    )
 }
 
 struct ScopeState {
@@ -267,7 +274,7 @@ pub(crate) fn find_disjoint_mutable_values(
     env: &Environment,
 ) -> DisjointSet<IdentifierId> {
     let mut scope_identifiers = DisjointSet::<IdentifierId>::new();
-    let mut declarations: HashMap<DeclarationId, IdentifierId> = HashMap::new();
+    let mut declarations: IdMap<DeclarationId, IdentifierId> = IdMap::new();
 
     let enable_forest = env.config.enable_forest;
 
@@ -305,7 +312,7 @@ pub(crate) fn find_disjoint_mutable_values(
                 });
             if is_phi_mutated_after_creation || is_loop_carried_reassignment {
                 let mut operands = vec![phi_id];
-                if let Some(&decl_id) = declarations.get(&phi_decl_id) {
+                if let Some(&decl_id) = declarations.get(phi_decl_id) {
                     operands.push(decl_id);
                 }
                 for (_pred_id, phi_operand) in &phi.operands {

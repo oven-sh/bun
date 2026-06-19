@@ -1349,7 +1349,7 @@ pub(crate) fn lower_statement(
         }
         Data::SLabel(labeled_stmt) => {
             let label_name = label_string(builder, Some(labeled_stmt.name))?
-                .ok_or_else(|| CompilerDiagnostic::todo("Unresolved label reference", None))?;
+                .ok_or_else(|| crate::diagnostics::cold_todo("Unresolved label reference", None))?;
             let loc = convert_loc(stmt_loc);
 
             // Check if the body is a loop statement - if so, delegate with label

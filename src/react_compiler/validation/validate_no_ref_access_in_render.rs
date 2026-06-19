@@ -1,4 +1,4 @@
-use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
+use crate::collections::{FxHashSet as HashSet, IdMap};
 
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory, SourceLocation,
@@ -270,16 +270,16 @@ fn join_ref_access_types_many(types: &[RefAccessType]) -> RefAccessType {
 
 struct Env {
     changed: bool,
-    data: HashMap<IdentifierId, RefAccessType>,
-    temporaries: HashMap<IdentifierId, Place>,
+    data: IdMap<IdentifierId, RefAccessType>,
+    temporaries: IdMap<IdentifierId, Place>,
 }
 
 impl Env {
     fn new() -> Self {
         Self {
             changed: false,
-            data: HashMap::default(),
-            temporaries: HashMap::default(),
+            data: IdMap::default(),
+            temporaries: IdMap::default(),
         }
     }
 
@@ -298,19 +298,19 @@ impl Env {
     fn get(&self, key: IdentifierId) -> Option<&RefAccessType> {
         let operand_id = self
             .temporaries
-            .get(&key)
+            .get(key)
             .map(|p| p.identifier)
             .unwrap_or(key);
-        self.data.get(&operand_id)
+        self.data.get(operand_id)
     }
 
     fn set(&mut self, key: IdentifierId, value: RefAccessType) {
         let operand_id = self
             .temporaries
-            .get(&key)
+            .get(key)
             .map(|p| p.identifier)
             .unwrap_or(key);
-        let current = self.data.get(&operand_id);
+        let current = self.data.get(operand_id);
         let widened_value = join_ref_access_types(&value, current.unwrap_or(&RefAccessType::None));
         if current.is_none() && widened_value == RefAccessType::None {
             // No change needed
@@ -361,6 +361,31 @@ fn destructure(ty: &RefAccessType) -> RefAccessType {
 
 // --- Validation helpers ---
 
+#[cold]
+#[inline(never)]
+fn ref_access_error(loc: Option<SourceLocation>, message: &'static str) -> CompilerDiagnostic {
+    CompilerDiagnostic::new(
+        ErrorCategory::Refs,
+        "Cannot access refs during render",
+        Some(ERROR_DESCRIPTION.to_string()),
+    )
+    .with_detail(CompilerDiagnosticDetail::Error {
+        loc,
+        message: Some(message.to_string()),
+        identifier_name: None,
+    })
+}
+
+#[cold]
+#[inline(never)]
+fn ref_access_error_with_init_hint(loc: Option<SourceLocation>) -> CompilerDiagnostic {
+    ref_access_error(loc, "Cannot access ref value during render").with_detail(
+        CompilerDiagnosticDetail::Hint {
+            message: "To initialize a ref only once, check that the ref is null with the pattern `if (ref.current == null) { ref.current = ... }`".to_string(),
+        },
+    )
+}
+
 fn validate_no_direct_ref_value_access(
     errors: &mut Vec<CompilerDiagnostic>,
     operand: &Place,
@@ -369,18 +394,10 @@ fn validate_no_direct_ref_value_access(
     if let Some(ty) = env.get(operand.identifier) {
         let ty = destructure(ty);
         if let RefAccessType::RefValue { loc, .. } = &ty {
-            errors.push(
-                CompilerDiagnostic::new(
-                    ErrorCategory::Refs,
-                    "Cannot access refs during render",
-                    Some(ERROR_DESCRIPTION.to_string()),
-                )
-                .with_detail(CompilerDiagnosticDetail::Error {
-                    loc: loc.or(operand.loc),
-                    message: Some("Cannot access ref value during render".to_string()),
-                    identifier_name: None,
-                }),
-            );
+            errors.push(ref_access_error(
+                loc.or(operand.loc),
+                "Cannot access ref value during render",
+            ));
         }
     }
 }
@@ -390,35 +407,19 @@ fn validate_no_ref_value_access(errors: &mut Vec<CompilerDiagnostic>, env: &Env,
         let ty = destructure(ty);
         match &ty {
             RefAccessType::RefValue { loc, .. } => {
-                errors.push(
-                    CompilerDiagnostic::new(
-                        ErrorCategory::Refs,
-                        "Cannot access refs during render",
-                        Some(ERROR_DESCRIPTION.to_string()),
-                    )
-                    .with_detail(CompilerDiagnosticDetail::Error {
-                        loc: loc.or(operand.loc),
-                        message: Some("Cannot access ref value during render".to_string()),
-                        identifier_name: None,
-                    }),
-                );
+                errors.push(ref_access_error(
+                    loc.or(operand.loc),
+                    "Cannot access ref value during render",
+                ));
             }
             RefAccessType::Structure {
                 fn_type: Some(fn_type),
                 ..
             } if fn_type.read_ref_effect => {
-                errors.push(
-                    CompilerDiagnostic::new(
-                        ErrorCategory::Refs,
-                        "Cannot access refs during render",
-                        Some(ERROR_DESCRIPTION.to_string()),
-                    )
-                    .with_detail(CompilerDiagnosticDetail::Error {
-                        loc: operand.loc,
-                        message: Some("Cannot access ref value during render".to_string()),
-                        identifier_name: None,
-                    }),
-                );
+                errors.push(ref_access_error(
+                    operand.loc,
+                    "Cannot access ref value during render",
+                ));
             }
             _ => {}
         }
@@ -440,41 +441,19 @@ fn validate_no_ref_passed_to_function(
                 } else {
                     loc
                 };
-                errors.push(
-                    CompilerDiagnostic::new(
-                        ErrorCategory::Refs,
-                        "Cannot access refs during render",
-                        Some(ERROR_DESCRIPTION.to_string()),
-                    )
-                    .with_detail(CompilerDiagnosticDetail::Error {
-                        loc: error_loc,
-                        message: Some(
-                            "Passing a ref to a function may read its value during render"
-                                .to_string(),
-                        ),
-                        identifier_name: None,
-                    }),
-                );
+                errors.push(ref_access_error(
+                    error_loc,
+                    "Passing a ref to a function may read its value during render",
+                ));
             }
             RefAccessType::Structure {
                 fn_type: Some(fn_type),
                 ..
             } if fn_type.read_ref_effect => {
-                errors.push(
-                    CompilerDiagnostic::new(
-                        ErrorCategory::Refs,
-                        "Cannot access refs during render",
-                        Some(ERROR_DESCRIPTION.to_string()),
-                    )
-                    .with_detail(CompilerDiagnosticDetail::Error {
-                        loc,
-                        message: Some(
-                            "Passing a ref to a function may read its value during render"
-                                .to_string(),
-                        ),
-                        identifier_name: None,
-                    }),
-                );
+                errors.push(ref_access_error(
+                    loc,
+                    "Passing a ref to a function may read its value during render",
+                ));
             }
             _ => {}
         }
@@ -496,18 +475,10 @@ fn validate_no_ref_update(
                 } else {
                     loc
                 };
-                errors.push(
-                    CompilerDiagnostic::new(
-                        ErrorCategory::Refs,
-                        "Cannot access refs during render",
-                        Some(ERROR_DESCRIPTION.to_string()),
-                    )
-                    .with_detail(CompilerDiagnosticDetail::Error {
-                        loc: error_loc,
-                        message: Some("Cannot update ref during render".to_string()),
-                        identifier_name: None,
-                    }),
-                );
+                errors.push(ref_access_error(
+                    error_loc,
+                    "Cannot update ref during render",
+                ));
             }
             _ => {}
         }
@@ -519,18 +490,10 @@ fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env)
         env.get(operand.identifier),
         Some(RefAccessType::Guard { .. })
     ) {
-        errors.push(
-            CompilerDiagnostic::new(
-                ErrorCategory::Refs,
-                "Cannot access refs during render",
-                Some(ERROR_DESCRIPTION.to_string()),
-            )
-            .with_detail(CompilerDiagnosticDetail::Error {
-                loc: operand.loc,
-                message: Some("Cannot access ref value during render".to_string()),
-                identifier_name: None,
-            }),
-        );
+        errors.push(ref_access_error(
+            operand.loc,
+            "Cannot access ref value during render",
+        ));
     }
 }
 
@@ -579,7 +542,7 @@ fn collect_temporaries_sidemap(
                 InstructionValue::LoadLocal { place, .. } => {
                     let temp = env
                         .temporaries
-                        .get(&place.identifier)
+                        .get(place.identifier)
                         .cloned()
                         .unwrap_or_else(|| place.clone());
                     env.define(instr.lvalue.identifier, temp);
@@ -587,7 +550,7 @@ fn collect_temporaries_sidemap(
                 InstructionValue::StoreLocal { lvalue, value, .. } => {
                     let temp = env
                         .temporaries
-                        .get(&value.identifier)
+                        .get(value.identifier)
                         .cloned()
                         .unwrap_or_else(|| value.clone());
                     env.define(instr.lvalue.identifier, temp.clone());
@@ -603,7 +566,7 @@ fn collect_temporaries_sidemap(
                     }
                     let temp = env
                         .temporaries
-                        .get(&object.identifier)
+                        .get(object.identifier)
                         .cloned()
                         .unwrap_or_else(|| object.clone());
                     env.define(instr.lvalue.identifier, temp);
@@ -851,22 +814,10 @@ fn validate_no_ref_access_in_render_impl(
                             return_type = *fn_ty.return_type.clone();
                             if fn_ty.read_ref_effect {
                                 did_error = true;
-                                errors.push(
-                                    CompilerDiagnostic::new(
-                                        ErrorCategory::Refs,
-                                        "Cannot access refs during render",
-                                        Some(ERROR_DESCRIPTION.to_string()),
-                                    )
-                                    .with_detail(
-                                        CompilerDiagnosticDetail::Error {
-                                            loc: callee.loc,
-                                            message: Some(
-                                                "This function accesses a ref value".to_string(),
-                                            ),
-                                            identifier_name: None,
-                                        },
-                                    ),
-                                );
+                                errors.push(ref_access_error(
+                                    callee.loc,
+                                    "This function accesses a ref value",
+                                ));
                             }
                         }
 
@@ -1067,24 +1018,7 @@ fn validate_no_ref_access_in_render_impl(
                                     instr.lvalue.identifier,
                                     RefAccessType::Guard { ref_id: *ref_id },
                                 );
-                                errors.push(
-                                    CompilerDiagnostic::new(
-                                        ErrorCategory::Refs,
-                                        "Cannot access refs during render",
-                                        Some(ERROR_DESCRIPTION.to_string()),
-                                    )
-                                    .with_detail(CompilerDiagnosticDetail::Error {
-                                        loc: value.loc,
-                                        message: Some(
-                                            "Cannot access ref value during render"
-                                                .to_string(),
-                                        ),
-                                        identifier_name: None,
-                                    })
-                                    .with_detail(CompilerDiagnosticDetail::Hint {
-                                        message: "To initialize a ref only once, check that the ref is null with the pattern `if (ref.current == null) { ref.current = ... }`".to_string(),
-                                    }),
-                                );
+                                errors.push(ref_access_error_with_init_hint(value.loc));
                             } else {
                                 validate_no_ref_value_access(errors, ref_env, value);
                             }

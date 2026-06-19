@@ -22,9 +22,9 @@
 //! instructions in each scope, the scopes must be aligned to block-scope
 //! boundaries — we can't memoize half of a loop!
 
-use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::collections::IdMap;
 use crate::hir::BlockId;
 use crate::hir::BlockKind;
 use crate::hir::EvaluationOrder;
@@ -101,7 +101,7 @@ pub fn align_reactive_scopes_to_block_scopes_hir(func: &mut HirFunction, env: &m
     let mut active_block_fallthrough_ranges: Vec<BlockFallthroughRange> = Vec::new();
     let mut active_scopes: HashSet<ScopeId> = HashSet::new();
     let mut seen: HashSet<ScopeId> = HashSet::new();
-    let mut value_block_nodes: HashMap<BlockId, ValueBlockNode> = HashMap::new();
+    let mut value_block_nodes: IdMap<BlockId, ValueBlockNode> = IdMap::new();
 
     let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
 
@@ -124,7 +124,7 @@ pub fn align_reactive_scopes_to_block_scopes_hir(func: &mut HirFunction, env: &m
             }
         }
 
-        let node = value_block_nodes.get(&block_id).cloned();
+        let node = value_block_nodes.get(block_id).cloned();
 
         // Visit instruction lvalues and operands
         let block = func.body.blocks.get(&block_id).unwrap();
@@ -206,7 +206,7 @@ pub fn align_reactive_scopes_to_block_scopes_hir(func: &mut HirFunction, env: &m
                 });
 
                 assert!(
-                    !value_block_nodes.contains_key(&ft),
+                    !value_block_nodes.contains_key(ft),
                     "Expect hir blocks to have unique fallthroughs"
                 );
                 if let Some(n) = &node {
@@ -243,7 +243,7 @@ pub fn align_reactive_scopes_to_block_scopes_hir(func: &mut HirFunction, env: &m
 
         // Visit all successors to set up value block nodes
         for successor in all_successors {
-            if value_block_nodes.contains_key(&successor) {
+            if value_block_nodes.contains_key(successor) {
                 continue;
             }
 

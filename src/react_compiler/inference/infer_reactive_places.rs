@@ -14,9 +14,9 @@
 //! 4. Mutation with reactive operands
 //! 5. Conditional assignment based on reactive control flow
 
-use crate::collections::FxHashMap as HashMap;
+use crate::collections::{FxHashMap as HashMap, IdMap};
 
-use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
+use crate::diagnostics::CompilerDiagnostic;
 use crate::hir::dominator::post_dominator_frontier;
 use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
@@ -65,8 +65,7 @@ pub fn infer_reactive_places(
     // The post-dominator frontier (and thus the set of control-test identifiers
     // per block) is a function of the CFG only, so compute it once here instead
     // of inside the fixpoint loop.
-    let mut control_tests: HashMap<BlockId, Vec<IdentifierId>> =
-        HashMap::with_capacity_and_hasher(block_ids.len(), Default::default());
+    let mut control_tests: IdMap<BlockId, Vec<IdentifierId>> = IdMap::new();
     for &block_id in &block_ids {
         let frontier = post_dominator_frontier(func, &post_dominators, block_id);
         let mut tests = Vec::new();
@@ -212,11 +211,12 @@ pub fn infer_reactive_places(
                                 // no-op
                             }
                             Effect::Unknown => {
-                                return Err(CompilerDiagnostic::new(
-                                    ErrorCategory::Invariant,
-                                    &format!("Unexpected unknown effect at {:?}", op_place.loc),
+                                return Err(crate::diagnostics::cold_invariant(
+                                    "Unexpected unknown effect",
+                                    Some(format!("{:?}", op_place.loc)),
                                     None,
-                                ));
+                                )
+                                .into());
                             }
                         }
                     }
@@ -406,10 +406,12 @@ impl StableSidemap {
 #[inline]
 fn is_reactive_controlled_block(
     block_id: BlockId,
-    control_tests: &HashMap<BlockId, Vec<IdentifierId>>,
+    control_tests: &IdMap<BlockId, Vec<IdentifierId>>,
     reactive_map: &mut ReactivityMap,
 ) -> bool {
-    control_tests[&block_id]
+    control_tests
+        .get(block_id)
+        .unwrap()
         .iter()
         .any(|&id| reactive_map.is_reactive(id))
 }

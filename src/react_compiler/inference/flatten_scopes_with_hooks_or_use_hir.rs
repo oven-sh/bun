@@ -26,7 +26,7 @@
 //!
 //! Analogous to TS `ReactiveScopes/FlattenScopesWithHooksOrUseHIR.ts`.
 
-use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
+use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
 use crate::hir::{BlockId, HirFunction, InstructionValue, Terminal, Type};
 
@@ -98,11 +98,12 @@ pub fn flatten_scopes_with_hooks_or_use_hir(
                 scope,
             } => (*block, *fallthrough, *id, *loc, *scope),
             _ => {
-                return Err(CompilerDiagnostic::new(
-                    ErrorCategory::Invariant,
-                    format!("Expected block bb{} to end in a scope terminal", id.0),
+                return Err(cold_invariant(
+                    "Expected block to end in a scope terminal",
+                    Some(format!("bb{}", id.0)),
                     None,
-                ));
+                )
+                .into());
             }
         };
 

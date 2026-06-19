@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use crate::collections::IndexMap;
-use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
+use crate::collections::{IdMap, IndexMap};
+use crate::diagnostics::{CompilerDiagnostic, ErrorCategory, cold_diagnostic, cold_invariant};
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::*;
@@ -16,7 +16,7 @@ struct IncompletePhi {
 }
 
 struct State {
-    defs: HashMap<IdentifierId, IdentifierId>,
+    defs: IdMap<IdentifierId, IdentifierId>,
     incomplete_phis: Vec<IncompletePhi>,
 }
 
@@ -96,16 +96,13 @@ impl SSABuilder {
                 Some(name) => format!("{}${}", name.value(), old_id.0),
                 None => format!("${}", old_id.0),
             };
-            return Err(CompilerDiagnostic::new(
+            return Err(cold_diagnostic(
                 ErrorCategory::Todo,
                 "[hoisting] EnterSSA: Expected identifier to be defined before being used",
                 Some(format!("Identifier {} is undefined", name)),
+                old_place.loc,
             )
-            .with_detail(CompilerDiagnosticDetail::Error {
-                loc: old_place.loc,
-                message: None,
-                identifier_name: None,
-            }));
+            .into());
         }
 
         // Do not redefine context references.
@@ -165,7 +162,7 @@ impl SSABuilder {
         env: &mut Environment,
     ) -> IdentifierId {
         if let Some(state) = &self.states[block_id.0 as usize] {
-            if let Some(&new_id) = state.defs.get(&old_place.identifier) {
+            if let Some(&new_id) = state.defs.get(old_place.identifier) {
                 return new_id;
             }
         }
@@ -269,7 +266,7 @@ impl SSABuilder {
     fn start_block(&mut self, block_id: BlockId) {
         self.current = Some(block_id);
         self.states[block_id.0 as usize] = Some(State {
-            defs: HashMap::new(),
+            defs: IdMap::new(),
             incomplete_phis: Vec::new(),
         });
     }
@@ -322,11 +319,12 @@ fn enter_ssa_impl(
         let block_id = *block_id;
 
         if visited_blocks.contains(&block_id) {
-            return Err(CompilerDiagnostic::new(
-                ErrorCategory::Invariant,
-                format!("found a cycle! visiting bb{} again", block_id.0),
+            return Err(cold_invariant(
+                "EnterSSA: found a cycle visiting block",
+                Some(format!("bb{}", block_id.0)),
                 None,
-            ));
+            )
+            .into());
         }
 
         visited_blocks.insert(block_id);
@@ -335,11 +333,12 @@ fn enter_ssa_impl(
         // Handle params at the root entry
         if block_id == root_entry {
             if !func.context.is_empty() {
-                return Err(CompilerDiagnostic::new(
-                    ErrorCategory::Invariant,
+                return Err(cold_invariant(
                     "Expected function context to be empty for outer function declarations",
                     None,
-                ));
+                    None,
+                )
+                .into());
             }
             let params = AstAlloc::take(&mut func.params);
             let mut new_params = AstAlloc::vec_with_capacity(params.len());
@@ -424,11 +423,12 @@ fn enter_ssa_impl(
                 let entry_block = inner_func.body.blocks.get_mut(&inner_entry).unwrap();
 
                 if !entry_block.preds.is_empty() {
-                    return Err(CompilerDiagnostic::new(
-                        ErrorCategory::Invariant,
+                    return Err(cold_invariant(
                         "Expected function expression entry block to have zero predecessors",
                         None,
-                    ));
+                        None,
+                    )
+                    .into());
                 }
                 entry_block.preds.insert(block_id);
 

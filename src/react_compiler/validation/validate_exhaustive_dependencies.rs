@@ -1,5 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
+use crate::collections::IdMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerSuggestion, CompilerSuggestionOperation,
     ErrorCategory, SourceLocation,
@@ -7,8 +8,7 @@ use crate::diagnostics::{
 use crate::hir::environment::Environment;
 use crate::hir::environment_config::ExhaustiveEffectDepsMode;
 use crate::hir::visitors::{
-    each_instruction_value_lvalue, each_instruction_value_operand_with_functions,
-    each_terminal_operand,
+    each_instruction_value_operand_with_functions, each_lvalue, each_terminal_operand,
 };
 use crate::hir::{
     ArrayElement, AstAlloc, BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier,
@@ -34,7 +34,7 @@ pub fn validate_exhaustive_dependencies(
     let validate_memo = env.config.validate_exhaustive_memoization_dependencies;
     let validate_effect = env.config.validate_exhaustive_effect_dependencies.clone();
 
-    let mut temporaries: HashMap<IdentifierId, Temporary> = HashMap::new();
+    let mut temporaries: IdMap<IdentifierId, Temporary> = IdMap::new();
     for param in &func.params {
         let place = match param {
             ParamPattern::Place(p) => p,
@@ -296,11 +296,11 @@ fn collect_reactive_identifiers(
             // Check inner lvalues (Destructure patterns, StoreLocal, DeclareLocal, etc.)
             // Matches TS eachInstructionLValue which yields both instr.lvalue and
             // eachInstructionValueLValue(instr.value)
-            for lvalue in each_instruction_value_lvalue(&instr.value) {
+            each_lvalue(&instr.value, |lvalue| {
                 if lvalue.reactive {
                     reactive.insert(lvalue.identifier);
                 }
-            }
+            });
             for operand in each_instruction_value_operand_with_functions(&instr.value, functions) {
                 if operand.reactive {
                     reactive.insert(operand.identifier);
@@ -320,8 +320,8 @@ fn collect_reactive_identifiers(
 // findOptionalPlaces
 // =============================================================================
 
-fn find_optional_places(func: &HirFunction) -> HashMap<IdentifierId, bool> {
-    let mut optionals: HashMap<IdentifierId, bool> = HashMap::new();
+fn find_optional_places(func: &HirFunction) -> IdMap<IdentifierId, bool> {
+    let mut optionals: IdMap<IdentifierId, bool> = IdMap::new();
     let mut visited: HashSet<BlockId> = HashSet::new();
 
     for (_block_id, block) in &func.body.blocks {
@@ -488,12 +488,12 @@ fn add_dependency_inferred(
 
 fn visit_candidate_dependency(
     place: &Place,
-    temporaries: &HashMap<IdentifierId, Temporary>,
+    temporaries: &IdMap<IdentifierId, Temporary>,
     dependencies: &mut Vec<InferredDependency>,
     dep_keys: &mut HashSet<InferredDependencyKey>,
     locals: &HashSet<IdentifierId>,
 ) {
-    if let Some(dep) = temporaries.get(&place.identifier) {
+    if let Some(dep) = temporaries.get(place.identifier) {
         add_dependency(dep, dependencies, dep_keys, locals);
     }
 }
@@ -503,7 +503,7 @@ fn collect_dependencies(
     identifiers: &[Identifier],
     types: &[Type],
     functions: &[HirFunction],
-    temporaries: &mut HashMap<IdentifierId, Temporary>,
+    temporaries: &mut IdMap<IdentifierId, Temporary>,
     callbacks: &mut Option<&mut Callbacks<'_>>,
     is_function_expression: bool,
 ) -> Result<Temporary, CompilerDiagnostic> {
@@ -536,7 +536,7 @@ fn collect_dependencies(
         for phi in &block.phis {
             let mut deps: Vec<InferredDependency> = Vec::new();
             for (_pred_id, operand) in &phi.operands {
-                if let Some(dep) = temporaries.get(&operand.identifier) {
+                if let Some(dep) = temporaries.get(operand.identifier) {
                     match dep {
                         Temporary::Aggregate {
                             dependencies: agg, ..
@@ -621,7 +621,7 @@ fn collect_dependencies(
                 }
                 InstructionValue::LoadContext { place, .. }
                 | InstructionValue::LoadLocal { place, .. } => {
-                    if let Some(temp) = temporaries.get(&place.identifier).cloned() {
+                    if let Some(temp) = temporaries.get(place.identifier).cloned() {
                         match &temp {
                             Temporary::Local { .. } => {
                                 // Update loc to the load site
@@ -664,7 +664,7 @@ fn collect_dependencies(
                         .is_some();
                     if !has_name {
                         // Unnamed: propagate temporary
-                        if let Some(temp) = temporaries.get(&store_val.identifier).cloned() {
+                        if let Some(temp) = temporaries.get(store_val.identifier).cloned() {
                             temporaries.insert(store_lv.place.identifier, temp);
                         }
                     } else {
@@ -741,7 +741,7 @@ fn collect_dependencies(
                         &locals,
                     );
                     if destr_lv.kind != InstructionKind::Reassign {
-                        for lv_place in each_instruction_value_lvalue(&instr.value) {
+                        each_lvalue(&instr.value, |lv_place| {
                             temporaries.insert(
                                 lv_place.identifier,
                                 Temporary::Local {
@@ -752,7 +752,7 @@ fn collect_dependencies(
                                 },
                             );
                             locals.insert(lv_place.identifier);
-                        }
+                        });
                     }
                 }
                 InstructionValue::PropertyLoad {
@@ -774,7 +774,7 @@ fn collect_dependencies(
                         );
                     } else {
                         // Extend path
-                        let obj_temp = temporaries.get(&object.identifier).cloned();
+                        let obj_temp = temporaries.get(object.identifier).cloned();
                         if let Some(Temporary::Local {
                             identifier,
                             path,
@@ -783,7 +783,7 @@ fn collect_dependencies(
                         }) = obj_temp
                         {
                             let optional =
-                                optionals.get(&object.identifier).copied().unwrap_or(false);
+                                optionals.get(object.identifier).copied().unwrap_or(false);
                             let mut new_path = path.clone();
                             new_path.push(DependencyPathEntry {
                                 optional,
@@ -959,9 +959,9 @@ fn collect_dependencies(
                                     _ => None,
                                 };
                                 if let (Some(fn_place), Some(deps_place)) = (fn_arg, deps_arg) {
-                                    let fn_deps = temporaries.get(&fn_place.identifier).cloned();
+                                    let fn_deps = temporaries.get(fn_place.identifier).cloned();
                                     let manual_deps =
-                                        temporaries.get(&deps_place.identifier).cloned();
+                                        temporaries.get(deps_place.identifier).cloned();
                                     if let (
                                         Some(Temporary::Aggregate {
                                             dependencies: fn_dep_list,
@@ -1077,9 +1077,9 @@ fn collect_dependencies(
                                     _ => None,
                                 };
                                 if let (Some(fn_place), Some(deps_place)) = (fn_arg, deps_arg) {
-                                    let fn_deps = temporaries.get(&fn_place.identifier).cloned();
+                                    let fn_deps = temporaries.get(fn_place.identifier).cloned();
                                     let manual_deps =
-                                        temporaries.get(&deps_place.identifier).cloned();
+                                        temporaries.get(deps_place.identifier).cloned();
                                     if let (
                                         Some(Temporary::Aggregate {
                                             dependencies: fn_dep_list,
@@ -1205,7 +1205,7 @@ fn collect_dependencies(
 
         // Terminal operands
         for operand in &each_terminal_operand(&block.terminal) {
-            if optionals.contains_key(&operand.identifier) {
+            if optionals.contains_key(operand.identifier) {
                 continue;
             }
             visit_candidate_dependency(
@@ -1773,13 +1773,7 @@ fn create_diagnostic(
             let description = desc_parts.join(". ");
             (reason, description)
         }
-        _ => {
-            return Err(CompilerDiagnostic::new(
-                ErrorCategory::Invariant,
-                format!("Unexpected error category: {:?}", category),
-                None,
-            ));
-        }
+        _ => return Err(unexpected_category_err(category)),
     };
 
     Ok(CompilerDiagnostic {
@@ -1798,8 +1792,16 @@ fn each_instruction_lvalue_ids(
     lvalue_id: IdentifierId,
 ) -> Vec<IdentifierId> {
     let mut ids = vec![lvalue_id];
-    for place in each_instruction_value_lvalue(value) {
-        ids.push(place.identifier);
-    }
+    each_lvalue(value, |place| ids.push(place.identifier));
     ids
+}
+
+#[cold]
+#[inline(never)]
+fn unexpected_category_err(category: ErrorCategory) -> CompilerDiagnostic {
+    CompilerDiagnostic::new(
+        ErrorCategory::Invariant,
+        format!("Unexpected error category: {:?}", category),
+        None,
+    )
 }

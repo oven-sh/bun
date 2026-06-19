@@ -435,3 +435,78 @@ impl<K: Hash + Eq> PartialEq for IndexSet<K> {
     }
 }
 impl<K: Hash + Eq> Eq for IndexSet<K> {}
+
+// ──────────────────────────────────────────────────────────────────────────
+// IdMap
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Insertion-ordered map keyed by a `u32` newtype id. Stores keys as raw `u32`
+/// so every id newtype shares one monomorphization of the underlying map.
+pub struct IdMap<K, V>(IndexMap<u32, V>, core::marker::PhantomData<K>);
+
+impl<K: Copy + Into<u32>, V> IdMap<K, V> {
+    #[inline]
+    pub fn new() -> Self {
+        Self(IndexMap::new(), core::marker::PhantomData)
+    }
+    #[inline]
+    pub fn get(&self, k: K) -> Option<&V> {
+        self.0.get(&k.into())
+    }
+    #[inline]
+    pub fn get_mut(&mut self, k: K) -> Option<&mut V> {
+        self.0.get_mut(&k.into())
+    }
+    #[inline]
+    pub fn insert(&mut self, k: K, v: V) -> Option<V> {
+        self.0.insert(k.into(), v)
+    }
+    #[inline]
+    pub fn contains_key(&self, k: K) -> bool {
+        self.0.contains_key(&k.into())
+    }
+    #[inline]
+    pub fn entry(&mut self, k: K) -> Entry<'_, u32, V> {
+        self.0.entry(k.into())
+    }
+    #[inline]
+    pub fn remove(&mut self, k: K) -> Option<V> {
+        self.0.remove(&k.into())
+    }
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = (K, &V)>
+    where
+        K: From<u32>,
+    {
+        self.0.iter().map(|(k, v)| (K::from(*k), v))
+    }
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    #[inline]
+    pub fn values(&self) -> slice::Iter<'_, V> {
+        self.0.values()
+    }
+    #[inline]
+    pub fn values_mut(&mut self) -> slice::IterMut<'_, V> {
+        self.0.values_mut()
+    }
+}
+
+impl<K, V> Default for IdMap<K, V> {
+    #[inline]
+    fn default() -> Self {
+        Self(IndexMap::new(), core::marker::PhantomData)
+    }
+}
+
+impl<K, V: Clone> Clone for IdMap<K, V> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), core::marker::PhantomData)
+    }
+}

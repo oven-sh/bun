@@ -13,7 +13,9 @@
 //! original in place; a final `finish()` call emits the runtime import and
 //! any outlined function decls as a separate `Part`.
 
-use crate::diagnostics::{CompilerError, CompilerErrorOrDiagnostic, ErrorCategory};
+use crate::diagnostics::{
+    CompilerError, CompilerErrorOrDiagnostic, ErrorCategory, cold_diagnostic,
+};
 use crate::hir::ReactFunctionType;
 use crate::hir::environment::OutputMode;
 use crate::hir::environment_config::{
@@ -33,7 +35,6 @@ use crate::codegen::CodegenFunction;
 bun_core::declare_scope!(react_compiler, hidden);
 use crate::collections::IndexMap;
 use crate::compile_result::{CompileDiagnostic, CompileOutput};
-use crate::diagnostics::CompilerErrorDetail;
 use crate::hir::VariableBinding;
 use crate::imports::{ProgramContext, add_imports_to_program, validate_restricted_imports};
 use crate::lowering::FunctionNode;
@@ -247,15 +248,12 @@ fn find_dynamic_gating_directive(directives: &[&[u8]]) -> Result<Option<String>,
             {
                 Ok(Some(ident.to_owned()))
             } else {
-                let mut err = CompilerError::new();
-                err.push_error_detail(
-                    CompilerErrorDetail::new(
-                        ErrorCategory::Gating,
-                        "Dynamic gating directive is not a valid JavaScript identifier",
-                    )
-                    .with_description(format!("Found '{}'", bun_core::BStr::new(d))),
-                );
-                Err(err)
+                Err(cold_diagnostic(
+                    ErrorCategory::Gating,
+                    "Dynamic gating directive is not a valid JavaScript identifier",
+                    Some(format!("Found '{}'", bun_core::BStr::new(d))),
+                    None,
+                ))
             }
         }
         _ => {
@@ -264,15 +262,12 @@ fn find_dynamic_gating_directive(directives: &[&[u8]]) -> Result<Option<String>,
                 .map(|d| bun_core::BStr::new(d).to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
-            let mut err = CompilerError::new();
-            err.push_error_detail(
-                CompilerErrorDetail::new(
-                    ErrorCategory::Gating,
-                    "Multiple dynamic gating directives found",
-                )
-                .with_description(format!("Expected a single directive but found [{list}]")),
-            );
-            Err(err)
+            Err(cold_diagnostic(
+                ErrorCategory::Gating,
+                "Multiple dynamic gating directives found",
+                Some(format!("Expected a single directive but found [{list}]")),
+                None,
+            ))
         }
     }
 }

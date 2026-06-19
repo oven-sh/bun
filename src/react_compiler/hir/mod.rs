@@ -120,6 +120,20 @@ pub struct FunctionId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MutableRangeId(pub u32);
 
+macro_rules! impl_u32_id {
+    ($($t:ty),* $(,)?) => {$(
+        impl From<$t> for u32 {
+            #[inline]
+            fn from(id: $t) -> u32 { id.0 }
+        }
+        impl From<u32> for $t {
+            #[inline]
+            fn from(n: u32) -> Self { Self(n) }
+        }
+    )*};
+}
+impl_u32_id!(BlockId, IdentifierId, InstructionId, DeclarationId, ScopeId);
+
 // =============================================================================
 // FloatValue wrapper
 // =============================================================================

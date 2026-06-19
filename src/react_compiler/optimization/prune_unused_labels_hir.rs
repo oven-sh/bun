@@ -11,8 +11,8 @@
 //!
 //! Analogous to TS `PruneUnusedLabelsHIR.ts`.
 
+use crate::collections::IdMap;
 use crate::hir::{BlockId, BlockKind, GotoVariant, HirFunction, Terminal};
-use std::collections::HashMap;
 
 pub fn prune_unused_labels_hir(func: &mut HirFunction) {
     // Phase 1: Identify label terminals whose body block immediately breaks
@@ -45,11 +45,11 @@ pub fn prune_unused_labels_hir(func: &mut HirFunction) {
     }
 
     // Phase 2: Apply merges
-    let mut rewrites: HashMap<BlockId, BlockId> = HashMap::new();
+    let mut rewrites: IdMap<BlockId, BlockId> = IdMap::new();
 
     for (original_label_id, next_id, fallthrough_id) in &merged {
         let label_id = rewrites
-            .get(original_label_id)
+            .get(*original_label_id)
             .copied()
             .unwrap_or(*original_label_id);
 
@@ -94,7 +94,7 @@ pub fn prune_unused_labels_hir(func: &mut HirFunction) {
         let preds_to_rewrite: Vec<(BlockId, BlockId)> = block
             .preds
             .iter()
-            .filter_map(|pred| rewrites.get(pred).map(|rewritten| (*pred, *rewritten)))
+            .filter_map(|pred| rewrites.get(*pred).map(|rewritten| (*pred, *rewritten)))
             .collect();
         for (old, new) in preds_to_rewrite {
             block.preds.shift_remove(&old);

@@ -467,3 +467,36 @@ pub fn format_category_heading(category: ErrorCategory) -> &'static str {
         _ => "Error",
     }
 }
+
+#[cold]
+#[inline(never)]
+pub fn cold_diagnostic(
+    category: ErrorCategory,
+    reason: &'static str,
+    description: Option<String>,
+    loc: Option<SourceLocation>,
+) -> CompilerError {
+    CompilerDiagnostic::new(category, reason, description)
+        .with_detail(CompilerDiagnosticDetail::Error {
+            loc,
+            message: None,
+            identifier_name: None,
+        })
+        .into()
+}
+
+#[cold]
+#[inline(never)]
+pub fn cold_todo(reason: &'static str, loc: Option<SourceLocation>) -> CompilerError {
+    cold_diagnostic(ErrorCategory::Todo, reason, None, loc)
+}
+
+#[cold]
+#[inline(never)]
+pub fn cold_invariant(
+    reason: &'static str,
+    desc: Option<String>,
+    loc: Option<SourceLocation>,
+) -> CompilerError {
+    cold_diagnostic(ErrorCategory::Invariant, reason, desc, loc)
+}

@@ -14,11 +14,11 @@
 //!   vars, aliasing between params/context-vars/return-value)
 //! - The legacy `Effect` to store on each Place
 
-use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
+use crate::collections::{FxHashSet as HashSet, IdMap};
 
 use crate::collections::IndexMap;
 
-use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
+use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
 use crate::hir::type_config::{ValueKind, ValueReason};
 use crate::hir::visitors::{
@@ -260,7 +260,7 @@ impl AliasingState {
             Forwards,
         }
 
-        let mut seen: HashMap<IdentifierId, MutationKind> = HashMap::default();
+        let mut seen: IdMap<IdentifierId, MutationKind> = IdMap::new();
         let mut queue: Vec<QueueEntry> = vec![QueueEntry {
             place: start,
             transitive,
@@ -270,7 +270,7 @@ impl AliasingState {
 
         while let Some(entry) = queue.pop() {
             let current = entry.place;
-            let previous_kind = seen.get(&current).copied();
+            let previous_kind = seen.get(current).copied();
             if let Some(prev) = previous_kind {
                 if prev >= entry.kind {
                     continue;
@@ -475,7 +475,7 @@ pub fn infer_mutation_aliasing_ranges(
         into: Place,
         index: usize,
     }
-    let mut pending_phis: HashMap<BlockId, Vec<PendingPhiOperand>> = HashMap::default();
+    let mut pending_phis: IdMap<BlockId, Vec<PendingPhiOperand>> = IdMap::new();
 
     struct PendingMutation {
         index: usize,
@@ -658,7 +658,7 @@ pub fn infer_mutation_aliasing_ranges(
 
         // Process pending phis for this block
         let block = &func.body.blocks[&block_id];
-        if let Some(block_phis) = pending_phis.remove(&block_id) {
+        if let Some(block_phis) = pending_phis.remove(block_id) {
             for pending in block_phis {
                 state.assign(pending.index, &pending.from, &pending.into);
             }
@@ -892,7 +892,7 @@ pub fn infer_mutation_aliasing_ranges(
 
             // Compute operand effects from instruction effects
             let effects = instr.effects.as_ref().unwrap().clone();
-            let mut operand_effects: HashMap<IdentifierId, Effect> = HashMap::default();
+            let mut operand_effects: IdMap<IdentifierId, Effect> = IdMap::new();
 
             for effect in &effects {
                 match effect {
@@ -920,11 +920,12 @@ pub fn infer_mutation_aliasing_ranges(
                         operand_effects.insert(value.identifier, Effect::Store);
                     }
                     AliasingEffect::Apply { .. } => {
-                        return Err(CompilerDiagnostic::new(
-                            ErrorCategory::Invariant,
+                        return Err(cold_invariant(
                             "[AnalyzeFunctions] Expected Apply effects to be replaced with more precise effects",
                             None,
-                        ));
+                            None,
+                        )
+                        .into());
                     }
                     AliasingEffect::MutateTransitive { value, .. }
                     | AliasingEffect::MutateConditionally { value }
@@ -949,12 +950,12 @@ pub fn infer_mutation_aliasing_ranges(
             // Apply operand effects to top-level lvalue
             let instr = &mut func.instructions[instr_id.0 as usize];
             let lvalue_id = instr.lvalue.identifier;
-            if let Some(&effect) = operand_effects.get(&lvalue_id) {
+            if let Some(&effect) = operand_effects.get(lvalue_id) {
                 instr.lvalue.effect = effect;
             }
             // Apply operand effects to value-level lvalues
             for_each_instruction_value_lvalue_mut(&mut instr.value, &mut |place| {
-                if let Some(&effect) = operand_effects.get(&place.identifier) {
+                if let Some(&effect) = operand_effects.get(place.identifier) {
                     place.effect = effect;
                 }
             });
@@ -972,7 +973,7 @@ pub fn infer_mutation_aliasing_ranges(
                             .start = eval_order;
                     }
                     // Apply effect
-                    if let Some(&effect) = operand_effects.get(&place.identifier) {
+                    if let Some(&effect) = operand_effects.get(place.identifier) {
                         place.effect = effect;
                     }
                 };
@@ -996,7 +997,10 @@ pub fn infer_mutation_aliasing_ranges(
                         {
                             env.identifiers[ctx_id.0 as usize].mutable_range.start = eval_order;
                         }
-                        let effect = operand_effects.get(ctx_id).copied().unwrap_or(Effect::Read);
+                        let effect = operand_effects
+                            .get(*ctx_id)
+                            .copied()
+                            .unwrap_or(Effect::Read);
                         let inner_func = &mut env.functions[func_id.0 as usize];
                         for ctx_place in &mut inner_func.context {
                             if ctx_place.identifier == *ctx_id {

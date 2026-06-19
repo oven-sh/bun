@@ -10,9 +10,7 @@
 //!
 //! Corresponds to `src/ReactiveScopes/StabilizeBlockIds.ts`.
 
-use std::collections::HashMap;
-
-use crate::collections::IndexSet;
+use crate::collections::{IdMap, IndexSet};
 use crate::hir::{
     BlockId, ReactiveFunction, ReactiveScopeBlock, ReactiveTerminal, ReactiveTerminalStatement,
     environment::Environment,
@@ -32,7 +30,7 @@ pub fn stabilize_block_ids(func: &mut ReactiveFunction, env: &mut Environment) {
     visit_reactive_function(func, &collector, &mut referenced);
 
     // Build mappings: referenced block IDs -> sequential IDs (insertion-order deterministic)
-    let mut mappings: HashMap<BlockId, BlockId> = HashMap::new();
+    let mut mappings: IdMap<BlockId, BlockId> = IdMap::new();
     for block_id in &referenced {
         let len = mappings.len() as u32;
         mappings.entry(*block_id).or_insert(BlockId(len));
@@ -80,7 +78,7 @@ impl<'a> ReactiveFunctionVisitor for CollectReferencedLabels<'a> {
 // Pass 2: RewriteBlockIds
 // =============================================================================
 
-fn get_or_insert_mapping(mappings: &mut HashMap<BlockId, BlockId>, id: BlockId) -> BlockId {
+fn get_or_insert_mapping(mappings: &mut IdMap<BlockId, BlockId>, id: BlockId) -> BlockId {
     let len = mappings.len() as u32;
     *mappings.entry(id).or_insert(BlockId(len))
 }
@@ -91,7 +89,7 @@ struct RewriteBlockIds<'a> {
 }
 
 impl<'a> ReactiveFunctionTransform for RewriteBlockIds<'a> {
-    type State = HashMap<BlockId, BlockId>;
+    type State = IdMap<BlockId, BlockId>;
 
     fn env(&self) -> &Environment {
         self.env

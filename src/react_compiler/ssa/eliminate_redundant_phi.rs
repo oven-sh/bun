@@ -1,38 +1,27 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
+use crate::collections::IdMap;
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::*;
 
 use crate::ssa::enter_ssa::placeholder_function;
 
-// =============================================================================
-// Helper: rewrite_place
-// =============================================================================
-
-fn rewrite_place(place: &mut Place, rewrites: &HashMap<IdentifierId, IdentifierId>) {
-    if let Some(&rewrite) = rewrites.get(&place.identifier) {
+fn rewrite_place(place: &mut Place, rewrites: &IdMap<IdentifierId, IdentifierId>) {
+    if let Some(&rewrite) = rewrites.get(place.identifier) {
         place.identifier = rewrite;
     }
 }
 
-// =============================================================================
-// Public entry point
-// =============================================================================
-
 pub fn eliminate_redundant_phi(func: &mut HirFunction, env: &mut Environment) {
-    let mut rewrites: HashMap<IdentifierId, IdentifierId> = HashMap::new();
+    let mut rewrites: IdMap<IdentifierId, IdentifierId> = IdMap::new();
     eliminate_redundant_phi_impl(func, env, &mut rewrites);
 }
-
-// =============================================================================
-// Inner implementation
-// =============================================================================
 
 fn eliminate_redundant_phi_impl(
     func: &mut HirFunction,
     env: &mut Environment,
-    rewrites: &mut HashMap<IdentifierId, IdentifierId>,
+    rewrites: &mut IdMap<IdentifierId, IdentifierId>,
 ) {
     let ir = &mut func.body;
 

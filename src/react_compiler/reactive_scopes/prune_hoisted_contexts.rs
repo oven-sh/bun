@@ -8,9 +8,8 @@
 //!
 //! Corresponds to `src/ReactiveScopes/PruneHoistedContexts.ts`.
 
-use std::collections::HashMap;
-
-use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
+use crate::collections::IdMap;
+use crate::diagnostics::{CompilerError, cold_invariant, cold_todo};
 use crate::hir::{
     EvaluationOrder, IdentifierId, InstructionKind, InstructionValue, Place, ReactiveFunction,
     ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveValue,
@@ -35,7 +34,7 @@ pub fn prune_hoisted_contexts(
     let mut transform = Transform { env };
     let mut state = VisitorState {
         active_scopes: Vec::new(),
-        uninitialized: HashMap::new(),
+        uninitialized: IdMap::new(),
     };
     transform_reactive_function(func, &mut transform, &mut state)
 }
@@ -52,7 +51,7 @@ enum UninitializedKind {
 
 struct VisitorState {
     active_scopes: Vec<std::collections::HashSet<IdentifierId>>,
-    uninitialized: HashMap<IdentifierId, UninitializedKind>,
+    uninitialized: IdMap<IdentifierId, UninitializedKind>,
 }
 
 impl VisitorState {
@@ -100,7 +99,7 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         // Clean up uninitialized after scope
         let scope_data = &self.env.scopes[scope.scope.0 as usize];
         for (_, decl) in &scope_data.declarations {
-            state.uninitialized.remove(&decl.identifier);
+            state.uninitialized.remove(decl.identifier);
         }
         Ok(())
     }
@@ -111,19 +110,13 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         place: &Place,
         state: &mut VisitorState,
     ) -> Result<(), CompilerError> {
-        if let Some(kind) = state.uninitialized.get(&place.identifier) {
+        if let Some(kind) = state.uninitialized.get(place.identifier) {
             if let UninitializedKind::Func { definition } = kind {
                 if *definition != Some(place.identifier) {
-                    let mut err = CompilerError::new();
-                    err.push_error_detail(
-                        CompilerErrorDetail::new(
-                            ErrorCategory::Todo,
-                            "[PruneHoistedContexts] Rewrite hoisted function references"
-                                .to_string(),
-                        )
-                        .with_loc(place.loc),
-                    );
-                    return Err(err);
+                    return Err(cold_todo(
+                        "[PruneHoistedContexts] Rewrite hoisted function references",
+                        place.loc,
+                    ));
                 }
             }
         }
@@ -142,7 +135,7 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
             let maybe_non_hoisted = convert_hoisted_lvalue_kind(lvalue.kind);
             if let Some(non_hoisted) = maybe_non_hoisted {
                 if non_hoisted == InstructionKind::Function
-                    && state.uninitialized.contains_key(&lvalue.place.identifier)
+                    && state.uninitialized.contains_key(lvalue.place.identifier)
                 {
                     state.uninitialized.insert(
                         lvalue.place.identifier,
@@ -164,33 +157,23 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                     {
                         lvalue.kind = InstructionKind::Reassign;
                     } else if lvalue.kind == InstructionKind::Function {
-                        if let Some(kind) = state.uninitialized.get(&lvalue_id) {
+                        if let Some(kind) = state.uninitialized.get(lvalue_id) {
                             if !matches!(kind, UninitializedKind::Func { .. }) {
-                                let mut err = CompilerError::new();
-                                err.push_error_detail(
-                                    CompilerErrorDetail::new(
-                                        ErrorCategory::Invariant,
-                                        "[PruneHoistedContexts] Unexpected hoisted function"
-                                            .to_string(),
-                                    )
-                                    .with_loc(instruction.loc),
-                                );
-                                return Err(err);
+                                return Err(cold_invariant(
+                                    "[PruneHoistedContexts] Unexpected hoisted function",
+                                    None,
+                                    instruction.loc,
+                                ));
                             }
                             // References to hoisted functions are now "safe" as
                             // variable assignments have finished.
-                            state.uninitialized.remove(&lvalue_id);
+                            state.uninitialized.remove(lvalue_id);
                         }
                     } else {
-                        let mut err = CompilerError::new();
-                        err.push_error_detail(
-                            CompilerErrorDetail::new(
-                                ErrorCategory::Todo,
-                                "[PruneHoistedContexts] Unexpected kind".to_string(),
-                            )
-                            .with_loc(instruction.loc),
-                        );
-                        return Err(err);
+                        return Err(cold_todo(
+                            "[PruneHoistedContexts] Unexpected kind",
+                            instruction.loc,
+                        ));
                     }
                 }
             }

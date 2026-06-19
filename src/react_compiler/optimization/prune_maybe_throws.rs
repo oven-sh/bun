@@ -10,11 +10,8 @@
 //!
 //! Analogous to TS `Optimization/PruneMaybeThrows.ts`.
 
-use std::collections::HashMap;
-
-use crate::diagnostics::{
-    CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory, GENERATED_SOURCE,
-};
+use crate::collections::IdMap;
+use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::cfg_utils::{
     get_reverse_postordered_blocks, mark_instruction_ids, remove_dead_do_while_statements,
     remove_unnecessary_try_catch, remove_unreachable_for_updates,
@@ -49,20 +46,15 @@ pub fn prune_maybe_throws(
                 for (predecessor, _) in &phi.operands {
                     if !preds.contains(predecessor) {
                         let mapped_terminal =
-                            terminal_mapping.get(predecessor).copied().ok_or_else(|| {
-                                CompilerDiagnostic::new(
-                                    ErrorCategory::Invariant,
+                            terminal_mapping.get(*predecessor).copied().ok_or_else(|| {
+                                cold_invariant(
                                     "Expected non-existing phi operand's predecessor to have been mapped to a new terminal",
                                     Some(format!(
                                         "Could not find mapping for predecessor bb{} in block bb{}",
                                         predecessor.0, block.id.0,
                                     )),
+                                    None,
                                 )
-                                .with_detail(CompilerDiagnosticDetail::Error {
-                                    loc: GENERATED_SOURCE,
-                                    message: None,
-                                    identifier_name: None,
-                                })
                             })?;
                         updates.push((*predecessor, mapped_terminal));
                     }
@@ -86,8 +78,8 @@ pub fn prune_maybe_throws(
     Ok(())
 }
 
-fn prune_maybe_throws_impl(func: &mut HirFunction) -> Option<HashMap<BlockId, BlockId>> {
-    let mut terminal_mapping: HashMap<BlockId, BlockId> = HashMap::new();
+fn prune_maybe_throws_impl(func: &mut HirFunction) -> Option<IdMap<BlockId, BlockId>> {
+    let mut terminal_mapping: IdMap<BlockId, BlockId> = IdMap::new();
     let instructions = &func.instructions;
 
     for block in func.body.blocks.values_mut() {
@@ -102,7 +94,7 @@ fn prune_maybe_throws_impl(func: &mut HirFunction) -> Option<HashMap<BlockId, Bl
             .any(|instr_id| instruction_may_throw(&instructions[instr_id.0 as usize]));
 
         if !can_throw {
-            let source = terminal_mapping.get(&block.id).copied().unwrap_or(block.id);
+            let source = terminal_mapping.get(block.id).copied().unwrap_or(block.id);
             terminal_mapping.insert(continuation, source);
             // Null out the handler rather than replacing with Goto.
             // Preserving the MaybeThrow makes the continuations clear for

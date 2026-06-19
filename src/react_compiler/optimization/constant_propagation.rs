@@ -24,8 +24,7 @@
 //!
 //! Analogous to TS `Optimization/ConstantPropagation.ts`.
 
-use std::collections::HashMap;
-
+use crate::collections::IdMap;
 use crate::diagnostics::JsString;
 use crate::hir::cfg_utils::{
     get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
@@ -68,16 +67,16 @@ impl Constant {
     }
 }
 
-/// Map of known constant values. Uses HashMap (not IndexMap) since iteration
-/// order does not affect correctness — this map is only used for lookups.
-type Constants = HashMap<IdentifierId, Constant>;
+/// Map of known constant values. Iteration order does not affect correctness —
+/// this map is only used for lookups.
+type Constants = IdMap<IdentifierId, Constant>;
 
 // =============================================================================
 // Public entry point
 // =============================================================================
 
 pub fn constant_propagation(func: &mut HirFunction, env: &mut Environment) {
-    let mut constants: Constants = HashMap::new();
+    let mut constants: Constants = IdMap::new();
     constant_propagation_impl(func, env, &mut constants);
 }
 
@@ -238,7 +237,7 @@ fn apply_constant_propagation(
 fn evaluate_phi(phi: &Phi, constants: &Constants) -> Option<Constant> {
     let mut value: Option<Constant> = None;
     for (_pred, operand) in &phi.operands {
-        let operand_value = constants.get(&operand.identifier)?;
+        let operand_value = constants.get(operand.identifier)?;
 
         match &value {
             None => {
@@ -741,7 +740,7 @@ fn process_inner_function(func_id: FunctionId, env: &mut Environment, constants:
 // =============================================================================
 
 fn read(constants: &Constants, place: &Place) -> Option<Constant> {
-    constants.get(&place.identifier).cloned()
+    constants.get(place.identifier).cloned()
 }
 
 // =============================================================================

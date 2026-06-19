@@ -11,9 +11,9 @@
 //!
 //! Ported from TypeScript `src/HIR/BuildReactiveScopeTerminalsHIR.ts`.
 
-use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::collections::IdMap;
 use crate::collections::IndexMap;
 use crate::hir::AstAlloc;
 use crate::hir::BasicBlock;
@@ -118,7 +118,7 @@ fn collect_scope_rewrites(func: &HirFunction, env: &mut Environment) -> Vec<Term
     });
 
     let mut rewrites: Vec<TerminalRewriteInfo> = Vec::new();
-    let mut fallthroughs: HashMap<ScopeId, BlockId> = HashMap::new();
+    let mut fallthroughs: IdMap<ScopeId, BlockId> = IdMap::new();
     let mut active_items: Vec<ScopeId> = Vec::new();
 
     for i in 0..items.len() {
@@ -141,7 +141,7 @@ fn collect_scope_rewrites(func: &HirFunction, env: &mut Environment) -> Vec<Term
             if disjoint {
                 // Exit this scope
                 let fallthrough_id = *fallthroughs
-                    .get(&maybe_parent)
+                    .get(maybe_parent)
                     .expect("Expected scope to exist");
                 let end_instr_id = env.scopes[maybe_parent.0 as usize].range.end;
                 rewrites.push(TerminalRewriteInfo::EndScope {
@@ -170,7 +170,7 @@ fn collect_scope_rewrites(func: &HirFunction, env: &mut Environment) -> Vec<Term
 
     // Exit remaining active items
     while let Some(curr) = active_items.pop() {
-        let fallthrough_id = *fallthroughs.get(&curr).expect("Expected scope to exist");
+        let fallthrough_id = *fallthroughs.get(curr).expect("Expected scope to exist");
         let end_instr_id = env.scopes[curr.0 as usize].range.end;
         rewrites.push(TerminalRewriteInfo::EndScope {
             instr_id: end_instr_id,
@@ -267,7 +267,7 @@ pub fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &mut Envi
     let mut queued_rewrites = collect_scope_rewrites(func, env);
 
     // Step 2: Apply rewrites by splitting blocks
-    let mut rewritten_final_blocks: HashMap<BlockId, BlockId> = HashMap::new();
+    let mut rewritten_final_blocks: IdMap<BlockId, BlockId> = IdMap::new();
     let mut next_blocks: IndexMap<BlockId, BasicBlock> = IndexMap::new();
 
     // Reverse so we can pop from the end while traversing in ascending order
@@ -338,7 +338,7 @@ pub fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &mut Envi
                 .keys()
                 .filter_map(|original_id| {
                     rewritten_final_blocks
-                        .get(original_id)
+                        .get(*original_id)
                         .map(|new_id| (*original_id, *new_id))
                 })
                 .collect();

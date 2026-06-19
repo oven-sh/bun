@@ -15,6 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::collections::IdMap;
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::{
@@ -121,8 +122,8 @@ pub fn memoize_fbt_and_macro_operands_in_same_scope(
 fn populate_macro_tags(
     func: &HirFunction,
     macro_kinds: &HashMap<String, MacroDefinition>,
-) -> HashMap<IdentifierId, MacroDefinition> {
-    let mut macro_tags: HashMap<IdentifierId, MacroDefinition> = HashMap::new();
+) -> IdMap<IdentifierId, MacroDefinition> {
+    let mut macro_tags: IdMap<IdentifierId, MacroDefinition> = IdMap::new();
 
     for block in func.body.blocks.values() {
         for &instr_id in &block.instructions {
@@ -150,7 +151,7 @@ fn populate_macro_tags(
                     object, property, ..
                 } => {
                     if let PropertyLiteral::String(prop_name) = property {
-                        if let Some(macro_def) = macro_tags.get(&object.identifier).cloned() {
+                        if let Some(macro_def) = macro_tags.get(object.identifier).cloned() {
                             let property_macro = if let Some(ref props) = macro_def.properties {
                                 let prop_def =
                                     props.get(prop_name.as_str()).or_else(|| props.get("*"));
@@ -178,10 +179,10 @@ fn populate_macro_tags(
 fn merge_macro_arguments(
     func: &HirFunction,
     env: &mut Environment,
-    macro_tags: &mut HashMap<IdentifierId, MacroDefinition>,
+    macro_tags: &mut IdMap<IdentifierId, MacroDefinition>,
     macro_kinds: &HashMap<String, MacroDefinition>,
 ) -> HashSet<IdentifierId> {
-    let mut macro_values: HashSet<IdentifierId> = macro_tags.keys().copied().collect();
+    let mut macro_values: HashSet<IdentifierId> = macro_tags.iter().map(|(k, _)| k).collect();
 
     // Iterate blocks in reverse order
     let block_ids: Vec<_> = func.body.blocks.keys().copied().collect();
@@ -217,8 +218,8 @@ fn merge_macro_arguments(
                     };
 
                     let macro_def = macro_tags
-                        .get(&callee.identifier)
-                        .or_else(|| macro_tags.get(&lvalue_id))
+                        .get(callee.identifier)
+                        .or_else(|| macro_tags.get(lvalue_id))
                         .cloned();
 
                     if let Some(macro_def) = macro_def {
@@ -241,11 +242,11 @@ fn merge_macro_arguments(
                     };
 
                     let macro_def = match tag {
-                        JsxTag::Place(place) => macro_tags.get(&place.identifier).cloned(),
+                        JsxTag::Place(place) => macro_tags.get(place.identifier).cloned(),
                         JsxTag::Builtin(builtin) => macro_kinds.get(builtin.name.as_str()).cloned(),
                     };
 
-                    let macro_def = macro_def.or_else(|| macro_tags.get(&lvalue_id).cloned());
+                    let macro_def = macro_def.or_else(|| macro_tags.get(lvalue_id).cloned());
 
                     if let Some(macro_def) = macro_def {
                         visit_operands(
@@ -267,7 +268,7 @@ fn merge_macro_arguments(
                         None => continue,
                     };
 
-                    let macro_def = macro_tags.get(&lvalue_id).cloned();
+                    let macro_def = macro_tags.get(lvalue_id).cloned();
                     if let Some(macro_def) = macro_def {
                         visit_operands(
                             &macro_def,
@@ -291,7 +292,7 @@ fn merge_macro_arguments(
                 None => continue,
             };
 
-            let macro_def = match macro_tags.get(&phi.place.identifier).cloned() {
+            let macro_def = match macro_tags.get(phi.place.identifier).cloned() {
                 Some(def) => def,
                 None => continue,
             };
@@ -355,7 +356,7 @@ fn visit_operands(
     value: &InstructionValue,
     env: &mut Environment,
     macro_values: &mut HashSet<IdentifierId>,
-    macro_tags: &mut HashMap<IdentifierId, MacroDefinition>,
+    macro_tags: &mut IdMap<IdentifierId, MacroDefinition>,
 ) {
     macro_values.insert(lvalue_id);
 

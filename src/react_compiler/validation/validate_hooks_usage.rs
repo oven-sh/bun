@@ -10,9 +10,7 @@
 //! and not called dynamically. Also validates that hooks are not
 //! called inside function expressions.
 
-use std::collections::HashMap;
-
-use crate::collections::IndexMap;
+use crate::collections::{IdMap, IndexMap};
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, SourceLocation,
 };
@@ -51,10 +49,10 @@ fn join_kinds(a: Kind, b: Kind) -> Kind {
 
 fn get_kind_for_place(
     place: &Place,
-    value_kinds: &HashMap<IdentifierId, Kind>,
+    value_kinds: &IdMap<IdentifierId, Kind>,
     identifiers: &[Identifier],
 ) -> Kind {
-    let known_kind = value_kinds.get(&place.identifier).copied();
+    let known_kind = value_kinds.get(place.identifier).copied();
     let ident = &identifiers[place.identifier.0 as usize];
     if let Some(ref name) = ident.name {
         if is_hook_name(name.value()) {
@@ -86,20 +84,22 @@ fn get_hook_kind_for_id<'a>(
 
 fn visit_place(
     place: &Place,
-    value_kinds: &HashMap<IdentifierId, Kind>,
+    value_kinds: &IdMap<IdentifierId, Kind>,
     errors_by_loc: &mut IndexMap<SourceLocation, CompilerErrorDetail>,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {
-    let kind = value_kinds.get(&place.identifier).copied();
+    let kind = value_kinds.get(place.identifier).copied();
     if kind == Some(Kind::KnownHook) {
         record_invalid_hook_usage_error(place, errors_by_loc, env)?;
     }
     Ok(())
 }
 
+#[cold]
+#[inline(never)]
 fn record_conditional_hook_error(
     place: &Place,
-    value_kinds: &mut HashMap<IdentifierId, Kind>,
+    value_kinds: &mut IdMap<IdentifierId, Kind>,
     errors_by_loc: &mut IndexMap<SourceLocation, CompilerErrorDetail>,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {
@@ -131,6 +131,8 @@ fn record_conditional_hook_error(
     Ok(())
 }
 
+#[cold]
+#[inline(never)]
 fn record_invalid_hook_usage_error(
     place: &Place,
     errors_by_loc: &mut IndexMap<SourceLocation, CompilerErrorDetail>,
@@ -162,6 +164,8 @@ fn record_invalid_hook_usage_error(
     Ok(())
 }
 
+#[cold]
+#[inline(never)]
 fn record_dynamic_hook_usage_error(
     place: &Place,
     errors_by_loc: &mut IndexMap<SourceLocation, CompilerErrorDetail>,
@@ -200,7 +204,7 @@ pub fn validate_hooks_usage(
 ) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
     let unconditional_blocks = compute_unconditional_blocks(func, env.next_block_id().0)?;
     let mut errors_by_loc: IndexMap<SourceLocation, CompilerErrorDetail> = IndexMap::new();
-    let mut value_kinds: HashMap<IdentifierId, Kind> = HashMap::new();
+    let mut value_kinds: IdMap<IdentifierId, Kind> = IdMap::new();
 
     // Process params
     for param in &func.params {
@@ -222,7 +226,7 @@ pub fn validate_hooks_usage(
                 Kind::Local
             };
             for (_, operand) in &phi.operands {
-                if let Some(&operand_kind) = value_kinds.get(&operand.identifier) {
+                if let Some(&operand_kind) = value_kinds.get(operand.identifier) {
                     kind = join_kinds(kind, operand_kind);
                 }
             }
@@ -397,10 +401,10 @@ pub fn validate_hooks_usage(
                     let kind = get_kind_for_place(&instr.lvalue, &value_kinds, &env.identifiers);
                     value_kinds.insert(lvalue_id, kind);
                     // Also set kind for value-level lvalues (e.g. DeclareLocal, PrefixUpdate, PostfixUpdate)
-                    for lv in visitors::each_instruction_value_lvalue(&instr.value) {
-                        let lv_kind = get_kind_for_place(&lv, &value_kinds, &env.identifiers);
+                    visitors::each_lvalue(&instr.value, |lv| {
+                        let lv_kind = get_kind_for_place(lv, &value_kinds, &env.identifiers);
                         value_kinds.insert(lv.identifier, lv_kind);
-                    }
+                    });
                 }
             }
         }
@@ -512,13 +516,15 @@ fn hook_kind_display(kind: &HookKind) -> &'static str {
 /// Uses the canonical `each_instruction_value_operand` from visitors.
 fn visit_all_operands(
     value: &InstructionValue,
-    value_kinds: &HashMap<IdentifierId, Kind>,
+    value_kinds: &IdMap<IdentifierId, Kind>,
     errors_by_loc: &mut IndexMap<SourceLocation, CompilerErrorDetail>,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {
-    let operands = visitors::each_instruction_value_operand(value, &*env);
-    for place in &operands {
-        visit_place(place, value_kinds, errors_by_loc, env)?;
-    }
-    Ok(())
+    let mut result = Ok(());
+    visitors::each_operand(value, |place| {
+        if result.is_ok() {
+            result = visit_place(place, value_kinds, errors_by_loc, env);
+        }
+    });
+    result
 }

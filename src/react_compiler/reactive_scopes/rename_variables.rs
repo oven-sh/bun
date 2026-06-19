@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::collections::IdMap;
 use crate::hir::DeclarationId;
 use crate::hir::EvaluationOrder;
 use crate::hir::FunctionId;
@@ -33,7 +34,7 @@ use crate::reactive_scopes::visitors::{self};
 // =============================================================================
 
 struct Scopes {
-    seen: HashMap<DeclarationId, IdentifierName>,
+    seen: IdMap<DeclarationId, IdentifierName>,
     stack: Vec<HashMap<String, DeclarationId>>,
     globals: HashSet<String>,
     names: HashSet<String>,
@@ -42,7 +43,7 @@ struct Scopes {
 impl Scopes {
     fn new(globals: HashSet<String>) -> Self {
         Self {
-            seen: HashMap::new(),
+            seen: IdMap::new(),
             stack: vec![HashMap::new()],
             globals,
             names: HashSet::new(),
@@ -57,7 +58,7 @@ impl Scopes {
         };
         let declaration_id = identifier.declaration_id;
 
-        if self.seen.contains_key(&declaration_id) {
+        if self.seen.contains_key(declaration_id) {
             return;
         }
 
@@ -231,7 +232,7 @@ fn rename_variables_with_parent(
 
     // Phase 2: Apply the computed renames to all identifiers in env.
     for identifier in env.identifiers.iter_mut() {
-        if let Some(mapped_name) = scopes.seen.get(&identifier.declaration_id) {
+        if let Some(mapped_name) = scopes.seen.get(identifier.declaration_id) {
             if identifier.name.is_some() {
                 identifier.name = Some(mapped_name.clone());
             }

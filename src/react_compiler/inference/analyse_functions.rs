@@ -14,7 +14,7 @@
 
 use crate::collections::FxHashSet as HashSet;
 use crate::collections::IndexMap;
-use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
+use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
 
 use crate::hir::{
@@ -168,11 +168,12 @@ where
                 // no-op
             }
             AliasingEffect::Apply { .. } => {
-                return Err(CompilerDiagnostic::new(
-                    ErrorCategory::Invariant,
+                return Err(cold_invariant(
                     "[AnalyzeFunctions] Expected Apply effects to be replaced with more precise effects",
                     None,
-                ));
+                    None,
+                )
+                .into());
             }
         }
     }

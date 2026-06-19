@@ -1,6 +1,6 @@
 //! Port of build_hir.rs lines 1–662 and 4362–5509 — see mod.rs.
 
-use crate::diagnostics::{CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory};
+use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory, cold_todo};
 use crate::hir::*;
 use bun_ast::expr::Data;
 use bun_ast::{self as ast, Expr, G, Loc, OpCode, OptionalChain, Ref};
@@ -22,7 +22,7 @@ pub(super) fn convert_opt_loc(loc: Loc) -> Option<SourceLocation> {
 pub(super) fn utf8_owned(bytes: &[u8]) -> Result<String, CompilerError> {
     core::str::from_utf8(bytes)
         .map(str::to_owned)
-        .map_err(|_| CompilerError::from(CompilerDiagnostic::todo("non-utf8 identifier", None)))
+        .map_err(|_| cold_todo("non-utf8 identifier", None))
 }
 
 // =============================================================================
@@ -429,10 +429,10 @@ pub(super) fn lower_member_expression(
                 value,
             })
         }
-        _ => Err(CompilerError::from(CompilerDiagnostic::todo(
+        _ => Err(cold_todo(
             "lower_member_expression: expected EDot/EIndex",
             loc,
-        ))),
+        )),
     }
 }
 
@@ -1170,17 +1170,10 @@ pub(super) fn lower_object_property_key(
                     clippy::disallowed_methods,
                     reason = "vendored react_compiler_hir keys are std::String; we own the just-allocated UTF-8 bytes"
                 )]
-                String::from_utf8(bun_core::strings::to_utf8_alloc(s.slice16())).map_err(|_| {
-                    CompilerError::from(CompilerDiagnostic::todo(
-                        "non-utf8 property key",
-                        convert_loc(key.loc),
-                    ))
-                })?
+                String::from_utf8(bun_core::strings::to_utf8_alloc(s.slice16()))
+                    .map_err(|_| cold_todo("non-utf8 property key", convert_loc(key.loc)))?
             } else if s.next.is_some() {
-                return Err(CompilerError::from(CompilerDiagnostic::todo(
-                    "rope property key",
-                    convert_loc(key.loc),
-                )));
+                return Err(cold_todo("rope property key", convert_loc(key.loc)));
             } else {
                 utf8_owned(s.slice8())?
             };
@@ -1365,10 +1358,10 @@ pub(super) fn lower_optional_call_expression_impl(
     parent_alternate: Option<BlockId>,
 ) -> Result<InstructionValue, CompilerError> {
     let Data::ECall(call) = &expr.data else {
-        return Err(CompilerError::from(CompilerDiagnostic::todo(
+        return Err(cold_todo(
             "lower_optional_call_expression: expected ECall",
             convert_loc(expr.loc),
-        )));
+        ));
     };
     let optional = matches!(call.optional_chain, Some(OptionalChain::Start));
     let loc = convert_loc(expr.loc);

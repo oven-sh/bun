@@ -15,8 +15,7 @@
 //! may be converted to a `const` if the reassignment is not used and was removed
 //! by dead code elimination.
 
-use std::collections::HashMap;
-
+use crate::collections::IdMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory, SourceLocation,
 };
@@ -30,10 +29,14 @@ use crate::hir::environment::Environment;
 /// Create an invariant CompilerError (matches TS CompilerError.invariant).
 /// When a loc is provided, creates a CompilerDiagnostic with an error detail item
 /// (matching TS CompilerError.invariant which uses .withDetails()).
+#[cold]
+#[inline(never)]
 fn invariant_error(reason: &str, description: Option<String>) -> CompilerError {
     invariant_error_with_loc(reason, description, None)
 }
 
+#[cold]
+#[inline(never)]
 fn invariant_error_with_loc(
     reason: &str,
     description: Option<String>,
@@ -115,7 +118,7 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
     //
     // Track: for each DeclarationId, the location of its first declaration,
     // and whether it needs to be changed to Let (because of reassignment).
-    let mut declarations: HashMap<DeclarationId, DeclarationLoc> = HashMap::new();
+    let mut declarations: IdMap<DeclarationId, DeclarationLoc> = IdMap::new();
     // Track which (block_index, instr_local_index) should have their lvalue.kind set to Reassign
     let mut reassign_locs: Vec<(usize, usize)> = Vec::new();
     // Track which declaration locations need to be set to Let
@@ -156,7 +159,7 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
                 InstructionValue::DeclareLocal { lvalue, .. } => {
                     let decl_id =
                         env.identifiers[lvalue.place.identifier.0 as usize].declaration_id;
-                    if declarations.contains_key(&decl_id) {
+                    if declarations.contains_key(decl_id) {
                         return Err(invariant_error_with_loc(
                             "Expected variable not to be defined prior to declaration",
                             Some(format!(
@@ -178,7 +181,7 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
                     let ident = &env.identifiers[lvalue.place.identifier.0 as usize];
                     if ident.name.is_some() {
                         let decl_id = ident.declaration_id;
-                        if let Some(existing) = declarations.get(&decl_id) {
+                        if let Some(existing) = declarations.get(decl_id) {
                             // Reassignment: mark existing declaration as Let, current as Reassign
                             match existing {
                                 DeclarationLoc::Instruction {
@@ -195,7 +198,7 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
                         } else {
                             // First store — mark as Const
                             // Mirrors TS: CompilerError.invariant(!declarations.has(...))
-                            if declarations.contains_key(&decl_id) {
+                            if declarations.contains_key(decl_id) {
                                 return Err(invariant_error_with_loc(
                                     "Expected variable not to be defined prior to declaration",
                                     Some(format!(
@@ -235,7 +238,7 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
                             kind = Some(InstructionKind::Const);
                         } else {
                             let decl_id = ident.declaration_id;
-                            if let Some(existing) = declarations.get(&decl_id) {
+                            if let Some(existing) = declarations.get(decl_id) {
                                 // Reassignment
                                 if !(kind.is_none() || kind == Some(InstructionKind::Reassign)) {
                                     return Err(invariant_error_with_loc(
@@ -299,7 +302,7 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
                 | InstructionValue::PrefixUpdate { lvalue, .. } => {
                     let ident = &env.identifiers[lvalue.identifier.0 as usize];
                     let decl_id = ident.declaration_id;
-                    let Some(existing) = declarations.get(&decl_id) else {
+                    let Some(existing) = declarations.get(decl_id) else {
                         return Err(invariant_error_with_loc(
                             "Expected variable to have been defined",
                             Some(format!("No declaration for {}", format_place(lvalue, env),)),

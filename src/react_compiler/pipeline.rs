@@ -180,15 +180,11 @@ pub fn compile_fn(
 
     #[cfg(any(debug_assertions, feature = "fixtures"))]
     if env.config.throw_unknown_exception_testonly {
-        let mut err = CompilerError::new();
-        err.push_error_detail(crate::diagnostics::CompilerErrorDetail {
-            category: crate::diagnostics::ErrorCategory::Invariant,
-            reason: "unexpected error".to_string(),
-            description: None,
-            loc: None,
-            suggestions: None,
-        });
-        return Err(err);
+        return Err(crate::diagnostics::cold_invariant(
+            "unexpected error",
+            None,
+            None,
+        ));
     }
 
     // Check for accumulated errors at the end of the pipeline
@@ -368,18 +364,7 @@ fn run_hir_passes(
         )
     );
 
-    timed!("EnterSSA", crate::ssa::enter_ssa(hir, env)).map_err(|diag| {
-        let loc = diag.primary_location().cloned();
-        let mut err = CompilerError::new();
-        err.push_error_detail(crate::diagnostics::CompilerErrorDetail {
-            category: diag.category,
-            reason: diag.reason,
-            description: diag.description,
-            loc,
-            suggestions: diag.suggestions,
-        });
-        err
-    })?;
+    timed!("EnterSSA", crate::ssa::enter_ssa(hir, env)).map_err(ssa_diag_to_error)?;
 
     timed!(
         "EliminateRedundantPhi",
@@ -692,4 +677,19 @@ fn run_hir_passes(
 
     let _ = fbt_operands;
     Ok((reactive_fn, unique_identifiers))
+}
+
+#[cold]
+#[inline(never)]
+fn ssa_diag_to_error(diag: crate::diagnostics::CompilerDiagnostic) -> CompilerError {
+    let loc = diag.primary_location().cloned();
+    let mut err = CompilerError::new();
+    err.push_error_detail(crate::diagnostics::CompilerErrorDetail {
+        category: diag.category,
+        reason: diag.reason,
+        description: diag.description,
+        loc,
+        suggestions: diag.suggestions,
+    });
+    err
 }

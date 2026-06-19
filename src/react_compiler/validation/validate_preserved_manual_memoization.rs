@@ -11,6 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::collections::IdMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory, SourceLocation,
 };
@@ -25,7 +26,7 @@ use crate::hir::{
 /// State tracked during manual memo validation within a StartMemoize..FinishMemoize range.
 struct ManualMemoBlockState {
     /// Reassigned temporaries (declaration_id -> set of identifier ids that were reassigned to it).
-    reassignments: HashMap<DeclarationId, HashSet<IdentifierId>>,
+    reassignments: IdMap<DeclarationId, HashSet<IdentifierId>>,
     /// Source location of the StartMemoize instruction.
     loc: Option<SourceLocation>,
     /// Declarations produced within this manual memo block.
@@ -200,7 +201,7 @@ fn visit_instruction(instr: &ReactiveInstruction, state: &mut VisitorState) {
                 decls: HashSet::new(),
                 deps_from_source,
                 manual_memo_id: *manual_memo_id,
-                reassignments: HashMap::new(),
+                reassignments: IdMap::new(),
             });
 
             // Check that each dependency's scope has completed before the memo
@@ -211,22 +212,7 @@ fn visit_instruction(instr: &ReactiveInstruction, state: &mut VisitorState) {
                 if let Some(scope_id) = ident.scope {
                     if !state.scopes.contains(&scope_id) && !state.pruned_scopes.contains(&scope_id)
                     {
-                        let diag = CompilerDiagnostic::new(
-                            ErrorCategory::PreserveManualMemo,
-                            "Existing memoization could not be preserved",
-                            Some(
-                                "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. \
-                                 This dependency may be mutated later, which could cause the value to change unexpectedly".to_string(),
-                            ),
-                        )
-                        .with_detail(CompilerDiagnosticDetail::Error {
-                            loc: place.loc,
-                            message: Some(
-                                "This dependency may be modified later".to_string(),
-                            ),
-                            identifier_name: None,
-                        });
-                        state.env.record_diagnostic(diag);
+                        record_dep_mutated_later_error(place.loc, state.env);
                     }
                 }
             }
@@ -262,7 +248,7 @@ fn visit_instruction(instr: &ReactiveInstruction, state: &mut VisitorState) {
                     // If the manual memo was inlined (useMemo -> IIFE), check reassignments
                     let decls_to_check = memo_state
                         .reassignments
-                        .get(&decl_ident.declaration_id)
+                        .get(decl_ident.declaration_id)
                         .map(|ids| ids.iter().copied().collect::<Vec<_>>())
                         .unwrap_or_else(|| vec![decl.identifier]);
 
@@ -316,6 +302,27 @@ fn visit_instruction(instr: &ReactiveInstruction, state: &mut VisitorState) {
     }
 }
 
+#[cold]
+#[inline(never)]
+fn record_dep_mutated_later_error(loc: Option<SourceLocation>, env: &mut Environment) {
+    let diag = CompilerDiagnostic::new(
+        ErrorCategory::PreserveManualMemo,
+        "Existing memoization could not be preserved",
+        Some(
+            "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. \
+             This dependency may be mutated later, which could cause the value to change unexpectedly".to_string(),
+        ),
+    )
+    .with_detail(CompilerDiagnosticDetail::Error {
+        loc,
+        message: Some("This dependency may be modified later".to_string()),
+        identifier_name: None,
+    });
+    env.record_diagnostic(diag);
+}
+
+#[cold]
+#[inline(never)]
 fn record_unmemoized_error(loc: Option<SourceLocation>, env: &mut Environment) {
     let diag = CompilerDiagnostic::new(
         ErrorCategory::PreserveManualMemo,
@@ -743,6 +750,26 @@ fn validate_inferred_dep(
         });
     }
 
+    record_dep_mismatch_error(
+        dep_id,
+        dep_path,
+        valid_deps_in_memo_block,
+        error_diagnostic,
+        memo_location,
+        env,
+    );
+}
+
+#[cold]
+#[inline(never)]
+fn record_dep_mismatch_error(
+    dep_id: IdentifierId,
+    dep_path: &[DependencyPathEntry],
+    valid_deps_in_memo_block: &[ManualMemoDependency],
+    error_diagnostic: Option<CompareDependencyResult>,
+    memo_location: Option<SourceLocation>,
+    env: &mut Environment,
+) {
     let ident = &env.identifiers[dep_id.0 as usize];
 
     let extra = if is_named(ident) {

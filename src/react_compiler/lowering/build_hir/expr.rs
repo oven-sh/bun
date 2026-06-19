@@ -1,7 +1,7 @@
 //! Port of build_hir.rs lines 663–2303 and 6553–6713 — see mod.rs.
 
 use crate::diagnostics::{
-    CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, JsString,
+    CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, JsString, cold_todo,
 };
 use crate::hir::*;
 use bun_ast::expr::Data;
@@ -124,7 +124,7 @@ pub(crate) fn lower_expression(
                     let value = prop
                         .value
                         .as_ref()
-                        .ok_or_else(|| CompilerDiagnostic::todo("spread without value", loc))?;
+                        .ok_or_else(|| cold_todo("spread without value", loc))?;
                     let place = lower_expression_to_temporary(builder, value)?;
                     properties.push(ObjectPropertyOrSpread::Spread(SpreadPattern { place }));
                     continue;
@@ -140,15 +140,16 @@ pub(crate) fn lower_expression(
                 let key_expr = prop
                     .key
                     .as_ref()
-                    .ok_or_else(|| CompilerDiagnostic::todo("object property without key", loc))?;
+                    .ok_or_else(|| cold_todo("object property without key", loc))?;
                 let computed = prop.flags.contains(PF::IsComputed);
                 let key = match lower_object_property_key(builder, key_expr, computed)? {
                     Some(k) => k,
                     None => continue,
                 };
-                let value_expr = prop.value.as_ref().ok_or_else(|| {
-                    CompilerDiagnostic::todo("object property without value", loc)
-                })?;
+                let value_expr = prop
+                    .value
+                    .as_ref()
+                    .ok_or_else(|| cold_todo("object property without value", loc))?;
                 let value = lower_expression_to_temporary(builder, value_expr)?;
                 properties.push(ObjectPropertyOrSpread::Property(ObjectProperty {
                     key,
@@ -1239,8 +1240,7 @@ fn convert_template_contents(
     match c {
         E::TemplateContents::Cooked(s) => {
             let cooked = if s.is_utf16 {
-                String::from_utf16(s.slice16())
-                    .map_err(|_| CompilerDiagnostic::todo("non-utf16 template", loc))?
+                String::from_utf16(s.slice16()).map_err(|_| cold_todo("non-utf16 template", loc))?
             } else {
                 utf8(s.slice8(), loc)?
             };
@@ -1441,7 +1441,7 @@ fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {
 fn utf8(bytes: &[u8], loc: Option<SourceLocation>) -> Result<String, CompilerError> {
     core::str::from_utf8(bytes)
         .map(str::to_owned)
-        .map_err(|_| CompilerError::from(CompilerDiagnostic::todo("non-utf8 identifier", loc)))
+        .map_err(|_| cold_todo("non-utf8 identifier", loc))
 }
 
 fn convert_js_string(
@@ -1455,12 +1455,12 @@ fn convert_js_string(
             if seg.is_utf16 {
                 joined.push_str(
                     &String::from_utf16(seg.slice16())
-                        .map_err(|_| CompilerDiagnostic::todo("non-utf16 string", loc))?,
+                        .map_err(|_| cold_todo("non-utf16 string", loc))?,
                 );
             } else {
                 joined.push_str(
                     core::str::from_utf8(seg.slice8())
-                        .map_err(|_| CompilerDiagnostic::todo("non-utf8 identifier", loc))?,
+                        .map_err(|_| cold_todo("non-utf8 identifier", loc))?,
                 );
             }
             cur = seg.next.as_ref().map(|r| r.get());
@@ -1482,6 +1482,8 @@ fn unsupported_node(node_type: &str, loc: Option<SourceLocation>) -> Instruction
     }
 }
 
+#[cold]
+#[inline(never)]
 fn todo_err(variant: &str, loc: Option<SourceLocation>) -> CompilerError {
     CompilerDiagnostic::todo(
         format!("(BuildHIR::lowerExpression) Handle {} expressions", variant),

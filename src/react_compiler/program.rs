@@ -303,6 +303,7 @@ fn is_valid_gating_identifier(s: &[u8]) -> bool {
 // -----------------------------------------------------------------------
 
 /// Outcome of [`parse_fixture_pragmas`].
+#[cfg(any(debug_assertions, feature = "fixtures"))]
 #[derive(Debug, Default)]
 pub struct PragmaParseResult {
     /// `Some(key)` when the source uses a pragma the port can't honor; the
@@ -313,6 +314,7 @@ pub struct PragmaParseResult {
 /// Iterator over `(key, value)` pairs in a pragma string. Mirrors upstream's
 /// `splitPragma`: split on `@`, then split each entry on the first `:` (or
 /// `(` for the `@key(value)` form).
+#[cfg(any(debug_assertions, feature = "fixtures"))]
 fn split_pragma(pragma: &[u8]) -> impl Iterator<Item = (&[u8], Option<&[u8]>)> {
     pragma.split(|&b| b == b'@').skip(1).filter_map(|entry| {
         let entry = trim_ascii(entry);
@@ -338,6 +340,7 @@ fn split_pragma(pragma: &[u8]) -> impl Iterator<Item = (&[u8], Option<&[u8]>)> {
     })
 }
 
+#[cfg(any(debug_assertions, feature = "fixtures"))]
 fn trim_ascii(mut s: &[u8]) -> &[u8] {
     while let [first, rest @ ..] = s {
         if first.is_ascii_whitespace() {
@@ -358,6 +361,7 @@ fn trim_ascii(mut s: &[u8]) -> &[u8] {
 
 /// Upstream's `tryParseTestPragmaValue`: `"..."` → string contents; otherwise
 /// the raw bytes (callers handle `true`/`false` separately).
+#[cfg(any(debug_assertions, feature = "fixtures"))]
 fn pragma_string_value(val: &[u8]) -> Option<String> {
     let s = if val.len() >= 2 && val[0] == b'"' && val[val.len() - 1] == b'"' {
         &val[1..val.len() - 1]
@@ -367,6 +371,7 @@ fn pragma_string_value(val: &[u8]) -> Option<String> {
     core::str::from_utf8(s).ok().map(str::to_owned)
 }
 
+#[cfg(any(debug_assertions, feature = "fixtures"))]
 fn pragma_bool(val: Option<&[u8]>) -> Option<bool> {
     match val {
         None | Some(b"true") => Some(true),
@@ -377,6 +382,7 @@ fn pragma_bool(val: Option<&[u8]>) -> Option<bool> {
 
 /// Collect the leading `//`-comment lines of `source` into a single buffer for
 /// pragma scanning. Stops at the first non-comment, non-blank line.
+#[cfg(any(debug_assertions, feature = "fixtures"))]
 fn leading_comment_pragma(source: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     for line in source.split(|&b| b == b'\n') {
@@ -396,6 +402,7 @@ fn leading_comment_pragma(source: &[u8]) -> Vec<u8> {
 
 /// Parse `// @key[:value]` pragmas from the leading comment block of `source`
 /// and apply them to `opts` (and `opts.environment`) in place.
+#[cfg(any(debug_assertions, feature = "fixtures"))]
 pub fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptions) -> PragmaParseResult {
     let pragma = leading_comment_pragma(source);
     let mut skip: Option<&'static str> = None;
@@ -1239,6 +1246,7 @@ impl ReactCompilerState {
         }
         self.did_lazy_init = true;
 
+        #[cfg(any(debug_assertions, feature = "fixtures"))]
         if self.options.parse_test_pragmas {
             let _ = parse_fixture_pragmas(host.source(), &mut self.options);
             self.context.opts.compilation_mode = self.options.compilation_mode.clone();

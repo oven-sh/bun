@@ -401,6 +401,8 @@ fn install_type_config_inner(
 
 /// Build the built-in shapes registry. This corresponds to TS `BUILTIN_SHAPES`
 /// defined at module level in ObjectShape.ts.
+#[cold]
+#[inline(never)]
 pub fn build_builtin_shapes() -> ShapeRegistry {
     let mut shapes = ShapeRegistry::new();
 
@@ -430,6 +432,8 @@ pub fn build_builtin_shapes() -> ShapeRegistry {
     shapes
 }
 
+#[cold]
+#[inline(never)]
 fn simple_function(
     shapes: &mut ShapeRegistry,
     positional_params: Vec<Effect>,
@@ -453,6 +457,8 @@ fn simple_function(
 }
 
 /// Shorthand for a pure function returning Primitive.
+#[cold]
+#[inline(never)]
 fn pure_primitive_fn(shapes: &mut ShapeRegistry) -> Type {
     simple_function(
         shapes,
@@ -463,6 +469,8 @@ fn pure_primitive_fn(shapes: &mut ShapeRegistry) -> Type {
     )
 }
 
+#[cold]
+#[inline(never)]
 fn build_array_shape(shapes: &mut ShapeRegistry) {
     let index_of = pure_primitive_fn(shapes);
     let includes = pure_primitive_fn(shapes);
@@ -746,6 +754,8 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
     );
 }
 
+#[cold]
+#[inline(never)]
 fn build_set_shape(shapes: &mut ShapeRegistry) {
     let has = add_function(
         shapes,
@@ -968,6 +978,8 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
     );
 }
 
+#[cold]
+#[inline(never)]
 fn build_map_shape(shapes: &mut ShapeRegistry) {
     let has = add_function(
         shapes,
@@ -1105,6 +1117,8 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
     );
 }
 
+#[cold]
+#[inline(never)]
 fn build_weak_set_shape(shapes: &mut ShapeRegistry) {
     let has = pure_primitive_fn(shapes);
     let add = add_function(
@@ -1147,6 +1161,8 @@ fn build_weak_set_shape(shapes: &mut ShapeRegistry) {
     );
 }
 
+#[cold]
+#[inline(never)]
 fn build_weak_map_shape(shapes: &mut ShapeRegistry) {
     let has = pure_primitive_fn(shapes);
     let get = add_function(
@@ -1203,6 +1219,8 @@ fn build_weak_map_shape(shapes: &mut ShapeRegistry) {
     );
 }
 
+#[cold]
+#[inline(never)]
 fn build_object_shape(shapes: &mut ShapeRegistry) {
     // BuiltInObject: has toString() returning Primitive (matches TS BuiltInObjectId shape)
     let to_string = add_function(
@@ -1460,6 +1478,8 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
     );
 }
 
+#[cold]
+#[inline(never)]
 fn build_ref_shapes(shapes: &mut ShapeRegistry) {
     // BuiltInUseRefId: { current: Object { shapeId: BuiltInRefValue } }
     add_object(
@@ -1485,6 +1505,8 @@ fn build_ref_shapes(shapes: &mut ShapeRegistry) {
     );
 }
 
+#[cold]
+#[inline(never)]
 fn build_state_shapes(shapes: &mut ShapeRegistry) {
     // BuiltInSetState: function that freezes its argument
     let set_state = add_function(
@@ -1601,6 +1623,8 @@ fn build_state_shapes(shapes: &mut ShapeRegistry) {
     );
 }
 
+#[cold]
+#[inline(never)]
 fn build_hook_shapes(shapes: &mut ShapeRegistry) {
     // BuiltInEffectEvent function shape (the return value of useEffectEvent)
     add_function(
@@ -1618,6 +1642,8 @@ fn build_hook_shapes(shapes: &mut ShapeRegistry) {
     );
 }
 
+#[cold]
+#[inline(never)]
 fn build_misc_shapes(shapes: &mut ShapeRegistry) {
     // ReanimatedSharedValue: empty properties (matching TS)
     add_object(shapes, Some(REANIMATED_SHARED_VALUE_ID), Vec::new());
@@ -1710,6 +1736,8 @@ pub fn get_reanimated_module_type(shapes: &mut ShapeRegistry) -> Type {
 ///
 /// Requires a mutable reference to the shapes registry because some globals
 /// (like Object.keys, Array.isArray) register new shapes.
+#[cold]
+#[inline(never)]
 pub fn build_default_globals(shapes: &mut ShapeRegistry) -> GlobalRegistry {
     let mut globals = GlobalRegistry::new();
 
@@ -1772,6 +1800,8 @@ const UNTYPED_GLOBALS: &[&str] = &[
 /// Build the React API types (REACT_APIS from TS). Returns the list of (name, type) pairs
 /// so they can be reused as properties of the React namespace object (matching TS behavior
 /// where the SAME type objects are used in both DEFAULT_GLOBALS and the React namespace).
+#[cold]
+#[inline(never)]
 fn build_react_apis(
     shapes: &mut ShapeRegistry,
     globals: &mut GlobalRegistry,
@@ -2046,6 +2076,8 @@ fn build_react_apis(
 }
 
 /// Build typed globals and return them as a list for use as globalThis/global properties.
+#[cold]
+#[inline(never)]
 fn build_typed_globals(
     shapes: &mut ShapeRegistry,
     globals: &mut GlobalRegistry,

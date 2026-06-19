@@ -220,7 +220,7 @@ fn process_and_outline_jsx(
         return;
     }
     // Sort by eval order ascending (TS: sort by a.id - b.id)
-    jsx_group.sort_by_key(|j| j.eval_order);
+    jsx_group.sort_unstable_by_key(|j| j.eval_order);
 
     let result = process_jsx_group(func, env, jsx_group, globals);
     if let Some(result) = result {

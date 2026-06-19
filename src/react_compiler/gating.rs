@@ -64,7 +64,7 @@ pub(crate) fn apply_gating_rewrites(
 ) -> Result<(), CompilerDiagnostic> {
     // Sort rewrites in reverse order by original_index so that insertions
     // at higher indices don't invalidate lower indices.
-    rewrites.sort_by_key(|r| core::cmp::Reverse(r.original_index));
+    rewrites.sort_unstable_by_key(|r| core::cmp::Reverse(r.original_index));
 
     for rewrite in rewrites {
         let gating_imported = context.add_import_specifier(

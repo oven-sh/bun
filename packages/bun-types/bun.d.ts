@@ -2907,6 +2907,26 @@ declare module "bun" {
     reactFastRefresh?: boolean;
 
     /**
+     * Run the React Compiler over `.jsx`/`.tsx` source files, automatically
+     * memoizing components and hooks.
+     *
+     * @default false
+     * @experimental
+     */
+    reactCompiler?: boolean;
+
+    /**
+     * Output mode for the React Compiler. `"ssr"` skips memoization (the
+     * `useMemoCache` runtime) for server-rendered output.
+     *
+     * Only applies when {@link reactCompiler} is `true`.
+     *
+     * @default "client"
+     * @experimental
+     */
+    reactCompilerOutputMode?: "client" | "ssr";
+
+    /**
      * A map of file paths to their contents for in-memory bundling.
      *
      * This allows you to bundle virtual files that don't exist on disk, or override

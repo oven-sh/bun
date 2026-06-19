@@ -180,6 +180,7 @@ impl<'a> Options<'a> {
                 react_fast_refresh: f.react_fast_refresh,
                 react_compiler: f.react_compiler,
                 react_compiler_parse_test_pragmas: f.react_compiler_parse_test_pragmas,
+                react_compiler_ssr: f.react_compiler_ssr,
                 hot_module_reloading: f.hot_module_reloading,
                 server_components: f.server_components,
                 is_macro_runtime: f.is_macro_runtime,
@@ -863,6 +864,11 @@ impl<'a> Parser<'a> {
                 enabled: true,
                 is_dev: p.options.jsx.development,
                 parse_test_pragmas: p.options.features.react_compiler_parse_test_pragmas,
+                output_mode: p
+                    .options
+                    .features
+                    .react_compiler_ssr
+                    .then(|| "ssr".to_owned()),
                 ..Default::default()
             };
             let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts);

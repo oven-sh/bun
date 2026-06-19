@@ -207,6 +207,8 @@ pub mod Runtime {
         /// Test-only: have the React Compiler read leading `// @key value`
         /// fixture pragmas from the source. Set by the fixture runner.
         pub react_compiler_parse_test_pragmas: bool,
+        /// Run the React Compiler in SSR output mode (skips memoization).
+        pub react_compiler_ssr: bool,
         /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
         /// It can be enabled on the command line with --format=internal_bake_dev
         ///
@@ -309,6 +311,7 @@ pub mod Runtime {
                 react_fast_refresh: false,
                 react_compiler: false,
                 react_compiler_parse_test_pragmas: false,
+                react_compiler_ssr: false,
                 hot_module_reloading: false,
                 server_components: ServerComponentsMode::None,
                 is_macro_runtime: false,

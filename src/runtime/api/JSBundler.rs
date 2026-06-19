@@ -122,6 +122,7 @@ pub mod js_bundler {
         pub react_fast_refresh: bool,
         pub react_compiler: bool,
         pub react_compiler_parse_test_pragmas: bool,
+        pub react_compiler_ssr: bool,
         pub define: StringMap,
         pub loaders: Option<api::LoaderMap>,
         pub dir: OwnedString,
@@ -180,6 +181,7 @@ pub mod js_bundler {
                 react_fast_refresh: false,
                 react_compiler: false,
                 react_compiler_parse_test_pragmas: false,
+                react_compiler_ssr: false,
                 define: StringMap::init(false),
                 loaders: None,
                 dir: OwnedString::default(),
@@ -606,6 +608,22 @@ pub mod js_bundler {
                 config.get_boolean_loose(global_this, "reactCompilerParseTestPragmas")?
             {
                 this.react_compiler_parse_test_pragmas = v;
+            }
+
+            if let Some(slice) =
+                config.get_optional_slice(global_this, b"reactCompilerOutputMode")?
+            {
+                this.react_compiler_ssr = match slice.slice() {
+                    b"ssr" => true,
+                    b"client" => false,
+                    other => {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Expected reactCompilerOutputMode to be 'client' or 'ssr', got {}",
+                            bstr::BStr::new(other)
+                        )));
+                    }
+                };
+                drop(slice);
             }
 
             let mut has_out_dir = false;

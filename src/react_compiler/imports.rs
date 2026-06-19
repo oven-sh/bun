@@ -311,12 +311,12 @@ pub(crate) fn add_imports_to_program(
 
     let mut new_stmts: Vec<Stmt> = Vec::new();
     let mut sorted_modules: Vec<_> = context.imports.iter().collect();
-    sorted_modules.sort_by_key(|(a, _)| a.to_lowercase());
+    sorted_modules.sort_unstable_by_key(|(a, _)| a.to_lowercase());
 
     for (module_name, imports_map) in sorted_modules {
         let sorted_imports = {
             let mut sorted: Vec<_> = imports_map.values().collect();
-            sorted.sort_by_key(|s| &s.imported);
+            sorted.sort_unstable_by_key(|s| &s.imported);
             sorted
         };
 

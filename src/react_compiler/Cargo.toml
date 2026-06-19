@@ -6,6 +6,13 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[features]
+# Fixture-harness support: test-only `// @pragma` parsing, the pragma-gated
+# passes (outline_jsx, name_anonymous_functions, lint-mode validators), and
+# BUN_REACT_COMPILER_TIMING. None of this is reachable from `Bun.build()`;
+# gating it lets LTO drop ~120 KB of .text from release binaries.
+fixtures = []
+
 [lints]
 workspace = true
 

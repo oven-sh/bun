@@ -204,6 +204,8 @@ fn next_anon_id() -> String {
 
 /// Add a non-hook function to a ShapeRegistry.
 /// Returns a `Type::Function` representing the added function.
+#[cold]
+#[inline(never)]
 pub fn add_function(
     registry: &mut ShapeRegistry,
     properties: Vec<(String, Type)>,
@@ -242,6 +244,8 @@ pub fn add_function(
 
 /// Add a hook to a ShapeRegistry.
 /// Returns a `Type::Function` representing the added hook.
+#[cold]
+#[inline(never)]
 pub fn add_hook(registry: &mut ShapeRegistry, sig: HookSignatureBuilder, id: Option<&str>) -> Type {
     let shape_id = id.map(|s| s.to_string()).unwrap_or_else(next_anon_id);
     let return_type = sig.return_type.clone();
@@ -274,6 +278,8 @@ pub fn add_hook(registry: &mut ShapeRegistry, sig: HookSignatureBuilder, id: Opt
 
 /// Add an object to a ShapeRegistry.
 /// Returns a `Type::Object` representing the added object.
+#[cold]
+#[inline(never)]
 pub fn add_object(
     registry: &mut ShapeRegistry,
     id: Option<&str>,
@@ -323,6 +329,8 @@ pub struct FunctionSignatureBuilder {
 }
 
 impl Default for FunctionSignatureBuilder {
+    #[cold]
+    #[inline(never)]
     fn default() -> Self {
         Self {
             positional_params: Vec::new(),

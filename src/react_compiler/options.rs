@@ -26,7 +26,7 @@ pub struct ReactCompilerOptions {
     pub gating: Option<ExternalFunctionConfig>,
     /// Dynamic gating: source module path for `@dynamicGating({"source":"..."})`.
     pub dynamic_gating: Option<String>,
-    /// `"forget"` (default) or `"nopanic"`.
+    /// `"client"` (default), `"ssr"`, or `"lint"`.
     pub output_mode: Option<String>,
     /// Test-only: read leading `// @key value` pragmas from the source and
     /// apply them to `self` before compiling. Set by the fixture runner.

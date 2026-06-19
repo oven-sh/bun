@@ -590,7 +590,7 @@ fn codegen_reactive_scope(
     let mut change_exprs: Vec<Expr> = Vec::new();
 
     let mut deps = scope_deps;
-    deps.sort_by(|a, b| compare_scope_dependency(a, b, cx.env));
+    deps.sort_unstable_by(|a, b| compare_scope_dependency(a, b, cx.env));
 
     let cache_name = cx.synthesize_name("$");
     let cache_ref = cx.cg.ref_for_name(&cache_name);
@@ -640,7 +640,7 @@ fn codegen_reactive_scope(
     let mut first_output_index: Option<u32> = None;
 
     let mut decls = scope_decls;
-    decls.sort_by(|(_a, a), (_b, b)| compare_scope_declaration(a, b, cx.env));
+    decls.sort_unstable_by(|(_a, a), (_b, b)| compare_scope_declaration(a, b, cx.env));
 
     for (_ident_id, decl) in &decls {
         let index = cx.alloc_cache_index();

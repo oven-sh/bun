@@ -956,6 +956,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.react_compiler = config.react_compiler;
         transpiler.options.react_compiler_parse_test_pragmas =
             config.react_compiler_parse_test_pragmas;
+        transpiler.options.react_compiler_ssr = config.react_compiler_ssr;
         transpiler.options.metafile = config.metafile;
         transpiler.options.metafile_json_path =
             Box::from(config.metafile_json_path.list.as_slice());

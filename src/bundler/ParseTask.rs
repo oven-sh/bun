@@ -2529,6 +2529,7 @@ pub mod parse_worker {
             topts.react_compiler && loader.is_jsx() && !source.path.is_node_module();
         opts.features.react_compiler_parse_test_pragmas =
             opts.features.react_compiler && topts.react_compiler_parse_test_pragmas;
+        opts.features.react_compiler_ssr = opts.features.react_compiler && topts.react_compiler_ssr;
 
         opts.features.server_components = if topts.server_components {
             use bun_ast::runtime::ServerComponentsMode as SC;

@@ -20,9 +20,7 @@
     reason = "interops with vendored react_compiler_hir which uses std::collections"
 )]
 
-use std::collections::{BTreeMap, HashSet};
-use std::sync::{Mutex, Once, OnceLock};
-use std::time::Instant;
+use std::collections::HashSet;
 
 use crate::diagnostics::CompilerError;
 use crate::hir::ReactFunctionType;
@@ -37,65 +35,86 @@ use crate::lowering::{self, FunctionNode};
 use crate::program::Host;
 
 // ---------------------------------------------------------------------------
-// Per-pass timing (BUN_REACT_COMPILER_TIMING=1)
+// Per-pass timing (BUN_REACT_COMPILER_TIMING=1) — fixture/dev builds only.
 // ---------------------------------------------------------------------------
 
-static PASS_TIMING: Mutex<BTreeMap<&'static str, (u64, u32)>> = Mutex::new(BTreeMap::new());
-static TIMING_REGISTER: Once = Once::new();
+#[cfg(any(debug_assertions, feature = "fixtures"))]
+mod timing {
+    use std::collections::BTreeMap;
+    use std::sync::{Mutex, Once, OnceLock};
 
-#[allow(clippy::disallowed_methods)] // bun_core::env_var has no entry for this debug-only knob
-fn timing_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("BUN_REACT_COMPILER_TIMING").is_some())
-}
+    static PASS_TIMING: Mutex<BTreeMap<&'static str, (u64, u32)>> = Mutex::new(BTreeMap::new());
+    static TIMING_REGISTER: Once = Once::new();
 
-#[inline]
-fn record_timing(name: &'static str, ns: u64) {
-    let mut m = PASS_TIMING.lock().unwrap();
-    let e = m.entry(name).or_insert((0, 0));
-    e.0 += ns;
-    e.1 += 1;
-}
-
-#[allow(clippy::disallowed_macros)] // opt-in debug instrumentation, runs at process exit
-extern "C" fn dump_timing() {
-    let m = PASS_TIMING.lock().unwrap();
-    if m.is_empty() {
-        return;
+    #[allow(clippy::disallowed_methods)]
+    pub(super) fn enabled() -> bool {
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        *ENABLED.get_or_init(|| std::env::var_os("BUN_REACT_COMPILER_TIMING").is_some())
     }
-    let mut v: Vec<_> = m.iter().collect();
-    v.sort_by_key(|(_, (ns, _))| std::cmp::Reverse(*ns));
-    let total: u64 = v.iter().map(|(_, (ns, _))| *ns).sum();
-    eprintln!("── react_compiler pass timing ──");
-    for (name, (ns, calls)) in v {
-        eprintln!(
-            "  {:>10.2}ms {:>5.1}%  {:>6}×  {}",
-            *ns as f64 / 1e6,
-            *ns as f64 / total as f64 * 100.0,
-            calls,
-            name
-        );
+
+    #[inline]
+    pub(super) fn record(name: &'static str, ns: u64) {
+        let mut m = PASS_TIMING.lock().unwrap();
+        let e = m.entry(name).or_insert((0, 0));
+        e.0 += ns;
+        e.1 += 1;
     }
-    eprintln!("  {:>10.2}ms total", total as f64 / 1e6);
+
+    #[allow(clippy::disallowed_macros)]
+    extern "C" fn dump() {
+        let m = PASS_TIMING.lock().unwrap();
+        if m.is_empty() {
+            return;
+        }
+        let mut v: Vec<_> = m.iter().collect();
+        v.sort_unstable_by_key(|(_, (ns, _))| std::cmp::Reverse(*ns));
+        let total: u64 = v.iter().map(|(_, (ns, _))| *ns).sum();
+        eprintln!("── react_compiler pass timing ──");
+        for (name, (ns, calls)) in v {
+            eprintln!(
+                "  {:>10.2}ms {:>5.1}%  {:>6}×  {}",
+                *ns as f64 / 1e6,
+                *ns as f64 / total as f64 * 100.0,
+                calls,
+                name
+            );
+        }
+        eprintln!("  {:>10.2}ms total", total as f64 / 1e6);
+    }
+
+    pub(super) fn ensure_dump_registered() {
+        if enabled() {
+            TIMING_REGISTER.call_once(|| bun_core::add_exit_callback(dump));
+        }
+    }
 }
 
+#[cfg(any(debug_assertions, feature = "fixtures"))]
 pub(crate) fn ensure_timing_dump_registered() {
-    if timing_enabled() {
-        TIMING_REGISTER.call_once(|| bun_core::add_exit_callback(dump_timing));
-    }
+    timing::ensure_dump_registered();
 }
+#[cfg(not(any(debug_assertions, feature = "fixtures")))]
+#[inline(always)]
+pub(crate) fn ensure_timing_dump_registered() {}
 
+#[cfg(any(debug_assertions, feature = "fixtures"))]
 macro_rules! timed {
     ($name:literal, $body:expr) => {{
-        if timing_enabled() {
-            let t0 = Instant::now();
+        if timing::enabled() {
+            let t0 = std::time::Instant::now();
             let r = $body;
-            record_timing($name, t0.elapsed().as_nanos() as u64);
+            timing::record($name, t0.elapsed().as_nanos() as u64);
             r
         } else {
             $body
         }
     }};
+}
+#[cfg(not(any(debug_assertions, feature = "fixtures")))]
+macro_rules! timed {
+    ($name:literal, $body:expr) => {
+        $body
+    };
 }
 
 /// Run the compilation pipeline on a single function.
@@ -159,7 +178,7 @@ pub fn compile_fn(
         codegen::codegen_function(&reactive_fn, &mut env, &mut cg, unique_identifiers)
     )?;
 
-    // Simulate unexpected exception for testing (matches TS Pipeline.ts)
+    #[cfg(any(debug_assertions, feature = "fixtures"))]
     if env.config.throw_unknown_exception_testonly {
         let mut err = CompilerError::new();
         err.push_error_detail(crate::diagnostics::CompilerErrorDetail {
@@ -189,11 +208,14 @@ pub fn compile_fn(
     // Re-compile outlined functions through the full pipeline.
     // This mirrors TS behavior where outlined functions from JSX outlining
     // are pushed back onto the compilation queue and compiled as components.
+    // `fn_type` is only `Some` for entries produced by `outline_jsx`, which is
+    // fixture-gated; without the feature, every entry passes through unchanged.
     let mut compiled_outlined: Vec<OutlinedFunction> = Vec::new();
     for o in codegen_result.outlined {
+        #[cfg(any(debug_assertions, feature = "fixtures"))]
         if let Some(fn_type) = o.fn_type {
             let outlined_name = o.func.name_hint.clone();
-            match compile_outlined_fn(
+            if let Ok(compiled) = compile_outlined_fn(
                 o.func,
                 outlined_name.as_deref(),
                 host,
@@ -203,19 +225,14 @@ pub fn compile_fn(
                 context,
                 import_bindings,
             ) {
-                Ok(compiled) => {
-                    compiled_outlined.push(OutlinedFunction {
-                        func: compiled,
-                        fn_type: Some(fn_type),
-                    });
-                }
-                Err(_err) => {
-                    // If re-compilation fails, skip the outlined function
-                }
+                compiled_outlined.push(OutlinedFunction {
+                    func: compiled,
+                    fn_type: Some(fn_type),
+                });
             }
-        } else {
-            compiled_outlined.push(o);
+            continue;
         }
+        compiled_outlined.push(o);
     }
 
     if let Some(uid_names) = env.take_uid_known_names() {
@@ -234,6 +251,7 @@ pub fn compile_fn(
 /// `ScopeInfo` keyed by fake positions. Bun's lowering reads `Ref` directly
 /// off identifier nodes, so the fake-position scaffolding is unnecessary: the
 /// outlined `CodegenFunction` is wrapped in a `G::Fn` and re-lowered as-is.
+#[cfg(any(debug_assertions, feature = "fixtures"))]
 #[allow(clippy::too_many_arguments)]
 pub fn compile_outlined_fn(
     codegen_fn: CodegenFunction,
@@ -383,14 +401,15 @@ fn run_hir_passes(
             )?;
         }
 
+        #[cfg(any(debug_assertions, feature = "fixtures"))]
         if env.config.validate_no_jsx_in_try_statements && env.output_mode == OutputMode::Lint {
-            // Upstream: `env.logErrors(...)` (logger-only, never fails compilation).
             let _ = timed!(
                 "ValidateNoJSXInTryStatement",
                 crate::validation::validate_no_jsx_in_try_statement(hir)
             );
         }
 
+        #[cfg(any(debug_assertions, feature = "fixtures"))]
         if env.config.validate_no_capitalized_calls.is_some() {
             timed!(
                 "ValidateNoCapitalizedCalls",
@@ -460,14 +479,15 @@ fn run_hir_passes(
             )?;
         }
 
+        #[cfg(any(debug_assertions, feature = "fixtures"))]
         if env.config.validate_no_set_state_in_effects && env.output_mode == OutputMode::Lint {
-            // Upstream: `env.logErrors(...)` (logger-only, never fails compilation).
             let _ = timed!(
                 "ValidateNoSetStateInEffects",
                 crate::validation::validate_no_set_state_in_effects(hir, env)
             );
         }
 
+        #[cfg(any(debug_assertions, feature = "fixtures"))]
         if env.config.validate_no_derived_computations_in_effects {
             timed!(
                 "ValidateNoDerivedComputationsInEffects",
@@ -480,8 +500,8 @@ fn run_hir_passes(
             crate::validation::validate_no_freezing_known_mutable_functions(hir, env)
         );
 
+        #[cfg(any(debug_assertions, feature = "fixtures"))]
         if env.config.validate_static_components && env.output_mode == OutputMode::Lint {
-            // Upstream: `env.logErrors(...)` (logger-only, never fails compilation).
             let _ = timed!(
                 "ValidateStaticComponents",
                 crate::validation::validate_static_components(hir)
@@ -518,10 +538,12 @@ fn run_hir_passes(
         crate::inference::memoize_fbt_and_macro_operands_in_same_scope(hir, env)
     );
 
+    #[cfg(any(debug_assertions, feature = "fixtures"))]
     if env.config.enable_jsx_outlining {
         timed!("OutlineJSX", crate::optimization::outline_jsx(hir, env));
     }
 
+    #[cfg(any(debug_assertions, feature = "fixtures"))]
     if env.config.enable_name_anonymous_functions {
         timed!(
             "NameAnonymousFunctions",

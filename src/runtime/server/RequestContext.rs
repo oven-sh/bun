@@ -416,6 +416,30 @@ mod shim {
         bun_ptr::BackRef::from(s).unpipe_without_deref()
     }
 }
+/// An abort happened before anyone touched `request.signal` (signals are
+/// materialized lazily): record it by storing an already-aborted signal on the
+/// Request so later `request.signal.aborted` reads still observe `true`.
+/// No pending-activity count — the signal can never fire again, so the JS
+/// wrapper needs no native keep-alive.
+pub(super) fn materialize_aborted_signal(
+    request: &Request,
+    global: &JSGlobalObject,
+    reason: jsc::CommonAbortReason,
+) {
+    if request.signal.get().is_some() {
+        return;
+    }
+    let Some(signal) = NonNull::new(AbortSignal::new(global)) else {
+        return;
+    };
+    shim::signal_fire(signal, global, reason);
+    // SAFETY: the `+1` from `new()` transfers to the Request's RAII handle
+    // (released by `AbortSignalRef::Drop` in `Request::finalize`).
+    request
+        .signal
+        .set(Some(unsafe { jsc::AbortSignalRef::adopt(signal.as_ptr()) }));
+}
+
 // `Api::FallbackMessageContainer`/`JsException`/`Problems`/`Fallback::render_backend`
 // live in `bun_options_types::schema::api` + `bun_ast::runtime`; both are
 // still being filled in by concurrent ports. The DEBUG_MODE error-page paths
@@ -622,13 +646,34 @@ where
     }
 
     pub fn set_signal_aborted(&mut self, reason: jsc::CommonAbortReason) {
+        let Some(server) = self.server else {
+            return;
+        };
+        // server is a BACKREF — valid while this RequestContext is alive
+        let global = server.global_this();
         if let Some(signal) = &self.signal {
-            if let Some(server) = self.server {
-                // server is a BACKREF — valid while this RequestContext is alive
-                let global = server.global_this();
-                shim::signal_fire(*signal, global, reason);
-            }
+            shim::signal_fire(*signal, global, reason);
+        } else if let Some(request) = self.request_weakref.get() {
+            // Signal was never materialized (lazy); record the abort on the
+            // Request so a later `request.signal` read still observes it.
+            materialize_aborted_signal(request, global, reason);
         }
+    }
+
+    /// Lazily create this context's `AbortSignal`. Signals used to be created
+    /// eagerly for every request; now they materialize on the first
+    /// `request.signal` access or on WebSocket upgrade. Returns `None` only if
+    /// the C++ allocation failed.
+    pub fn ensure_ctx_signal(&mut self, global: &JSGlobalObject) -> Option<NonNull<AbortSignal>> {
+        if let Some(signal) = self.signal {
+            return Some(signal);
+        }
+        let signal = NonNull::new(AbortSignal::new(global))?;
+        // GC-visibility count; released together with the intrusive `+1` from
+        // `new()` via `shim::signal_release` (see the `signal` field docs).
+        bun_ptr::BackRef::from(signal).pending_activity_ref();
+        self.signal = Some(signal);
+        Some(signal)
     }
 
     fn drain_microtasks(&self) {
@@ -1368,6 +1413,11 @@ where
 
         if let Some(request) = this.request_weakref.get() {
             request.request_context = AnyRequestContext::NULL;
+            materialize_aborted_signal(
+                request,
+                global_this,
+                jsc::CommonAbortReason::ConnectionClosed,
+            );
             if shim::iec_trigger(
                 &request.internal_event_callback,
                 request::EventType::Abort,
@@ -1453,6 +1503,13 @@ where
 
         if let Some(request) = self.request_weakref.get() {
             request.request_context = AnyRequestContext::NULL;
+            if self.flags.aborted() {
+                materialize_aborted_signal(
+                    request,
+                    global_this,
+                    jsc::CommonAbortReason::ConnectionClosed,
+                );
+            }
             // we can already clean this strong refs
             shim::iec_deinit(&request.internal_event_callback);
             self.request_weakref.deref();

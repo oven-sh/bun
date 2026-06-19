@@ -59,7 +59,7 @@ describe.concurrent("bun explain", () => {
   // `bun explain <pkg>` exits 0 and prints a dep tree whose root is <pkg>.
   it("shows direct dependency for a known package", async () => {
     const testDir = await setupFixture();
-    const { stdout, exited } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "explain", "lodash"],
       cwd: testDir,
       env: bunEnv,
@@ -67,16 +67,16 @@ describe.concurrent("bun explain", () => {
       stderr: "pipe",
     });
 
-    expect(await exited).toBe(0);
-    const output = await stdout.text();
+    const [output, , code] = await Promise.all([stdout.text(), stderr.text(), exited]);
     expect(output).toContain("lodash@");
+    expect(code).toBe(0);
   });
 
   // TS-3: alias wired, with --top flag.
   // `bun explain <pkg> --top` exits 0 — the alias inherits WhyCommand's flag handling.
   it("accepts --top flag and exits 0", async () => {
     const testDir = await setupFixture();
-    const { stdout, exited } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "explain", "lodash", "--top"],
       cwd: testDir,
       env: bunEnv,
@@ -84,9 +84,9 @@ describe.concurrent("bun explain", () => {
       stderr: "pipe",
     });
 
-    expect(await exited).toBe(0);
-    const output = await stdout.text();
+    const [output, , code] = await Promise.all([stdout.text(), stderr.text(), exited]);
     expect(output).toContain("lodash@");
+    expect(code).toBe(0);
   });
 
   // TS-4: alias wired, --help.

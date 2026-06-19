@@ -250,7 +250,7 @@ describe("MessagePort pipe", () => {
           }
           for (let i = 0; i < 10; i++) { Bun.gc(true); await Bun.sleep(0); }
           // If dropped-in-transit endpoints weren't closed, every D would
-          // be pinned via isOtherSideOpen and finalized.count would be 0.
+          // be pinned via isActivityPending (!PeerClosed) and finalized.count would be 0.
           console.log(JSON.stringify({ finalized: finalized.count }));
           A.close();
           process.exit(0);

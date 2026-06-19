@@ -115,9 +115,7 @@ describe("v8.getHeapStatistics", () => {
 });
 
 describe("v8.startupSnapshot", () => {
-  // Bun never builds a V8 startup snapshot, so isBuildingSnapshot() must return
-  // false instead of throwing. bson (via mongodb / @keyv/mongo) calls it at
-  // import time and expects a boolean. https://github.com/oven-sh/bun/issues/32501
+  // https://github.com/oven-sh/bun/issues/32501
   test("isBuildingSnapshot() returns false", () => {
     const { startupSnapshot } = require("node:v8");
     expect(startupSnapshot.isBuildingSnapshot()).toBe(false);

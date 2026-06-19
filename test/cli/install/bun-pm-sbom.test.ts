@@ -394,7 +394,7 @@ describe("bun pm sbom", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toContain("bun pm sbom");
   });
 });

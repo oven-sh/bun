@@ -4,10 +4,15 @@
 //!   - CycloneDX 1.7 (default): <https://cyclonedx.org/>
 //!   - SPDX 2.3: <https://spdx.dev/>
 
-use std::collections::HashSet;
+// The CycloneDX / SPDX serializers below hand-format pretty-printed JSON;
+// `write!` with a trailing '\n' is the natural shape there and lines up with
+// the adjacent `w.extend_from_slice(b"...\n")` calls.
+#![allow(clippy::write_with_newline)]
+
 use std::io::Write as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use bun_collections::StringSet;
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, strings};
 use bun_install::integrity::{Integrity, Tag as IntegrityTag};
@@ -52,7 +57,7 @@ impl PmSbomCommand {
                 Some(fmt) => fmt,
                 None => {
                     Output::err_generic("invalid --format value: '{s}'", (bstr::BStr::new(f),));
-                    Output::note("valid values are 'cyclonedx' or 'spdx'");
+                    bun_core::note!("valid values are 'cyclonedx' or 'spdx'");
                     Global::exit(1);
                 }
             },
@@ -101,11 +106,11 @@ impl PmSbomCommand {
                 Global::exit(1);
             }
             if pm.options.log_level != bun_install::LogLevel::Silent {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<green>Saved<r> {} ({} packages)",
                     bstr::BStr::new(path),
                     generator.components.len()
-                ));
+                );
             }
         } else {
             let _ = Output::writer().write_all(&out);
@@ -131,6 +136,8 @@ impl PmSbomCommand {
             \x20 <d>Write an SPDX 2.3 SBOM to a file<r>\n\
             \x20 <b><green>bun pm sbom<r> <cyan>--format<r> spdx <cyan>-o<r> sbom.spdx.json\n\
             \n";
+        #[allow(clippy::disallowed_methods)]
+        // help-text const contains <tag> markup — must use the runtime tag-walker
         Output::pretty(help);
         Output::flush();
     }
@@ -349,10 +356,10 @@ impl<'a> Generator<'a> {
 
         // Build a component for every other package.
         let mut components: Vec<Component> = Vec::with_capacity(pkg_len.saturating_sub(1));
-        let mut seen_refs: HashSet<Vec<u8>> = HashSet::new();
-        let mut seen_spdx_ids: HashSet<Vec<u8>> = HashSet::new();
-        seen_refs.insert(root.ref_.clone());
-        seen_spdx_ids.insert(root.spdx_id.clone());
+        let mut seen_refs = StringSet::new();
+        let mut seen_spdx_ids = StringSet::new();
+        let _ = seen_refs.insert(&root.ref_);
+        let _ = seen_spdx_ids.insert(&root.spdx_id);
 
         for idx in 0..pkg_len {
             let pkg_id = idx as PackageID;
@@ -445,7 +452,7 @@ impl<'a> Generator<'a> {
                 let unique = format!("{}~{}", bstr::BStr::new(&ref_), idx).into_bytes();
                 ref_ = unique;
             }
-            seen_refs.insert(ref_.clone());
+            let _ = seen_refs.insert(&ref_);
 
             // SPDXIDs must also be unique, but are derived from `ref_` by
             // sanitizing non-alphanumeric characters to `-`, so two distinct
@@ -456,7 +463,7 @@ impl<'a> Generator<'a> {
                 let unique = format!("{}.{}", bstr::BStr::new(&spdx_id), idx).into_bytes();
                 spdx_id = unique;
             }
-            seen_spdx_ids.insert(spdx_id.clone());
+            let _ = seen_spdx_ids.insert(&spdx_id);
 
             id_to_component[pkg_id as usize] = components.len() as u32;
             components.push(Component {

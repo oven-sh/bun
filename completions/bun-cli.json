@@ -2860,7 +2860,7 @@
               "name": "format",
               "description": "Output format: cyclonedx (default) or spdx",
               "hasValue": true,
-              "valueType": "string",
+              "valueType": "val",
               "required": false,
               "multiple": false
             },
@@ -2869,7 +2869,7 @@
               "shortName": "o",
               "description": "Write the SBOM to a file instead of stdout",
               "hasValue": true,
-              "valueType": "string",
+              "valueType": "val",
               "required": false,
               "multiple": false
             }

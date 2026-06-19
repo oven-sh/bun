@@ -935,6 +935,7 @@ for (const [title, bunInstallValue, base] of [
     delete spawnEnv.BUN_INSTALL_GLOBAL_DIR;
     delete spawnEnv.BUN_INSTALL_BIN;
     delete spawnEnv.XDG_CACHE_HOME;
+    delete spawnEnv.XDG_CONFIG_HOME;
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "pm", "bin", "-g"],

@@ -32,26 +32,26 @@ Everything lives in this crate; nothing is vendored. Each file is either a
 **whole-crate port** (upstream `src/` copied byte-for-byte, only import paths
 rewritten) or an **AST-boundary port** (re-typed onto `bun_ast`).
 
-| Upstream | Bun port (`src/react_compiler/`) | Kind |
-|---|---|---|
-| `react_compiler_hir/src/` | `hir/` | whole-crate |
-| `react_compiler_diagnostics/src/` | `diagnostics/` | whole-crate |
-| `react_compiler_ssa/src/` | `ssa/` | whole-crate |
-| `react_compiler_inference/src/` | `inference/` | whole-crate |
-| `react_compiler_typeinference/src/` | `typeinference/` | whole-crate |
-| `react_compiler_optimization/src/` | `optimization/` | whole-crate |
-| `react_compiler_validation/src/` | `validation/` | whole-crate |
-| `react_compiler_reactive_scopes/src/` | `reactive_scopes/` | whole-crate (all passes EXCEPT `codegen_reactive_function.rs`) |
-| `react_compiler_utils/src/` | `utils/` | whole-crate |
-| `react_compiler_lowering/build_hir.rs` | `lowering/build_hir.rs` | AST-boundary — reads `bun_ast::{Expr,Stmt,Binding}` instead of `react_compiler_ast::*` |
-| `react_compiler_lowering/hir_builder.rs` | `lowering/hir_builder.rs` | AST-boundary — `Builder` holds `&[Symbol]`/`&Scope` instead of `&ScopeInfo` |
-| `react_compiler_lowering/find_context_identifiers.rs` | `lowering/find_context_identifiers.rs` | AST-boundary — walks `bun_ast` |
-| `react_compiler_lowering/identifier_loc_index.rs` | `lowering/identifier_loc_index.rs` | AST-boundary — keyed by `Ref` not `(u32, String)` |
-| `react_compiler_reactive_scopes/codegen_reactive_function.rs` | `codegen.rs` | AST-boundary — emits `bun_ast::{Expr,Stmt,Binding}` |
-| `react_compiler/entrypoint/pipeline.rs` | `pipeline.rs` | AST-boundary — calls our `lower` + HIR passes + our `codegen` |
-| `react_compiler/entrypoint/program.rs` | `program.rs` | AST-boundary — walks `&[Stmt]`, finds candidate components/hooks |
-| `react_compiler/entrypoint/{imports,gating,suppression,compile_result}.rs` | same names | AST-boundary — small; emit/read `bun_ast` |
-| `react_compiler_ast`, `react_compiler_lowering` (rest), `react_compiler` (rest) | — | **not in tree** — upstream-only porting reference |
+| Upstream                                                                        | Bun port (`src/react_compiler/`)       | Kind                                                                                   |
+| ------------------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------- |
+| `react_compiler_hir/src/`                                                       | `hir/`                                 | whole-crate                                                                            |
+| `react_compiler_diagnostics/src/`                                               | `diagnostics/`                         | whole-crate                                                                            |
+| `react_compiler_ssa/src/`                                                       | `ssa/`                                 | whole-crate                                                                            |
+| `react_compiler_inference/src/`                                                 | `inference/`                           | whole-crate                                                                            |
+| `react_compiler_typeinference/src/`                                             | `typeinference/`                       | whole-crate                                                                            |
+| `react_compiler_optimization/src/`                                              | `optimization/`                        | whole-crate                                                                            |
+| `react_compiler_validation/src/`                                                | `validation/`                          | whole-crate                                                                            |
+| `react_compiler_reactive_scopes/src/`                                           | `reactive_scopes/`                     | whole-crate (all passes EXCEPT `codegen_reactive_function.rs`)                         |
+| `react_compiler_utils/src/`                                                     | `utils/`                               | whole-crate                                                                            |
+| `react_compiler_lowering/build_hir.rs`                                          | `lowering/build_hir.rs`                | AST-boundary — reads `bun_ast::{Expr,Stmt,Binding}` instead of `react_compiler_ast::*` |
+| `react_compiler_lowering/hir_builder.rs`                                        | `lowering/hir_builder.rs`              | AST-boundary — `Builder` holds `&[Symbol]`/`&Scope` instead of `&ScopeInfo`            |
+| `react_compiler_lowering/find_context_identifiers.rs`                           | `lowering/find_context_identifiers.rs` | AST-boundary — walks `bun_ast`                                                         |
+| `react_compiler_lowering/identifier_loc_index.rs`                               | `lowering/identifier_loc_index.rs`     | AST-boundary — keyed by `Ref` not `(u32, String)`                                      |
+| `react_compiler_reactive_scopes/codegen_reactive_function.rs`                   | `codegen.rs`                           | AST-boundary — emits `bun_ast::{Expr,Stmt,Binding}`                                    |
+| `react_compiler/entrypoint/pipeline.rs`                                         | `pipeline.rs`                          | AST-boundary — calls our `lower` + HIR passes + our `codegen`                          |
+| `react_compiler/entrypoint/program.rs`                                          | `program.rs`                           | AST-boundary — walks `&[Stmt]`, finds candidate components/hooks                       |
+| `react_compiler/entrypoint/{imports,gating,suppression,compile_result}.rs`      | same names                             | AST-boundary — small; emit/read `bun_ast`                                              |
+| `react_compiler_ast`, `react_compiler_lowering` (rest), `react_compiler` (rest) | —                                      | **not in tree** — upstream-only porting reference                                      |
 
 `validate_source_locations.rs` and `fixture_utils.rs` are upstream test/debug
 helpers — **not ported**.
@@ -66,22 +66,22 @@ hunk, so gratuitous restructuring makes that harder.
 
 ### Type mapping (input: lowering)
 
-| upstream `react_compiler_ast` | `bun_ast` |
-|---|---|
-| `Expression` | `Expr` (`expr::Data`) |
-| `Statement` | `Stmt` (`stmt::Data`) |
-| `PatternLike` | `Binding` (`b::B`) |
-| `Identifier { name, .. }` | `Ref` → `symbols[ref.inner_index()].original_name` |
-| `BaseNode { start, node_id, .. }` | `Loc { start: i32 }` (no node_id — use `Ref` for identity) |
-| `ScopeInfo` / `BindingId` | `&[Symbol]` + `&Scope` tree; binding identity is `Ref` |
+| upstream `react_compiler_ast`                                            | `bun_ast`                                                                      |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| `Expression`                                                             | `Expr` (`expr::Data`)                                                          |
+| `Statement`                                                              | `Stmt` (`stmt::Data`)                                                          |
+| `PatternLike`                                                            | `Binding` (`b::B`)                                                             |
+| `Identifier { name, .. }`                                                | `Ref` → `symbols[ref.inner_index()].original_name`                             |
+| `BaseNode { start, node_id, .. }`                                        | `Loc { start: i32 }` (no node_id — use `Ref` for identity)                     |
+| `ScopeInfo` / `BindingId`                                                | `&[Symbol]` + `&Scope` tree; binding identity is `Ref`                         |
 | `FunctionDeclaration` / `FunctionExpression` / `ArrowFunctionExpression` | `G::Fn` / `E::Arrow` (`FunctionNode<'a>` enum wraps a `&G::Fn` or `&E::Arrow`) |
-| `BlockStatement.body: Vec<Statement>` | `G::FnBody.stmts: StoreSlice<Stmt>` |
-| `BinaryExpression`/`LogicalExpression`/`AssignmentExpression` | one `EBinary` with `OpCode` discriminant |
-| `MemberExpression { computed }` | `EDot` (computed=false) / `EIndex` (computed=true) |
-| `OptionalMemberExpression`/`OptionalCallExpression` | `optional_chain: Option<OptionalChain>` on `EDot`/`EIndex`/`ECall` |
-| `JSXElement` / `JSXFragment` | one `EJsxElement` (`tag: None` = fragment) |
-| `VariableDeclaration` | `S::Local` |
-| `StringLiteral.value: JsString` | `E::EString` (`data: StoreStr` UTF-8, or `data16` for UTF-16) |
+| `BlockStatement.body: Vec<Statement>`                                    | `G::FnBody.stmts: StoreSlice<Stmt>`                                            |
+| `BinaryExpression`/`LogicalExpression`/`AssignmentExpression`            | one `EBinary` with `OpCode` discriminant                                       |
+| `MemberExpression { computed }`                                          | `EDot` (computed=false) / `EIndex` (computed=true)                             |
+| `OptionalMemberExpression`/`OptionalCallExpression`                      | `optional_chain: Option<OptionalChain>` on `EDot`/`EIndex`/`ECall`             |
+| `JSXElement` / `JSXFragment`                                             | one `EJsxElement` (`tag: None` = fragment)                                     |
+| `VariableDeclaration`                                                    | `S::Local`                                                                     |
+| `StringLiteral.value: JsString`                                          | `E::EString` (`data: StoreStr` UTF-8, or `data16` for UTF-16)                  |
 
 **Scope/binding resolution.** Upstream's `ScopeInfo` is a flat table the
 Babel/OXC frontends build separately. Bun's parser already resolved every
@@ -99,16 +99,16 @@ only for diagnostic span width).
 
 ### Type mapping (output: codegen)
 
-| upstream emits | Bun port emits |
-|---|---|
+| upstream emits                             | Bun port emits                                                                     |
+| ------------------------------------------ | ---------------------------------------------------------------------------------- |
 | `Expression::Identifier(Identifier{name})` | `Expr::init_identifier(ref_, loc)` — `ref_` from `Builder.declare_temporary(name)` |
-| `Statement::VariableDeclaration` | `Stmt::alloc(S::Local { kind, decls, .. }, loc)` |
-| `Statement::ExpressionStatement` | `Stmt::alloc(S::SExpr { value, .. }, loc)` |
-| `BlockStatement { body }` | `G::FnBody { stmts: StoreSlice<Stmt>, loc }` |
-| `Expression::CallExpression` | `Expr::init(E::Call { target, args, .. }, loc)` |
-| `Expression::ArrayExpression` | `Expr::init(E::Array { items, .. }, loc)` |
-| `Expression::JSXElement` | `Expr::init(E::JSXElement { tag, properties, children, .. }, loc)` |
-| `PatternLike::ArrayPattern` | `Binding::alloc(arena, b::Array { items, .. }, loc)` |
+| `Statement::VariableDeclaration`           | `Stmt::alloc(S::Local { kind, decls, .. }, loc)`                                   |
+| `Statement::ExpressionStatement`           | `Stmt::alloc(S::SExpr { value, .. }, loc)`                                         |
+| `BlockStatement { body }`                  | `G::FnBody { stmts: StoreSlice<Stmt>, loc }`                                       |
+| `Expression::CallExpression`               | `Expr::init(E::Call { target, args, .. }, loc)`                                    |
+| `Expression::ArrayExpression`              | `Expr::init(E::Array { items, .. }, loc)`                                          |
+| `Expression::JSXElement`                   | `Expr::init(E::JSXElement { tag, properties, children, .. }, loc)`                 |
+| `PatternLike::ArrayPattern`                | `Binding::alloc(arena, b::Array { items, .. }, loc)`                               |
 
 Node allocation uses the thread-local store (`Expr::init`, `Stmt::alloc`) so
 nodes land in the parser's arena. `Binding` and slice/string copies need an

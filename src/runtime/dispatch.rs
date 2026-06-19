@@ -164,6 +164,7 @@ use bun_sql_jsc::postgres::PostgresSQLConnection;
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
+use bun_jsc::garbage_collection_controller::GarbageCollectionController;
 
 #[cfg(not(windows))]
 use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
@@ -977,6 +978,18 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
             timer_arm!(AbortSignalTimeout, event_loop_timer, |c, _now, vm| {
                 AbortSignalTimeout::run(c, vm)
             })
+        }
+        EventLoopTimerTag::GcOneShot => {
+            timer_arm!(GarbageCollectionController, gc_timer, |c, _now, _vm| {
+                GarbageCollectionController::on_gc_timer(c)
+            })
+        }
+        EventLoopTimerTag::GcRepeating => {
+            timer_arm!(
+                GarbageCollectionController,
+                gc_repeating_timer,
+                |c, _now, vm| GarbageCollectionController::on_gc_repeating_timer(c, vm)
+            )
         }
         EventLoopTimerTag::DateHeaderTimer => {
             timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c)

@@ -305,6 +305,40 @@ const tests = [
     },
     error: 'IP: 127.0.0.1 is not in the cert\'s list: '
   },
+  // IPv6 addresses
+  {
+    host: '::1', cert: {
+      subjectaltname: 'IP Address:::1',
+      subject: {}
+    }
+  },
+  {
+    host: '[::1]', cert: {
+      subjectaltname: 'IP Address:::1',
+      subject: {}
+    }
+  },
+  {
+    host: '[2001:DB8::1]', cert: {
+      subjectaltname: 'IP Address:2001:DB8::1',
+      subject: {}
+    }
+  },
+  {
+    host: '[2001:DB8::2]', cert: {
+      subjectaltname: 'IP Address:2001:DB8::1',
+      subject: {}
+    },
+    error: 'IP: 2001:DB8::2 is not in the cert\'s list: ' +
+           '2001:db8::1'
+  },
+  {
+    host: '[::1]', cert: {
+      subjectaltname: 'DNS:a.com',
+      subject: {}
+    },
+    error: 'IP: ::1 is not in the cert\'s list: '
+  },
   {
     host: 'localhost', cert: {
       subjectaltname: 'DNS:a.com',

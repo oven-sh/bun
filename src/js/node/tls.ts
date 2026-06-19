@@ -578,9 +578,12 @@ function checkServerIdentity(hostname, cert) {
   let reason = "Unknown reason";
 
   hostname = unfqdn(hostname); // Remove trailing dot for error messages.
-  if (net.isIP(hostname)) {
-    valid = ArrayPrototypeIncludes.$call(ips, canonicalizeIP(hostname));
-    if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");
+  // Strip IPv6 literal brackets before IP check — `net.isIP("[::1]")` returns 0
+  // because the brackets are not part of the address.
+  const unbracketed = RegExpPrototypeSymbolReplace.$call(/^\[|\]$/g, hostname, "");
+  if (net.isIP(unbracketed)) {
+    valid = ArrayPrototypeIncludes.$call(ips, canonicalizeIP(unbracketed));
+    if (!valid) reason = `IP: ${unbracketed} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");
   } else if (dnsNames.length > 0 || subject?.CN) {
     const hostParts = splitHost(hostname);
     const wildcard = pattern => check(hostParts, pattern, true);

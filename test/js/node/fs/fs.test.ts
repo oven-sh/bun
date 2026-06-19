@@ -1617,7 +1617,7 @@ describe("open with a numeric flag boxed as a double", () => {
   it("still rejects a non-integer numeric flag", () => {
     using dir = tempDir("fs-flags-double-reject", {});
     const file = join(String(dir), "bad.txt");
-    expect.toThrowWithCode(() => openSync(file, asDouble(578.5), 0o666), "ERR_OUT_OF_RANGE");
+    expect(() => openSync(file, asDouble(578.5), 0o666)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
   });
 });
 

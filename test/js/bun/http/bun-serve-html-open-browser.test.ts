@@ -1,3 +1,4 @@
+import * as internalForTesting from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 
 // The HTML dev server "o" shortcut (`bun index.html`, then press `o`) opens the
@@ -5,7 +6,10 @@ import { describe, expect, test } from "bun:test";
 // an executable on PATH, so spawning it directly throws
 // `Executable not found in $PATH: "start"`.
 // https://github.com/oven-sh/bun/issues/26231
-const { getBrowserOpenCommand } = require("bun:internal-for-testing");
+//
+// Read off the namespace rather than a named import so the file still loads when
+// the export is absent, surfacing a missing fix as a failing assertion.
+const { getBrowserOpenCommand } = internalForTesting;
 
 describe("getBrowserOpenCommand", () => {
   const url = "http://localhost:3000/";

@@ -344,7 +344,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // and its items are merged into the first. The symbols may
                     // already have a namespace_alias from ImportScanner pointing at
                     // the now-unused record, so we must update it.
-                    symbol.namespace_alias = Some(Box::new(G::NamespaceAlias {
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
                         namespace_ref: deduped.namespace_ref,
                         alias: item.original_name,
                         import_record_index: deduped.import_record_index,

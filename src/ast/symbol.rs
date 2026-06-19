@@ -27,8 +27,11 @@ pub struct Symbol {
     /// if it has a namespace alias.
     ///
     /// Boxed: this is `None` for the overwhelming majority of symbols, so we
-    /// pay 8 bytes inline instead of ~32.
-    pub namespace_alias: Option<Box<G::NamespaceAlias>>,
+    /// pay 8 bytes inline instead of ~32. `AstBox` so the header lives in the
+    /// same spill heap as the rest of the per-file AST and is reclaimed on
+    /// reset (`Symbol` is held in `ArenaVec<'a, Symbol>`; `Drop` is not
+    /// guaranteed to run).
+    pub namespace_alias: Option<bun_alloc::AstBox<G::NamespaceAlias>>,
 
     /// Used by the parser for single pass parsing.
     ///
@@ -206,7 +209,7 @@ symbol_flag_accessors! {
 
 // The size of `Symbol` is not load-bearing (no FFI, no serialization), so
 // there is intentionally no layout assert here.
-const _: () = assert!(core::mem::size_of::<Option<Box<G::NamespaceAlias>>>() == 8);
+const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);
 
 const INVALID_CHUNK_INDEX: u32 = u32::MAX;
 pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;

@@ -3900,7 +3900,7 @@ impl<'a> LinkerContext<'a> {
                     // SAFETY: the mutated symbol slot is disjoint from `named_import`
                     // (graph.ast SoA) and `result` (stack local).
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
-                        Some(Box::new(G::NamespaceAlias {
+                        Some(bun_alloc::ast_box(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
                             ..Default::default()
@@ -3924,7 +3924,7 @@ impl<'a> LinkerContext<'a> {
                     // SAFETY: one-shot field store after `imports_to_bind.put` (disjoint
                     // map) has fully returned; no other live borrow aliases this symbol slot.
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
-                        Some(Box::new(G::NamespaceAlias {
+                        Some(bun_alloc::ast_box(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
                             ..Default::default()

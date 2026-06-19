@@ -2175,7 +2175,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[ref_.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(Box::new(js_ast::NamespaceAlias {
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
                         namespace_ref,
                         alias: js_ast::StoreStr::new(alias_name),
                         import_record_index: import_record_i,
@@ -3229,7 +3229,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.bun_app_namespace_ref =
                         self.new_symbol(js_ast::symbol::Kind::Other, b"import_bun_app")?;
                     let symbol = &mut self.symbols[self.response_ref.inner_index() as usize];
-                    symbol.namespace_alias = Some(Box::new(js_ast::NamespaceAlias {
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
                         namespace_ref: self.bun_app_namespace_ref,
                         alias: js_ast::StoreStr::new(b"Response"),
                         was_originally_property_access: false,
@@ -4148,7 +4148,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if self.options.features.hot_module_reloading {
                     let symbol = &mut self.symbols[r#ref.inner_index() as usize];
                     if symbol.namespace_alias.is_none() {
-                        symbol.namespace_alias = Some(Box::new(js_ast::NamespaceAlias {
+                        symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
                             namespace_ref: stmt.namespace_ref,
                             alias: js_ast::StoreStr::new(b"default"),
                             import_record_index: stmt.import_record_index,
@@ -4230,7 +4230,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[r#ref.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(Box::new(js_ast::NamespaceAlias {
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
                         namespace_ref: stmt.namespace_ref,
                         alias: js_ast::StoreStr::new(alias),
                         import_record_index: stmt.import_record_index,

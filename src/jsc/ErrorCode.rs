@@ -713,9 +713,13 @@ impl ErrorCode {
     pub const DIR_CONCURRENT_OPERATION: ErrorCode = ErrorCode(327);
     /// `ERR_INVALID_BUFFER_SIZE` (instanceof RangeError)
     pub const INVALID_BUFFER_SIZE: ErrorCode = ErrorCode(328);
+    /// `ERR_INSPECTOR_ALREADY_ACTIVATED` (instanceof Error)
+    pub const INSPECTOR_ALREADY_ACTIVATED: ErrorCode = ErrorCode(329);
+    /// `ERR_INSPECTOR_NOT_ACTIVE` (instanceof Error)
+    pub const INSPECTOR_NOT_ACTIVE: ErrorCode = ErrorCode(330);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 329;
+    pub const COUNT: u16 = 331;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1087,6 +1091,8 @@ impl ErrorCode {
     pub const ERR_SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode::SECRETS_INTERACTION_REQUIRED;
     pub const ERR_HTTP2_GOAWAY_SESSION: ErrorCode = ErrorCode::HTTP2_GOAWAY_SESSION;
     pub const ERR_PROXY_TUNNEL: ErrorCode = ErrorCode::PROXY_TUNNEL;
+    pub const ERR_INSPECTOR_ALREADY_ACTIVATED: ErrorCode = ErrorCode::INSPECTOR_ALREADY_ACTIVATED;
+    pub const ERR_INSPECTOR_NOT_ACTIVE: ErrorCode = ErrorCode::INSPECTOR_NOT_ACTIVE;
 
     // NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
     // do NOT live here. They belong to the unrelated enum
@@ -1433,6 +1439,8 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY",
     "ERR_DIR_CONCURRENT_OPERATION",
     "ERR_INVALID_BUFFER_SIZE",
+    "ERR_INSPECTOR_ALREADY_ACTIVATED",
+    "ERR_INSPECTOR_NOT_ACTIVE",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

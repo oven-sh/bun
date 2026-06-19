@@ -129,8 +129,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_INVALID_SETTING_VALUE", TypeError, "TypeError", RangeError],
   ["ERR_ILLEGAL_CONSTRUCTOR", TypeError],
   ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError],
-  ["ERR_INSPECTOR_ALREADY_ACTIVATED", Error],
-  ["ERR_INSPECTOR_NOT_ACTIVE", Error],
   ["ERR_INVALID_ADDRESS", Error],
   ["ERR_INVALID_ADDRESS_FAMILY", RangeError],
   ["ERR_INVALID_ARG_TYPE", TypeError],
@@ -342,5 +340,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY", Error],
   ["ERR_DIR_CONCURRENT_OPERATION", Error],
   ["ERR_INVALID_BUFFER_SIZE", RangeError],
+  ["ERR_INSPECTOR_ALREADY_ACTIVATED", Error],
+  ["ERR_INSPECTOR_NOT_ACTIVE", Error],
 ];
 export default errors;

@@ -212,12 +212,12 @@ fn insert_additional_function_declaration(
     };
 
     let original_fn_name =
-        original_fn_ref.func.name.and_then(|n| n.ref_).expect(
+        original_fn_ref.func.name.map(|n| n.ref_).expect(
             "Expected function declaration referenced elsewhere to have a named identifier",
         );
     let _compiled_id = compiled
         .name
-        .and_then(|n| n.ref_)
+        .map(|n| n.ref_)
         .expect("Expected compiled function declaration to have a named identifier");
     let original_params = original_fn_ref.func.args;
     let original_has_rest = original_fn_ref
@@ -243,14 +243,14 @@ fn insert_additional_function_declaration(
     // Step 1: rename existing functions
     compiled.name = Some(LocRef {
         loc: Loc::EMPTY,
-        ref_: Some(optimized_fn_ref),
+        ref_: optimized_fn_ref,
     });
     compiled.flags.remove(flags::Function::IsExport);
 
     // Rename the original function in-place to *_unoptimized
     original_fn_ref.func.name = Some(LocRef {
         loc: Loc::EMPTY,
-        ref_: Some(unoptimized_fn_ref),
+        ref_: unoptimized_fn_ref,
     });
 
     // Step 2: build new params and args for the dispatcher function
@@ -317,7 +317,7 @@ fn insert_additional_function_declaration(
             func: G::Fn {
                 name: Some(LocRef {
                     loc: Loc::EMPTY,
-                    ref_: Some(original_fn_name),
+                    ref_: original_fn_name,
                 }),
                 args: StoreSlice::new_mut(new_params),
                 body: G::FnBody {
@@ -467,7 +467,7 @@ fn make_const_decl(arena: &Arena, ref_: Ref, init: Expr, is_export: bool) -> Stm
 /// FunctionDeclaration with an id.
 fn get_fn_decl_name(stmt: &Stmt) -> Option<Ref> {
     match stmt.data {
-        StmtData::SFunction(fd) => fd.func.name.and_then(|n| n.ref_),
+        StmtData::SFunction(fd) => fd.func.name.map(|n| n.ref_).filter(|r| r.is_valid()),
         _ => None,
     }
 }
@@ -478,7 +478,7 @@ fn get_fn_decl_name_from_export_default(stmt: &Stmt) -> Option<Ref> {
     match stmt.data {
         StmtData::SExportDefault(ed) => match ed.value {
             StmtOrExpr::Stmt(inner) => match inner.data {
-                StmtData::SFunction(fd) => fd.func.name.and_then(|n| n.ref_),
+                StmtData::SFunction(fd) => fd.func.name.map(|n| n.ref_).filter(|r| r.is_valid()),
                 _ => None,
             },
             StmtOrExpr::Expr(_) => None,

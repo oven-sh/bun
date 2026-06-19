@@ -1516,7 +1516,7 @@ fn label_string(
     builder: &HirBuilder,
     label: Option<ast::LocRef>,
 ) -> Result<Option<String>, CompilerDiagnostic> {
-    match label.and_then(|l| l.ref_) {
+    match label.map(|l| l.ref_).filter(|r| r.is_valid()) {
         Some(r) => Ok(Some(builder.ref_name(r)?)),
         None => Ok(None),
     }

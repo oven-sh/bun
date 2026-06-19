@@ -566,12 +566,10 @@ impl<'h> CaptureWalker<'h> {
 
     fn walk_fn(&mut self, func: &G::Fn) {
         if let Some(name) = &func.name {
-            if let Some(ref_) = name.ref_ {
-                self.record_decl(ref_);
-            }
+            self.record_decl(name.ref_);
         }
-        if let Some(ref_) = func.arguments_ref {
-            self.record_decl(ref_);
+        if func.arguments_ref.is_valid() {
+            self.record_decl(func.arguments_ref);
         }
         self.push_scope(func.open_parens_loc);
         self.push_scope(func.body.loc);
@@ -693,17 +691,13 @@ impl<'h> CaptureWalker<'h> {
             }
             StmtData::SFunction(f) => {
                 if let Some(name) = &f.func.name {
-                    if let Some(ref_) = name.ref_ {
-                        self.record_decl(ref_);
-                    }
+                    self.record_decl(name.ref_);
                 }
                 self.walk_fn(&f.func);
             }
             StmtData::SClass(c) => {
                 if let Some(name) = &c.class.class_name {
-                    if let Some(ref_) = name.ref_ {
-                        self.record_decl(ref_);
-                    }
+                    self.record_decl(name.ref_);
                 }
             }
             StmtData::SExportDefault(e) => match &e.value {

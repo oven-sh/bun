@@ -333,7 +333,7 @@ pub(crate) fn add_imports_to_program(
                 namespace_ref,
                 default_name: None,
                 items: StoreSlice::new_mut(items.leak()),
-                star_name_loc: None,
+                star_name_loc: Loc::EMPTY,
                 import_record_index,
                 is_single_line: true,
                 phase_defer: false,
@@ -356,7 +356,7 @@ fn make_import_specifier(spec: &NonLocalImportSpecifier) -> ClauseItem {
         alias_loc: Loc::EMPTY,
         name: LocRef {
             loc: Loc::EMPTY,
-            ref_: Some(spec.name_ref),
+            ref_: spec.name_ref,
         },
         original_name: StoreStr::EMPTY,
     }

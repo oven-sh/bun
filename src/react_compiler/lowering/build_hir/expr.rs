@@ -35,7 +35,7 @@ pub(crate) fn lower_expression(
             loc,
         }),
         Data::ENumber(lit) => Ok(InstructionValue::Primitive {
-            value: PrimitiveValue::Number(FloatValue::new(lit.value)),
+            value: PrimitiveValue::Number(FloatValue::new(lit.value())),
             loc,
         }),
         Data::EString(lit) => Ok(InstructionValue::Primitive {
@@ -681,7 +681,7 @@ fn lower_simple_assignment(
                     builder,
                     InstructionValue::PropertyStore {
                         object,
-                        property: PropertyLiteral::Number(FloatValue::new(num.value)),
+                        property: PropertyLiteral::Number(FloatValue::new(num.value())),
                         value: right,
                         loc: left_loc,
                     },

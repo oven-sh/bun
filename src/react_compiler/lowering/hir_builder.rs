@@ -198,7 +198,7 @@ impl<'a> FunctionNode<'a> {
 
     pub fn name_ref(&self) -> Option<Ref> {
         match self {
-            FunctionNode::Function(f) => f.name.as_ref().and_then(|n| n.ref_),
+            FunctionNode::Function(f) => f.name.as_ref().map(|n| n.ref_).filter(|r| r.is_valid()),
             FunctionNode::Arrow(_) => None,
         }
     }

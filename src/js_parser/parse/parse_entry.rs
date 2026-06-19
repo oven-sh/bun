@@ -2193,16 +2193,14 @@ impl<'a> Parser<'a> {
                                 is_top_level: true,
                             })?;
                             for item in import.items.iter() {
-                                if let Some(ref_) = item.name.ref_ {
-                                    declared_symbols.append(DeclaredSymbol {
-                                        ref_,
-                                        is_top_level: true,
-                                    })?;
-                                }
+                                declared_symbols.append(DeclaredSymbol {
+                                    ref_: item.name.ref_,
+                                    is_top_level: true,
+                                })?;
                             }
                         }
                         js_ast::StmtData::SFunction(func) => {
-                            if let Some(ref_) = func.func.name.and_then(|n| n.ref_) {
+                            if let Some(ref_) = func.func.name.map(|n| n.ref_) {
                                 declared_symbols.append(DeclaredSymbol {
                                     ref_,
                                     is_top_level: true,

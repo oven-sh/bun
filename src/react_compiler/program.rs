@@ -157,7 +157,7 @@ pub fn collect_import_bindings(
                 .ok()
                 .map(str::to_owned)
         };
-        if import.star_name_loc.is_some() {
+        if !import.star_name_loc.is_empty() {
             if let Some(name) = local_name(import.namespace_ref) {
                 out.insert(
                     import.namespace_ref,
@@ -169,20 +169,19 @@ pub fn collect_import_bindings(
             }
         }
         if let Some(default) = import.default_name {
-            if let Some(ref_) = default.ref_ {
-                if let Some(name) = local_name(ref_) {
-                    out.insert(
-                        ref_,
-                        VariableBinding::ImportDefault {
-                            name,
-                            module: module.to_owned(),
-                        },
-                    );
-                }
+            let ref_ = default.ref_;
+            if let Some(name) = local_name(ref_) {
+                out.insert(
+                    ref_,
+                    VariableBinding::ImportDefault {
+                        name,
+                        module: module.to_owned(),
+                    },
+                );
             }
         }
         for item in import.items.slice() {
-            let Some(ref_) = item.name.ref_ else { continue };
+            let ref_ = item.name.ref_;
             let Some(name) = local_name(ref_) else {
                 continue;
             };
@@ -1297,7 +1296,7 @@ pub fn maybe_compile_function(
     // tree-shaken away while the runtime-import Part — kept unconditionally as
     // a potentially side-effectful external import — survives, which would
     // otherwise leave a dangling `react/compiler-runtime` import in output.
-    if let Some(name_ref) = func.name.as_ref().and_then(|n| n.ref_) {
+    if let Some(name_ref) = func.name.as_ref().map(|n| n.ref_) {
         host.record_usage(name_ref);
     }
     true
@@ -1327,7 +1326,7 @@ pub fn maybe_compile_expr(
             true
         }
         ExprData::EFunction(f) => {
-            let inner_name_ref = f.func.name.as_ref().and_then(|n| n.ref_);
+            let inner_name_ref = f.func.name.as_ref().map(|n| n.ref_);
             let inner_name = inner_name_ref.map(|r| host.ref_name(r).to_vec());
             let codegen_fn = {
                 let node = FunctionNode::Function(&f.func);
@@ -1370,7 +1369,7 @@ pub fn maybe_compile_expr(
                     true
                 }
                 ExprData::EFunction(f) => {
-                    let inner_name_ref = f.func.name.as_ref().and_then(|n| n.ref_);
+                    let inner_name_ref = f.func.name.as_ref().map(|n| n.ref_);
                     let codegen_fn = {
                         let node = FunctionNode::Function(&f.func);
                         match maybe_compile_node(state, host, node, name, Some(&callee), loc) {

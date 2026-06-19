@@ -388,7 +388,7 @@ pub(super) fn lower_object_property_key(
             }
         }
         Data::ENumber(n) if !computed => Ok(Some(ObjectPropertyKey::Identifier {
-            name: n.value.to_string(),
+            name: n.value().to_string(),
         })),
         Data::EIdentifier(id) if !computed => Ok(Some(ObjectPropertyKey::Identifier {
             name: builder.ref_name(id.ref_)?,

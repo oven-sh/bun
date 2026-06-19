@@ -186,9 +186,7 @@ pub fn codegen_function(
             E::Call {
                 target: use_memo_cache,
                 args: AstAlloc::vec_from_iter([Expr::init(
-                    E::Number {
-                        value: cache_count as f64,
-                    },
+                    E::Number::new(cache_count as f64),
                     loc,
                 )]),
                 ..Default::default()
@@ -447,7 +445,7 @@ fn codegen_reactive_function(
         let r = cx.cg.ref_for_name(name);
         LocRef {
             loc: convert_loc(func.loc),
-            ref_: Some(r),
+            ref_: r,
         }
     });
 
@@ -548,7 +546,7 @@ fn codegen_block_no_reset(
                             S::Label {
                                 name: LocRef {
                                     loc: Loc::EMPTY,
-                                    ref_: Some(label_ref),
+                                    ref_: label_ref,
                                 },
                                 stmt: inner,
                             },
@@ -600,12 +598,7 @@ fn codegen_reactive_scope(
         Expr::init(
             E::Index {
                 target: cache_ident(),
-                index: Expr::init(
-                    E::Number {
-                        value: index as f64,
-                    },
-                    loc,
-                ),
+                index: Expr::init(E::Number::new(index as f64), loc),
                 optional_chain: None,
             },
             loc,
@@ -823,7 +816,7 @@ fn codegen_terminal(
                 let r = cx.cg.ref_for_label(*target);
                 Some(LocRef {
                     loc: Loc::EMPTY,
-                    ref_: Some(r),
+                    ref_: r,
                 })
             } else {
                 None
@@ -843,7 +836,7 @@ fn codegen_terminal(
                 let r = cx.cg.ref_for_label(*target);
                 Some(LocRef {
                     loc: Loc::EMPTY,
-                    ref_: Some(r),
+                    ref_: r,
                 })
             } else {
                 None
@@ -1470,7 +1463,7 @@ fn emit_store(
                     let mut func: G::Fn = G::Fn {
                         name: Some(LocRef {
                             loc: lval.loc,
-                            ref_: Some(fn_id.r#ref),
+                            ref_: fn_id.r#ref,
                         }),
                         open_parens_loc: stmt_loc,
                         args: func_expr.func.args,
@@ -2231,7 +2224,7 @@ fn codegen_function_expression(
             }
             let fn_name = name.as_ref().map(|n| {
                 let r = cx.cg.ref_for_name(n);
-                LocRef { loc, ref_: Some(r) }
+                LocRef { loc, ref_: r }
             });
             Expr::init(
                 E::Function {
@@ -2430,12 +2423,9 @@ fn codegen_object_property_key(
         ObjectPropertyKey::String { name } => Ok(string_expr(name, Loc::EMPTY)),
         ObjectPropertyKey::Identifier { name } => Ok(string_expr(name, Loc::EMPTY)),
         ObjectPropertyKey::Computed { name } => codegen_place_to_expression(cx, name),
-        ObjectPropertyKey::Number { name } => Ok(Expr::init(
-            E::Number {
-                value: name.value(),
-            },
-            Loc::EMPTY,
-        )),
+        ObjectPropertyKey::Number { name } => {
+            Ok(Expr::init(E::Number::new(name.value()), Loc::EMPTY))
+        }
     }
 }
 
@@ -3136,7 +3126,7 @@ fn property_access_expr(
         PropertyLiteral::Number(n) => Expr::init(
             E::Index {
                 target,
-                index: Expr::init(E::Number { value: n.value() }, loc),
+                index: Expr::init(E::Number::new(n.value()), loc),
                 optional_chain,
             },
             loc,
@@ -3191,7 +3181,7 @@ fn codegen_primitive_value(cx: &mut Context, value: &PrimitiveValue, loc: Loc) -
                     )
                 }
             } else {
-                Expr::init(E::Number { value: f }, loc)
+                Expr::init(E::Number::new(f), loc)
             }
         }
         PrimitiveValue::Boolean(b) => Expr::init(E::Boolean { value: *b }, loc),
@@ -3396,10 +3386,7 @@ fn wrap_hook_call_with_guard(
             Expr::init(
                 E::Call {
                     target: Expr::init_identifier(guard_ref, loc),
-                    args: AstAlloc::vec_from_iter([Expr::init(
-                        E::Number { value: kind as f64 },
-                        loc,
-                    )]),
+                    args: AstAlloc::vec_from_iter([Expr::init(E::Number::new(kind as f64), loc)]),
                     ..Default::default()
                 },
                 loc,
@@ -3466,10 +3453,7 @@ fn create_function_body_hook_guard(
             Expr::init(
                 E::Call {
                     target: Expr::init_identifier(guard_ref, loc),
-                    args: AstAlloc::vec_from_iter([Expr::init(
-                        E::Number { value: kind as f64 },
-                        loc,
-                    )]),
+                    args: AstAlloc::vec_from_iter([Expr::init(E::Number::new(kind as f64), loc)]),
                     ..Default::default()
                 },
                 loc,

@@ -72,7 +72,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
                     .expect("oom");
                 let loc_ref = js_ast::LocRef {
                     loc: bun_ast::Loc::EMPTY,
-                    ref_: Some(new_ref),
+                    ref_: new_ref,
                 };
                 VecExt::append(&mut p.module_scope_mut().generated, new_ref);
                 p.is_import_item.insert(new_ref, ());

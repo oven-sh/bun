@@ -405,7 +405,7 @@ pub(super) fn lower_member_expression(
                 });
             }
             if let Data::ENumber(lit) = &i.index.data {
-                let prop_literal = PropertyLiteral::Number(FloatValue::new(lit.value));
+                let prop_literal = PropertyLiteral::Number(FloatValue::new(lit.value()));
                 let value = InstructionValue::PropertyLoad {
                     object: object.clone(),
                     property: prop_literal.clone(),
@@ -1137,7 +1137,7 @@ fn lower_member_store(
                     builder,
                     InstructionValue::PropertyStore {
                         object,
-                        property: PropertyLiteral::Number(FloatValue::new(n.value)),
+                        property: PropertyLiteral::Number(FloatValue::new(n.value())),
                         value,
                         loc,
                     },
@@ -1180,7 +1180,7 @@ pub(super) fn lower_object_property_key(
             Ok(Some(ObjectPropertyKey::String { name }))
         }
         Data::ENumber(n) if !computed => Ok(Some(ObjectPropertyKey::Identifier {
-            name: format!("{}", n.value),
+            name: format!("{}", n.value()),
         })),
         _ if computed => {
             let place = lower_expression_to_temporary(builder, key)?;

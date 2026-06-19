@@ -176,12 +176,10 @@ impl<'a> ContextIdentifierVisitor<'a> {
         self.push_scope(func.open_parens_loc);
         self.push_scope(func.body.loc);
         if let Some(name) = &func.name {
-            if let Some(ref_) = name.ref_ {
-                self.record_decl(ref_);
-            }
+            self.record_decl(name.ref_);
         }
-        if let Some(ref_) = func.arguments_ref {
-            self.record_decl(ref_);
+        if func.arguments_ref.is_valid() {
+            self.record_decl(func.arguments_ref);
         }
         self.walk_args(func.args.slice());
         self.walk_stmts(func.body.stmts.slice());
@@ -342,16 +340,12 @@ impl<'a> ContextIdentifierVisitor<'a> {
                 // function *expressions*).
                 self.walk_fn(&f.func);
                 if let Some(name) = &f.func.name {
-                    if let Some(ref_) = name.ref_ {
-                        self.record_decl(ref_);
-                    }
+                    self.record_decl(name.ref_);
                 }
             }
             StmtData::SClass(c) => {
                 if let Some(name) = &c.class.class_name {
-                    if let Some(ref_) = name.ref_ {
-                        self.record_decl(ref_);
-                    }
+                    self.record_decl(name.ref_);
                 }
                 self.walk_class(&c.class);
             }
@@ -430,9 +424,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
             }
             Data::EClass(c) => {
                 if let Some(name) = &c.class_name {
-                    if let Some(ref_) = name.ref_ {
-                        self.record_decl(ref_);
-                    }
+                    self.record_decl(name.ref_);
                 }
                 self.walk_class(c);
             }

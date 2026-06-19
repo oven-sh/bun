@@ -135,6 +135,7 @@ pub mod js_bundler {
         pub no_macros: bool,
         pub ignore_dce_annotations: bool,
         pub emit_dce_annotations: Option<bool>,
+        pub tree_shaking: Option<bool>,
         pub names: Names,
         pub external: StringSet,
         pub allow_unresolved: Option<StringSet>,
@@ -199,6 +200,7 @@ pub mod js_bundler {
                 no_macros: false,
                 ignore_dce_annotations: false,
                 emit_dce_annotations: None,
+                tree_shaking: None,
                 names: Names::default(),
                 external: StringSet::default(),
                 allow_unresolved: None,
@@ -807,6 +809,10 @@ pub mod js_bundler {
 
             if let Some(flag) = config.get_boolean_loose(global_this, "ignoreDCEAnnotations")? {
                 this.ignore_dce_annotations = flag;
+            }
+
+            if let Some(flag) = config.get_boolean_loose(global_this, "treeShaking")? {
+                this.tree_shaking = Some(flag);
             }
 
             if let Some(conditions_value) = config.get_truthy(global_this, "conditions")? {

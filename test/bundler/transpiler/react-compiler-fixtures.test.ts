@@ -165,18 +165,20 @@ function shouldSkip(relPath: string, pragmas: Pragmas): string | null {
 // Known divergences from upstream — Bun produces a different (or no) result.
 // Grow this from CI; each entry must say why.
 const TODO: Record<string, string> = {
-  // These `@compilationMode:"infer"` fixtures declare a component/hook with no
-  // `export` and no live reference. `bun build` drops the unreferenced decl
-  // before printing (per-part liveness, independent of `tree_shaking`), so
-  // `_c(N)` never reaches the output even though the runtime import does.
-  // `--no-bundle` skips the React Compiler pass entirely, so the correct
-  // output is unobservable from this harness.
-  "infer-function-assignment": "no export — compiled body dropped before output",
-  "infer-function-expression-component": "no export — compiled body dropped before output",
-  "infer-functions-component-with-hook-call": "no export — compiled body dropped before output",
-  "infer-functions-component-with-jsx": "no export — compiled body dropped before output",
-  "infer-functions-hook-with-hook-call": "no export — compiled body dropped before output",
-  "infer-functions-hook-with-jsx": "no export — compiled body dropped before output",
+  // Bun compiles these where upstream errors. Previously masked: the fixtures
+  // have no `export`, so tree-shaking dropped the compiled body and the
+  // "error fixture should not be memoized" assertion saw an empty output.
+  "error.invalid-known-incompatible-function": "missing known-incompatible-library check",
+  "error.invalid-known-incompatible-hook": "missing known-incompatible-library check",
+  "error.invalid-known-incompatible-hook-return-property": "missing known-incompatible-library check",
+  "error.todo-missing-source-locations": "Bun compiles where upstream emits a Todo error",
+  "exhaustive-deps/error.invalid-exhaustive-effect-deps-extra-only": "missing exhaustive-deps validation",
+  "exhaustive-deps/error.invalid-exhaustive-effect-deps-missing-only": "missing exhaustive-deps validation",
+
+  // Slot-count mismatch (Bun emits 11, upstream 12). Previously masked by the
+  // `!modeMatchesBun && got.length === 0` early return — the unexported body
+  // was tree-shaken so the harness never compared slot counts.
+  "optional-chain-on-known-nonnull": "slot count mismatch (11 vs 12)",
 
   // validate_preserved_manual_memoization does not yet detect the
   // "inferred dep not present in source deps" case (upstream errors here).
@@ -280,6 +282,7 @@ async function compileAll(): Promise<void> {
       format: "esm",
       splitting: false,
       external: ["*"],
+      treeShaking: false,
       // @ts-expect-error — wired in JSBundler.rs but not yet in bun-types
       reactCompiler: true,
       reactCompilerParseTestPragmas: true,

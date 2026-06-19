@@ -2777,16 +2777,14 @@ pub mod bv2_impl {
             this.linker.graph.bump = bun_ptr::BackRef::new(this.graph.heap);
             this.transpiler.log_mut().clone_line_text = true;
 
-            // We don't expose an option to disable this. Bake forbids tree-shaking
-            // since every export must is always exist in case a future module
-            // starts depending on it.
-            if this.transpiler.options.output_format == options::Format::InternalBakeDev {
-                this.transpiler.options.tree_shaking = false;
-                this.transpiler.resolver.opts.tree_shaking = false;
-            } else {
-                this.transpiler.options.tree_shaking = true;
-                this.transpiler.resolver.opts.tree_shaking = true;
-            }
+            // Bake forbids tree-shaking since every export must always exist in
+            // case a future module starts depending on it. The override is only
+            // set by `Bun.build({ treeShaking })` for tests/debugging.
+            let tree_shaking = this.transpiler.options.tree_shaking_override.unwrap_or(
+                this.transpiler.options.output_format != options::Format::InternalBakeDev,
+            );
+            this.transpiler.options.tree_shaking = tree_shaking;
+            this.transpiler.resolver.opts.tree_shaking = tree_shaking;
 
             // BACKREF: `LinkerContext<'a>.resolver` is `ParentRef<Resolver<'a>>`;
             // the resolver lives in `transpiler` which outlives `self` (same `'a`).

@@ -1327,6 +1327,7 @@ pub struct BundleOptions<'a> {
 
     pub conditions: ESMConditions,
     pub tree_shaking: bool,
+    pub tree_shaking_override: Option<bool>,
     pub code_splitting: bool,
     pub source_map: SourceMapOption,
     pub packages: PackagesOption,
@@ -1536,6 +1537,7 @@ impl<'a> BundleOptions<'a> {
                 style: bun_core::handle_oom(self.conditions.style.clone()),
             },
             tree_shaking: self.tree_shaking,
+            tree_shaking_override: self.tree_shaking_override,
             code_splitting: self.code_splitting,
             source_map: self.source_map,
             packages: self.packages,
@@ -1810,6 +1812,7 @@ impl<'a> BundleOptions<'a> {
                 style: Default::default(),
             }, // filled below
             tree_shaking: false,
+            tree_shaking_override: None,
             code_splitting: false,
             source_map: SourceMapOption::None,
             packages: PackagesOption::Bundle,

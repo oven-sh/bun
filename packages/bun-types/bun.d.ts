@@ -2774,7 +2774,12 @@ declare module "bun" {
      */
     emitDCEAnnotations?: boolean;
 
-    // treeshaking?: boolean;
+    /**
+     * Whether to enable tree-shaking (removal of unreferenced top-level
+     * declarations and unused exports). Defaults to `true`. Set to `false` to
+     * keep dead code in the output for debugging or test fixtures.
+     */
+    treeShaking?: boolean;
 
     // jsx?:
     //   | "automatic"

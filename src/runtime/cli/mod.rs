@@ -251,8 +251,13 @@ pub mod open {
     /// argument; without it `start` treats the URL as the title.
     pub(crate) fn open_url(url: &[u8]) {
         #[cfg(windows)]
-        let status =
-            bun_core::spawn_sync_inherit(&[&b"cmd.exe"[..], &b"/c"[..], &b"start"[..], &b""[..], url]);
+        let status = bun_core::spawn_sync_inherit(&[
+            &b"cmd.exe"[..],
+            &b"/c"[..],
+            &b"start"[..],
+            &b""[..],
+            url,
+        ]);
         #[cfg(not(windows))]
         let status = bun_core::spawn_sync_inherit(&[OPENER, url]);
 

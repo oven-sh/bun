@@ -258,6 +258,7 @@ pub struct LexerSnapshot<'a> {
     pub has_pure_comment_before: bool,
     pub has_no_side_effect_comment_before: bool,
     pub has_react_hooks_suppression_before: bool,
+    pub has_react_hooks_block_suppression: bool,
     pub preserve_all_comments_before: bool,
     pub is_legacy_octal_literal: bool,
     pub is_log_disabled: bool,
@@ -340,6 +341,10 @@ pub struct LexerType<
     /// this at function-body close to set `flags::Function::HasReactHooksSuppression`
     /// / `E::Arrow::has_react_hooks_suppression`.
     pub has_react_hooks_suppression_before: bool,
+    /// Sticky variant of the above: set when the suppression comment lacks
+    /// `-next-line` (a block-style `eslint-disable`). Never cleared by the
+    /// parser, so it applies to every subsequent function in the file.
+    pub has_react_hooks_block_suppression: bool,
     pub preserve_all_comments_before: bool,
     pub is_legacy_octal_literal: bool,
     pub is_log_disabled: bool,
@@ -518,6 +523,7 @@ lexer_impl_header! {
             has_pure_comment_before: self.has_pure_comment_before,
             has_no_side_effect_comment_before: self.has_no_side_effect_comment_before,
             has_react_hooks_suppression_before: self.has_react_hooks_suppression_before,
+            has_react_hooks_block_suppression: self.has_react_hooks_block_suppression,
             preserve_all_comments_before: self.preserve_all_comments_before,
             is_legacy_octal_literal: self.is_legacy_octal_literal,
             is_log_disabled: self.is_log_disabled,
@@ -559,6 +565,7 @@ lexer_impl_header! {
         self.has_pure_comment_before = original.has_pure_comment_before;
         self.has_no_side_effect_comment_before = original.has_no_side_effect_comment_before;
         self.has_react_hooks_suppression_before = original.has_react_hooks_suppression_before;
+        self.has_react_hooks_block_suppression = original.has_react_hooks_block_suppression;
         self.preserve_all_comments_before = original.preserve_all_comments_before;
         self.is_legacy_octal_literal = original.is_legacy_octal_literal;
         self.is_log_disabled = original.is_log_disabled;
@@ -2328,11 +2335,14 @@ lexer_impl_header! {
         };
 
         if self.track_react_suppressions
-            && !self.has_react_hooks_suppression_before
+            && !(self.has_react_hooks_suppression_before && self.has_react_hooks_block_suppression)
             && strings::contains(&text[..end_comment_text], b"react-hooks/")
             && strings::contains(&text[..end_comment_text], b"eslint-disable")
         {
             self.has_react_hooks_suppression_before = true;
+            if !strings::contains(&text[..end_comment_text], b"-next-line") {
+                self.has_react_hooks_block_suppression = true;
+            }
         }
 
         if has_legal_annotation || self.preserve_all_comments_before {
@@ -2683,6 +2693,7 @@ lexer_impl_header! {
             has_pure_comment_before: false,
             has_no_side_effect_comment_before: false,
             has_react_hooks_suppression_before: false,
+            has_react_hooks_block_suppression: false,
             preserve_all_comments_before: false,
             is_legacy_octal_literal: false,
             is_log_disabled: false,

@@ -406,16 +406,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(func);
         }
         let mut temp_opts = opts;
-        let suppression_before = p.lexer.has_react_hooks_suppression_before;
         func.body = p.parse_fn_body(&mut temp_opts)?;
-        if p.lexer.has_react_hooks_suppression_before {
+        if p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression {
             func.flags.insert(Flags::Function::HasReactHooksSuppression);
-        }
-        // Restore only when returning to module scope so a suppression inside a
-        // nested closure still reaches the enclosing top-level component, but
-        // never leaks to that component's siblings.
-        if p.fn_or_arrow_data_parse.is_top_level {
-            p.lexer.has_react_hooks_suppression_before = suppression_before;
+            // next-line semantics: a suppression marks the enclosing top-level
+            // function and is consumed; it never reaches that function's siblings.
+            if p.fn_or_arrow_data_parse.is_top_level {
+                p.lexer.has_react_hooks_suppression_before = false;
+            }
         }
 
         Ok(func)
@@ -556,14 +554,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data.is_this_disallowed = p.fn_or_arrow_data_parse.is_this_disallowed;
 
         let args_slice = bun_ast::StoreSlice::<G::Arg>::new_mut(args);
-        let suppression_before = p.lexer.has_react_hooks_suppression_before;
 
         if p.lexer.token == T::TOpenBrace {
             let body = p.parse_fn_body(data)?;
             p.after_arrow_body_loc = p.lexer.loc();
-            let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before;
-            if p.fn_or_arrow_data_parse.is_top_level {
-                p.lexer.has_react_hooks_suppression_before = suppression_before;
+            let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before
+                || p.lexer.has_react_hooks_block_suppression;
+            if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
+                p.lexer.has_react_hooks_suppression_before = false;
             }
             return Ok(E::Arrow {
                 args: args_slice,
@@ -594,9 +592,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);
 
         p.pop_scope();
-        let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before;
-        if p.fn_or_arrow_data_parse.is_top_level {
-            p.lexer.has_react_hooks_suppression_before = suppression_before;
+        let has_react_hooks_suppression =
+            p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression;
+        if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
+            p.lexer.has_react_hooks_suppression_before = false;
         }
         Ok(E::Arrow {
             args: args_slice,

@@ -158,7 +158,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_IPC_DISCONNECTED", Error],
   ["ERR_IPC_ONE_PIPE", Error],
   ["ERR_LOAD_SQLITE_EXTENSION", Error],
-  ["ERR_SQLITE_ERROR", Error],
   ["ERR_MEMORY_ALLOCATION_FAILED", Error],
   ["ERR_MESSAGE_TARGET_CONTEXT_UNAVAILABLE", Error],
   ["ERR_METHOD_NOT_IMPLEMENTED", Error],
@@ -339,5 +338,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_FS_CP_EEXIST", Error],
   ["ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY", Error],
   ["ERR_DIR_CONCURRENT_OPERATION", Error],
+  ["ERR_SQLITE_ERROR", Error],
 ];
 export default errors;

@@ -709,9 +709,11 @@ impl ErrorCode {
     pub const FS_CP_SYMLINK_TO_SUBDIRECTORY: ErrorCode = ErrorCode(325);
     /// `ERR_DIR_CONCURRENT_OPERATION` (instanceof Error)
     pub const DIR_CONCURRENT_OPERATION: ErrorCode = ErrorCode(326);
+    /// `ERR_SQLITE_ERROR` (instanceof Error)
+    pub const SQLITE_ERROR: ErrorCode = ErrorCode(327);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 327;
+    pub const COUNT: u16 = 328;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -987,6 +989,7 @@ impl ErrorCode {
     pub const ERR_SOCKET_DGRAM_IS_CONNECTED: ErrorCode = ErrorCode::SOCKET_DGRAM_IS_CONNECTED;
     pub const ERR_SOCKET_DGRAM_NOT_CONNECTED: ErrorCode = ErrorCode::SOCKET_DGRAM_NOT_CONNECTED;
     pub const ERR_SOCKET_DGRAM_NOT_RUNNING: ErrorCode = ErrorCode::SOCKET_DGRAM_NOT_RUNNING;
+    pub const ERR_SQLITE_ERROR: ErrorCode = ErrorCode::SQLITE_ERROR;
     pub const ERR_SSR_RESPONSE_EXPECTED: ErrorCode = ErrorCode::SSR_RESPONSE_EXPECTED;
     pub const ERR_STREAM_ALREADY_FINISHED: ErrorCode = ErrorCode::STREAM_ALREADY_FINISHED;
     pub const ERR_STREAM_CANNOT_PIPE: ErrorCode = ErrorCode::STREAM_CANNOT_PIPE;
@@ -1425,6 +1428,7 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_FS_CP_EEXIST",
     "ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY",
     "ERR_DIR_CONCURRENT_OPERATION",
+    "ERR_SQLITE_ERROR",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

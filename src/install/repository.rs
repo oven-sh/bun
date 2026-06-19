@@ -116,7 +116,10 @@ impl SloppyGlobalGitConfig {
     }
 
     fn load_and_parse() -> SloppyGlobalGitConfig {
-        let Some(home_dir) = bun_core::env_var::HOME.get() else {
+        let Some(home_dir) = bun_core::env_var::HOME
+            .get()
+            .filter(|p| Path::is_absolute(p))
+        else {
             return SloppyGlobalGitConfig::default();
         };
 

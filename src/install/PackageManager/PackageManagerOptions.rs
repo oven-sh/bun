@@ -280,12 +280,24 @@ pub struct Update {
     pub peer: bool,
 }
 
+// `join_abs_string_buf` below requires an absolute base: on Windows it
+// asserts, and on POSIX a relative base yields a rooted path with the first
+// byte dropped. These env vars are user input and can be empty or relative
+// (e.g. `BUN_INSTALL=~/.bun` copied to a Windows shell where `~` is not
+// expanded), so skip values that are not absolute and fall through to the
+// next candidate. Resolving against the process cwd is not an option because
+// cwd changes between `open_global_dir` and `open_global_bin_dir`.
+#[inline]
+fn get_abs(v: Option<&'static [u8]>) -> Option<&'static [u8]> {
+    v.filter(|p| bun_paths::is_absolute(p))
+}
+
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
 pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_core::Error> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
-    if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
+    if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get_not_empty() {
         return Dir::cwd()
             .make_open_path(home_dir, OpenDirOptions::default())
             .map(|d| d.into_raw());
@@ -297,7 +309,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
             .map(|d| d.into_raw());
     }
 
-    if let Some(home_dir) = env_var::BUN_INSTALL.get() {
+    if let Some(home_dir) = get_abs(env_var::BUN_INSTALL.get()) {
         let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [b"install", b"global"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
@@ -306,9 +318,8 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
             .map(|d| d.into_raw());
     }
 
-    if let Some(home_dir) = env_var::XDG_CACHE_HOME
-        .get()
-        .or_else(|| env_var::HOME.get())
+    if let Some(home_dir) =
+        get_abs(env_var::XDG_CACHE_HOME.get()).or_else(|| get_abs(env_var::HOME.get()))
     {
         let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 3] = [b".bun", b"install", b"global"];
@@ -327,7 +338,7 @@ pub(crate) fn open_global_bin_dir(
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
-    if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
+    if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get_not_empty() {
         return Dir::cwd()
             .make_open_path(home_dir, OpenDirOptions::default())
             .map(|d| d.into_raw());
@@ -343,7 +354,7 @@ pub(crate) fn open_global_bin_dir(
         }
     }
 
-    if let Some(home_dir) = env_var::BUN_INSTALL.get() {
+    if let Some(home_dir) = get_abs(env_var::BUN_INSTALL.get()) {
         let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 1] = [b"bin"];
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
@@ -352,9 +363,8 @@ pub(crate) fn open_global_bin_dir(
             .map(|d| d.into_raw());
     }
 
-    if let Some(home_dir) = env_var::XDG_CACHE_HOME
-        .get()
-        .or_else(|| env_var::HOME.get())
+    if let Some(home_dir) =
+        get_abs(env_var::XDG_CACHE_HOME.get()).or_else(|| get_abs(env_var::HOME.get()))
     {
         let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [b".bun", b"bin"];

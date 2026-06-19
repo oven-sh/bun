@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
 import { bunEnv, bunExe, bunEnv as env, readdirSorted, tempDir, tmpdirSync } from "harness";
-import { cpSync } from "node:fs";
+import { cpSync, realpathSync } from "node:fs";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -906,3 +906,50 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+// https://bun-p9.sentry.io/issues/7403306202/
+// Windows panicked in _joinAbsStringBufWindows when $BUN_INSTALL was not an
+// absolute path; POSIX silently opened a mangled path rooted at "/". Now
+// empty and relative values are skipped so the next candidate ($HOME) wins.
+for (const [title, bunInstallValue, base] of [
+  ["empty $BUN_INSTALL falls through to $HOME", "", ["fake-home", ".bun"]],
+  ["relative $BUN_INSTALL falls through to $HOME", "relative-dir", ["fake-home", ".bun"]],
+  ["absolute $BUN_INSTALL", null, ["abs-bun"]],
+] as const) {
+  test(`global dir: ${title}`, async () => {
+    using dir = tempDir("pm-global-dir-env", {
+      "package.json": JSON.stringify({ name: "pm-global-dir-env", version: "1.0.0" }),
+    });
+    const cwd = String(dir);
+    const globalDir = join(cwd, ...base, "install", "global");
+    const binDir = join(cwd, ...base, "bin");
+    await mkdir(globalDir, { recursive: true });
+    await writeFile(join(globalDir, "package.json"), JSON.stringify({ name: "global", version: "1.0.0" }));
+
+    const spawnEnv: NodeJS.Dict<string> = {
+      ...env,
+      BUN_INSTALL: bunInstallValue ?? join(cwd, "abs-bun"),
+      HOME: join(cwd, "fake-home"),
+      USERPROFILE: join(cwd, "fake-home"),
+    };
+    delete spawnEnv.BUN_INSTALL_GLOBAL_DIR;
+    delete spawnEnv.BUN_INSTALL_BIN;
+    delete spawnEnv.XDG_CACHE_HOME;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "bin", "-g"],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: spawnEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, exitCode }).toEqual({
+      stderr: expect.not.stringContaining("error:"),
+      exitCode: 0,
+    });
+    expect(await exists(binDir)).toBeTrue();
+    expect(realpathSync(stdout.trim())).toBe(realpathSync(binDir));
+  });
+}

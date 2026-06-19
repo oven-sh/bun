@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::collections::IndexSet;
 use crate::hir::ArrayPatternElement;
 use crate::hir::DeclarationId;
 use crate::hir::Effect;
@@ -35,7 +36,6 @@ use crate::hir::ScopeId;
 use crate::hir::environment::Environment;
 use crate::hir::is_primitive_type;
 use crate::hir::visitors::each_instruction_value_operand;
-use indexmap::IndexSet;
 
 use crate::reactive_scopes::visitors::ReactiveFunctionTransform;
 use crate::reactive_scopes::visitors::ReactiveFunctionVisitor;

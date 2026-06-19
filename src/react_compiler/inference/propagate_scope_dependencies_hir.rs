@@ -12,16 +12,16 @@
 //! - `src/HIR/CollectHoistablePropertyLoads.ts`
 //! - `src/HIR/DeriveMinimalDependenciesHIR.ts`
 
-use indexmap::IndexMap;
+use crate::collections::IndexMap;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::hir::environment::Environment;
 use crate::hir::visitors::{ScopeBlockInfo, ScopeBlockTraversal};
 use crate::hir::{
-    BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
-    GotoVariant, HirFunction, IdentifierId, Instruction, InstructionId, InstructionKind,
+    AstAlloc, BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
+    GotoVariant, HirFunction, HirVec, IdentifierId, Instruction, InstructionId, InstructionKind,
     InstructionValue, MutableRange, ParamPattern, Place, PlaceOrSpread, PropertyLiteral,
-    ReactFunctionType, ReactiveScopeDependency, ScopeId, Terminal, Type, visitors,
+    ReactFunctionType, ReactiveScopeDependency, ScopeId, Terminal, Type, hir_vec, visitors,
 };
 
 // =============================================================================
@@ -314,7 +314,7 @@ fn collect_temporaries_sidemap_impl(
                             ReactiveScopeDependency {
                                 identifier: place.identifier,
                                 reactive: place.reactive,
-                                path: vec![],
+                                path: hir_vec![],
                                 loc: *loc,
                             },
                         );
@@ -339,7 +339,7 @@ fn collect_temporaries_sidemap_impl(
                             ReactiveScopeDependency {
                                 identifier: place.identifier,
                                 reactive: place.reactive,
-                                path: vec![],
+                                path: hir_vec![],
                                 loc: *loc,
                             },
                         );
@@ -390,7 +390,7 @@ fn get_property(
         ReactiveScopeDependency {
             identifier: object.identifier,
             reactive: object.reactive,
-            path: vec![DependencyPathEntry {
+            path: hir_vec![DependencyPathEntry {
                 property: property_name.clone(),
                 optional,
                 loc,
@@ -595,7 +595,7 @@ fn traverse_optional_block(
                 return None;
             }
 
-            let mut path: Vec<DependencyPathEntry> = Vec::new();
+            let mut path: HirVec<DependencyPathEntry> = hir_vec![];
             for i in 1..maybe_test_block.instructions.len() {
                 let curr_instr = &func.instructions[maybe_test_block.instructions[i].0 as usize];
                 let prev_instr =
@@ -825,7 +825,7 @@ impl PropertyPathRegistry {
             full_path: ReactiveScopeDependency {
                 identifier: identifier_id,
                 reactive,
-                path: vec![],
+                path: hir_vec![],
                 loc,
             },
             has_optional: false,
@@ -1037,7 +1037,7 @@ fn get_maybe_non_null_in_instruction(
                 .unwrap_or_else(|| ReactiveScopeDependency {
                     identifier: object.identifier,
                     reactive: object.reactive,
-                    path: vec![],
+                    path: hir_vec![],
                     loc: object.loc,
                 }),
         ),
@@ -1273,7 +1273,7 @@ fn collect_non_nulls_in_blocks(
                                 let sub_dep = ReactiveScopeDependency {
                                     identifier: val.identifier,
                                     reactive: val.reactive,
-                                    path: dep.path[..i].to_vec(),
+                                    path: AstAlloc::vec_from_slice(&dep.path[..i]),
                                     loc: dep.loc,
                                 };
                                 let node_idx = registry.get_or_create_property(&sub_dep);
@@ -1773,7 +1773,7 @@ fn collect_minimal_deps_in_subtree(
         results.push(ReactiveScopeDependency {
             identifier: root_id,
             reactive,
-            path: path.to_vec(),
+            path: AstAlloc::vec_from_slice(path),
             loc: node.loc,
         });
     } else {
@@ -1919,7 +1919,7 @@ impl<'a> DependencyCollectionContext<'a> {
             .unwrap_or_else(|| ReactiveScopeDependency {
                 identifier: place.identifier,
                 reactive: place.reactive,
-                path: vec![],
+                path: hir_vec![],
                 loc: place.loc,
             });
         self.visit_dependency(dep, env);
@@ -1979,7 +1979,7 @@ impl<'a> DependencyCollectionContext<'a> {
             ReactiveScopeDependency {
                 identifier: dep.identifier,
                 reactive: dep.reactive,
-                path: vec![],
+                path: hir_vec![],
                 loc: dep.loc,
             }
         } else {
@@ -2005,7 +2005,7 @@ impl<'a> DependencyCollectionContext<'a> {
                     &ReactiveScopeDependency {
                         identifier: place.identifier,
                         reactive: place.reactive,
-                        path: vec![],
+                        path: hir_vec![],
                         loc: place.loc,
                     },
                     env,
@@ -2040,10 +2040,10 @@ fn visit_inner_function_blocks(
 ) {
     // Clone inner function's instructions and block structure to avoid
     // borrow conflicts when mutating env through handle_instruction.
-    let inner_instrs: Vec<Instruction> = env.functions[func_id.0 as usize].instructions.clone();
+    let inner_instrs: HirVec<Instruction> = env.functions[func_id.0 as usize].instructions.clone();
     let inner_blocks: Vec<(
         BlockId,
-        Vec<InstructionId>,
+        HirVec<InstructionId>,
         Vec<(BlockId, IdentifierId)>,
         Terminal,
     )> = env.functions[func_id.0 as usize]

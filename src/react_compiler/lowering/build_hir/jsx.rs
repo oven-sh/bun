@@ -6,8 +6,8 @@
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::{
-    BuiltinTag, InstructionValue, JsxAttribute, JsxTag, Place, PrimitiveValue, PropertyLiteral,
-    SourceLocation,
+    AstAlloc, BuiltinTag, HirVec, InstructionValue, JsxAttribute, JsxTag, Place, PrimitiveValue,
+    PropertyLiteral, SourceLocation,
 };
 use bun_ast::expr::Data as ExprData;
 use bun_ast::{E, Expr, G, Loc};
@@ -254,8 +254,8 @@ pub(super) fn lower_jsx_call(
         _ => false,
     };
 
-    let mut props: Vec<JsxAttribute> = Vec::new();
-    let mut children: Vec<Place> = Vec::new();
+    let mut props: HirVec<JsxAttribute> = AstAlloc::vec();
+    let mut children: HirVec<Place> = AstAlloc::vec();
 
     if is_automatic {
         let ExprData::EObject(obj) = &props_arg.unwrap().data else {
@@ -398,7 +398,7 @@ fn lower_jsx_children(
     builder: &mut HirBuilder,
     value: &Expr,
     is_static_children: bool,
-    out: &mut Vec<Place>,
+    out: &mut HirVec<Place>,
 ) -> Result<(), CompilerError> {
     if is_static_children {
         if let ExprData::EArray(arr) = &value.data {

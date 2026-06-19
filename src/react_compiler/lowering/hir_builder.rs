@@ -4,6 +4,8 @@
 //! `&dyn Host` (which exposes `symbols()/module_scope()/import_records()`)
 //! instead, since Bun's parser already resolved every reference to a `Ref`.
 
+use crate::collections::IndexMap;
+use crate::collections::IndexSet;
 use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerDiagnosticDetail;
 use crate::diagnostics::CompilerError;
@@ -15,8 +17,6 @@ use crate::hir::visitors::each_terminal_successor;
 use crate::hir::visitors::terminal_fallthrough;
 use crate::hir::*;
 use bun_ast::{self as ast, E, G, Loc, Ref, Symbol, symbol};
-use indexmap::IndexMap;
-use indexmap::IndexSet;
 
 use crate::program::Host;
 
@@ -237,7 +237,7 @@ impl Scope {
 
 pub struct WipBlock {
     pub id: BlockId,
-    pub instructions: Vec<InstructionId>,
+    pub instructions: HirVec<InstructionId>,
     pub kind: BlockKind,
 }
 
@@ -245,7 +245,7 @@ fn new_block(id: BlockId, kind: BlockKind) -> WipBlock {
     WipBlock {
         id,
         kind,
-        instructions: Vec::new(),
+        instructions: AstAlloc::vec(),
     }
 }
 
@@ -275,7 +275,7 @@ pub struct HirBuilder<'h> {
     pub(crate) host: &'h dyn Host,
     exception_handler_stack: Vec<BlockId>,
     /// Flat instruction table being built up.
-    instruction_table: Vec<Instruction>,
+    instruction_table: HirVec<Instruction>,
     /// Traversal context: counts the number of `fbt` tag parents
     /// of the current babel node.
     pub fbt_depth: u32,
@@ -336,7 +336,7 @@ impl<'h> HirBuilder<'h> {
             env,
             host,
             exception_handler_stack: Vec::new(),
-            instruction_table: Vec::new(),
+            instruction_table: AstAlloc::vec(),
             fbt_depth: 0,
             function_scope,
             component_scope,
@@ -521,7 +521,7 @@ impl<'h> HirBuilder<'h> {
                 instructions: wip.instructions,
                 terminal,
                 preds: IndexSet::new(),
-                phis: Vec::new(),
+                phis: AstAlloc::vec(),
             },
         );
 
@@ -543,7 +543,7 @@ impl<'h> HirBuilder<'h> {
                 instructions: wip.instructions,
                 terminal,
                 preds: IndexSet::new(),
-                phis: Vec::new(),
+                phis: AstAlloc::vec(),
             },
         );
     }
@@ -563,7 +563,7 @@ impl<'h> HirBuilder<'h> {
                 instructions: block.instructions,
                 terminal,
                 preds: IndexSet::new(),
-                phis: Vec::new(),
+                phis: AstAlloc::vec(),
             },
         );
     }
@@ -580,7 +580,7 @@ impl<'h> HirBuilder<'h> {
                 instructions: completed_wip.instructions,
                 terminal,
                 preds: IndexSet::new(),
-                phis: Vec::new(),
+                phis: AstAlloc::vec(),
             },
         );
     }
@@ -601,7 +601,7 @@ impl<'h> HirBuilder<'h> {
                 instructions: completed_wip.instructions,
                 terminal,
                 preds: IndexSet::new(),
-                phis: Vec::new(),
+                phis: AstAlloc::vec(),
             },
         );
         Ok(())
@@ -851,7 +851,7 @@ impl<'h> HirBuilder<'h> {
     ) -> Result<
         (
             HIR,
-            Vec<Instruction>,
+            HirVec<Instruction>,
             IndexMap<String, Ref>,
             IndexMap<Ref, IdentifierId>,
         ),
@@ -862,7 +862,7 @@ impl<'h> HirBuilder<'h> {
             entry: self.entry,
         };
 
-        let mut instructions = std::mem::take(&mut self.instruction_table);
+        let mut instructions = AstAlloc::take(&mut self.instruction_table);
 
         let rpo_blocks = get_reverse_postordered_blocks(&hir, &instructions);
 
@@ -1207,13 +1207,13 @@ pub(crate) fn get_reverse_postordered_blocks(
                 BasicBlock {
                     kind: block.kind,
                     id: block_id,
-                    instructions: Vec::new(),
+                    instructions: AstAlloc::vec(),
                     terminal: Terminal::Unreachable {
                         id: block.terminal.evaluation_order(),
                         loc: block.terminal.loc().copied(),
                     },
                     preds: block.preds.clone(),
-                    phis: Vec::new(),
+                    phis: AstAlloc::vec(),
                 },
             );
         }

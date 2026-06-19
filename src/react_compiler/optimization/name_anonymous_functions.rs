@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
 use crate::hir::{
-    FunctionId, HirFunction, IdentifierId, IdentifierName, Instruction, InstructionValue,
+    AstAlloc, FunctionId, HirFunction, IdentifierId, IdentifierName, Instruction, InstructionValue,
     JsxAttribute, JsxTag, PlaceOrSpread,
 };
 
@@ -77,7 +77,7 @@ pub fn name_anonymous_functions(func: &mut HirFunction, env: &mut Environment) {
     // Update name_hint on FunctionExpression instruction values in all arena functions
     for i in 0..env.functions.len() {
         // We need to temporarily take the instructions to avoid borrow issues
-        let mut instructions = std::mem::take(&mut env.functions[i].instructions);
+        let mut instructions = AstAlloc::take(&mut env.functions[i].instructions);
         apply_name_hints_to_instructions(&mut instructions, &update_map);
         env.functions[i].instructions = instructions;
     }

@@ -10,7 +10,7 @@
 use std::collections::HashSet;
 use std::hash::Hash;
 
-use indexmap::IndexMap;
+use crate::collections::IndexMap;
 
 /// A Union-Find data structure for grouping items into disjoint sets.
 ///

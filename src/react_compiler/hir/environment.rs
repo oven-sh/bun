@@ -46,10 +46,10 @@ pub struct Environment {
     next_mutable_range_id_counter: u32,
 
     // Arenas (use direct field access for sliced borrows)
-    pub identifiers: Vec<Identifier>,
-    pub types: Vec<Type>,
-    pub scopes: Vec<ReactiveScope>,
-    pub functions: Vec<HirFunction>,
+    pub identifiers: HirVec<Identifier>,
+    pub types: HirVec<Type>,
+    pub scopes: HirVec<ReactiveScope>,
+    pub functions: HirVec<HirFunction>,
 
     // Error accumulation
     pub errors: CompilerError,
@@ -74,7 +74,7 @@ pub struct Environment {
 
     // Renames: tracks variable renames from lowering (original_name → new_name)
     // keyed by binding declaration position, for applying back to the Babel AST.
-    pub renames: Vec<BindingRename>,
+    pub renames: HirVec<BindingRename>,
 
     // Node IDs of identifiers that are actual references to bindings.
     // Used by codegen to filter type annotation renames — only rename identifiers
@@ -106,7 +106,7 @@ pub struct Environment {
     default_mutating_hook: Option<Global>,
 
     // Outlined functions: functions extracted from the component during outlining passes
-    outlined_functions: Vec<OutlinedFunctionEntry>,
+    outlined_functions: HirVec<OutlinedFunctionEntry>,
 
     // Known names for collision-aware UID generation. Lazily populated from
     // identifiers on first use, then updated with each generated name.
@@ -133,7 +133,7 @@ impl Environment {
     /// and sets up the module type cache.
     pub fn with_config(config: EnvironmentConfig) -> Self {
         let mut shapes = ShapeRegistry::with_base(globals::base_shapes());
-        let mut global_registry = GlobalRegistry::with_base(globals::base_globals());
+        let mut global_registry = GlobalRegistry::with_base();
 
         // Register custom hooks from config
         for (hook_name, hook) in &config.custom_hooks {
@@ -177,10 +177,10 @@ impl Environment {
             next_block_id_counter: 0,
             next_scope_id_counter: 0,
             next_mutable_range_id_counter: 0,
-            identifiers: Vec::new(),
-            types: Vec::new(),
-            scopes: Vec::new(),
-            functions: Vec::new(),
+            identifiers: AstAlloc::vec(),
+            types: AstAlloc::vec(),
+            scopes: AstAlloc::vec(),
+            functions: AstAlloc::vec(),
             errors: CompilerError::new(),
             fn_type: ReactFunctionType::Other,
             output_mode: OutputMode::Client,
@@ -189,7 +189,7 @@ impl Environment {
             instrument_fn_name: None,
             instrument_gating_name: None,
             hook_guard_name: None,
-            renames: Vec::new(),
+            renames: AstAlloc::vec(),
             reference_node_ids: HashSet::new(),
             hoisted_identifiers: HashSet::new(),
             validate_preserve_existing_memoization_guarantees: config
@@ -203,7 +203,7 @@ impl Environment {
             module_type_errors: HashMap::new(),
             default_nonmutating_hook: None,
             default_mutating_hook: None,
-            outlined_functions: Vec::new(),
+            outlined_functions: AstAlloc::vec(),
             uid_known_names: None,
             config,
         }
@@ -236,7 +236,7 @@ impl Environment {
             instrument_fn_name: self.instrument_fn_name.clone(),
             instrument_gating_name: self.instrument_gating_name.clone(),
             hook_guard_name: self.hook_guard_name.clone(),
-            renames: Vec::new(),
+            renames: AstAlloc::vec(),
             reference_node_ids: HashSet::new(),
             hoisted_identifiers: HashSet::new(),
             validate_preserve_existing_memoization_guarantees: self
@@ -251,7 +251,7 @@ impl Environment {
             config: self.config.clone(),
             default_nonmutating_hook: self.default_nonmutating_hook.clone(),
             default_mutating_hook: self.default_mutating_hook.clone(),
-            outlined_functions: Vec::new(),
+            outlined_functions: AstAlloc::vec(),
             uid_known_names: self.uid_known_names.clone(),
         }
     }
@@ -301,11 +301,11 @@ impl Environment {
         self.scopes.push(ReactiveScope {
             id,
             range,
-            dependencies: Vec::new(),
-            declarations: Vec::new(),
-            reassignments: Vec::new(),
+            dependencies: AstAlloc::vec(),
+            declarations: AstAlloc::vec(),
+            reassignments: AstAlloc::vec(),
             early_return_value: None,
-            merged: Vec::new(),
+            merged: AstAlloc::vec(),
             loc: None,
         });
         id
@@ -778,7 +778,7 @@ impl Environment {
             .config
             .module_type_provider
             .as_ref()
-            .and_then(|map| map.get(module_name).cloned())
+            .and_then(|map| map.get(&module_name.to_string()).cloned())
             .or_else(|| default_module_type_provider(module_name));
 
         let module_type = module_config.map(|config| {
@@ -954,8 +954,8 @@ impl Environment {
     }
 
     /// Take the outlined functions, leaving the vec empty.
-    pub fn take_outlined_functions(&mut self) -> Vec<OutlinedFunctionEntry> {
-        std::mem::take(&mut self.outlined_functions)
+    pub fn take_outlined_functions(&mut self) -> HirVec<OutlinedFunctionEntry> {
+        AstAlloc::take(&mut self.outlined_functions)
     }
 
     /// Whether memoization is enabled for this compilation.

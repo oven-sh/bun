@@ -6,7 +6,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use indexmap::{IndexMap, IndexSet};
+use crate::collections::{IndexMap, IndexSet};
 
 use crate::diagnostics::{
     CompilerError, CompilerErrorDetail, ErrorCategory, Position, SourceLocation,
@@ -122,7 +122,7 @@ impl ProgramContext {
 
     /// Check if a name conflicts with known references.
     pub fn has_reference(&self, name: &str) -> bool {
-        self.known_referenced_names.contains(name)
+        self.known_referenced_names.iter().any(|n| n == name)
     }
 
     /// Generate a unique identifier name that doesn't conflict with existing bindings.
@@ -179,26 +179,28 @@ impl ProgramContext {
         specifier: &str,
         name_hint: Option<&str>,
     ) -> NonLocalImportSpecifier {
+        let module = module.to_string();
+        let specifier = specifier.to_string();
         // Check if already imported
-        if let Some(module_imports) = self.imports.get(module) {
-            if let Some(existing) = module_imports.get(specifier) {
+        if let Some(module_imports) = self.imports.get(&module) {
+            if let Some(existing) = module_imports.get(&specifier) {
                 return existing.clone();
             }
         }
 
-        let name = self.new_uid(name_hint.unwrap_or(specifier));
+        let name = self.new_uid(name_hint.unwrap_or(&specifier));
         let name_ref = host.new_generated(name.as_bytes());
         let binding = NonLocalImportSpecifier {
             name,
             name_ref,
-            module: module.to_string(),
-            imported: specifier.to_string(),
+            module: module.clone(),
+            imported: specifier.clone(),
         };
 
         self.imports
-            .entry(module.to_string())
+            .entry(module)
             .or_default()
-            .insert(specifier.to_string(), binding.clone());
+            .insert(specifier, binding.clone());
 
         binding
     }
@@ -251,7 +253,7 @@ pub(crate) fn validate_restricted_imports(
         }
         if core::str::from_utf8(import.path.text)
             .ok()
-            .is_some_and(|v| restricted.contains(v))
+            .is_some_and(|v| restricted.contains(&v))
         {
             let mut detail = CompilerErrorDetail::new(
                 ErrorCategory::Todo,

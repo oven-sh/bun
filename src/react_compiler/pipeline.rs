@@ -28,11 +28,11 @@ use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::environment_config::EnvironmentConfig;
 
 use crate::codegen::{self, Codegen, CodegenFunction, OutlinedFunction};
+use crate::collections::IndexMap;
 use crate::hir::VariableBinding;
 use crate::imports::ProgramContext;
 use crate::lowering::{self, FunctionNode};
 use crate::program::Host;
-use indexmap::IndexMap;
 
 /// Run the compilation pipeline on a single function.
 #[allow(clippy::too_many_arguments)]

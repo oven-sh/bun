@@ -28,16 +28,90 @@ use crate::hir::type_config::ValueReason;
 /// In the Rust port, both map to our `Type` enum.
 pub type Global = Type;
 
+// Length-dispatched name → index into `BASE.globals`. Values live in a
+// `LazyLock<Box<[Global]>>` because `Type` is not const-constructible.
+bun_core::comptime_string_map! {
+    static BASE_GLOBAL_INDEX: usize = {
+        // React APIs
+        b"useContext" => 0,
+        b"useState" => 1,
+        b"useActionState" => 2,
+        b"useReducer" => 3,
+        b"useRef" => 4,
+        b"useImperativeHandle" => 5,
+        b"useMemo" => 6,
+        b"useCallback" => 7,
+        b"useEffect" => 8,
+        b"useLayoutEffect" => 9,
+        b"useInsertionEffect" => 10,
+        b"useTransition" => 11,
+        b"useOptimistic" => 12,
+        b"use" => 13,
+        b"useEffectEvent" => 14,
+        // UNTYPED_GLOBALS not later overwritten by typed globals
+        b"Function" => 15,
+        b"RegExp" => 16,
+        b"Error" => 17,
+        b"TypeError" => 18,
+        b"RangeError" => 19,
+        b"ReferenceError" => 20,
+        b"SyntaxError" => 21,
+        b"URIError" => 22,
+        b"EvalError" => 23,
+        b"DataView" => 24,
+        b"Float32Array" => 25,
+        b"Float64Array" => 26,
+        b"Int8Array" => 27,
+        b"Int16Array" => 28,
+        b"Int32Array" => 29,
+        b"Uint8Array" => 30,
+        b"Uint8ClampedArray" => 31,
+        b"Uint16Array" => 32,
+        b"Uint32Array" => 33,
+        b"ArrayBuffer" => 34,
+        b"JSON" => 35,
+        b"eval" => 36,
+        // Typed globals
+        b"Object" => 37,
+        b"Array" => 38,
+        b"Math" => 39,
+        b"performance" => 40,
+        b"Date" => 41,
+        b"console" => 42,
+        b"Boolean" => 43,
+        b"Number" => 44,
+        b"String" => 45,
+        b"parseInt" => 46,
+        b"parseFloat" => 47,
+        b"isNaN" => 48,
+        b"isFinite" => 49,
+        b"encodeURI" => 50,
+        b"encodeURIComponent" => 51,
+        b"decodeURI" => 52,
+        b"decodeURIComponent" => 53,
+        b"Infinity" => 54,
+        b"NaN" => 55,
+        b"Map" => 56,
+        b"Set" => 57,
+        b"WeakMap" => 58,
+        b"WeakSet" => 59,
+        b"React" => 60,
+        b"_jsx" => 61,
+        b"globalThis" => 62,
+        b"global" => 63,
+    };
+}
+
 /// Registry mapping global names to their types.
 ///
 /// Supports two modes:
-/// - **Builder mode** (`base=None`): wraps a single HashMap, used during
+/// - **Builder mode** (`base=false`): wraps a single HashMap, used during
 ///   `build_default_globals` to construct the static base.
-/// - **Overlay mode** (`base=Some`): holds a `&'static HashMap` base plus a small
-///   extras HashMap. Lookups check extras first, then base. Inserts go into extras.
-///   Cloning only copies the extras map (the base pointer is shared).
+/// - **Overlay mode** (`base=true`): lookups check the extras HashMap first,
+///   then fall back to the static `BASE_GLOBAL_INDEX` / `BASE.globals` table.
+///   Inserts go into extras. Cloning only copies the extras map.
 pub struct GlobalRegistry {
-    base: Option<&'static HashMap<String, Global>>,
+    base: bool,
     entries: HashMap<String, Global>,
 }
 
@@ -45,23 +119,27 @@ impl GlobalRegistry {
     /// Create an empty builder-mode registry.
     pub fn new() -> Self {
         Self {
-            base: None,
+            base: false,
             entries: HashMap::new(),
         }
     }
 
-    /// Create an overlay-mode registry backed by a static base.
-    pub fn with_base(base: &'static HashMap<String, Global>) -> Self {
+    /// Create an overlay-mode registry backed by the static base.
+    pub fn with_base() -> Self {
         Self {
-            base: Some(base),
+            base: true,
             entries: HashMap::new(),
         }
     }
 
     pub fn get(&self, key: &str) -> Option<&Global> {
-        self.entries
-            .get(key)
-            .or_else(|| self.base.and_then(|b| b.get(key)))
+        if let Some(v) = self.entries.get(key) {
+            return Some(v);
+        }
+        if self.base {
+            return lookup_base_global(key);
+        }
+        None
     }
 
     pub fn insert(&mut self, key: String, value: Global) {
@@ -69,25 +147,29 @@ impl GlobalRegistry {
     }
 
     pub fn contains_key(&self, key: &str) -> bool {
-        self.entries.contains_key(key) || self.base.map_or(false, |b| b.contains_key(key))
+        self.entries.contains_key(key)
+            || (self.base && BASE_GLOBAL_INDEX.contains_key(key.as_bytes()))
     }
 
     /// Iterate over all keys in the registry (base + extras).
     /// Keys in extras that shadow base keys appear only once.
-    pub fn keys(&self) -> impl Iterator<Item = &String> {
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        let entries = &self.entries;
         let base_keys = self
             .base
+            .then(|| BASE_GLOBAL_INDEX.keys())
             .into_iter()
-            .flat_map(|b| b.keys())
-            .filter(|k| !self.entries.contains_key(k.as_str()));
-        self.entries.keys().chain(base_keys)
+            .flatten()
+            .filter_map(|k| std::str::from_utf8(k).ok())
+            .filter(move |k| !entries.contains_key(*k));
+        entries.keys().map(String::as_str).chain(base_keys)
     }
 
     /// Consume the registry and return the inner HashMap.
     /// Only valid in builder mode (no base).
     pub fn into_inner(self) -> HashMap<String, Global> {
         debug_assert!(
-            self.base.is_none(),
+            !self.base,
             "into_inner() called on overlay-mode GlobalRegistry"
         );
         self.entries
@@ -109,15 +191,29 @@ impl Clone for GlobalRegistry {
 
 struct BaseRegistries {
     shapes: HashMap<String, ObjectShape>,
-    globals: HashMap<String, Global>,
+    globals: Box<[Global]>,
 }
 
 static BASE: LazyLock<BaseRegistries> = LazyLock::new(|| {
     let mut shapes = build_builtin_shapes();
-    let globals = build_default_globals(&mut shapes);
+    let mut globals_map = build_default_globals(&mut shapes).into_inner();
+    debug_assert_eq!(
+        globals_map.len(),
+        BASE_GLOBAL_INDEX.len(),
+        "BASE_GLOBAL_INDEX is out of sync with build_default_globals()",
+    );
+    let mut globals: Vec<Global> = Vec::with_capacity(BASE_GLOBAL_INDEX.len());
+    for (key, &idx) in BASE_GLOBAL_INDEX.entries() {
+        debug_assert_eq!(idx, globals.len());
+        let key = std::str::from_utf8(key).unwrap();
+        let value = globals_map
+            .remove(key)
+            .unwrap_or_else(|| panic!("BASE_GLOBAL_INDEX key '{key}' missing from built globals"));
+        globals.push(value);
+    }
     BaseRegistries {
         shapes: shapes.into_inner(),
-        globals: globals.into_inner(),
+        globals: globals.into_boxed_slice(),
     }
 });
 
@@ -126,9 +222,11 @@ pub fn base_shapes() -> &'static HashMap<String, ObjectShape> {
     &BASE.shapes
 }
 
-/// Get a reference to the static base globals registry.
-pub fn base_globals() -> &'static HashMap<String, Global> {
-    &BASE.globals
+/// Look up a global by name in the static base table.
+pub fn lookup_base_global(name: &str) -> Option<&'static Global> {
+    BASE_GLOBAL_INDEX
+        .get(name.as_bytes())
+        .map(|&i| &BASE.globals[i])
 }
 
 // =============================================================================

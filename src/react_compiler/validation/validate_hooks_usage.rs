@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 
+use crate::collections::IndexMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, SourceLocation,
 };
@@ -23,7 +24,6 @@ use crate::hir::{
     FunctionId, HirFunction, Identifier, IdentifierId, InstructionValue, ParamPattern, Place,
     PropertyLiteral, Type, visitors,
 };
-use indexmap::IndexMap;
 
 /// Value classification for hook validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

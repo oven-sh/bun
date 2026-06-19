@@ -12,7 +12,7 @@ pub fn validate_no_capitalized_calls(
     env: &mut Environment,
 ) -> Result<(), CompilerError> {
     // Build the allow list from global registry keys + config entries
-    let mut allow_list: HashSet<String> = env.globals().keys().cloned().collect();
+    let mut allow_list: HashSet<String> = env.globals().keys().map(String::from).collect();
     if let Some(config_entries) = &env.config.validate_no_capitalized_calls {
         for entry in config_entries {
             allow_list.insert(entry.clone());

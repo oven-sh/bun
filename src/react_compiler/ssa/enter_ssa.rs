@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::collections::IndexMap;
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::*;
-use indexmap::IndexMap;
 
 // =============================================================================
 // SSABuilder
@@ -336,8 +336,8 @@ fn enter_ssa_impl(
                     None,
                 ));
             }
-            let params = std::mem::take(&mut func.params);
-            let mut new_params = Vec::with_capacity(params.len());
+            let params = AstAlloc::take(&mut func.params);
+            let mut new_params = AstAlloc::vec_with_capacity(params.len());
             for param in params {
                 new_params.push(match param {
                     ParamPattern::Place(p) => ParamPattern::Place(builder.define_place(&p, env)?),
@@ -350,7 +350,7 @@ fn enter_ssa_impl(
         }
 
         // Process instructions
-        let instruction_ids: Vec<InstructionId> = func
+        let instruction_ids = func
             .body
             .blocks
             .get(&block_id)
@@ -374,11 +374,12 @@ fn enter_ssa_impl(
 
             // Map context places for function expressions before other operands
             if let Some(fid) = func_expr_id {
-                let context = std::mem::take(&mut env.functions[fid.0 as usize].context);
-                env.functions[fid.0 as usize].context = context
-                    .into_iter()
-                    .map(|place| builder.get_place(&place, env))
-                    .collect();
+                let context = AstAlloc::take(&mut env.functions[fid.0 as usize].context);
+                env.functions[fid.0 as usize].context = AstAlloc::vec_from_iter(
+                    context
+                        .into_iter()
+                        .map(|place| builder.get_place(&place, env)),
+                );
             }
 
             // Map non-context operands
@@ -431,8 +432,8 @@ fn enter_ssa_impl(
                 let saved_current = builder.current;
 
                 // Map inner function params
-                let inner_params = std::mem::take(&mut env.functions[fid.0 as usize].params);
-                let mut new_inner_params = Vec::with_capacity(inner_params.len());
+                let inner_params = AstAlloc::take(&mut env.functions[fid.0 as usize].params);
+                let mut new_inner_params = AstAlloc::vec_with_capacity(inner_params.len());
                 for param in inner_params {
                     new_inner_params.push(match param {
                         ParamPattern::Place(p) => {
@@ -509,7 +510,7 @@ pub fn placeholder_function() -> HirFunction {
         id: None,
         name_hint: None,
         fn_type: ReactFunctionType::Other,
-        params: Vec::new(),
+        params: hir_vec![],
         return_type_annotation: None,
         returns: Place {
             identifier: IdentifierId(0),
@@ -517,15 +518,15 @@ pub fn placeholder_function() -> HirFunction {
             reactive: false,
             loc: None,
         },
-        context: Vec::new(),
+        context: hir_vec![],
         body: HIR {
             entry: BlockId(0),
             blocks: IndexMap::new(),
         },
-        instructions: Vec::new(),
+        instructions: hir_vec![],
         generator: false,
         is_async: false,
-        directives: Vec::new(),
+        directives: hir_vec![],
         aliasing_effects: None,
     }
 }

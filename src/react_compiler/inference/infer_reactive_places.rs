@@ -576,7 +576,7 @@ fn apply_reactive_flags_replay(
 
         // 2b. Instructions
         let block = func.body.blocks.get(block_id).unwrap();
-        let instr_ids: Vec<crate::hir::InstructionId> = block.instructions.clone();
+        let instr_ids = block.instructions.clone();
 
         for instr_id in &instr_ids {
             let instr = &func.instructions[instr_id.0 as usize];
@@ -753,7 +753,7 @@ fn apply_reactive_flags_to_inner_func(
 
     // Apply reactive flags using canonical visitors
     let inner_func = &mut env.functions[func_id.0 as usize];
-    for (_block_id, block) in &mut inner_func.body.blocks {
+    for (_block_id, block) in inner_func.body.blocks.iter_mut() {
         for instr_id in &block.instructions {
             let instr = &mut inner_func.instructions[instr_id.0 as usize];
             visitors::for_each_instruction_value_operand_mut(&mut instr.value, &mut |place| {

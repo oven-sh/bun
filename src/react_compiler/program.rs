@@ -28,12 +28,12 @@ use crate::ReactCompilerOptions;
 use crate::codegen::CodegenFunction;
 
 bun_core::declare_scope!(react_compiler, hidden);
+use crate::collections::IndexMap;
 use crate::compile_result::{CompileDiagnostic, CompileOutput};
 use crate::hir::VariableBinding;
 use crate::imports::{ProgramContext, add_imports_to_program, validate_restricted_imports};
 use crate::lowering::FunctionNode;
 use crate::pipeline;
-use indexmap::IndexMap;
 
 /// JSX runtime symbols the compiler may need to reference in generated code.
 /// Mirrors `bun_js_parser::JSXImport` without the crate dependency.

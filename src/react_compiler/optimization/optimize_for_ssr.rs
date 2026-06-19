@@ -24,7 +24,7 @@ use crate::hir::object_shape::HookKind;
 use crate::hir::visitors::{each_instruction_value_operand, each_terminal_operand};
 use crate::hir::{
     ArrayPatternElement, HirFunction, IdentifierId, InstructionValue, PlaceOrSpread,
-    PrimitiveValue, is_set_state_type, is_start_transition_type,
+    PrimitiveValue, hir_vec, is_set_state_type, is_start_transition_type,
 };
 
 /// Optimizes a function for SSR by inlining state hooks, removing effects,
@@ -165,7 +165,7 @@ pub fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
     // - Replace useEffectEvent(fn) with LoadLocal(fn)
     // - Replace useEffect/useLayoutEffect/useInsertionEffect with Primitive(undefined)
     // - Replace useState/useReducer with their inlined replacement
-    for (_block_id, block) in &mut func.body.blocks {
+    for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &mut func.instructions[instr_id.0 as usize];
             match &instr.value {
@@ -276,7 +276,7 @@ pub fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
                                         loc,
                                     } => InstructionValue::CallExpression {
                                         callee: callee.clone(),
-                                        args: vec![PlaceOrSpread::Place(arg.clone())],
+                                        args: hir_vec![PlaceOrSpread::Place(arg.clone())],
                                         loc: *loc,
                                     },
                                 };

@@ -16,7 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use indexmap::IndexMap;
+use crate::collections::IndexMap;
 
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 use crate::hir::environment::Environment;
@@ -541,7 +541,7 @@ pub fn infer_mutation_aliasing_ranges(
         seen_blocks.insert(block_id);
 
         // Process instruction effects
-        let instr_ids: Vec<_> = block.instructions.clone();
+        let instr_ids = block.instructions.clone();
         for instr_id in &instr_ids {
             let instr = &func.instructions[instr_id.0 as usize];
             let instr_eval_order = instr.id;
@@ -833,7 +833,7 @@ pub fn infer_mutation_aliasing_ranges(
         }
 
         let block = &func.body.blocks[&block_id];
-        let instr_ids: Vec<_> = block.instructions.clone();
+        let instr_ids = block.instructions.clone();
 
         for instr_id in &instr_ids {
             let instr = &func.instructions[instr_id.0 as usize];

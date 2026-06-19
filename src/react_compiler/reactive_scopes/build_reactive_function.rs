@@ -40,11 +40,11 @@ pub fn build_reactive_function(
         loc: hir.loc,
         id: hir.id.clone(),
         name_hint: hir.name_hint.clone(),
-        params: hir.params.clone(),
+        params: hir.params.to_vec(),
         generator: hir.generator,
         is_async: hir.is_async,
         body,
-        directives: hir.directives.clone(),
+        directives: hir.directives.to_vec(),
     })
 }
 
@@ -341,7 +341,7 @@ impl<'a, 'b> Driver<'a, 'b> {
             // Extract data from block before any mutable operations
             let block = &self.hir.body.blocks[&block_id];
             let block_id_val = block.id;
-            let instructions: Vec<_> = block.instructions.clone();
+            let instructions = block.instructions.clone();
             let terminal = block.terminal.clone();
 
             if !self.cx.emitted.insert(block_id_val) {
@@ -359,7 +359,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                     id: instr.id,
                     lvalue: Some(instr.lvalue.clone()),
                     value: ReactiveValue::Instruction(instr.value.clone()),
-                    effects: instr.effects.clone(),
+                    effects: instr.effects.as_ref().map(|e| e.to_vec()),
                     loc: instr.loc,
                 }));
             }
@@ -1109,7 +1109,7 @@ impl<'a, 'b> Driver<'a, 'b> {
         let block = &self.hir.body.blocks[&block_id];
         let block_id_val = block.id;
         let terminal = block.terminal.clone();
-        let instructions: Vec<_> = block.instructions.clone();
+        let instructions = block.instructions.clone();
 
         // If we've reached the fallthrough, stop
         if let Some(ft) = fallthrough {
@@ -1196,7 +1196,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                             id: instr.id,
                             lvalue: Some(instr.lvalue.clone()),
                             value: ReactiveValue::Instruction(instr.value.clone()),
-                            effects: instr.effects.clone(),
+                            effects: instr.effects.as_ref().map(|e| e.to_vec()),
                             loc: instr.loc,
                         }
                     })
@@ -1403,7 +1403,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                     id: instr.id,
                     lvalue: Some(instr.lvalue.clone()),
                     value: ReactiveValue::Instruction(instr.value.clone()),
-                    effects: instr.effects.clone(),
+                    effects: instr.effects.as_ref().map(|e| e.to_vec()),
                     loc: instr.loc,
                 }
             })
@@ -1480,7 +1480,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                     id: instr.id,
                     lvalue: Some(instr.lvalue.clone()),
                     value: ReactiveValue::Instruction(instr.value.clone()),
-                    effects: instr.effects.clone(),
+                    effects: instr.effects.as_ref().map(|e| e.to_vec()),
                     loc: instr.loc,
                 }
             })

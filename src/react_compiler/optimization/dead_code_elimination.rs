@@ -17,8 +17,8 @@ use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
 use crate::hir::{
-    ArrayPatternElement, BlockId, BlockKind, HirFunction, IdentifierId, InstructionKind,
-    InstructionValue, ObjectPropertyOrSpread, Pattern,
+    ArrayPatternElement, AstAlloc, BlockId, BlockKind, HirFunction, HirVec, IdentifierId,
+    InstructionKind, InstructionValue, ObjectPropertyOrSpread, Pattern,
 };
 
 /// Implements dead-code elimination, eliminating instructions whose values are unused.
@@ -34,7 +34,7 @@ pub fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
     // Collect instructions to rewrite (two-phase: collect then apply to avoid borrow conflicts)
     let mut instructions_to_rewrite: Vec<crate::hir::InstructionId> = Vec::new();
 
-    for (_block_id, block) in &mut func.body.blocks {
+    for block in func.body.blocks.values_mut() {
         // Remove unused phi nodes
         block
             .phis
@@ -235,13 +235,13 @@ fn rewrite_instruction(
                 }
                 Pattern::Object(obj) => {
                     // For objects, prune unused properties if rest element is unused or absent
-                    let mut next_properties: Option<Vec<ObjectPropertyOrSpread>> = None;
+                    let mut next_properties: Option<HirVec<ObjectPropertyOrSpread>> = None;
                     for prop in &obj.properties {
                         match prop {
                             ObjectPropertyOrSpread::Property(p) => {
                                 if is_id_or_name_used(state, &env.identifiers, p.place.identifier) {
                                     next_properties
-                                        .get_or_insert_with(Vec::new)
+                                        .get_or_insert_with(AstAlloc::vec)
                                         .push(prop.clone());
                                 }
                             }

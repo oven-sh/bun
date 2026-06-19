@@ -2,10 +2,10 @@
 
 use crate::diagnostics::{CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::{
-    ArrayPattern, ArrayPatternElement, BinaryOperator, BlockKind, Case, Effect, EvaluationOrder,
-    GotoVariant, InstructionKind, InstructionValue, LValue, LValuePattern, ObjectPattern,
-    ObjectProperty, ObjectPropertyOrSpread, ObjectPropertyType, Pattern, Place, PrimitiveValue,
-    ReturnVariant, SourceLocation, SpreadPattern, Terminal, VariableBinding,
+    ArrayPattern, ArrayPatternElement, AstAlloc, BinaryOperator, BlockKind, Case, Effect,
+    EvaluationOrder, GotoVariant, HirVec, InstructionKind, InstructionValue, LValue, LValuePattern,
+    ObjectPattern, ObjectProperty, ObjectPropertyOrSpread, ObjectPropertyType, Pattern, Place,
+    PrimitiveValue, ReturnVariant, SourceLocation, SpreadPattern, Terminal, VariableBinding,
 };
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data;
@@ -1070,7 +1070,7 @@ pub(crate) fn lower_statement(
             // Iterate through cases in reverse order so that previous blocks can
             // fallthrough to successors
             let mut fallthrough = continuation_id;
-            let mut cases: Vec<Case> = Vec::new();
+            let mut cases: HirVec<Case> = AstAlloc::vec();
             let mut has_default = false;
 
             for ii in (0..switch_stmt.cases.len()).rev() {
@@ -1680,7 +1680,7 @@ pub(super) fn lower_assignment_binding(
         }
 
         b::B::BArray(pattern) => {
-            let mut items: Vec<ArrayPatternElement> = Vec::new();
+            let mut items: HirVec<ArrayPatternElement> = AstAlloc::vec();
             let mut followups: Vec<(Place, &Binding, Option<&Expr>)> = Vec::new();
 
             let elements = pattern.items();
@@ -1778,7 +1778,7 @@ pub(super) fn lower_assignment_binding(
         }
 
         b::B::BObject(pattern) => {
-            let mut properties: Vec<ObjectPropertyOrSpread> = Vec::new();
+            let mut properties: HirVec<ObjectPropertyOrSpread> = AstAlloc::vec();
             let mut followups: Vec<(Place, &Binding, Option<&Expr>)> = Vec::new();
 
             for prop in pattern.properties() {

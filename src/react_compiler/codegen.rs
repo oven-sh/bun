@@ -36,10 +36,10 @@ use crate::hir::reactive::{
     ReactiveValue,
 };
 use crate::hir::{
-    ArrayElement, ArrayPattern, BlockId, DeclarationId, FunctionExpressionType, IdentifierId,
-    InstructionKind, InstructionValue, JsxAttribute, JsxTag, LogicalOperator, ObjectPattern,
-    ObjectPropertyKey, ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern, Pattern, Place,
-    PlaceOrSpread, PrimitiveValue, PropertyLiteral, ScopeId, SpreadPattern,
+    ArrayElement, ArrayPattern, BlockId, DeclarationId, FunctionExpressionType, HirVec,
+    IdentifierId, InstructionKind, InstructionValue, JsxAttribute, JsxTag, LogicalOperator,
+    ObjectPattern, ObjectPropertyKey, ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern,
+    Pattern, Place, PlaceOrSpread, PrimitiveValue, PropertyLiteral, ScopeId, SpreadPattern,
 };
 use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_function};
 use crate::reactive_scopes::{
@@ -2472,7 +2472,7 @@ fn codegen_jsx_expression(
     cx: &mut Context,
     tag: &JsxTag,
     props: &[JsxAttribute],
-    children: &Option<Vec<Place>>,
+    children: &Option<HirVec<Place>>,
     loc: Option<DiagSourceLocation>,
     closing_loc: Option<DiagSourceLocation>,
 ) -> Result<Expr, CompilerError> {

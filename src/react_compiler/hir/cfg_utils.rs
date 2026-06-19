@@ -5,8 +5,8 @@
 //! used by the optimization and inference passes to renumber, prune, and
 //! reorder blocks after structural changes.
 
-use indexmap::IndexMap;
-use indexmap::IndexSet;
+use crate::collections::IndexMap;
+use crate::collections::IndexSet;
 
 use super::environment::Environment;
 use super::visitors::{each_terminal_successor, terminal_fallthrough};
@@ -109,13 +109,13 @@ pub fn get_reverse_postordered_blocks(
                 BasicBlock {
                     kind: block.kind,
                     id: block_id,
-                    instructions: Vec::new(),
+                    instructions: super::AstAlloc::vec(),
                     terminal: Terminal::Unreachable {
                         id: block.terminal.evaluation_order(),
                         loc: block.terminal.loc().copied(),
                     },
                     preds: block.preds.clone(),
-                    phis: Vec::new(),
+                    phis: super::AstAlloc::vec(),
                 },
             );
         }

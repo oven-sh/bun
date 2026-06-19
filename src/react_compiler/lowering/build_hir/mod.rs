@@ -14,18 +14,19 @@
 //! | 6242–6468 | `jsx` (`lower_jsx_*`) |
 //! | 4257–4361, 5985–6241 | this file: `lower()` entry + `lower_inner()` driver |
 
+use crate::collections::IndexMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
 };
 use crate::hir::{
-    BlockKind, Effect, EvaluationOrder, HirFunction, IdentifierId, InstructionKind,
-    InstructionValue, ParamPattern, Place, PrimitiveValue, ReactFunctionType, ReturnVariant,
-    SourceLocation, SpreadPattern, Terminal, VariableBinding, environment::Environment,
+    AstAlloc, BlockKind, Effect, EvaluationOrder, HirFunction, HirVec, IdentifierId,
+    InstructionKind, InstructionValue, ParamPattern, Place, PrimitiveValue, ReactFunctionType,
+    ReturnVariant, SourceLocation, SpreadPattern, Terminal, VariableBinding,
+    environment::Environment,
 };
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as ast, Expr, G, Loc, Ref, Stmt, StmtOrExpr, b};
-use indexmap::IndexMap;
 
 use super::find_context_identifiers::find_context_identifiers;
 use super::hir_builder::{
@@ -171,7 +172,7 @@ pub(super) fn lower_inner<'h>(
     builder.push_scope(func.body().loc);
 
     // Build context places from the captured refs
-    let mut context: Vec<Place> = Vec::new();
+    let mut context: HirVec<Place> = AstAlloc::vec();
     for (&ref_, ctx_loc) in context_map {
         let identifier = builder.resolve_binding(ref_)?;
         context.push(Place {
@@ -183,7 +184,7 @@ pub(super) fn lower_inner<'h>(
     }
 
     // Process parameters
-    let mut hir_params: Vec<ParamPattern> = Vec::new();
+    let mut hir_params: HirVec<ParamPattern> = AstAlloc::vec();
     let last = params.len().saturating_sub(1);
     for (i, param) in params.iter().enumerate() {
         let is_rest = has_rest_arg && i == last;
@@ -272,7 +273,7 @@ pub(super) fn lower_inner<'h>(
     }
 
     // Lower the body
-    let mut directives: Vec<String> = Vec::new();
+    let mut directives: HirVec<String> = AstAlloc::vec();
     let expr_body = arrow_expression_body(func);
     match expr_body {
         Some(expr) => {

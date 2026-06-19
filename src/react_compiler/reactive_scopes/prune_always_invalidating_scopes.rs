@@ -126,14 +126,12 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                     .iter()
                     .map(|(_, decl)| decl.identifier)
                     .collect();
-                let reassign_ids: Vec<IdentifierId> = scope_data.reassignments.clone();
-
                 for id in &decl_ids {
                     if self.always_invalidating_values.contains(id) {
                         self.unmemoized_values.insert(*id);
                     }
                 }
-                for id in &reassign_ids {
+                for id in scope_data.reassignments.iter() {
                     if self.always_invalidating_values.contains(id) {
                         self.unmemoized_values.insert(*id);
                     }

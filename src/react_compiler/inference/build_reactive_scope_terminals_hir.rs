@@ -14,6 +14,8 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::collections::IndexMap;
+use crate::hir::AstAlloc;
 use crate::hir::BasicBlock;
 use crate::hir::BlockId;
 use crate::hir::EvaluationOrder;
@@ -29,7 +31,6 @@ use crate::hir::environment::Environment;
 use crate::hir::visitors::each_instruction_lvalue_ids;
 use crate::hir::visitors::each_instruction_operand_ids;
 use crate::hir::visitors::each_terminal_operand_ids;
-use indexmap::IndexMap;
 
 // =============================================================================
 // getScopes
@@ -222,7 +223,7 @@ fn handle_rewrite(
     };
 
     let curr_block_id = context.next_block_id;
-    let mut preds = indexmap::IndexSet::new();
+    let mut preds = crate::collections::IndexSet::new();
     for &p in &context.next_preds {
         preds.insert(p);
     }
@@ -230,13 +231,15 @@ fn handle_rewrite(
     context.rewrites.push(BasicBlock {
         kind: source_block.kind,
         id: curr_block_id,
-        instructions: source_block.instructions[context.instr_slice_idx..idx].to_vec(),
+        instructions: AstAlloc::vec_from_slice(
+            &source_block.instructions[context.instr_slice_idx..idx],
+        ),
         preds,
         // Only the first rewrite should reuse source block phis
         phis: if context.rewrites.is_empty() {
             source_block.phis.clone()
         } else {
-            Vec::new()
+            AstAlloc::vec()
         },
         terminal,
     });
@@ -300,7 +303,7 @@ pub fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &mut Envi
         }
 
         if !context.rewrites.is_empty() {
-            let mut final_preds = indexmap::IndexSet::new();
+            let mut final_preds = crate::collections::IndexSet::new();
             for &p in &context.next_preds {
                 final_preds.insert(p);
             }
@@ -309,8 +312,10 @@ pub fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &mut Envi
                 kind: block.kind,
                 preds: final_preds,
                 terminal: block.terminal.clone(),
-                instructions: block.instructions[context.instr_slice_idx..].to_vec(),
-                phis: Vec::new(),
+                instructions: AstAlloc::vec_from_slice(
+                    &block.instructions[context.instr_slice_idx..],
+                ),
+                phis: AstAlloc::vec(),
             };
             let final_block_id = final_block.id;
             context.rewrites.push(final_block);

@@ -92,7 +92,7 @@ fn eliminate_redundant_phi_impl(
             });
 
             // Rewrite instructions
-            let instruction_ids: Vec<InstructionId> =
+            let instruction_ids: HirVec<InstructionId> =
                 ir.blocks.get(&block_id).unwrap().instructions.clone();
 
             for instr_id in &instruction_ids {

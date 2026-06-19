@@ -8,7 +8,7 @@
 //! These are the JSON-serializable config types used by `moduleTypeProvider`
 //! and `installTypeConfig` to describe module/function/hook types.
 
-use indexmap::IndexMap;
+use crate::collections::IndexMap;
 
 use crate::hir::Effect;
 

@@ -16,10 +16,10 @@ use crate::diagnostics::{
 };
 use crate::hir::environment::Environment;
 use crate::hir::{
-    DeclarationId, DependencyPathEntry, Identifier, IdentifierId, IdentifierName, InstructionKind,
-    InstructionValue, ManualMemoDependency, ManualMemoDependencyRoot, Place, ReactiveBlock,
-    ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveValue,
-    ScopeId,
+    AstAlloc, DeclarationId, DependencyPathEntry, HirVec, Identifier, IdentifierId, IdentifierName,
+    InstructionKind, InstructionValue, ManualMemoDependency, ManualMemoDependencyRoot, Place,
+    ReactiveBlock, ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement,
+    ReactiveValue, ScopeId,
 };
 
 /// State tracked during manual memo validation within a StartMemoize..FinishMemoize range.
@@ -31,7 +31,7 @@ struct ManualMemoBlockState {
     /// Declarations produced within this manual memo block.
     decls: HashSet<DeclarationId>,
     /// Normalized deps from source (useMemo/useCallback dep array).
-    deps_from_source: Option<Vec<ManualMemoDependency>>,
+    deps_from_source: Option<HirVec<ManualMemoDependency>>,
     /// Manual memo id from StartMemoize.
     manual_memo_id: u32,
 }
@@ -367,7 +367,7 @@ fn record_temporaries(instr: &ReactiveInstruction, state: &mut VisitorState) {
                     value: lvalue.clone(),
                     constant: false,
                 },
-                path: Vec::new(),
+                path: AstAlloc::vec(),
                 loc: lvalue.loc,
             },
         );
@@ -441,7 +441,7 @@ fn record_deps_in_value(value: &ReactiveValue, state: &mut VisitorState) {
                                     value: lvalue.place.clone(),
                                     constant: false,
                                 },
-                                path: Vec::new(),
+                                path: AstAlloc::vec(),
                                 loc: lvalue.place.loc,
                             },
                         );
@@ -463,7 +463,7 @@ fn record_deps_in_value(value: &ReactiveValue, state: &mut VisitorState) {
                                         value: place.clone(),
                                         constant: false,
                                     },
-                                    path: Vec::new(),
+                                    path: AstAlloc::vec(),
                                     loc: place.loc,
                                 },
                             );
@@ -477,7 +477,7 @@ fn record_deps_in_value(value: &ReactiveValue, state: &mut VisitorState) {
 }
 
 /// Get operand places from a StartMemoize instruction's deps.
-fn start_memoize_operands(deps: &Option<Vec<ManualMemoDependency>>) -> Vec<Place> {
+fn start_memoize_operands(deps: &Option<HirVec<ManualMemoDependency>>) -> Vec<Place> {
     let mut result = Vec::new();
     if let Some(deps) = deps {
         for dep in deps {
@@ -717,7 +717,7 @@ fn validate_inferred_dep(
                 },
                 constant: false,
             },
-            path: dep_path.to_vec(),
+            path: AstAlloc::vec_from_slice(dep_path),
             loc: ident.loc,
         }
     };

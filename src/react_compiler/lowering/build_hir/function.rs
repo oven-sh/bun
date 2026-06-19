@@ -1,5 +1,6 @@
 //! Port of build_hir.rs lines 5510–5984 and 6469–6552 — see mod.rs.
 
+use crate::collections::IndexMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, JsString, SourceLocation,
 };
@@ -9,7 +10,6 @@ use crate::hir::{
 };
 use bun_ast::expr::Data;
 use bun_ast::{self as ast, E, Expr, G, Loc, Ref};
-use indexmap::IndexMap;
 
 use super::super::hir_builder::{HirBuilder, convert_loc};
 use super::FunctionNode;

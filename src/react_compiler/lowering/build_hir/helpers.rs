@@ -322,8 +322,8 @@ pub(super) fn lower_identifier(
 pub(super) fn lower_arguments(
     builder: &mut HirBuilder,
     args: &[Expr],
-) -> Result<Vec<PlaceOrSpread>, CompilerError> {
-    let mut result = Vec::new();
+) -> Result<HirVec<PlaceOrSpread>, CompilerError> {
+    let mut result = AstAlloc::vec();
     for arg in args {
         match &arg.data {
             Data::ESpread(spread) => {
@@ -631,7 +631,7 @@ pub(super) fn lower_assignment(
         }
 
         Data::EArray(pattern) => {
-            let mut items: Vec<ArrayPatternElement> = Vec::new();
+            let mut items: HirVec<ArrayPatternElement> = AstAlloc::vec();
             let mut followups: Vec<(Place, &Expr)> = Vec::new();
 
             let force_temporaries = if kind == InstructionKind::Reassign {
@@ -778,7 +778,7 @@ pub(super) fn lower_assignment(
         }
 
         Data::EObject(pattern) => {
-            let mut properties: Vec<ObjectPropertyOrSpread> = Vec::new();
+            let mut properties: HirVec<ObjectPropertyOrSpread> = AstAlloc::vec();
             let mut followups: Vec<(Place, &Expr, Option<&Expr>)> = Vec::new();
 
             let force_temporaries = if kind == InstructionKind::Reassign {

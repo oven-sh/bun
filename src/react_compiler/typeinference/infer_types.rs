@@ -18,8 +18,8 @@ use crate::hir::object_shape::{
     BUILT_IN_USE_REF_ID, ShapeRegistry,
 };
 use crate::hir::{
-    ArrayPatternElement, BinaryOperator, FunctionId, HirFunction, Identifier, IdentifierId,
-    IdentifierName, InstructionId, InstructionKind, InstructionValue, JsxAttribute,
+    ArrayPatternElement, AstAlloc, BinaryOperator, FunctionId, HirFunction, HirVec, Identifier,
+    IdentifierId, IdentifierName, InstructionId, InstructionKind, InstructionValue, JsxAttribute,
     LoweredFunction, ManualMemoDependencyRoot, NonLocalBinding, ObjectPropertyKey,
     ObjectPropertyOrSpread, ParamPattern, Pattern, PropertyLiteral, PropertyNameKind,
     ReactFunctionType, SourceLocation, Terminal, Type, TypeId,
@@ -68,7 +68,7 @@ fn get_type(id: IdentifierId, identifiers: &[Identifier]) -> Type {
 }
 
 /// Allocate a new TypeVar in the types arena (standalone, no &mut Environment needed).
-fn make_type(types: &mut Vec<Type>) -> Type {
+fn make_type(types: &mut HirVec<Type>) -> Type {
     let id = TypeId(types.len() as u32);
     types.push(Type::TypeVar { id });
     Type::TypeVar { id }
@@ -373,17 +373,17 @@ fn generate(
     }
 
     let mut names: HashMap<IdentifierId, String> = HashMap::new();
-    let mut return_types: Vec<Type> = Vec::new();
+    let mut return_types: HirVec<Type> = AstAlloc::vec();
 
     for (_block_id, block) in &func.body.blocks {
         // Phis
         for phi in &block.phis {
             let left = get_type(phi.place.identifier, &env.identifiers);
-            let operands: Vec<Type> = phi
-                .operands
-                .values()
-                .map(|p| get_type(p.identifier, &env.identifiers))
-                .collect();
+            let operands = AstAlloc::vec_from_iter(
+                phi.operands
+                    .values()
+                    .map(|p| get_type(p.identifier, &env.identifiers)),
+            );
             unifier.unify(left, Type::Phi { operands }, &env.shapes)?;
         }
 
@@ -435,8 +435,8 @@ fn generate(
 fn generate_for_function_id(
     func_id: FunctionId,
     identifiers: &[Identifier],
-    types: &mut Vec<Type>,
-    functions: &mut Vec<HirFunction>,
+    types: &mut HirVec<Type>,
+    functions: &mut HirVec<HirFunction>,
     global_types: &HashMap<(u32, InstructionId), Type>,
     shapes: &ShapeRegistry,
     unifier: &mut Unifier,
@@ -475,16 +475,16 @@ fn generate_for_function_id(
     // TS creates a fresh `names` Map per recursive `generate` call, so inner
     // functions don't inherit or pollute the outer function's name mappings.
     let mut inner_names: HashMap<IdentifierId, String> = HashMap::new();
-    let mut inner_return_types: Vec<Type> = Vec::new();
+    let mut inner_return_types: HirVec<Type> = AstAlloc::vec();
 
     for (_block_id, block) in &inner.body.blocks {
         for phi in &block.phis {
             let left = get_type(phi.place.identifier, identifiers);
-            let operands: Vec<Type> = phi
-                .operands
-                .values()
-                .map(|p| get_type(p.identifier, identifiers))
-                .collect();
+            let operands = AstAlloc::vec_from_iter(
+                phi.operands
+                    .values()
+                    .map(|p| get_type(p.identifier, identifiers)),
+            );
             unifier.unify(left, Type::Phi { operands }, shapes)?;
         }
 
@@ -536,8 +536,8 @@ fn generate_instruction_types(
     instr_id: InstructionId,
     function_key: u32,
     identifiers: &[Identifier],
-    types: &mut Vec<Type>,
-    functions: &mut Vec<HirFunction>,
+    types: &mut HirVec<Type>,
+    functions: &mut HirVec<HirFunction>,
     names: &mut HashMap<IdentifierId, String>,
     global_types: &HashMap<(u32, InstructionId), Type>,
     shapes: &ShapeRegistry,
@@ -958,7 +958,7 @@ fn apply_function(
     func: &HirFunction,
     functions: &[HirFunction],
     identifiers: &mut [Identifier],
-    types: &mut Vec<Type>,
+    types: &mut HirVec<Type>,
     unifier: &Unifier,
 ) {
     for (_block_id, block) in &func.body.blocks {
@@ -1009,7 +1009,7 @@ fn apply_function(
 fn resolve_identifier(
     id: IdentifierId,
     identifiers: &mut [Identifier],
-    types: &mut Vec<Type>,
+    types: &mut HirVec<Type>,
     unifier: &Unifier,
 ) {
     let type_id = identifiers[id.0 as usize].type_;
@@ -1022,7 +1022,7 @@ fn resolve_identifier(
 fn apply_instruction_lvalues(
     value: &InstructionValue,
     identifiers: &mut [Identifier],
-    types: &mut Vec<Type>,
+    types: &mut HirVec<Type>,
     unifier: &Unifier,
 ) {
     match value {
@@ -1084,7 +1084,7 @@ fn apply_instruction_lvalues(
 fn apply_instruction_operands(
     value: &InstructionValue,
     identifiers: &mut [Identifier],
-    types: &mut Vec<Type>,
+    types: &mut HirVec<Type>,
     unifier: &Unifier,
 ) {
     match value {
@@ -1521,7 +1521,7 @@ impl Unifier {
     fn try_resolve_type(&mut self, v: &Type, ty: &Type) -> Option<Type> {
         match ty {
             Type::Phi { operands } => {
-                let mut new_operands = Vec::new();
+                let mut new_operands = AstAlloc::vec();
                 for operand in operands {
                     if let Type::TypeVar { id } = operand {
                         if let Type::TypeVar { id: v_id } = v {
@@ -1610,7 +1610,7 @@ impl Unifier {
 
         if let Type::Phi { operands } = ty {
             return Type::Phi {
-                operands: operands.iter().map(|o| self.get(o)).collect(),
+                operands: AstAlloc::vec_from_iter(operands.iter().map(|o| self.get(o))),
             };
         }
 

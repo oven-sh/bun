@@ -18,7 +18,7 @@ use crate::hir::{HirFunction, InstructionValue, is_props_type};
 
 pub fn optimize_props_method_calls(func: &mut HirFunction, env: &Environment) {
     for (_block_id, block) in &func.body.blocks {
-        let instruction_ids: Vec<_> = block.instructions.clone();
+        let instruction_ids = block.instructions.clone();
         for instr_id in instruction_ids {
             let instr = &mut func.instructions[instr_id.0 as usize];
             let should_replace = matches!(

@@ -294,7 +294,7 @@ fn apply_early_return_to_scope(
                     reactive: false,
                     loc: None, // GeneratedSource
                 },
-                args: vec![PlaceOrSpread::Place(Place {
+                args: crate::hir_vec![PlaceOrSpread::Place(Place {
                     identifier: arg_temp,
                     effect: Effect::Unknown,
                     reactive: false,

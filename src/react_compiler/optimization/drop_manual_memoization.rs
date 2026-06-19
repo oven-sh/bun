@@ -19,10 +19,12 @@ use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerDiagnosticDetail;
 use crate::diagnostics::ErrorCategory;
 use crate::hir::ArrayElement;
+use crate::hir::AstAlloc;
 use crate::hir::DependencyPathEntry;
 use crate::hir::Effect;
 use crate::hir::EvaluationOrder;
 use crate::hir::HirFunction;
+use crate::hir::HirVec;
 use crate::hir::IdentifierId;
 use crate::hir::IdentifierName;
 use crate::hir::Instruction;
@@ -38,6 +40,7 @@ use crate::hir::SourceLocation;
 use crate::hir::cfg_utils::create_temporary_place;
 use crate::hir::cfg_utils::mark_instruction_ids;
 use crate::hir::environment::Environment;
+use crate::hir_vec;
 
 // =============================================================================
 // Types
@@ -79,7 +82,7 @@ struct MaybeDepsListInfo {
 
 struct ExtractedMemoArgs {
     fn_place: Place,
-    deps_list: Option<Vec<ManualMemoDependency>>,
+    deps_list: Option<HirVec<ManualMemoDependency>>,
     deps_loc: Option<SourceLocation>,
 }
 
@@ -117,7 +120,7 @@ pub fn drop_manual_memoization(
 
     // Collect all block instruction lists up front to avoid borrowing func immutably
     // while needing to mutate it
-    let all_block_instructions: Vec<Vec<InstructionId>> = func
+    let all_block_instructions: Vec<HirVec<InstructionId>> = func
         .body
         .blocks
         .values()
@@ -158,12 +161,13 @@ pub fn drop_manual_memoization(
     if !queued_inserts.is_empty() {
         let mut has_changes = false;
         for block in func.body.blocks.values_mut() {
-            let mut next_instructions: Option<Vec<InstructionId>> = None;
+            let mut next_instructions: Option<HirVec<InstructionId>> = None;
             for i in 0..block.instructions.len() {
                 let instr_id = block.instructions[i];
                 if let Some(insert_instr) = queued_inserts.remove(&instr_id) {
                     if next_instructions.is_none() {
-                        next_instructions = Some(block.instructions[..i].to_vec());
+                        next_instructions =
+                            Some(AstAlloc::vec_from_slice(&block.instructions[..i]));
                     }
                     let ni = next_instructions.as_mut().unwrap();
                     ni.push(instr_id);
@@ -395,7 +399,7 @@ pub fn collect_maybe_memo_dependencies(
             root: ManualMemoDependencyRoot::Global {
                 identifier_name: binding.name().to_string(),
             },
-            path: vec![],
+            path: hir_vec![],
             loc: loc.clone(),
         }),
         InstructionValue::PropertyLoad {
@@ -434,7 +438,7 @@ pub fn collect_maybe_memo_dependencies(
                         value: place.clone(),
                         constant: false,
                     },
-                    path: vec![],
+                    path: hir_vec![],
                     loc: place.loc.clone(),
                 })
             } else {
@@ -476,7 +480,7 @@ fn get_manual_memoization_replacement(
         // Replace with Call fn() - invoke the memo function directly
         InstructionValue::CallExpression {
             callee: fn_place.clone(),
-            args: vec![],
+            args: hir_vec![],
             loc,
         }
     } else {
@@ -496,7 +500,7 @@ fn get_manual_memoization_replacement(
 fn make_manual_memoization_markers(
     fn_expr: &Place,
     env: &mut Environment,
-    deps_list: Option<Vec<ManualMemoDependency>>,
+    deps_list: Option<HirVec<ManualMemoDependency>>,
     deps_loc: Option<SourceLocation>,
     memo_decl: &Place,
     manual_memo_id: u32,
@@ -617,7 +621,7 @@ fn extract_manual_memoization_args(
     }
 
     let deps_info = maybe_deps_list.unwrap();
-    let mut deps_list: Vec<ManualMemoDependency> = Vec::new();
+    let mut deps_list: HirVec<ManualMemoDependency> = AstAlloc::vec();
     for dep in &deps_info.deps {
         let maybe_dep = sidemap.maybe_deps.get(&dep.identifier);
         if let Some(d) = maybe_dep {

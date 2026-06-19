@@ -12,8 +12,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::diagnostics::CompilerError;
 use crate::hir::{
-    DeclarationId, DependencyPathEntry, EvaluationOrder, InstructionKind, InstructionValue, Place,
-    ReactiveBlock, ReactiveFunction, ReactiveScopeBlock, ReactiveScopeDependency,
+    DeclarationId, DependencyPathEntry, EvaluationOrder, HirVec, InstructionKind, InstructionValue,
+    Place, ReactiveBlock, ReactiveFunction, ReactiveScopeBlock, ReactiveScopeDependency,
     ReactiveStatement, ReactiveValue, ScopeId, Type,
     environment::Environment,
     object_shape::{BUILT_IN_ARRAY_ID, BUILT_IN_FUNCTION_ID, BUILT_IN_JSX_ID, BUILT_IN_OBJECT_ID},
@@ -45,7 +45,7 @@ pub fn merge_reactive_scopes_that_invalidate_together(
         last_usage,
         temporaries: HashMap::new(),
     };
-    let mut state: Option<Vec<ReactiveScopeDependency>> = None;
+    let mut state: Option<HirVec<ReactiveScopeDependency>> = None;
     transform_reactive_function(func, &mut transform, &mut state)
 }
 
@@ -86,7 +86,7 @@ struct MergeTransform<'a> {
 }
 
 impl<'a> ReactiveFunctionTransform for MergeTransform<'a> {
-    type State = Option<Vec<ReactiveScopeDependency>>;
+    type State = Option<HirVec<ReactiveScopeDependency>>;
 
     fn env(&self) -> &Environment {
         self.env
@@ -460,7 +460,7 @@ fn can_merge_scopes(
         .map(|(_key, decl)| ReactiveScopeDependency {
             identifier: decl.identifier,
             reactive: true,
-            path: Vec::new(),
+            path: crate::hir_vec![],
             loc: None,
         })
         .collect();

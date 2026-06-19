@@ -7,7 +7,7 @@
 //!
 //! Provides hardcoded type overrides for known-incompatible third-party libraries.
 
-use indexmap::IndexMap;
+use crate::collections::IndexMap;
 
 use crate::hir::Effect;
 use crate::hir::type_config::{

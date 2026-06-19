@@ -21,6 +21,7 @@ use crate::hir::{
     AliasingEffect, BlockId, BlockKind, Effect, GENERATED_SOURCE, HirFunction, Instruction,
     InstructionId, InstructionValue, Place, Terminal,
 };
+use crate::hir_vec;
 use crate::ssa::enter_ssa::placeholder_function;
 
 /// Merge consecutive blocks in the function's CFG, including inner functions.
@@ -131,7 +132,7 @@ pub fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [HirFunc
                     loc: GENERATED_SOURCE,
                 },
                 loc: GENERATED_SOURCE,
-                effects: Some(vec![AliasingEffect::Alias {
+                effects: Some(hir_vec![AliasingEffect::Alias {
                     from: operand,
                     into: lvalue,
                 }]),

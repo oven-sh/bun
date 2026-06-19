@@ -56,7 +56,7 @@ pub trait ReactiveFunctionVisitor {
         for block_id in block_ids {
             let inner_func = &self.env().functions[func_id.0 as usize];
             let block = &inner_func.body.blocks[&block_id];
-            let instr_ids: Vec<_> = block.instructions.clone();
+            let instr_ids = block.instructions.clone();
             let terminal_operands: Vec<Place> =
                 crate::hir::visitors::each_terminal_operand(&block.terminal);
             let terminal_id = block.terminal.evaluation_order();

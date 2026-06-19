@@ -111,7 +111,7 @@ struct DerivationMetadata {
     type_of_value: TypeOfValue,
     place_identifier: IdentifierId,
     place_name: Option<IdentifierName>,
-    source_ids: indexmap::IndexSet<IdentifierId>,
+    source_ids: crate::collections::IndexSet<IdentifierId>,
     is_state_source: bool,
 }
 
@@ -241,7 +241,7 @@ impl DerivationCache {
         &mut self,
         derived_id: IdentifierId,
         derived_name: Option<IdentifierName>,
-        source_ids: indexmap::IndexSet<IdentifierId>,
+        source_ids: crate::collections::IndexSet<IdentifierId>,
         type_of_value: TypeOfValue,
         is_state_source: bool,
     ) {
@@ -395,7 +395,7 @@ pub fn validate_no_derived_computations_in_effects_exp(
                     DerivationMetadata {
                         place_identifier: place.identifier,
                         place_name: name,
-                        source_ids: indexmap::IndexSet::new(),
+                        source_ids: crate::collections::IndexSet::new(),
                         type_of_value: TypeOfValue::FromProps,
                         is_state_source: true,
                     },
@@ -411,7 +411,7 @@ pub fn validate_no_derived_computations_in_effects_exp(
                     DerivationMetadata {
                         place_identifier: place.identifier,
                         place_name: name,
-                        source_ids: indexmap::IndexSet::new(),
+                        source_ids: crate::collections::IndexSet::new(),
                         type_of_value: TypeOfValue::FromProps,
                         is_state_source: true,
                     },
@@ -477,7 +477,8 @@ fn record_phi_derivations(
     let identifiers = &env.identifiers;
     for phi in &block.phis {
         let mut type_of_value = TypeOfValue::Ignored;
-        let mut source_ids: indexmap::IndexSet<IdentifierId> = indexmap::IndexSet::new();
+        let mut source_ids: crate::collections::IndexSet<IdentifierId> =
+            crate::collections::IndexSet::new();
 
         for (_block_id, operand) in &phi.operands {
             if let Some(operand_metadata) = context.derivation_cache.cache.get(&operand.identifier)
@@ -522,7 +523,8 @@ fn record_instruction_derivations(
 
     let mut type_of_value = TypeOfValue::Ignored;
     let is_source = false;
-    let mut sources: indexmap::IndexSet<IdentifierId> = indexmap::IndexSet::new();
+    let mut sources: crate::collections::IndexSet<IdentifierId> =
+        crate::collections::IndexSet::new();
 
     match &instr.value {
         InstructionValue::FunctionExpression { lowered_func, .. } => {
@@ -575,7 +577,7 @@ fn record_instruction_derivations(
                 context.derivation_cache.add_derivation_entry(
                     lvalue_id,
                     name,
-                    indexmap::IndexSet::new(),
+                    crate::collections::IndexSet::new(),
                     TypeOfValue::FromState,
                     true,
                 );
@@ -614,7 +616,7 @@ fn record_instruction_derivations(
                 context.derivation_cache.add_derivation_entry(
                     lvalue_id,
                     name,
-                    indexmap::IndexSet::new(),
+                    crate::collections::IndexSet::new(),
                     TypeOfValue::FromState,
                     true,
                 );
@@ -773,7 +775,8 @@ fn build_tree_node(
     }
 
     let mut children: Vec<TreeNode> = Vec::new();
-    let mut named_siblings: indexmap::IndexSet<String> = indexmap::IndexSet::new();
+    let mut named_siblings: crate::collections::IndexSet<String> =
+        crate::collections::IndexSet::new();
 
     for child_id in &source_metadata.source_ids {
         assert_ne!(
@@ -813,8 +816,8 @@ fn render_tree(
     node: &TreeNode,
     indent: &str,
     is_last: bool,
-    props_set: &mut indexmap::IndexSet<String>,
-    state_set: &mut indexmap::IndexSet<String>,
+    props_set: &mut crate::collections::IndexSet<String>,
+    state_set: &mut crate::collections::IndexSet<String>,
 ) -> String {
     let prefix = format!(
         "{}{}",
@@ -900,7 +903,7 @@ fn validate_effect(
         callee_loc: Option<SourceLocation>,
         callee_id: IdentifierId,
         callee_identifier_name: Option<String>,
-        source_ids: indexmap::IndexSet<IdentifierId>,
+        source_ids: crate::collections::IndexSet<IdentifierId>,
     }
 
     let mut effect_derived_set_state_calls: Vec<DerivedSetStateCall> = Vec::new();
@@ -1061,11 +1064,13 @@ fn validate_effect(
                 && context.set_state_usages.contains_key(&root_id)
                 && effect_usage_count == total_usage_count - 1
             {
-                let mut props_set: indexmap::IndexSet<String> = indexmap::IndexSet::new();
-                let mut state_set: indexmap::IndexSet<String> = indexmap::IndexSet::new();
+                let mut props_set: crate::collections::IndexSet<String> =
+                    crate::collections::IndexSet::new();
+                let mut state_set: crate::collections::IndexSet<String> =
+                    crate::collections::IndexSet::new();
 
-                let mut root_nodes_map: indexmap::IndexMap<String, TreeNode> =
-                    indexmap::IndexMap::new();
+                let mut root_nodes_map: crate::collections::IndexMap<String, TreeNode> =
+                    crate::collections::IndexMap::new();
                 for id in &derived.source_ids {
                     let nodes = build_tree_node(*id, context, &HashSet::new());
                     for node in nodes {

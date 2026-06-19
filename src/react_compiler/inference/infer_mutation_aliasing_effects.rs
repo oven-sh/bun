@@ -14,16 +14,19 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::collections::IndexSet;
 use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerDiagnosticDetail;
 use crate::diagnostics::ErrorCategory;
 use crate::hir::AliasingEffect;
 use crate::hir::AliasingSignature;
+use crate::hir::AstAlloc;
 use crate::hir::BlockId;
 use crate::hir::DeclarationId;
 use crate::hir::Effect;
 use crate::hir::FunctionId;
 use crate::hir::HirFunction;
+use crate::hir::HirVec;
 use crate::hir::IdentifierId;
 use crate::hir::InstructionKind;
 use crate::hir::InstructionValue;
@@ -44,7 +47,6 @@ use crate::hir::object_shape::HookKind;
 use crate::hir::type_config::ValueKind;
 use crate::hir::type_config::ValueReason;
 use crate::hir::visitors;
-use indexmap::IndexSet;
 
 // =============================================================================
 // Public entry point
@@ -115,11 +117,12 @@ pub fn infer_mutation_aliasing_effects(
         }
     }
 
-    let mut queued_states: indexmap::IndexMap<BlockId, InferenceState> = indexmap::IndexMap::new();
+    let mut queued_states: crate::collections::IndexMap<BlockId, InferenceState> =
+        crate::collections::IndexMap::new();
 
     // Queue helper
     fn queue(
-        queued_states: &mut indexmap::IndexMap<BlockId, InferenceState>,
+        queued_states: &mut crate::collections::IndexMap<BlockId, InferenceState>,
         states_by_block: &HashMap<BlockId, InferenceState>,
         block_id: BlockId,
         state: InferenceState,
@@ -550,7 +553,7 @@ impl InferenceState {
     fn infer_phi(
         &mut self,
         phi_place_id: IdentifierId,
-        phi_operands: &indexmap::IndexMap<BlockId, Place>,
+        phi_operands: &crate::collections::IndexMap<BlockId, Place>,
     ) {
         let mut values: HashSet<ValueId> = HashSet::new();
         for (_, operand) in phi_operands {
@@ -990,7 +993,7 @@ fn infer_block(
     let block = &func.body.blocks[&block_id];
 
     // Process phis
-    let phis: Vec<(IdentifierId, indexmap::IndexMap<BlockId, Place>)> = block
+    let phis: Vec<(IdentifierId, crate::collections::IndexMap<BlockId, Place>)> = block
         .phis
         .iter()
         .map(|phi| (phi.place.identifier, phi.operands.clone()))
@@ -1064,7 +1067,7 @@ fn infer_block(
         TerminalAction::MaybeThrow { handler_id } => {
             if let Some(handler_param) = context.catch_handlers.get(&handler_id).cloned() {
                 if state.is_defined(handler_param.identifier) {
-                    let mut terminal_effects: Vec<AliasingEffect> = Vec::new();
+                    let mut terminal_effects: HirVec<AliasingEffect> = AstAlloc::vec();
                     for instr_idx in &instr_ids {
                         let instr = &func.instructions[*instr_idx as usize];
                         match &instr.value {
@@ -1111,10 +1114,12 @@ fn infer_block(
                     ..
                 } = block_mut.terminal
                 {
-                    *term_effects = Some(vec![context.intern_effect(AliasingEffect::Freeze {
-                        value: value.clone(),
-                        reason: ValueReason::JsxCaptured,
-                    })]);
+                    *term_effects = Some(crate::hir_vec![context.intern_effect(
+                        AliasingEffect::Freeze {
+                            value: value.clone(),
+                            reason: ValueReason::JsxCaptured,
+                        }
+                    )]);
                 }
             }
         }
@@ -1134,8 +1139,8 @@ fn apply_signature(
     instr: &crate::hir::Instruction,
     env: &mut Environment,
     func: &HirFunction,
-) -> Result<Option<Vec<AliasingEffect>>, CompilerDiagnostic> {
-    let mut effects: Vec<AliasingEffect> = Vec::new();
+) -> Result<Option<HirVec<AliasingEffect>>, CompilerDiagnostic> {
+    let mut effects: HirVec<AliasingEffect> = AstAlloc::vec();
 
     // For function instructions, validate frozen mutation
     match &instr.value {
@@ -1296,7 +1301,7 @@ fn apply_effect(
     state: &mut InferenceState,
     effect: AliasingEffect,
     initialized: &mut HashSet<IdentifierId>,
-    effects: &mut Vec<AliasingEffect>,
+    effects: &mut HirVec<AliasingEffect>,
     env: &mut Environment,
     func: &HirFunction,
 ) -> Result<(), CompilerDiagnostic> {
@@ -1449,7 +1454,7 @@ fn apply_effect(
             let is_mutable = has_captures || has_tracked_side_effects || captures_ref;
 
             // Update context variable effects
-            let context_places: Vec<Place> = inner_func.context.clone();
+            let context_places = inner_func.context.clone();
             for operand in &context_places {
                 if operand.effect != Effect::Capture {
                     continue;
@@ -1651,7 +1656,7 @@ fn apply_effect(
                                 .unwrap()
                                 .clone();
                             let inner_func = &env.functions[func_id.0 as usize];
-                            let context_places: Vec<Place> = inner_func.context.clone();
+                            let context_places = inner_func.context.clone();
                             let sig_effects = compute_effects_for_aliasing_signature(
                                 env,
                                 &sig,
@@ -2082,7 +2087,7 @@ fn compute_signature_for_instruction(
                 receiver: callee.clone(),
                 function: callee.clone(),
                 mutates_function: false,
-                args: args.iter().map(place_or_spread_to_hole).collect(),
+                args: AstAlloc::vec_from_iter(args.iter().map(place_or_spread_to_hole)),
                 into: lvalue.clone(),
                 signature: sig,
                 loc: *loc,
@@ -2096,7 +2101,7 @@ fn compute_signature_for_instruction(
                 receiver: callee.clone(),
                 function: callee.clone(),
                 mutates_function: true,
-                args: args.iter().map(place_or_spread_to_hole).collect(),
+                args: AstAlloc::vec_from_iter(args.iter().map(place_or_spread_to_hole)),
                 into: lvalue.clone(),
                 signature: sig,
                 loc: *loc,
@@ -2115,7 +2120,7 @@ fn compute_signature_for_instruction(
                 receiver: receiver.clone(),
                 function: property.clone(),
                 mutates_function: false,
-                args: args.iter().map(place_or_spread_to_hole).collect(),
+                args: AstAlloc::vec_from_iter(args.iter().map(place_or_spread_to_hole)),
                 into: lvalue.clone(),
                 signature: sig,
                 loc: *loc,
@@ -2204,12 +2209,13 @@ fn compute_signature_for_instruction(
         InstructionValue::FunctionExpression { lowered_func, .. }
         | InstructionValue::ObjectMethod { lowered_func, .. } => {
             let inner_func = &env.functions[lowered_func.func.0 as usize];
-            let captures: Vec<Place> = inner_func
-                .context
-                .iter()
-                .filter(|operand| operand.effect == Effect::Capture)
-                .cloned()
-                .collect();
+            let captures = AstAlloc::vec_from_iter(
+                inner_func
+                    .context
+                    .iter()
+                    .filter(|operand| operand.effect == Effect::Capture)
+                    .cloned(),
+            );
             effects.push(AliasingEffect::CreateFunction {
                 into: lvalue.clone(),
                 function_id: lowered_func.func,
@@ -3049,7 +3055,7 @@ fn compute_effects_for_aliasing_signature_config(
                 let func = substitutions.get(f).and_then(|v| v.first()).cloned();
                 let into = substitutions.get(i).and_then(|v| v.first()).cloned();
                 if let (Some(recv), Some(func), Some(into)) = (recv, func, into) {
-                    let mut apply_args: Vec<PlaceOrSpreadOrHole> = Vec::new();
+                    let mut apply_args: HirVec<PlaceOrSpreadOrHole> = AstAlloc::vec();
                     for arg in a {
                         match arg {
                             crate::hir::type_config::ApplyArgConfig::Hole { .. } => {
@@ -3105,7 +3111,7 @@ fn build_signature_from_function_expression(
     func_id: FunctionId,
 ) -> AliasingSignature {
     let inner_func = &env.functions[func_id.0 as usize];
-    let mut params: Vec<IdentifierId> = Vec::new();
+    let mut params: HirVec<IdentifierId> = AstAlloc::vec();
     let mut rest: Option<IdentifierId> = None;
     for param in &inner_func.params {
         match param {
@@ -3114,7 +3120,10 @@ fn build_signature_from_function_expression(
         }
     }
     let returns = inner_func.returns.identifier;
-    let aliasing_effects = inner_func.aliasing_effects.clone().unwrap_or_default();
+    let aliasing_effects = inner_func
+        .aliasing_effects
+        .clone()
+        .unwrap_or_else(AstAlloc::vec);
     let loc = inner_func.loc;
 
     if rest.is_none() {
@@ -3128,7 +3137,7 @@ fn build_signature_from_function_expression(
         rest,
         returns,
         effects: aliasing_effects,
-        temporaries: Vec::new(),
+        temporaries: AstAlloc::vec(),
     }
 }
 
@@ -3387,7 +3396,7 @@ fn compute_effects_for_aliasing_signature(
                     .and_then(|v| v.first())
                     .cloned();
                 if let (Some(recv), Some(func), Some(apply_into)) = (recv, func, apply_into) {
-                    let mut apply_args: Vec<PlaceOrSpreadOrHole> = Vec::new();
+                    let mut apply_args: HirVec<PlaceOrSpreadOrHole> = AstAlloc::vec();
                     for arg in a {
                         match arg {
                             PlaceOrSpreadOrHole::Hole => apply_args.push(PlaceOrSpreadOrHole::Hole),

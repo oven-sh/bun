@@ -48,9 +48,9 @@ use crate::hir::cfg_utils::{
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::{
-    BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, GENERATED_SOURCE, GotoVariant,
-    HirFunction, IdentifierId, IdentifierName, Instruction, InstructionId, InstructionKind,
-    InstructionValue, LValue, Place, Terminal,
+    AstAlloc, BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, GENERATED_SOURCE,
+    GotoVariant, HirFunction, HirVec, IdentifierId, IdentifierName, Instruction, InstructionId,
+    InstructionKind, InstructionValue, LValue, Place, Terminal,
 };
 
 use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
@@ -132,15 +132,16 @@ pub fn inline_immediately_invoked_function_expressions(
 
                     // Create a new block which will contain code following the IIFE call
                     let continuation_block_id = env.next_block_id();
-                    let continuation_instructions: Vec<InstructionId> =
-                        func.body.blocks[&block_id].instructions[ii + 1..].to_vec();
+                    let continuation_instructions = AstAlloc::vec_from_slice(
+                        &func.body.blocks[&block_id].instructions[ii + 1..],
+                    );
                     let continuation_terminal = func.body.blocks[&block_id].terminal.clone();
                     let continuation_block = BasicBlock {
                         id: continuation_block_id,
                         instructions: continuation_instructions,
                         kind: block_kind,
-                        phis: Vec::new(),
-                        preds: indexmap::IndexSet::new(),
+                        phis: AstAlloc::vec(),
+                        preds: crate::collections::IndexSet::new(),
                         terminal: continuation_terminal,
                     };
                     func.body
@@ -337,7 +338,7 @@ fn has_single_exit_return_terminal(func: &HirFunction) -> bool {
 /// * Replace the terminal with a Goto to <return_target>
 fn rewrite_block(
     env: &mut Environment,
-    instructions: &mut Vec<Instruction>,
+    instructions: &mut HirVec<Instruction>,
     block: &mut BasicBlock,
     return_target: BlockId,
     return_value: &Place,

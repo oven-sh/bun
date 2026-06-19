@@ -45,14 +45,46 @@ pub mod reactive;
 pub mod type_config;
 pub mod visitors;
 
+use crate::collections::IndexMap;
+use crate::collections::IndexSet;
 pub use crate::diagnostics::CompilerDiagnostic;
 pub use crate::diagnostics::ErrorCategory;
 pub use crate::diagnostics::GENERATED_SOURCE;
 pub use crate::diagnostics::Position;
 pub use crate::diagnostics::SourceLocation;
-use indexmap::IndexMap;
-use indexmap::IndexSet;
 pub use reactive::*;
+
+// =============================================================================
+// Arena-backed Vec for HIR data
+// =============================================================================
+
+/// `Vec` whose backing buffer lives in the parser's thread-local AST arena
+/// (see [`bun_alloc::AstAlloc`]). Same layout as `Vec<T>` (the allocator is a
+/// ZST), so HIR types are unchanged in size. The arena is installed for the
+/// duration of `js_parser`'s visit pass — the hook point that calls into this
+/// compiler — so every `HirVec` allocated during a `compile_fn` lands in the
+/// per-file arena and is bulk-freed with the rest of the AST.
+///
+/// `Drop` on a `HirVec<T>` still runs each element's `Drop` (so `String` /
+/// `IndexMap` fields inside `T` are freed); only the backing buffer's
+/// `deallocate` is a no-op.
+pub type HirVec<T> = bun_alloc::AstVec<T>;
+pub use bun_alloc::AstAlloc;
+
+/// `vec![..]` for [`HirVec`]. `Vec<T, A>` has no `Default`/`From<[T; N]>` for
+/// non-`Global` `A`, so the std macro doesn't apply.
+#[macro_export]
+macro_rules! hir_vec {
+    () => {
+        ::bun_alloc::AstAlloc::vec()
+    };
+    ($($x:expr),+ $(,)?) => {{
+        let mut v = ::bun_alloc::AstAlloc::vec();
+        $(v.push($x);)+
+        v
+    }};
+}
+pub use crate::hir_vec;
 
 // =============================================================================
 // ID newtypes
@@ -197,16 +229,16 @@ pub struct HirFunction {
     pub id: Option<String>,
     pub name_hint: Option<String>,
     pub fn_type: ReactFunctionType,
-    pub params: Vec<ParamPattern>,
+    pub params: HirVec<ParamPattern>,
     pub return_type_annotation: Option<String>,
     pub returns: Place,
-    pub context: Vec<Place>,
+    pub context: HirVec<Place>,
     pub body: HIR,
-    pub instructions: Vec<Instruction>,
+    pub instructions: HirVec<Instruction>,
     pub generator: bool,
     pub is_async: bool,
-    pub directives: Vec<String>,
-    pub aliasing_effects: Option<Vec<AliasingEffect>>,
+    pub directives: HirVec<String>,
+    pub aliasing_effects: Option<HirVec<AliasingEffect>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,10 +288,10 @@ impl std::fmt::Display for BlockKind {
 pub struct BasicBlock {
     pub kind: BlockKind,
     pub id: BlockId,
-    pub instructions: Vec<InstructionId>,
+    pub instructions: HirVec<InstructionId>,
     pub terminal: Terminal,
     pub preds: IndexSet<BlockId>,
-    pub phis: Vec<Phi>,
+    pub phis: HirVec<Phi>,
 }
 
 /// Phi node for SSA
@@ -293,7 +325,7 @@ pub enum Terminal {
         return_variant: ReturnVariant,
         id: EvaluationOrder,
         loc: Option<SourceLocation>,
-        effects: Option<Vec<AliasingEffect>>,
+        effects: Option<HirVec<AliasingEffect>>,
     },
     Goto {
         block: BlockId,
@@ -319,7 +351,7 @@ pub enum Terminal {
     },
     Switch {
         test: Place,
-        cases: Vec<Case>,
+        cases: HirVec<Case>,
         fallthrough: BlockId,
         id: EvaluationOrder,
         loc: Option<SourceLocation>,
@@ -399,7 +431,7 @@ pub enum Terminal {
         handler: Option<BlockId>,
         id: EvaluationOrder,
         loc: Option<SourceLocation>,
-        effects: Option<Vec<AliasingEffect>>,
+        effects: Option<HirVec<AliasingEffect>>,
     },
     Try {
         block: BlockId,
@@ -558,7 +590,7 @@ pub struct Instruction {
     pub lvalue: Place,
     pub value: InstructionValue,
     pub loc: Option<SourceLocation>,
-    pub effects: Option<Vec<AliasingEffect>>,
+    pub effects: Option<HirVec<AliasingEffect>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -646,18 +678,18 @@ pub enum InstructionValue {
     },
     NewExpression {
         callee: Place,
-        args: Vec<PlaceOrSpread>,
+        args: HirVec<PlaceOrSpread>,
         loc: Option<SourceLocation>,
     },
     CallExpression {
         callee: Place,
-        args: Vec<PlaceOrSpread>,
+        args: HirVec<PlaceOrSpread>,
         loc: Option<SourceLocation>,
     },
     MethodCall {
         receiver: Place,
         property: Place,
-        args: Vec<PlaceOrSpread>,
+        args: HirVec<PlaceOrSpread>,
         loc: Option<SourceLocation>,
     },
     UnaryExpression {
@@ -678,14 +710,14 @@ pub enum InstructionValue {
     },
     JsxExpression {
         tag: JsxTag,
-        props: Vec<JsxAttribute>,
-        children: Option<Vec<Place>>,
+        props: HirVec<JsxAttribute>,
+        children: Option<HirVec<Place>>,
         loc: Option<SourceLocation>,
         opening_loc: Option<SourceLocation>,
         closing_loc: Option<SourceLocation>,
     },
     ObjectExpression {
-        properties: Vec<ObjectPropertyOrSpread>,
+        properties: HirVec<ObjectPropertyOrSpread>,
         loc: Option<SourceLocation>,
     },
     ObjectMethod {
@@ -693,11 +725,11 @@ pub enum InstructionValue {
         lowered_func: LoweredFunction,
     },
     ArrayExpression {
-        elements: Vec<ArrayElement>,
+        elements: HirVec<ArrayElement>,
         loc: Option<SourceLocation>,
     },
     JsxFragment {
-        children: Vec<Place>,
+        children: HirVec<Place>,
         loc: Option<SourceLocation>,
     },
     RegExpLiteral {
@@ -764,8 +796,8 @@ pub enum InstructionValue {
         loc: Option<SourceLocation>,
     },
     TemplateLiteral {
-        subexprs: Vec<Place>,
-        quasis: Vec<TemplateQuasi>,
+        subexprs: HirVec<Place>,
+        quasis: HirVec<TemplateQuasi>,
         loc: Option<SourceLocation>,
     },
     Await {
@@ -802,7 +834,7 @@ pub enum InstructionValue {
     },
     StartMemoize {
         manual_memo_id: u32,
-        deps: Option<Vec<ManualMemoDependency>>,
+        deps: Option<HirVec<ManualMemoDependency>>,
         deps_loc: Option<Option<SourceLocation>>,
         has_invalid_deps: bool,
         loc: Option<SourceLocation>,
@@ -993,7 +1025,7 @@ pub struct TemplateQuasi {
 #[derive(Debug, Clone)]
 pub struct ManualMemoDependency {
     pub root: ManualMemoDependencyRoot,
-    pub path: Vec<DependencyPathEntry>,
+    pub path: HirVec<DependencyPathEntry>,
     pub loc: Option<SourceLocation>,
 }
 
@@ -1127,7 +1159,7 @@ pub enum Hole {
 
 #[derive(Debug, Clone)]
 pub struct ArrayPattern {
-    pub items: Vec<ArrayPatternElement>,
+    pub items: HirVec<ArrayPatternElement>,
     pub loc: Option<SourceLocation>,
 }
 
@@ -1140,7 +1172,7 @@ pub enum ArrayPatternElement {
 
 #[derive(Debug, Clone)]
 pub struct ObjectPattern {
-    pub properties: Vec<ObjectPropertyOrSpread>,
+    pub properties: HirVec<ObjectPropertyOrSpread>,
     pub loc: Option<SourceLocation>,
 }
 
@@ -1330,7 +1362,7 @@ pub enum Type {
     },
     Poly,
     Phi {
-        operands: Vec<Type>,
+        operands: HirVec<Type>,
     },
     Property {
         object_type: Box<Type>,
@@ -1356,19 +1388,19 @@ pub struct ReactiveScope {
     pub range: MutableRange,
 
     /// The inputs to this reactive scope (populated by later passes)
-    pub dependencies: Vec<ReactiveScopeDependency>,
+    pub dependencies: HirVec<ReactiveScopeDependency>,
 
     /// The set of values produced by this scope (populated by later passes)
-    pub declarations: Vec<(IdentifierId, ReactiveScopeDeclaration)>,
+    pub declarations: HirVec<(IdentifierId, ReactiveScopeDeclaration)>,
 
     /// Identifiers which are reassigned by this scope (populated by later passes)
-    pub reassignments: Vec<IdentifierId>,
+    pub reassignments: HirVec<IdentifierId>,
 
     /// If the scope contains an early return, this stores info about it (populated by later passes)
     pub early_return_value: Option<ReactiveScopeEarlyReturn>,
 
     /// Scopes that were merged into this one (populated by later passes)
-    pub merged: Vec<ScopeId>,
+    pub merged: HirVec<ScopeId>,
 
     /// Source location spanning the scope
     pub loc: Option<SourceLocation>,
@@ -1379,7 +1411,7 @@ pub struct ReactiveScope {
 pub struct ReactiveScopeDependency {
     pub identifier: IdentifierId,
     pub reactive: bool,
-    pub path: Vec<DependencyPathEntry>,
+    pub path: HirVec<DependencyPathEntry>,
     pub loc: Option<SourceLocation>,
 }
 
@@ -1452,14 +1484,14 @@ pub enum AliasingEffect {
         receiver: Place,
         function: Place,
         mutates_function: bool,
-        args: Vec<PlaceOrSpreadOrHole>,
+        args: HirVec<PlaceOrSpreadOrHole>,
         into: Place,
         signature: Option<FunctionSignature>,
         loc: Option<SourceLocation>,
     },
     /// Function expression creation with captures.
     CreateFunction {
-        captures: Vec<Place>,
+        captures: HirVec<Place>,
         function_id: FunctionId,
         into: Place,
     },
@@ -1495,11 +1527,11 @@ pub enum PlaceOrSpreadOrHole {
 #[derive(Debug, Clone)]
 pub struct AliasingSignature {
     pub receiver: IdentifierId,
-    pub params: Vec<IdentifierId>,
+    pub params: HirVec<IdentifierId>,
     pub rest: Option<IdentifierId>,
     pub returns: IdentifierId,
-    pub effects: Vec<AliasingEffect>,
-    pub temporaries: Vec<Place>,
+    pub effects: HirVec<AliasingEffect>,
+    pub temporaries: HirVec<Place>,
 }
 
 // =============================================================================

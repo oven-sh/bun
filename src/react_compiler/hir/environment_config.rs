@@ -68,7 +68,7 @@ pub struct EnvironmentConfig {
 
     /// Pre-resolved module type provider results.
     /// Map from module name to TypeConfig, computed by the JS shim.
-    pub module_type_provider: Option<indexmap::IndexMap<String, TypeConfig>>,
+    pub module_type_provider: Option<crate::collections::IndexMap<String, TypeConfig>>,
 
     /// Custom macro-like function names that should have their operands
     /// memoized in the same scope (similar to fbt).

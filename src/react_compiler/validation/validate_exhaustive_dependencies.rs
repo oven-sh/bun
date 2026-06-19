@@ -11,9 +11,10 @@ use crate::hir::visitors::{
     each_terminal_operand,
 };
 use crate::hir::{
-    ArrayElement, BlockId, DependencyPathEntry, HirFunction, Identifier, IdentifierId,
-    InstructionKind, InstructionValue, ManualMemoDependency, ManualMemoDependencyRoot,
-    NonLocalBinding, ParamPattern, Place, PlaceOrSpread, PropertyLiteral, Terminal, Type,
+    ArrayElement, AstAlloc, BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier,
+    IdentifierId, InstructionKind, InstructionValue, ManualMemoDependency,
+    ManualMemoDependencyRoot, NonLocalBinding, ParamPattern, Place, PlaceOrSpread, PropertyLiteral,
+    Terminal, Type, hir_vec,
 };
 
 /// Port of ValidateExhaustiveDependencies.ts
@@ -104,7 +105,7 @@ pub fn validate_exhaustive_dependencies(
 /// Info extracted from a StartMemoize instruction
 struct StartMemoInfo {
     manual_memo_id: u32,
-    deps: Option<Vec<ManualMemoDependency>>,
+    deps: Option<HirVec<ManualMemoDependency>>,
     deps_loc: Option<Option<SourceLocation>>,
     #[allow(dead_code)]
     loc: Option<SourceLocation>,
@@ -869,7 +870,7 @@ fn collect_dependencies(
 
                                 let diagnostic = validate_dependencies(
                                     inferred,
-                                    &sm.deps.unwrap_or_default(),
+                                    &sm.deps.unwrap_or_else(|| hir_vec![]),
                                     cb.reactive,
                                     sm.deps_loc.unwrap_or(None),
                                     ErrorCategory::MemoDependencies,
@@ -1002,7 +1003,9 @@ fn collect_dependencies(
                                                                 },
                                                                 constant: false,
                                                             },
-                                                        path: path.clone(),
+                                                        path: AstAlloc::vec_from_iter(
+                                                            path.iter().cloned(),
+                                                        ),
                                                         loc: *loc,
                                                     },
                                                     InferredDependency::Global { binding } => {
@@ -1013,7 +1016,7 @@ fn collect_dependencies(
                                                                         .name()
                                                                         .to_string(),
                                                                 },
-                                                            path: Vec::new(),
+                                                            path: hir_vec![],
                                                             loc: None,
                                                         }
                                                     }
@@ -1117,7 +1120,9 @@ fn collect_dependencies(
                                                                 },
                                                                 constant: false,
                                                             },
-                                                        path: path.clone(),
+                                                        path: AstAlloc::vec_from_iter(
+                                                            path.iter().cloned(),
+                                                        ),
                                                         loc: *loc,
                                                     },
                                                     InferredDependency::Global { binding } => {
@@ -1128,7 +1133,7 @@ fn collect_dependencies(
                                                                         .name()
                                                                         .to_string(),
                                                                 },
-                                                            path: Vec::new(),
+                                                            path: hir_vec![],
                                                             loc: None,
                                                         }
                                                     }

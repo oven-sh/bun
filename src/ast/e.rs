@@ -688,14 +688,15 @@ impl JSXSpecialProp {
     }
 }
 
-/// Stores the `f64` as two `u32` halves so the struct has align 4, letting
-/// `expr::Data` (and therefore `Expr`) drop to align 4 and pack into 16 bytes.
-/// `value()` reconstructs via `f64::from_bits`; on x64/arm64 this compiles to
-/// a single `movq`/`ldr`+`fmov`, so there's no per-access cost.
+/// `packed(4)` lowers the alignment to 4 so `expr::Data` (and therefore `Expr`)
+/// drop to align 4 and pack into 16 bytes; the `f64` stays a single scalar so
+/// `.value()` is one `movsd`/`ldr`. The field is private because comparisons on
+/// a packed `f64` field would require `&self.value` (an unaligned reference);
+/// callers go through `value()` / `new()` which copy by value.
 #[derive(Clone, Copy)]
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct Number {
-    bits: [u32; 2],
+    value: f64,
 }
 
 const _: () = assert!(core::mem::size_of::<Number>() == 8);
@@ -704,14 +705,11 @@ const _: () = assert!(core::mem::align_of::<Number>() == 4);
 impl Number {
     #[inline(always)]
     pub const fn new(value: f64) -> Self {
-        let b = value.to_bits();
-        Number {
-            bits: [b as u32, (b >> 32) as u32],
-        }
+        Number { value }
     }
     #[inline(always)]
     pub const fn value(self) -> f64 {
-        f64::from_bits((self.bits[1] as u64) << 32 | self.bits[0] as u64)
+        self.value
     }
 }
 impl From<f64> for Number {
@@ -1424,8 +1422,8 @@ impl EString {
             )
         }
     }
-    /// Constructor for `'static` literals (Prefill globals).
-    pub fn from_static(data: &'static [u8]) -> Self {
+    /// Const constructor for `'static` literals (Prefill globals).
+    pub const fn from_static(data: &'static [u8]) -> Self {
         Self {
             data: Str::new(data),
             prefer_template: false,

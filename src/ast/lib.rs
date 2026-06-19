@@ -172,17 +172,15 @@ pub enum RefTag {
 /// the masking is a no-op and hashing is bit-identical to the pre-shrink
 /// layout — preserving output sha-identity.
 ///
-/// Stored as two `u32` halves rather than a single `u64` so the struct has
-/// align 4. This is what lets the inline identifier payloads — and therefore
-/// `expr::Data` and `Expr` themselves — drop to align 4 and pack into 16
-/// bytes. All bit-twiddling goes through `bits()` / `from_bits_inner()` so the
-/// public API is unchanged.
-#[repr(C)]
+/// `packed(4)` lowers the alignment to 4 without changing the single-scalar
+/// representation, so `Ref` is still passed/returned in one register and
+/// `self.0` is still one `mov`. The align-4 part is what lets the inline
+/// identifier payloads — and therefore `expr::Data` and `Expr` — pack into 16
+/// bytes. All accessors take `self` by value (`Copy`), so the packed-field
+/// reference restriction never applies.
+#[repr(C, packed(4))]
 #[derive(Clone, Copy)]
-pub struct Ref {
-    lo: u32,
-    hi: u32,
-}
+pub struct Ref(u64);
 
 const _: () = assert!(core::mem::size_of::<Ref>() == 8);
 const _: () = assert!(core::mem::align_of::<Ref>() == 4);
@@ -190,25 +188,7 @@ const _: () = assert!(core::mem::align_of::<Ref>() == 4);
 /// We mask to 31 bits for `source_index`, 28 for `inner_index`.
 pub type RefInt = u32;
 
-// Little-endian only: bits()/from_bits_inner() rely on `{lo, hi}` byte order
-// matching a native u64 read. Every Bun target is LE.
-const _: () = assert!(cfg!(target_endian = "little"));
-
 impl Ref {
-    #[inline(always)]
-    const fn bits(self) -> u64 {
-        // SAFETY: `Ref` is `repr(C)` `{lo: u32, hi: u32}` — 8 bytes, no
-        // padding, fully initialized. On LE the byte image is exactly
-        // `(hi << 32) | lo`. One `mov` instead of two loads + shift|or, which
-        // matters because `Ref` is the hot `HashMap` key in the renamer.
-        unsafe { core::mem::transmute::<Ref, u64>(self) }
-    }
-    #[inline(always)]
-    const fn from_bits_inner(b: u64) -> Ref {
-        // SAFETY: inverse of `bits()` — every u64 bit pattern is a valid `Ref`.
-        unsafe { core::mem::transmute::<u64, Ref>(b) }
-    }
-
     const INNER_MASK: u64 = (1u64 << 31) - 1;
     /// `inner_index` width — 28 bits, leaving 3 user bits.
     /// `debug_assert!` in `pack()` catches any source large enough to overflow
@@ -222,19 +202,19 @@ impl Ref {
     const SRC_SHIFT: u32 = 33;
 
     /// Represents a null state without using an extra bit.
-    pub const NONE: Ref = Ref { lo: 0, hi: 0 }; // tag=Invalid, inner=0, src=0
+    pub const NONE: Ref = Ref(0); // tag=Invalid, inner=0, src=0
 
     /// Raw 64-bit representation **including** user bits. For round-tripping
     /// through external pointer-packed storage (e.g. css `IdentOrRef`). Differs
     /// from [`Self::as_u64`], which masks user bits for hashing/equality.
     #[inline]
     pub const fn to_raw_bits(self) -> u64 {
-        self.bits()
+        self.0
     }
     /// Reconstruct from a value previously returned by [`Self::to_raw_bits`].
     #[inline]
     pub const fn from_raw_bits(bits: u64) -> Ref {
-        Ref::from_bits_inner(bits)
+        Ref(bits)
     }
 
     /// General constructor exposing all three packed fields. Prefer `init` for
@@ -251,24 +231,22 @@ impl Ref {
             (inner as u64) <= Self::INNER_BITS,
             "Ref.inner_index overflows 28 bits — file has >268M symbols or >268MB source slice",
         );
-        Ref::from_bits_inner(
-            (inner as u64 & Self::INNER_BITS)
-                | ((tag as u64) << 31)
-                | ((src as u64 & Self::INNER_MASK) << Self::SRC_SHIFT),
-        )
+        Ref((inner as u64 & Self::INNER_BITS)
+            | ((tag as u64) << 31)
+            | ((src as u64 & Self::INNER_MASK) << Self::SRC_SHIFT))
     }
 
     #[inline]
     pub const fn inner_index(self) -> u32 {
-        self.lo & Self::INNER_BITS as u32
+        (self.0 & Self::INNER_BITS) as u32
     }
     #[inline]
     pub const fn source_index(self) -> u32 {
-        (self.bits() >> Self::SRC_SHIFT) as u32 & Self::INNER_MASK as u32
+        (self.0 >> Self::SRC_SHIFT) as u32 & Self::INNER_MASK as u32
     }
     #[inline]
     pub const fn tag(self) -> RefTag {
-        match (self.bits() >> 31) as u8 & 0b11 {
+        match (self.0 >> 31) as u8 & 0b11 {
             0 => RefTag::Invalid,
             1 => RefTag::AllocatedName,
             2 => RefTag::SourceContentsSlice,
@@ -282,7 +260,7 @@ impl Ref {
         // `E::Identifier::init(Ref::NONE).with_can_be_removed_if_unused(true)`)
         // still reports null — keeps `is_empty`/`is_null` consistent with
         // `eq`/`hash`/`eql`/`as_u64`, which all ignore the user-bit lane.
-        (self.bits() & !Self::USER_BITS_MASK) == 0
+        (self.0 & !Self::USER_BITS_MASK) == 0
     }
     #[inline]
     pub const fn is_valid(self) -> bool {
@@ -324,7 +302,7 @@ impl Ref {
     /// so wyhash output is unchanged vs the pre-shrink layout.
     #[inline]
     pub const fn as_u64(self) -> u64 {
-        self.bits() & !Self::USER_BITS_MASK
+        self.0 & !Self::USER_BITS_MASK
     }
     #[inline]
     pub fn hash64(self) -> u64 {
@@ -341,19 +319,19 @@ impl Ref {
     #[inline]
     pub const fn user_bit(self, n: u32) -> bool {
         debug_assert!(n < 3);
-        (self.lo >> (28 + n)) & 1 != 0
+        (self.0 >> (28 + n)) & 1 != 0
     }
     #[inline]
     pub fn set_user_bit(&mut self, n: u32, v: bool) {
         debug_assert!(n < 3);
-        let bit = 1u32 << (28 + n);
-        self.lo = (self.lo & !bit) | ((v as u32) << (28 + n));
+        let bit = 1u64 << (28 + n);
+        self.0 = (self.0 & !bit) | ((v as u64) << (28 + n));
     }
     #[inline]
     pub const fn with_user_bit(mut self, n: u32, v: bool) -> Ref {
         debug_assert!(n < 3);
-        let bit = 1u32 << (28 + n);
-        self.lo = (self.lo & !bit) | ((v as u32) << (28 + n));
+        let bit = 1u64 << (28 + n);
+        self.0 = (self.0 & !bit) | ((v as u64) << (28 + n));
         self
     }
     /// Identity bits only (user/flag lane zeroed). Use when handing a
@@ -363,10 +341,7 @@ impl Ref {
     /// leak across node kinds.
     #[inline]
     pub const fn without_user_bits(self) -> Ref {
-        Ref {
-            lo: self.lo & !(Self::USER_BITS_MASK as u32),
-            hi: self.hi,
-        }
+        Ref(self.0 & !Self::USER_BITS_MASK)
     }
     /// Replace the identity bits with those of `self` while keeping `src`'s
     /// user-bit lane. Used by `handle_identifier`'s `id_clone.ref_ = result.ref`
@@ -374,11 +349,7 @@ impl Ref {
     /// zeroed by a whole-word write.
     #[inline]
     pub const fn with_user_bits_from(self, src: Ref) -> Ref {
-        let mask = Self::USER_BITS_MASK as u32;
-        Ref {
-            lo: (self.lo & !mask) | (src.lo & mask),
-            hi: self.hi,
-        }
+        Ref((self.0 & !Self::USER_BITS_MASK) | (src.0 & Self::USER_BITS_MASK))
     }
     #[inline]
     pub fn hash(self) -> u32 {

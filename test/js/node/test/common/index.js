@@ -153,6 +153,10 @@ if (process.argv.length === 2 &&
           }
           return originalRequire.apply(this, arguments);
         };
+        // http2-specific internal modules (internal/http2/util, …) are
+        // served separately via Bun.plugin module shims backed by the
+        // node:http2 implementation's own internals.
+        installBunExposeInternalsShim();
         break;
       }
       if (flag === "test") {
@@ -1146,6 +1150,15 @@ const common = {
     return hasOpenSSL(3, 1);
   },
 
+  get isInsideDirWithUnusualChars() {
+    return __dirname.includes('%') ||
+           (!isWindows && __dirname.includes('\\')) ||
+           __dirname.includes('$') ||
+           __dirname.includes('\n') ||
+           __dirname.includes('\r') ||
+           __dirname.includes('\t');
+  },
+
   get hasOpenSSL32() {
     return hasOpenSSL(3, 2);
   },
@@ -1244,3 +1257,45 @@ module.exports = new Proxy(common, {
     return obj[prop];
   },
 });
+
+// Bun: tests gated on `// Flags: --expose-internals` import node-internal modules for access to
+// internal symbols and classes (kSocket, ServerHttp2Session, NghttpError, ...). Provide those as
+// virtual modules backed by Bun's actual internals, so the tests exercise real behavior rather
+// than being skipped on the import.
+function installBunExposeInternalsShim() {
+  if (typeof Bun === "undefined" || typeof Bun.plugin !== "function") return;
+  let http2Internals = {};
+  try {
+    http2Internals = require("http2")[Symbol.for("::bunhttp2internals::")] ?? {};
+  } catch {
+    // http2 may be unavailable in some builds; the shim then only provides symbols.
+  }
+  class NghttpError extends Error {
+    constructor(message) {
+      super(message);
+      this.code = "ERR_HTTP2_ERROR";
+    }
+  }
+  Bun.plugin({
+    name: "node-test-expose-internals",
+    setup(build) {
+      build.module("internal/http2/util", () => ({
+        loader: "object",
+        exports: {
+          // The same registered symbol node:http2 stores the raw socket under.
+          kSocket: Symbol.for("::bunhttp2socket::"),
+          NghttpError,
+          ...(http2Internals.util ?? {}),
+        },
+      }));
+      build.module("internal/http2/core", () => ({
+        loader: "object",
+        exports: { ...(http2Internals.core ?? {}) },
+      }));
+      build.module("internal/timers", () => ({
+        loader: "object",
+        exports: { kTimeout: Symbol.for("::buntimeout::") },
+      }));
+    },
+  });
+}

@@ -288,3 +288,117 @@ test("fs.promises async stack with Promise.all", async () => {
   // Promise.all uses combinator context — must not crash.
   expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
 });
+
+it("an unused FileHandle.writer() does not prevent close()", async () => {
+  const dir = tempDirWithFiles("unused-writer", { "x.txt": "hello" });
+  const fh = await fsPromises.open(join(dir, "x.txt"), "r+");
+  fh.writer(); // never written to, never ended
+  // must not hang: the writer only refs the handle once a write happens
+  await fh.close();
+  expect(fh.fd).toBe(-1);
+});
+
+it("sources created before close() refuse to use the stale fd", async () => {
+  const dir = tempDirWithFiles("stale-fd", { "x.txt": "hello" });
+  const file = join(dir, "x.txt");
+
+  // writer
+  {
+    const fh = await fsPromises.open(file, "r+");
+    const w = fh.writer();
+    await fh.close();
+    await expect(w.write(Buffer.from("a"))).rejects.toMatchObject({ code: "ERR_INVALID_STATE" });
+    expect(() => w.writeSync(Buffer.from("a"))).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+  }
+  // pull
+  {
+    const fh = await fsPromises.open(file, "r");
+    const src = fh.pull();
+    await fh.close();
+    await expect(
+      (async () => {
+        for await (const _ of src);
+      })(),
+    ).rejects.toMatchObject({ code: "ERR_INVALID_STATE" });
+  }
+  // pullSync
+  {
+    const fh = await fsPromises.open(file, "r");
+    const src = fh.pullSync();
+    await fh.close();
+    expect(() => {
+      for (const _ of src);
+    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+  }
+});
+
+it("rm and promises.rm report ERR_FS_EISDIR for directories like rmSync", async () => {
+  const dir = tempDirWithFiles("rm-eisdir", { "sub/a.txt": "x" });
+  const target = join(dir, "sub");
+  await expect(fsPromises.rm(target)).rejects.toMatchObject({ code: "ERR_FS_EISDIR" });
+  const { promise, resolve } = Promise.withResolvers();
+  fs.rm(target, err => resolve(err));
+  expect((await promise)?.code).toBe("ERR_FS_EISDIR");
+  // directory is still removable the supported way
+  await fsPromises.rm(target, { recursive: true });
+  expect(fs.existsSync(target)).toBe(false);
+});
+
+it("close() while an operation is in flight actually closes the fd", async () => {
+  const dir = tempDirWithFiles("deferred-close", { "x.txt": "hello" });
+  const fh = await fsPromises.open(join(dir, "x.txt"), "r");
+  const fd = fh.fd;
+  // take an extra ref so close() defers, then release it
+  const read = fh.read(Buffer.alloc(5), 0, 5, 0);
+  const closed = fh.close();
+  await read;
+  await closed;
+  expect(fh.fd).toBe(-1);
+  // the deferred path must have issued the real close; nothing else runs in
+  // this process between the close and this check, so EBADF is deterministic
+  expect(() => fs.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+});
+
+it("fail()/end() with autoClose defer the close past an in-flight write", async () => {
+  const dir = tempDirWithFiles("writer-teardown", { "a.bin": "", "b.bin": "" });
+  // fail() while a large write is on the threadpool must not close the fd
+  // under it; the write completes, then the handle closes.
+  {
+    const fh = await fsPromises.open(join(dir, "a.bin"), "w");
+    const w = fh.writer({ autoClose: true });
+    const big = Buffer.alloc(8 << 20, 65);
+    const pending = w.write(big);
+    w.fail(new Error("stop"));
+    await pending; // must not reject with EBADF
+    expect(fs.statSync(join(dir, "a.bin")).size).toBe(big.byteLength);
+    expect(fh.fd).toBe(-1); // deferred teardown closed the handle
+  }
+  // end() while a write is pending waits for it and reports all bytes
+  {
+    const fh = await fsPromises.open(join(dir, "b.bin"), "w");
+    const w = fh.writer({ autoClose: true });
+    const big = Buffer.alloc(8 << 20, 66);
+    const pending = w.write(big);
+    const total = await w.end();
+    await pending;
+    expect(total).toBe(big.byteLength);
+    expect(fs.statSync(join(dir, "b.bin")).size).toBe(big.byteLength);
+    expect(fh.fd).toBe(-1);
+  }
+});
+
+it("teardown waits for every concurrent in-flight write", async () => {
+  const dir = tempDirWithFiles("writer-concurrent", { "a.bin": "" });
+  const fh = await fsPromises.open(join(dir, "a.bin"), "w");
+  const w = fh.writer({ autoClose: true, start: 0 });
+  const big = Buffer.alloc(4 << 20, 65);
+  // two unawaited writes in flight; the first one finishing must not run the
+  // deferred teardown while the second is still on the threadpool
+  const p1 = w.write(big);
+  const p2 = w.write(big);
+  w.fail(new Error("stop"));
+  await p1;
+  await p2; // must not reject with EBADF
+  expect(fs.statSync(join(dir, "a.bin")).size).toBe(big.byteLength * 2);
+  expect(fh.fd).toBe(-1);
+});

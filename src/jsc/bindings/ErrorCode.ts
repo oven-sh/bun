@@ -335,5 +335,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_GOAWAY_SESSION", Error],
   ["ERR_TLS_ALPN_CALLBACK_INVALID_RESULT", TypeError],
   ["ERR_PROXY_TUNNEL", Error],
+  ["ERR_FS_CP_EEXIST", Error],
+  ["ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY", Error],
+  ["ERR_DIR_CONCURRENT_OPERATION", Error],
 ];
 export default errors;

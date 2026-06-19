@@ -2393,6 +2393,15 @@ where
         // not content-length or transfer-encoding so we need to respect the body
         let body_value = response.get_body_value();
         body_value.to_blob_if_possible();
+        // `to_blob_if_possible` can't see streams migrated into the JS-side
+        // cached slot; convert blob/file-backed streams here too so HEAD
+        // reports the same Content-Length the GET render path produces.
+        if matches!(body_value, Body::Value::Locked(_)) {
+            if let Some(mut readable) = response.get_body_readable_stream(global_this) {
+                let _ = response.try_blob_from_resolved_stream(global_this, &mut readable);
+            }
+        }
+        let body_value = response.get_body_value();
         match body_value {
             Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) => {
                 let mut blob = body_value.use_as_any_blob_allow_non_utf8_string();
@@ -2894,11 +2903,31 @@ where
                             return;
                         }
                         // toBlobIfPossible will typically convert .Blob streams, or .File streams into a Blob object, but cannot always.
-                        readable_stream::Source::Blob(_)
-                        | readable_stream::Source::File(_)
+                        readable_stream::Source::Blob(_) | readable_stream::Source::File(_) => {
+                            // `value.to_blob_if_possible()` above can no longer
+                            // see the stream once check_body_stream_ref has
+                            // migrated it into the JS-side cached slot, so
+                            // unread blob/file-backed Response streams land
+                            // here. Convert now so file streams take the
+                            // sendfile/native blob path instead of the
+                            // per-chunk JS streaming loop. Reader-held streams
+                            // were already rejected by the `is_locked` check
+                            // above.
+                            let mut stream = stream;
+                            if let Some(blob) = stream.to_any_blob(global_this) {
+                                this.response_body_readable_stream_ref.deinit();
+                                this.blob = blob;
+                                this.render_with_blob_from_body_value();
+                                return;
+                            }
+                            if let Some(resp) = this.resp {
+                                let mut pair = StreamPair { stream, this };
+                                resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);
+                            }
+                            return;
+                        }
                         // These are the common scenario:
-                        | readable_stream::Source::JavaScript
-                        | readable_stream::Source::Direct => {
+                        readable_stream::Source::JavaScript | readable_stream::Source::Direct => {
                             if let Some(resp) = this.resp {
                                 let mut pair = StreamPair { stream, this };
                                 resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);
@@ -2927,9 +2956,8 @@ where
                             // we can avoid streaming it and just send it all at once.
                             if byte_stream.has_received_last_chunk.get() {
                                 let mut byte_list = byte_stream.drain();
-                                this.blob = AnyBlob::from_array_list(
-                                    byte_list.move_to_list_managed(),
-                                );
+                                this.blob =
+                                    AnyBlob::from_array_list(byte_list.move_to_list_managed());
                                 this.response_body_readable_stream_ref.deinit();
                                 this.do_render_blob();
                                 return;

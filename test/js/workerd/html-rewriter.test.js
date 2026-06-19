@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { gcTick, tls, tmpdirSync } from "harness";
+import { gcTick, tempDir, tls, tmpdirSync } from "harness";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
 var setTimeoutAsync = (fn, delay) => {
@@ -163,6 +163,35 @@ describe("HTMLRewriter", () => {
     await Bun.write(filePath, "<div>hello</div>");
     var output = rewriter.transform(new Response(Bun.file(filePath)));
     expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
+  });
+
+  it("(from file stream) supports element handlers", async () => {
+    var rewriter = new HTMLRewriter();
+    rewriter.on("div", {
+      element(element) {
+        element.setInnerContent("<blink>it worked!</blink>", { html: true });
+      },
+    });
+    using dir = tempDir("html-rewriter-stream", { "index.html": "<div>hello</div>" });
+    var output = rewriter.transform(new Response(Bun.file(join(String(dir), "index.html")).stream()));
+    expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
+  });
+
+  it("(from file stream) errors cleanly when the stream is held by a reader", async () => {
+    var rewriter = new HTMLRewriter();
+    rewriter.on("div", {
+      element(element) {
+        element.setInnerContent("<blink>it worked!</blink>", { html: true });
+      },
+    });
+    using dir = tempDir("html-rewriter-stream-locked", { "index.html": "<div>hello</div>" });
+    const response = new Response(Bun.file(join(String(dir), "index.html")).stream());
+    // a raw-constructor reader locks the stream without disturbing it; the
+    // buffering path must refuse to consume it out from under the reader
+    new ReadableStreamDefaultReader(response.body);
+    expect(async () => {
+      await rewriter.transform(response).text();
+    }).toThrow("Stream already used, please create a new one");
   });
 
   it("supports attribute iterator", async () => {

@@ -459,6 +459,15 @@ impl Response {
     }
 
     #[inline]
+    pub fn try_blob_from_resolved_stream(
+        &self,
+        global_object: &JSGlobalObject,
+        stream: &mut super::readable_stream::ReadableStream,
+    ) -> bool {
+        <Self as BodyMixin>::try_blob_from_resolved_stream(self, global_object, stream)
+    }
+
+    #[inline]
     pub fn set_size_hint(&self, size_hint: super::blob::SizeType) {
         if let BodyValue::Locked(locked) = self.body.get().value_mut() {
             locked.size_hint = size_hint;

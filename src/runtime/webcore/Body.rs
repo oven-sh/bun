@@ -1705,6 +1705,55 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
     }
 
+    /// Try to convert a still-unread blob/file-backed body stream back into a
+    /// Blob body value so consumers take the native blob paths (sendfile,
+    /// buffered reads) instead of the per-chunk JS streaming loop.
+    ///
+    /// `Value::to_blob_if_possible` can only consult the native
+    /// `Locked.readable` slot, but `check_body_stream_ref` migrates the stream
+    /// into the JS-side cache right after construction, leaving that slot
+    /// empty — so for `new Response(file.stream())` the conversion silently
+    /// never fires. Callers resolve the stream from either slot (via
+    /// `get_body_readable_stream`) and pass it in. Returns true when the body
+    /// value was replaced with the blob.
+    fn try_blob_from_resolved_stream(
+        &self,
+        global_object: &JSGlobalObject,
+        stream: &mut ReadableStream,
+    ) -> bool {
+        {
+            let Value::Locked(locked) = self.get_body_value() else {
+                return false;
+            };
+            // Someone is already consuming or waiting on this body.
+            if locked.promise.is_some()
+                || locked.on_receive_value.is_some()
+                || !locked.action.is_none()
+            {
+                return false;
+            }
+        }
+        // A reader the user holds must keep observing the stream; consumption
+        // must keep rejecting like the streaming path does. The callers'
+        // `is_disturbed` checks alone miss readers made with
+        // `new ReadableStreamDefaultReader(s)`, which — unlike `getReader()` —
+        // doesn't run the deferred `$start` thunk that marks lazy native
+        // streams disturbed.
+        if stream.is_locked(global_object) {
+            return false;
+        }
+        let Some(blob) = stream.to_any_blob(global_object) else {
+            return false;
+        };
+        self.detach_readable_stream(global_object);
+        *self.get_body_value() = match blob {
+            AnyBlob::Blob(b) => Value::Blob(b),
+            AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
+            AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
+        };
+        true
+    }
+
     /// Migrate any `Locked.readable` strong ref
     /// into the GC-traced `js.gc.stream` slot to break the cycle (the JS
     /// wrapper owns the stream; native side must not hold it strongly).
@@ -1766,13 +1815,14 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream(global_object) {
+            if let Some(mut readable) = self.get_body_readable_stream(global_object) {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let value = self.get_body_value();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetText, Some(readable));
+                if !self.try_blob_from_resolved_stream(global_object, &mut readable) {
+                    if let Value::Locked(locked) = self.get_body_value() {
+                        return locked.set_promise(global_object, Action::GetText, Some(readable));
+                    }
                 }
             }
             let value = self.get_body_value();
@@ -1836,14 +1886,14 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream(global_object) {
+            if let Some(mut readable) = self.get_body_readable_stream(global_object) {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetJSON, Some(readable));
+                if !self.try_blob_from_resolved_stream(global_object, &mut readable) {
+                    if let Value::Locked(locked) = self.get_body_value() {
+                        return locked.set_promise(global_object, Action::GetJSON, Some(readable));
+                    }
                 }
             }
             let value = self.get_body_value();
@@ -1883,18 +1933,18 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream(global_object) {
+            if let Some(mut readable) = self.get_body_readable_stream(global_object) {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(
-                        global_object,
-                        Action::GetArrayBuffer,
-                        Some(readable),
-                    );
+                if !self.try_blob_from_resolved_stream(global_object, &mut readable) {
+                    if let Value::Locked(locked) = self.get_body_value() {
+                        return locked.set_promise(
+                            global_object,
+                            Action::GetArrayBuffer,
+                            Some(readable),
+                        );
+                    }
                 }
             }
             let value = self.get_body_value();
@@ -1935,14 +1985,14 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream(global_object) {
+            if let Some(mut readable) = self.get_body_readable_stream(global_object) {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetBytes, Some(readable));
+                if !self.try_blob_from_resolved_stream(global_object, &mut readable) {
+                    if let Value::Locked(locked) = self.get_body_value() {
+                        return locked.set_promise(global_object, Action::GetBytes, Some(readable));
+                    }
                 }
             }
             let value = self.get_body_value();
@@ -2018,6 +2068,16 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         if let Value::Locked(_locked) = value {
+            // Blob/file-backed streams that `check_body_stream_ref` migrated
+            // into the JS-side cache convert here so the blob tail below
+            // (including the async file read) runs instead of the JS
+            // streaming loop.
+            if let Some(mut readable) = self.get_body_readable_stream(global_object) {
+                let _ = self.try_blob_from_resolved_stream(global_object, &mut readable);
+            }
+        }
+        let value = self.get_body_value();
+        if let Value::Locked(_locked) = value {
             let owned_readable = self.get_body_readable_stream(global_object);
             // reshaped for borrowck — re-borrow after self method call.
             let value = self.get_body_value();
@@ -2041,6 +2101,38 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         };
         // encoder dropped at end of scope (replaces defer encoder.deinit())
+
+        // File-backed (and S3) blobs have no bytes in memory, so the
+        // synchronous parse below would read an empty view and silently
+        // resolve with an empty FormData. Stamp the body's content type onto
+        // the blob and take Blob's read-then-parse path instead
+        // (`do_read_file`/`do_read_from_s3` via `to_form_data`).
+        if matches!(&blob, AnyBlob::Blob(b) if b.needs_to_read_file() || b.is_s3()) {
+            let AnyBlob::Blob(b) = &blob else {
+                unreachable!()
+            };
+            b.free_content_type();
+            b.content_type_was_set.set(true);
+            match &encoding {
+                webcore::form_data::Encoding::URLEncoded => {
+                    b.content_type.set(std::ptr::from_ref::<[u8]>(
+                        b"application/x-www-form-urlencoded" as &'static [u8],
+                    ));
+                }
+                webcore::form_data::Encoding::Multipart(boundary) => {
+                    const CONTENT_TYPE_PREFIX: &[u8] = b"multipart/form-data; boundary=";
+                    let mut ct = Vec::with_capacity(CONTENT_TYPE_PREFIX.len() + boundary.len());
+                    ct.extend_from_slice(CONTENT_TYPE_PREFIX);
+                    ct.extend_from_slice(boundary);
+                    b.content_type
+                        .set(bun_core::heap::into_raw(ct.into_boxed_slice()));
+                    b.content_type_allocated.set(true);
+                }
+            }
+            let result = b.to_form_data(global_object, Lifetime::Temporary);
+            blob.detach();
+            return result.map_err(Into::into);
+        }
 
         let js_value =
             match webcore::form_data::FormData::to_js(global_object, blob.slice(), &encoding) {
@@ -2076,7 +2168,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream(global_object) {
+            if let Some(mut readable) = self.get_body_readable_stream(global_object) {
                 let value = self.get_body_value();
                 let Value::Locked(locked) = value else {
                     unreachable!()
@@ -2087,9 +2179,10 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                value.to_blob_if_possible();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetBlob, Some(readable));
+                if !self.try_blob_from_resolved_stream(global_object, &mut readable) {
+                    if let Value::Locked(locked) = self.get_body_value() {
+                        return locked.set_promise(global_object, Action::GetBlob, Some(readable));
+                    }
                 }
             }
             let value = self.get_body_value();
@@ -2437,9 +2530,29 @@ impl<'a> ValueBufferer<'a> {
                 webcore::readable_stream::Source::Invalid => {
                     return Err(bun_core::err!("InvalidStream"));
                 }
-                // toBlobIfPossible should've caught this
                 webcore::readable_stream::Source::Blob(_)
-                | webcore::readable_stream::Source::File(_) => unreachable!(),
+                | webcore::readable_stream::Source::File(_) => {
+                    // `run`'s `to_blob_if_possible` only consults the native
+                    // `Locked.readable` slot, so blob/file-backed streams that
+                    // `check_body_stream_ref` migrated into the JS-side cache
+                    // land here. Convert them now and re-dispatch through the
+                    // Blob arm (buffered bytes / async file read). Reader-held
+                    // streams were already rejected by the `is_locked` check
+                    // above.
+                    let mut stream = stream;
+                    if let Some(blob) = stream.to_any_blob(self.global) {
+                        *value = match blob {
+                            AnyBlob::Blob(b) => Value::Blob(b),
+                            AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
+                            AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
+                        };
+                        // the stream's source is consumed and detached; no
+                        // reason to keep the JS wrapper rooted
+                        let _ = core::mem::take(&mut self.readable_stream_ref);
+                        return self.run(value, None);
+                    }
+                    return Err(bun_core::err!("UnsupportedStreamType"));
+                }
                 webcore::readable_stream::Source::JavaScript
                 | webcore::readable_stream::Source::Direct => {
                     // this is broken right now

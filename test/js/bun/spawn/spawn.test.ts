@@ -11,6 +11,7 @@ import {
   isPosix,
   isWindows,
   shellExe,
+  tempDirWithFiles,
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
@@ -307,6 +308,31 @@ for (let [gcTick, label] of [
         });
         gcTick();
         expect(await readableStreamToText(stdout!)).toBe("hello there!");
+      });
+
+      it("Response wrapping a Bun.file() stream works as stdin", async () => {
+        const dir = tempDirWithFiles("spawn-response-file-stream", { "stdin.txt": "hello there!" });
+        const { stdout, exited } = spawn({
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+          stdout: "pipe",
+          stdin: new Response(Bun.file(join(dir, "stdin.txt")).stream()),
+        });
+        expect(await readableStreamToText(stdout!)).toBe("hello there!");
+        await exited;
+      });
+
+      it("Request wrapping a Bun.file() stream works as stdin", async () => {
+        const dir = tempDirWithFiles("spawn-request-file-stream", { "stdin.txt": "hello from a request" });
+        const { stdout, exited } = spawn({
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+          stdout: "pipe",
+          stdin: new Request("http://bun.test/", {
+            method: "POST",
+            body: Bun.file(join(dir, "stdin.txt")).stream(),
+          }),
+        });
+        expect(await readableStreamToText(stdout!)).toBe("hello from a request");
+        await exited;
       });
 
       it("Bun.file() works as stdin and stdout", async () => {

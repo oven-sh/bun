@@ -11,6 +11,7 @@ import {
   isIPv6,
   isPosix,
   tempDir,
+  tempDirWithFiles,
   tls,
   tmpdirSync,
 } from "harness";
@@ -2428,4 +2429,207 @@ it.if(isPosix)("serves /bun:info over a unix socket in development mode", async 
   const text = await res.text();
   expect(text).toContain("bun_version");
   expect(res.status).toBe(200);
+});
+
+describe("Response wrapping a Bun.file() stream", () => {
+  // Position-dependent contents so slice windows are verifiable. 1 MiB: on
+  // unfixed builds, serving a sliced file stream stalls until idleTimeout
+  // and resets the connection (the test then fails by timeout).
+  const STREAM_FILE_SIZE = 1024 * 1024;
+  function makeStreamFile() {
+    const bytes = new Uint8Array(STREAM_FILE_SIZE);
+    for (let i = 0; i < STREAM_FILE_SIZE; i++) bytes[i] = (i * 7) & 0xff;
+    const dir = tempDirWithFiles("serve-file-stream", { "serve-file-stream.bin": Buffer.from(bytes) });
+    return { path: join(dir, "serve-file-stream.bin"), bytes };
+  }
+
+  it("serves with Content-Length via the native blob path", async () => {
+    const { path, bytes } = makeStreamFile();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(file(path).stream()),
+    });
+
+    const res = await fetch(server.url);
+    // an unread file-backed stream takes the same path as Response(file):
+    // sized body, no chunked encoding
+    expect(res.headers.get("content-length")).toBe(String(STREAM_FILE_SIZE));
+    expect(res.headers.get("transfer-encoding")).toBeNull();
+    const body = await res.bytes();
+    expect(body.byteLength).toBe(STREAM_FILE_SIZE);
+    expect(Buffer.compare(body, bytes)).toBe(0);
+  });
+
+  it("serves a sliced file stream with exactly the slice's bytes", async () => {
+    const { path, bytes } = makeStreamFile();
+    const start = 100;
+    const end = 1124;
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 5,
+      fetch: () => new Response(file(path).slice(start, end).stream()),
+    });
+
+    const res = await fetch(server.url);
+    const body = await res.bytes();
+    expect(body.byteLength).toBe(end - start);
+    expect(Buffer.compare(body, bytes.subarray(start, end))).toBe(0);
+    expect(res.headers.get("content-length")).toBe(String(end - start));
+  });
+
+  it("HEAD reports the same Content-Length as GET for a file-stream response", async () => {
+    const { path } = makeStreamFile();
+    const start = 100;
+    const end = 1124;
+    using server = Bun.serve({
+      port: 0,
+      fetch: req => {
+        switch (new URL(req.url).pathname) {
+          case "/slice-stream":
+            return new Response(file(path).slice(start, end).stream());
+          case "/slice-blob":
+            return new Response(file(path).slice(start, end));
+          default:
+            return new Response(file(path).stream());
+        }
+      },
+    });
+
+    const head = await fetch(server.url, { method: "HEAD" });
+    expect(head.headers.get("content-length")).toBe(String(STREAM_FILE_SIZE));
+    expect(head.headers.get("transfer-encoding")).toBeNull();
+
+    // resolve_size must not widen a slice back to the end of the file
+    const sliceStream = await fetch(new URL("/slice-stream", server.url), { method: "HEAD" });
+    expect(sliceStream.headers.get("content-length")).toBe(String(end - start));
+    const sliceBlob = await fetch(new URL("/slice-blob", server.url), { method: "HEAD" });
+    expect(sliceBlob.headers.get("content-length")).toBe(String(end - start));
+  });
+
+  it("aborting requests mid-transfer doesn't break the server", async () => {
+    const { path } = makeStreamFile();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(file(path).stream()),
+    });
+
+    // race aborts against the native file-stream response, mirroring the
+    // "should be able to abort a sendfile response and streams" test above
+    async function doRequest() {
+      try {
+        const controller = new AbortController();
+        const res = await fetch(server.url, { signal: controller.signal });
+        res.body
+          ?.getReader()
+          .read()
+          .catch(() => {});
+        controller.abort();
+      } catch {}
+    }
+    const batchSize = 20;
+    const batch: Promise<void>[] = [];
+    for (let i = 0; i < 100; i++) {
+      batch.push(doRequest());
+      if (batch.length === batchSize) {
+        await Promise.all(batch);
+        batch.length = 0;
+      }
+    }
+    await Promise.all(batch);
+
+    // the server still serves complete responses afterwards
+    const res = await fetch(server.url);
+    const body = await res.bytes();
+    expect(body.byteLength).toBe(STREAM_FILE_SIZE);
+  });
+
+  it("the client canceling the response stream mid-transfer doesn't break the server", async () => {
+    const { path, bytes } = makeStreamFile();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(file(path).stream()),
+    });
+
+    {
+      const res = await fetch(server.url);
+      const reader = res.body!.getReader();
+      const first = await reader.read();
+      expect(first.done).toBe(false);
+      await reader.cancel();
+    }
+
+    const res = await fetch(server.url);
+    const body = await res.bytes();
+    expect(Buffer.compare(body, bytes)).toBe(0);
+  });
+
+  it("a stream being read by user JS keeps the cannot-pipe error semantics", async () => {
+    // The locked-stream error is also reported as an unhandled error, so
+    // this case runs in a subprocess.
+    const { path } = makeStreamFile();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        using server = Bun.serve({
+          port: 0,
+          fetch: () => {
+            // lock the stream after constructing the Response: the render
+            // path must not bypass the existing cannot-pipe error handling
+            const response = new Response(Bun.file(${JSON.stringify(path)}).stream());
+            response.body.getReader();
+            return response;
+          },
+        });
+        const res = await fetch(server.url);
+        const body = await res.text();
+        console.log("status:" + res.status);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // the locked stream is rejected before headers go out and the request
+    // fails with the cannot-pipe error
+    expect(stdout).toContain("status:500");
+    expect(stderr).toContain("Stream already used");
+    expect(exitCode).toBe(1);
+  });
+
+  it("a stream locked by a raw-constructor reader keeps the cannot-pipe error semantics", async () => {
+    // Same as above, but with new ReadableStreamDefaultReader(body), which —
+    // unlike getReader() — doesn't run the deferred $start thunk: the stream
+    // is locked but not disturbed, and the native blob conversion must not
+    // serve it out from under the reader.
+    const { path } = makeStreamFile();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        using server = Bun.serve({
+          port: 0,
+          fetch: () => {
+            const response = new Response(Bun.file(${JSON.stringify(path)}).stream());
+            new ReadableStreamDefaultReader(response.body);
+            return response;
+          },
+        });
+        const res = await fetch(server.url);
+        const body = await res.text();
+        console.log("status:" + res.status);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("status:500");
+    expect(stderr).toContain("Stream already used");
+    expect(exitCode).toBe(1);
+  });
 });

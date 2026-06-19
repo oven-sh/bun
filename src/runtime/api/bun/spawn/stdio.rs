@@ -480,8 +480,18 @@ impl Stdio {
             // `value` is on the stack. `dupe()` only bumps the store refcount.
             return out_stdio.extract_blob(global, webcore::blob::Any::Blob(blob.dupe()), i);
         } else if let Some(req) = value.as_class_ref::<webcore::Request>() {
+            // `extract_body_value`'s `to_blob_if_possible` can't see streams
+            // that `check_body_stream_ref` migrated into the JS-side cache;
+            // convert blob/file-backed streams here so they take the blob
+            // path instead of the streaming stdin consumer.
+            if let Some(mut readable) = req.get_body_readable_stream(global) {
+                let _ = req.try_blob_from_resolved_stream(global, &mut readable);
+            }
             return Self::extract_body_value(out_stdio, global, i, req.get_body_value(), is_sync);
         } else if let Some(res) = value.as_class_ref::<webcore::Response>() {
+            if let Some(mut readable) = res.get_body_readable_stream(global) {
+                let _ = res.try_blob_from_resolved_stream(global, &mut readable);
+            }
             return Self::extract_body_value(out_stdio, global, i, res.get_body_value(), is_sync);
         }
 

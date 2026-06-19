@@ -2921,7 +2921,8 @@ declare module "bun" {
      *
      * Only applies when {@link reactCompiler} is `true`.
      *
-     * @default "client"
+     * @default `"client"` when {@link target} is `"browser"`; `"ssr"` when
+     * {@link target} is `"bun"` or `"node"`.
      * @experimental
      */
     reactCompilerOutputMode?: "client" | "ssr";

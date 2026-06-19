@@ -120,9 +120,9 @@ pub mod js_bundler {
         pub entry_points: StringSet,
         pub hot: bool,
         pub react_fast_refresh: bool,
-        pub react_compiler: bool,
+        pub react_compiler: bun_ast::runtime::ReactCompilerMode,
         pub react_compiler_parse_test_pragmas: bool,
-        pub react_compiler_ssr: bool,
+        pub react_compiler_output_mode_explicit: bool,
         pub define: StringMap,
         pub loaders: Option<api::LoaderMap>,
         pub dir: OwnedString,
@@ -179,9 +179,9 @@ pub mod js_bundler {
                 entry_points: StringSet::default(),
                 hot: false,
                 react_fast_refresh: false,
-                react_compiler: false,
+                react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
-                react_compiler_ssr: false,
+                react_compiler_output_mode_explicit: false,
                 define: StringMap::init(false),
                 loaders: None,
                 dir: OwnedString::default(),
@@ -601,7 +601,11 @@ pub mod js_bundler {
             }
 
             if let Some(react_compiler) = config.get_boolean_loose(global_this, "reactCompiler")? {
-                this.react_compiler = react_compiler;
+                this.react_compiler = if react_compiler {
+                    bun_ast::runtime::ReactCompilerMode::Client
+                } else {
+                    bun_ast::runtime::ReactCompilerMode::Disabled
+                };
             }
 
             if let Some(v) =
@@ -613,9 +617,9 @@ pub mod js_bundler {
             if let Some(slice) =
                 config.get_optional_slice(global_this, b"reactCompilerOutputMode")?
             {
-                this.react_compiler_ssr = match slice.slice() {
-                    b"ssr" => true,
-                    b"client" => false,
+                this.react_compiler = match slice.slice() {
+                    b"ssr" => bun_ast::runtime::ReactCompilerMode::Ssr,
+                    b"client" => bun_ast::runtime::ReactCompilerMode::Client,
                     other => {
                         return Err(global_this.throw_invalid_arguments(format_args!(
                             "Expected reactCompilerOutputMode to be 'client' or 'ssr', got {}",
@@ -623,6 +627,7 @@ pub mod js_bundler {
                         )));
                     }
                 };
+                this.react_compiler_output_mode_explicit = true;
                 drop(slice);
             }
 

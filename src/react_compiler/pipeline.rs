@@ -167,12 +167,13 @@ pub fn compile_fn(
     // emitted `import { c as _c }` resolve to the same symbol. Opt-out
     // functions are filtered before this call (see `maybe_compile_node`), so a
     // spurious import is only possible when codegen itself errors below.
-    let memo_cache = context.add_memo_cache_import(host);
-    let mut cg = Codegen::new(
-        host,
-        arena,
-        [("useMemoCache".to_string(), memo_cache.name_ref)],
-    );
+    // SSR mode never allocates memo slots, so skip the import to avoid emitting
+    // an unused `react/compiler-runtime` import.
+    let memo_seed = (context.output_mode == OutputMode::Client).then(|| {
+        let memo_cache = context.add_memo_cache_import(host);
+        ("useMemoCache".to_string(), memo_cache.name_ref)
+    });
+    let mut cg = Codegen::new(host, arena, memo_seed);
     let codegen_result = timed!(
         "Codegen",
         codegen::codegen_function(&reactive_fn, &mut env, &mut cg, unique_identifiers)
@@ -307,12 +308,11 @@ pub fn compile_outlined_fn(
 
     let (reactive_fn, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context)?;
 
-    let memo_cache = context.add_memo_cache_import(host);
-    let mut cg = Codegen::new(
-        host,
-        arena,
-        [("useMemoCache".to_string(), memo_cache.name_ref)],
-    );
+    let memo_seed = (context.output_mode == OutputMode::Client).then(|| {
+        let memo_cache = context.add_memo_cache_import(host);
+        ("useMemoCache".to_string(), memo_cache.name_ref)
+    });
+    let mut cg = Codegen::new(host, arena, memo_seed);
     let codegen_result =
         codegen::codegen_function(&reactive_fn, &mut env, &mut cg, unique_identifiers)?;
 

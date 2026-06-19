@@ -1155,6 +1155,7 @@ function expectBundled(
           sourcemap: sourceMap,
           splitting,
           target,
+          reactCompiler,
           bytecode,
           publicPath,
           emitDCEAnnotations,

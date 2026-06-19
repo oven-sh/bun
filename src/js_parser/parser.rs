@@ -203,12 +203,10 @@ pub mod Runtime {
         pub react_fast_refresh: bool,
         /// Run the React Compiler (auto-memoization) over the parsed AST
         /// before the visit pass.
-        pub react_compiler: bool,
+        pub react_compiler: ReactCompilerMode,
         /// Test-only: have the React Compiler read leading `// @key value`
         /// fixture pragmas from the source. Set by the fixture runner.
         pub react_compiler_parse_test_pragmas: bool,
-        /// Run the React Compiler in SSR output mode (skips memoization).
-        pub react_compiler_ssr: bool,
         /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
         /// It can be enabled on the command line with --format=internal_bake_dev
         ///
@@ -309,9 +307,8 @@ pub mod Runtime {
         fn default() -> Self {
             Self {
                 react_fast_refresh: false,
-                react_compiler: false,
+                react_compiler: ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
-                react_compiler_ssr: false,
                 hot_module_reloading: false,
                 server_components: ServerComponentsMode::None,
                 is_macro_runtime: false,
@@ -395,8 +392,7 @@ pub mod Runtime {
         pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 18] = [
-                self.react_compiler,
+            let bools: [bool; 17] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -420,6 +416,7 @@ pub mod Runtime {
             // `[bool; N]` is N bytes of 0x00/0x01.
             // `bool: NoUninit`, `u8: AnyBitPattern` → `cast_slice` is statically sound.
             hasher.update(bytemuck::cast_slice::<bool, u8>(&bools));
+            hasher.update(&[self.react_compiler as u8]);
 
             // Hash --feature flags. These directly affect transpiled output via
             // feature("NAME") replacement in visit_expr.rs. When empty, we add
@@ -444,7 +441,7 @@ pub mod Runtime {
     // here so `parser::Runtime::{Imports, ReplaceableExport, ...}` and
     // `bun_ast::runtime::{...}` are the same nominal types.
     pub(crate) use bun_ast::runtime::{
-        Imports, ReplaceableExport, ReplaceableExportMap, ServerComponentsMode,
+        Imports, ReactCompilerMode, ReplaceableExport, ReplaceableExportMap, ServerComponentsMode,
     };
 
     // ───────────────────────────── Runtime / Fallback ─────────────────────

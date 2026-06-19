@@ -93,6 +93,25 @@ impl ReplaceableExportMap {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReactCompilerMode {
+    #[default]
+    Disabled,
+    Client,
+    Ssr,
+}
+
+impl ReactCompilerMode {
+    #[inline]
+    pub fn is_enabled(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+    #[inline]
+    pub fn is_ssr(self) -> bool {
+        matches!(self, Self::Ssr)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum ServerComponentsMode {
     /// Server components is disabled, strings "use client" and "use server" mean nothing.

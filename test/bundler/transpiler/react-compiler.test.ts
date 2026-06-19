@@ -86,6 +86,51 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("react-compiler/OutputModeDefaultsByTarget-Browser", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        export function Counter() {
+          const [n] = useState(0);
+          return <div>{n}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // target: "browser" with no reactCompilerOutputMode → client (memoized).
+      expect(out).toContain("react/compiler-runtime");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+    },
+  });
+
+  itBundled("react-compiler/OutputModeDefaultsByTarget-Bun", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        export function Counter() {
+          const [n] = useState(0);
+          return <div>{n}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "bun",
+    backend: "api",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // target: "bun" with no reactCompilerOutputMode → ssr (no memoization,
+      // no compiler-runtime import; useState lowered to its initial value).
+      expect(out).not.toContain("react/compiler-runtime");
+      expect(out).not.toMatch(/\b_c\(\d+\)/);
+    },
+  });
+
   itBundled("react-compiler/NonComponentUntouched", {
     files: {
       "/entry.jsx": /* jsx */ `

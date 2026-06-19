@@ -99,19 +99,27 @@ describe.concurrent("vitest", () => {
     using dir = createVitestProject();
     const { stdout, stderr, exitCode } = await runVitest(String(dir), []);
 
-    expect(stdout).toMatch(/Test Files\s+1 passed/);
+    // Combined first assertion so a crashed/erroring vitest run shows its
+    // stderr and exit code in the failure diff, not just an empty stdout.
+    expect({ exitCode, stderr: exitCode === 0 ? "" : stderr, stdout }).toMatchObject({
+      exitCode: 0,
+      stderr: "",
+      stdout: expect.stringMatching(/Test Files\s+1 passed/),
+    });
     expect(stdout).toMatch(/Tests\s+2 passed/);
-    expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
   }, 90_000);
 
   test("reports v8 coverage through node:inspector's precise coverage", async () => {
     using dir = createVitestProject();
     const { stdout, stderr, exitCode } = await runVitest(String(dir), ["--coverage"]);
 
-    expect(stdout).toMatch(/Tests\s+2 passed/);
+    expect({ exitCode, stderr: exitCode === 0 ? "" : stderr, stdout }).toMatchObject({
+      exitCode: 0,
+      stderr: "",
+      stdout: expect.stringMatching(/Tests\s+2 passed/),
+    });
     // The same project produces this exact report under Node.js: add() and
     // classify() are covered, the negative branch and neverCalled() are not.
     expect(stdout).toMatch(/math\.ts\s*\|\s*50\s*\|\s*75\s*\|\s*66\.66\s*\|\s*55\.55\s*\|\s*7,15-18/);
-    expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
   }, 120_000);
 });

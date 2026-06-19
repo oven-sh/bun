@@ -170,3 +170,9 @@ test/js/third_party/@azure/service-bus/azure-service-bus.test.ts
 # reached via Runtime.evaluate on a DevTools protocol connection) is missing an
 # exception check upstream; the inspector.open() fixture exercises that path.
 test/js/node/inspector/inspector.test.ts
+
+# vitest's startup (plain `vitest --run`, before any inspector/coverage code is
+# reached) trips a pre-existing unchecked exception after constructEmptyArray
+# (JSGlobalObjectInlines.h:281), aborting the spawned process under
+# BUN_JSC_validateExceptionChecks=1.
+test/js/third_party/vitest/vitest.test.ts

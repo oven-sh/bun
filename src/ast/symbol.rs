@@ -25,7 +25,10 @@ pub struct Symbol {
     /// mode, re-exported symbols are collapsed using MergeSymbols() and renamed
     /// symbols from other files that end up at this symbol must be able to tell
     /// if it has a namespace alias.
-    pub namespace_alias: Option<G::NamespaceAlias>,
+    ///
+    /// Boxed: this is `None` for the overwhelming majority of symbols, so we
+    /// pay 8 bytes inline instead of ~32.
+    pub namespace_alias: Option<Box<G::NamespaceAlias>>,
 
     /// Used by the parser for single pass parsing.
     ///
@@ -168,6 +171,7 @@ pub struct Symbol {
 
 // The size of `Symbol` is not load-bearing (no FFI, no serialization), so
 // there is intentionally no layout assert here.
+const _: () = assert!(core::mem::size_of::<Option<Box<G::NamespaceAlias>>>() == 8);
 
 const INVALID_CHUNK_INDEX: u32 = u32::MAX;
 pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;

@@ -149,7 +149,6 @@ pub fn post_process_js_chunk(
                 tag: ImportRecordTag::None,
                 loader: None,
                 source_index: Index::INVALID,
-                module_id: 0,
                 original_path: b"",
                 flags: ImportRecordFlags::default(),
             });

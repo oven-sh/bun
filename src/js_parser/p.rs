@@ -2175,12 +2175,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[ref_.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(js_ast::NamespaceAlias {
+                    symbol.namespace_alias = Some(Box::new(js_ast::NamespaceAlias {
                         namespace_ref,
                         alias: js_ast::StoreStr::new(alias_name),
                         import_record_index: import_record_i,
                         was_originally_property_access: false,
-                    });
+                    }));
                 }
             }
 
@@ -3229,12 +3229,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.bun_app_namespace_ref =
                         self.new_symbol(js_ast::symbol::Kind::Other, b"import_bun_app")?;
                     let symbol = &mut self.symbols[self.response_ref.inner_index() as usize];
-                    symbol.namespace_alias = Some(js_ast::NamespaceAlias {
+                    symbol.namespace_alias = Some(Box::new(js_ast::NamespaceAlias {
                         namespace_ref: self.bun_app_namespace_ref,
                         alias: js_ast::StoreStr::new(b"Response"),
                         was_originally_property_access: false,
                         import_record_index: u32::MAX,
-                    });
+                    }));
                 }
             }
         }
@@ -4148,12 +4148,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if self.options.features.hot_module_reloading {
                     let symbol = &mut self.symbols[r#ref.inner_index() as usize];
                     if symbol.namespace_alias.is_none() {
-                        symbol.namespace_alias = Some(js_ast::NamespaceAlias {
+                        symbol.namespace_alias = Some(Box::new(js_ast::NamespaceAlias {
                             namespace_ref: stmt.namespace_ref,
                             alias: js_ast::StoreStr::new(b"default"),
                             import_record_index: stmt.import_record_index,
                             was_originally_property_access: false,
-                        });
+                        }));
                     }
                 }
 
@@ -4230,12 +4230,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[r#ref.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(js_ast::NamespaceAlias {
+                    symbol.namespace_alias = Some(Box::new(js_ast::NamespaceAlias {
                         namespace_ref: stmt.namespace_ref,
                         alias: js_ast::StoreStr::new(alias),
                         import_record_index: stmt.import_record_index,
                         was_originally_property_access: false,
-                    });
+                    }));
                 }
             }
 
@@ -5097,7 +5097,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             tag: bun_ast::ImportRecordTag::None,
             loader: None,
             source_index: bun_ast::Index::INVALID,
-            module_id: 0,
             original_path: b"",
             flags: bun_ast::ImportRecordFlags::empty(),
         });
@@ -5361,7 +5360,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parts.push(js_ast::Part {
                 stmts: final_stmts,
                 symbol_uses: core::mem::take(&mut self.symbol_uses),
-                import_symbol_property_uses: core::mem::take(&mut self.import_symbol_property_uses),
+                import_symbol_property_uses: {
+                    let m = core::mem::take(&mut self.import_symbol_property_uses);
+                    if m.is_empty() {
+                        None
+                    } else {
+                        Some(Box::new(m))
+                    }
+                },
                 declared_symbols: self.declared_symbols.to_owned_slice(),
                 import_record_indices: {
                     let v = core::mem::replace(

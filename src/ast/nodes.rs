@@ -1082,7 +1082,7 @@ pub struct Part {
     /// value or not. This is only known during linking. So we defer adding
     /// a dependency on these imported symbols until we know whether the
     /// property access is an inlined enum value or not.
-    pub import_symbol_property_uses: PartSymbolPropertyUseMap,
+    pub import_symbol_property_uses: Option<Box<PartSymbolPropertyUseMap>>,
 
     /// The indices of the other parts in this file that are needed if this part
     /// is needed.
@@ -1137,7 +1137,7 @@ impl Default for Part {
             import_record_indices: PartImportRecordIndices::new_in(bun_alloc::AstAlloc),
             declared_symbols: DeclaredSymbolList::default(),
             symbol_uses: PartSymbolUseMap::default(),
-            import_symbol_property_uses: PartSymbolPropertyUseMap::default(),
+            import_symbol_property_uses: None,
             dependencies: Vec::new_in(bun_alloc::AstAlloc),
             can_be_removed_if_unused: false,
             force_tree_shaking: false,

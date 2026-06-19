@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { isWindows, tempDirWithFiles } from "harness";
 import fs from "node:fs";
+import path from "node:path";
 
 let tmp: string;
 beforeAll(() => {
@@ -259,5 +260,64 @@ describe("fs.globSync exclude with withFileTypes", () => {
     const inners = results.filter(d => d.name === "inner.txt");
     expect(inners).toHaveLength(1);
     expect(String(inners[0].parentPath).replaceAll("\\", "/")).toEndWith("keep");
+  });
+});
+
+// Regression coverage for https://github.com/oven-sh/bun/issues/29699:
+// fs.glob must not follow directory symlinks (Node's default), or a
+// pnpm-style symlink cycle loops until ENAMETOOLONG. These are
+// skipped on Windows because the fixtures need real directory symlinks.
+describe.skipIf(isWindows)("fs.glob symlink semantics (matches Node)", () => {
+  it("does not loop on a pnpm-style symlink cycle", async () => {
+    // a/node_modules/b -> b, b/node_modules/c -> c, c/node_modules/a -> a.
+    // Following the cycle would emit bar.test.ts and deeper duplicates
+    // forever; Node finds exactly the one test file under the cwd.
+    const root = tempDirWithFiles("glob-pnpm-cycle", {
+      "a/src/foo.test.ts": "export {}",
+      "b/src/bar.test.ts": "export {}",
+      "a/node_modules/.keep": "",
+      "b/node_modules/.keep": "",
+      "c/node_modules/.keep": "",
+    });
+    fs.symlinkSync("../../b", path.join(root, "a/node_modules/b"), "dir");
+    fs.symlinkSync("../../c", path.join(root, "b/node_modules/c"), "dir");
+    fs.symlinkSync("../../a", path.join(root, "c/node_modules/a"), "dir");
+
+    const matches: string[] = [];
+    for await (const file of fs.promises.glob("**/*.test.ts", { cwd: path.join(root, "a") })) {
+      matches.push(file);
+      if (matches.length > 3) break; // guard: the bug emitted an unbounded stream
+    }
+    expect(matches).toEqual([path.join("src", "foo.test.ts")]);
+    // globSync takes the same path.
+    expect(fs.globSync("**/*.test.ts", { cwd: path.join(root, "a") })).toEqual([path.join("src", "foo.test.ts")]);
+  });
+
+  it("a wildcard segment does not descend into a directory symlink", () => {
+    const root = tempDirWithFiles("glob-wild-symlink", {
+      "dir/inside.txt": "x",
+    });
+    fs.symlinkSync("dir", path.join(root, "link"), "dir");
+    // `*` matches both `dir` and `link`, but the walk only descends the
+    // real directory — the symlink is not crossed.
+    expect(fs.globSync("*/*.txt", { cwd: root })).toEqual([path.join("dir", "inside.txt")]);
+  });
+
+  it("a literal path segment still traverses a directory symlink", () => {
+    // Node's nuance: wildcard segments stop at symlinks, literal ones
+    // cross them. `link/*.txt` names the symlink literally, so it descends.
+    const root = tempDirWithFiles("glob-literal-symlink", {
+      "dir/inside.txt": "x",
+    });
+    fs.symlinkSync("dir", path.join(root, "link"), "dir");
+    expect(fs.globSync("link/*.txt", { cwd: root })).toEqual([path.join("link", "inside.txt")]);
+  });
+
+  it("matches a symlink that points at a file", () => {
+    const root = tempDirWithFiles("glob-symlink-file", {
+      "target.txt": "t",
+    });
+    fs.symlinkSync("target.txt", path.join(root, "alias.txt"), "file");
+    expect(fs.globSync("*.txt", { cwd: root }).sort()).toEqual(["alias.txt", "target.txt"]);
   });
 });

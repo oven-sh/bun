@@ -97,7 +97,6 @@ const HANDLED_PRAGMAS = new Set([
   "validateNoDerivedComputationsInEffectsExp",
   "validateNoJsxInTryStatements",
   "validateStaticComponents",
-  "validateSourceLocations",
   "validateNoImpureFunctionsInRender",
   "validateNoFreezingKnownMutableFunctions",
   "enableAssumeHooksFollowRulesOfReact",
@@ -137,6 +136,9 @@ const UNSUPPORTED_PRAGMAS = new Set([
   // Bun handles HMR via its own React Refresh transform and never populates
   // `env.code`, so the extra source-hash slot is never emitted (codegen.rs).
   "enableResetCacheOnSourceFileChanges",
+  // Upstream test-only pass that walks the generated *Babel* AST post-codegen.
+  // Bun emits bun_ast, so the pass is structurally unportable (DESIGN.md).
+  "validateSourceLocations",
 ]);
 
 // Fixtures Bun's React Compiler integration cannot run yet.
@@ -164,29 +166,8 @@ function shouldSkip(relPath: string, pragmas: Pragmas): string | null {
 
 // Known divergences from upstream — Bun produces a different (or no) result.
 // Grow this from CI; each entry must say why.
-const TODO: Record<string, string> = {
-  // Bun compiles these where upstream errors. Previously masked: the fixtures
-  // have no `export`, so tree-shaking dropped the compiled body and the
-  // "error fixture should not be memoized" assertion saw an empty output.
-  "error.invalid-known-incompatible-function": "missing known-incompatible-library check",
-  "error.invalid-known-incompatible-hook": "missing known-incompatible-library check",
-  "error.invalid-known-incompatible-hook-return-property": "missing known-incompatible-library check",
-  "error.todo-missing-source-locations": "Bun compiles where upstream emits a Todo error",
-  "exhaustive-deps/error.invalid-exhaustive-effect-deps-extra-only": "missing exhaustive-deps validation",
-  "exhaustive-deps/error.invalid-exhaustive-effect-deps-missing-only": "missing exhaustive-deps validation",
-
-  // Slot-count mismatch (Bun emits 11, upstream 12). Previously masked by the
-  // `!modeMatchesBun && got.length === 0` early return — the unexported body
-  // was tree-shaken so the harness never compared slot counts.
-  "optional-chain-on-known-nonnull": "slot count mismatch (11 vs 12)",
-
-  // validate_preserved_manual_memoization does not yet detect the
-  // "inferred dep not present in source deps" case (upstream errors here).
-  "error.ref-like-name-not-a-ref": "validate_preserved_manual_memoization: missing inferred-vs-source dep check",
-  "error.ref-like-name-not-Ref": "validate_preserved_manual_memoization: missing inferred-vs-source dep check",
-  "error.repro-preserve-memoization-inner-destructured-value-mistaken-as-dependency-mutated-dep":
-    "validate_preserved_manual_memoization: missing mutated-dep check",
-};
+// `__proto__: null`: a fixture named "constructor" exists.
+const TODO: Record<string, string> = { __proto__: null } as any;
 
 type Fixture = {
   name: string;

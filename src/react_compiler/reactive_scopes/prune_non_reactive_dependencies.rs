@@ -61,11 +61,14 @@ impl<'a> ReactiveFunctionVisitor for CollectVisitor<'a> {
         self.traverse_pruned_scope(scope, state);
 
         let scope_data = &self.env.scopes[scope.scope.0 as usize];
-        for (_id, decl) in &scope_data.declarations {
+        for (id, decl) in &scope_data.declarations {
             let identifier = &self.env.identifiers[decl.identifier.0 as usize];
             let ty = &self.env.types[identifier.type_.0 as usize];
-            if !is_primitive_type(ty) && !is_stable_type(ty) {
-                state.insert(*_id);
+            // Upstream `isStableRefType`: a useRef result is stable only if it
+            // hasn't already been observed as reactive.
+            let is_stable_ref = is_use_ref_type(ty) && !state.contains(id);
+            if !is_primitive_type(ty) && !is_stable_ref {
+                state.insert(*id);
             }
         }
     }

@@ -80,3 +80,49 @@ export {
 };
 "
 `;
+
+exports[`bundler react-compiler/ObjectPatternRestInProps 1`] = `
+"// entry.tsx
+import { jsxDEV } from "react/jsx-dev-runtime";
+import { c as _c } from "react/compiler-runtime";
+function Comp(t0) {
+  const $ = _c(8);
+  let a;
+  let b;
+  let rest;
+  if ($[0] !== t0) {
+    ({
+      a,
+      b,
+      ...rest
+    } = t0);
+    $[0] = t0;
+    $[1] = a;
+    $[2] = b;
+    $[3] = rest;
+  } else {
+    a = $[1];
+    b = $[2];
+    rest = $[3];
+  }
+  let t1;
+  if ($[4] !== a || $[5] !== b || $[6] !== rest) {
+    t1 = /* @__PURE__ */ jsxDEV("div", {
+      "data-a": a,
+      "data-b": b,
+      ...rest
+    }, undefined, false, undefined, this);
+    $[4] = a;
+    $[5] = b;
+    $[6] = rest;
+    $[7] = t1;
+  } else {
+    t1 = $[7];
+  }
+  return t1;
+}
+export {
+  Comp
+};
+"
+`;

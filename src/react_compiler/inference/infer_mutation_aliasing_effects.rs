@@ -120,27 +120,24 @@ pub fn infer_mutation_aliasing_effects(
     let mut queued_states: crate::collections::IndexMap<BlockId, InferenceState> =
         crate::collections::IndexMap::new();
 
-    // Queue helper
+    // Queue helper. Takes `state` by reference; clones only when actually inserting.
     fn queue(
         queued_states: &mut crate::collections::IndexMap<BlockId, InferenceState>,
         states_by_block: &HashMap<BlockId, InferenceState>,
         block_id: BlockId,
-        state: InferenceState,
+        state: &InferenceState,
     ) {
         if let Some(queued_state) = queued_states.get(&block_id) {
-            let merged = queued_state.merge(&state);
-            let new_state = merged.unwrap_or_else(|| queued_state.clone());
-            queued_states.insert(block_id, new_state);
-        } else {
-            let prev_state = states_by_block.get(&block_id);
-            if let Some(prev) = prev_state {
-                let next_state = prev.merge(&state);
-                if let Some(next) = next_state {
-                    queued_states.insert(block_id, next);
-                }
-            } else {
-                queued_states.insert(block_id, state);
+            if let Some(merged) = queued_state.merge(state) {
+                queued_states.insert(block_id, merged);
             }
+            // merge() == None means `state` adds nothing; queued entry is already correct.
+        } else if let Some(prev) = states_by_block.get(&block_id) {
+            if let Some(next) = prev.merge(state) {
+                queued_states.insert(block_id, next);
+            }
+        } else {
+            queued_states.insert(block_id, state.clone());
         }
     }
 
@@ -148,7 +145,7 @@ pub fn infer_mutation_aliasing_effects(
         &mut queued_states,
         &states_by_block,
         func.body.entry,
-        initial_state,
+        &initial_state,
     );
 
     let hoisted_context_declarations = find_hoisted_context_declarations(func, env);
@@ -188,8 +185,8 @@ pub fn infer_mutation_aliasing_effects(
                 None => continue,
             };
 
-            states_by_block.insert(block_id, incoming_state.clone());
             let mut state = incoming_state.clone();
+            states_by_block.insert(block_id, incoming_state);
 
             infer_block(&mut context, &mut state, block_id, func, env)?;
 
@@ -227,12 +224,7 @@ pub fn infer_mutation_aliasing_effects(
             // Queue successors
             let successors = terminal_successors(&func.body.blocks[&block_id].terminal);
             for next_block_id in successors {
-                queue(
-                    &mut queued_states,
-                    &states_by_block,
-                    next_block_id,
-                    state.clone(),
-                );
+                queue(&mut queued_states, &states_by_block, next_block_id, &state);
             }
         }
     }

@@ -1827,8 +1827,12 @@ pub fn init(
 
     if let Some(data_dir) = bun_core::env_var::XDG_CONFIG_HOME
         .get()
-        .or_else(|| bun_core::env_var::HOME.get())
         .filter(|p| bun_paths::is_absolute(p))
+        .or_else(|| {
+            bun_core::env_var::HOME
+                .get()
+                .filter(|p| bun_paths::is_absolute(p))
+        })
     {
         let mut buf = PathBuffer::uninit();
         let parts = [b"./.npmrc" as &[u8]];

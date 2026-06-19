@@ -185,14 +185,10 @@ function handleKnownInternalErrors(cause: Error | null): Error | null {
       return $makeAbortError(undefined, { cause });
     }
     case ZLIB_FAILURES.has(causeCode):
-    // Brotli decoder errors carry the BrotliDecoderErrorString() name. In
-    // Node these are formatted as 'ERR_' + '_ERROR_...' (= 'ERR__ERROR_*');
-    // Bun's native brotli formats them as 'ERR_BROTLI_DECODER_' +
-    // 'ERROR_...' (= 'ERR_BROTLI_DECODER_ERROR_*'). Match both shapes.
+    // Brotli decoder errors carry the BrotliDecoderErrorString() name,
+    // formatted as 'ERR_' + '_ERROR_...' (= 'ERR__ERROR_*').
     // Falls through
-    case causeCode != null &&
-      (StringPrototypeStartsWith.$call(causeCode, "ERR__ERROR_") ||
-        StringPrototypeStartsWith.$call(causeCode, "ERR_BROTLI_DECODER_ERROR_")): {
+    case causeCode != null && StringPrototypeStartsWith.$call(causeCode, "ERR__ERROR_"): {
       // Upstream uses `new TypeError(undefined, { cause })`, but the builtins
       // codegen rewrites `new TypeError` to $makeTypeError, which only accepts
       // a message and silently drops the options bag. Pass an explicit empty

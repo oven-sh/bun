@@ -2226,6 +2226,8 @@ ServerResponse.prototype._finish = function () {
 };
 
 ServerResponse.prototype.detachSocket = function (socket) {
+  // socket can be null when the stream destroyer detached the request's
+  // socket (req.socket = null) before the response finished.
   if (socket && socket._httpMessage === this) {
     if (socket[kCloseCallback]) socket[kCloseCallback] = undefined;
     socket.removeListener("close", onServerResponseClose);

@@ -1,3 +1,4 @@
+import { cronPlistForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -60,6 +61,44 @@ const hasLaunchctl =
     }
   })();
 const hasAnyCronBackend = hasCrontab || hasLaunchctl || hasSchtasks;
+
+// The macOS launchd `start_mac` path is darwin-only-compiled, so the full
+// `Bun.cron()` flow can't run on Linux/Windows CI. `cronPlistForTesting` exposes
+// the pure plist-building helper (same function `start_mac` uses) so the log-path
+// and XML-escaping behavior is verifiable on every host.
+describe("macOS launchd plist generation", () => {
+  test("log paths are under ~/Library/Logs/bun/cron, never world-writable /tmp", () => {
+    const plist = cronPlistForTesting(
+      "/Users/alice",
+      "weekly-report",
+      "/usr/local/bin/bun",
+      "/app/job.ts",
+      "0 0 * * *",
+    );
+    expect(plist).toContain("<key>StandardOutPath</key>");
+    expect(plist).toContain("<string>/Users/alice/Library/Logs/bun/cron/bun.cron.weekly-report.stdout.log</string>");
+    expect(plist).toContain("<key>StandardErrorPath</key>");
+    expect(plist).toContain("<string>/Users/alice/Library/Logs/bun/cron/bun.cron.weekly-report.stderr.log</string>");
+    // The whole point of the fix: no log path may live under /tmp.
+    expect(plist).not.toContain("/tmp/");
+  });
+
+  test("the log directory is derived from $HOME", () => {
+    const plist = cronPlistForTesting("/home/build/nested dir", "job", "/bin/bun", "/job.ts", "* * * * *");
+    // Spaces are not XML metacharacters, so they pass through unescaped.
+    expect(plist).toContain("<string>/home/build/nested dir/Library/Logs/bun/cron/bun.cron.job.stdout.log</string>");
+  });
+
+  test("XML-escapes metacharacters in the HOME-derived log path", () => {
+    const plist = cronPlistForTesting("/home/a&b<c>", "job", "/bin/bun", "/job.ts", "* * * * *");
+    expect(plist).toContain("/home/a&amp;b&lt;c&gt;/Library/Logs/bun/cron/bun.cron.job.stdout.log");
+    expect(plist).not.toContain("/home/a&b<c>/Library/Logs");
+  });
+
+  test("invalid cron expression throws", () => {
+    expect(() => cronPlistForTesting("/Users/alice", "job", "/bin/bun", "/job.ts", "not a cron")).toThrow();
+  });
+});
 
 function readCrontab(): string {
   const result = Bun.spawnSync({
@@ -1055,17 +1094,20 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
     }
   });
 
-  test("plist declares StandardOutPath and StandardErrorPath (docs L231-232)", async () => {
+  test("plist log paths are under ~/Library/Logs/bun/cron, not world-writable /tmp", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
     try {
       await Bun.cron(`${dir}/job.ts`, "0 0 * * *", "test-mac-logpaths");
       const plist = await Bun.file(plistPath("test-mac-logpaths")).text();
+      const logDir = `${process.env.HOME}/Library/Logs/bun/cron`;
       expect(plist).toContain("<key>StandardOutPath</key>");
-      expect(plist).toContain("<string>/tmp/bun.cron.test-mac-logpaths.stdout.log</string>");
+      expect(plist).toContain(`<string>${logDir}/bun.cron.test-mac-logpaths.stdout.log</string>`);
       expect(plist).toContain("<key>StandardErrorPath</key>");
-      expect(plist).toContain("<string>/tmp/bun.cron.test-mac-logpaths.stderr.log</string>");
+      expect(plist).toContain(`<string>${logDir}/bun.cron.test-mac-logpaths.stderr.log</string>`);
+      expect(plist).not.toContain("<string>/tmp/");
+      expect(existsSync(logDir)).toBe(true);
     } finally {
       removeLaunchdJob("test-mac-logpaths");
     }
@@ -1189,11 +1231,12 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
       try {
         unlinkSync(markerPath);
       } catch {}
+      const logDir = `${process.env.HOME}/Library/Logs/bun/cron`;
       try {
-        unlinkSync("/tmp/bun.cron.test-mac-e2e.stdout.log");
+        unlinkSync(`${logDir}/bun.cron.test-mac-e2e.stdout.log`);
       } catch {}
       try {
-        unlinkSync("/tmp/bun.cron.test-mac-e2e.stderr.log");
+        unlinkSync(`${logDir}/bun.cron.test-mac-e2e.stderr.log`);
       } catch {}
     }
   });

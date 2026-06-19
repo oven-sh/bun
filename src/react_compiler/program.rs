@@ -15,6 +15,7 @@
 
 use crate::diagnostics::{CompilerError, CompilerErrorOrDiagnostic, ErrorCategory};
 use crate::hir::ReactFunctionType;
+use crate::hir::environment::OutputMode;
 use crate::hir::environment_config::{
     EnvironmentConfig, ExhaustiveEffectDepsMode, ExternalFunctionConfig, InstrumentationConfig,
 };
@@ -32,6 +33,7 @@ use crate::codegen::CodegenFunction;
 bun_core::declare_scope!(react_compiler, hidden);
 use crate::collections::IndexMap;
 use crate::compile_result::{CompileDiagnostic, CompileOutput};
+use crate::diagnostics::CompilerErrorDetail;
 use crate::hir::VariableBinding;
 use crate::imports::{ProgramContext, add_imports_to_program, validate_restricted_imports};
 use crate::lowering::FunctionNode;
@@ -99,6 +101,9 @@ const OPT_IN_DIRECTIVES: &[&[u8]] = &[b"use forget", b"use memo"];
 
 /// Directives that opt a function out of memoization
 const OPT_OUT_DIRECTIVES: &[&[u8]] = &[b"use no forget", b"use no memo"];
+
+/// Prefix of the dynamic-gating directive (`'use memo if(<ident>)'`).
+const DYNAMIC_GATING_DIRECTIVE_PREFIX: &[u8] = b"use memo if(";
 
 // -----------------------------------------------------------------------
 // Directive helpers
@@ -215,6 +220,75 @@ fn find_directive_disabling_memoization<'a>(directives: &[&'a [u8]]) -> Option<&
         .iter()
         .find(|d| OPT_OUT_DIRECTIVES.contains(d))
         .copied()
+}
+
+/// Port of upstream `tryFindDirectiveEnablingDynamicGating`.
+///
+/// Scans the leading directives for `'use memo if(<ident>)'`. Returns
+/// `Ok(Some(ident))` for exactly one valid directive, `Ok(None)` when none are
+/// present, and `Err` for multiple directives or an invalid identifier.
+fn find_dynamic_gating_directive(directives: &[&[u8]]) -> Result<Option<String>, CompilerError> {
+    let mut found: Vec<&[u8]> = Vec::new();
+    for d in directives {
+        if d.starts_with(DYNAMIC_GATING_DIRECTIVE_PREFIX) && d.last() == Some(&b')') {
+            found.push(d);
+        }
+    }
+    match found.len() {
+        0 => Ok(None),
+        1 => {
+            let d = found[0];
+            let inner = &d[DYNAMIC_GATING_DIRECTIVE_PREFIX.len()..d.len() - 1];
+            // `is_valid_gating_identifier` only accepts ASCII, so `from_utf8`
+            // on a valid identifier cannot fail.
+            if let Some(ident) = core::str::from_utf8(inner)
+                .ok()
+                .filter(|_| is_valid_gating_identifier(inner))
+            {
+                Ok(Some(ident.to_owned()))
+            } else {
+                let mut err = CompilerError::new();
+                err.push_error_detail(
+                    CompilerErrorDetail::new(
+                        ErrorCategory::Gating,
+                        "Dynamic gating directive is not a valid JavaScript identifier",
+                    )
+                    .with_description(format!("Found '{}'", bun_core::BStr::new(d))),
+                );
+                Err(err)
+            }
+        }
+        _ => {
+            let list = found
+                .iter()
+                .map(|d| bun_core::BStr::new(d).to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut err = CompilerError::new();
+            err.push_error_detail(
+                CompilerErrorDetail::new(
+                    ErrorCategory::Gating,
+                    "Multiple dynamic gating directives found",
+                )
+                .with_description(format!("Expected a single directive but found [{list}]")),
+            );
+            Err(err)
+        }
+    }
+}
+
+/// ASCII identifier shape that is not a JS reserved word. Upstream uses
+/// `isValidIdentifier` from `@babel/types`.
+fn is_valid_gating_identifier(s: &[u8]) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let start_ok = |c: u8| c.is_ascii_alphabetic() || c == b'_' || c == b'$';
+    let cont_ok = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+    if !start_ok(s[0]) || !s[1..].iter().all(|&c| cont_ok(c)) {
+        return false;
+    }
+    !ast::lexer_tables::keyword(s).is_some_and(ast::lexer_tables::T::is_reserved_word)
 }
 
 // -----------------------------------------------------------------------
@@ -369,8 +443,18 @@ pub fn parse_fixture_pragmas(source: &[u8], opts: &mut ReactCompilerOptions) -> 
                 }
             }
             b"dynamicGating" => {
-                if let Some(v) = val.and_then(pragma_string_value) {
-                    opts.dynamic_gating = Some(v);
+                // Value is a JSON object `{"source":"<module>"}`, not a quoted
+                // string; extract the `source` field by hand.
+                let parsed = val.and_then(|v| {
+                    let i = bun_core::strings::index_of(v, b"\"source\"")?;
+                    let rest = &v[i + b"\"source\"".len()..];
+                    let open = rest.iter().position(|&b| b == b'"')?;
+                    let rest = &rest[open + 1..];
+                    let close = rest.iter().position(|&b| b == b'"')?;
+                    core::str::from_utf8(&rest[..close]).ok().map(str::to_owned)
+                });
+                if let Some(source) = parsed {
+                    opts.dynamic_gating = Some(source);
                 } else {
                     skip.get_or_insert("dynamicGating");
                 }
@@ -869,7 +953,13 @@ fn get_react_function_type(
     parent_callee_name: Option<&[u8]>,
     opts: &ReactCompilerOptions,
 ) -> Option<ReactFunctionType> {
-    if find_directive_enabling_memoization(body_directives).is_some() {
+    let has_dynamic_gating_directive = opts.dynamic_gating.is_some()
+        && body_directives
+            .iter()
+            .any(|d| d.starts_with(DYNAMIC_GATING_DIRECTIVE_PREFIX));
+    if find_directive_enabling_memoization(body_directives).is_some()
+        || has_dynamic_gating_directive
+    {
         return Some(
             get_component_or_hook_like(host, name, func, parent_callee_name)
                 .unwrap_or(ReactFunctionType::Other),
@@ -1126,14 +1216,17 @@ impl ReactCompilerState {
         }
         self.did_lazy_init = true;
 
-        // Leading `// @key[:value]` pragmas override configured options. Only
-        // applied when `compilation_mode` was not explicitly set (i.e. fixture
-        // context); production callers always pass a mode.
-        if self.options.compilation_mode.is_none() {
+        if self.options.parse_test_pragmas {
             let _ = parse_fixture_pragmas(host.source(), &mut self.options);
             self.context.opts.compilation_mode = self.options.compilation_mode.clone();
             self.env_config = self.options.environment.clone();
         }
+
+        self.context.output_mode = match self.options.output_mode.as_deref() {
+            Some("ssr") => OutputMode::Ssr,
+            Some("lint") => OutputMode::Lint,
+            _ => OutputMode::Client,
+        };
 
         self.context.init_from_scope(host.symbols());
 
@@ -1307,6 +1400,35 @@ fn maybe_compile_node(
     bun_core::scoped_log!(react_compiler, "  -> fn_type={:?}", fn_type);
     let fn_type = fn_type?;
 
+    let fn_name: Option<String> =
+        name.and_then(|n| core::str::from_utf8(n).ok().map(str::to_owned));
+
+    if node.has_react_hooks_suppression() {
+        bun_core::scoped_log!(react_compiler, "  -> bail: react-hooks eslint suppression");
+        return None;
+    }
+
+    // Dynamic-gating directive validation (upstream `tryFindDirective…`).
+    let dynamic_gating_ident: Option<String> = if state.options.dynamic_gating.is_some() {
+        match find_dynamic_gating_directive(&body_directives) {
+            Ok(ident) => ident,
+            Err(err) => {
+                if let Some(fatal) = handle_error(
+                    err,
+                    fn_name.as_deref(),
+                    fn_loc,
+                    &mut state.diagnostics,
+                    &state.options,
+                ) {
+                    state.fatal = Some(fatal);
+                }
+                return None;
+            }
+        }
+    } else {
+        None
+    };
+
     // Upstream still runs the full pipeline on opted-out functions to surface
     // validation diagnostics; Bun skips early — the diagnostics channel is not
     // wired yet, and skipping avoids registering a spurious runtime import.
@@ -1317,8 +1439,10 @@ fn maybe_compile_node(
         return None;
     }
 
-    let fn_name: Option<String> =
-        name.and_then(|n| core::str::from_utf8(n).ok().map(str::to_owned));
+    // TODO(port): emit the `gate() ? compiled : original` wrapper. The
+    // function-declaration path needs statement-level access (see gating.rs
+    // `apply_gating_rewrites`); for now a valid directive only opts the
+    // function in and registers no extra import.
 
     // SAFETY: the arena is owned by the `Host` implementor (the parser's `P`)
     // and outlives the `&mut dyn Host` borrow for the duration of this call.
@@ -1349,8 +1473,12 @@ fn maybe_compile_node(
             None
         }
         Ok(mut codegen_fn) => {
+            if state.context.output_mode == OutputMode::Lint {
+                return None;
+            }
             if state.context.opts.compilation_mode.as_deref() == Some("annotation")
                 && find_directive_enabling_memoization(&body_directives).is_none()
+                && dynamic_gating_ident.is_none()
             {
                 return None;
             }

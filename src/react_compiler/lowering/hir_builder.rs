@@ -168,6 +168,15 @@ impl<'a> FunctionNode<'a> {
         }
     }
 
+    pub fn has_react_hooks_suppression(&self) -> bool {
+        match self {
+            FunctionNode::Function(f) => f
+                .flags
+                .contains(ast::flags::Function::HasReactHooksSuppression),
+            FunctionNode::Arrow(a) => a.has_react_hooks_suppression,
+        }
+    }
+
     pub fn loc(&self) -> Loc {
         match self {
             FunctionNode::Function(f) => f.body.loc,

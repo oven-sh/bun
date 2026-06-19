@@ -407,6 +407,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let mut temp_opts = opts;
         func.body = p.parse_fn_body(&mut temp_opts)?;
+        if p.lexer.has_react_hooks_suppression_before {
+            func.flags.insert(Flags::Function::HasReactHooksSuppression);
+        }
 
         Ok(func)
     }
@@ -553,6 +556,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(E::Arrow {
                 args: args_slice,
                 body,
+                has_react_hooks_suppression: p.lexer.has_react_hooks_suppression_before,
                 ..Default::default()
             });
         }
@@ -585,6 +589,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc: arrow_loc,
                 stmts: bun_ast::StoreSlice::new_mut(stmts),
             },
+            has_react_hooks_suppression: p.lexer.has_react_hooks_suppression_before,
             ..Default::default()
         })
     }

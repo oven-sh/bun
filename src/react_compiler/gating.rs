@@ -363,6 +363,29 @@ fn insert_additional_function_declaration(
     Ok(())
 }
 
+/// Expression-level gating wrapper for dynamic gating (`@dynamicGating`).
+///
+/// Builds `gate_ref() ? compiled : original`. Used by `maybe_compile_expr` for
+/// `const Foo = ...` initializers and `export default ...` expressions, where
+/// the rewrite replaces the initializer expression in place rather than a
+/// top-level statement (port of upstream `Gating.ts`'s expression branch).
+pub(crate) fn wrap_expr_with_gate(
+    original: Expr,
+    compiled: Expr,
+    gate_ref: Ref,
+    _arena: &Arena,
+) -> Expr {
+    let loc = original.loc;
+    Expr::init(
+        E::If {
+            test_: make_call(gate_ref, AstAlloc::vec()),
+            yes: compiled,
+            no: original,
+        },
+        loc,
+    )
+}
+
 /// Build a gating conditional expression:
 /// `gating_fn() ? build_fn_expr(compiled) : build_fn_expr(original)`
 fn build_gating_expression(

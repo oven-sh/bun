@@ -769,7 +769,7 @@ fn generate_instruction_types(
                             )?;
                         }
                         ArrayPatternElement::Hole => {
-                            break;
+                            continue;
                         }
                     }
                 }

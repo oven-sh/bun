@@ -16,6 +16,7 @@ use bun_ast::{
     ClauseItem, ImportKind, ImportRecord, Loc, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol,
 };
 
+use crate::hir::environment::OutputMode;
 use crate::options::ReactCompilerOptions;
 use crate::program::Host;
 
@@ -43,6 +44,7 @@ pub struct ProgramContext {
     source_filename: Option<String>,
     pub code: Option<String>,
     pub react_runtime_module: String,
+    pub output_mode: OutputMode,
     pub has_module_scope_opt_out: bool,
 
     // Pre-resolved import local names for codegen
@@ -73,6 +75,7 @@ impl ProgramContext {
             source_filename: None,
             code,
             react_runtime_module,
+            output_mode: OutputMode::Client,
             has_module_scope_opt_out,
             instrument_fn_name: None,
             instrument_gating_name: None,

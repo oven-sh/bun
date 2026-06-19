@@ -179,6 +179,7 @@ impl<'a> Options<'a> {
             features: RuntimeFeatures {
                 react_fast_refresh: f.react_fast_refresh,
                 react_compiler: f.react_compiler,
+                react_compiler_parse_test_pragmas: f.react_compiler_parse_test_pragmas,
                 hot_module_reloading: f.hot_module_reloading,
                 server_components: f.server_components,
                 is_macro_runtime: f.is_macro_runtime,
@@ -314,7 +315,12 @@ impl<'a> Parser<'a> {
         define: &'a Define,
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
-        let lexer = js_lexer::Lexer::init(log, source, bump)?;
+        let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
+        // Must be set before the priming `next()` so leading comments are seen.
+        lexer.track_comments = options.features.minify_identifiers;
+        lexer.track_react_suppressions = options.features.react_compiler;
+        lexer.step();
+        lexer.next()?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
         // chain (the `&'a mut Log` was consumed by `Lexer::init`).
         let log_ptr = lexer.log;
@@ -856,6 +862,7 @@ impl<'a> Parser<'a> {
             let rc_options = bun_react_compiler::ReactCompilerOptions {
                 enabled: true,
                 is_dev: p.options.jsx.development,
+                parse_test_pragmas: p.options.features.react_compiler_parse_test_pragmas,
                 ..Default::default()
             };
             let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts);

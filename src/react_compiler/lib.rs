@@ -26,7 +26,6 @@ mod compile_result;
 mod gating;
 mod imports;
 mod options;
-mod suppression;
 
 pub mod codegen;
 pub mod lowering;

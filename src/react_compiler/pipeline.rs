@@ -48,7 +48,7 @@ pub fn compile_fn(
 ) -> Result<CodegenFunction, CompilerError> {
     let mut env = Environment::with_config(env_config.clone());
     env.fn_type = fn_type;
-    env.output_mode = OutputMode::Client;
+    env.output_mode = context.output_mode;
     env.code = context.code.clone();
     env.filename = context.filename.clone();
     env.instrument_fn_name = context.instrument_fn_name.clone();
@@ -179,7 +179,7 @@ pub fn compile_outlined_fn(
 
     let mut env = Environment::with_config(env_config.clone());
     env.fn_type = fn_type;
-    env.output_mode = OutputMode::Client;
+    env.output_mode = context.output_mode;
 
     // Build a FunctionDeclaration from the codegen output
     let mut params: bun_alloc::AstVec<G::Arg> =

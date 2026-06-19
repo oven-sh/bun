@@ -204,6 +204,9 @@ pub mod Runtime {
         /// Run the React Compiler (auto-memoization) over the parsed AST
         /// before the visit pass.
         pub react_compiler: bool,
+        /// Test-only: have the React Compiler read leading `// @key value`
+        /// fixture pragmas from the source. Set by the fixture runner.
+        pub react_compiler_parse_test_pragmas: bool,
         /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
         /// It can be enabled on the command line with --format=internal_bake_dev
         ///
@@ -305,6 +308,7 @@ pub mod Runtime {
             Self {
                 react_fast_refresh: false,
                 react_compiler: false,
+                react_compiler_parse_test_pragmas: false,
                 hot_module_reloading: false,
                 server_components: ServerComponentsMode::None,
                 is_macro_runtime: false,

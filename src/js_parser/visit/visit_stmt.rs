@@ -1263,21 +1263,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let Some(init) = &mut decl.value else {
                     continue;
                 };
-                let name = match decl.binding.data {
-                    js_ast::binding::Data::BIdentifier(b) => Some(
-                        p.symbols[b.r#ref.inner_index() as usize]
-                            .original_name
-                            .slice()
-                            .to_vec(),
+                let (name, b_ref) = match decl.binding.data {
+                    js_ast::binding::Data::BIdentifier(b) => (
+                        Some(
+                            p.symbols[b.r#ref.inner_index() as usize]
+                                .original_name
+                                .slice()
+                                .to_vec(),
+                        ),
+                        Some(b.r#ref),
                     ),
-                    _ => None,
+                    _ => (None, None),
                 };
-                bun_react_compiler::maybe_compile_expr(
+                let compiled = bun_react_compiler::maybe_compile_expr(
                     &mut rc,
                     &mut crate::react_compiler_host::ReactCompilerHost::new(p),
                     init,
                     name.as_deref(),
                 );
+                if compiled {
+                    if let Some(b_ref) = b_ref {
+                        p.record_usage(b_ref);
+                    }
+                }
             }
             p.react_compiler = Some(rc);
         }

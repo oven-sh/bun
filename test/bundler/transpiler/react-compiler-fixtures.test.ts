@@ -120,6 +120,8 @@ const HANDLED_PRAGMAS = new Set([
   "enableEmitHookGuards",
   "enableEmitInstrumentForget",
   "instrumentForget",
+  "outputMode",
+  "dynamicGating",
 ]);
 
 // Pragmas `parse_fixture_pragmas` recognises but cannot honour (returns
@@ -132,13 +134,6 @@ const UNSUPPORTED_PRAGMAS = new Set([
   "moduleTypeProvider",
   "eslintSuppressionRules",
   "validateBlocklistedImports",
-  // `lint` emits the input unchanged; `ssr` runs a transform Bun never enables
-  // (pipeline.rs hardcodes OutputMode::Client). Either way the `.expect.md`
-  // slot count is meaningless against Bun's client-mode output.
-  "outputMode",
-  // Directive validation (`'use memo if(...)'`) and the runtime gating wrapper
-  // are not ported; `opts.dynamic_gating` is parsed but never read.
-  "dynamicGating",
   // Bun handles HMR via its own React Refresh transform and never populates
   // `env.code`, so the extra source-hash slot is never emitted (codegen.rs).
   "enableResetCacheOnSourceFileChanges",
@@ -171,24 +166,17 @@ function shouldSkip(relPath: string, pragmas: Pragmas): string | null {
 // Grow this from CI; each entry must say why.
 const TODO: Record<string, string> = {
   // These `@compilationMode:"infer"` fixtures declare a component/hook with no
-  // `export` and no live reference. `bun build` tree-shakes the compiled body
-  // before printing, so `_c(N)` never reaches the output. There is no option to
-  // disable `p.tree_shake`, and `--no-bundle` skips the React Compiler pass
-  // entirely, so the correct output is unobservable from this harness.
-  "infer-function-assignment": "no export — compiled body tree-shaken before output",
-  "infer-function-expression-component": "no export — compiled body tree-shaken before output",
-  "infer-functions-component-with-hook-call": "no export — compiled body tree-shaken before output",
-  "infer-functions-component-with-jsx": "no export — compiled body tree-shaken before output",
-  "infer-functions-hook-with-hook-call": "no export — compiled body tree-shaken before output",
-  "infer-functions-hook-with-jsx": "no export — compiled body tree-shaken before output",
-
-  // Upstream's snap harness wires a `moduleTypeProvider` that types
-  // `shared-runtime` exports (`useNoAlias` has a no-alias effect on its args;
-  // `useFragment` returns a shape whose `.a[idx].toString()` is primitive). Bun
-  // has no equivalent module-type provider, so it conservatively memoizes more.
-  // Harness-config gap, not a compiler bug.
-  "hook-noAlias": "needs shared-runtime moduleTypeProvider (useNoAlias typed shape)",
-  "relay-transitive-mixeddata": "needs shared-runtime moduleTypeProvider (useFragment typed shape)",
+  // `export` and no live reference. `bun build` drops the unreferenced decl
+  // before printing (per-part liveness, independent of `tree_shaking`), so
+  // `_c(N)` never reaches the output even though the runtime import does.
+  // `--no-bundle` skips the React Compiler pass entirely, so the correct
+  // output is unobservable from this harness.
+  "infer-function-assignment": "no export — compiled body dropped before output",
+  "infer-function-expression-component": "no export — compiled body dropped before output",
+  "infer-functions-component-with-hook-call": "no export — compiled body dropped before output",
+  "infer-functions-component-with-jsx": "no export — compiled body dropped before output",
+  "infer-functions-hook-with-hook-call": "no export — compiled body dropped before output",
+  "infer-functions-hook-with-jsx": "no export — compiled body dropped before output",
 
   // validate_preserved_manual_memoization does not yet detect the
   // "inferred dep not present in source deps" case (upstream errors here).
@@ -196,13 +184,6 @@ const TODO: Record<string, string> = {
   "error.ref-like-name-not-Ref": "validate_preserved_manual_memoization: missing inferred-vs-source dep check",
   "error.repro-preserve-memoization-inner-destructured-value-mistaken-as-dependency-mutated-dep":
     "validate_preserved_manual_memoization: missing mutated-dep check",
-
-  // suppression.rs implements eslint-disable scanning but is not wired into
-  // program.rs (Host doesn't surface program comments).
-  "unclosed-eslint-suppression-skips-all-components": "suppression.rs not wired into program.rs",
-
-  // Slot-count off-by-one (5 vs 4); siblings with identical pragmas pass.
-  "invalid-set-state-in-effect-verbose-force-update": "codegen slot count diverges from upstream (5 vs 4)",
 };
 
 type Fixture = {
@@ -301,6 +282,7 @@ async function compileAll(): Promise<void> {
       external: ["*"],
       // @ts-expect-error — wired in JSBundler.rs but not yet in bun-types
       reactCompiler: true,
+      reactCompilerParseTestPragmas: true,
       // Upstream's Babel harness enables the TS plugin unconditionally, so
       // many `.js` fixtures contain TS syntax (casts, type params).
       loader: { ".js": "tsx", ".mjs": "tsx" },

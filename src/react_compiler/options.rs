@@ -28,8 +28,9 @@ pub struct ReactCompilerOptions {
     pub dynamic_gating: Option<String>,
     /// `"forget"` (default) or `"nopanic"`.
     pub output_mode: Option<String>,
-    /// ESLint suppression rule names that opt a function out of compilation.
-    pub eslint_suppression_rules: Option<Vec<String>>,
+    /// Test-only: read leading `// @key value` pragmas from the source and
+    /// apply them to `self` before compiling. Set by the fixture runner.
+    pub parse_test_pragmas: bool,
     /// Ignore `"use no forget"` / `"use no memo"` directives.
     pub ignore_use_no_forget: bool,
     /// Test-only: emit logger events into the output.

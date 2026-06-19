@@ -442,6 +442,17 @@ describe("node:inspector", () => {
       session.disconnect();
     });
 
+    test("Profiler.disable stops precise coverage, like V8", () => {
+      const session = new inspector.Session();
+      session.connect();
+      session.post("Profiler.enable");
+      session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+      session.post("Profiler.disable");
+      session.post("Profiler.enable");
+      expect(() => session.post("Profiler.takePreciseCoverage")).toThrow("Precise coverage has not been started.");
+      session.disconnect();
+    });
+
     test("getBestEffortCoverage returns a result array", () => {
       const session = new inspector.Session();
       session.connect();

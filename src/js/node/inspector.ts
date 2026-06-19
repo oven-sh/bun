@@ -454,6 +454,12 @@ class Session extends EventEmitter {
         if (isCPUProfilerRunning()) {
           stopCPUProfiler();
         }
+        // V8's Profiler agent stops precise coverage on disable; without this
+        // the control-flow profiler keeps instrumenting newly-compiled code.
+        if (this.#preciseCoverageEnabled) {
+          stopPreciseCoverage();
+          this.#preciseCoverageEnabled = false;
+        }
         this.#profilerEnabled = false;
         return {};
 

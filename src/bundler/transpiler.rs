@@ -2017,10 +2017,7 @@ fn parse_data_loader<'a>(
                         value: Some(prop.value.expect("infallible: prop has value")),
                     };
                     export_clauses[count] = bun_ast::ClauseItem {
-                        name: bun_ast::LocRef {
-                            ref_: Some(ref_),
-                            loc: key_loc,
-                        },
+                        name: bun_ast::LocRef { ref_, loc: key_loc },
                         alias: bun_ast::StoreStr::new(name),
                         alias_loc: key_loc,
                         ..Default::default()
@@ -2051,7 +2048,7 @@ fn parse_data_loader<'a>(
                         value: bun_ast::StmtOrExpr::Expr(expr),
                         default_name: bun_ast::LocRef {
                             loc: bun_ast::Loc::default(),
-                            ref_: Some(bun_ast::Ref::NONE),
+                            ref_: bun_ast::Ref::NONE,
                         },
                     },
                     bun_ast::Loc { start: 0 },
@@ -2072,7 +2069,7 @@ fn parse_data_loader<'a>(
                     value: bun_ast::StmtOrExpr::Expr(expr),
                     default_name: bun_ast::LocRef {
                         loc: bun_ast::Loc::default(),
-                        ref_: Some(bun_ast::Ref::NONE),
+                        ref_: bun_ast::Ref::NONE,
                     },
                 },
                 bun_ast::Loc { start: 0 },
@@ -2119,7 +2116,7 @@ fn parse_text_loader<'a>(
             value: bun_ast::StmtOrExpr::Expr(expr),
             default_name: bun_ast::LocRef {
                 loc: bun_ast::Loc::default(),
-                ref_: Some(bun_ast::Ref::NONE),
+                ref_: bun_ast::Ref::NONE,
             },
         },
         bun_ast::Loc { start: 0 },
@@ -2177,7 +2174,7 @@ fn parse_md_loader<'a>(
             value: bun_ast::StmtOrExpr::Expr(expr),
             default_name: bun_ast::LocRef {
                 loc: bun_ast::Loc::default(),
-                ref_: Some(bun_ast::Ref::NONE),
+                ref_: bun_ast::Ref::NONE,
             },
         },
         bun_ast::Loc { start: 0 },

@@ -113,3 +113,16 @@ describe("v8.getHeapStatistics", () => {
     });
   }
 });
+
+describe("v8.startupSnapshot", () => {
+  // https://github.com/oven-sh/bun/issues/32501
+  test("isBuildingSnapshot() returns false", () => {
+    const { startupSnapshot } = require("node:v8");
+    expect(startupSnapshot.isBuildingSnapshot()).toBe(false);
+  });
+
+  test("isBuildingSnapshot() returns false via process.getBuiltinModule", () => {
+    const { startupSnapshot } = process.getBuiltinModule("v8");
+    expect(startupSnapshot.isBuildingSnapshot()).toBe(false);
+  });
+});

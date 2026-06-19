@@ -59,7 +59,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text)?;
             name = Some(js_ast::LocRef {
                 loc: name_loc,
-                ref_: Some(ref_),
+                ref_,
             });
         }
 
@@ -142,7 +142,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::symbol::Kind::HoistedFunction
             };
 
-            n.ref_ = Some(p.declare_symbol(kind, n.loc, name_text)?);
+            n.ref_ = p.declare_symbol(kind, n.loc, name_text)?;
         }
         func.name = name;
 
@@ -183,7 +183,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut func = G::Fn {
             name,
             flags: initial_flags,
-            arguments_ref: None,
+            arguments_ref: js_ast::Ref::NONE,
             open_parens_loc: p.lexer.loc(),
             ..Default::default()
         };
@@ -357,16 +357,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // this if it wasn't already declared above because arguments are allowed to
         // be called "arguments", in which case the real "arguments" is inaccessible.
         if !p.current_scope().members.contains_key(arguments_str) {
-            func.arguments_ref = Some(
-                p.declare_symbol_maybe_generated::<false>(
+            func.arguments_ref = p
+                .declare_symbol_maybe_generated::<false>(
                     js_ast::symbol::Kind::Arguments,
                     func.open_parens_loc,
                     arguments_str,
                 )
-                .expect("unreachable"),
-            );
-            p.symbols[func.arguments_ref.unwrap().inner_index() as usize].must_not_be_renamed =
-                true;
+                .expect("unreachable");
+            p.symbols[func.arguments_ref.inner_index() as usize].set_must_not_be_renamed(true);
         }
 
         p.lexer.expect(T::TCloseParen)?;
@@ -454,7 +452,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             name = Some(js_ast::LocRef {
                 loc: name_loc,
-                ref_: Some(ref_),
+                ref_,
             });
 
             p.lexer.next()?;

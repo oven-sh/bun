@@ -918,7 +918,6 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
             tag: Default::default(),
             loader: None,
             source_index: Default::default(),
-            module_id: 0,
             original_path: b"",
             flags: Default::default(),
         });
@@ -2990,7 +2989,6 @@ mod stylesheet_impl {
                             tag: Default::default(),
                             loader: None,
                             source_index: Default::default(),
-                            module_id: 0,
                             original_path: b"",
                             flags: Default::default(),
                         });
@@ -3507,7 +3505,6 @@ impl<'a> Parser<'a> {
                 tag: Default::default(),
                 loader: None,
                 source_index: Default::default(),
-                module_id: 0,
                 original_path: b"",
                 flags: Default::default(),
             });

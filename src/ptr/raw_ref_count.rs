@@ -89,17 +89,7 @@ impl RawAtomicRefCount {
     pub fn decrement(&self) -> DecrementResult {
         // Release decrement, acquire fence on the last reference (below).
         let old = self.raw_value.fetch_sub(1, Ordering::Release);
-        if cfg!(debug_assertions) || cfg!(windows) {
-            // Always-on on Windows while #53265 fs-promises-writeFile is being
-            // root-caused: an over-deref in release destroys the object twice;
-            // the second destroy (from JSSink ~dtor → FileSink__finalize) reads
-            // freed memory and the resulting `Strong<Impl>* corrupted (0x1)`
-            // assert in Strong::destroy is too late to identify the *first*
-            // call site that dropped the count below zero. With panic=abort the
-            // crash-handler hook captures a Rust backtrace, so this surfaces
-            // the exact culprit. Remove `|| cfg!(windows)` once root-caused.
-            assert!(old != 0, "underflow of thread-safe ref count");
-        }
+        debug_assert!(old != 0, "underflow of thread-safe ref count");
         if old == 1 {
             core::sync::atomic::fence(Ordering::Acquire);
             DecrementResult::ShouldDestroy

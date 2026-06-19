@@ -269,7 +269,7 @@ impl Expr {
 
     pub fn as_number(&self) -> Option<f64> {
         match self.data {
-            Data::ENumber(n) => Some(n.value),
+            Data::ENumber(n) => Some(n.value()),
             _ => None,
         }
     }
@@ -1504,7 +1504,7 @@ impl Expr {
             }
             Data::ENumber(n) => {
                 return Some(expr.at(E::Boolean {
-                    value: n.value == 0.0 || n.value.is_nan(),
+                    value: n.value() == 0.0 || n.value().is_nan(),
                 }));
             }
             Data::EBigInt(b) => {
@@ -1738,18 +1738,14 @@ pub enum Data {
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
-// The identifier-family flags are packed into `Ref`'s spare bits (see
-// `E::Identifier` doc), so every inline payload is ≤ 8 bytes; with the
-// repr(Rust) discriminant that rounds to 16. `Expr` = `Data` (16, align 8) +
-// `Loc` (i32) → 20 → 24 after tail padding.
-//
-// The `Option<Data>` assert proves Rust's niche optimization fires: the enum
-// has spare discriminant values (47 variants < 256, and every pointer variant
-// contributes a NonNull niche), so `None` packs into an unused bit-pattern
-// rather than adding a word. If a future variant adds `#[repr(C)]`/`#[repr(u32)]`
-// or a nullable `*mut T` payload, this assert catches the size regression.
-const _: () = assert!(core::mem::size_of::<Data>() == 16); // Do not increase the size of Expr
-const _: () = assert!(core::mem::size_of::<Expr>() == 24);
+// Every payload — `StoreRef<T>` and the inline identifier/`Number`/etc.
+// structs — is ≤ 8 bytes at align 4, so `Data` = 1-byte discriminant + 8-byte
+// payload → 12 at align 4. `Expr` = `Data` (12, align 4) + `Loc` (i32) → 16.
+// `Option<Data>`/`Option<Expr>` niche-pack via spare discriminant values
+// (47 variants < 256); a `#[repr(C)]`/`#[repr(u32)]` on `Data` would break it.
+const _: () = assert!(core::mem::size_of::<Data>() == 12); // Do not increase the size of Expr
+const _: () = assert!(core::mem::align_of::<Data>() == 4);
+const _: () = assert!(core::mem::size_of::<Expr>() == 16);
 const _: () = assert!(
     core::mem::size_of::<Option<Data>>() == core::mem::size_of::<Data>(),
     "expr::Data lost its niche — check for #[repr] or nullable-ptr payload"
@@ -1758,16 +1754,23 @@ const _: () = assert!(
     core::mem::size_of::<Option<Expr>>() == core::mem::size_of::<Expr>(),
     "Expr lost its niche — Option<Expr> is used in G::Property/B::Property/etc."
 );
-// Inline-payload ceilings (regress any of these and `Data` grows past 16):
+// Inline-payload ceilings (regress any of these and `Data` grows past 12).
+// `align_of <= 4` is what keeps `Data` (and therefore `Expr`) at align 4.
 const _: () = assert!(core::mem::size_of::<E::Identifier>() == 8);
+const _: () = assert!(core::mem::align_of::<E::Identifier>() == 4);
 const _: () = assert!(core::mem::size_of::<E::ImportIdentifier>() == 8);
 const _: () = assert!(core::mem::size_of::<E::CommonJSExportIdentifier>() == 8);
 const _: () = assert!(core::mem::size_of::<E::PrivateIdentifier>() == 8);
 const _: () = assert!(core::mem::size_of::<E::Number>() <= 8);
+const _: () = assert!(core::mem::align_of::<E::Number>() == 4);
 const _: () = assert!(core::mem::size_of::<E::Special>() <= 8);
 const _: () = assert!(core::mem::size_of::<E::RequireString>() <= 8);
 const _: () = assert!(core::mem::size_of::<E::NewTarget>() <= 8);
 const _: () = assert!(core::mem::size_of::<StoreRef<E::Binary>>() == core::mem::size_of::<usize>());
+// Heap-payload shrinks unlocked by the 12-byte StoreSlice<T>:
+const _: () = assert!(core::mem::size_of::<crate::G::FnBody>() == 16);
+const _: () = assert!(core::mem::size_of::<E::Arrow>() <= 32);
+const _: () = assert!(core::mem::size_of::<crate::S::Block>() == 16);
 
 // Field-style accessors (`data.e_string()`, `data.e_object()`). The match arms
 // in this file use these heavily; keeping them as inherent methods avoids
@@ -2686,7 +2689,7 @@ impl Data {
                 raw(hasher, e.value);
             }
             Data::ENumber(e) => {
-                raw(hasher, e.value);
+                raw(hasher, e.value());
             }
             Data::EBigInt(e) => {
                 hasher.update(&e.value);
@@ -2991,9 +2994,9 @@ impl Data {
                 Some(string_to_equivalent_number_value(str.slice8()))
             }
             Data::EBoolean(b) | Data::EBranchBoolean(b) => Some(if b.value { 1.0 } else { 0.0 }),
-            Data::ENumber(n) => Some(n.value),
+            Data::ENumber(n) => Some(n.value()),
             Data::EInlinedEnum(inlined) => match &inlined.value.data {
-                Data::ENumber(num) => Some(num.value),
+                Data::ENumber(num) => Some(num.value()),
                 Data::EString(str) => {
                     if str.next.is_some() {
                         return None;
@@ -3014,16 +3017,16 @@ impl Data {
         match self {
             Data::EBoolean(b) | Data::EBranchBoolean(b) => Some(if b.value { 1.0 } else { 0.0 }),
             Data::ENumber(n) => {
-                if n.value.is_finite() {
-                    Some(n.value)
+                if n.value().is_finite() {
+                    Some(n.value())
                 } else {
                     None
                 }
             }
             Data::EInlinedEnum(inlined) => match &inlined.value.data {
                 Data::ENumber(num) => {
-                    if num.value.is_finite() {
-                        Some(num.value)
+                    if num.value().is_finite() {
+                        Some(num.value())
                     } else {
                         None
                     }
@@ -3036,9 +3039,9 @@ impl Data {
 
     pub fn extract_numeric_value(&self) -> Option<f64> {
         match self {
-            Data::ENumber(n) => Some(n.value),
+            Data::ENumber(n) => Some(n.value()),
             Data::EInlinedEnum(inlined) => match &inlined.value.data {
-                Data::ENumber(num) => Some(num.value),
+                Data::ENumber(num) => Some(num.value()),
                 _ => None,
             },
             _ => None,
@@ -3174,9 +3177,9 @@ impl Data {
                     return Equality {
                         ok: true,
                         equal: if l.value {
-                            num.value == 1.0
+                            num.value() == 1.0
                         } else {
-                            num.value == 0.0
+                            num.value() == 0.0
                         },
                         ..Default::default()
                     };
@@ -3190,7 +3193,7 @@ impl Data {
                 Data::ENumber(r) => {
                     return Equality {
                         ok: true,
-                        equal: l.value == r.value,
+                        equal: l.value() == r.value(),
                         ..Default::default()
                     };
                 }
@@ -3198,7 +3201,7 @@ impl Data {
                     if let Data::ENumber(rn) = &r.value.data {
                         return Equality {
                             ok: true,
-                            equal: l.value == rn.value,
+                            equal: l.value() == rn.value(),
                             ..Default::default()
                         };
                     }
@@ -3210,9 +3213,9 @@ impl Data {
                             // "1 == true" is true
                             // "0 == false" is true
                             equal: if r.value {
-                                l.value == 1.0
+                                l.value() == 1.0
                             } else {
-                                l.value == 0.0
+                                l.value() == 0.0
                             },
                             ..Default::default()
                         };
@@ -3278,10 +3281,10 @@ impl Data {
                     Data::ENumber(r) => {
                         if !K::STRICT {
                             l.resolve_rope_if_needed(p.arena());
-                            if r.value == 0.0 && (l.is_blank() || l.eql_comptime(b"0")) {
+                            if r.value() == 0.0 && (l.is_blank() || l.eql_comptime(b"0")) {
                                 return Equality::TRUE;
                             }
-                            if r.value == 1.0 && l.eql_comptime(b"1") {
+                            if r.value() == 1.0 && l.eql_comptime(b"1") {
                                 return Equality::TRUE;
                             }
                             // the string could still equal 0 or 1 but it could be hex, binary, octal, ...

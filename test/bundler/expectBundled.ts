@@ -13,7 +13,6 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  rmdirSync,
   rmSync,
   writeFileSync,
 } from "fs";
@@ -1815,7 +1814,7 @@ for (const [key, blob] of build.outputs) {
       }
     }
 
-    rmdirSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
 
     return testRef(id, opts);
   })();

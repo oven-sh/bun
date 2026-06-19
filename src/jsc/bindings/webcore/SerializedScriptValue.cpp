@@ -1102,6 +1102,14 @@ private:
     // the messaging entry points and calling this from ErrorInstance,
     // ObjectStartState, and each serializer branch that corresponds to a Node
     // JSTransferable host type.
+    //
+    // Known divergence: Worker::dispatchErrorWithValue (worker→parent uncaught
+    // error) also passes both gates. Node's equivalent goes through
+    // internal/error_serdes.serializeError(), which builds a fresh property bag
+    // and serializes via v8.DefaultSerializer, so the marker is irrelevant there.
+    // In Bun, a marked Error thrown from a worker degrades to the string
+    // fallback (dispatchErrorWithMessage); gracefully handled but loses the
+    // original constructor and own properties.
     bool isMarkedUncloneableForMessaging(VM& vm, JSObject* object)
     {
         if (m_forStorage != SerializationForStorage::No)

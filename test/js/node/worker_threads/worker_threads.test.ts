@@ -812,7 +812,7 @@ describe("markAsUncloneable", () => {
       ipc(message) {
         resolve(message);
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "inherit", "inherit"],
     });
     proc.exited.then(code => reject(new Error("child exited early: " + code)));
     const obj = { a: 1 };

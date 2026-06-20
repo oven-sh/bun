@@ -79,7 +79,7 @@ test.skipIf(!isWindows)("fs.rm recursive surfaces a permission error when delete
     const fixture = `
       const fs = require("node:fs");
       const fsp = require("node:fs/promises");
-      const root = process.argv[2];
+      const root = process.env.TEST_RM_ROOT;
       let sync, async_;
       try {
         fs.rmSync(root, { recursive: true });
@@ -97,8 +97,8 @@ test.skipIf(!isWindows)("fs.rm recursive surfaces a permission error when delete
     `;
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture, root],
-      env: bunEnv,
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, TEST_RM_ROOT: root },
       stdout: "pipe",
       stderr: "pipe",
     });

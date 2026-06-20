@@ -352,6 +352,45 @@ describe.concurrent("import source (source phase imports)", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.each(["bun", "node:fs", "bun:sqlite"])(
+      "static source phase import of the builtin %j is an error",
+      async spec => {
+        // The printer's `Tag::Bun` fast path rewrites `import x from "bun"`
+        // to `var x = globalThis.Bun` and never touches the module loader;
+        // it must not fire for a source-phase request.
+        const { stdout, stderr, exitCode } = await run({
+          "main.js": `
+            import source mod from "${spec}";
+            console.log("unreachable", typeof mod);
+          `,
+        });
+        expect(stdout).not.toContain("unreachable");
+        expect(stderr).toContain("only WebAssembly modules have a module source");
+        expect(stderr).toContain(JSON.stringify(spec));
+        expect(exitCode).not.toBe(0);
+      },
+    );
+
+    test.each([
+      ["literal", `import.source("bun")`],
+      ["non-literal", `import.source(["bun"].join(""))`],
+      ["node builtin", `import.source("node:fs")`],
+    ])("dynamic import.source() of a builtin (%s) rejects", async (_name, expr) => {
+      const { stdout, stderr, exitCode } = await run({
+        "main.js": `
+          try {
+            await ${expr};
+            console.log("unreachable");
+          } catch (e) {
+            console.log("caught:", String(e.message).includes("only WebAssembly modules have a module source"));
+          }
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout.split("\n").filter(Boolean)).toEqual(["caught: true"]);
+      expect(exitCode).toBe(0);
+    });
+
     test("a file without the wasm magic is rejected even with a .wasm extension", async () => {
       const { stdout, stderr, exitCode } = await run({
         "main.js": `

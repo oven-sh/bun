@@ -2757,7 +2757,11 @@ pub mod __gated_printer {
                 //      const foo = await Promise.resolve(globalThis.Bun)
                 //      const bar = globalThis.Bun
                 //
-                if record.tag == ImportRecordTag::Bun {
+                // Source-phase `import.source("bun")` must fall through to
+                // the `with { type: "webassembly" }` lowering below so the
+                // module loader can reject it (no builtin has a module
+                // source) instead of silently binding `globalThis.Bun`.
+                if record.tag == ImportRecordTag::Bun && record.phase != ImportPhase::Source {
                     if record.kind == ImportKind::Dynamic {
                         self.print(b"Promise.resolve(globalThis.Bun)");
                         if wrap {
@@ -6009,7 +6013,13 @@ pub mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
 
                     if IS_BUN_PLATFORM {
-                        if record.tag == ImportRecordTag::Bun {
+                        // `import source x from "bun"` must reach the
+                        // module loader (via the `with { type: "webassembly" }`
+                        // lowering below) so it can error, not silently
+                        // bind `globalThis.Bun`.
+                        if record.tag == ImportRecordTag::Bun
+                            && record.phase != ImportPhase::Source
+                        {
                             self.print_global_bun_import_statement(s);
                             self.prev_stmt_tag = new_tag;
                             return Ok(());

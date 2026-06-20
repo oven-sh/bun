@@ -979,12 +979,28 @@ static JSValue fetchESMSourceCode(
         }
     }
 
+    // TC39 source phase imports are lowered by the printer onto
+    // `with { type: "webassembly" }`. No builtin module has a module source,
+    // so reject that request here rather than silently serving the
+    // evaluation-phase builtin (the transpile path produces the same error
+    // for file-backed non-wasm modules).
+    const bool isSourcePhase = typeAttribute && !typeAttribute->isEmpty()
+        && typeAttribute->toWTFString(BunString::ZeroCopy) == "webassembly"_s;
+
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, referrer, res)) {
         if (!res->success) {
             throwException(scope, res->result.err, globalObject);
             auto* exception = scope.exception();
             (void)scope.tryClearException();
             RELEASE_AND_RETURN(scope, reject(exception));
+        }
+
+        if (isSourcePhase) [[unlikely]] {
+            auto message = makeString(
+                "Source phase import of \""_s,
+                specifier->toWTFString(BunString::ZeroCopy),
+                "\" failed: only WebAssembly modules have a module source"_s);
+            RELEASE_AND_RETURN(scope, reject(createTypeError(globalObject, message)));
         }
 
         // This can happen if it's a `bun build --compile`'d CommonJS file

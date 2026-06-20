@@ -5,8 +5,11 @@
 
 //! Type configuration types, ported from TypeSchema.ts.
 //!
-//! These are the JSON-serializable config types used by `moduleTypeProvider`
-//! and `installTypeConfig` to describe module/function/hook types.
+//! These are compile-time config descriptors used by `moduleTypeProvider`
+//! and `installTypeConfig` to describe module/function/hook types. All string
+//! fields are `&'static str` because every config is built from literals in
+//! `globals.rs` / `default_module_type_provider.rs`; a future runtime-supplied
+//! provider would need a separate owned variant.
 
 use crate::collections::IndexMap;
 
@@ -49,67 +52,67 @@ pub type ValueReasonSet = enumset::EnumSet<ValueReason>;
 #[derive(Debug, Clone)]
 pub enum AliasingEffectConfig {
     Freeze {
-        value: String,
+        value: &'static str,
         reason: ValueReason,
     },
     Create {
-        into: String,
+        into: &'static str,
         value: ValueKind,
         reason: ValueReason,
     },
     CreateFrom {
-        from: String,
-        into: String,
+        from: &'static str,
+        into: &'static str,
     },
     Assign {
-        from: String,
-        into: String,
+        from: &'static str,
+        into: &'static str,
     },
     Alias {
-        from: String,
-        into: String,
+        from: &'static str,
+        into: &'static str,
     },
     Capture {
-        from: String,
-        into: String,
+        from: &'static str,
+        into: &'static str,
     },
     ImmutableCapture {
-        from: String,
-        into: String,
+        from: &'static str,
+        into: &'static str,
     },
     Impure {
-        place: String,
+        place: &'static str,
     },
     Mutate {
-        value: String,
+        value: &'static str,
     },
     MutateTransitiveConditionally {
-        value: String,
+        value: &'static str,
     },
     Apply {
-        receiver: String,
-        function: String,
+        receiver: &'static str,
+        function: &'static str,
         mutates_function: bool,
         args: Vec<ApplyArgConfig>,
-        into: String,
+        into: &'static str,
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ApplyArgConfig {
-    Place(String),
-    Spread { place: String },
+    Place(&'static str),
+    Spread { place: &'static str },
     Hole {},
 }
 
-/// Aliasing signature config, the JSON-serializable form.
+/// Aliasing signature config (compile-time descriptor; not deserialized at runtime).
 #[derive(Debug, Clone)]
 pub struct AliasingSignatureConfig {
-    pub receiver: String,
-    pub params: Vec<String>,
-    pub rest: Option<String>,
-    pub returns: String,
-    pub temporaries: Vec<String>,
+    pub receiver: &'static str,
+    pub params: Vec<&'static str>,
+    pub rest: Option<&'static str>,
+    pub returns: &'static str,
+    pub temporaries: Vec<&'static str>,
     pub effects: Vec<AliasingEffectConfig>,
 }
 
@@ -127,7 +130,7 @@ pub enum TypeConfig {
 
 #[derive(Debug, Clone)]
 pub struct ObjectTypeConfig {
-    pub properties: Option<IndexMap<String, TypeConfig>>,
+    pub properties: Option<IndexMap<&'static str, TypeConfig>>,
 }
 
 #[derive(Debug, Clone)]
@@ -140,9 +143,9 @@ pub struct FunctionTypeConfig {
     pub no_alias: Option<bool>,
     pub mutable_only_if_operands_are_mutable: Option<bool>,
     pub impure: Option<bool>,
-    pub canonical_name: Option<String>,
+    pub canonical_name: Option<&'static str>,
     pub aliasing: Option<AliasingSignatureConfig>,
-    pub known_incompatible: Option<String>,
+    pub known_incompatible: Option<&'static str>,
 }
 
 #[derive(Debug, Clone)]
@@ -153,7 +156,7 @@ pub struct HookTypeConfig {
     pub return_value_kind: Option<ValueKind>,
     pub no_alias: Option<bool>,
     pub aliasing: Option<AliasingSignatureConfig>,
-    pub known_incompatible: Option<String>,
+    pub known_incompatible: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

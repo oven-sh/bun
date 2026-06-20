@@ -306,8 +306,11 @@ fn evaluate_instruction(
                     PrimitiveValue::String(s) if s.as_str().is_some_and(is_valid_identifier) => {
                         let object = object.clone();
                         let loc = *loc;
-                        let new_property =
-                            PropertyLiteral::String(s.as_str().expect("guarded utf8").to_string());
+                        let new_property = PropertyLiteral::String(crate::hir::StoreStr::new(
+                            bun_ast::data_store_dupe_str(
+                                s.as_str().expect("guarded utf8").as_bytes(),
+                            ),
+                        ));
                         func.instructions[instr_id.0 as usize].value =
                             InstructionValue::PropertyLoad {
                                 object,
@@ -350,8 +353,11 @@ fn evaluate_instruction(
                         let object = object.clone();
                         let store_value = value.clone();
                         let loc = *loc;
-                        let new_property =
-                            PropertyLiteral::String(s.as_str().expect("guarded utf8").to_string());
+                        let new_property = PropertyLiteral::String(crate::hir::StoreStr::new(
+                            bun_ast::data_store_dupe_str(
+                                s.as_str().expect("guarded utf8").as_bytes(),
+                            ),
+                        ));
                         func.instructions[instr_id.0 as usize].value =
                             InstructionValue::PropertyStore {
                                 object,
@@ -534,7 +540,7 @@ fn evaluate_instruction(
             }) = object_value
             {
                 if let PropertyLiteral::String(prop_name) = property {
-                    if prop_name == "length" {
+                    if prop_name.slice() == b"length" {
                         // Use UTF-16 code unit count to match JS .length semantics
                         let len = s.len_utf16() as f64;
                         let loc = *loc;
@@ -562,8 +568,11 @@ fn evaluate_instruction(
                 // No subexpressions: join all cooked quasis
                 let mut result_string = String::new();
                 for q in quasis {
-                    match &q.cooked {
-                        Some(cooked) => result_string.push_str(cooked),
+                    match q.cooked {
+                        Some(cooked) => match core::str::from_utf8(cooked.slice()) {
+                            Ok(s) => result_string.push_str(s),
+                            Err(_) => return None,
+                        },
                         None => return None,
                     }
                 }
@@ -588,7 +597,11 @@ fn evaluate_instruction(
             }
 
             let mut quasi_index = 0usize;
-            let mut result_string = quasis[quasi_index].cooked.as_ref().unwrap().clone();
+            let mut result_string =
+                match core::str::from_utf8(quasis[quasi_index].cooked.unwrap().slice()) {
+                    Ok(s) => s.to_owned(),
+                    Err(_) => return None,
+                };
             quasi_index += 1;
 
             for sub_expr in subexprs {
@@ -607,14 +620,17 @@ fn evaluate_instruction(
                     PrimitiveValue::Undefined => return None,
                 };
 
-                let suffix = match &quasis[quasi_index].cooked {
-                    Some(s) => s.clone(),
+                let suffix = match quasis[quasi_index].cooked {
+                    Some(s) => match core::str::from_utf8(s.slice()) {
+                        Ok(s) => s,
+                        Err(_) => return None,
+                    },
                     None => return None,
                 };
                 quasi_index += 1;
 
                 result_string.push_str(&expression_str);
-                result_string.push_str(&suffix);
+                result_string.push_str(suffix);
             }
 
             let loc = *loc;
@@ -870,7 +886,7 @@ fn evaluate_binary_op(
                 let mut units = l.code_units();
                 units.extend(r.code_units());
                 Some(PrimitiveValue::String(
-                    crate::diagnostics::JsString::from_code_units(units),
+                    crate::diagnostics::JsString::from_code_units(&units),
                 ))
             }
             _ => None,

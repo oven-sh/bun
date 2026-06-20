@@ -295,7 +295,7 @@ fn collect_temporaries(
             let hook_name = get_hook_detection_name(binding);
             let mut detected = false;
             if let Some(name) = hook_name {
-                if name == "useMemo" {
+                if name == b"useMemo" {
                     sidemap.manual_memos.insert(
                         lvalue_id,
                         ManualMemoCallee {
@@ -304,7 +304,7 @@ fn collect_temporaries(
                         },
                     );
                     detected = true;
-                } else if name == "useCallback" {
+                } else if name == b"useCallback" {
                     sidemap.manual_memos.insert(
                         lvalue_id,
                         ManualMemoCallee {
@@ -324,7 +324,7 @@ fn collect_temporaries(
         } => {
             if sidemap.react.contains(&object.identifier) {
                 if let PropertyLiteral::String(prop_name) = property {
-                    if prop_name == "useMemo" {
+                    if prop_name == b"useMemo" {
                         sidemap.manual_memos.insert(
                             lvalue_id,
                             ManualMemoCallee {
@@ -332,7 +332,7 @@ fn collect_temporaries(
                                 load_instr_id: instr_id,
                             },
                         );
-                    } else if prop_name == "useCallback" {
+                    } else if prop_name == b"useCallback" {
                         sidemap.manual_memos.insert(
                             lvalue_id,
                             ManualMemoCallee {
@@ -398,7 +398,7 @@ pub fn collect_maybe_memo_dependencies(
     match value {
         InstructionValue::LoadGlobal { binding, loc, .. } => Some(ManualMemoDependency {
             root: ManualMemoDependencyRoot::Global {
-                identifier_name: binding.name().to_string(),
+                identifier_name: crate::hir::StoreStr::new(binding.name()),
             },
             path: hir_vec![],
             loc: loc.clone(),
@@ -722,9 +722,8 @@ fn err_unexpected_optional_terminal(t: &crate::hir::Terminal) -> CompilerDiagnos
     )
 }
 
-fn is_known_react_module(module: &str) -> bool {
-    let lower = module.to_lowercase();
-    lower == "react" || lower == "react-dom"
+fn is_known_react_module(module: &[u8]) -> bool {
+    module.eq_ignore_ascii_case(b"react") || module.eq_ignore_ascii_case(b"react-dom")
 }
 
 /// True when `binding` loads the React module object itself (so a subsequent
@@ -734,8 +733,8 @@ fn is_known_react_module(module: &str) -> bool {
 fn is_react_namespace_binding(binding: &NonLocalBinding) -> bool {
     match binding {
         NonLocalBinding::ImportNamespace { module, .. }
-        | NonLocalBinding::ImportDefault { module, .. } => is_known_react_module(module),
-        _ => binding.name() == "React",
+        | NonLocalBinding::ImportDefault { module, .. } => is_known_react_module(module.slice()),
+        _ => binding.name() == b"React",
     }
 }
 
@@ -754,26 +753,26 @@ fn is_react_namespace_binding(binding: &NonLocalBinding) -> bool {
 ///   case and for bundler-flattened `React.useMemo` accesses.
 /// - `ImportDefault`/`ImportNamespace` from known React module: use the local name
 /// - `ImportDefault`/`ImportNamespace` from unknown module: return None
-fn get_hook_detection_name(binding: &NonLocalBinding) -> Option<&str> {
+fn get_hook_detection_name(binding: &NonLocalBinding) -> Option<&[u8]> {
     match binding {
-        NonLocalBinding::Global { name } => Some(name.as_str()),
+        NonLocalBinding::Global { name } => Some(name.slice()),
         NonLocalBinding::ImportSpecifier {
             imported, module, ..
         } => {
-            if is_known_react_module(module) {
-                Some(imported.as_str())
+            if is_known_react_module(module.slice()) {
+                Some(imported.slice())
             } else {
                 None
             }
         }
         NonLocalBinding::ImportDefault { name, module }
         | NonLocalBinding::ImportNamespace { name, module } => {
-            if is_known_react_module(module) {
-                Some(name.as_str())
+            if is_known_react_module(module.slice()) {
+                Some(name.slice())
             } else {
                 None
             }
         }
-        NonLocalBinding::ModuleLocal { name } => Some(name.as_str()),
+        NonLocalBinding::ModuleLocal { name } => Some(name.slice()),
     }
 }

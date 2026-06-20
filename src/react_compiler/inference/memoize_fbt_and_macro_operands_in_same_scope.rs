@@ -35,7 +35,7 @@ enum InlineLevel {
 struct MacroDefinition {
     level: InlineLevel,
     /// Maps property names to their own MacroDefinition. `"*"` is a wildcard.
-    properties: Option<HashMap<String, MacroDefinition>>,
+    properties: Option<HashMap<&'static [u8], MacroDefinition>>,
 }
 
 fn shallow_macro() -> MacroDefinition {
@@ -53,8 +53,8 @@ fn transitive_macro() -> MacroDefinition {
 }
 
 fn fbt_macro() -> MacroDefinition {
-    let mut props = HashMap::new();
-    props.insert("*".to_string(), shallow_macro());
+    let mut props: HashMap<&'static [u8], MacroDefinition> = HashMap::new();
+    props.insert(b"*", shallow_macro());
     // fbt.enum gets FBT_MACRO (recursive/transitive)
     // We'll fill this in after construction since it's self-referential.
     // Instead, we use a special marker and handle it in property lookup.
@@ -67,31 +67,28 @@ fn fbt_macro() -> MacroDefinition {
     let enum_macro = MacroDefinition {
         level: InlineLevel::Transitive,
         properties: Some({
-            let mut p = HashMap::new();
-            p.insert("*".to_string(), shallow_macro());
+            let mut p: HashMap<&'static [u8], MacroDefinition> = HashMap::new();
+            p.insert(b"*", shallow_macro());
             // enum's enum is also recursive, but in practice the depth is bounded
-            p.insert("enum".to_string(), transitive_macro());
+            p.insert(b"enum", transitive_macro());
             p
         }),
     };
-    fbt.properties
-        .as_mut()
-        .unwrap()
-        .insert("enum".to_string(), enum_macro);
+    fbt.properties.as_mut().unwrap().insert(b"enum", enum_macro);
     fbt
 }
 
 /// Built-in FBT tags and their macro definitions.
-fn fbt_tags() -> HashMap<String, MacroDefinition> {
-    let mut tags = HashMap::new();
-    tags.insert("fbt".to_string(), fbt_macro());
-    tags.insert("fbt:param".to_string(), shallow_macro());
-    tags.insert("fbt:enum".to_string(), fbt_macro());
-    tags.insert("fbt:plural".to_string(), shallow_macro());
-    tags.insert("fbs".to_string(), fbt_macro());
-    tags.insert("fbs:param".to_string(), shallow_macro());
-    tags.insert("fbs:enum".to_string(), fbt_macro());
-    tags.insert("fbs:plural".to_string(), shallow_macro());
+fn fbt_tags() -> HashMap<Vec<u8>, MacroDefinition> {
+    let mut tags: HashMap<Vec<u8>, MacroDefinition> = HashMap::new();
+    tags.insert(b"fbt".to_vec(), fbt_macro());
+    tags.insert(b"fbt:param".to_vec(), shallow_macro());
+    tags.insert(b"fbt:enum".to_vec(), fbt_macro());
+    tags.insert(b"fbt:plural".to_vec(), shallow_macro());
+    tags.insert(b"fbs".to_vec(), fbt_macro());
+    tags.insert(b"fbs:param".to_vec(), shallow_macro());
+    tags.insert(b"fbs:enum".to_vec(), fbt_macro());
+    tags.insert(b"fbs:plural".to_vec(), shallow_macro());
     tags
 }
 
@@ -101,10 +98,10 @@ pub fn memoize_fbt_and_macro_operands_in_same_scope(
     env: &mut Environment,
 ) -> HashSet<IdentifierId> {
     // Phase 1: Build macro kinds map from built-in FBT tags + custom macros
-    let mut macro_kinds: HashMap<String, MacroDefinition> = fbt_tags();
+    let mut macro_kinds: HashMap<Vec<u8>, MacroDefinition> = fbt_tags();
     if let Some(ref custom_macros) = env.config.custom_macros {
         for name in custom_macros {
-            macro_kinds.insert(name.clone(), transitive_macro());
+            macro_kinds.insert(name.as_bytes().to_vec(), transitive_macro());
         }
     }
 
@@ -121,7 +118,7 @@ pub fn memoize_fbt_and_macro_operands_in_same_scope(
 /// things like `fbt.foo.bar(...)`.
 fn populate_macro_tags(
     func: &HirFunction,
-    macro_kinds: &HashMap<String, MacroDefinition>,
+    macro_kinds: &HashMap<Vec<u8>, MacroDefinition>,
 ) -> IdMap<IdentifierId, MacroDefinition> {
     let mut macro_tags: IdMap<IdentifierId, MacroDefinition> = IdMap::new();
 
@@ -135,7 +132,9 @@ fn populate_macro_tags(
                     value: PrimitiveValue::String(s),
                     ..
                 } => {
-                    if let Some(macro_def) = s.as_str().and_then(|utf8| macro_kinds.get(utf8)) {
+                    if let Some(macro_def) =
+                        s.as_str().and_then(|utf8| macro_kinds.get(utf8.as_bytes()))
+                    {
                         // We don't distinguish between tag names and strings, so record
                         // all `fbt` string literals in case they are used as a jsx tag.
                         macro_tags.insert(lvalue_id, macro_def.clone());
@@ -153,8 +152,9 @@ fn populate_macro_tags(
                     if let PropertyLiteral::String(prop_name) = property {
                         if let Some(macro_def) = macro_tags.get(object.identifier).cloned() {
                             let property_macro = if let Some(ref props) = macro_def.properties {
-                                let prop_def =
-                                    props.get(prop_name.as_str()).or_else(|| props.get("*"));
+                                let prop_def = props
+                                    .get(prop_name.slice())
+                                    .or_else(|| props.get(b"*".as_slice()));
                                 match prop_def {
                                     Some(def) => def.clone(),
                                     None => macro_def.clone(),
@@ -180,7 +180,7 @@ fn merge_macro_arguments(
     func: &HirFunction,
     env: &mut Environment,
     macro_tags: &mut IdMap<IdentifierId, MacroDefinition>,
-    macro_kinds: &HashMap<String, MacroDefinition>,
+    macro_kinds: &HashMap<Vec<u8>, MacroDefinition>,
 ) -> HashSet<IdentifierId> {
     let mut macro_values: HashSet<IdentifierId> = macro_tags.iter().map(|(k, _)| k).collect();
 
@@ -243,7 +243,7 @@ fn merge_macro_arguments(
 
                     let macro_def = match tag {
                         JsxTag::Place(place) => macro_tags.get(place.identifier).cloned(),
-                        JsxTag::Builtin(builtin) => macro_kinds.get(builtin.name.as_str()).cloned(),
+                        JsxTag::Builtin(builtin) => macro_kinds.get(builtin.name.slice()).cloned(),
                     };
 
                     let macro_def = macro_def.or_else(|| macro_tags.get(lvalue_id).cloned());

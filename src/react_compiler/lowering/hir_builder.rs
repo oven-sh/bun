@@ -940,7 +940,7 @@ impl<'h> HirBuilder<'h> {
         if name == "fbt" {
             let should_record_fbt_error = if let Some(&identifier_id) = self.bindings.get(&ref_) {
                 match &self.env.identifiers[identifier_id.0 as usize].name {
-                    Some(IdentifierName::Named(resolved_name)) => resolved_name == "fbt",
+                    Some(IdentifierName::Named(resolved_name)) => resolved_name == b"fbt",
                     _ => false,
                 }
             } else {
@@ -981,20 +981,26 @@ impl<'h> HirBuilder<'h> {
             }
         }
 
+        let stored_name = StoreStr::new(self.host.ref_name(ref_));
+        let stored_candidate = if candidate == name {
+            stored_name
+        } else {
+            StoreStr::new(bun_ast::data_store_dupe_str(candidate.as_bytes()))
+        };
         if candidate != name {
             if let Some(start) = loc.as_ref().and_then(|l| l.start.index) {
                 self.env
                     .renames
                     .push(crate::hir::environment::BindingRename {
-                        original: name,
-                        renamed: candidate.clone(),
+                        original: stored_name,
+                        renamed: stored_candidate,
                         declaration_start: start,
                     });
             }
         }
 
         let id = self.env.next_identifier_id();
-        self.env.identifiers[id.0 as usize].name = Some(IdentifierName::Named(candidate.clone()));
+        self.env.identifiers[id.0 as usize].name = Some(IdentifierName::Named(stored_candidate));
         if let Some(loc) = loc {
             self.env.identifiers[id.0 as usize].loc = Some(loc);
         }
@@ -1031,9 +1037,7 @@ impl<'h> HirBuilder<'h> {
                 loc,
             ));
         };
-        let name = core::str::from_utf8(sym.original_name.slice())
-            .map_err(|_| crate::diagnostics::cold_todo("non-utf8 identifier", loc))?
-            .to_owned();
+        let name = sym.original_name;
 
         use symbol::Kind as Sk;
         match sym.kind {
@@ -1050,17 +1054,15 @@ impl<'h> HirBuilder<'h> {
                         .import_records()
                         .get(alias.import_record_index as usize)
                     {
-                        let module = core::str::from_utf8(record.path.text)
-                            .unwrap_or("")
-                            .to_owned();
-                        let imported = core::str::from_utf8(alias.alias.slice()).unwrap_or("");
-                        return Ok(if imported == "default" {
+                        let module = StoreStr::new(record.path.text);
+                        let imported = alias.alias;
+                        return Ok(if imported.slice() == b"default" {
                             VariableBinding::ImportDefault { name, module }
                         } else {
                             VariableBinding::ImportSpecifier {
                                 name,
                                 module,
-                                imported: imported.to_owned(),
+                                imported,
                             }
                         });
                     }

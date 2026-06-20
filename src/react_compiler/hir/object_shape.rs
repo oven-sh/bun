@@ -110,8 +110,8 @@ pub struct FunctionSignature {
     pub no_alias: bool,
     pub mutable_only_if_operands_are_mutable: bool,
     pub impure: bool,
-    pub known_incompatible: Option<String>,
-    pub canonical_name: Option<String>,
+    pub known_incompatible: Option<&'static str>,
+    pub canonical_name: Option<&'static str>,
     /// Aliasing signature in config form. Full parsing into AliasingSignature
     /// with Place values is deferred until the aliasing effects system is ported.
     pub aliasing: Option<AliasingSignatureConfig>,
@@ -121,7 +121,7 @@ pub struct FunctionSignature {
 /// Ported from TS `ObjectShape`.
 #[derive(Debug, Clone)]
 pub struct ObjectShape {
-    pub properties: HashMap<String, Type>,
+    pub properties: HashMap<&'static str, Type>,
     pub function_type: Option<FunctionSignature>,
 }
 
@@ -134,8 +134,9 @@ pub struct ObjectShape {
 ///   extras HashMap. Lookups check extras first, then base. Inserts go into extras.
 ///   Cloning only copies the extras map (the base pointer is shared).
 pub struct ShapeRegistry {
-    base: Option<&'static HashMap<String, ObjectShape>>,
-    entries: HashMap<String, ObjectShape>,
+    base: Option<&'static HashMap<&'static str, ObjectShape>>,
+    entries: HashMap<&'static str, ObjectShape>,
+    next_anon: u32,
 }
 
 impl ShapeRegistry {
@@ -144,15 +145,49 @@ impl ShapeRegistry {
         Self {
             base: None,
             entries: HashMap::new(),
+            next_anon: 0,
         }
     }
 
     /// Create an overlay-mode registry backed by a static base.
-    pub fn with_base(base: &'static HashMap<String, ObjectShape>) -> Self {
+    pub fn with_base(base: &'static HashMap<&'static str, ObjectShape>) -> Self {
         Self {
             base: Some(base),
             entries: HashMap::new(),
+            next_anon: 0,
         }
+    }
+
+    /// Mint the next anonymous shape ID for this registry.
+    ///
+    /// IDs are drawn from a process-wide interned pool so each distinct index
+    /// leaks at most one string for the process lifetime. The counter is
+    /// per-registry, so repeated `Environment::with_config` calls (one per
+    /// compiled function) reuse the same handful of interned IDs instead of
+    /// leaking a fresh string per component. Overlay-mode registries use a
+    /// distinct prefix so their IDs cannot collide with anon IDs baked into
+    /// the static base shapes.
+    fn next_anon_id(&mut self) -> &'static str {
+        use std::sync::RwLock;
+        static BUILDER_POOL: RwLock<Vec<&'static str>> = RwLock::new(Vec::new());
+        static OVERLAY_POOL: RwLock<Vec<&'static str>> = RwLock::new(Vec::new());
+
+        let id = self.next_anon as usize;
+        self.next_anon += 1;
+        let (pool, prefix) = if self.base.is_some() {
+            (&OVERLAY_POOL, "<anon_")
+        } else {
+            (&BUILDER_POOL, "<generated_")
+        };
+        if let Some(&s) = pool.read().unwrap().get(id) {
+            return s;
+        }
+        let mut w = pool.write().unwrap();
+        while w.len() <= id {
+            let s: &'static str = Box::leak(format!("{}{}>", prefix, w.len()).into_boxed_str());
+            w.push(s);
+        }
+        w[id]
     }
 
     pub fn get(&self, key: &str) -> Option<&ObjectShape> {
@@ -161,13 +196,13 @@ impl ShapeRegistry {
             .or_else(|| self.base.and_then(|b| b.get(key)))
     }
 
-    pub fn insert(&mut self, key: String, value: ObjectShape) {
+    pub fn insert(&mut self, key: &'static str, value: ObjectShape) {
         self.entries.insert(key, value);
     }
 
     /// Consume the registry and return the inner HashMap.
     /// Only valid in builder mode (no base).
-    pub fn into_inner(self) -> HashMap<String, ObjectShape> {
+    pub fn into_inner(self) -> HashMap<&'static str, ObjectShape> {
         debug_assert!(
             self.base.is_none(),
             "into_inner() called on overlay-mode ShapeRegistry"
@@ -181,21 +216,9 @@ impl Clone for ShapeRegistry {
         Self {
             base: self.base,
             entries: self.entries.clone(),
+            next_anon: self.next_anon,
         }
     }
-}
-
-// =============================================================================
-// Counter for anonymous shape IDs
-// =============================================================================
-
-/// Thread-local counter for generating unique anonymous shape IDs.
-/// Mirrors TS `nextAnonId` in ObjectShape.ts.
-fn next_anon_id() -> String {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static COUNTER: AtomicU32 = AtomicU32::new(0);
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("<generated_{}>", id)
 }
 
 // =============================================================================
@@ -208,16 +231,16 @@ fn next_anon_id() -> String {
 #[inline(never)]
 pub fn add_function(
     registry: &mut ShapeRegistry,
-    properties: Vec<(String, Type)>,
+    properties: Vec<(&'static str, Type)>,
     sig: FunctionSignatureBuilder,
-    id: Option<&str>,
+    id: Option<&'static str>,
     is_constructor: bool,
 ) -> Type {
-    let shape_id: String = id.map(str::to_owned).unwrap_or_else(next_anon_id);
+    let shape_id: &'static str = id.unwrap_or_else(|| registry.next_anon_id());
     let return_type = sig.return_type.clone();
     add_shape(
         registry,
-        &shape_id,
+        shape_id,
         properties,
         Some(FunctionSignature {
             positional_params: sig.positional_params,
@@ -246,12 +269,16 @@ pub fn add_function(
 /// Returns a `Type::Function` representing the added hook.
 #[cold]
 #[inline(never)]
-pub fn add_hook(registry: &mut ShapeRegistry, sig: HookSignatureBuilder, id: Option<&str>) -> Type {
-    let shape_id: String = id.map(str::to_owned).unwrap_or_else(next_anon_id);
+pub fn add_hook(
+    registry: &mut ShapeRegistry,
+    sig: HookSignatureBuilder,
+    id: Option<&'static str>,
+) -> Type {
+    let shape_id: &'static str = id.unwrap_or_else(|| registry.next_anon_id());
     let return_type = sig.return_type.clone();
     add_shape(
         registry,
-        &shape_id,
+        shape_id,
         Vec::new(),
         Some(FunctionSignature {
             positional_params: sig.positional_params,
@@ -282,11 +309,11 @@ pub fn add_hook(registry: &mut ShapeRegistry, sig: HookSignatureBuilder, id: Opt
 #[inline(never)]
 pub fn add_object(
     registry: &mut ShapeRegistry,
-    id: Option<&str>,
-    properties: Vec<(String, Type)>,
+    id: Option<&'static str>,
+    properties: Vec<(&'static str, Type)>,
 ) -> Type {
-    let shape_id: String = id.map(str::to_owned).unwrap_or_else(next_anon_id);
-    add_shape(registry, &shape_id, properties, None);
+    let shape_id: &'static str = id.unwrap_or_else(|| registry.next_anon_id());
+    add_shape(registry, shape_id, properties, None);
     Type::Object {
         shape_id: Some(shape_id),
     }
@@ -294,8 +321,8 @@ pub fn add_object(
 
 fn add_shape(
     registry: &mut ShapeRegistry,
-    id: &str,
-    properties: Vec<(String, Type)>,
+    id: &'static str,
+    properties: Vec<(&'static str, Type)>,
     function_type: Option<FunctionSignature>,
 ) {
     let shape = ObjectShape {
@@ -305,7 +332,7 @@ fn add_shape(
     // Note: TS has an invariant that the id doesn't already exist. We use
     // insert which overwrites. In practice duplicates don't occur for built-in
     // shapes, and for user configs we want last-write-wins behavior.
-    registry.insert(id.to_string(), shape);
+    registry.insert(id, shape);
 }
 
 // =============================================================================
@@ -323,8 +350,8 @@ pub struct FunctionSignatureBuilder {
     pub no_alias: bool,
     pub mutable_only_if_operands_are_mutable: bool,
     pub impure: bool,
-    pub known_incompatible: Option<String>,
-    pub canonical_name: Option<String>,
+    pub known_incompatible: Option<&'static str>,
+    pub canonical_name: Option<&'static str>,
     pub aliasing: Option<AliasingSignatureConfig>,
 }
 
@@ -359,7 +386,7 @@ pub struct HookSignatureBuilder {
     pub callee_effect: Effect,
     pub hook_kind: HookKind,
     pub no_alias: bool,
-    pub known_incompatible: Option<String>,
+    pub known_incompatible: Option<&'static str>,
     pub aliasing: Option<AliasingSignatureConfig>,
 }
 
@@ -395,27 +422,27 @@ pub fn default_nonmutating_hook(registry: &mut ShapeRegistry) -> Type {
             return_value_kind: ValueKind::Frozen,
             hook_kind: HookKind::Custom,
             aliasing: Some(AliasingSignatureConfig {
-                receiver: "@receiver".to_string(),
+                receiver: "@receiver",
                 params: Vec::new(),
-                rest: Some("@rest".to_string()),
-                returns: "@returns".to_string(),
+                rest: Some("@rest"),
+                returns: "@returns",
                 temporaries: Vec::new(),
                 effects: vec![
                     // Freeze the arguments
                     AliasingEffectConfig::Freeze {
-                        value: "@rest".to_string(),
+                        value: "@rest",
                         reason: ValueReason::HookCaptured,
                     },
                     // Returns a frozen value
                     AliasingEffectConfig::Create {
-                        into: "@returns".to_string(),
+                        into: "@returns",
                         value: ValueKind::Frozen,
                         reason: ValueReason::HookReturn,
                     },
                     // May alias any arguments into the return
                     AliasingEffectConfig::Alias {
-                        from: "@rest".to_string(),
-                        into: "@returns".to_string(),
+                        from: "@rest",
+                        into: "@returns",
                     },
                 ],
             }),

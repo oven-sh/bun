@@ -93,7 +93,7 @@ impl SSABuilder {
         if self.unknown.contains(&old_id) {
             let ident = &env.identifiers[old_id.0 as usize];
             let name = match &ident.name {
-                Some(name) => format!("{}${}", name.value(), old_id.0),
+                Some(name) => format!("{}${}", bun_core::BStr::new(name.value()), old_id.0),
                 None => format!("${}", old_id.0),
             };
             return Err(cold_diagnostic(

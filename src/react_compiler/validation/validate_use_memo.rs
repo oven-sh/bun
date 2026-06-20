@@ -58,9 +58,9 @@ fn validate_use_memo_impl(
             match value {
                 InstructionValue::LoadGlobal { binding, .. } => {
                     let name = binding.name();
-                    if name == "useMemo" {
+                    if name == b"useMemo" {
                         use_memos.insert(lvalue.identifier);
-                    } else if name == "React" {
+                    } else if name == b"React" {
                         react.insert(lvalue.identifier);
                     }
                 }
@@ -69,7 +69,7 @@ fn validate_use_memo_impl(
                 } => {
                     if react.contains(&object.identifier) {
                         if let crate::hir::PropertyLiteral::String(prop_name) = property {
-                            if prop_name == "useMemo" {
+                            if prop_name == b"useMemo" {
                                 use_memos.insert(lvalue.identifier);
                             }
                         }

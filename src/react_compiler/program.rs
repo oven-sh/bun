@@ -148,36 +148,24 @@ pub fn collect_import_bindings(
         let Some(record) = records.get(import.import_record_index as usize) else {
             continue;
         };
-        let Ok(module) = core::str::from_utf8(record.path.text) else {
-            continue;
-        };
-        let local_name = |ref_: Ref| -> Option<String> {
-            let sym = symbols.get(ref_.inner_index() as usize)?;
-            core::str::from_utf8(sym.original_name.slice())
-                .ok()
-                .map(str::to_owned)
+        let module = crate::hir::StoreStr::new(record.path.text);
+        let local_name = |ref_: Ref| -> Option<crate::hir::StoreStr> {
+            symbols
+                .get(ref_.inner_index() as usize)
+                .map(|sym| sym.original_name)
         };
         if !import.star_name_loc.is_empty() {
             if let Some(name) = local_name(import.namespace_ref) {
                 out.insert(
                     import.namespace_ref,
-                    VariableBinding::ImportNamespace {
-                        name,
-                        module: module.to_owned(),
-                    },
+                    VariableBinding::ImportNamespace { name, module },
                 );
             }
         }
         if let Some(default) = import.default_name {
             let ref_ = default.ref_;
             if let Some(name) = local_name(ref_) {
-                out.insert(
-                    ref_,
-                    VariableBinding::ImportDefault {
-                        name,
-                        module: module.to_owned(),
-                    },
-                );
+                out.insert(ref_, VariableBinding::ImportDefault { name, module });
             }
         }
         for item in import.items.slice() {
@@ -185,21 +173,16 @@ pub fn collect_import_bindings(
             let Some(name) = local_name(ref_) else {
                 continue;
             };
-            let Ok(imported) = core::str::from_utf8(item.alias.slice()) else {
-                continue;
-            };
+            let imported = item.alias;
             out.insert(
                 ref_,
-                if imported == "default" {
-                    VariableBinding::ImportDefault {
-                        name,
-                        module: module.to_owned(),
-                    }
+                if imported.slice() == b"default" {
+                    VariableBinding::ImportDefault { name, module }
                 } else {
                     VariableBinding::ImportSpecifier {
                         name,
-                        module: module.to_owned(),
-                        imported: imported.to_owned(),
+                        module,
+                        imported,
                     }
                 },
             );
@@ -1565,8 +1548,8 @@ fn convert_renames(
     renames
         .iter()
         .map(|r| crate::compile_result::BindingRenameInfo {
-            original: r.original.clone(),
-            renamed: r.renamed.clone(),
+            original: bun_core::BStr::new(r.original.slice()).to_string(),
+            renamed: bun_core::BStr::new(r.renamed.slice()).to_string(),
             declaration_start: r.declaration_start,
         })
         .collect()

@@ -206,7 +206,7 @@ pub fn infer_mutation_aliasing_effects(
                 let ident_info = env.identifiers.get(uninitialized_id.0 as usize);
                 let name = ident_info
                     .and_then(|ident| ident.name.as_ref())
-                    .map(|n| n.value().to_string())
+                    .map(|n| bun_core::BStr::new(n.value()).to_string())
                     .unwrap_or_else(|| "".to_string());
                 // Use usage_loc if available, otherwise fall back to identifier's own loc
                 let error_loc = usage_loc.or_else(|| ident_info.and_then(|i| i.loc));
@@ -941,7 +941,7 @@ enum MutationResult {
 // =============================================================================
 
 struct Context {
-    interned_effects: HashMap<String, AliasingEffect>,
+    interned_effects: HashMap<u64, AliasingEffect>,
     instruction_signature_cache: HashMap<u32, InstructionSignature>,
     catch_handlers: HashMap<BlockId, Place>,
     is_function_expression: bool,
@@ -949,16 +949,16 @@ struct Context {
     non_mutating_spreads: HashSet<IdentifierId>,
     /// Cache of ValueIds keyed by effect hash, ensuring stable allocation-site identity
     /// across fixpoint iterations. Mirrors TS `effectInstructionValueCache`.
-    effect_value_id_cache: HashMap<String, ValueId>,
+    effect_value_id_cache: HashMap<u64, ValueId>,
     /// Maps ValueId to FunctionId for function expressions, so we can look up
     /// locally-declared functions when processing Apply effects.
     function_values: HashMap<ValueId, FunctionId>,
     /// Cache of function expression signatures, keyed by FunctionId
     function_signature_cache: HashMap<FunctionId, AliasingSignature>,
     /// Cache of temporary places created for aliasing signature config temporaries.
-    /// Keyed by (lvalue_identifier_id, temp_name) to ensure stable allocation
-    /// across fixpoint iterations.
-    aliasing_config_temp_cache: HashMap<(IdentifierId, String), Place>,
+    /// Keyed by (lvalue_identifier_id, index into config.temporaries) to ensure
+    /// stable allocation across fixpoint iterations.
+    aliasing_config_temp_cache: HashMap<(IdentifierId, u32), Place>,
     /// Pass-local ValueId allocator.
     next_value_id: u32,
     /// Stable per-identifier fallback ValueIds for the read-before-define paths
@@ -1007,7 +1007,9 @@ struct InstructionSignature {
 // Helper: hash_effect
 // =============================================================================
 
-fn hash_effect(effect: &AliasingEffect) -> String {
+fn hash_effect(effect: &AliasingEffect) -> u64 {
+    use std::hash::Hasher;
+    let mut h = rustc_hash::FxHasher::default();
     match effect {
         AliasingEffect::Apply {
             receiver,
@@ -1017,87 +1019,124 @@ fn hash_effect(effect: &AliasingEffect) -> String {
             into,
             ..
         } => {
-            let args_str: Vec<String> = args
-                .iter()
-                .map(|a| match a {
-                    PlaceOrSpreadOrHole::Hole => String::new(),
-                    PlaceOrSpreadOrHole::Place(p) => format!("{}", p.identifier.0),
-                    PlaceOrSpreadOrHole::Spread(s) => format!("...{}", s.place.identifier.0),
-                })
-                .collect();
-            format!(
-                "Apply:{}:{}:{}:{}:{}",
-                receiver.identifier.0,
-                function.identifier.0,
-                mutates_function,
-                args_str.join(","),
-                into.identifier.0
-            )
+            h.write_u8(0);
+            h.write_u32(receiver.identifier.0);
+            h.write_u32(function.identifier.0);
+            h.write_u8(*mutates_function as u8);
+            for a in args.iter() {
+                match a {
+                    PlaceOrSpreadOrHole::Hole => h.write_u8(0),
+                    PlaceOrSpreadOrHole::Place(p) => {
+                        h.write_u8(1);
+                        h.write_u32(p.identifier.0);
+                    }
+                    PlaceOrSpreadOrHole::Spread(s) => {
+                        h.write_u8(2);
+                        h.write_u32(s.place.identifier.0);
+                    }
+                }
+            }
+            h.write_u32(into.identifier.0);
         }
         AliasingEffect::CreateFrom { from, into } => {
-            format!("CreateFrom:{}:{}", from.identifier.0, into.identifier.0)
+            h.write_u8(1);
+            h.write_u32(from.identifier.0);
+            h.write_u32(into.identifier.0);
         }
-        AliasingEffect::ImmutableCapture { from, into } => format!(
-            "ImmutableCapture:{}:{}",
-            from.identifier.0, into.identifier.0
-        ),
+        AliasingEffect::ImmutableCapture { from, into } => {
+            h.write_u8(2);
+            h.write_u32(from.identifier.0);
+            h.write_u32(into.identifier.0);
+        }
         AliasingEffect::Assign { from, into } => {
-            format!("Assign:{}:{}", from.identifier.0, into.identifier.0)
+            h.write_u8(3);
+            h.write_u32(from.identifier.0);
+            h.write_u32(into.identifier.0);
         }
         AliasingEffect::Alias { from, into } => {
-            format!("Alias:{}:{}", from.identifier.0, into.identifier.0)
+            h.write_u8(4);
+            h.write_u32(from.identifier.0);
+            h.write_u32(into.identifier.0);
         }
         AliasingEffect::Capture { from, into } => {
-            format!("Capture:{}:{}", from.identifier.0, into.identifier.0)
+            h.write_u8(5);
+            h.write_u32(from.identifier.0);
+            h.write_u32(into.identifier.0);
         }
         AliasingEffect::MaybeAlias { from, into } => {
-            format!("MaybeAlias:{}:{}", from.identifier.0, into.identifier.0)
+            h.write_u8(6);
+            h.write_u32(from.identifier.0);
+            h.write_u32(into.identifier.0);
         }
         AliasingEffect::Create {
             into,
             value,
             reason,
-        } => format!("Create:{}:{:?}:{:?}", into.identifier.0, value, reason),
-        AliasingEffect::Freeze { value, reason } => {
-            format!("Freeze:{}:{:?}", value.identifier.0, reason)
+        } => {
+            h.write_u8(7);
+            h.write_u32(into.identifier.0);
+            h.write_u8(*value as u8);
+            h.write_u8(*reason as u8);
         }
-        AliasingEffect::Impure { place, .. } => format!("Impure:{}", place.identifier.0),
-        AliasingEffect::Render { place } => format!("Render:{}", place.identifier.0),
-        AliasingEffect::MutateFrozen { place, error } => format!(
-            "MutateFrozen:{}:{}:{:?}",
-            place.identifier.0, error.reason, error.description
-        ),
-        AliasingEffect::MutateGlobal { place, error } => format!(
-            "MutateGlobal:{}:{}:{:?}",
-            place.identifier.0, error.reason, error.description
-        ),
-        AliasingEffect::Mutate { value, .. } => format!("Mutate:{}", value.identifier.0),
+        AliasingEffect::Freeze { value, reason } => {
+            h.write_u8(8);
+            h.write_u32(value.identifier.0);
+            h.write_u8(*reason as u8);
+        }
+        AliasingEffect::Impure { place, .. } => {
+            h.write_u8(9);
+            h.write_u32(place.identifier.0);
+        }
+        AliasingEffect::Render { place } => {
+            h.write_u8(10);
+            h.write_u32(place.identifier.0);
+        }
+        AliasingEffect::MutateFrozen { place, error } => {
+            h.write_u8(11);
+            h.write_u32(place.identifier.0);
+            h.write(error.reason.as_bytes());
+            if let Some(d) = &error.description {
+                h.write(d.as_bytes());
+            }
+        }
+        AliasingEffect::MutateGlobal { place, error } => {
+            h.write_u8(12);
+            h.write_u32(place.identifier.0);
+            h.write(error.reason.as_bytes());
+            if let Some(d) = &error.description {
+                h.write(d.as_bytes());
+            }
+        }
+        AliasingEffect::Mutate { value, .. } => {
+            h.write_u8(13);
+            h.write_u32(value.identifier.0);
+        }
         AliasingEffect::MutateConditionally { value } => {
-            format!("MutateConditionally:{}", value.identifier.0)
+            h.write_u8(14);
+            h.write_u32(value.identifier.0);
         }
         AliasingEffect::MutateTransitive { value } => {
-            format!("MutateTransitive:{}", value.identifier.0)
+            h.write_u8(15);
+            h.write_u32(value.identifier.0);
         }
         AliasingEffect::MutateTransitiveConditionally { value } => {
-            format!("MutateTransitiveConditionally:{}", value.identifier.0)
+            h.write_u8(16);
+            h.write_u32(value.identifier.0);
         }
         AliasingEffect::CreateFunction {
             into,
             function_id,
             captures,
         } => {
-            let cap_str: Vec<String> = captures
-                .iter()
-                .map(|p| format!("{}", p.identifier.0))
-                .collect();
-            format!(
-                "CreateFunction:{}:{}:{}",
-                into.identifier.0,
-                function_id.0,
-                cap_str.join(",")
-            )
+            h.write_u8(17);
+            h.write_u32(into.identifier.0);
+            h.write_u32(function_id.0);
+            for p in captures.iter() {
+                h.write_u32(p.identifier.0);
+            }
         }
     }
+    h.finish()
 }
 
 // =============================================================================
@@ -1537,14 +1576,14 @@ fn apply_signature(
                         let ident = &env.identifiers[mutate_value.identifier.0 as usize];
                         let variable = match &ident.name {
                             Some(crate::hir::IdentifierName::Named(n)) => {
-                                format!("`{}`", n)
+                                format!("`{}`", bun_core::BStr::new(n.slice()))
                             }
                             _ => "value".to_string(),
                         };
                         let mut diagnostic = CompilerDiagnostic::new(
                             ErrorCategory::Immutability,
                             "This value cannot be modified",
-                            Some(reason_str),
+                            Some(reason_str.to_string()),
                         );
                         diagnostic.details.push(
                             crate::diagnostics::CompilerDiagnosticDetail::Error {
@@ -1959,8 +1998,14 @@ fn apply_effect(
                         env,
                         func,
                     )?;
-                    let cache_key =
-                        format!("Assign_frozen:{}:{}", from.identifier.0, into.identifier.0);
+                    let cache_key = {
+                        use std::hash::Hasher;
+                        let mut h = rustc_hash::FxHasher::default();
+                        h.write_u8(0xF0);
+                        h.write_u32(from.identifier.0);
+                        h.write_u32(into.identifier.0);
+                        h.finish()
+                    };
                     let value_id = match context.effect_value_id_cache.get(&cache_key) {
                         Some(v) => *v,
                         None => {
@@ -1979,8 +2024,14 @@ fn apply_effect(
                     state.define(into.identifier, value_id);
                 }
                 ValueKind::Global | ValueKind::Primitive => {
-                    let cache_key =
-                        format!("Assign_copy:{}:{}", from.identifier.0, into.identifier.0);
+                    let cache_key = {
+                        use std::hash::Hasher;
+                        let mut h = rustc_hash::FxHasher::default();
+                        h.write_u8(0xF1);
+                        h.write_u32(from.identifier.0);
+                        h.write_u32(into.identifier.0);
+                        h.finish()
+                    };
                     let value_id = match context.effect_value_id_cache.get(&cache_key) {
                         Some(v) => *v,
                         None => {
@@ -2075,7 +2126,7 @@ fn apply_effect(
             }
             if let Some(sig) = signature {
                 // Check known_incompatible (TS line 2351-2370)
-                if let Some(ref incompatible_msg) = sig.known_incompatible {
+                if let Some(incompatible_msg) = sig.known_incompatible {
                     if env.enable_validations() {
                         let mut diagnostic = CompilerDiagnostic::new(
                             ErrorCategory::IncompatibleLibrary,
@@ -2089,7 +2140,7 @@ fn apply_effect(
                         );
                         diagnostic.details.push(CompilerDiagnosticDetail::Error {
                             loc: receiver.loc,
-                            message: Some(incompatible_msg.clone()),
+                            message: Some(incompatible_msg.to_string()),
                             identifier_name: None,
                         });
                         // TS throws here, aborting compilation for this function
@@ -2267,7 +2318,9 @@ fn apply_effect(
                     && context.hoisted_context_declarations.contains_key(&decl_id)
                 {
                     let variable = match &ident.name {
-                        Some(crate::hir::IdentifierName::Named(n)) => Some(format!("`{}`", n)),
+                        Some(crate::hir::IdentifierName::Named(n)) => {
+                            Some(format!("`{}`", bun_core::BStr::new(n.slice())))
+                        }
                         _ => None,
                     };
                     let hoisted_access = context
@@ -2322,13 +2375,15 @@ fn apply_effect(
                 } else {
                     let reason_str = get_write_error_reason(abstract_value);
                     let variable = match &ident.name {
-                        Some(crate::hir::IdentifierName::Named(n)) => format!("`{}`", n),
+                        Some(crate::hir::IdentifierName::Named(n)) => {
+                            format!("`{}`", bun_core::BStr::new(n.slice()))
+                        }
                         _ => "value".to_string(),
                     };
                     let mut diagnostic = CompilerDiagnostic::new(
                         ErrorCategory::Immutability,
                         "This value cannot be modified",
-                        Some(reason_str),
+                        Some(reason_str.to_string()),
                     );
                     diagnostic
                         .details
@@ -2541,7 +2596,7 @@ fn compute_signature_for_instruction(
                 let obj_ty =
                     &env.types[env.identifiers[object.identifier.0 as usize].type_.0 as usize];
                 if let crate::hir::PropertyLiteral::String(prop_name) = property {
-                    if prop_name == "current" && matches!(obj_ty, Type::TypeVar { .. }) {
+                    if prop_name.slice() == b"current" && matches!(obj_ty, Type::TypeVar { .. }) {
                         Some(MutationReason::AssignCurrentProperty)
                     } else {
                         None
@@ -2870,7 +2925,7 @@ fn compute_signature_for_instruction(
             loc: _,
             ..
         } => {
-            let variable = format!("`{}`", name);
+            let variable = format!("`{}`", bun_core::BStr::new(name.slice()));
             let mut diagnostic = CompilerDiagnostic::new(
                 ErrorCategory::Globals,
                 "Cannot reassign variables declared outside of the component/hook",
@@ -3242,14 +3297,14 @@ fn compute_effects_for_aliasing_signature_config(
     lvalue: &Place,
     receiver: &Place,
     args: &[PlaceOrSpreadOrHole],
-    context: &[Place],
+    _context: &[Place],
     _loc: Option<&SourceLocation>,
-    temp_cache: &mut HashMap<(IdentifierId, String), Place>,
+    temp_cache: &mut HashMap<(IdentifierId, u32), Place>,
 ) -> Result<Option<Vec<AliasingEffect>>, CompilerDiagnostic> {
     // Build substitutions from config strings to places
-    let mut substitutions: HashMap<String, Vec<Place>> = HashMap::default();
-    substitutions.insert(config.receiver.clone(), vec![receiver.clone()]);
-    substitutions.insert(config.returns.clone(), vec![lvalue.clone()]);
+    let mut substitutions: HashMap<&'static str, Vec<Place>> = HashMap::default();
+    substitutions.insert(config.receiver, vec![receiver.clone()]);
+    substitutions.insert(config.returns, vec![lvalue.clone()]);
 
     let mut mutable_spreads: HashSet<IdentifierId> = HashSet::default();
 
@@ -3259,12 +3314,9 @@ fn compute_effects_for_aliasing_signature_config(
             PlaceOrSpreadOrHole::Place(place)
             | PlaceOrSpreadOrHole::Spread(crate::hir::SpreadPattern { place }) => {
                 if i < config.params.len() && !matches!(arg, PlaceOrSpreadOrHole::Spread(_)) {
-                    substitutions.insert(config.params[i].clone(), vec![place.clone()]);
-                } else if let Some(ref rest) = config.rest {
-                    substitutions
-                        .entry(rest.clone())
-                        .or_default()
-                        .push(place.clone());
+                    substitutions.insert(config.params[i], vec![place.clone()]);
+                } else if let Some(rest) = config.rest {
+                    substitutions.entry(rest).or_default().push(place.clone());
                 } else {
                     return Ok(None);
                 }
@@ -3281,21 +3333,14 @@ fn compute_effects_for_aliasing_signature_config(
         }
     }
 
-    for operand in context {
-        let ident = &env.identifiers[operand.identifier.0 as usize];
-        if let Some(ref name) = ident.name {
-            substitutions.insert(format!("@{}", name.value()), vec![operand.clone()]);
-        }
-    }
-
-    // Create temporaries (cached by lvalue + temp_name to be stable across fixpoint iterations)
-    for temp_name in &config.temporaries {
-        let cache_key = (lvalue.identifier, temp_name.clone());
+    // Create temporaries (cached by lvalue + index to be stable across fixpoint iterations)
+    for (temp_idx, &temp_name) in config.temporaries.iter().enumerate() {
+        let cache_key = (lvalue.identifier, temp_idx as u32);
         let temp_place = temp_cache
             .entry(cache_key)
             .or_insert_with(|| create_temp_place(env, receiver.loc))
             .clone();
-        substitutions.insert(temp_name.clone(), vec![temp_place]);
+        substitutions.insert(temp_name, vec![temp_place]);
     }
 
     let mut effects: Vec<AliasingEffect> = Vec::new();
@@ -3838,36 +3883,35 @@ fn primary_reason(reasons: ValueReasonSet) -> ValueReason {
     ValueReason::Other
 }
 
-fn get_write_error_reason(abstract_value: AbstractValue) -> String {
+fn get_write_error_reason(abstract_value: AbstractValue) -> &'static str {
     if abstract_value.reason.contains(ValueReason::Global) {
-        "Modifying a variable defined outside a component or hook is not allowed. Consider using an effect".to_string()
+        "Modifying a variable defined outside a component or hook is not allowed. Consider using an effect"
     } else if abstract_value.reason.contains(ValueReason::JsxCaptured) {
-        "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX".to_string()
+        "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX"
     } else if abstract_value.reason.contains(ValueReason::Context) {
-        "Modifying a value returned from 'useContext()' is not allowed.".to_string()
+        "Modifying a value returned from 'useContext()' is not allowed."
     } else if abstract_value
         .reason
         .contains(ValueReason::KnownReturnSignature)
     {
         "Modifying a value returned from a function whose return value should not be mutated"
-            .to_string()
     } else if abstract_value
         .reason
         .contains(ValueReason::ReactiveFunctionArgument)
     {
-        "Modifying component props or hook arguments is not allowed. Consider using a local variable instead".to_string()
+        "Modifying component props or hook arguments is not allowed. Consider using a local variable instead"
     } else if abstract_value.reason.contains(ValueReason::State) {
-        "Modifying a value returned from 'useState()', which should not be modified directly. Use the setter function to update instead".to_string()
+        "Modifying a value returned from 'useState()', which should not be modified directly. Use the setter function to update instead"
     } else if abstract_value.reason.contains(ValueReason::ReducerState) {
-        "Modifying a value returned from 'useReducer()', which should not be modified directly. Use the dispatch function to update instead".to_string()
+        "Modifying a value returned from 'useReducer()', which should not be modified directly. Use the dispatch function to update instead"
     } else if abstract_value.reason.contains(ValueReason::Effect) {
-        "Modifying a value used previously in an effect function or as an effect dependency is not allowed. Consider moving the modification before calling useEffect()".to_string()
+        "Modifying a value used previously in an effect function or as an effect dependency is not allowed. Consider moving the modification before calling useEffect()"
     } else if abstract_value.reason.contains(ValueReason::HookCaptured) {
-        "Modifying a value previously passed as an argument to a hook is not allowed. Consider moving the modification before calling the hook".to_string()
+        "Modifying a value previously passed as an argument to a hook is not allowed. Consider moving the modification before calling the hook"
     } else if abstract_value.reason.contains(ValueReason::HookReturn) {
-        "Modifying a value returned from a hook is not allowed. Consider moving the modification into the hook where the value is constructed".to_string()
+        "Modifying a value returned from a hook is not allowed. Consider moving the modification into the hook where the value is constructed"
     } else {
-        "This modifies a variable that React considers immutable".to_string()
+        "This modifies a variable that React considers immutable"
     }
 }
 
@@ -3883,7 +3927,7 @@ fn conditionally_mutate_iterator(place: &Place, ty: &Type) -> Option<AliasingEff
 
 fn is_builtin_collection_type(ty: &Type) -> bool {
     matches!(ty, Type::Object { shape_id: Some(id) }
-        if id == BUILT_IN_ARRAY_ID || id == BUILT_IN_SET_ID || id == BUILT_IN_MAP_ID
+        if *id == BUILT_IN_ARRAY_ID || *id == BUILT_IN_SET_ID || *id == BUILT_IN_MAP_ID
     )
 }
 

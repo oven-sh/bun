@@ -54,17 +54,17 @@ fn invariant_error_with_loc(
 }
 
 /// Format an InstructionKind variant name (matches TS `${kind}` interpolation).
-fn format_kind(kind: Option<InstructionKind>) -> String {
+fn format_kind(kind: Option<InstructionKind>) -> &'static str {
     match kind {
-        Some(InstructionKind::Const) => "Const".to_string(),
-        Some(InstructionKind::Let) => "Let".to_string(),
-        Some(InstructionKind::Reassign) => "Reassign".to_string(),
-        Some(InstructionKind::Catch) => "Catch".to_string(),
-        Some(InstructionKind::HoistedConst) => "HoistedConst".to_string(),
-        Some(InstructionKind::HoistedLet) => "HoistedLet".to_string(),
-        Some(InstructionKind::HoistedFunction) => "HoistedFunction".to_string(),
-        Some(InstructionKind::Function) => "Function".to_string(),
-        None => "null".to_string(),
+        Some(InstructionKind::Const) => "Const",
+        Some(InstructionKind::Let) => "Let",
+        Some(InstructionKind::Reassign) => "Reassign",
+        Some(InstructionKind::Catch) => "Catch",
+        Some(InstructionKind::HoistedConst) => "HoistedConst",
+        Some(InstructionKind::HoistedLet) => "HoistedLet",
+        Some(InstructionKind::HoistedFunction) => "HoistedFunction",
+        Some(InstructionKind::Function) => "Function",
+        None => "null",
     }
 }
 
@@ -72,7 +72,7 @@ fn format_kind(kind: Option<InstructionKind>) -> String {
 fn format_place(place: &Place, env: &Environment) -> String {
     let ident = &env.identifiers[place.identifier.0 as usize];
     let name = match &ident.name {
-        Some(n) => n.value().to_string(),
+        Some(n) => bun_core::BStr::new(n.value()).to_string(),
         None => String::new(),
     };
     let scope = match ident.scope {

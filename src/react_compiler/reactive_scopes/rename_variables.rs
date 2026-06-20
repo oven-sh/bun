@@ -24,6 +24,7 @@ use crate::hir::ReactiveBlock;
 use crate::hir::ReactiveFunction;
 use crate::hir::ReactiveScopeBlock;
 use crate::hir::ReactiveValue;
+use crate::hir::StoreStr;
 use crate::hir::environment::Environment;
 
 use crate::reactive_scopes::visitors::ReactiveFunctionVisitor;
@@ -35,13 +36,13 @@ use crate::reactive_scopes::visitors::{self};
 
 struct Scopes {
     seen: IdMap<DeclarationId, IdentifierName>,
-    stack: Vec<HashMap<String, DeclarationId>>,
-    globals: HashSet<String>,
-    names: HashSet<String>,
+    stack: Vec<HashMap<StoreStr, DeclarationId>>,
+    globals: HashSet<StoreStr>,
+    names: HashSet<StoreStr>,
 }
 
 impl Scopes {
-    fn new(globals: HashSet<String>) -> Self {
+    fn new(globals: HashSet<StoreStr>) -> Self {
         Self {
             seen: IdMap::new(),
             stack: vec![HashMap::new()],
@@ -53,7 +54,7 @@ impl Scopes {
     fn visit_identifier(&mut self, identifier_id: crate::hir::IdentifierId, env: &Environment) {
         let identifier = &env.identifiers[identifier_id.0 as usize];
         let original_name = match &identifier.name {
-            Some(name) => name.clone(),
+            Some(name) => name,
             None => return,
         };
         let declaration_id = identifier.declaration_id;
@@ -62,46 +63,49 @@ impl Scopes {
             return;
         }
 
-        let original_value = original_name.value().to_string();
+        let original_value: &[u8] = original_name.value();
         let is_promoted = matches!(original_name, IdentifierName::Promoted(_));
-        let is_promoted_temp = is_promoted && original_value.starts_with("#t");
-        let is_promoted_jsx = is_promoted && original_value.starts_with("#T");
+        let is_promoted_temp = is_promoted && original_value.starts_with(b"#t");
+        let is_promoted_jsx = is_promoted && original_value.starts_with(b"#T");
 
-        let mut name: String;
+        let mut name: Vec<u8> = Vec::with_capacity(original_value.len() + 4);
+        let mut itoa = bun_core::fmt::ItoaBuf::new();
         let mut id: u32 = 0;
-        if is_promoted_temp {
-            name = format!("t{}", id);
-            id += 1;
-        } else if is_promoted_jsx {
-            name = format!("T{}", id);
+        let mut regen = |buf: &mut Vec<u8>, n: u32| {
+            buf.clear();
+            if is_promoted_temp {
+                buf.push(b't');
+            } else if is_promoted_jsx {
+                buf.push(b'T');
+            } else {
+                buf.extend_from_slice(original_value);
+                buf.push(b'$');
+            }
+            buf.extend_from_slice(itoa.format(n).as_bytes());
+        };
+        if is_promoted_temp || is_promoted_jsx {
+            regen(&mut name, id);
             id += 1;
         } else {
-            name = original_value.clone();
+            name.extend_from_slice(original_value);
         }
 
-        while self.lookup(&name).is_some() || self.globals.contains(&name) {
-            if is_promoted_temp {
-                name = format!("t{}", id);
-                id += 1;
-            } else if is_promoted_jsx {
-                name = format!("T{}", id);
-                id += 1;
-            } else {
-                name = format!("{}${}", original_value, id);
-                id += 1;
-            }
+        while self.lookup(&name).is_some() || self.globals.contains(name.as_slice()) {
+            regen(&mut name, id);
+            id += 1;
         }
 
-        let identifier_name = IdentifierName::Named(name.clone());
-        self.seen.insert(declaration_id, identifier_name);
+        let stored = StoreStr::new(bun_ast::data_store_dupe_str(&name));
+        self.seen
+            .insert(declaration_id, IdentifierName::Named(stored));
         self.stack
             .last_mut()
             .unwrap()
-            .insert(name.clone(), declaration_id);
-        self.names.insert(name);
+            .insert(stored, declaration_id);
+        self.names.insert(stored);
     }
 
-    fn lookup(&self, name: &str) -> Option<DeclarationId> {
+    fn lookup(&self, name: &[u8]) -> Option<DeclarationId> {
         for scope in self.stack.iter().rev() {
             if let Some(id) = scope.get(name) {
                 return Some(*id);
@@ -206,7 +210,7 @@ pub fn rename_variables(func: &mut ReactiveFunction, env: &mut Environment) -> H
 fn rename_variables_with_parent(
     func: &mut ReactiveFunction,
     env: &mut Environment,
-    parent_names: Option<&HashSet<String>>,
+    parent_names: Option<&HashSet<StoreStr>>,
 ) -> HashSet<String> {
     let globals = collect_referenced_globals(&func.body, env);
 
@@ -219,13 +223,13 @@ fn rename_variables_with_parent(
     // parent function body and processed within the parent's scope context.
     if let Some(parent) = parent_names {
         scopes.enter();
-        for name in parent {
+        for &name in parent {
             scopes
                 .stack
                 .last_mut()
                 .unwrap()
-                .insert(name.clone(), DeclarationId(u32::MAX));
-            scopes.names.insert(name.clone());
+                .insert(name, DeclarationId(u32::MAX));
+            scopes.names.insert(name);
         }
     }
     rename_variables_impl(func, &Visitor { env }, &mut scopes);
@@ -239,8 +243,10 @@ fn rename_variables_with_parent(
         }
     }
 
-    let mut result: HashSet<String> = scopes.names;
-    result.extend(globals);
+    let mut result: HashSet<String> = HashSet::with_capacity(scopes.names.len() + globals.len());
+    for n in scopes.names.iter().chain(globals.iter()) {
+        result.insert(bun_core::BStr::new(n.slice()).to_string());
+    }
     result
 }
 
@@ -264,13 +270,17 @@ fn rename_variables_impl(func: &ReactiveFunction, visitor: &Visitor, scopes: &mu
 
 /// Collects all globally referenced names from the reactive function.
 /// TS: `collectReferencedGlobals`
-fn collect_referenced_globals(block: &ReactiveBlock, env: &Environment) -> HashSet<String> {
+fn collect_referenced_globals(block: &ReactiveBlock, env: &Environment) -> HashSet<StoreStr> {
     let mut globals = HashSet::new();
     collect_globals_block(block, &mut globals, env);
     globals
 }
 
-fn collect_globals_block(block: &ReactiveBlock, globals: &mut HashSet<String>, env: &Environment) {
+fn collect_globals_block(
+    block: &ReactiveBlock,
+    globals: &mut HashSet<StoreStr>,
+    env: &Environment,
+) {
     for stmt in block {
         match stmt {
             crate::hir::ReactiveStatement::Instruction(instr) => {
@@ -289,11 +299,15 @@ fn collect_globals_block(block: &ReactiveBlock, globals: &mut HashSet<String>, e
     }
 }
 
-fn collect_globals_value(value: &ReactiveValue, globals: &mut HashSet<String>, env: &Environment) {
+fn collect_globals_value(
+    value: &ReactiveValue,
+    globals: &mut HashSet<StoreStr>,
+    env: &Environment,
+) {
     match value {
         ReactiveValue::Instruction(iv) => {
             if let InstructionValue::LoadGlobal { binding, .. } = iv {
-                globals.insert(binding.name().to_string());
+                globals.insert(StoreStr::new(binding.name()));
             }
             // Visit inner functions
             match iv {
@@ -337,7 +351,7 @@ fn collect_globals_value(value: &ReactiveValue, globals: &mut HashSet<String>, e
 /// Recursively collects LoadGlobal names from an inner HIR function.
 fn collect_globals_hir_function(
     func_id: FunctionId,
-    globals: &mut HashSet<String>,
+    globals: &mut HashSet<StoreStr>,
     env: &Environment,
 ) {
     let inner_func = &env.functions[func_id.0 as usize];
@@ -348,7 +362,7 @@ fn collect_globals_hir_function(
         for instr_id in &block.instructions {
             let instr = &inner_func.instructions[instr_id.0 as usize];
             if let InstructionValue::LoadGlobal { binding, .. } = &instr.value {
-                globals.insert(binding.name().to_string());
+                globals.insert(StoreStr::new(binding.name()));
             }
             // Recurse into nested function expressions
             match &instr.value {
@@ -364,7 +378,7 @@ fn collect_globals_hir_function(
 
 fn collect_globals_terminal(
     stmt: &crate::hir::ReactiveTerminalStatement,
-    globals: &mut HashSet<String>,
+    globals: &mut HashSet<StoreStr>,
     env: &Environment,
 ) {
     match &stmt.terminal {

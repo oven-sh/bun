@@ -6,7 +6,7 @@ use crate::diagnostics::{
 };
 use crate::hir::{
     Effect, FunctionExpressionType, InstructionKind, InstructionValue, LValue, LoweredFunction,
-    ObjectProperty, ObjectPropertyKey, ObjectPropertyType, Place, VariableBinding,
+    ObjectProperty, ObjectPropertyKey, ObjectPropertyType, Place, StoreStr, VariableBinding,
 };
 use bun_ast::expr::Data;
 use bun_ast::{self as ast, E, Expr, G, Loc, Ref};
@@ -23,10 +23,9 @@ pub(super) fn lower_function_to_value(
     expr_type: FunctionExpressionType,
 ) -> Result<InstructionValue, CompilerDiagnostic> {
     let loc = convert_loc(func_loc);
-    let name = match func.name_ref() {
-        Some(r) => Some(builder.ref_name(r)?),
-        None => None,
-    };
+    let name = func
+        .name_ref()
+        .map(|r| StoreStr::new(builder.host().ref_name(r)));
     let lowered_func = lower_function(builder, func, func_loc)?;
     Ok(InstructionValue::FunctionExpression {
         name,
@@ -43,10 +42,9 @@ pub(super) fn lower_function(
     func_loc: Loc,
 ) -> Result<LoweredFunction, CompilerDiagnostic> {
     let loc = convert_loc(func_loc);
-    let id = match func.name_ref() {
-        Some(r) => Some(builder.ref_name(r)?),
-        None => None,
-    };
+    let id = func
+        .name_ref()
+        .map(|r| StoreStr::new(builder.host().ref_name(r)));
 
     // Bun's parser already linked every function to its scope tree; the
     // synthetic zero-width scope search upstream performs is a Hermes-desugar
@@ -111,10 +109,7 @@ pub(super) fn lower_function_declaration(
     let func = FunctionNode::Function(func_decl);
 
     let func_name_ref = func.name_ref();
-    let func_name = match func_name_ref {
-        Some(r) => Some(builder.ref_name(r)?),
-        None => None,
-    };
+    let func_name = func_name_ref.map(|r| StoreStr::new(builder.host().ref_name(r)));
 
     let parent_function_scope = builder.function_scope();
     let component_scope = builder.component_scope();
@@ -142,7 +137,7 @@ pub(super) fn lower_function_declaration(
     let (host, env) = builder.host_and_env_mut();
     let (hir_func, child_used_names, child_bindings) = lower_inner(
         &func,
-        func_name.clone(),
+        func_name,
         loc,
         host,
         env,
@@ -164,7 +159,7 @@ pub(super) fn lower_function_declaration(
 
     // Emit FunctionExpression instruction
     let fn_value = InstructionValue::FunctionExpression {
-        name: func_name.clone(),
+        name: func_name,
         name_hint: None,
         lowered_func,
         expr_type: FunctionExpressionType::FunctionDeclaration,
@@ -223,7 +218,7 @@ pub(super) fn lower_function_declaration(
                     category: ErrorCategory::Invariant,
                     reason: format!(
                         "Could not find binding for function declaration `{}`",
-                        func_name.as_deref().unwrap_or("")
+                        bun_core::BStr::new(func_name.map(|s| s.slice()).unwrap_or(b""))
                     ),
                     description: None,
                     loc,
@@ -323,11 +318,11 @@ pub(super) fn lower_object_method(
     let key = match key_expr {
         Some(k) => {
             lower_object_property_key(builder, k, computed)?.unwrap_or(ObjectPropertyKey::String {
-                name: String::new(),
+                name: StoreStr::EMPTY,
             })
         }
         None => ObjectPropertyKey::String {
-            name: String::new(),
+            name: StoreStr::EMPTY,
         },
     };
 
@@ -376,7 +371,7 @@ pub(super) fn lower_object_property_key(
         // the static-key path. Roped strings fall through to the
         // computed/unsupported arms below.
         Data::EString(s) if s.next.is_none() => {
-            let name = estring_to_marker_string(s, key.loc)?;
+            let name = estring_to_marker_string(s);
             // Bun stores non-computed identifier keys as `EString`; classify as
             // Identifier when the bytes form a valid identifier so the HIR
             // matches upstream's `Expression::Identifier` arm.
@@ -386,11 +381,14 @@ pub(super) fn lower_object_property_key(
                 Ok(Some(ObjectPropertyKey::String { name }))
             }
         }
-        Data::ENumber(n) if !computed => Ok(Some(ObjectPropertyKey::Identifier {
-            name: n.value().to_string(),
-        })),
+        Data::ENumber(n) if !computed => {
+            let scratch = n.value().to_string();
+            Ok(Some(ObjectPropertyKey::Identifier {
+                name: super::helpers::arena_str(scratch.as_bytes()),
+            }))
+        }
         Data::EIdentifier(id) if !computed => Ok(Some(ObjectPropertyKey::Identifier {
-            name: builder.ref_name(id.ref_)?,
+            name: StoreStr::new(builder.host().ref_name(id.ref_)),
         })),
         Data::EPrivateIdentifier(_) => {
             builder.record_error(CompilerErrorDetail {
@@ -419,23 +417,13 @@ pub(super) fn lower_object_property_key(
     }
 }
 
-fn estring_to_marker_string(s: &E::EString, loc: Loc) -> Result<String, CompilerError> {
+fn estring_to_marker_string(s: &E::EString) -> StoreStr {
     debug_assert!(s.next.is_none());
     if s.is_utf16 {
-        Ok(JsString::from_code_units(s.slice16().to_vec()).to_marker_string())
+        let marker = JsString::from_code_units(s.slice16()).to_marker_string();
+        super::helpers::arena_str(marker.as_bytes())
     } else {
-        core::str::from_utf8(s.slice8())
-            .map(str::to_owned)
-            .map_err(|_| {
-                CompilerError::from(
-                    CompilerDiagnostic::new(ErrorCategory::Todo, "non-utf8 property key", None)
-                        .with_detail(crate::diagnostics::CompilerDiagnosticDetail::Error {
-                            loc: convert_loc(loc),
-                            message: None,
-                            identifier_name: None,
-                        }),
-                )
-            })
+        StoreStr::new(s.slice8())
     }
 }
 

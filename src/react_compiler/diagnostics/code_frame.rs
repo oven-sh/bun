@@ -5,13 +5,14 @@
  * LICENSE file in the root directory of this source tree.
  */
 use crate::diagnostics::{CompilerDiagnosticDetail, CompilerError, CompilerErrorOrDiagnostic};
+use core::fmt::Write as _;
 
 const CODEFRAME_LINES_ABOVE: u32 = 2;
 const CODEFRAME_LINES_BELOW: u32 = 3;
 const CODEFRAME_MAX_LINES: u32 = 10;
 const CODEFRAME_ABBREVIATED_SOURCE_LINES: usize = 5;
 
-/// Split source text on newlines, matching Babel's NEWLINE regex: /\r\n|[\n\r\u2028\u2029]/
+/// Split source text on newlines, matching Babel's NEWLINE regex: /\r\n|[\n\r  ]/
 fn split_lines(source: &str) -> Vec<&str> {
     let mut lines = Vec::new();
     let mut start = 0;
@@ -50,6 +51,25 @@ fn split_lines(source: &str) -> Vec<&str> {
     }
     lines.push(&source[start..]);
     lines
+}
+
+fn digit_count(mut n: usize) -> usize {
+    if n == 0 {
+        return 1;
+    }
+    let mut c = 0;
+    while n > 0 {
+        c += 1;
+        n /= 10;
+    }
+    c
+}
+
+fn push_repeated(out: &mut String, ch: char, n: usize) {
+    out.reserve(n);
+    for _ in 0..n {
+        out.push(ch);
+    }
 }
 
 /// Represents a marker line entry: either mark the whole line (true) or a [column, length] range.
@@ -155,7 +175,7 @@ pub fn code_frame_columns(
     );
 
     let has_columns = start_column_1 > 0;
-    let number_max_width = format!("{}", end).len();
+    let number_max_width = digit_count(end);
 
     // Build a lookup map for marker lines
     let mut marker_map: std::collections::HashMap<usize, MarkerEntry> =
@@ -198,81 +218,64 @@ pub fn code_frame_columns(
         marker_map.insert(line_number, resolved);
     }
 
-    // Build frame lines
-    let mut frame_parts: Vec<String> = Vec::new();
+    let mut frame = String::new();
+
+    // If message is set but no columns, prepend the message
+    if !message.is_empty() && !has_columns {
+        push_repeated(&mut frame, ' ', number_max_width + 1);
+        frame.push_str(message);
+        frame.push('\n');
+    }
+
     let display_lines = &lines[start..end];
 
     for (index, line) in display_lines.iter().enumerate() {
+        if index > 0 {
+            frame.push('\n');
+        }
         let number = start + 1 + index;
-        // Right-align the line number: ` ${number}`.slice(-numberMaxWidth)
-        let number_str = format!("{}", number);
-        let padded_number = if number_str.len() >= number_max_width {
-            number_str
-        } else {
-            let padding = " ".repeat(number_max_width - number_str.len());
-            format!("{}{}", padding, number_str)
-        };
-        let gutter = format!(" {} |", padded_number);
 
         let has_marker = marker_map.get(&number);
         let has_next_marker = marker_map.contains_key(&(number + 1));
         let last_marker_line = has_marker.is_some() && !has_next_marker;
 
-        if let Some(marker_entry) = has_marker {
-            // This is a marked line
-            let line_content = if line.is_empty() {
-                String::new()
-            } else {
-                format!(" {}", line)
-            };
-
-            let marker_line_str = match marker_entry {
-                MarkerEntry::Range(col, len) => {
-                    // Build marker spacing: replace non-tab chars with spaces
-                    let max_col = if *col > 0 { col - 1 } else { 0 };
-                    let byte_end = std::cmp::min(max_col, line.len());
-                    // Ensure we don't slice in the middle of a multi-byte UTF-8 character
-                    let safe_end = if byte_end < line.len() && !line.is_char_boundary(byte_end) {
-                        line.floor_char_boundary(byte_end)
-                    } else {
-                        byte_end
-                    };
-                    let prefix = &line[..safe_end];
-                    let marker_spacing: String = prefix
-                        .chars()
-                        .map(|c| if c == '\t' { '\t' } else { ' ' })
-                        .collect();
-                    let number_of_markers = if *len == 0 { 1 } else { *len };
-                    let carets = "^".repeat(number_of_markers);
-                    let gutter_spaces = gutter.replace(|c: char| c.is_ascii_digit(), " ");
-                    let mut marker_str =
-                        format!("\n {} {}{}", gutter_spaces, marker_spacing, carets);
-                    if last_marker_line && !message.is_empty() {
-                        marker_str.push(' ');
-                        marker_str.push_str(message);
-                    }
-                    marker_str
-                }
-                MarkerEntry::WholeLine => String::new(),
-            };
-
-            frame_parts.push(format!(">{}{}{}", gutter, line_content, marker_line_str));
-        } else {
-            // Non-marked line
-            let line_content = if line.is_empty() {
-                String::new()
-            } else {
-                format!(" {}", line)
-            };
-            frame_parts.push(format!(" {}{}", gutter, line_content));
+        frame.push(if has_marker.is_some() { '>' } else { ' ' });
+        // gutter: " {padded_number} |"
+        let _ = write!(frame, " {:>width$} |", number, width = number_max_width);
+        if !line.is_empty() {
+            frame.push(' ');
+            frame.push_str(line);
         }
-    }
 
-    let mut frame = frame_parts.join("\n");
-
-    // If message is set but no columns, prepend the message
-    if !message.is_empty() && !has_columns {
-        frame = format!("{}{}\n{}", " ".repeat(number_max_width + 1), message, frame);
+        if let Some(MarkerEntry::Range(col, len)) = has_marker {
+            // Build marker spacing: replace non-tab chars with spaces
+            let max_col = if *col > 0 { col - 1 } else { 0 };
+            let byte_end = std::cmp::min(max_col, line.len());
+            // Ensure we don't slice in the middle of a multi-byte UTF-8 character
+            let safe_end = if byte_end < line.len() && !line.is_char_boundary(byte_end) {
+                line.floor_char_boundary(byte_end)
+            } else {
+                byte_end
+            };
+            let prefix = &line[..safe_end];
+            // marker line: "\n {gutter_spaces} {marker_spacing}{carets}"
+            // gutter_spaces is the gutter with digits replaced by spaces:
+            // " " + number_max_width spaces + " |"
+            frame.push('\n');
+            frame.push(' ');
+            push_repeated(&mut frame, ' ', number_max_width + 2);
+            frame.push('|');
+            frame.push(' ');
+            for c in prefix.chars() {
+                frame.push(if c == '\t' { '\t' } else { ' ' });
+            }
+            let number_of_markers = if *len == 0 { 1 } else { *len };
+            push_repeated(&mut frame, '^', number_of_markers);
+            if last_marker_line && !message.is_empty() {
+                frame.push(' ');
+                frame.push_str(message);
+            }
+        }
     }
 
     frame
@@ -307,15 +310,21 @@ pub fn print_code_frame(
     let pipe_index = lines[0].find('|').unwrap_or(0);
     let tail_start = lines.len() - tail_count;
 
-    let mut parts: Vec<String> = Vec::new();
-    for line in &lines[..head_count] {
-        parts.push(line.to_string());
+    let mut out = String::with_capacity(printed.len());
+    for (i, line) in lines[..head_count].iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(line);
     }
-    parts.push(format!("{}\u{2026}", " ".repeat(pipe_index)));
+    out.push('\n');
+    push_repeated(&mut out, ' ', pipe_index);
+    out.push('\u{2026}');
     for line in &lines[tail_start..] {
-        parts.push(line.to_string());
+        out.push('\n');
+        out.push_str(line);
     }
-    parts.join("\n")
+    out
 }
 
 use crate::diagnostics::format_category_heading;
@@ -327,21 +336,19 @@ use crate::diagnostics::format_category_heading;
 /// The filename parameter is the source filename (e.g., "foo.ts") used in
 /// location displays.
 pub fn format_compiler_error(err: &CompilerError, source: &str, filename: Option<&str>) -> String {
-    let detail_messages: Vec<String> = err
-        .details
-        .iter()
-        .map(|d| format_error_detail(d, source, filename))
-        .collect();
-
     let count = err.details.len();
     let plural = if count == 1 { "" } else { "s" };
-    let header = format!("Found {} error{}:\n\n", count, plural);
+    let mut out = String::new();
+    let _ = write!(out, "Found {} error{}:\n\n", count, plural);
 
-    let trimmed: Vec<String> = detail_messages
-        .iter()
-        .map(|m| m.trim().to_string())
-        .collect();
-    format!("{}{}", header, trimmed.join("\n\n"))
+    for (i, d) in err.details.iter().enumerate() {
+        if i > 0 {
+            out.push_str("\n\n");
+        }
+        let detail = format_error_detail(d, source, filename);
+        out.push_str(detail.trim());
+    }
+    out
 }
 
 /// Format a single error detail (either Diagnostic or ErrorDetail).
@@ -350,13 +357,14 @@ fn format_error_detail(
     source: &str,
     filename: Option<&str>,
 ) -> String {
+    let mut out = String::new();
     match detail {
         CompilerErrorOrDiagnostic::Diagnostic(d) => {
             let heading = format_category_heading(d.category);
-            let mut buffer = vec![format!("{}: {}", heading, d.reason)];
+            let _ = write!(out, "{}: {}", heading, d.reason);
 
             if let Some(ref description) = d.description {
-                buffer.push(format!("\n\n{}.", description));
+                let _ = write!(out, "\n\n{}.", description);
             }
             for item in &d.details {
                 match item {
@@ -370,31 +378,30 @@ fn format_error_detail(
                                 loc.end.column,
                                 message.as_deref().unwrap_or(""),
                             );
-                            buffer.push("\n\n".to_string());
+                            out.push_str("\n\n");
                             if let Some(fname) = filename {
-                                buffer.push(format!(
-                                    "{}:{}:{}\n",
+                                let _ = writeln!(
+                                    out,
+                                    "{}:{}:{}",
                                     fname, loc.start.line, loc.start.column
-                                ));
+                                );
                             }
-                            buffer.push(frame);
+                            out.push_str(&frame);
                         }
                     }
                     CompilerDiagnosticDetail::Hint { message } => {
-                        buffer.push("\n\n".to_string());
-                        buffer.push(message.clone());
+                        out.push_str("\n\n");
+                        out.push_str(message);
                     }
                 }
             }
-
-            buffer.join("")
         }
         CompilerErrorOrDiagnostic::ErrorDetail(d) => {
             let heading = format_category_heading(d.category);
-            let mut buffer = vec![format!("{}: {}", heading, d.reason)];
+            let _ = write!(out, "{}: {}", heading, d.reason);
 
             if let Some(ref description) = d.description {
-                buffer.push(format!("\n\n{}.", description));
+                let _ = write!(out, "\n\n{}.", description);
                 if let Some(ref loc) = d.loc {
                     let frame = print_code_frame(
                         source,
@@ -404,15 +411,12 @@ fn format_error_detail(
                         loc.end.column,
                         &d.reason,
                     );
-                    buffer.push("\n\n".to_string());
+                    out.push_str("\n\n");
                     if let Some(fname) = filename {
-                        buffer.push(format!(
-                            "{}:{}:{}\n",
-                            fname, loc.start.line, loc.start.column
-                        ));
+                        let _ = writeln!(out, "{}:{}:{}", fname, loc.start.line, loc.start.column);
                     }
-                    buffer.push(frame);
-                    buffer.push("\n\n".to_string());
+                    out.push_str(&frame);
+                    out.push_str("\n\n");
                 }
             } else if let Some(ref loc) = d.loc {
                 let frame = print_code_frame(
@@ -423,18 +427,14 @@ fn format_error_detail(
                     loc.end.column,
                     &d.reason,
                 );
-                buffer.push("\n\n".to_string());
+                out.push_str("\n\n");
                 if let Some(fname) = filename {
-                    buffer.push(format!(
-                        "{}:{}:{}\n",
-                        fname, loc.start.line, loc.start.column
-                    ));
+                    let _ = writeln!(out, "{}:{}:{}", fname, loc.start.line, loc.start.column);
                 }
-                buffer.push(frame);
-                buffer.push("\n\n".to_string());
+                out.push_str(&frame);
+                out.push_str("\n\n");
             }
-
-            buffer.join("")
         }
     }
+    out
 }

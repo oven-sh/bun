@@ -497,17 +497,12 @@ fn can_merge_scopes(
 pub fn is_always_invalidating_type(ty: &Type) -> bool {
     match ty {
         Type::Object { shape_id } => {
-            if let Some(id) = shape_id {
-                matches!(
-                    id.as_str(),
-                    s if s == BUILT_IN_ARRAY_ID
-                        || s == BUILT_IN_OBJECT_ID
-                        || s == BUILT_IN_FUNCTION_ID
-                        || s == BUILT_IN_JSX_ID
+            matches!(
+                *shape_id,
+                Some(
+                    BUILT_IN_ARRAY_ID | BUILT_IN_OBJECT_ID | BUILT_IN_FUNCTION_ID | BUILT_IN_JSX_ID
                 )
-            } else {
-                false
-            }
+            )
         }
         Type::Function { .. } => true,
         _ => false,

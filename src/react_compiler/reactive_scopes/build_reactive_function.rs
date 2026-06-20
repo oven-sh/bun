@@ -39,13 +39,19 @@ pub fn build_reactive_function(
 
     Ok(ReactiveFunction {
         loc: hir.loc,
-        id: hir.id.clone(),
-        name_hint: hir.name_hint.clone(),
+        id: hir.id.map(|s| bun_core::BStr::new(s.slice()).to_string()),
+        name_hint: hir
+            .name_hint
+            .map(|s| bun_core::BStr::new(s.slice()).to_string()),
         params: hir.params.to_vec(),
         generator: hir.generator,
         is_async: hir.is_async,
         body,
-        directives: hir.directives.to_vec(),
+        directives: hir
+            .directives
+            .iter()
+            .map(|s| bun_core::BStr::new(s.slice()).to_string())
+            .collect(),
     })
 }
 

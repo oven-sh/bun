@@ -195,7 +195,7 @@ fn freeze_violation_diagnostic(
 ) -> CompilerDiagnostic {
     let identifier = &identifiers[mutation_info.value_identifier.0 as usize];
     let variable_name = match &identifier.name {
-        Some(IdentifierName::Named(name)) => format!("`{}`", name),
+        Some(IdentifierName::Named(name)) => format!("`{}`", bun_core::BStr::new(name.slice())),
         _ => "a local variable".to_string(),
     };
 

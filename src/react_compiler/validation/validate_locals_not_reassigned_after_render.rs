@@ -71,7 +71,7 @@ pub fn validate_locals_not_reassigned_after_render(func: &HirFunction, env: &mut
 fn format_variable_name(place: &Place, identifiers: &[Identifier]) -> String {
     let identifier = &identifiers[place.identifier.0 as usize];
     match &identifier.name {
-        Some(IdentifierName::Named(name)) => format!("`{}`", name),
+        Some(IdentifierName::Named(name)) => format!("`{}`", bun_core::BStr::new(name.slice())),
         _ => "variable".to_string(),
     }
 }

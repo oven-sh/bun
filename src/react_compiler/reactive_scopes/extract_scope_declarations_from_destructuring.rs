@@ -132,8 +132,16 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                     // (matches TS makeTemporaryIdentifier which receives place.loc)
                     env.identifiers[temp_id.0 as usize].loc = place.loc.clone();
                     // Promote the temporary
+                    let mut itoa = bun_core::fmt::ItoaBuf::new();
+                    let digits = itoa.format(decl_id.0).as_bytes();
+                    let mut buf = [0u8; 16];
+                    buf[0] = b'#';
+                    buf[1] = b't';
+                    buf[2..2 + digits.len()].copy_from_slice(digits);
                     env.identifiers[temp_id.0 as usize].name =
-                        Some(IdentifierName::Promoted(format!("#t{}", decl_id.0)));
+                        Some(IdentifierName::Promoted(crate::hir::StoreStr::new(
+                            bun_ast::data_store_dupe_str(&buf[..2 + digits.len()]),
+                        )));
                     let temporary = Place {
                         identifier: temp_id,
                         effect: place.effect,

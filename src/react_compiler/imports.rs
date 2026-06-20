@@ -22,14 +22,14 @@ use crate::program::Host;
 
 /// An import specifier tracked by ProgramContext.
 /// Corresponds to NonLocalImportSpecifier in the TS compiler.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct NonLocalImportSpecifier {
-    pub name: String,
-    /// Bun symbol for the local binding (`name`); minted via
-    /// `Host::new_generated` so codegen emits `EIdentifier { ref_: name_ref }`.
+    /// Bun symbol for the local binding; minted via `Host::new_generated`
+    /// so codegen emits `EIdentifier { ref_: name_ref }`. The textual name
+    /// is recoverable via `Host::ref_name(name_ref)`.
     pub name_ref: bun_ast::Ref,
-    pub module: String,
-    pub imported: String,
+    pub module: &'static str,
+    pub imported: &'static str,
 }
 
 /// Context for the program being compiled.
@@ -43,7 +43,7 @@ pub struct ProgramContext {
     /// which may differ from `filename` (e.g., no path prefix).
     source_filename: Option<String>,
     pub code: Option<String>,
-    pub react_runtime_module: String,
+    pub react_runtime_module: &'static str,
     pub output_mode: OutputMode,
     pub has_module_scope_opt_out: bool,
 
@@ -58,7 +58,7 @@ pub struct ProgramContext {
     // Internal state
     already_compiled: IndexSet<u32>,
     known_referenced_names: IndexSet<String>,
-    imports: IndexMap<String, IndexMap<String, NonLocalImportSpecifier>>,
+    imports: IndexMap<&'static str, IndexMap<&'static str, NonLocalImportSpecifier>>,
 }
 
 impl ProgramContext {
@@ -95,8 +95,8 @@ impl ProgramContext {
     }
 
     /// Get the source filename for logger events.
-    pub fn source_filename(&self) -> Option<String> {
-        self.source_filename.clone()
+    pub fn source_filename(&self) -> Option<&str> {
+        self.source_filename.as_deref()
     }
 
     /// Check if a function at the given start position has already been compiled.
@@ -123,11 +123,6 @@ impl ProgramContext {
         }
     }
 
-    /// Check if a name conflicts with known references.
-    pub fn has_reference(&self, name: &str) -> bool {
-        self.known_referenced_names.iter().any(|n| n == name)
-    }
-
     /// Generate a unique identifier name that doesn't conflict with existing bindings.
     ///
     /// For hook names (use*), preserves the original name to avoid breaking
@@ -139,36 +134,36 @@ impl ProgramContext {
             // type HookKind based on callee naming convention.
             let mut uid = name.to_string();
             let mut i = 0;
-            while self.has_reference(&uid) {
+            while self.known_referenced_names.contains(&uid) {
                 uid = format!("{}_{}", name, i);
                 i += 1;
             }
             self.known_referenced_names.insert(uid.clone());
-            uid
-        } else if !self.has_reference(name) {
-            self.known_referenced_names.insert(name.to_string());
-            name.to_string()
-        } else {
-            // Generate unique name with underscore prefix (similar to Babel's generateUid).
-            // Babel strips leading underscores before prefixing, so:
-            //   generateUid("_c") → strips to "c" → generates "_c", "_c2", "_c3", ...
-            //   generateUid("foo") → generates "_foo", "_foo2", "_foo3", ...
-            let base = name.trim_start_matches('_');
-            let mut uid = format!("_{}", base);
-            let mut i = 2;
-            while self.has_reference(&uid) {
-                uid = format!("_{}{}", base, i);
-                i += 1;
-            }
-            self.known_referenced_names.insert(uid.clone());
-            uid
+            return uid;
         }
+        let uid = name.to_string();
+        if !self.known_referenced_names.contains(&uid) {
+            self.known_referenced_names.insert(uid.clone());
+            return uid;
+        }
+        // Generate unique name with underscore prefix (similar to Babel's generateUid).
+        // Babel strips leading underscores before prefixing, so:
+        //   generateUid("_c") → strips to "c" → generates "_c", "_c2", "_c3", ...
+        //   generateUid("foo") → generates "_foo", "_foo2", "_foo3", ...
+        let base = name.trim_start_matches('_');
+        let mut uid = format!("_{}", base);
+        let mut i = 2;
+        while self.known_referenced_names.contains(&uid) {
+            uid = format!("_{}{}", base, i);
+            i += 1;
+        }
+        self.known_referenced_names.insert(uid.clone());
+        uid
     }
 
     /// Add the memo cache import (the `c` function from the compiler runtime).
     pub fn add_memo_cache_import(&mut self, host: &mut dyn Host) -> NonLocalImportSpecifier {
-        let module = self.react_runtime_module.clone();
-        self.add_import_specifier(host, &module, "c", Some("_c"))
+        self.add_import_specifier(host, self.react_runtime_module, "c", Some("_c"))
     }
 
     /// Add an import specifier, reusing an existing one if it was already added.
@@ -178,32 +173,29 @@ impl ProgramContext {
     pub fn add_import_specifier(
         &mut self,
         host: &mut dyn Host,
-        module: &str,
-        specifier: &str,
+        module: &'static str,
+        specifier: &'static str,
         name_hint: Option<&str>,
     ) -> NonLocalImportSpecifier {
-        let module = module.to_string();
-        let specifier = specifier.to_string();
         // Check if already imported
         if let Some(module_imports) = self.imports.get(&module) {
             if let Some(existing) = module_imports.get(&specifier) {
-                return existing.clone();
+                return *existing;
             }
         }
 
-        let name = self.new_uid(name_hint.unwrap_or(&specifier));
+        let name = self.new_uid(name_hint.unwrap_or(specifier));
         let name_ref = host.new_generated(name.as_bytes());
         let binding = NonLocalImportSpecifier {
-            name,
             name_ref,
-            module: module.clone(),
-            imported: specifier.clone(),
+            module,
+            imported: specifier,
         };
 
         self.imports
             .entry(module)
             .or_default()
-            .insert(specifier, binding.clone());
+            .insert(specifier, binding);
 
         binding
     }
@@ -230,7 +222,9 @@ impl ProgramContext {
     }
 
     /// Get an immutable view of the generated imports.
-    pub fn imports(&self) -> &IndexMap<String, IndexMap<String, NonLocalImportSpecifier>> {
+    pub fn imports(
+        &self,
+    ) -> &IndexMap<&'static str, IndexMap<&'static str, NonLocalImportSpecifier>> {
         &self.imports
     }
 }
@@ -245,7 +239,7 @@ pub(crate) fn validate_restricted_imports(
         Some(b) if !b.is_empty() => b,
         _ => return None,
     };
-    let restricted: IndexSet<&str> = blocklisted.iter().map(|s| s.as_str()).collect();
+    let restricted: IndexSet<&[u8]> = blocklisted.iter().map(|s| s.as_bytes()).collect();
     let mut error = CompilerError::new();
 
     for import in import_records {
@@ -254,17 +248,14 @@ pub(crate) fn validate_restricted_imports(
         if import.kind != ImportKind::Stmt {
             continue;
         }
-        if core::str::from_utf8(import.path.text)
-            .ok()
-            .is_some_and(|v| restricted.contains(&v))
-        {
+        if restricted.contains(&import.path.text) {
             let mut detail = CompilerErrorDetail::new(
                 ErrorCategory::Todo,
                 "Bailing out due to blocklisted import",
             )
             .with_description(format!(
                 "Import from module {}",
-                core::str::from_utf8(import.path.text).unwrap_or("<non-utf8>")
+                bun_core::BStr::new(import.path.text)
             ));
             detail.loc = convert_loc(import.range.loc);
             error.push_error_detail(detail);
@@ -311,12 +302,16 @@ pub(crate) fn add_imports_to_program(
 
     let mut new_stmts: Vec<Stmt> = Vec::new();
     let mut sorted_modules: Vec<_> = context.imports.iter().collect();
-    sorted_modules.sort_unstable_by_key(|(a, _)| a.to_lowercase());
+    sorted_modules.sort_unstable_by(|(a, _), (b, _)| {
+        a.bytes()
+            .map(|c| c.to_ascii_lowercase())
+            .cmp(b.bytes().map(|c| c.to_ascii_lowercase()))
+    });
 
     for (module_name, imports_map) in sorted_modules {
         let sorted_imports = {
             let mut sorted: Vec<_> = imports_map.values().collect();
-            sorted.sort_unstable_by_key(|s| &s.imported);
+            sorted.sort_unstable_by_key(|s| s.imported);
             sorted
         };
 
@@ -385,11 +380,11 @@ fn is_hook_name(name: &str) -> bool {
 /// Upstream's `CompilerTarget::MetaInternal { runtime_module }` arm is
 /// intentionally not ported — `ReactCompilerOptions.target` only accepts a
 /// version string.
-pub(crate) fn get_react_compiler_runtime_module(target: Option<&str>) -> String {
+pub(crate) fn get_react_compiler_runtime_module(target: Option<&str>) -> &'static str {
     match target {
-        Some("19") => "react/compiler-runtime".to_string(),
-        Some("17") | Some("18") => "react-compiler-runtime".to_string(),
+        Some("19") => "react/compiler-runtime",
+        Some("17") | Some("18") => "react-compiler-runtime",
         // Default to React 19 runtime for unrecognized versions
-        _ => "react/compiler-runtime".to_string(),
+        _ => "react/compiler-runtime",
     }
 }

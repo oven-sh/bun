@@ -8,7 +8,10 @@
 //! It also exports standalone formatting functions (format_loc, format_primitive, etc.)
 //! that require no state.
 
+use core::fmt::{self, Write};
 use std::collections::HashSet;
+
+use bun_core::{BStr, ByteSlice};
 
 use crate::diagnostics::CompilerError;
 use crate::diagnostics::CompilerErrorOrDiagnostic;
@@ -32,157 +35,40 @@ use crate::hir::type_config::ValueReason;
 
 // =============================================================================
 // Standalone formatting functions (no state needed)
+//
+// These return lightweight `impl Display` adaptors so callers can embed them
+// directly in `write!` / `format_args!` without allocating an intermediate
+// `String`.
 // =============================================================================
 
-pub fn format_loc(loc: &Option<SourceLocation>) -> String {
-    match loc {
-        Some(l) => format_loc_value(l),
-        None => "generated".to_string(),
-    }
+pub fn format_loc(loc: &Option<SourceLocation>) -> impl fmt::Display + '_ {
+    DisplayLoc(loc)
 }
 
-pub fn format_loc_value(loc: &SourceLocation) -> String {
-    format!(
-        "{}:{}-{}:{}",
-        loc.start.line, loc.start.column, loc.end.line, loc.end.column
-    )
+pub fn format_loc_value(loc: &SourceLocation) -> impl fmt::Display + '_ {
+    DisplayLocValue(loc)
 }
 
 /// Format a string like JS `JSON.stringify`: escape control chars and quotes
 /// but preserve non-ASCII unicode (e.g. U+00A0 nbsp) as literal characters.
-pub fn format_js_string(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() + 2);
-    result.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => result.push_str("\\\""),
-            '\\' => result.push_str("\\\\"),
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
-            '\u{0008}' => result.push_str("\\b"),
-            '\u{000c}' => result.push_str("\\f"),
-            // Only escape C0 control chars (U+0000–U+001F), matching JS JSON.stringify.
-            // Do NOT escape C1 controls (U+0080–U+009F) — JS outputs those as literal chars.
-            c if (c as u32) <= 0x1F => {
-                result.push_str(&format!("\\u{:04x}", c as u32));
-            }
-            c => result.push(c),
-        }
-    }
-    result.push('"');
-    result
+pub fn format_js_string(s: &[u8]) -> impl fmt::Display + '_ {
+    DisplayJsString(s)
 }
 
-pub fn format_primitive(prim: &crate::hir::PrimitiveValue) -> String {
-    match prim {
-        crate::hir::PrimitiveValue::Null => "null".to_string(),
-        crate::hir::PrimitiveValue::Undefined => "undefined".to_string(),
-        crate::hir::PrimitiveValue::Boolean(b) => format!("{}", b),
-        crate::hir::PrimitiveValue::Number(n) => crate::hir::format_js_number(n.value()),
-        crate::hir::PrimitiveValue::String(s) => match s.as_str() {
-            Some(utf8) => format_js_string(utf8),
-            // Ill-formed strings: escape the well-formed segments exactly like
-            // format_js_string and render each unpaired surrogate as \uXXXX,
-            // matching what TS's JSON.stringify-based printer emits.
-            None => {
-                let mut result = String::new();
-                result.push('"');
-                let mut units = s.code_units().into_iter().peekable();
-                while let Some(unit) = units.next() {
-                    let is_lead = (0xD800..=0xDBFF).contains(&unit);
-                    let is_trail = (0xDC00..=0xDFFF).contains(&unit);
-                    if is_lead {
-                        if let Some(&next) = units.peek() {
-                            if (0xDC00..=0xDFFF).contains(&next) {
-                                units.next();
-                                let cp = 0x10000
-                                    + ((unit as u32 - 0xD800) << 10)
-                                    + (next as u32 - 0xDC00);
-                                result.push(char::from_u32(cp).expect("valid supplementary"));
-                                continue;
-                            }
-                        }
-                    }
-                    if is_lead || is_trail {
-                        result.push_str(&format!("\\u{unit:04x}"));
-                        continue;
-                    }
-                    let c = char::from_u32(unit as u32).expect("BMP non-surrogate is a char");
-                    match c {
-                        '"' => result.push_str("\\\""),
-                        '\\' => result.push_str("\\\\"),
-                        '\n' => result.push_str("\\n"),
-                        '\r' => result.push_str("\\r"),
-                        '\t' => result.push_str("\\t"),
-                        '\u{0008}' => result.push_str("\\b"),
-                        '\u{000c}' => result.push_str("\\f"),
-                        c if (c as u32) <= 0x1F => {
-                            result.push_str(&format!("\\u{:04x}", c as u32));
-                        }
-                        c => result.push(c),
-                    }
-                }
-                result.push('"');
-                result
-            }
-        },
-    }
+pub fn format_primitive(prim: &crate::hir::PrimitiveValue) -> impl fmt::Display + '_ {
+    DisplayPrimitive(prim)
 }
 
-pub fn format_property_literal(prop: &crate::hir::PropertyLiteral) -> String {
-    match prop {
-        crate::hir::PropertyLiteral::String(s) => s.clone(),
-        crate::hir::PropertyLiteral::Number(n) => crate::hir::format_js_number(n.value()),
-    }
+pub fn format_property_literal(prop: &crate::hir::PropertyLiteral) -> impl fmt::Display + '_ {
+    DisplayPropertyLiteral(prop)
 }
 
-pub fn format_object_property_key(key: &crate::hir::ObjectPropertyKey) -> String {
-    match key {
-        crate::hir::ObjectPropertyKey::String { name } => format!("String(\"{}\")", name),
-        crate::hir::ObjectPropertyKey::Identifier { name } => {
-            format!("Identifier(\"{}\")", name)
-        }
-        crate::hir::ObjectPropertyKey::Computed { name } => {
-            format!("Computed({})", name.identifier.0)
-        }
-        crate::hir::ObjectPropertyKey::Number { name } => {
-            format!("Number({})", crate::hir::format_js_number(name.value()))
-        }
-    }
+pub fn format_object_property_key(key: &crate::hir::ObjectPropertyKey) -> impl fmt::Display + '_ {
+    DisplayObjectPropertyKey(key)
 }
 
-pub fn format_non_local_binding(binding: &crate::hir::NonLocalBinding) -> String {
-    match binding {
-        crate::hir::NonLocalBinding::Global { name } => {
-            format!("Global {{ name: \"{}\" }}", name)
-        }
-        crate::hir::NonLocalBinding::ModuleLocal { name } => {
-            format!("ModuleLocal {{ name: \"{}\" }}", name)
-        }
-        crate::hir::NonLocalBinding::ImportDefault { name, module } => {
-            format!(
-                "ImportDefault {{ name: \"{}\", module: \"{}\" }}",
-                name, module
-            )
-        }
-        crate::hir::NonLocalBinding::ImportNamespace { name, module } => {
-            format!(
-                "ImportNamespace {{ name: \"{}\", module: \"{}\" }}",
-                name, module
-            )
-        }
-        crate::hir::NonLocalBinding::ImportSpecifier {
-            name,
-            module,
-            imported,
-        } => {
-            format!(
-                "ImportSpecifier {{ name: \"{}\", module: \"{}\", imported: \"{}\" }}",
-                name, module, imported
-            )
-        }
-    }
+pub fn format_non_local_binding(binding: &crate::hir::NonLocalBinding) -> impl fmt::Display + '_ {
+    DisplayNonLocalBinding(binding)
 }
 
 pub fn format_value_kind(kind: ValueKind) -> &'static str {
@@ -213,63 +99,198 @@ pub fn format_value_reason(reason: ValueReason) -> &'static str {
     }
 }
 
-// =============================================================================
-// PrintFormatter — shared stateful formatter
-// =============================================================================
+// -----------------------------------------------------------------------------
+// Display adaptors
+// -----------------------------------------------------------------------------
 
-/// Shared formatter state used by both HIR and reactive printers.
-///
-/// Both `DebugPrinter` structs delegate to this for formatting shared constructs
-/// like Places, Identifiers, Scopes, Types, InstructionValues, etc.
-pub struct PrintFormatter<'a> {
-    pub env: &'a Environment,
-    pub seen_identifiers: HashSet<IdentifierId>,
-    pub seen_scopes: HashSet<ScopeId>,
-    pub output: Vec<String>,
-    pub indent_level: usize,
-}
-
-impl<'a> PrintFormatter<'a> {
-    pub fn new(env: &'a Environment) -> Self {
-        Self {
-            env,
-            seen_identifiers: HashSet::new(),
-            seen_scopes: HashSet::new(),
-            output: Vec::new(),
-            indent_level: 0,
+struct DisplayLoc<'a>(&'a Option<SourceLocation>);
+impl fmt::Display for DisplayLoc<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(l) => DisplayLocValue(l).fmt(f),
+            None => f.write_str("generated"),
         }
     }
+}
 
-    pub fn line(&mut self, text: &str) {
-        let indent = "  ".repeat(self.indent_level);
-        self.output.push(format!("{}{}", indent, text));
+struct DisplayLocValue<'a>(&'a SourceLocation);
+impl fmt::Display for DisplayLocValue<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let l = self.0;
+        write!(
+            f,
+            "{}:{}-{}:{}",
+            l.start.line, l.start.column, l.end.line, l.end.column
+        )
     }
+}
 
-    /// Write a line without adding indentation (used when copying pre-formatted output)
-    pub fn line_raw(&mut self, text: &str) {
-        self.output.push(text.to_string());
+struct DisplayJsString<'a>(&'a [u8]);
+impl fmt::Display for DisplayJsString<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_js_escaped_chars(f, self.0.chars())
     }
+}
 
-    pub fn indent(&mut self) {
-        self.indent_level += 1;
+fn write_js_escaped_chars(f: &mut impl Write, chars: impl Iterator<Item = char>) -> fmt::Result {
+    f.write_char('"')?;
+    for c in chars {
+        match c {
+            '"' => f.write_str("\\\"")?,
+            '\\' => f.write_str("\\\\")?,
+            '\n' => f.write_str("\\n")?,
+            '\r' => f.write_str("\\r")?,
+            '\t' => f.write_str("\\t")?,
+            '\u{0008}' => f.write_str("\\b")?,
+            '\u{000c}' => f.write_str("\\f")?,
+            // Only escape C0 control chars (U+0000–U+001F), matching JS JSON.stringify.
+            // Do NOT escape C1 controls (U+0080–U+009F) — JS outputs those as literal chars.
+            c if (c as u32) <= 0x1F => write!(f, "\\u{:04x}", c as u32)?,
+            c => f.write_char(c)?,
+        }
     }
+    f.write_char('"')
+}
 
-    pub fn dedent(&mut self) {
-        self.indent_level -= 1;
+struct DisplayPrimitive<'a>(&'a crate::hir::PrimitiveValue);
+impl fmt::Display for DisplayPrimitive<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            crate::hir::PrimitiveValue::Null => f.write_str("null"),
+            crate::hir::PrimitiveValue::Undefined => f.write_str("undefined"),
+            crate::hir::PrimitiveValue::Boolean(b) => write!(f, "{}", b),
+            crate::hir::PrimitiveValue::Number(n) => {
+                f.write_str(&crate::hir::format_js_number(n.value()))
+            }
+            crate::hir::PrimitiveValue::String(s) => match s.as_str() {
+                Some(utf8) => write_js_escaped_chars(f, utf8.chars()),
+                // Ill-formed strings: escape the well-formed segments exactly like
+                // format_js_string and render each unpaired surrogate as \uXXXX,
+                // matching what TS's JSON.stringify-based printer emits.
+                None => {
+                    f.write_char('"')?;
+                    let mut units = s.code_units().into_iter().peekable();
+                    while let Some(unit) = units.next() {
+                        let is_lead = (0xD800..=0xDBFF).contains(&unit);
+                        let is_trail = (0xDC00..=0xDFFF).contains(&unit);
+                        if is_lead {
+                            if let Some(&next) = units.peek() {
+                                if (0xDC00..=0xDFFF).contains(&next) {
+                                    units.next();
+                                    let cp = 0x10000
+                                        + ((unit as u32 - 0xD800) << 10)
+                                        + (next as u32 - 0xDC00);
+                                    f.write_char(char::from_u32(cp).expect("valid supplementary"))?;
+                                    continue;
+                                }
+                            }
+                        }
+                        if is_lead || is_trail {
+                            write!(f, "\\u{unit:04x}")?;
+                            continue;
+                        }
+                        let c = char::from_u32(unit as u32).expect("BMP non-surrogate is a char");
+                        match c {
+                            '"' => f.write_str("\\\"")?,
+                            '\\' => f.write_str("\\\\")?,
+                            '\n' => f.write_str("\\n")?,
+                            '\r' => f.write_str("\\r")?,
+                            '\t' => f.write_str("\\t")?,
+                            '\u{0008}' => f.write_str("\\b")?,
+                            '\u{000c}' => f.write_str("\\f")?,
+                            c if (c as u32) <= 0x1F => write!(f, "\\u{:04x}", c as u32)?,
+                            c => f.write_char(c)?,
+                        }
+                    }
+                    f.write_char('"')
+                }
+            },
+        }
     }
+}
 
-    pub fn to_string_output(&self) -> String {
-        self.output.join("\n")
+struct DisplayPropertyLiteral<'a>(&'a crate::hir::PropertyLiteral);
+impl fmt::Display for DisplayPropertyLiteral<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            crate::hir::PropertyLiteral::String(s) => fmt::Display::fmt(BStr::new(s.slice()), f),
+            crate::hir::PropertyLiteral::Number(n) => {
+                f.write_str(&crate::hir::format_js_number(n.value()))
+            }
+        }
     }
+}
 
-    // =========================================================================
-    // AliasingEffect
-    // =========================================================================
+struct DisplayObjectPropertyKey<'a>(&'a crate::hir::ObjectPropertyKey);
+impl fmt::Display for DisplayObjectPropertyKey<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            crate::hir::ObjectPropertyKey::String { name } => {
+                write!(f, "String(\"{}\")", BStr::new(name.slice()))
+            }
+            crate::hir::ObjectPropertyKey::Identifier { name } => {
+                write!(f, "Identifier(\"{}\")", BStr::new(name.slice()))
+            }
+            crate::hir::ObjectPropertyKey::Computed { name } => {
+                write!(f, "Computed({})", name.identifier.0)
+            }
+            crate::hir::ObjectPropertyKey::Number { name } => {
+                write!(f, "Number({})", crate::hir::format_js_number(name.value()))
+            }
+        }
+    }
+}
 
-    pub fn format_effect(&self, effect: &AliasingEffect) -> String {
-        match effect {
+struct DisplayNonLocalBinding<'a>(&'a crate::hir::NonLocalBinding);
+impl fmt::Display for DisplayNonLocalBinding<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            crate::hir::NonLocalBinding::Global { name } => {
+                write!(f, "Global {{ name: \"{}\" }}", BStr::new(name.slice()))
+            }
+            crate::hir::NonLocalBinding::ModuleLocal { name } => {
+                write!(f, "ModuleLocal {{ name: \"{}\" }}", BStr::new(name.slice()))
+            }
+            crate::hir::NonLocalBinding::ImportDefault { name, module } => {
+                write!(
+                    f,
+                    "ImportDefault {{ name: \"{}\", module: \"{}\" }}",
+                    BStr::new(name.slice()),
+                    BStr::new(module.slice())
+                )
+            }
+            crate::hir::NonLocalBinding::ImportNamespace { name, module } => {
+                write!(
+                    f,
+                    "ImportNamespace {{ name: \"{}\", module: \"{}\" }}",
+                    BStr::new(name.slice()),
+                    BStr::new(module.slice())
+                )
+            }
+            crate::hir::NonLocalBinding::ImportSpecifier {
+                name,
+                module,
+                imported,
+            } => {
+                write!(
+                    f,
+                    "ImportSpecifier {{ name: \"{}\", module: \"{}\", imported: \"{}\" }}",
+                    BStr::new(name.slice()),
+                    BStr::new(module.slice()),
+                    BStr::new(imported.slice())
+                )
+            }
+        }
+    }
+}
+
+pub struct DisplayEffect<'a>(pub &'a AliasingEffect);
+impl fmt::Display for DisplayEffect<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
             AliasingEffect::Freeze { value, reason } => {
-                format!(
+                write!(
+                    f,
                     "Freeze {{ value: {}, reason: {} }}",
                     value.identifier.0,
                     format_value_reason(*reason)
@@ -277,45 +298,51 @@ impl<'a> PrintFormatter<'a> {
             }
             AliasingEffect::Mutate { value, reason } => match reason {
                 Some(MutationReason::AssignCurrentProperty) => {
-                    format!(
+                    write!(
+                        f,
                         "Mutate {{ value: {}, reason: AssignCurrentProperty }}",
                         value.identifier.0
                     )
                 }
-                None => format!("Mutate {{ value: {} }}", value.identifier.0),
+                None => write!(f, "Mutate {{ value: {} }}", value.identifier.0),
             },
             AliasingEffect::MutateConditionally { value } => {
-                format!("MutateConditionally {{ value: {} }}", value.identifier.0)
+                write!(f, "MutateConditionally {{ value: {} }}", value.identifier.0)
             }
             AliasingEffect::MutateTransitive { value } => {
-                format!("MutateTransitive {{ value: {} }}", value.identifier.0)
+                write!(f, "MutateTransitive {{ value: {} }}", value.identifier.0)
             }
             AliasingEffect::MutateTransitiveConditionally { value } => {
-                format!(
+                write!(
+                    f,
                     "MutateTransitiveConditionally {{ value: {} }}",
                     value.identifier.0
                 )
             }
             AliasingEffect::Capture { from, into } => {
-                format!(
+                write!(
+                    f,
                     "Capture {{ into: {}, from: {} }}",
                     into.identifier.0, from.identifier.0
                 )
             }
             AliasingEffect::Alias { from, into } => {
-                format!(
+                write!(
+                    f,
                     "Alias {{ into: {}, from: {} }}",
                     into.identifier.0, from.identifier.0
                 )
             }
             AliasingEffect::MaybeAlias { from, into } => {
-                format!(
+                write!(
+                    f,
                     "MaybeAlias {{ into: {}, from: {} }}",
                     into.identifier.0, from.identifier.0
                 )
             }
             AliasingEffect::Assign { from, into } => {
-                format!(
+                write!(
+                    f,
                     "Assign {{ into: {}, from: {} }}",
                     into.identifier.0, from.identifier.0
                 )
@@ -325,7 +352,8 @@ impl<'a> PrintFormatter<'a> {
                 value,
                 reason,
             } => {
-                format!(
+                write!(
+                    f,
                     "Create {{ into: {}, value: {}, reason: {} }}",
                     into.identifier.0,
                     format_value_kind(*value),
@@ -333,13 +361,15 @@ impl<'a> PrintFormatter<'a> {
                 )
             }
             AliasingEffect::CreateFrom { from, into } => {
-                format!(
+                write!(
+                    f,
                     "CreateFrom {{ into: {}, from: {} }}",
                     into.identifier.0, from.identifier.0
                 )
             }
             AliasingEffect::ImmutableCapture { from, into } => {
-                format!(
+                write!(
+                    f,
                     "ImmutableCapture {{ into: {}, from: {} }}",
                     into.identifier.0, from.identifier.0
                 )
@@ -352,60 +382,234 @@ impl<'a> PrintFormatter<'a> {
                 into,
                 ..
             } => {
-                let args_str: Vec<String> = args
-                    .iter()
-                    .map(|a| match a {
-                        PlaceOrSpreadOrHole::Hole => "hole".to_string(),
-                        PlaceOrSpreadOrHole::Place(p) => p.identifier.0.to_string(),
-                        PlaceOrSpreadOrHole::Spread(s) => format!("...{}", s.place.identifier.0),
-                    })
-                    .collect();
-                format!(
-                    "Apply {{ into: {}, receiver: {}, function: {}, mutatesFunction: {}, args: [{}] }}",
+                write!(
+                    f,
+                    "Apply {{ into: {}, receiver: {}, function: {}, mutatesFunction: {}, args: [",
                     into.identifier.0,
                     receiver.identifier.0,
                     function.identifier.0,
                     mutates_function,
-                    args_str.join(", ")
-                )
+                )?;
+                for (i, a) in args.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    match a {
+                        PlaceOrSpreadOrHole::Hole => f.write_str("hole")?,
+                        PlaceOrSpreadOrHole::Place(p) => write!(f, "{}", p.identifier.0)?,
+                        PlaceOrSpreadOrHole::Spread(s) => write!(f, "...{}", s.place.identifier.0)?,
+                    }
+                }
+                f.write_str("] }")
             }
             AliasingEffect::CreateFunction {
                 captures,
                 function_id: _,
                 into,
             } => {
-                let cap_str: Vec<String> = captures
-                    .iter()
-                    .map(|p| p.identifier.0.to_string())
-                    .collect();
-                format!(
-                    "CreateFunction {{ into: {}, captures: [{}] }}",
-                    into.identifier.0,
-                    cap_str.join(", ")
-                )
+                write!(
+                    f,
+                    "CreateFunction {{ into: {}, captures: [",
+                    into.identifier.0
+                )?;
+                for (i, p) in captures.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}", p.identifier.0)?;
+                }
+                f.write_str("] }")
             }
             AliasingEffect::MutateFrozen { place, error } => {
-                format!(
+                write!(
+                    f,
                     "MutateFrozen {{ place: {}, reason: {:?} }}",
                     place.identifier.0, error.reason
                 )
             }
             AliasingEffect::MutateGlobal { place, error } => {
-                format!(
+                write!(
+                    f,
                     "MutateGlobal {{ place: {}, reason: {:?} }}",
                     place.identifier.0, error.reason
                 )
             }
             AliasingEffect::Impure { place, error } => {
-                format!(
+                write!(
+                    f,
                     "Impure {{ place: {}, reason: {:?} }}",
                     place.identifier.0, error.reason
                 )
             }
             AliasingEffect::Render { place } => {
-                format!("Render {{ place: {} }}", place.identifier.0)
+                write!(f, "Render {{ place: {} }}", place.identifier.0)
             }
         }
+    }
+}
+
+pub struct DisplayType<'a>(pub &'a Type);
+impl fmt::Display for DisplayType<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Type::Primitive => f.write_str("Primitive"),
+            Type::Function {
+                shape_id,
+                return_type,
+                is_constructor,
+            } => {
+                f.write_str("Function { shapeId: ")?;
+                match shape_id {
+                    Some(s) => write!(f, "\"{}\"", s)?,
+                    None => f.write_str("null")?,
+                }
+                write!(
+                    f,
+                    ", return: {}, isConstructor: {} }}",
+                    DisplayType(&**return_type),
+                    is_constructor
+                )
+            }
+            Type::Object { shape_id } => {
+                f.write_str("Object { shapeId: ")?;
+                match shape_id {
+                    Some(s) => write!(f, "\"{}\"", s)?,
+                    None => f.write_str("null")?,
+                }
+                f.write_str(" }")
+            }
+            Type::TypeVar { id } => write!(f, "Type({})", id.0),
+            Type::Poly => f.write_str("Poly"),
+            Type::Phi { operands } => {
+                f.write_str("Phi { operands: [")?;
+                for (i, op) in operands.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(", ")?;
+                    }
+                    DisplayType(op).fmt(f)?;
+                }
+                f.write_str("] }")
+            }
+            Type::Property {
+                object_type,
+                object_name,
+                property_name,
+            } => {
+                write!(
+                    f,
+                    "Property {{ objectType: {}, objectName: \"{}\", propertyName: ",
+                    DisplayType(&**object_type),
+                    BStr::new(object_name.slice()),
+                )?;
+                match property_name {
+                    crate::hir::PropertyNameKind::Literal { value } => {
+                        write!(f, "\"{}\"", DisplayPropertyLiteral(value))?;
+                    }
+                    crate::hir::PropertyNameKind::Computed { value } => {
+                        write!(f, "computed({})", DisplayType(&**value))?;
+                    }
+                }
+                f.write_str(" }")
+            }
+            Type::ObjectMethod => f.write_str("ObjectMethod"),
+        }
+    }
+}
+
+struct DisplayTypeId<'a> {
+    env: &'a Environment,
+    id: crate::hir::TypeId,
+}
+impl fmt::Display for DisplayTypeId<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.env.types.get(self.id.0 as usize) {
+            Some(ty) => DisplayType(ty).fmt(f),
+            None => write!(f, "Type({})", self.id.0),
+        }
+    }
+}
+
+// =============================================================================
+// PrintFormatter — shared stateful formatter
+// =============================================================================
+
+/// Shared formatter state used by both HIR and reactive printers.
+///
+/// Both `DebugPrinter` structs delegate to this for formatting shared constructs
+/// like Places, Identifiers, Scopes, Types, InstructionValues, etc.
+pub struct PrintFormatter<'a> {
+    pub env: &'a Environment,
+    pub seen_identifiers: HashSet<IdentifierId>,
+    pub seen_scopes: HashSet<ScopeId>,
+    pub output: String,
+    pub indent_level: usize,
+}
+
+impl<'a> PrintFormatter<'a> {
+    pub fn new(env: &'a Environment) -> Self {
+        Self {
+            env,
+            seen_identifiers: HashSet::new(),
+            seen_scopes: HashSet::new(),
+            output: String::new(),
+            indent_level: 0,
+        }
+    }
+
+    #[inline]
+    fn begin_line(&mut self) {
+        if !self.output.is_empty() {
+            self.output.push('\n');
+        }
+        for _ in 0..self.indent_level {
+            self.output.push_str("  ");
+        }
+    }
+
+    pub fn line(&mut self, text: &str) {
+        self.begin_line();
+        self.output.push_str(text);
+    }
+
+    pub fn line_fmt(&mut self, args: fmt::Arguments<'_>) {
+        self.begin_line();
+        let _ = self.output.write_fmt(args);
+    }
+
+    /// Write a line without adding indentation (used when copying pre-formatted output)
+    pub fn line_raw(&mut self, text: &str) {
+        if !self.output.is_empty() {
+            self.output.push('\n');
+        }
+        self.output.push_str(text);
+    }
+
+    pub fn indent(&mut self) {
+        self.indent_level += 1;
+    }
+
+    pub fn dedent(&mut self) {
+        self.indent_level -= 1;
+    }
+
+    pub fn to_string_output(&self) -> String {
+        self.output.clone()
+    }
+
+    pub fn into_output(self) -> String {
+        self.output
+    }
+
+    pub fn as_output(&self) -> &str {
+        &self.output
+    }
+
+    // =========================================================================
+    // AliasingEffect
+    // =========================================================================
+
+    pub fn format_effect<'e>(&self, effect: &'e AliasingEffect) -> impl fmt::Display + 'e {
+        DisplayEffect(effect)
     }
 
     // =========================================================================
@@ -413,9 +617,17 @@ impl<'a> PrintFormatter<'a> {
     // =========================================================================
 
     pub fn format_place_field(&mut self, field_name: &str, place: &Place) {
+        self.format_place_field_inner(format_args!("{}", field_name), place);
+    }
+
+    pub fn format_place_field_idx(&mut self, index: usize, place: &Place) {
+        self.format_place_field_inner(format_args!("[{}]", index), place);
+    }
+
+    fn format_place_field_inner(&mut self, field_name: fmt::Arguments<'_>, place: &Place) {
         let is_seen = self.seen_identifiers.contains(&place.identifier);
         if is_seen {
-            self.line(&format!(
+            self.line_fmt(format_args!(
                 "{}: Place {{ identifier: Identifier({}), effect: {}, reactive: {}, loc: {} }}",
                 field_name,
                 place.identifier.0,
@@ -424,15 +636,15 @@ impl<'a> PrintFormatter<'a> {
                 format_loc(&place.loc)
             ));
         } else {
-            self.line(&format!("{}: Place {{", field_name));
+            self.line_fmt(format_args!("{}: Place {{", field_name));
             self.indent();
             self.line("identifier:");
             self.indent();
             self.format_identifier(place.identifier);
             self.dedent();
-            self.line(&format!("effect: {}", place.effect));
-            self.line(&format!("reactive: {}", place.reactive));
-            self.line(&format!("loc: {}", format_loc(&place.loc)));
+            self.line_fmt(format_args!("effect: {}", place.effect));
+            self.line_fmt(format_args!("reactive: {}", place.reactive));
+            self.line_fmt(format_args!("loc: {}", format_loc(&place.loc)));
             self.dedent();
             self.line("}");
         }
@@ -444,20 +656,22 @@ impl<'a> PrintFormatter<'a> {
 
     pub fn format_identifier(&mut self, id: IdentifierId) {
         self.seen_identifiers.insert(id);
-        let ident = &self.env.identifiers[id.0 as usize];
+        let env = self.env;
+        let ident = &env.identifiers[id.0 as usize];
         self.line("Identifier {");
         self.indent();
-        self.line(&format!("id: {}", ident.id.0));
-        self.line(&format!("declarationId: {}", ident.declaration_id.0));
+        self.line_fmt(format_args!("id: {}", ident.id.0));
+        self.line_fmt(format_args!("declarationId: {}", ident.declaration_id.0));
         match &ident.name {
             Some(name) => {
                 let (kind, value) = match name {
-                    IdentifierName::Named(n) => ("named", n.as_str()),
-                    IdentifierName::Promoted(n) => ("promoted", n.as_str()),
+                    IdentifierName::Named(n) => ("named", n.slice()),
+                    IdentifierName::Promoted(n) => ("promoted", n.slice()),
                 };
-                self.line(&format!(
+                self.line_fmt(format_args!(
                     "name: {{ kind: \"{}\", value: \"{}\" }}",
-                    kind, value
+                    kind,
+                    BStr::new(value)
                 ));
             }
             None => self.line("name: null"),
@@ -471,7 +685,7 @@ impl<'a> PrintFormatter<'a> {
         // so we match by using ident.mutable_range directly (which is synced
         // at the AlignReactiveScopesToBlockScopesHIR step but not re-synced
         // after scope repointing in merge passes).
-        self.line(&format!(
+        self.line_fmt(format_args!(
             "mutableRange: [{}:{}]",
             ident.mutable_range.start.0, ident.mutable_range.end.0
         ));
@@ -479,8 +693,14 @@ impl<'a> PrintFormatter<'a> {
             Some(scope_id) => self.format_scope_field("scope", scope_id),
             None => self.line("scope: null"),
         }
-        self.line(&format!("type: {}", self.format_type(ident.type_)));
-        self.line(&format!("loc: {}", format_loc(&ident.loc)));
+        self.line_fmt(format_args!(
+            "type: {}",
+            DisplayTypeId {
+                env,
+                id: ident.type_
+            }
+        ));
+        self.line_fmt(format_args!("loc: {}", format_loc(&ident.loc)));
         self.dedent();
         self.line("}");
     }
@@ -492,53 +712,46 @@ impl<'a> PrintFormatter<'a> {
     pub fn format_scope_field(&mut self, field_name: &str, scope_id: ScopeId) {
         let is_seen = self.seen_scopes.contains(&scope_id);
         if is_seen {
-            self.line(&format!("{}: Scope({})", field_name, scope_id.0));
+            self.line_fmt(format_args!("{}: Scope({})", field_name, scope_id.0));
         } else {
             self.seen_scopes.insert(scope_id);
-            if let Some(scope) = self.env.scopes.iter().find(|s| s.id == scope_id) {
-                let range_start = scope.range.start.0;
-                let range_end = scope.range.end.0;
-                let dependencies = scope.dependencies.clone();
-                let declarations = scope.declarations.clone();
-                let reassignments = scope.reassignments.clone();
-                let early_return_value = scope.early_return_value.clone();
-                let merged = scope.merged.clone();
-                let loc = scope.loc;
-
-                self.line(&format!("{}: Scope {{", field_name));
+            let env = self.env;
+            if let Some(scope) = env.scopes.iter().find(|s| s.id == scope_id) {
+                self.line_fmt(format_args!("{}: Scope {{", field_name));
                 self.indent();
-                self.line(&format!("id: {}", scope_id.0));
-                self.line(&format!("range: [{}:{}]", range_start, range_end));
+                self.line_fmt(format_args!("id: {}", scope_id.0));
+                self.line_fmt(format_args!(
+                    "range: [{}:{}]",
+                    scope.range.start.0, scope.range.end.0
+                ));
 
                 // dependencies
                 self.line("dependencies:");
                 self.indent();
-                for (i, dep) in dependencies.iter().enumerate() {
-                    let path_str: String = dep
-                        .path
-                        .iter()
-                        .map(|p| {
-                            let prop = match &p.property {
-                                crate::hir::PropertyLiteral::String(s) => s.clone(),
-                                crate::hir::PropertyLiteral::Number(n) => {
-                                    crate::hir::format_js_number(n.value())
-                                }
-                            };
-                            format!("{}{}", if p.optional { "?." } else { "." }, prop)
-                        })
-                        .collect();
-                    self.line(&format!(
-                        "[{}] {{ identifier: {}, reactive: {}, path: \"{}\" }}",
-                        i, dep.identifier.0, dep.reactive, path_str
-                    ));
+                for (i, dep) in scope.dependencies.iter().enumerate() {
+                    self.begin_line();
+                    let _ = write!(
+                        self.output,
+                        "[{}] {{ identifier: {}, reactive: {}, path: \"",
+                        i, dep.identifier.0, dep.reactive
+                    );
+                    for p in dep.path.iter() {
+                        let _ = write!(
+                            self.output,
+                            "{}{}",
+                            if p.optional { "?." } else { "." },
+                            DisplayPropertyLiteral(&p.property)
+                        );
+                    }
+                    self.output.push_str("\" }");
                 }
                 self.dedent();
 
                 // declarations
                 self.line("declarations:");
                 self.indent();
-                for (ident_id, decl) in &declarations {
-                    self.line(&format!(
+                for (ident_id, decl) in &scope.declarations {
+                    self.line_fmt(format_args!(
                         "{}: {{ identifier: {}, scope: {} }}",
                         ident_id.0, decl.identifier.0, decl.scope.0
                     ));
@@ -548,34 +761,41 @@ impl<'a> PrintFormatter<'a> {
                 // reassignments
                 self.line("reassignments:");
                 self.indent();
-                for ident_id in &reassignments {
-                    self.line(&format!("{}", ident_id.0));
+                for ident_id in &scope.reassignments {
+                    self.line_fmt(format_args!("{}", ident_id.0));
                 }
                 self.dedent();
 
                 // earlyReturnValue
-                if let Some(early_return) = &early_return_value {
+                if let Some(early_return) = &scope.early_return_value {
                     self.line("earlyReturnValue:");
                     self.indent();
-                    self.line(&format!("value: {}", early_return.value.0));
-                    self.line(&format!("loc: {}", format_loc(&early_return.loc)));
-                    self.line(&format!("label: bb{}", early_return.label.0));
+                    self.line_fmt(format_args!("value: {}", early_return.value.0));
+                    self.line_fmt(format_args!("loc: {}", format_loc(&early_return.loc)));
+                    self.line_fmt(format_args!("label: bb{}", early_return.label.0));
                     self.dedent();
                 } else {
                     self.line("earlyReturnValue: null");
                 }
 
                 // merged
-                let merged_str: Vec<String> = merged.iter().map(|s| s.0.to_string()).collect();
-                self.line(&format!("merged: [{}]", merged_str.join(", ")));
+                self.begin_line();
+                self.output.push_str("merged: [");
+                for (i, s) in scope.merged.iter().enumerate() {
+                    if i > 0 {
+                        self.output.push_str(", ");
+                    }
+                    let _ = write!(self.output, "{}", s.0);
+                }
+                self.output.push(']');
 
                 // loc
-                self.line(&format!("loc: {}", format_loc(&loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(&scope.loc)));
 
                 self.dedent();
                 self.line("}");
             } else {
-                self.line(&format!("{}: Scope({})", field_name, scope_id.0));
+                self.line_fmt(format_args!("{}: Scope({})", field_name, scope_id.0));
             }
         }
     }
@@ -584,72 +804,15 @@ impl<'a> PrintFormatter<'a> {
     // Type
     // =========================================================================
 
-    pub fn format_type(&self, type_id: crate::hir::TypeId) -> String {
-        if let Some(ty) = self.env.types.get(type_id.0 as usize) {
-            self.format_type_value(ty)
-        } else {
-            format!("Type({})", type_id.0)
+    pub fn format_type(&self, type_id: crate::hir::TypeId) -> impl fmt::Display + 'a {
+        DisplayTypeId {
+            env: self.env,
+            id: type_id,
         }
     }
 
-    pub fn format_type_value(&self, ty: &Type) -> String {
-        match ty {
-            Type::Primitive => "Primitive".to_string(),
-            Type::Function {
-                shape_id,
-                return_type,
-                is_constructor,
-            } => {
-                format!(
-                    "Function {{ shapeId: {}, return: {}, isConstructor: {} }}",
-                    match shape_id {
-                        Some(s) => format!("\"{}\"", s),
-                        None => "null".to_string(),
-                    },
-                    self.format_type_value(return_type),
-                    is_constructor
-                )
-            }
-            Type::Object { shape_id } => {
-                format!(
-                    "Object {{ shapeId: {} }}",
-                    match shape_id {
-                        Some(s) => format!("\"{}\"", s),
-                        None => "null".to_string(),
-                    }
-                )
-            }
-            Type::TypeVar { id } => format!("Type({})", id.0),
-            Type::Poly => "Poly".to_string(),
-            Type::Phi { operands } => {
-                let ops: Vec<String> = operands
-                    .iter()
-                    .map(|op| self.format_type_value(op))
-                    .collect();
-                format!("Phi {{ operands: [{}] }}", ops.join(", "))
-            }
-            Type::Property {
-                object_type,
-                object_name,
-                property_name,
-            } => {
-                let prop_str = match property_name {
-                    crate::hir::PropertyNameKind::Literal { value } => {
-                        format!("\"{}\"", format_property_literal(value))
-                    }
-                    crate::hir::PropertyNameKind::Computed { value } => {
-                        format!("computed({})", self.format_type_value(value))
-                    }
-                };
-                format!(
-                    "Property {{ objectType: {}, objectName: \"{}\", propertyName: {} }}",
-                    self.format_type_value(object_type),
-                    object_name,
-                    prop_str
-                )
-            }
-            Type::ObjectMethod => "ObjectMethod".to_string(),
-        }
+    pub fn format_type_value<'t>(&self, ty: &'t Type) -> impl fmt::Display + 't {
+        DisplayType(ty)
     }
 
     // =========================================================================
@@ -657,9 +820,9 @@ impl<'a> PrintFormatter<'a> {
     // =========================================================================
 
     pub fn format_lvalue(&mut self, field_name: &str, lv: &LValue) {
-        self.line(&format!("{}:", field_name));
+        self.line_fmt(format_args!("{}:", field_name));
         self.indent();
-        self.line(&format!("kind: {:?}", lv.kind));
+        self.line_fmt(format_args!("kind: {:?}", lv.kind));
         self.format_place_field("place", &lv.place);
         self.dedent();
     }
@@ -678,13 +841,13 @@ impl<'a> PrintFormatter<'a> {
                 for (i, item) in arr.items.iter().enumerate() {
                     match item {
                         crate::hir::ArrayPatternElement::Hole => {
-                            self.line(&format!("[{}] Hole", i));
+                            self.line_fmt(format_args!("[{}] Hole", i));
                         }
                         crate::hir::ArrayPatternElement::Place(p) => {
-                            self.format_place_field(&format!("[{}]", i), p);
+                            self.format_place_field_idx(i, p);
                         }
                         crate::hir::ArrayPatternElement::Spread(s) => {
-                            self.line(&format!("[{}] Spread:", i));
+                            self.line_fmt(format_args!("[{}] Spread:", i));
                             self.indent();
                             self.format_place_field("place", &s.place);
                             self.dedent();
@@ -692,7 +855,7 @@ impl<'a> PrintFormatter<'a> {
                     }
                 }
                 self.dedent();
-                self.line(&format!("loc: {}", format_loc(&arr.loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(&arr.loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -704,16 +867,19 @@ impl<'a> PrintFormatter<'a> {
                 for (i, prop) in obj.properties.iter().enumerate() {
                     match prop {
                         crate::hir::ObjectPropertyOrSpread::Property(p) => {
-                            self.line(&format!("[{}] ObjectProperty {{", i));
+                            self.line_fmt(format_args!("[{}] ObjectProperty {{", i));
                             self.indent();
-                            self.line(&format!("key: {}", format_object_property_key(&p.key)));
-                            self.line(&format!("type: \"{}\"", p.property_type));
+                            self.line_fmt(format_args!(
+                                "key: {}",
+                                format_object_property_key(&p.key)
+                            ));
+                            self.line_fmt(format_args!("type: \"{}\"", p.property_type));
                             self.format_place_field("place", &p.place);
                             self.dedent();
                             self.line("}");
                         }
                         crate::hir::ObjectPropertyOrSpread::Spread(s) => {
-                            self.line(&format!("[{}] Spread:", i));
+                            self.line_fmt(format_args!("[{}] Spread:", i));
                             self.indent();
                             self.format_place_field("place", &s.place);
                             self.dedent();
@@ -721,7 +887,7 @@ impl<'a> PrintFormatter<'a> {
                     }
                 }
                 self.dedent();
-                self.line(&format!("loc: {}", format_loc(&obj.loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(&obj.loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -735,10 +901,10 @@ impl<'a> PrintFormatter<'a> {
     pub fn format_argument(&mut self, arg: &crate::hir::PlaceOrSpread, index: usize) {
         match arg {
             crate::hir::PlaceOrSpread::Place(p) => {
-                self.format_place_field(&format!("[{}]", index), p);
+                self.format_place_field_idx(index, p);
             }
             crate::hir::PlaceOrSpread::Spread(s) => {
-                self.line(&format!("[{}] Spread:", index));
+                self.line_fmt(format_args!("[{}] Spread:", index));
                 self.indent();
                 self.format_place_field("place", &s.place);
                 self.dedent();
@@ -767,13 +933,13 @@ impl<'a> PrintFormatter<'a> {
                 for (i, elem) in elements.iter().enumerate() {
                     match elem {
                         crate::hir::ArrayElement::Place(p) => {
-                            self.format_place_field(&format!("[{}]", i), p);
+                            self.format_place_field_idx(i, p);
                         }
                         crate::hir::ArrayElement::Hole => {
-                            self.line(&format!("[{}] Hole", i));
+                            self.line_fmt(format_args!("[{}] Hole", i));
                         }
                         crate::hir::ArrayElement::Spread(s) => {
-                            self.line(&format!("[{}] Spread:", i));
+                            self.line_fmt(format_args!("[{}] Spread:", i));
                             self.indent();
                             self.format_place_field("place", &s.place);
                             self.dedent();
@@ -781,7 +947,7 @@ impl<'a> PrintFormatter<'a> {
                     }
                 }
                 self.dedent();
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -793,16 +959,19 @@ impl<'a> PrintFormatter<'a> {
                 for (i, prop) in properties.iter().enumerate() {
                     match prop {
                         crate::hir::ObjectPropertyOrSpread::Property(p) => {
-                            self.line(&format!("[{}] ObjectProperty {{", i));
+                            self.line_fmt(format_args!("[{}] ObjectProperty {{", i));
                             self.indent();
-                            self.line(&format!("key: {}", format_object_property_key(&p.key)));
-                            self.line(&format!("type: \"{}\"", p.property_type));
+                            self.line_fmt(format_args!(
+                                "key: {}",
+                                format_object_property_key(&p.key)
+                            ));
+                            self.line_fmt(format_args!("type: \"{}\"", p.property_type));
                             self.format_place_field("place", &p.place);
                             self.dedent();
                             self.line("}");
                         }
                         crate::hir::ObjectPropertyOrSpread::Spread(s) => {
-                            self.line(&format!("[{}] Spread:", i));
+                            self.line_fmt(format_args!("[{}] Spread:", i));
                             self.indent();
                             self.format_place_field("place", &s.place);
                             self.dedent();
@@ -810,7 +979,7 @@ impl<'a> PrintFormatter<'a> {
                     }
                 }
                 self.dedent();
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -821,9 +990,9 @@ impl<'a> PrintFormatter<'a> {
             } => {
                 self.line("UnaryExpression {");
                 self.indent();
-                self.line(&format!("operator: \"{}\"", operator));
+                self.line_fmt(format_args!("operator: \"{}\"", operator));
                 self.format_place_field("value", val);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -835,10 +1004,10 @@ impl<'a> PrintFormatter<'a> {
             } => {
                 self.line("BinaryExpression {");
                 self.indent();
-                self.line(&format!("operator: \"{}\"", operator));
+                self.line_fmt(format_args!("operator: \"{}\"", operator));
                 self.format_place_field("left", left);
                 self.format_place_field("right", right);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -852,7 +1021,7 @@ impl<'a> PrintFormatter<'a> {
                     self.format_argument(arg, i);
                 }
                 self.dedent();
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -866,7 +1035,7 @@ impl<'a> PrintFormatter<'a> {
                     self.format_argument(arg, i);
                 }
                 self.dedent();
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -886,19 +1055,19 @@ impl<'a> PrintFormatter<'a> {
                     self.format_argument(arg, i);
                 }
                 self.dedent();
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
             InstructionValue::JSXText { value: val, loc } => {
-                self.line(&format!(
+                self.line_fmt(format_args!(
                     "JSXText {{ value: {}, loc: {} }}",
-                    format_js_string(val),
+                    format_js_string(val.slice()),
                     format_loc(loc)
                 ));
             }
             InstructionValue::Primitive { value: prim, loc } => {
-                self.line(&format!(
+                self.line_fmt(format_args!(
                     "Primitive {{ value: {}, loc: {} }}",
                     format_primitive(prim),
                     format_loc(loc)
@@ -915,14 +1084,17 @@ impl<'a> PrintFormatter<'a> {
                 self.line("TypeCastExpression {");
                 self.indent();
                 self.format_place_field("value", val);
-                self.line(&format!("type: {}", self.format_type_value(type_)));
+                self.line_fmt(format_args!("type: {}", DisplayType(type_)));
                 if let Some(annotation_name) = type_annotation_name {
-                    self.line(&format!("typeAnnotation: {}", annotation_name));
+                    self.line_fmt(format_args!(
+                        "typeAnnotation: {}",
+                        BStr::new(annotation_name.slice())
+                    ));
                 }
                 if let Some(annotation_kind) = type_annotation_kind {
-                    self.line(&format!("typeAnnotationKind: \"{}\"", annotation_kind));
+                    self.line_fmt(format_args!("typeAnnotationKind: \"{}\"", annotation_kind));
                 }
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -941,7 +1113,10 @@ impl<'a> PrintFormatter<'a> {
                         self.format_place_field("tag", p);
                     }
                     crate::hir::JsxTag::Builtin(b) => {
-                        self.line(&format!("tag: BuiltinTag(\"{}\")", b.name));
+                        self.line_fmt(format_args!(
+                            "tag: BuiltinTag(\"{}\")",
+                            BStr::new(b.name.slice())
+                        ));
                     }
                 }
                 self.line("props:");
@@ -949,15 +1124,15 @@ impl<'a> PrintFormatter<'a> {
                 for (i, prop) in props.iter().enumerate() {
                     match prop {
                         crate::hir::JsxAttribute::Attribute { name, place } => {
-                            self.line(&format!("[{}] JsxAttribute {{", i));
+                            self.line_fmt(format_args!("[{}] JsxAttribute {{", i));
                             self.indent();
-                            self.line(&format!("name: \"{}\"", name));
+                            self.line_fmt(format_args!("name: \"{}\"", BStr::new(name.slice())));
                             self.format_place_field("place", place);
                             self.dedent();
                             self.line("}");
                         }
                         crate::hir::JsxAttribute::SpreadAttribute { argument } => {
-                            self.line(&format!("[{}] JsxSpreadAttribute:", i));
+                            self.line_fmt(format_args!("[{}] JsxSpreadAttribute:", i));
                             self.indent();
                             self.format_place_field("argument", argument);
                             self.dedent();
@@ -970,15 +1145,15 @@ impl<'a> PrintFormatter<'a> {
                         self.line("children:");
                         self.indent();
                         for (i, child) in c.iter().enumerate() {
-                            self.format_place_field(&format!("[{}]", i), child);
+                            self.format_place_field_idx(i, child);
                         }
                         self.dedent();
                     }
                     None => self.line("children: null"),
                 }
-                self.line(&format!("openingLoc: {}", format_loc(opening_loc)));
-                self.line(&format!("closingLoc: {}", format_loc(closing_loc)));
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("openingLoc: {}", format_loc(opening_loc)));
+                self.line_fmt(format_args!("closingLoc: {}", format_loc(closing_loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -988,26 +1163,29 @@ impl<'a> PrintFormatter<'a> {
                 self.line("children:");
                 self.indent();
                 for (i, child) in children.iter().enumerate() {
-                    self.format_place_field(&format!("[{}]", i), child);
+                    self.format_place_field_idx(i, child);
                 }
                 self.dedent();
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
             InstructionValue::UnsupportedNode { node_type, loc, .. } => match node_type {
-                Some(t) => self.line(&format!(
+                Some(t) => self.line_fmt(format_args!(
                     "UnsupportedNode {{ type: {:?}, loc: {} }}",
                     t,
                     format_loc(loc)
                 )),
-                None => self.line(&format!("UnsupportedNode {{ loc: {} }}", format_loc(loc))),
+                None => self.line_fmt(format_args!(
+                    "UnsupportedNode {{ loc: {} }}",
+                    format_loc(loc)
+                )),
             },
             InstructionValue::LoadLocal { place, loc } => {
                 self.line("LoadLocal {");
                 self.indent();
                 self.format_place_field("place", place);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1019,14 +1197,11 @@ impl<'a> PrintFormatter<'a> {
                 self.line("DeclareLocal {");
                 self.indent();
                 self.format_lvalue("lvalue", lvalue);
-                self.line(&format!(
-                    "type: {}",
-                    match type_annotation {
-                        Some(t) => t.clone(),
-                        None => "null".to_string(),
-                    }
-                ));
-                self.line(&format!("loc: {}", format_loc(loc)));
+                match type_annotation {
+                    Some(t) => self.line_fmt(format_args!("type: {}", BStr::new(t.slice()))),
+                    None => self.line("type: null"),
+                }
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1035,10 +1210,10 @@ impl<'a> PrintFormatter<'a> {
                 self.indent();
                 self.line("lvalue:");
                 self.indent();
-                self.line(&format!("kind: {:?}", lvalue.kind));
+                self.line_fmt(format_args!("kind: {:?}", lvalue.kind));
                 self.format_place_field("place", &lvalue.place);
                 self.dedent();
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1052,14 +1227,11 @@ impl<'a> PrintFormatter<'a> {
                 self.indent();
                 self.format_lvalue("lvalue", lvalue);
                 self.format_place_field("value", val);
-                self.line(&format!(
-                    "type: {}",
-                    match type_annotation {
-                        Some(t) => t.clone(),
-                        None => "null".to_string(),
-                    }
-                ));
-                self.line(&format!("loc: {}", format_loc(loc)));
+                match type_annotation {
+                    Some(t) => self.line_fmt(format_args!("type: {}", BStr::new(t.slice()))),
+                    None => self.line("type: null"),
+                }
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1067,7 +1239,7 @@ impl<'a> PrintFormatter<'a> {
                 self.line("LoadContext {");
                 self.indent();
                 self.format_place_field("place", place);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1080,11 +1252,11 @@ impl<'a> PrintFormatter<'a> {
                 self.indent();
                 self.line("lvalue:");
                 self.indent();
-                self.line(&format!("kind: {:?}", lvalue.kind));
+                self.line_fmt(format_args!("kind: {:?}", lvalue.kind));
                 self.format_place_field("place", &lvalue.place);
                 self.dedent();
                 self.format_place_field("value", val);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1097,11 +1269,11 @@ impl<'a> PrintFormatter<'a> {
                 self.indent();
                 self.line("lvalue:");
                 self.indent();
-                self.line(&format!("kind: {:?}", lvalue.kind));
+                self.line_fmt(format_args!("kind: {:?}", lvalue.kind));
                 self.format_pattern(&lvalue.pattern);
                 self.dedent();
                 self.format_place_field("value", val);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1113,11 +1285,11 @@ impl<'a> PrintFormatter<'a> {
                 self.line("PropertyLoad {");
                 self.indent();
                 self.format_place_field("object", object);
-                self.line(&format!(
+                self.line_fmt(format_args!(
                     "property: \"{}\"",
                     format_property_literal(property)
                 ));
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1130,12 +1302,12 @@ impl<'a> PrintFormatter<'a> {
                 self.line("PropertyStore {");
                 self.indent();
                 self.format_place_field("object", object);
-                self.line(&format!(
+                self.line_fmt(format_args!(
                     "property: \"{}\"",
                     format_property_literal(property)
                 ));
                 self.format_place_field("value", val);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1147,11 +1319,11 @@ impl<'a> PrintFormatter<'a> {
                 self.line("PropertyDelete {");
                 self.indent();
                 self.format_place_field("object", object);
-                self.line(&format!(
+                self.line_fmt(format_args!(
                     "property: \"{}\"",
                     format_property_literal(property)
                 ));
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1164,7 +1336,7 @@ impl<'a> PrintFormatter<'a> {
                 self.indent();
                 self.format_place_field("object", object);
                 self.format_place_field("property", property);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1179,7 +1351,7 @@ impl<'a> PrintFormatter<'a> {
                 self.format_place_field("object", object);
                 self.format_place_field("property", property);
                 self.format_place_field("value", val);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1192,15 +1364,18 @@ impl<'a> PrintFormatter<'a> {
                 self.indent();
                 self.format_place_field("object", object);
                 self.format_place_field("property", property);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
             InstructionValue::LoadGlobal { binding, loc } => {
                 self.line("LoadGlobal {");
                 self.indent();
-                self.line(&format!("binding: {}", format_non_local_binding(binding)));
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!(
+                    "binding: {}",
+                    format_non_local_binding(binding)
+                ));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1211,9 +1386,9 @@ impl<'a> PrintFormatter<'a> {
             } => {
                 self.line("StoreGlobal {");
                 self.indent();
-                self.line(&format!("name: \"{}\"", name));
+                self.line_fmt(format_args!("name: \"{}\"", BStr::new(name.slice())));
                 self.format_place_field("value", val);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1226,29 +1401,26 @@ impl<'a> PrintFormatter<'a> {
             } => {
                 self.line("FunctionExpression {");
                 self.indent();
-                self.line(&format!(
-                    "name: {}",
-                    match name {
-                        Some(n) => format!("\"{}\"", n),
-                        None => "null".to_string(),
+                match name {
+                    Some(n) => self.line_fmt(format_args!("name: \"{}\"", BStr::new(n.slice()))),
+                    None => self.line("name: null"),
+                }
+                match name_hint {
+                    Some(h) => {
+                        self.line_fmt(format_args!("nameHint: \"{}\"", BStr::new(h.slice())))
                     }
-                ));
-                self.line(&format!(
-                    "nameHint: {}",
-                    match name_hint {
-                        Some(h) => format!("\"{}\"", h),
-                        None => "null".to_string(),
-                    }
-                ));
-                self.line(&format!("type: \"{:?}\"", expr_type));
+                    None => self.line("nameHint: null"),
+                }
+                self.line_fmt(format_args!("type: \"{:?}\"", expr_type));
                 self.line("loweredFunc:");
-                let inner_func = &self.env.functions[lowered_func.func.0 as usize];
+                let env = self.env;
+                let inner_func = &env.functions[lowered_func.func.0 as usize];
                 if let Some(formatter) = inner_func_formatter {
                     formatter(self, inner_func);
                 } else {
-                    self.line(&format!("  <function {}>", lowered_func.func.0));
+                    self.line_fmt(format_args!("  <function {}>", lowered_func.func.0));
                 }
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1256,13 +1428,14 @@ impl<'a> PrintFormatter<'a> {
                 self.line("ObjectMethod {");
                 self.indent();
                 self.line("loweredFunc:");
-                let inner_func = &self.env.functions[lowered_func.func.0 as usize];
+                let env = self.env;
+                let inner_func = &env.functions[lowered_func.func.0 as usize];
                 if let Some(formatter) = inner_func_formatter {
                     formatter(self, inner_func);
                 } else {
-                    self.line(&format!("  <function {}>", lowered_func.func.0));
+                    self.line_fmt(format_args!("  <function {}>", lowered_func.func.0));
                 }
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1274,15 +1447,14 @@ impl<'a> PrintFormatter<'a> {
                 self.line("TaggedTemplateExpression {");
                 self.indent();
                 self.format_place_field("tag", tag);
-                self.line(&format!("raw: {}", format_js_string(&val.raw)));
-                self.line(&format!(
-                    "cooked: {}",
-                    match &val.cooked {
-                        Some(c) => format_js_string(c),
-                        None => "undefined".to_string(),
+                self.line_fmt(format_args!("raw: {}", format_js_string(val.raw.slice())));
+                match &val.cooked {
+                    Some(c) => {
+                        self.line_fmt(format_args!("cooked: {}", format_js_string(c.slice())))
                     }
-                ));
-                self.line(&format!("loc: {}", format_loc(loc)));
+                    None => self.line("cooked: undefined"),
+                }
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1296,24 +1468,29 @@ impl<'a> PrintFormatter<'a> {
                 self.line("subexprs:");
                 self.indent();
                 for (i, sub) in subexprs.iter().enumerate() {
-                    self.format_place_field(&format!("[{}]", i), sub);
+                    self.format_place_field_idx(i, sub);
                 }
                 self.dedent();
                 self.line("quasis:");
                 self.indent();
                 for (i, q) in quasis.iter().enumerate() {
-                    self.line(&format!(
-                        "[{}] {{ raw: {}, cooked: {} }}",
+                    self.begin_line();
+                    let _ = write!(
+                        self.output,
+                        "[{}] {{ raw: {}, cooked: ",
                         i,
-                        format_js_string(&q.raw),
-                        match &q.cooked {
-                            Some(c) => format_js_string(c),
-                            None => "undefined".to_string(),
+                        format_js_string(q.raw.slice())
+                    );
+                    match &q.cooked {
+                        Some(c) => {
+                            let _ = write!(self.output, "{}", format_js_string(c.slice()));
                         }
-                    ));
+                        None => self.output.push_str("undefined"),
+                    }
+                    self.output.push_str(" }");
                 }
                 self.dedent();
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1322,10 +1499,10 @@ impl<'a> PrintFormatter<'a> {
                 flags,
                 loc,
             } => {
-                self.line(&format!(
+                self.line_fmt(format_args!(
                     "RegExpLiteral {{ pattern: \"{}\", flags: \"{}\", loc: {} }}",
-                    pattern,
-                    flags,
+                    BStr::new(pattern.slice()),
+                    BStr::new(flags.slice()),
                     format_loc(loc)
                 ));
             }
@@ -1334,7 +1511,7 @@ impl<'a> PrintFormatter<'a> {
                 property,
                 loc,
             } => {
-                self.line(&format!(
+                self.line_fmt(format_args!(
                     "MetaProperty {{ meta: \"{}\", property: \"{}\", loc: {} }}",
                     meta,
                     property,
@@ -1345,7 +1522,7 @@ impl<'a> PrintFormatter<'a> {
                 self.line("Await {");
                 self.indent();
                 self.format_place_field("value", val);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1353,7 +1530,7 @@ impl<'a> PrintFormatter<'a> {
                 self.line("GetIterator {");
                 self.indent();
                 self.format_place_field("collection", collection);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1366,7 +1543,7 @@ impl<'a> PrintFormatter<'a> {
                 self.indent();
                 self.format_place_field("iterator", iterator);
                 self.format_place_field("collection", collection);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1374,12 +1551,12 @@ impl<'a> PrintFormatter<'a> {
                 self.line("NextPropertyOf {");
                 self.indent();
                 self.format_place_field("value", val);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
             InstructionValue::Debugger { loc } => {
-                self.line(&format!("Debugger {{ loc: {} }}", format_loc(loc)));
+                self.line_fmt(format_args!("Debugger {{ loc: {} }}", format_loc(loc)));
             }
             InstructionValue::PostfixUpdate {
                 lvalue,
@@ -1390,9 +1567,9 @@ impl<'a> PrintFormatter<'a> {
                 self.line("PostfixUpdate {");
                 self.indent();
                 self.format_place_field("lvalue", lvalue);
-                self.line(&format!("operation: \"{}\"", operation));
+                self.line_fmt(format_args!("operation: \"{}\"", operation));
                 self.format_place_field("value", val);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1405,9 +1582,9 @@ impl<'a> PrintFormatter<'a> {
                 self.line("PrefixUpdate {");
                 self.indent();
                 self.format_place_field("lvalue", lvalue);
-                self.line(&format!("operation: \"{}\"", operation));
+                self.line_fmt(format_args!("operation: \"{}\"", operation));
                 self.format_place_field("value", val);
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1420,46 +1597,49 @@ impl<'a> PrintFormatter<'a> {
             } => {
                 self.line("StartMemoize {");
                 self.indent();
-                self.line(&format!("manualMemoId: {}", manual_memo_id));
+                self.line_fmt(format_args!("manualMemoId: {}", manual_memo_id));
                 match deps {
                     Some(d) => {
                         self.line("deps:");
                         self.indent();
                         for (i, dep) in d.iter().enumerate() {
-                            let root_str = match &dep.root {
+                            self.begin_line();
+                            let _ = write!(self.output, "[{}] ", i);
+                            match &dep.root {
                                 crate::hir::ManualMemoDependencyRoot::Global {
                                     identifier_name,
                                 } => {
-                                    format!("Global(\"{}\")", identifier_name)
+                                    let _ = write!(
+                                        self.output,
+                                        "Global(\"{}\")",
+                                        BStr::new(identifier_name.slice())
+                                    );
                                 }
                                 crate::hir::ManualMemoDependencyRoot::NamedLocal {
                                     value: val,
                                     constant,
                                 } => {
-                                    format!(
+                                    let _ = write!(
+                                        self.output,
                                         "NamedLocal({}, constant={})",
                                         val.identifier.0, constant
-                                    )
+                                    );
                                 }
-                            };
-                            let path_str: String = dep
-                                .path
-                                .iter()
-                                .map(|p| {
-                                    format!(
-                                        "{}.{}",
-                                        if p.optional { "?" } else { "" },
-                                        format_property_literal(&p.property)
-                                    )
-                                })
-                                .collect();
-                            self.line(&format!("[{}] {}{}", i, root_str, path_str));
+                            }
+                            for p in dep.path.iter() {
+                                let _ = write!(
+                                    self.output,
+                                    "{}.{}",
+                                    if p.optional { "?" } else { "" },
+                                    DisplayPropertyLiteral(&p.property)
+                                );
+                            }
                         }
                         self.dedent();
                     }
                     None => self.line("deps: null"),
                 }
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1471,10 +1651,10 @@ impl<'a> PrintFormatter<'a> {
             } => {
                 self.line("FinishMemoize {");
                 self.indent();
-                self.line(&format!("manualMemoId: {}", manual_memo_id));
+                self.line_fmt(format_args!("manualMemoId: {}", manual_memo_id));
                 self.format_place_field("decl", decl);
-                self.line(&format!("pruned: {}", pruned));
-                self.line(&format!("loc: {}", format_loc(loc)));
+                self.line_fmt(format_args!("pruned: {}", pruned));
+                self.line_fmt(format_args!("loc: {}", format_loc(loc)));
                 self.dedent();
                 self.line("}");
             }
@@ -1493,47 +1673,34 @@ impl<'a> PrintFormatter<'a> {
         self.line("Errors:");
         self.indent();
         for (i, detail) in error.details.iter().enumerate() {
-            self.line(&format!("[{}] {{", i));
+            self.line_fmt(format_args!("[{}] {{", i));
             self.indent();
             match detail {
                 CompilerErrorOrDiagnostic::Diagnostic(d) => {
-                    self.line(&format!("severity: {:?}", d.severity()));
-                    self.line(&format!("reason: {:?}", d.reason));
-                    self.line(&format!(
-                        "description: {}",
-                        match &d.description {
-                            Some(desc) => format!("{:?}", desc),
-                            None => "null".to_string(),
-                        }
-                    ));
-                    self.line(&format!("category: {:?}", d.category));
-                    let loc = d.primary_location();
-                    self.line(&format!(
-                        "loc: {}",
-                        match loc {
-                            Some(l) => format_loc_value(l),
-                            None => "null".to_string(),
-                        }
-                    ));
+                    self.line_fmt(format_args!("severity: {:?}", d.severity()));
+                    self.line_fmt(format_args!("reason: {:?}", d.reason));
+                    match &d.description {
+                        Some(desc) => self.line_fmt(format_args!("description: {:?}", desc)),
+                        None => self.line("description: null"),
+                    }
+                    self.line_fmt(format_args!("category: {:?}", d.category));
+                    match d.primary_location() {
+                        Some(l) => self.line_fmt(format_args!("loc: {}", format_loc_value(l))),
+                        None => self.line("loc: null"),
+                    }
                 }
                 CompilerErrorOrDiagnostic::ErrorDetail(d) => {
-                    self.line(&format!("severity: {:?}", d.severity()));
-                    self.line(&format!("reason: {:?}", d.reason));
-                    self.line(&format!(
-                        "description: {}",
-                        match &d.description {
-                            Some(desc) => format!("{:?}", desc),
-                            None => "null".to_string(),
-                        }
-                    ));
-                    self.line(&format!("category: {:?}", d.category));
-                    self.line(&format!(
-                        "loc: {}",
-                        match &d.loc {
-                            Some(l) => format_loc_value(l),
-                            None => "null".to_string(),
-                        }
-                    ));
+                    self.line_fmt(format_args!("severity: {:?}", d.severity()));
+                    self.line_fmt(format_args!("reason: {:?}", d.reason));
+                    match &d.description {
+                        Some(desc) => self.line_fmt(format_args!("description: {:?}", desc)),
+                        None => self.line("description: null"),
+                    }
+                    self.line_fmt(format_args!("category: {:?}", d.category));
+                    match &d.loc {
+                        Some(l) => self.line_fmt(format_args!("loc: {}", format_loc_value(l))),
+                        None => self.line("loc: null"),
+                    }
                 }
             }
             self.dedent();

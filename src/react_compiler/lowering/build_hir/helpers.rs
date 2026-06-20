@@ -10,10 +10,18 @@ use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 use super::expr::lower_reorderable_expression;
 use super::lower_expression;
 
-pub(super) fn utf8_owned(bytes: &[u8]) -> Result<String, CompilerError> {
-    core::str::from_utf8(bytes)
-        .map(str::to_owned)
-        .map_err(|_| cold_todo("non-utf8 identifier", None))
+#[inline]
+pub(super) fn arena_str(bytes: &[u8]) -> StoreStr {
+    StoreStr::new(ast::data_store_dupe_str(bytes))
+}
+
+struct WriteBytes<'a>(&'a mut HirVec<u8>);
+impl core::fmt::Write for WriteBytes<'_> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.0.extend_from_slice(s.as_bytes());
+        Ok(())
+    }
 }
 
 // =============================================================================
@@ -155,8 +163,25 @@ pub(super) fn build_temporary_place(
 pub(super) fn promote_temporary(builder: &mut HirBuilder, identifier_id: IdentifierId) {
     let env = builder.environment_mut();
     let decl_id = env.identifiers[identifier_id.0 as usize].declaration_id;
+    let mut buf = [0u8; 12];
+    buf[0] = b'#';
+    buf[1] = b't';
+    let mut n = decl_id.0;
+    let mut len = 2usize;
+    if n == 0 {
+        buf[len] = b'0';
+        len += 1;
+    } else {
+        let start = len;
+        while n > 0 {
+            buf[len] = b'0' + (n % 10) as u8;
+            len += 1;
+            n /= 10;
+        }
+        buf[start..len].reverse();
+    }
     env.identifiers[identifier_id.0 as usize].name =
-        Some(IdentifierName::Promoted(format!("#t{}", decl_id.0)));
+        Some(IdentifierName::Promoted(arena_str(&buf[..len])));
 }
 
 pub(super) fn lower_value_to_temporary(
@@ -207,8 +232,8 @@ pub(super) fn lower_identifier(
             loc,
         }),
         _ => {
-            if let VariableBinding::Global { ref name } = binding {
-                if name == "eval" {
+            if let VariableBinding::Global { name } = &binding {
+                if name.slice() == b"eval" {
                     builder.record_error(CompilerErrorDetail {
                         category: ErrorCategory::UnsupportedSyntax,
                         reason: "The 'eval' function is not supported".to_string(),
@@ -302,7 +327,7 @@ pub(super) fn lower_member_expression(
                 Some(obj) => obj,
                 None => lower_expression_to_temporary(builder, &d.target)?,
             };
-            let prop_literal = PropertyLiteral::String(utf8_owned(d.name.slice())?);
+            let prop_literal = PropertyLiteral::String(StoreStr::new(d.name.slice()));
             let value = InstructionValue::PropertyLoad {
                 object: object.clone(),
                 property: prop_literal.clone(),
@@ -330,9 +355,9 @@ pub(super) fn lower_member_expression(
                 })?;
                 return Ok(LoweredMemberExpression {
                     object,
-                    property: MemberProperty::Literal(PropertyLiteral::String(String::new())),
+                    property: MemberProperty::Literal(PropertyLiteral::String(StoreStr::EMPTY)),
                     value: InstructionValue::UnsupportedNode {
-                        node_type: Some("MemberExpression".to_string()),
+                        node_type: Some("MemberExpression"),
                         original_node: serialize_expression!(expr),
                         loc,
                     },
@@ -376,7 +401,7 @@ pub(super) fn lower_member_expression(
 
 pub(super) enum IdentifierForAssignment {
     Place(Place),
-    Global { name: String },
+    Global { name: StoreStr },
 }
 
 #[derive(Clone, Copy)]
@@ -403,12 +428,15 @@ pub(super) fn lower_identifier_for_assignment(
                 builder.set_identifier_declaration_loc(identifier, &ident_loc);
             }
             if binding_kind == BindingKind::Const && kind == InstructionKind::Reassign {
-                let name = builder.ref_name(ref_).unwrap_or_default();
+                let name = builder.host().ref_name(ref_);
                 builder.record_error(CompilerErrorDetail {
                     reason: "Cannot reassign a `const` variable".to_string(),
                     category: ErrorCategory::Syntax,
                     loc,
-                    description: Some(format!("`{}` is declared as const", name)),
+                    description: Some(format!(
+                        "`{}` is declared as const",
+                        bun_core::BStr::new(name)
+                    )),
                     suggestions: None,
                 })?;
                 return Ok(None);
@@ -436,7 +464,7 @@ pub(super) fn lower_identifier_for_assignment(
         }
         _ => {
             if kind == InstructionKind::Reassign {
-                let name = builder.ref_name(ref_).unwrap_or_default();
+                let name = StoreStr::new(builder.host().ref_name(ref_));
                 Ok(Some(IdentifierForAssignment::Global { name }))
             } else {
                 builder.record_error(CompilerErrorDetail {
@@ -516,7 +544,7 @@ pub(super) fn lower_assignment(
                             let temp = lower_value_to_temporary(
                                 builder,
                                 InstructionValue::UnsupportedNode {
-                                    node_type: Some("Identifier".to_string()),
+                                    node_type: Some("Identifier"),
                                     original_node: serialize_pattern!(target),
                                     loc,
                                 },
@@ -1041,7 +1069,7 @@ fn lower_member_store(
                 builder,
                 InstructionValue::PropertyStore {
                     object,
-                    property: PropertyLiteral::String(utf8_owned(d.name.slice())?),
+                    property: PropertyLiteral::String(StoreStr::new(d.name.slice())),
                     value,
                     loc,
                 },
@@ -1060,7 +1088,7 @@ fn lower_member_store(
                 return lower_value_to_temporary(
                     builder,
                     InstructionValue::UnsupportedNode {
-                        node_type: Some("MemberExpression".to_string()),
+                        node_type: Some("MemberExpression"),
                         original_node: serialize_pattern!(target),
                         loc,
                     },
@@ -1100,22 +1128,21 @@ pub(super) fn lower_object_property_key(
     match &key.data {
         Data::EString(s) => {
             let name = if s.is_utf16 {
-                #[allow(
-                    clippy::disallowed_methods,
-                    reason = "vendored react_compiler_hir keys are std::String; we own the just-allocated UTF-8 bytes"
-                )]
-                String::from_utf8(bun_core::strings::to_utf8_alloc(s.slice16()))
-                    .map_err(|_| cold_todo("non-utf8 property key", convert_loc(key.loc)))?
+                arena_str(&bun_core::strings::to_utf8_alloc(s.slice16()))
             } else if s.next.is_some() {
                 return Err(cold_todo("rope property key", convert_loc(key.loc)));
             } else {
-                utf8_owned(s.slice8())?
+                StoreStr::new(s.slice8())
             };
             Ok(Some(ObjectPropertyKey::String { name }))
         }
-        Data::ENumber(n) if !computed => Ok(Some(ObjectPropertyKey::Identifier {
-            name: format!("{}", n.value()),
-        })),
+        Data::ENumber(n) if !computed => {
+            let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(24);
+            core::fmt::write(&mut WriteBytes(&mut buf), format_args!("{}", n.value())).ok();
+            Ok(Some(ObjectPropertyKey::Identifier {
+                name: StoreStr::new(buf.leak()),
+            }))
+        }
         _ if computed => {
             let place = lower_expression_to_temporary(builder, key)?;
             Ok(Some(ObjectPropertyKey::Computed { name: place }))

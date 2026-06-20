@@ -357,29 +357,30 @@ impl CompilerError {
     /// Format per detail: `"Category: reason. Description. (line:column)"`
     /// Multiple details are joined with `"\n\n"`.
     pub fn to_string_for_event(&self) -> String {
-        self.details
-            .iter()
-            .map(|d| {
-                let (category, reason, description, loc) = match d {
-                    CompilerErrorOrDiagnostic::Diagnostic(d) => {
-                        let loc = d.primary_location().cloned();
-                        (d.category, &d.reason, &d.description, loc)
-                    }
-                    CompilerErrorOrDiagnostic::ErrorDetail(d) => {
-                        (d.category, &d.reason, &d.description, d.loc)
-                    }
-                };
-                let mut buf = format!("{}: {}", format_category_heading(category), reason);
-                if let Some(desc) = description {
-                    buf.push_str(&format!(". {}.", desc));
+        use core::fmt::Write as _;
+        let mut buf = String::new();
+        for (i, d) in self.details.iter().enumerate() {
+            if i > 0 {
+                buf.push_str("\n\n");
+            }
+            let (category, reason, description, loc) = match d {
+                CompilerErrorOrDiagnostic::Diagnostic(d) => {
+                    let loc = d.primary_location().cloned();
+                    (d.category, &d.reason, &d.description, loc)
                 }
-                if let Some(loc) = loc {
-                    buf.push_str(&format!(" ({}:{})", loc.start.line, loc.start.column));
+                CompilerErrorOrDiagnostic::ErrorDetail(d) => {
+                    (d.category, &d.reason, &d.description, d.loc)
                 }
-                buf
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n")
+            };
+            let _ = write!(buf, "{}: {}", format_category_heading(category), reason);
+            if let Some(desc) = description {
+                let _ = write!(buf, ". {}.", desc);
+            }
+            if let Some(loc) = loc {
+                let _ = write!(buf, " ({}:{})", loc.start.line, loc.start.column);
+            }
+        }
+        buf
     }
 }
 

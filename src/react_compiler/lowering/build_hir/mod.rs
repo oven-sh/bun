@@ -21,7 +21,7 @@ use crate::diagnostics::{
 use crate::hir::{
     AstAlloc, BlockKind, Effect, EvaluationOrder, HirFunction, HirVec, IdentifierId,
     InstructionKind, InstructionValue, ParamPattern, Place, PrimitiveValue, ReactFunctionType,
-    ReturnVariant, SourceLocation, SpreadPattern, Terminal, VariableBinding,
+    ReturnVariant, SourceLocation, SpreadPattern, StoreStr, Terminal, VariableBinding,
     environment::Environment,
 };
 use bun_ast::expr::Data as ExprData;
@@ -65,19 +65,9 @@ pub fn lower(
     // but the HIR function's `id` field should only include the function's own AST id
     // (FunctionDeclaration.id or FunctionExpression.id, NOT arrow functions).
     let loc = convert_loc(func.loc());
-    let ast_id = match func.name_ref() {
-        Some(r) => {
-            let sym = &host.symbols()[r.inner_index() as usize];
-            Some(
-                core::str::from_utf8(sym.original_name.slice())
-                    .map_err(|_| {
-                        CompilerError::from(CompilerDiagnostic::todo("non-utf8 identifier", loc))
-                    })?
-                    .to_owned(),
-            )
-        }
-        None => None,
-    };
+    let ast_id = func
+        .name_ref()
+        .map(|r| host.symbols()[r.inner_index() as usize].original_name);
 
     // Bun has no `node_id`-keyed scope table; the top-level function's scope
     // is a child of `module_scope`, and `G::Fn` does not retain a back-link.
@@ -122,7 +112,7 @@ pub fn lower(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lower_inner<'h>(
     func: &FunctionNode<'_>,
-    id: Option<String>,
+    id: Option<StoreStr>,
     loc: Option<SourceLocation>,
     host: &'h dyn Host,
     env: &'h mut Environment,
@@ -272,7 +262,7 @@ pub(super) fn lower_inner<'h>(
     }
 
     // Lower the body
-    let mut directives: HirVec<String> = AstAlloc::vec();
+    let mut directives: HirVec<StoreStr> = AstAlloc::vec();
     let expr_body = arrow_expression_body(func);
     match expr_body {
         Some(expr) => {
@@ -292,9 +282,7 @@ pub(super) fn lower_inner<'h>(
         None => {
             for s in body_stmts {
                 if let StmtData::SDirective(d) = &s.data {
-                    if let Ok(v) = core::str::from_utf8(d.value.slice()) {
-                        directives.push(v.to_owned());
-                    }
+                    directives.push(d.value);
                 }
             }
             // Use lower_block_statement_with_scope to get hoisting support for the function body.

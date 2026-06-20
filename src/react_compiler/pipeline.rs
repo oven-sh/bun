@@ -29,7 +29,7 @@ use crate::hir::environment_config::EnvironmentConfig;
 
 use crate::codegen::{self, Codegen, CodegenFunction, OutlinedFunction};
 use crate::collections::IndexMap;
-use crate::hir::VariableBinding;
+use crate::hir::{StoreStr, VariableBinding};
 use crate::imports::ProgramContext;
 use crate::lowering::{self, FunctionNode};
 use crate::program::Host;
@@ -132,12 +132,19 @@ pub fn compile_fn(
     let mut env = Environment::with_config(env_config.clone());
     env.fn_type = fn_type;
     env.output_mode = context.output_mode;
-    env.code = context.code.clone();
-    env.filename = context.filename.clone();
-    env.instrument_fn_name = context.instrument_fn_name.clone();
-    env.instrument_gating_name = context.instrument_gating_name.clone();
-    env.hook_guard_name = context.hook_guard_name.clone();
-    let known: HashSet<String> = context.known_referenced_names().iter().cloned().collect();
+    // ProgramContext owns these `String`s for the whole compile; `StoreStr`
+    // borrows their bytes under the same lifetime contract as arena slices.
+    let borrow = |s: &Option<String>| s.as_deref().map(|s| StoreStr::new(s.as_bytes()));
+    env.code = borrow(&context.code);
+    env.filename = borrow(&context.filename);
+    env.instrument_fn_name = borrow(&context.instrument_fn_name);
+    env.instrument_gating_name = borrow(&context.instrument_gating_name);
+    env.hook_guard_name = borrow(&context.hook_guard_name);
+    let known: HashSet<StoreStr> = context
+        .known_referenced_names()
+        .iter()
+        .map(|s| StoreStr::new(s.as_bytes()))
+        .collect();
     env.seed_uid_known_names(&known);
 
     ensure_timing_dump_registered();
@@ -197,7 +204,12 @@ pub fn compile_fn(
         // "leak" _temp names that subsequent successful compilations wouldn't see,
         // causing numbering mismatches vs TS.
         if let Some(uid_names) = env.take_uid_known_names() {
-            context.merge_uid_known_names(&uid_names.into_iter().collect());
+            context.merge_uid_known_names(
+                &uid_names
+                    .into_iter()
+                    .map(|s| bun_core::BStr::new(s.slice()).to_string())
+                    .collect(),
+            );
         }
         return Err(env.take_errors());
     }
@@ -233,7 +245,12 @@ pub fn compile_fn(
     }
 
     if let Some(uid_names) = env.take_uid_known_names() {
-        context.merge_uid_known_names(&uid_names.into_iter().collect());
+        context.merge_uid_known_names(
+            &uid_names
+                .into_iter()
+                .map(|s| bun_core::BStr::new(s.slice()).to_string())
+                .collect(),
+        );
     }
 
     Ok(CodegenFunction {

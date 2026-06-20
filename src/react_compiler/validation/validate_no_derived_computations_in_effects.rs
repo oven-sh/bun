@@ -40,7 +40,7 @@ fn get_identifier_name_with_loc(
     let ident = &identifiers[id.0 as usize];
     match &ident.name {
         Some(IdentifierName::Named(name)) | Some(IdentifierName::Promoted(name)) => {
-            return Some(name.clone());
+            return Some(bun_core::BStr::new(name.slice()).to_string());
         }
         _ => {}
     }
@@ -50,7 +50,7 @@ fn get_identifier_name_with_loc(
         if other.declaration_id == decl_id {
             match &other.name {
                 Some(IdentifierName::Named(name)) | Some(IdentifierName::Promoted(name)) => {
-                    return Some(name.clone());
+                    return Some(bun_core::BStr::new(name.slice()).to_string());
                 }
                 _ => {}
             }
@@ -766,7 +766,7 @@ fn build_tree_node(
     if source_metadata.is_state_source {
         if let Some(IdentifierName::Named(name)) = &source_metadata.place_name {
             return vec![TreeNode {
-                name: name.clone(),
+                name: bun_core::BStr::new(name.slice()).to_string(),
                 type_of_value: source_metadata.type_of_value,
                 is_source: true,
                 children: Vec::new(),
@@ -786,7 +786,7 @@ fn build_tree_node(
 
         let mut new_visited = visited.clone();
         if let Some(IdentifierName::Named(name)) = &source_metadata.place_name {
-            new_visited.insert(name.clone());
+            new_visited.insert(bun_core::BStr::new(name.slice()).to_string());
         }
 
         let child_nodes = build_tree_node(*child_id, context, &new_visited);
@@ -799,9 +799,10 @@ fn build_tree_node(
     }
 
     if let Some(IdentifierName::Named(name)) = &source_metadata.place_name {
-        if !visited.contains(name) {
+        let name = bun_core::BStr::new(name.slice()).to_string();
+        if !visited.contains(&name) {
             return vec![TreeNode {
-                name: name.clone(),
+                name,
                 type_of_value: source_metadata.type_of_value,
                 is_source: source_metadata.is_state_source,
                 children,
@@ -1004,7 +1005,9 @@ fn validate_effect(
                                     callee.identifier,
                                     identifiers,
                                     &callee.loc,
-                                    env.code.as_deref(),
+                                    env.code
+                                        .as_ref()
+                                        .and_then(|c| core::str::from_utf8(c.slice()).ok()),
                                 );
                                 effect_derived_set_state_calls.push(DerivedSetStateCall {
                                     callee_loc: callee.loc,

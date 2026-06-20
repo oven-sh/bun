@@ -435,7 +435,7 @@ fn is_stable_type(ty: &Type) -> bool {
             shape_id: Some(id), ..
         } => {
             matches!(
-                id.as_str(),
+                *id,
                 "BuiltInSetState"
                     | "BuiltInSetActionState"
                     | "BuiltInDispatch"
@@ -444,7 +444,7 @@ fn is_stable_type(ty: &Type) -> bool {
             )
         }
         Type::Object { shape_id: Some(id) } => {
-            matches!(id.as_str(), "BuiltInUseRefId")
+            matches!(*id, "BuiltInUseRefId")
         }
         _ => false,
     }
@@ -454,7 +454,7 @@ fn is_stable_type_container(ty: &Type) -> bool {
     match ty {
         Type::Object { shape_id: Some(id) } => {
             matches!(
-                id.as_str(),
+                *id,
                 "BuiltInUseState"
                     | "BuiltInUseActionState"
                     | "BuiltInUseReducer"

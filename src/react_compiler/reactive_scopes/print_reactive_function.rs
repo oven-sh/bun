@@ -9,16 +9,31 @@
 //! Delegates shared formatting (Places, Identifiers, Scopes, Types,
 //! InstructionValues, Effects, Errors) to `crate::hir::print::PrintFormatter`.
 
+use core::fmt;
+
 use crate::hir::environment::Environment;
-use crate::hir::print::{self, PrintFormatter};
+use crate::hir::print::PrintFormatter;
 use crate::hir::{
     HirFunction, ParamPattern, ReactiveBlock, ReactiveFunction, ReactiveInstruction,
-    ReactiveStatement, ReactiveTerminal, ReactiveTerminalStatement, ReactiveValue,
+    ReactiveStatement, ReactiveTerminal, ReactiveTerminalStatement, ReactiveValue, SourceLocation,
 };
 
-// =============================================================================
-// DebugPrinter — thin wrapper around PrintFormatter for reactive-specific logic
-// =============================================================================
+/// Zero-allocation `Display` adapter for `Option<SourceLocation>`, producing
+/// the same output as `hir::print::format_loc` without the intermediate `String`.
+struct Loc<'a>(&'a Option<SourceLocation>);
+
+impl fmt::Display for Loc<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(l) => write!(
+                f,
+                "{}:{}-{}:{}",
+                l.start.line, l.start.column, l.end.line, l.end.column
+            ),
+            None => f.write_str("generated"),
+        }
+    }
+}
 
 pub struct DebugPrinter<'a> {
     pub fmt: PrintFormatter<'a>,
@@ -34,30 +49,26 @@ impl<'a> DebugPrinter<'a> {
         }
     }
 
-    // =========================================================================
-    // ReactiveFunction
-    // =========================================================================
+    /// Write a single indented line built from `args` directly into the
+    /// formatter's output buffer, avoiding the temporary `String` that
+    /// `self.fmt.line(&format!(..))` would allocate.
+    fn line_fmt(&mut self, args: core::fmt::Arguments<'_>) {
+        self.fmt.line_fmt(args);
+    }
 
     pub fn format_reactive_function(&mut self, func: &ReactiveFunction) {
         self.fmt.indent();
-        self.fmt.line(&format!(
-            "id: {}",
-            match &func.id {
-                Some(id) => format!("\"{}\"", id),
-                None => "null".to_string(),
-            }
-        ));
-        self.fmt.line(&format!(
-            "name_hint: {}",
-            match &func.name_hint {
-                Some(h) => format!("\"{}\"", h),
-                None => "null".to_string(),
-            }
-        ));
-        self.fmt.line(&format!("generator: {}", func.generator));
-        self.fmt.line(&format!("is_async: {}", func.is_async));
-        self.fmt
-            .line(&format!("loc: {}", print::format_loc(&func.loc)));
+        match &func.id {
+            Some(id) => self.line_fmt(format_args!("id: \"{}\"", id)),
+            None => self.fmt.line("id: null"),
+        }
+        match &func.name_hint {
+            Some(h) => self.line_fmt(format_args!("name_hint: \"{}\"", h)),
+            None => self.fmt.line("name_hint: null"),
+        }
+        self.line_fmt(format_args!("generator: {}", func.generator));
+        self.line_fmt(format_args!("is_async: {}", func.is_async));
+        self.line_fmt(format_args!("loc: {}", Loc(&func.loc)));
 
         // params
         self.fmt.line("params:");
@@ -68,7 +79,7 @@ impl<'a> DebugPrinter<'a> {
                     self.fmt.format_place_field(&format!("[{}]", i), place);
                 }
                 ParamPattern::Spread(spread) => {
-                    self.fmt.line(&format!("[{}] Spread:", i));
+                    self.line_fmt(format_args!("[{}] Spread:", i));
                     self.fmt.indent();
                     self.fmt.format_place_field("place", &spread.place);
                     self.fmt.dedent();
@@ -81,7 +92,7 @@ impl<'a> DebugPrinter<'a> {
         self.fmt.line("directives:");
         self.fmt.indent();
         for (i, d) in func.directives.iter().enumerate() {
-            self.fmt.line(&format!("[{}] \"{}\"", i, d));
+            self.line_fmt(format_args!("[{}] \"{}\"", i, d));
         }
         self.fmt.dedent();
 
@@ -92,10 +103,6 @@ impl<'a> DebugPrinter<'a> {
         self.fmt.dedent();
         self.fmt.dedent();
     }
-
-    // =========================================================================
-    // ReactiveBlock
-    // =========================================================================
 
     fn format_reactive_block(&mut self, block: &ReactiveBlock) {
         for stmt in block.iter() {
@@ -140,10 +147,6 @@ impl<'a> DebugPrinter<'a> {
         }
     }
 
-    // =========================================================================
-    // ReactiveInstruction
-    // =========================================================================
-
     fn format_reactive_instruction_block(&mut self, instr: &ReactiveInstruction) {
         self.fmt.line("ReactiveInstruction {");
         self.fmt.indent();
@@ -153,7 +156,7 @@ impl<'a> DebugPrinter<'a> {
     }
 
     fn format_reactive_instruction(&mut self, instr: &ReactiveInstruction) {
-        self.fmt.line(&format!("id: {}", instr.id.0));
+        self.line_fmt(format_args!("id: {}", instr.id.0));
         match &instr.lvalue {
             Some(place) => self.fmt.format_place_field("lvalue", place),
             None => self.fmt.line("lvalue: null"),
@@ -167,20 +170,14 @@ impl<'a> DebugPrinter<'a> {
                 self.fmt.line("effects:");
                 self.fmt.indent();
                 for (i, eff) in effects.iter().enumerate() {
-                    self.fmt
-                        .line(&format!("[{}] {}", i, self.fmt.format_effect(eff)));
+                    self.line_fmt(format_args!("[{}] {}", i, self.fmt.format_effect(eff)));
                 }
                 self.fmt.dedent();
             }
             None => self.fmt.line("effects: null"),
         }
-        self.fmt
-            .line(&format!("loc: {}", print::format_loc(&instr.loc)));
+        self.line_fmt(format_args!("loc: {}", Loc(&instr.loc)));
     }
-
-    // =========================================================================
-    // ReactiveValue
-    // =========================================================================
 
     fn format_reactive_value(&mut self, value: &ReactiveValue) {
         match value {
@@ -209,7 +206,7 @@ impl<'a> DebugPrinter<'a> {
             } => {
                 self.fmt.line("LogicalExpression {");
                 self.fmt.indent();
-                self.fmt.line(&format!("operator: \"{}\"", operator));
+                self.line_fmt(format_args!("operator: \"{}\"", operator));
                 self.fmt.line("left:");
                 self.fmt.indent();
                 self.format_reactive_value(left);
@@ -218,7 +215,7 @@ impl<'a> DebugPrinter<'a> {
                 self.fmt.indent();
                 self.format_reactive_value(right);
                 self.fmt.dedent();
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -242,7 +239,7 @@ impl<'a> DebugPrinter<'a> {
                 self.fmt.indent();
                 self.format_reactive_value(alternate);
                 self.fmt.dedent();
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -257,18 +254,18 @@ impl<'a> DebugPrinter<'a> {
                 self.fmt.line("instructions:");
                 self.fmt.indent();
                 for (i, instr) in instructions.iter().enumerate() {
-                    self.fmt.line(&format!("[{}]:", i));
+                    self.line_fmt(format_args!("[{}]:", i));
                     self.fmt.indent();
                     self.format_reactive_instruction_block(instr);
                     self.fmt.dedent();
                 }
                 self.fmt.dedent();
-                self.fmt.line(&format!("id: {}", id.0));
+                self.line_fmt(format_args!("id: {}", id.0));
                 self.fmt.line("value:");
                 self.fmt.indent();
                 self.format_reactive_value(value);
                 self.fmt.dedent();
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -280,27 +277,23 @@ impl<'a> DebugPrinter<'a> {
             } => {
                 self.fmt.line("OptionalExpression {");
                 self.fmt.indent();
-                self.fmt.line(&format!("id: {}", id.0));
+                self.line_fmt(format_args!("id: {}", id.0));
                 self.fmt.line("value:");
                 self.fmt.indent();
                 self.format_reactive_value(value);
                 self.fmt.dedent();
-                self.fmt.line(&format!("optional: {}", optional));
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("optional: {}", optional));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
         }
     }
 
-    // =========================================================================
-    // ReactiveTerminal
-    // =========================================================================
-
     fn format_terminal_statement(&mut self, stmt: &ReactiveTerminalStatement) {
         match &stmt.label {
             Some(label) => {
-                self.fmt.line(&format!(
+                self.line_fmt(format_args!(
                     "label: {{ id: bb{}, implicit: {} }}",
                     label.id.0, label.implicit
                 ));
@@ -323,10 +316,10 @@ impl<'a> DebugPrinter<'a> {
             } => {
                 self.fmt.line("Break {");
                 self.fmt.indent();
-                self.fmt.line(&format!("target: bb{}", target.0));
-                self.fmt.line(&format!("id: {}", id.0));
-                self.fmt.line(&format!("targetKind: \"{}\"", target_kind));
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("target: bb{}", target.0));
+                self.line_fmt(format_args!("id: {}", id.0));
+                self.line_fmt(format_args!("targetKind: \"{}\"", target_kind));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -338,10 +331,10 @@ impl<'a> DebugPrinter<'a> {
             } => {
                 self.fmt.line("Continue {");
                 self.fmt.indent();
-                self.fmt.line(&format!("target: bb{}", target.0));
-                self.fmt.line(&format!("id: {}", id.0));
-                self.fmt.line(&format!("targetKind: \"{}\"", target_kind));
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("target: bb{}", target.0));
+                self.line_fmt(format_args!("id: {}", id.0));
+                self.line_fmt(format_args!("targetKind: \"{}\"", target_kind));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -349,8 +342,8 @@ impl<'a> DebugPrinter<'a> {
                 self.fmt.line("Return {");
                 self.fmt.indent();
                 self.fmt.format_place_field("value", value);
-                self.fmt.line(&format!("id: {}", id.0));
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("id: {}", id.0));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -358,8 +351,8 @@ impl<'a> DebugPrinter<'a> {
                 self.fmt.line("Throw {");
                 self.fmt.indent();
                 self.fmt.format_place_field("value", value);
-                self.fmt.line(&format!("id: {}", id.0));
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("id: {}", id.0));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -375,7 +368,7 @@ impl<'a> DebugPrinter<'a> {
                 self.fmt.line("cases:");
                 self.fmt.indent();
                 for (i, case) in cases.iter().enumerate() {
-                    self.fmt.line(&format!("[{}] {{", i));
+                    self.line_fmt(format_args!("[{}] {{", i));
                     self.fmt.indent();
                     match &case.test {
                         Some(p) => {
@@ -398,8 +391,8 @@ impl<'a> DebugPrinter<'a> {
                     self.fmt.line("}");
                 }
                 self.fmt.dedent();
-                self.fmt.line(&format!("id: {}", id.0));
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("id: {}", id.0));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -419,8 +412,8 @@ impl<'a> DebugPrinter<'a> {
                 self.fmt.indent();
                 self.format_reactive_value(test);
                 self.fmt.dedent();
-                self.fmt.line(&format!("id: {}", id.0));
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("id: {}", id.0));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -440,8 +433,8 @@ impl<'a> DebugPrinter<'a> {
                 self.fmt.indent();
                 self.format_reactive_block(loop_block);
                 self.fmt.dedent();
-                self.fmt.line(&format!("id: {}", id.0));
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("id: {}", id.0));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -476,8 +469,8 @@ impl<'a> DebugPrinter<'a> {
                 self.fmt.indent();
                 self.format_reactive_block(loop_block);
                 self.fmt.dedent();
-                self.fmt.line(&format!("id: {}", id.0));
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("id: {}", id.0));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -502,8 +495,8 @@ impl<'a> DebugPrinter<'a> {
                 self.fmt.indent();
                 self.format_reactive_block(loop_block);
                 self.fmt.dedent();
-                self.fmt.line(&format!("id: {}", id.0));
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("id: {}", id.0));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -523,8 +516,8 @@ impl<'a> DebugPrinter<'a> {
                 self.fmt.indent();
                 self.format_reactive_block(loop_block);
                 self.fmt.dedent();
-                self.fmt.line(&format!("id: {}", id.0));
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("id: {}", id.0));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -551,8 +544,8 @@ impl<'a> DebugPrinter<'a> {
                     }
                     None => self.fmt.line("alternate: null"),
                 }
-                self.fmt.line(&format!("id: {}", id.0));
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("id: {}", id.0));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -563,8 +556,8 @@ impl<'a> DebugPrinter<'a> {
                 self.fmt.indent();
                 self.format_reactive_block(block);
                 self.fmt.dedent();
-                self.fmt.line(&format!("id: {}", id.0));
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("id: {}", id.0));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
@@ -589,18 +582,14 @@ impl<'a> DebugPrinter<'a> {
                 self.fmt.indent();
                 self.format_reactive_block(handler);
                 self.fmt.dedent();
-                self.fmt.line(&format!("id: {}", id.0));
-                self.fmt.line(&format!("loc: {}", print::format_loc(loc)));
+                self.line_fmt(format_args!("id: {}", id.0));
+                self.line_fmt(format_args!("loc: {}", Loc(loc)));
                 self.fmt.dedent();
                 self.fmt.line("}");
             }
         }
     }
 }
-
-// =============================================================================
-// Entry point
-// =============================================================================
 
 /// Type alias for a function formatter callback that can print HIR functions.
 /// Used to format inner functions in FunctionExpression/ObjectMethod values.

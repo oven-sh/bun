@@ -74,7 +74,9 @@ pub fn validate_no_set_state_in_effects(
                             functions,
                             enable_allow_set_state_from_refs,
                             env.next_block_id_counter,
-                            env.code.as_deref(),
+                            env.code
+                                .as_ref()
+                                .and_then(|c| core::str::from_utf8(c.slice()).ok()),
                         )?;
                         if let Some(info) = callee {
                             set_state_functions.insert(instr.lvalue.identifier, info);
@@ -158,7 +160,7 @@ fn get_identifier_name_with_loc(
 ) -> Option<String> {
     let ident = &identifiers[id.0 as usize];
     if let Some(IdentifierName::Named(name)) = &ident.name {
-        return Some(name.clone());
+        return Some(bun_core::BStr::new(name.slice()).to_string());
     }
     // Fall back to extracting from source code
     if let (Some(loc), Some(code)) = (loc, source_code) {
@@ -410,7 +412,7 @@ fn get_set_state_call(
                     object, property, ..
                 } = &instr.value
                 {
-                    if *property == PropertyLiteral::String("current".to_string()) {
+                    if matches!(property, PropertyLiteral::String(s) if s == b"current") {
                         let obj_ident = &identifiers[object.identifier.0 as usize];
                         let obj_ty = &types[obj_ident.type_.0 as usize];
                         if is_use_ref_type(obj_ty) || is_ref_value_type(obj_ty) {
@@ -506,7 +508,7 @@ fn get_set_state_call(
                     object, property, ..
                 } = &instr.value
                 {
-                    if *property == PropertyLiteral::String("current".to_string()) {
+                    if matches!(property, PropertyLiteral::String(s) if s == b"current") {
                         let obj_ident = &identifiers[object.identifier.0 as usize];
                         let obj_ty = &types[obj_ident.type_.0 as usize];
                         if is_use_ref_type(obj_ty) || is_ref_value_type(obj_ty) {

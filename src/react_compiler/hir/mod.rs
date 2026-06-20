@@ -65,11 +65,17 @@ pub use reactive::*;
 /// compiler — so every `HirVec` allocated during a `compile_fn` lands in the
 /// per-file arena and is bulk-freed with the rest of the AST.
 ///
-/// `Drop` on a `HirVec<T>` still runs each element's `Drop` (so `String` /
-/// `IndexMap` fields inside `T` are freed); only the backing buffer's
-/// `deallocate` is a no-op.
+/// `Drop` on a `HirVec<T>` still runs each element's `Drop`; only the backing
+/// buffer's `deallocate` is a no-op. Nonetheless, HIR types must NOT own
+/// global-heap allocations (`String`, `Box<T>`, `Vec<T>`): the arena bulk-
+/// frees on reset without walking elements, so any nested global allocation
+/// leaks per parse. Use [`StoreStr`] / [`HirBox`] / [`HirVec`] instead.
 pub type HirVec<T> = bun_alloc::AstVec<T>;
+/// Arena-backed `Box<T>`. See [`HirVec`] for the leak rationale.
+pub type HirBox<T> = bun_alloc::AstBox<T>;
 pub use bun_alloc::AstAlloc;
+/// Arena-owned (or `'static`) byte string. Copy; no Drop. See [`HirVec`].
+pub use bun_ast::StoreStr;
 
 /// `vec![..]` for [`HirVec`]. `Vec<T, A>` has no `Default`/`From<[T; N]>` for
 /// non-`Global` `A`, so the std macro doesn't apply.
@@ -181,30 +187,26 @@ impl std::hash::Hash for FloatValue {
 
 impl std::fmt::Display for FloatValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", format_js_number(self.value()))
+        write_js_number(f, self.value())
     }
 }
 
-/// Format an f64 the way JavaScript's `Number.prototype.toString()` does.
+/// Write an f64 the way JavaScript's `Number.prototype.toString()` does.
 ///
 /// Key differences from Rust's default `Display`:
 /// - Uses scientific notation for |x| >= 1e21 (e.g. `1e+21`, `2.18739127891275e+22`)
 /// - Uses scientific notation for 0 < |x| < 1e-6 (e.g. `1e-7`, `1.5e-8`)
 /// - Uses minimal significant digits that round-trip to the same f64
 /// - Formats -0 as "0"
-pub fn format_js_number(n: f64) -> String {
+pub fn write_js_number(w: &mut impl core::fmt::Write, n: f64) -> core::fmt::Result {
     if n.is_nan() {
-        return "NaN".to_string();
+        return w.write_str("NaN");
     }
     if n.is_infinite() {
-        return if n > 0.0 {
-            "Infinity".to_string()
-        } else {
-            "-Infinity".to_string()
-        };
+        return w.write_str(if n > 0.0 { "Infinity" } else { "-Infinity" });
     }
     if n == 0.0 {
-        return "0".to_string();
+        return w.write_str("0");
     }
 
     let abs = n.abs();
@@ -212,23 +214,65 @@ pub fn format_js_number(n: f64) -> String {
 
     if abs >= 1e21 || (abs > 0.0 && abs < 1e-6) {
         // Use scientific notation matching JS format: coefficient + "e+" or "e-" + exponent
-        // Rust's {:e} uses "e" (lowercase) like JS, but formats as e.g. "1.5e21" not "1.5e+21"
-        let formatted = format!("{:e}", abs);
+        // Rust's {:e} uses "e" (lowercase) like JS, but formats as e.g. "1.5e21" not "1.5e+21".
+        // Render the LowerExp form into a small stack buffer to split coefficient/exponent
+        // without a heap allocation (longest f64 {:e} form is well under 32 bytes).
+        use core::fmt::Write as _;
+        let mut buf = [0u8; 32];
+        let mut cursor = StackCursor {
+            buf: &mut buf,
+            len: 0,
+        };
+        write!(cursor, "{:e}", abs)?;
+        let formatted = cursor.as_str();
         // Split into coefficient and exponent parts
         let (coeff, exp_str) = formatted.split_once('e').unwrap();
         let exp: i32 = exp_str.parse().unwrap();
         // JS uses e+N for positive exponents, e-N for negative
         if exp >= 0 {
-            format!("{}{}e+{}", sign, coeff, exp)
+            write!(w, "{}{}e+{}", sign, coeff, exp)
         } else {
-            format!("{}{}e-{}", sign, coeff, exp.unsigned_abs())
+            write!(w, "{}{}e-{}", sign, coeff, exp.unsigned_abs())
         }
     } else if abs.fract() == 0.0 && abs < (i64::MAX as f64) {
         // Integer that fits in i64 — format without decimal point
-        format!("{}{}", sign, abs as i64)
+        write!(w, "{}{}", sign, abs as i64)
     } else {
         // Regular float: Rust's default Display gives us the right digits
-        format!("{}", n)
+        write!(w, "{}", n)
+    }
+}
+
+/// Allocating wrapper around [`write_js_number`]. Prefer the writer form on
+/// hot paths; this exists for callers that need an owned `String` (e.g.
+/// constant folding `String(n)`).
+pub fn format_js_number(n: f64) -> String {
+    let mut s = String::new();
+    write_js_number(&mut s, n).unwrap();
+    s
+}
+
+struct StackCursor<'a> {
+    buf: &'a mut [u8],
+    len: usize,
+}
+impl StackCursor<'_> {
+    #[inline]
+    fn as_str(&self) -> &str {
+        // SAFETY: `core::fmt::LowerExp` for f64 emits only ASCII.
+        unsafe { core::str::from_utf8_unchecked(&self.buf[..self.len]) }
+    }
+}
+impl core::fmt::Write for StackCursor<'_> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let bytes = s.as_bytes();
+        let dst = self
+            .buf
+            .get_mut(self.len..self.len + bytes.len())
+            .ok_or(core::fmt::Error)?;
+        dst.copy_from_slice(bytes);
+        self.len += bytes.len();
+        Ok(())
     }
 }
 
@@ -240,18 +284,18 @@ pub fn format_js_number(n: f64) -> String {
 #[derive(Debug, Clone)]
 pub struct HirFunction {
     pub loc: Option<SourceLocation>,
-    pub id: Option<String>,
-    pub name_hint: Option<String>,
+    pub id: Option<StoreStr>,
+    pub name_hint: Option<StoreStr>,
     pub fn_type: ReactFunctionType,
     pub params: HirVec<ParamPattern>,
-    pub return_type_annotation: Option<String>,
+    pub return_type_annotation: Option<StoreStr>,
     pub returns: Place,
     pub context: HirVec<Place>,
     pub body: HIR,
     pub instructions: HirVec<Instruction>,
     pub generator: bool,
     pub is_async: bool,
-    pub directives: HirVec<String>,
+    pub directives: HirVec<StoreStr>,
     pub aliasing_effects: Option<HirVec<AliasingEffect>>,
 }
 
@@ -653,7 +697,7 @@ pub enum InstructionValue {
     },
     DeclareLocal {
         lvalue: LValue,
-        type_annotation: Option<String>,
+        type_annotation: Option<StoreStr>,
         loc: Option<SourceLocation>,
     },
     DeclareContext {
@@ -663,7 +707,7 @@ pub enum InstructionValue {
     StoreLocal {
         lvalue: LValue,
         value: Place,
-        type_annotation: Option<String>,
+        type_annotation: Option<StoreStr>,
         loc: Option<SourceLocation>,
     },
     StoreContext {
@@ -681,7 +725,7 @@ pub enum InstructionValue {
         loc: Option<SourceLocation>,
     },
     JSXText {
-        value: String,
+        value: StoreStr,
         loc: Option<SourceLocation>,
     },
     BinaryExpression {
@@ -714,12 +758,12 @@ pub enum InstructionValue {
     TypeCastExpression {
         value: Place,
         type_: Type,
-        type_annotation_name: Option<String>,
-        type_annotation_kind: Option<String>,
+        type_annotation_name: Option<StoreStr>,
+        type_annotation_kind: Option<&'static str>,
         /// The original AST type annotation node, preserved for codegen.
         /// For Flow: the inner type from TypeAnnotation.typeAnnotation
         /// For TS: the TSType node from TSAsExpression/TSSatisfiesExpression
-        type_annotation: Option<Box<str>>,
+        type_annotation: Option<StoreStr>,
         loc: Option<SourceLocation>,
     },
     JsxExpression {
@@ -747,13 +791,13 @@ pub enum InstructionValue {
         loc: Option<SourceLocation>,
     },
     RegExpLiteral {
-        pattern: String,
-        flags: String,
+        pattern: StoreStr,
+        flags: StoreStr,
         loc: Option<SourceLocation>,
     },
     MetaProperty {
-        meta: String,
-        property: String,
+        meta: &'static str,
+        property: &'static str,
         loc: Option<SourceLocation>,
     },
     PropertyStore {
@@ -793,13 +837,13 @@ pub enum InstructionValue {
         loc: Option<SourceLocation>,
     },
     StoreGlobal {
-        name: String,
+        name: StoreStr,
         value: Place,
         loc: Option<SourceLocation>,
     },
     FunctionExpression {
-        name: Option<String>,
-        name_hint: Option<String>,
+        name: Option<StoreStr>,
+        name_hint: Option<StoreStr>,
         lowered_func: LoweredFunction,
         expr_type: FunctionExpressionType,
         loc: Option<SourceLocation>,
@@ -860,9 +904,9 @@ pub enum InstructionValue {
         loc: Option<SourceLocation>,
     },
     UnsupportedNode {
-        node_type: Option<String>,
+        node_type: Option<&'static str>,
         /// The original AST node serialized as JSON, so codegen can emit it verbatim.
-        original_node: Option<Box<str>>,
+        original_node: Option<StoreStr>,
         loc: Option<SourceLocation>,
     },
 }
@@ -1032,8 +1076,8 @@ pub enum FunctionExpressionType {
 
 #[derive(Debug, Clone)]
 pub struct TemplateQuasi {
-    pub raw: String,
-    pub cooked: Option<String>,
+    pub raw: StoreStr,
+    pub cooked: Option<StoreStr>,
 }
 
 #[derive(Debug, Clone)]
@@ -1046,7 +1090,7 @@ pub struct ManualMemoDependency {
 #[derive(Debug, Clone)]
 pub enum ManualMemoDependencyRoot {
     NamedLocal { value: Place, constant: bool },
-    Global { identifier_name: String },
+    Global { identifier_name: StoreStr },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1106,14 +1150,14 @@ impl MutableRange {
 
 #[derive(Debug, Clone)]
 pub enum IdentifierName {
-    Named(String),
-    Promoted(String),
+    Named(StoreStr),
+    Promoted(StoreStr),
 }
 
 impl IdentifierName {
-    pub fn value(&self) -> &str {
+    pub fn value(&self) -> &[u8] {
         match self {
-            IdentifierName::Named(v) | IdentifierName::Promoted(v) => v,
+            IdentifierName::Named(v) | IdentifierName::Promoted(v) => v.slice(),
         }
     }
 }
@@ -1205,8 +1249,8 @@ pub struct ObjectProperty {
 
 #[derive(Debug, Clone)]
 pub enum ObjectPropertyKey {
-    String { name: String },
-    Identifier { name: String },
+    String { name: StoreStr },
+    Identifier { name: StoreStr },
     Computed { name: Place },
     Number { name: FloatValue },
 }
@@ -1228,14 +1272,14 @@ impl std::fmt::Display for ObjectPropertyType {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PropertyLiteral {
-    String(String),
+    String(StoreStr),
     Number(FloatValue),
 }
 
 impl std::fmt::Display for PropertyLiteral {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PropertyLiteral::String(s) => write!(f, "{}", s),
+            PropertyLiteral::String(s) => write!(f, "{}", bun_core::BStr::new(s.slice())),
             PropertyLiteral::Number(n) => write!(f, "{}", n),
         }
     }
@@ -1261,7 +1305,7 @@ pub struct LoweredFunction {
 
 #[derive(Debug, Clone)]
 pub struct BuiltinTag {
-    pub name: String,
+    pub name: StoreStr,
     pub loc: Option<SourceLocation>,
 }
 
@@ -1274,7 +1318,7 @@ pub enum JsxTag {
 #[derive(Debug, Clone)]
 pub enum JsxAttribute {
     SpreadAttribute { argument: Place },
-    Attribute { name: String, place: Place },
+    Attribute { name: StoreStr, place: Place },
 }
 
 // =============================================================================
@@ -1300,58 +1344,58 @@ pub enum VariableBinding {
         binding_kind: BindingKind,
     },
     Global {
-        name: String,
+        name: StoreStr,
     },
     ImportDefault {
-        name: String,
-        module: String,
+        name: StoreStr,
+        module: StoreStr,
     },
     ImportSpecifier {
-        name: String,
-        module: String,
-        imported: String,
+        name: StoreStr,
+        module: StoreStr,
+        imported: StoreStr,
     },
     ImportNamespace {
-        name: String,
-        module: String,
+        name: StoreStr,
+        module: StoreStr,
     },
     ModuleLocal {
-        name: String,
+        name: StoreStr,
     },
 }
 
 #[derive(Debug, Clone)]
 pub enum NonLocalBinding {
     ImportDefault {
-        name: String,
-        module: String,
+        name: StoreStr,
+        module: StoreStr,
     },
     ImportSpecifier {
-        name: String,
-        module: String,
-        imported: String,
+        name: StoreStr,
+        module: StoreStr,
+        imported: StoreStr,
     },
     ImportNamespace {
-        name: String,
-        module: String,
+        name: StoreStr,
+        module: StoreStr,
     },
     ModuleLocal {
-        name: String,
+        name: StoreStr,
     },
     Global {
-        name: String,
+        name: StoreStr,
     },
 }
 
 impl NonLocalBinding {
     /// Returns the `name` field common to all variants.
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &[u8] {
         match self {
             NonLocalBinding::ImportDefault { name, .. }
             | NonLocalBinding::ImportSpecifier { name, .. }
             | NonLocalBinding::ImportNamespace { name, .. }
             | NonLocalBinding::ModuleLocal { name, .. }
-            | NonLocalBinding::Global { name, .. } => name,
+            | NonLocalBinding::Global { name, .. } => name.slice(),
         }
     }
 }
@@ -1360,16 +1404,25 @@ impl NonLocalBinding {
 // Type system (from Types.ts)
 // =============================================================================
 
+/// The recursive `Box<Type>` fields here intentionally use the global
+/// allocator, NOT [`HirBox`]: `Type` values are constructed and held by the
+/// process-lifetime [`ShapeRegistry`](crate::hir::object_shape::ShapeRegistry),
+/// which outlives the per-file AST arena, so an arena-backed box would dangle
+/// after `Store::reset()`. The leak hazard described on [`HirVec`] does not
+/// apply because `Type` is stored in `Drop`-running containers (registry
+/// `HashMap`s, the unifier's substitution map) rather than bulk-freed arena
+/// slabs; the one arena-backed holder, `Phi::operands`, is dropped normally
+/// at the end of type inference before any arena reset.
 #[derive(Debug, Clone)]
 pub enum Type {
     Primitive,
     Function {
-        shape_id: Option<String>,
+        shape_id: Option<&'static str>,
         return_type: Box<Type>,
         is_constructor: bool,
     },
     Object {
-        shape_id: Option<String>,
+        shape_id: Option<&'static str>,
     },
     TypeVar {
         id: TypeId,
@@ -1380,7 +1433,7 @@ pub enum Type {
     },
     Property {
         object_type: Box<Type>,
-        object_name: String,
+        object_name: StoreStr,
         property_name: PropertyNameKind,
     },
     ObjectMethod,
@@ -1568,37 +1621,37 @@ pub fn is_primitive_type(ty: &Type) -> bool {
 
 /// Returns true if the type is the props object.
 pub fn is_props_type(ty: &Type) -> bool {
-    matches!(ty, Type::Object { shape_id: Some(id) } if id == BUILT_IN_PROPS_ID)
+    matches!(ty, Type::Object { shape_id: Some(id) } if *id == BUILT_IN_PROPS_ID)
 }
 
 /// Returns true if the type is an array.
 pub fn is_array_type(ty: &Type) -> bool {
-    matches!(ty, Type::Object { shape_id: Some(id) } if id == BUILT_IN_ARRAY_ID)
+    matches!(ty, Type::Object { shape_id: Some(id) } if *id == BUILT_IN_ARRAY_ID)
 }
 
 /// Returns true if the type is a Set.
 pub fn is_set_type(ty: &Type) -> bool {
-    matches!(ty, Type::Object { shape_id: Some(id) } if id == BUILT_IN_SET_ID)
+    matches!(ty, Type::Object { shape_id: Some(id) } if *id == BUILT_IN_SET_ID)
 }
 
 /// Returns true if the type is a Map.
 pub fn is_map_type(ty: &Type) -> bool {
-    matches!(ty, Type::Object { shape_id: Some(id) } if id == BUILT_IN_MAP_ID)
+    matches!(ty, Type::Object { shape_id: Some(id) } if *id == BUILT_IN_MAP_ID)
 }
 
 /// Returns true if the type is JSX.
 pub fn is_jsx_type(ty: &Type) -> bool {
-    matches!(ty, Type::Object { shape_id: Some(id) } if id == BUILT_IN_JSX_ID)
+    matches!(ty, Type::Object { shape_id: Some(id) } if *id == BUILT_IN_JSX_ID)
 }
 
 /// Returns true if the identifier type is a ref value.
 pub fn is_ref_value_type(ty: &Type) -> bool {
-    matches!(ty, Type::Object { shape_id: Some(id) } if id == BUILT_IN_REF_VALUE_ID)
+    matches!(ty, Type::Object { shape_id: Some(id) } if *id == BUILT_IN_REF_VALUE_ID)
 }
 
 /// Returns true if the identifier type is useRef.
 pub fn is_use_ref_type(ty: &Type) -> bool {
-    matches!(ty, Type::Object { shape_id: Some(id) } if id == BUILT_IN_USE_REF_ID)
+    matches!(ty, Type::Object { shape_id: Some(id) } if *id == BUILT_IN_USE_REF_ID)
 }
 
 /// Returns true if the type is a ref or ref value.
@@ -1608,38 +1661,38 @@ pub fn is_ref_or_ref_value(ty: &Type) -> bool {
 
 /// Returns true if the type is a useState result (BuiltInUseState).
 pub fn is_use_state_type(ty: &Type) -> bool {
-    matches!(ty, Type::Object { shape_id: Some(id) } if id == object_shape::BUILT_IN_USE_STATE_ID)
+    matches!(ty, Type::Object { shape_id: Some(id) } if *id == object_shape::BUILT_IN_USE_STATE_ID)
 }
 
 /// Returns true if the type is a setState function (BuiltInSetState).
 pub fn is_set_state_type(ty: &Type) -> bool {
-    matches!(ty, Type::Function { shape_id: Some(id), .. } if id == object_shape::BUILT_IN_SET_STATE_ID)
+    matches!(ty, Type::Function { shape_id: Some(id), .. } if *id == object_shape::BUILT_IN_SET_STATE_ID)
 }
 
 /// Returns true if the type is a useEffect hook.
 pub fn is_use_effect_hook_type(ty: &Type) -> bool {
-    matches!(ty, Type::Function { shape_id: Some(id), .. } if id == object_shape::BUILT_IN_USE_EFFECT_HOOK_ID)
+    matches!(ty, Type::Function { shape_id: Some(id), .. } if *id == object_shape::BUILT_IN_USE_EFFECT_HOOK_ID)
 }
 
 /// Returns true if the type is a useLayoutEffect hook.
 pub fn is_use_layout_effect_hook_type(ty: &Type) -> bool {
-    matches!(ty, Type::Function { shape_id: Some(id), .. } if id == object_shape::BUILT_IN_USE_LAYOUT_EFFECT_HOOK_ID)
+    matches!(ty, Type::Function { shape_id: Some(id), .. } if *id == object_shape::BUILT_IN_USE_LAYOUT_EFFECT_HOOK_ID)
 }
 
 /// Returns true if the type is a useInsertionEffect hook.
 pub fn is_use_insertion_effect_hook_type(ty: &Type) -> bool {
-    matches!(ty, Type::Function { shape_id: Some(id), .. } if id == object_shape::BUILT_IN_USE_INSERTION_EFFECT_HOOK_ID)
+    matches!(ty, Type::Function { shape_id: Some(id), .. } if *id == object_shape::BUILT_IN_USE_INSERTION_EFFECT_HOOK_ID)
 }
 
 /// Returns true if the type is a useEffectEvent function.
 pub fn is_use_effect_event_type(ty: &Type) -> bool {
-    matches!(ty, Type::Function { shape_id: Some(id), .. } if id == object_shape::BUILT_IN_USE_EFFECT_EVENT_ID)
+    matches!(ty, Type::Function { shape_id: Some(id), .. } if *id == object_shape::BUILT_IN_USE_EFFECT_EVENT_ID)
 }
 
 /// Returns true if the type is a ref or ref-like mutable type (e.g. Reanimated shared values).
 pub fn is_ref_or_ref_like_mutable_type(ty: &Type) -> bool {
     matches!(ty, Type::Object { shape_id: Some(id) }
-        if id == object_shape::BUILT_IN_USE_REF_ID || id == object_shape::REANIMATED_SHARED_VALUE_ID)
+        if *id == object_shape::BUILT_IN_USE_REF_ID || *id == object_shape::REANIMATED_SHARED_VALUE_ID)
 }
 
 /// Returns true if the type is the `use()` operator (React.use).
@@ -1647,18 +1700,18 @@ pub fn is_use_operator_type(ty: &Type) -> bool {
     matches!(
         ty,
         Type::Function { shape_id: Some(id), .. }
-            if id == BUILT_IN_USE_OPERATOR_ID
+            if *id == BUILT_IN_USE_OPERATOR_ID
     )
 }
 
 /// Returns true if the type is a plain object (BuiltInObject).
 pub fn is_plain_object_type(ty: &Type) -> bool {
-    matches!(ty, Type::Object { shape_id: Some(id) } if id == object_shape::BUILT_IN_OBJECT_ID)
+    matches!(ty, Type::Object { shape_id: Some(id) } if *id == object_shape::BUILT_IN_OBJECT_ID)
 }
 
 /// Returns true if the type is a startTransition function (BuiltInStartTransition).
 pub fn is_start_transition_type(ty: &Type) -> bool {
-    matches!(ty, Type::Function { shape_id: Some(id), .. } if id == object_shape::BUILT_IN_START_TRANSITION_ID)
+    matches!(ty, Type::Function { shape_id: Some(id), .. } if *id == object_shape::BUILT_IN_START_TRANSITION_ID)
 }
 
 #[cfg(test)]

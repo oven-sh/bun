@@ -179,11 +179,11 @@ fn validate_context_variable_lvalues_impl(
 fn format_place(place: &Place, identifiers: &[Identifier]) -> String {
     let id = place.identifier;
     let ident = &identifiers[id.0 as usize];
-    let name = match &ident.name {
-        Some(n) => n.value().to_string(),
-        None => String::new(),
+    let name: &[u8] = match &ident.name {
+        Some(n) => n.value(),
+        None => b"",
     };
-    format!("{} {}${}", place.effect, name, id.0)
+    format!("{} {}${}", place.effect, bun_core::BStr::new(name), id.0)
 }
 
 fn visit(

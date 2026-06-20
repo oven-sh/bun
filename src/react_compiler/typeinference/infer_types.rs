@@ -23,8 +23,8 @@ use crate::hir::{
     ArrayPatternElement, AstAlloc, BinaryOperator, FunctionId, HirFunction, HirVec, Identifier,
     IdentifierId, IdentifierName, InstructionId, InstructionKind, InstructionValue, JsxAttribute,
     LoweredFunction, NonLocalBinding, ObjectPropertyKey, ObjectPropertyOrSpread, ParamPattern,
-    Pattern, PropertyLiteral, PropertyNameKind, ReactFunctionType, SourceLocation, Terminal, Type,
-    TypeId,
+    Pattern, PropertyLiteral, PropertyNameKind, ReactFunctionType, SourceLocation, StoreStr,
+    Terminal, Type, TypeId,
 };
 use crate::ssa::enter_ssa::placeholder_function;
 
@@ -191,7 +191,7 @@ fn resolve_property_type(
     custom_hook_type: Option<&Type>,
 ) -> Option<Type> {
     let shape_id = match resolved_object {
-        Type::Object { shape_id } | Type::Function { shape_id, .. } => shape_id.as_deref(),
+        Type::Object { shape_id } | Type::Function { shape_id, .. } => *shape_id,
         _ => {
             // No shape, but if property name is hook-like, return hook type
             if let Some(hook_type) = custom_hook_type {
@@ -199,7 +199,7 @@ fn resolve_property_type(
                     value: PropertyLiteral::String(s),
                 } = property_name
                 {
-                    if is_hook_name(s) {
+                    if is_hook_name(s.slice()) {
                         return Some(hook_type.clone());
                     }
                 }
@@ -216,7 +216,7 @@ fn resolve_property_type(
                 value: PropertyLiteral::String(s),
             } = property_name
             {
-                if is_hook_name(s) {
+                if is_hook_name(s.slice()) {
                     return custom_hook_type.cloned();
                 }
             }
@@ -227,15 +227,18 @@ fn resolve_property_type(
 
     match property_name {
         PropertyNameKind::Literal { value } => match value {
-            PropertyLiteral::String(s) => shape
-                .properties
-                .get(s.as_str())
+            // Shape registry keys are `&'static str` (all ASCII); a property
+            // name that is not valid UTF-8 cannot match any registry key, so
+            // fall through to the `"*"` / hook-name fallback in that case.
+            PropertyLiteral::String(s) => core::str::from_utf8(s.slice())
+                .ok()
+                .and_then(|k| shape.properties.get(k))
                 .or_else(|| shape.properties.get("*"))
                 .cloned()
                 // Hook-name fallback: if property is not found in shape but looks
                 // like a hook name, return the custom hook type
                 .or_else(|| {
-                    if is_hook_name(s) {
+                    if is_hook_name(s.slice()) {
                         custom_hook_type.cloned()
                     } else {
                         None
@@ -249,11 +252,11 @@ fn resolve_property_type(
 
 /// Check if a property access looks like a ref pattern (e.g. `ref.current`, `fooRef.current`).
 /// Matches TS `isRefLikeName` in InferTypes.ts.
-fn is_ref_like_name(object_name: &str, property_name: &PropertyNameKind) -> bool {
+fn is_ref_like_name(object_name: &[u8], property_name: &PropertyNameKind) -> bool {
     let is_current = match property_name {
         PropertyNameKind::Literal {
             value: PropertyLiteral::String(s),
-        } => s == "current",
+        } => s.slice() == b"current",
         _ => false,
     };
     if !is_current {
@@ -262,13 +265,12 @@ fn is_ref_like_name(object_name: &str, property_name: &PropertyNameKind) -> bool
     // Match TS regex: /^(?:[a-zA-Z$_][a-zA-Z$_0-9]*)Ref$|^ref$/
     // "Ref" alone does NOT match — requires at least one character before "Ref"
     // (e.g., "fooRef", "aRef" match, but bare "Ref" does not).
-    object_name == "ref"
+    object_name == b"ref"
         || (object_name.len() > 3
-            && object_name.ends_with("Ref")
-            && object_name[..1]
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphabetic() || c == '$' || c == '_'))
+            && object_name.ends_with(b"Ref")
+            && object_name
+                .first()
+                .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'$' || *c == b'_'))
 }
 
 /// Type equality matching TS `typeEquals`.
@@ -296,14 +298,38 @@ fn type_equals(a: &Type, b: &Type) -> bool {
     }
 }
 
-fn set_name(names: &mut IdMap<IdentifierId, String>, id: IdentifierId, source: &Identifier) {
-    if let Some(IdentifierName::Named(ref name)) = source.name {
-        names.insert(id, name.clone());
+fn set_name(names: &mut IdMap<IdentifierId, StoreStr>, id: IdentifierId, source: &Identifier) {
+    if let Some(IdentifierName::Named(name)) = source.name {
+        names.insert(id, name);
     }
 }
 
-fn get_name(names: &IdMap<IdentifierId, String>, id: IdentifierId) -> String {
-    names.get(id).cloned().unwrap_or_default()
+fn get_name(names: &IdMap<IdentifierId, StoreStr>, id: IdentifierId) -> StoreStr {
+    names.get(id).copied().unwrap_or(StoreStr::EMPTY)
+}
+
+/// Array-destructure index → property key. Static table covers every index a
+/// shape registry can name (only `"0"`/`"1"` exist today); larger indices are
+/// arena-allocated so the lookup string is preserved exactly.
+fn index_property_literal(i: usize) -> PropertyLiteral {
+    static INDEX_STRINGS: [&[u8]; 32] = [
+        b"0", b"1", b"2", b"3", b"4", b"5", b"6", b"7", b"8", b"9", b"10", b"11", b"12", b"13",
+        b"14", b"15", b"16", b"17", b"18", b"19", b"20", b"21", b"22", b"23", b"24", b"25", b"26",
+        b"27", b"28", b"29", b"30", b"31",
+    ];
+    if let Some(&s) = INDEX_STRINGS.get(i) {
+        return PropertyLiteral::String(StoreStr::new(s));
+    }
+    debug_assert!(i >= 32);
+    let mut buf = [0u8; 20];
+    let mut n = i;
+    let mut pos = buf.len();
+    while n > 0 {
+        pos -= 1;
+        buf[pos] = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    PropertyLiteral::String(StoreStr::new(AstAlloc::vec_from_slice(&buf[pos..]).leak()))
 }
 
 // =============================================================================
@@ -329,7 +355,7 @@ fn generate(
                 unifier.unify(
                     ty,
                     Type::Object {
-                        shape_id: Some(BUILT_IN_PROPS_ID.to_string()),
+                        shape_id: Some(BUILT_IN_PROPS_ID),
                     },
                     &env.shapes,
                 )?;
@@ -341,7 +367,7 @@ fn generate(
                 unifier.unify(
                     ty,
                     Type::Object {
-                        shape_id: Some(BUILT_IN_USE_REF_ID.to_string()),
+                        shape_id: Some(BUILT_IN_USE_REF_ID),
                     },
                     &env.shapes,
                 )?;
@@ -374,7 +400,7 @@ fn generate(
         }
     }
 
-    let mut names: IdMap<IdentifierId, String> = IdMap::new();
+    let mut names: IdMap<IdentifierId, StoreStr> = IdMap::new();
     let mut return_types: HirVec<Type> = AstAlloc::vec();
 
     for (_block_id, block) in &func.body.blocks {
@@ -454,7 +480,7 @@ fn generate_for_function_id(
                 unifier.unify(
                     ty,
                     Type::Object {
-                        shape_id: Some(BUILT_IN_PROPS_ID.to_string()),
+                        shape_id: Some(BUILT_IN_PROPS_ID),
                     },
                     shapes,
                 )?;
@@ -466,7 +492,7 @@ fn generate_for_function_id(
                 unifier.unify(
                     ty,
                     Type::Object {
-                        shape_id: Some(BUILT_IN_USE_REF_ID.to_string()),
+                        shape_id: Some(BUILT_IN_USE_REF_ID),
                     },
                     shapes,
                 )?;
@@ -476,7 +502,7 @@ fn generate_for_function_id(
 
     // TS creates a fresh `names` Map per recursive `generate` call, so inner
     // functions don't inherit or pollute the outer function's name mappings.
-    let mut inner_names: IdMap<IdentifierId, String> = IdMap::new();
+    let mut inner_names: IdMap<IdentifierId, StoreStr> = IdMap::new();
     let mut inner_return_types: HirVec<Type> = AstAlloc::vec();
 
     for (_block_id, block) in &inner.body.blocks {
@@ -540,7 +566,7 @@ fn generate_instruction_types(
     identifiers: &[Identifier],
     types: &mut HirVec<Type>,
     functions: &mut HirVec<HirFunction>,
-    names: &mut IdMap<IdentifierId, String>,
+    names: &mut IdMap<IdentifierId, StoreStr>,
     global_types: &HashMap<(u32, InstructionId), Type>,
     shapes: &ShapeRegistry,
     unifier: &mut Unifier,
@@ -628,8 +654,8 @@ fn generate_instruction_types(
             let mut shape_id = None;
             if unifier.enable_treat_set_identifiers_as_state_setters {
                 let name = get_name(names, callee.identifier);
-                if name.starts_with("set") {
-                    shape_id = Some(BUILT_IN_SET_STATE_ID.to_string());
+                if name.slice().starts_with(b"set") {
+                    shape_id = Some(BUILT_IN_SET_STATE_ID);
                 }
             }
             let callee_type = get_type(callee.identifier, identifiers);
@@ -672,7 +698,7 @@ fn generate_instruction_types(
             unifier.unify(
                 left,
                 Type::Object {
-                    shape_id: Some(BUILT_IN_OBJECT_ID.to_string()),
+                    shape_id: Some(BUILT_IN_OBJECT_ID),
                 },
                 shapes,
             )?;
@@ -682,7 +708,7 @@ fn generate_instruction_types(
             unifier.unify(
                 left,
                 Type::Object {
-                    shape_id: Some(BUILT_IN_ARRAY_ID.to_string()),
+                    shape_id: Some(BUILT_IN_ARRAY_ID),
                 },
                 shapes,
             )?;
@@ -754,7 +780,7 @@ fn generate_instruction_types(
                                     object_type: Box::new(value_type),
                                     object_name,
                                     property_name: PropertyNameKind::Literal {
-                                        value: PropertyLiteral::String(i.to_string()),
+                                        value: index_property_literal(i),
                                     },
                                 },
                                 shapes,
@@ -765,7 +791,7 @@ fn generate_instruction_types(
                             unifier.unify(
                                 spread_type,
                                 Type::Object {
-                                    shape_id: Some(BUILT_IN_ARRAY_ID.to_string()),
+                                    shape_id: Some(BUILT_IN_ARRAY_ID),
                                 },
                                 shapes,
                             )?;
@@ -792,7 +818,7 @@ fn generate_instruction_types(
                                         object_type: Box::new(value_type),
                                         object_name,
                                         property_name: PropertyNameKind::Literal {
-                                            value: PropertyLiteral::String(name.clone()),
+                                            value: PropertyLiteral::String(*name),
                                         },
                                     },
                                     shapes,
@@ -834,7 +860,7 @@ fn generate_instruction_types(
             unifier.unify(
                 left,
                 Type::Function {
-                    shape_id: Some(BUILT_IN_FUNCTION_ID.to_string()),
+                    shape_id: Some(BUILT_IN_FUNCTION_ID),
                     return_type: Box::new(inner_return_type),
                     is_constructor: false,
                 },
@@ -866,12 +892,12 @@ fn generate_instruction_types(
             if unifier.enable_treat_ref_like_identifiers_as_refs {
                 for prop in props {
                     if let JsxAttribute::Attribute { name, place } = prop {
-                        if name == "ref" {
+                        if name.slice() == b"ref" {
                             let ref_type = get_type(place.identifier, identifiers);
                             unifier.unify(
                                 ref_type,
                                 Type::Object {
-                                    shape_id: Some(BUILT_IN_USE_REF_ID.to_string()),
+                                    shape_id: Some(BUILT_IN_USE_REF_ID),
                                 },
                                 shapes,
                             )?;
@@ -882,7 +908,7 @@ fn generate_instruction_types(
             unifier.unify(
                 left,
                 Type::Object {
-                    shape_id: Some(BUILT_IN_JSX_ID.to_string()),
+                    shape_id: Some(BUILT_IN_JSX_ID),
                 },
                 shapes,
             )?;
@@ -892,7 +918,7 @@ fn generate_instruction_types(
             unifier.unify(
                 left,
                 Type::Object {
-                    shape_id: Some(BUILT_IN_JSX_ID.to_string()),
+                    shape_id: Some(BUILT_IN_JSX_ID),
                 },
                 shapes,
             )?;
@@ -1073,19 +1099,19 @@ impl Unifier {
         {
             // Check enableTreatRefLikeIdentifiersAsRefs
             if self.enable_treat_ref_like_identifiers_as_refs
-                && is_ref_like_name(object_name, property_name)
+                && is_ref_like_name(object_name.slice(), property_name)
             {
                 self.unify_impl(
                     *object_type.clone(),
                     Type::Object {
-                        shape_id: Some(BUILT_IN_USE_REF_ID.to_string()),
+                        shape_id: Some(BUILT_IN_USE_REF_ID),
                     },
                     shapes,
                 )?;
                 self.unify_impl(
                     t_a,
                     Type::Object {
-                        shape_id: Some(BUILT_IN_REF_VALUE_ID.to_string()),
+                        shape_id: Some(BUILT_IN_REF_VALUE_ID),
                     },
                     shapes,
                 )?;
@@ -1264,7 +1290,7 @@ impl Unifier {
                 let object_type = self.try_resolve_type(v, &resolved_obj)?;
                 Some(Type::Property {
                     object_type: Box::new(object_type),
-                    object_name: object_name.clone(),
+                    object_name: *object_name,
                     property_name: property_name.clone(),
                 })
             }
@@ -1276,7 +1302,7 @@ impl Unifier {
                 let resolved_ret = self.get(return_type);
                 let return_type = self.try_resolve_type(v, &resolved_ret)?;
                 Some(Type::Function {
-                    shape_id: shape_id.clone(),
+                    shape_id: *shape_id,
                     return_type: Box::new(return_type),
                     is_constructor: *is_constructor,
                 })
@@ -1330,7 +1356,7 @@ impl Unifier {
         {
             return Type::Function {
                 is_constructor: *is_constructor,
-                shape_id: shape_id.clone(),
+                shape_id: *shape_id,
                 return_type: Box::new(self.get(return_type)),
             };
         }
@@ -1344,10 +1370,10 @@ impl Unifier {
 // =============================================================================
 
 fn try_union_types(ty1: &Type, ty2: &Type) -> Option<Type> {
-    let (readonly_type, other_type) = if matches!(ty1, Type::Object { shape_id } if shape_id.as_deref() == Some(BUILT_IN_MIXED_READONLY_ID))
+    let (readonly_type, other_type) = if matches!(ty1, Type::Object { shape_id } if *shape_id == Some(BUILT_IN_MIXED_READONLY_ID))
     {
         (ty1, ty2)
-    } else if matches!(ty2, Type::Object { shape_id } if shape_id.as_deref() == Some(BUILT_IN_MIXED_READONLY_ID))
+    } else if matches!(ty2, Type::Object { shape_id } if *shape_id == Some(BUILT_IN_MIXED_READONLY_ID))
     {
         (ty2, ty1)
     } else {
@@ -1357,7 +1383,7 @@ fn try_union_types(ty1: &Type, ty2: &Type) -> Option<Type> {
     if matches!(other_type, Type::Primitive) {
         // Union(Primitive | MixedReadonly) = MixedReadonly
         return Some(readonly_type.clone());
-    } else if matches!(other_type, Type::Object { shape_id } if shape_id.as_deref() == Some(BUILT_IN_ARRAY_ID))
+    } else if matches!(other_type, Type::Object { shape_id } if *shape_id == Some(BUILT_IN_ARRAY_ID))
     {
         // Union(Array | MixedReadonly) = Array
         return Some(other_type.clone());

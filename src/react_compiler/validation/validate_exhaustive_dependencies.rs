@@ -14,8 +14,10 @@ use crate::hir::{
     ArrayElement, AstAlloc, BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier,
     IdentifierId, InstructionKind, InstructionValue, ManualMemoDependency,
     ManualMemoDependencyRoot, NonLocalBinding, ParamPattern, Place, PlaceOrSpread, PropertyLiteral,
-    Terminal, Type, hir_vec,
+    StoreStr, Terminal, Type, hir_vec,
 };
+use bun_core::BStr;
+use core::fmt::Write as _;
 
 /// Port of ValidateExhaustiveDependencies.ts
 ///
@@ -139,37 +141,9 @@ enum InferredDependency {
     },
 }
 
-/// Hashable key for deduplicating inferred dependencies in a Set
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum InferredDependencyKey {
-    Local {
-        identifier: IdentifierId,
-        path_key: String,
-    },
-    Global {
-        name: String,
-    },
-}
-
-fn dep_to_key(dep: &InferredDependency) -> InferredDependencyKey {
-    match dep {
-        InferredDependency::Local {
-            identifier, path, ..
-        } => InferredDependencyKey::Local {
-            identifier: *identifier,
-            path_key: path_to_string(path),
-        },
-        InferredDependency::Global { binding } => InferredDependencyKey::Global {
-            name: binding.name().to_string(),
-        },
-    }
-}
-
-fn path_to_string(path: &[DependencyPathEntry]) -> String {
-    path.iter()
-        .map(|p| format!("{}{}", if p.optional { "?." } else { "." }, p.property))
-        .collect::<Vec<_>>()
-        .join("")
+/// Dependency lists are small; linear dedup avoids allocating hash keys.
+fn contains_dep(deps: &[InferredDependency], dep: &InferredDependency) -> bool {
+    deps.iter().any(|d| is_equal_temporary(d, dep))
 }
 
 /// Callbacks for StartMemoize/FinishMemoize/Effect events
@@ -188,7 +162,7 @@ struct Callbacks<'a> {
 // =============================================================================
 
 fn is_effect_event_function_type(ty: &Type) -> bool {
-    matches!(ty, Type::Function { shape_id: Some(id), .. } if id == "BuiltInEffectEventFunction")
+    matches!(ty, Type::Function { shape_id: Some(id), .. } if *id == "BuiltInEffectEventFunction")
 }
 
 fn is_stable_type(ty: &Type) -> bool {
@@ -196,23 +170,25 @@ fn is_stable_type(ty: &Type) -> bool {
         Type::Function {
             shape_id: Some(id), ..
         } => matches!(
-            id.as_str(),
+            *id,
             "BuiltInSetState"
                 | "BuiltInSetActionState"
                 | "BuiltInDispatch"
                 | "BuiltInStartTransition"
                 | "BuiltInSetOptimistic"
         ),
-        Type::Object { shape_id: Some(id) } => matches!(id.as_str(), "BuiltInUseRefId"),
+        Type::Object { shape_id: Some(id) } => matches!(*id, "BuiltInUseRefId"),
         _ => false,
     }
 }
 
 fn is_effect_hook(ty: &Type) -> bool {
     matches!(ty, Type::Function { shape_id: Some(id), .. }
-        if id == "BuiltInUseEffectHook"
-            || id == "BuiltInUseLayoutEffectHook"
-            || id == "BuiltInUseInsertionEffectHook"
+        if matches!(*id,
+            "BuiltInUseEffectHook"
+                | "BuiltInUseLayoutEffectHook"
+                | "BuiltInUseInsertionEffectHook"
+        )
     )
 }
 
@@ -221,7 +197,7 @@ fn is_primitive_type(ty: &Type) -> bool {
 }
 
 fn is_use_ref_type(ty: &Type) -> bool {
-    matches!(ty, Type::Object { shape_id: Some(id) } if id == "BuiltInUseRefId")
+    matches!(ty, Type::Object { shape_id: Some(id) } if *id == "BuiltInUseRefId")
 }
 
 fn get_identifier_type<'a>(
@@ -233,11 +209,8 @@ fn get_identifier_type<'a>(
     &types[ident.type_.0 as usize]
 }
 
-fn get_identifier_name(id: IdentifierId, identifiers: &[Identifier]) -> Option<String> {
-    identifiers[id.0 as usize]
-        .name
-        .as_ref()
-        .map(|n| n.value().to_string())
+fn get_identifier_name(id: IdentifierId, identifiers: &[Identifier]) -> Option<&[u8]> {
+    identifiers[id.0 as usize].name.as_ref().map(|n| n.value())
 }
 
 // =============================================================================
@@ -412,7 +385,6 @@ fn find_optional_places(func: &HirFunction) -> IdMap<IdentifierId, bool> {
 fn add_dependency(
     dep: &Temporary,
     dependencies: &mut Vec<InferredDependency>,
-    dep_keys: &mut HashSet<InferredDependencyKey>,
     locals: &HashSet<IdentifierId>,
 ) {
     match dep {
@@ -421,15 +393,14 @@ fn add_dependency(
             ..
         } => {
             for d in agg_deps {
-                add_dependency_inferred(d, dependencies, dep_keys, locals);
+                add_dependency_inferred(d, dependencies, locals);
             }
         }
         Temporary::Global { binding } => {
             let inferred = InferredDependency::Global {
                 binding: binding.clone(),
             };
-            let key = dep_to_key(&inferred);
-            if dep_keys.insert(key) {
+            if !contains_dep(dependencies, &inferred) {
                 dependencies.push(inferred);
             }
         }
@@ -446,8 +417,7 @@ fn add_dependency(
                     context: *context,
                     loc: *loc,
                 };
-                let key = dep_to_key(&inferred);
-                if dep_keys.insert(key) {
+                if !contains_dep(dependencies, &inferred) {
                     dependencies.push(inferred);
                 }
             }
@@ -458,22 +428,17 @@ fn add_dependency(
 fn add_dependency_inferred(
     dep: &InferredDependency,
     dependencies: &mut Vec<InferredDependency>,
-    dep_keys: &mut HashSet<InferredDependencyKey>,
     locals: &HashSet<IdentifierId>,
 ) {
     match dep {
         InferredDependency::Global { .. } => {
-            let key = dep_to_key(dep);
-            if dep_keys.insert(key) {
+            if !contains_dep(dependencies, dep) {
                 dependencies.push(dep.clone());
             }
         }
         InferredDependency::Local { identifier, .. } => {
-            if !locals.contains(identifier) {
-                let key = dep_to_key(dep);
-                if dep_keys.insert(key) {
-                    dependencies.push(dep.clone());
-                }
+            if !locals.contains(identifier) && !contains_dep(dependencies, dep) {
+                dependencies.push(dep.clone());
             }
         }
     }
@@ -483,11 +448,10 @@ fn visit_candidate_dependency(
     place: &Place,
     temporaries: &IdMap<IdentifierId, Temporary>,
     dependencies: &mut Vec<InferredDependency>,
-    dep_keys: &mut HashSet<InferredDependencyKey>,
     locals: &HashSet<IdentifierId>,
 ) {
     if let Some(dep) = temporaries.get(place.identifier) {
-        add_dependency(dep, dependencies, dep_keys, locals);
+        add_dependency(dep, dependencies, locals);
     }
 }
 
@@ -514,14 +478,12 @@ fn collect_dependencies(
     }
 
     let mut dependencies: Vec<InferredDependency> = Vec::new();
-    let mut dep_keys: HashSet<InferredDependencyKey> = HashSet::new();
 
     // Saved state for when we're inside a memo block (StartMemoize..FinishMemoize).
     // In TS, `dependencies` and `locals` are shared by reference between the main
     // collection loop and the callbacks — StartMemoize clears them, FinishMemoize
     // reads and clears them. We simulate this by saving/restoring.
     let mut saved_dependencies: Option<Vec<InferredDependency>> = None;
-    let mut saved_dep_keys: Option<HashSet<InferredDependencyKey>> = None;
     let mut saved_locals: Option<HashSet<IdentifierId>> = None;
 
     for (_block_id, block) in &func.body.blocks {
@@ -666,7 +628,6 @@ fn collect_dependencies(
                             store_val,
                             temporaries,
                             &mut dependencies,
-                            &mut dep_keys,
                             &locals,
                         );
                         if store_lv.kind != InstructionKind::Reassign {
@@ -701,13 +662,7 @@ fn collect_dependencies(
                     value: store_val,
                     ..
                 } => {
-                    visit_candidate_dependency(
-                        store_val,
-                        temporaries,
-                        &mut dependencies,
-                        &mut dep_keys,
-                        &locals,
-                    );
+                    visit_candidate_dependency(store_val, temporaries, &mut dependencies, &locals);
                     if store_lv.kind != InstructionKind::Reassign {
                         temporaries.insert(
                             store_lv.place.identifier,
@@ -726,13 +681,7 @@ fn collect_dependencies(
                     lvalue: destr_lv,
                     ..
                 } => {
-                    visit_candidate_dependency(
-                        destr_val,
-                        temporaries,
-                        &mut dependencies,
-                        &mut dep_keys,
-                        &locals,
-                    );
+                    visit_candidate_dependency(destr_val, temporaries, &mut dependencies, &locals);
                     if destr_lv.kind != InstructionKind::Reassign {
                         each_lvalue(&instr.value, |lv_place| {
                             temporaries.insert(
@@ -755,16 +704,10 @@ fn collect_dependencies(
                     let is_numeric = matches!(property, PropertyLiteral::Number(_));
                     let is_ref_current =
                         is_use_ref_type(get_identifier_type(object.identifier, identifiers, types))
-                            && *property == PropertyLiteral::String("current".to_string());
+                            && matches!(property, PropertyLiteral::String(s) if s == b"current");
 
                     if is_numeric || is_ref_current {
-                        visit_candidate_dependency(
-                            object,
-                            temporaries,
-                            &mut dependencies,
-                            &mut dep_keys,
-                            &locals,
-                        );
+                        visit_candidate_dependency(object, temporaries, &mut dependencies, &locals);
                     } else {
                         // Extend path
                         let obj_temp = temporaries.get(object.identifier).cloned();
@@ -808,7 +751,7 @@ fn collect_dependencies(
                         true,
                     )?;
                     temporaries.insert(lvalue_id, function_deps.clone());
-                    add_dependency(&function_deps, &mut dependencies, &mut dep_keys, &locals);
+                    add_dependency(&function_deps, &mut dependencies, &locals);
                 }
                 InstructionValue::StartMemoize {
                     manual_memo_id,
@@ -826,7 +769,6 @@ fn collect_dependencies(
                         // Save current state and clear, matching TS which clears the shared
                         // dependencies/locals sets on StartMemoize
                         saved_dependencies = Some(std::mem::take(&mut dependencies));
-                        saved_dep_keys = Some(std::mem::take(&mut dep_keys));
                         saved_locals = Some(std::mem::take(&mut locals));
                     }
                 }
@@ -851,7 +793,6 @@ fn collect_dependencies(
                                     decl,
                                     temporaries,
                                     &mut dependencies,
-                                    &mut dep_keys,
                                     &locals,
                                 );
 
@@ -880,15 +821,10 @@ fn collect_dependencies(
                             if let Some(saved) = saved_dependencies.take() {
                                 // Merge current memo-block deps into the restored outer deps
                                 let memo_deps = std::mem::replace(&mut dependencies, saved);
-                                let _memo_keys = std::mem::replace(
-                                    &mut dep_keys,
-                                    saved_dep_keys.take().unwrap_or_default(),
-                                );
                                 locals = saved_locals.take().unwrap_or_default();
                                 // Add memo deps to outer deps (they're still valid outer deps)
                                 for d in memo_deps {
-                                    let key = dep_to_key(&d);
-                                    if dep_keys.insert(key) {
+                                    if !contains_dep(&dependencies, &d) {
                                         dependencies.push(d);
                                     }
                                 }
@@ -898,7 +834,6 @@ fn collect_dependencies(
                 }
                 InstructionValue::ArrayExpression { elements, loc, .. } => {
                     let mut array_deps: Vec<InferredDependency> = Vec::new();
-                    let mut array_keys: HashSet<InferredDependencyKey> = HashSet::new();
                     let empty_locals = HashSet::new();
                     for elem in elements {
                         let place = match elem {
@@ -912,7 +847,6 @@ fn collect_dependencies(
                                 place,
                                 temporaries,
                                 &mut array_deps,
-                                &mut array_keys,
                                 &empty_locals,
                             );
                             // Visit normally
@@ -920,7 +854,6 @@ fn collect_dependencies(
                                 place,
                                 temporaries,
                                 &mut dependencies,
-                                &mut dep_keys,
                                 &locals,
                             );
                         }
@@ -1003,9 +936,9 @@ fn collect_dependencies(
                                                         ManualMemoDependency {
                                                             root:
                                                                 ManualMemoDependencyRoot::Global {
-                                                                    identifier_name: binding
-                                                                        .name()
-                                                                        .to_string(),
+                                                                    identifier_name: StoreStr::new(
+                                                                        binding.name(),
+                                                                    ),
                                                                 },
                                                             path: hir_vec![],
                                                             loc: None,
@@ -1041,7 +974,6 @@ fn collect_dependencies(
                             &operand,
                             temporaries,
                             &mut dependencies,
-                            &mut dep_keys,
                             &locals,
                         );
                     }
@@ -1120,9 +1052,9 @@ fn collect_dependencies(
                                                         ManualMemoDependency {
                                                             root:
                                                                 ManualMemoDependencyRoot::Global {
-                                                                    identifier_name: binding
-                                                                        .name()
-                                                                        .to_string(),
+                                                                    identifier_name: StoreStr::new(
+                                                                        binding.name(),
+                                                                    ),
                                                                 },
                                                             path: hir_vec![],
                                                             loc: None,
@@ -1151,26 +1083,14 @@ fn collect_dependencies(
                     }
 
                     // Visit operands, skipping the method property itself
-                    visit_candidate_dependency(
-                        receiver,
-                        temporaries,
-                        &mut dependencies,
-                        &mut dep_keys,
-                        &locals,
-                    );
+                    visit_candidate_dependency(receiver, temporaries, &mut dependencies, &locals);
                     // Skip property — matches TS behavior
                     for arg in args {
                         let place = match arg {
                             PlaceOrSpread::Place(p) => p,
                             PlaceOrSpread::Spread(s) => &s.place,
                         };
-                        visit_candidate_dependency(
-                            place,
-                            temporaries,
-                            &mut dependencies,
-                            &mut dep_keys,
-                            &locals,
-                        );
+                        visit_candidate_dependency(place, temporaries, &mut dependencies, &locals);
                     }
                 }
                 _ => {
@@ -1182,7 +1102,6 @@ fn collect_dependencies(
                             &operand,
                             temporaries,
                             &mut dependencies,
-                            &mut dep_keys,
                             &locals,
                         );
                     }
@@ -1199,13 +1118,7 @@ fn collect_dependencies(
             if optionals.contains_key(operand.identifier) {
                 continue;
             }
-            visit_candidate_dependency(
-                operand,
-                temporaries,
-                &mut dependencies,
-                &mut dep_keys,
-                &locals,
-            );
+            visit_candidate_dependency(operand, temporaries, &mut dependencies, &locals);
         }
     }
 
@@ -1218,6 +1131,15 @@ fn collect_dependencies(
 // =============================================================================
 // validateDependencies
 // =============================================================================
+
+fn cmp_property_literal(a: &PropertyLiteral, b: &PropertyLiteral) -> std::cmp::Ordering {
+    match (a, b) {
+        (PropertyLiteral::String(a), PropertyLiteral::String(b)) => a.slice().cmp(b.slice()),
+        (PropertyLiteral::Number(a), PropertyLiteral::Number(b)) => a.value().total_cmp(&b.value()),
+        (PropertyLiteral::String(_), PropertyLiteral::Number(_)) => std::cmp::Ordering::Less,
+        (PropertyLiteral::Number(_), PropertyLiteral::String(_)) => std::cmp::Ordering::Greater,
+    }
+}
 
 fn validate_dependencies(
     mut inferred: Vec<InferredDependency>,
@@ -1250,7 +1172,7 @@ fn validate_dependencies(
             ) => {
                 let a_name = get_identifier_name(*a_id, identifiers);
                 let b_name = get_identifier_name(*b_id, identifiers);
-                match (a_name.as_deref(), b_name.as_deref()) {
+                match (a_name, b_name) {
                     (Some(an), Some(bn)) => {
                         if *a_id != *b_id {
                             an.cmp(bn)
@@ -1264,8 +1186,7 @@ fn validate_dependencies(
                                 if a_opt != b_opt {
                                     return a_opt.cmp(&b_opt);
                                 }
-                                let prop_cmp =
-                                    ap.property.to_string().cmp(&bp.property.to_string());
+                                let prop_cmp = cmp_property_literal(&ap.property, &bp.property);
                                 if prop_cmp != std::cmp::Ordering::Equal {
                                     return prop_cmp;
                                 }
@@ -1283,8 +1204,7 @@ fn validate_dependencies(
                 },
             ) => {
                 let a_name = ab.name();
-                let b_name = get_identifier_name(*b_id, identifiers);
-                match b_name.as_deref() {
+                match get_identifier_name(*b_id, identifiers) {
                     Some(bn) => a_name.cmp(bn),
                     None => std::cmp::Ordering::Equal,
                 }
@@ -1297,7 +1217,7 @@ fn validate_dependencies(
             ) => {
                 let a_name = get_identifier_name(*a_id, identifiers);
                 let b_name = bb.name();
-                match a_name.as_deref() {
+                match a_name {
                     Some(an) => an.cmp(b_name),
                     None => std::cmp::Ordering::Equal,
                 }
@@ -1367,7 +1287,7 @@ fn validate_dependencies(
             InferredDependency::Global { binding } => {
                 for (i, manual_dep) in manual_dependencies.iter().enumerate() {
                     if let ManualMemoDependencyRoot::Global { identifier_name } = &manual_dep.root {
-                        if identifier_name == binding.name() {
+                        if identifier_name.slice() == binding.name() {
                             matched.insert(i);
                             extra.push(manual_dep);
                         }
@@ -1495,11 +1415,12 @@ fn validate_dependencies(
             ..
         } = dep
         {
-            let mut hint = String::new();
             let ty = get_identifier_type(*identifier, identifiers, types);
-            if is_stable_type(ty) {
-                hint = ". Refs, setState functions, and other \"stable\" values generally do not need to be added as dependencies, but this variable may change over time to point to different values".to_string();
-            }
+            let hint: &'static str = if is_stable_type(ty) {
+                ". Refs, setState functions, and other \"stable\" values generally do not need to be added as dependencies, but this variable may change over time to point to different values"
+            } else {
+                ""
+            };
             let dep_str = print_inferred_dependency(dep, identifiers);
             diagnostic.details.push(CompilerDiagnosticDetail::Error {
                 loc: *loc,
@@ -1606,36 +1527,37 @@ fn validate_dependencies(
 // =============================================================================
 
 fn print_inferred_dependency(dep: &InferredDependency, identifiers: &[Identifier]) -> String {
+    let mut out = String::new();
     match dep {
-        InferredDependency::Global { binding } => binding.name().to_string(),
+        InferredDependency::Global { binding } => {
+            let _ = write!(out, "{}", BStr::new(binding.name()));
+        }
         InferredDependency::Local {
             identifier, path, ..
         } => {
-            let name = get_identifier_name(*identifier, identifiers)
-                .unwrap_or_else(|| "<unnamed>".to_string());
-            let path_str: String = path
-                .iter()
-                .map(|p| format!("{}.{}", if p.optional { "?" } else { "" }, p.property))
-                .collect();
-            format!("{name}{path_str}")
+            let name = get_identifier_name(*identifier, identifiers).unwrap_or(b"<unnamed>");
+            let _ = write!(out, "{}", BStr::new(name));
+            for p in path {
+                let _ = write!(out, "{}.{}", if p.optional { "?" } else { "" }, p.property);
+            }
         }
     }
+    out
 }
 
 fn print_manual_memo_dependency(dep: &ManualMemoDependency, identifiers: &[Identifier]) -> String {
-    let name = match &dep.root {
-        ManualMemoDependencyRoot::Global { identifier_name } => identifier_name.clone(),
+    let mut out = String::new();
+    let name: &[u8] = match &dep.root {
+        ManualMemoDependencyRoot::Global { identifier_name } => identifier_name.slice(),
         ManualMemoDependencyRoot::NamedLocal { value, .. } => {
-            get_identifier_name(value.identifier, identifiers)
-                .unwrap_or_else(|| "<unnamed>".to_string())
+            get_identifier_name(value.identifier, identifiers).unwrap_or(b"<unnamed>")
         }
     };
-    let path_str: String = dep
-        .path
-        .iter()
-        .map(|p| format!("{}.{}", if p.optional { "?" } else { "" }, p.property))
-        .collect();
-    format!("{name}{path_str}")
+    let _ = write!(out, "{}", BStr::new(name));
+    for p in &dep.path {
+        let _ = write!(out, "{}.{}", if p.optional { "?" } else { "" }, p.property);
+    }
+    out
 }
 
 // =============================================================================

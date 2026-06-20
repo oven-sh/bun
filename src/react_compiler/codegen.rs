@@ -103,7 +103,7 @@ pub struct OutlinedFunction {
 pub struct Codegen<'h> {
     pub host: &'h mut dyn Host,
     pub arena: &'h Arena,
-    name_to_ref: HashMap<String, Ref>,
+    name_to_ref: HashMap<Vec<u8>, Ref>,
     label_to_ref: IdMap<BlockId, Ref>,
 }
 
@@ -116,26 +116,41 @@ impl<'h> Codegen<'h> {
         Codegen {
             host,
             arena,
-            name_to_ref: used_names.into_iter().collect(),
+            name_to_ref: used_names
+                .into_iter()
+                .map(|(s, r)| (s.into_bytes(), r))
+                .collect(),
             label_to_ref: IdMap::new(),
         }
     }
 
-    fn ref_for_name(&mut self, name: &str) -> Ref {
+    fn ref_for_name(&mut self, name: &[u8]) -> Ref {
         if let Some(&r) = self.name_to_ref.get(name) {
             self.host.record_usage(r);
             return r;
         }
-        let r = self.host.new_generated(name.as_bytes());
-        self.name_to_ref.insert(name.to_string(), r);
+        let r = self.host.new_generated(name);
+        self.name_to_ref.insert(name.to_vec(), r);
         r
+    }
+
+    fn ident_expr(&mut self, name: &[u8], loc: Loc) -> Expr {
+        if name == b"undefined" {
+            return Expr::init(E::Undefined {}, loc);
+        }
+        Expr::init_identifier(self.ref_for_name(name), loc)
     }
 
     fn ref_for_label(&mut self, id: BlockId) -> Ref {
         if let Some(&r) = self.label_to_ref.get(id) {
             return r;
         }
-        let r = self.host.new_generated(codegen_label(id).as_bytes());
+        use std::io::Write;
+        let mut buf = [0u8; 24];
+        let mut cursor = std::io::Cursor::new(&mut buf[..]);
+        write!(cursor, "bb{}", id.0).unwrap();
+        let len = cursor.position() as usize;
+        let r = self.host.new_generated(&buf[..len]);
         self.label_to_ref.insert(id, r);
         r
     }
@@ -153,7 +168,7 @@ pub fn codegen_function(
     // Fast Refresh: Bun handles HMR via its own React Refresh transform; the
     // upstream `enable_reset_cache_on_source_file_changes` path keys on
     // `env.code` which Bun never populates, so this is always `None`.
-    let fast_refresh_state: Option<(u32, String)> = None;
+    let fast_refresh_state: Option<u32> = None;
 
     let mut compiled = codegen_reactive_function(&mut cx, func)?;
 
@@ -162,15 +177,12 @@ pub fn codegen_function(
     if cx.env.hook_guard_name.is_some()
         && cx.env.output_mode == crate::hir::environment::OutputMode::Client
     {
-        let guard_name = cx.env.hook_guard_name.as_ref().unwrap().clone();
+        let guard_ref = {
+            let name = cx.env.hook_guard_name.as_deref().unwrap();
+            cx.cg.ref_for_name(name)
+        };
         let body_stmts = std::mem::take(&mut compiled.body);
-        compiled.body = vec![create_function_body_hook_guard(
-            &mut cx,
-            &guard_name,
-            body_stmts,
-            0,
-            1,
-        )];
+        compiled.body = vec![create_function_body_hook_guard(guard_ref, body_stmts, 0, 1)];
     }
 
     let cache_count = compiled.memo_slots_used;
@@ -180,7 +192,7 @@ pub fn codegen_function(
         let loc = Loc::EMPTY;
 
         // const $ = useMemoCache(N)
-        let use_memo_cache = cx.ident_expr("useMemoCache", loc);
+        let use_memo_cache = cx.ident_expr(b"useMemoCache", loc);
         let call = Expr::init(
             E::Call {
                 target: use_memo_cache,
@@ -192,7 +204,7 @@ pub fn codegen_function(
             },
             loc,
         );
-        let cache_ref = cx.cg.ref_for_name(&cache_name);
+        let cache_ref = cx.cg.ref_for_name(cache_name.as_bytes());
         preface.push(Stmt::alloc(
             S::Local {
                 kind: S::Kind::KConst,
@@ -214,22 +226,24 @@ pub fn codegen_function(
     }
 
     // Instrument forget: emit instrumentation call at the top of the function body
-    let emit_instrument_forget = cx.env.config.enable_emit_instrument_forget.clone();
-    if let Some(ref instrument_config) = emit_instrument_forget {
+    if let Some(instrument_config) = cx.env.config.enable_emit_instrument_forget.as_ref() {
         if func.id.is_some() && cx.env.output_mode == crate::hir::environment::OutputMode::Client {
             let instrument_fn_local = cx
                 .env
                 .instrument_fn_name
-                .clone()
-                .unwrap_or_else(|| instrument_config.fn_.import_specifier_name.clone());
-            let instrument_gating_local = cx.env.instrument_gating_name.clone();
+                .as_deref()
+                .unwrap_or(instrument_config.fn_.import_specifier_name.as_bytes());
+            let target = cx.cg.ident_expr(instrument_fn_local, Loc::EMPTY);
 
-            let gating_expr: Option<Expr> =
-                instrument_gating_local.map(|name| cx.ident_expr(&name, Loc::EMPTY));
+            let gating_expr: Option<Expr> = cx
+                .env
+                .instrument_gating_name
+                .as_deref()
+                .map(|name| cx.cg.ident_expr(name, Loc::EMPTY));
             let global_gating_expr: Option<Expr> = instrument_config
                 .global_gating
-                .as_ref()
-                .map(|g| cx.ident_expr(g, Loc::EMPTY));
+                .as_deref()
+                .map(|g| cx.cg.ident_expr(g.as_bytes(), Loc::EMPTY));
 
             let if_test = match (gating_expr, global_gating_expr) {
                 (Some(gating), Some(global)) => Expr::init(
@@ -247,15 +261,17 @@ pub fn codegen_function(
                 ),
             };
 
-            let fn_name_str = func.id.clone().unwrap_or_default();
-            let filename_str = cx.env.filename.clone().unwrap_or_default();
-            let target = cx.ident_expr(&instrument_fn_local, Loc::EMPTY);
+            let fn_name_str = func.id.as_deref().unwrap_or("");
+            let filename_str = cx.env.filename.as_deref().unwrap_or(b"");
             let call = Expr::init(
                 E::Call {
                     target,
                     args: AstAlloc::vec_from_iter([
-                        string_expr(&fn_name_str, Loc::EMPTY),
-                        string_expr(&filename_str, Loc::EMPTY),
+                        string_expr(fn_name_str, Loc::EMPTY),
+                        Expr::init(
+                            E::EString::init(store_str(filename_str).slice()),
+                            Loc::EMPTY,
+                        ),
                     ]),
                     ..Default::default()
                 },
@@ -310,7 +326,7 @@ struct Context<'a, 'h> {
     temp: Temporaries,
     object_methods: IdMap<IdentifierId, (InstructionValue, Option<DiagSourceLocation>)>,
     unique_identifiers: HashSet<String>,
-    synthesized_names: HashMap<String, String>,
+    synthesized_names: HashMap<&'static str, String>,
 }
 
 impl<'a, 'h> Context<'a, 'h> {
@@ -347,19 +363,20 @@ impl<'a, 'h> Context<'a, 'h> {
         self.declarations.contains(&ident.declaration_id)
     }
 
-    fn synthesize_name(&mut self, name: &str) -> String {
+    fn synthesize_name(&mut self, name: &'static str) -> String {
         if let Some(prev) = self.synthesized_names.get(name) {
             return prev.clone();
         }
-        let mut validated = name.to_string();
+        let mut validated = String::from(name);
         let mut index = 0u32;
         while self.unique_identifiers.contains(&validated) {
-            validated = format!("{name}{index}");
+            validated.clear();
+            use std::fmt::Write;
+            write!(validated, "{name}{index}").unwrap();
             index += 1;
         }
         self.unique_identifiers.insert(validated.clone());
-        self.synthesized_names
-            .insert(name.to_string(), validated.clone());
+        self.synthesized_names.insert(name, validated.clone());
         validated
     }
 
@@ -367,12 +384,8 @@ impl<'a, 'h> Context<'a, 'h> {
         self.env.record_error(detail)
     }
 
-    fn ident_expr(&mut self, name: &str, loc: Loc) -> Expr {
-        if name == "undefined" {
-            return Expr::init(E::Undefined {}, loc);
-        }
-        let r = self.cg.ref_for_name(name);
-        Expr::init_identifier(r, loc)
+    fn ident_expr(&mut self, name: &[u8], loc: Loc) -> Expr {
+        self.cg.ident_expr(name, loc)
     }
 }
 
@@ -428,7 +441,7 @@ fn codegen_reactive_function(
         count_memo_blocks(func, cx.env);
 
     let id = func.id.as_ref().map(|name| {
-        let r = cx.cg.ref_for_name(name);
+        let r = cx.cg.ref_for_name(name.as_bytes());
         LocRef {
             loc: convert_loc(func.loc),
             ref_: r,
@@ -578,7 +591,7 @@ fn codegen_reactive_scope(
     deps.sort_unstable_by(|a, b| compare_scope_dependency(a, b, cx.env));
 
     let cache_name = cx.synthesize_name("$");
-    let cache_ref = cx.cg.ref_for_name(&cache_name);
+    let cache_ref = cx.cg.ref_for_name(cache_name.as_bytes());
     let cache_ident = || Expr::init_identifier(cache_ref, loc);
     let cache_slot = |index: u32| {
         Expr::init(
@@ -629,14 +642,15 @@ fn codegen_reactive_scope(
         }
 
         let ident = &cx.env.identifiers[decl.identifier.0 as usize];
-        invariant(
-            ident.name.is_some(),
-            &format!(
-                "Expected scope declaration identifier to be named, id={}",
-                decl.identifier.0
-            ),
-            None,
-        )?;
+        if ident.name.is_none() {
+            return Err(invariant_err(
+                &format!(
+                    "Expected scope declaration identifier to be named, id={}",
+                    decl.identifier.0
+                ),
+                None,
+            ));
+        }
 
         let (name_ref, name_loc) = convert_identifier(cx, decl.identifier)?;
         if !cx.has_declared(decl.identifier) {
@@ -741,17 +755,13 @@ fn codegen_reactive_scope(
         .clone();
     if let Some(ref early_return) = early_return_value {
         let early_ident = &cx.env.identifiers[early_return.value.0 as usize];
-        let name = match &early_ident.name {
-            Some(crate::hir::IdentifierName::Named(n)) => n.clone(),
-            Some(crate::hir::IdentifierName::Promoted(n)) => n.clone(),
-            None => {
-                return Err(invariant_err(
-                    "Expected early return value to be promoted to a named variable",
-                    early_return.loc,
-                ));
-            }
+        let Some(name) = &early_ident.name else {
+            return Err(invariant_err(
+                "Expected early return value to be promoted to a named variable",
+                early_return.loc,
+            ));
         };
-        let name_expr = cx.ident_expr(&name, loc);
+        let name_expr = cx.cg.ident_expr(name.value(), loc);
         statements.push(Stmt::alloc(
             S::If {
                 test_: Expr::init(
@@ -1172,7 +1182,7 @@ fn extract_for_in_of_lval(
                 loc,
                 suggestions: None,
             })?;
-            let r = cx.cg.ref_for_name("_");
+            let r = cx.cg.ref_for_name(b"_");
             return Ok((
                 Binding::alloc(cx.cg.arena, b::Identifier { r#ref: r }, Loc::EMPTY),
                 S::Kind::KLet,
@@ -1765,7 +1775,7 @@ fn codegen_base_instruction_value(
         InstructionValue::LoadLocal { place, .. } | InstructionValue::LoadContext { place, .. } => {
             codegen_place_to_expression(cx, place)
         }
-        InstructionValue::LoadGlobal { binding, .. } => Ok(cx.ident_expr(binding.name(), loc)),
+        InstructionValue::LoadGlobal { binding, .. } => Ok(cx.cg.ident_expr(binding.name(), loc)),
         InstructionValue::CallExpression { callee, args, .. } => {
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;
@@ -1936,7 +1946,7 @@ fn codegen_base_instruction_value(
         InstructionValue::RegExpLiteral { pattern, flags, .. } => {
             let mut raw = Vec::with_capacity(2 + pattern.len() + flags.len());
             raw.push(b'/');
-            raw.extend_from_slice(pattern.as_bytes());
+            raw.extend_from_slice(pattern.slice());
             raw.push(b'/');
             let flags_offset =
                 if flags.is_empty() {
@@ -1946,7 +1956,7 @@ fn codegen_base_instruction_value(
                         invariant_err("RegExp pattern exceeds u16 flags_offset", None)
                     })?)
                 };
-            raw.extend_from_slice(flags.as_bytes());
+            raw.extend_from_slice(flags.slice());
             Ok(Expr::init(
                 E::RegExp {
                     value: store_str(&raw),
@@ -1955,21 +1965,19 @@ fn codegen_base_instruction_value(
                 loc,
             ))
         }
-        InstructionValue::MetaProperty { meta, property, .. } => {
-            match (meta.as_str(), property.as_str()) {
-                ("import", "meta") => Ok(Expr::init(E::ImportMeta {}, loc)),
-                ("new", "target") => Ok(Expr::init(
-                    E::NewTarget {
-                        range: ast::Range { loc, len: 0 },
-                    },
-                    loc,
-                )),
-                (m, p) => Err(invariant_err(
-                    &format!("Unsupported MetaProperty {m}.{p}"),
-                    None,
-                )),
-            }
-        }
+        InstructionValue::MetaProperty { meta, property, .. } => match (*meta, *property) {
+            ("import", "meta") => Ok(Expr::init(E::ImportMeta {}, loc)),
+            ("new", "target") => Ok(Expr::init(
+                E::NewTarget {
+                    range: ast::Range { loc, len: 0 },
+                },
+                loc,
+            )),
+            (m, p) => Err(invariant_err(
+                &format!("Unsupported MetaProperty {m}.{p}"),
+                None,
+            )),
+        },
         InstructionValue::Await { value, .. } => {
             let arg = codegen_place_to_expression(cx, value)?;
             Ok(Expr::init(E::Await { value: arg }, loc))
@@ -2026,7 +2034,7 @@ fn codegen_base_instruction_value(
         }
         InstructionValue::StoreGlobal { name, value, .. } => {
             let rhs = codegen_place_to_expression(cx, value)?;
-            let left = cx.ident_expr(name, loc);
+            let left = cx.cg.ident_expr(name.slice(), loc);
             Ok(Expr::init(
                 E::Binary {
                     op: OpCode::BinAssign,
@@ -2048,7 +2056,7 @@ fn codegen_base_instruction_value(
             Ok(Expr::init(
                 E::Template {
                     tag: Some(tag_expr),
-                    head: E::TemplateContents::Raw(store_str(value.raw.as_bytes())),
+                    head: E::TemplateContents::Raw(value.raw),
                     parts: StoreSlice::EMPTY,
                 },
                 loc,
@@ -2083,7 +2091,10 @@ fn codegen_base_instruction_value(
             // Bun emits type-stripped output; the cast is a passthrough.
             codegen_place_to_expression(cx, value)
         }
-        InstructionValue::JSXText { value, loc } => Ok(string_expr(value, convert_loc(*loc))),
+        InstructionValue::JSXText { value, loc } => Ok(Expr::init(
+            E::EString::init(value.slice()),
+            convert_loc(*loc),
+        )),
         InstructionValue::JsxExpression {
             tag,
             props,
@@ -2146,8 +2157,8 @@ fn codegen_base_instruction_value(
 
 fn codegen_function_expression(
     cx: &mut Context,
-    name: &Option<String>,
-    name_hint: &Option<String>,
+    name: &Option<StoreStr>,
+    name_hint: &Option<StoreStr>,
     lowered_func: &crate::hir::LoweredFunction,
     expr_type: FunctionExpressionType,
     loc: Loc,
@@ -2200,7 +2211,7 @@ fn codegen_function_expression(
                 fn_flags |= flags::Function::HasRestArg;
             }
             let fn_name = name.as_ref().map(|n| {
-                let r = cx.cg.ref_for_name(n);
+                let r = cx.cg.ref_for_name(n.slice());
                 LocRef { loc, ref_: r }
             });
             Expr::init(
@@ -2220,8 +2231,8 @@ fn codegen_function_expression(
     };
 
     if cx.env.config.enable_name_anonymous_functions && name.is_none() && name_hint.is_some() {
-        let hint = name_hint.as_ref().unwrap();
-        let key = string_expr(hint, loc);
+        let hint = name_hint.unwrap();
+        let key = Expr::init(E::EString::init(hint.slice()), loc);
         let mut props: G::PropertyList = AstAlloc::vec_with_capacity(1);
         props.push(G::Property {
             kind: G::PropertyKind::Normal,
@@ -2238,7 +2249,7 @@ fn codegen_function_expression(
                     },
                     loc,
                 ),
-                index: string_expr(hint, loc),
+                index: Expr::init(E::EString::init(hint.slice()), loc),
                 optional_chain: None,
             },
             loc,
@@ -2389,8 +2400,12 @@ fn codegen_object_property_key(
     key: &ObjectPropertyKey,
 ) -> Result<Expr, CompilerError> {
     match key {
-        ObjectPropertyKey::String { name } => Ok(string_expr(name, Loc::EMPTY)),
-        ObjectPropertyKey::Identifier { name } => Ok(string_expr(name, Loc::EMPTY)),
+        ObjectPropertyKey::String { name } => {
+            Ok(Expr::init(E::EString::init(name.slice()), Loc::EMPTY))
+        }
+        ObjectPropertyKey::Identifier { name } => {
+            Ok(Expr::init(E::EString::init(name.slice()), Loc::EMPTY))
+        }
         ObjectPropertyKey::Computed { name } => codegen_place_to_expression(cx, name),
         ObjectPropertyKey::Number { name } => {
             Ok(Expr::init(E::Number::new(name.value()), Loc::EMPTY))
@@ -2415,7 +2430,10 @@ fn codegen_jsx_expression(
 
     let tag_value = match tag {
         JsxTag::Place(place) => codegen_place_to_expression(cx, place)?,
-        JsxTag::Builtin(builtin) => string_expr(&builtin.name, convert_loc(builtin.loc)),
+        JsxTag::Builtin(builtin) => Expr::init(
+            E::EString::init(builtin.name.slice()),
+            convert_loc(builtin.loc),
+        ),
     };
 
     let mut child_nodes: ExprNodeList = AstAlloc::vec();
@@ -2430,7 +2448,7 @@ fn codegen_jsx_expression(
     let mut key_value: Option<Expr> = None;
     for attr in props {
         if let JsxAttribute::Attribute { name, place } = attr
-            && name == "key"
+            && name.slice() == b"key"
         {
             key_value = Some(codegen_place_to_expression(cx, place)?);
             continue;
@@ -2552,7 +2570,7 @@ fn codegen_jsx_attribute(
     match attr {
         JsxAttribute::Attribute { name, place } => {
             let loc = convert_loc(place.loc);
-            let key = string_expr(name, loc);
+            let key = Expr::init(E::EString::init(name.slice()), loc);
             let inner_value = codegen_place_to_expression(cx, place)?;
             Ok(G::Property {
                 kind: G::PropertyKind::Normal,
@@ -2797,14 +2815,11 @@ fn convert_identifier(
     identifier_id: IdentifierId,
 ) -> Result<(Ref, Loc), CompilerError> {
     let ident = &cx.env.identifiers[identifier_id.0 as usize];
-    let (name, loc) = match &ident.name {
-        Some(crate::hir::IdentifierName::Named(n)) => (n.clone(), ident.loc),
-        Some(crate::hir::IdentifierName::Promoted(n)) => (n.clone(), ident.loc),
-        None => {
-            return Err(unnamed_identifier_err(identifier_id.0));
-        }
+    let Some(name) = &ident.name else {
+        return Err(unnamed_identifier_err(identifier_id.0));
     };
-    Ok((cx.cg.ref_for_name(&name), convert_loc(loc)))
+    let loc = ident.loc;
+    Ok((cx.cg.ref_for_name(name.value()), convert_loc(loc)))
 }
 
 fn codegen_arguments(
@@ -3057,9 +3072,9 @@ fn decl_list(iter: impl IntoIterator<Item = G::Decl>) -> G::DeclList {
 }
 
 fn template_contents(q: &crate::hir::TemplateQuasi) -> E::TemplateContents {
-    match &q.cooked {
-        Some(cooked) => E::TemplateContents::Cooked(estring_utf8(cooked)),
-        None => E::TemplateContents::Raw(store_str(q.raw.as_bytes())),
+    match q.cooked {
+        Some(cooked) => E::TemplateContents::Cooked(E::EString::init(cooked.slice())),
+        None => E::TemplateContents::Raw(q.raw),
     }
 }
 
@@ -3073,7 +3088,7 @@ fn property_access_expr(
         PropertyLiteral::String(s) => Expr::init(
             E::Dot {
                 target,
-                name: store_str(s.as_bytes()),
+                name: *s,
                 name_loc: loc,
                 optional_chain,
                 ..Default::default()
@@ -3091,16 +3106,12 @@ fn property_access_expr(
     }
 }
 
-fn codegen_label(id: BlockId) -> String {
-    format!("bb{}", id.0)
-}
-
-fn symbol_for(cx: &mut Context, name: &str) -> Expr {
-    let symbol = cx.ident_expr("Symbol", Loc::EMPTY);
+fn symbol_for(cx: &mut Context, name: &'static str) -> Expr {
+    let symbol = cx.ident_expr(b"Symbol", Loc::EMPTY);
     let callee = Expr::init(
         E::Dot {
             target: symbol,
-            name: store_str(b"for"),
+            name: StoreStr::new(b"for"),
             name_loc: Loc::EMPTY,
             optional_chain: None,
             ..Default::default()
@@ -3122,9 +3133,9 @@ fn codegen_primitive_value(cx: &mut Context, value: &PrimitiveValue, loc: Loc) -
         PrimitiveValue::Number(n) => {
             let f = n.value();
             if f.is_nan() {
-                cx.ident_expr("NaN", loc)
+                cx.ident_expr(b"NaN", loc)
             } else if f.is_infinite() {
-                let inf = cx.ident_expr("Infinity", loc);
+                let inf = cx.ident_expr(b"Infinity", loc);
                 if f > 0.0 {
                     inf
                 } else {
@@ -3272,23 +3283,25 @@ fn compare_scope_dependency(
     dep_to_sort_key(a, env).cmp(&dep_to_sort_key(b, env))
 }
 
-fn dep_to_sort_key(dep: &crate::hir::ReactiveScopeDependency, env: &Environment) -> String {
+fn dep_to_sort_key(dep: &crate::hir::ReactiveScopeDependency, env: &Environment) -> Vec<u8> {
+    use std::io::Write;
+    let mut out: Vec<u8> = Vec::with_capacity(32);
     let ident = &env.identifiers[dep.identifier.0 as usize];
-    let base = match &ident.name {
-        Some(crate::hir::IdentifierName::Named(n)) => n.clone(),
-        Some(crate::hir::IdentifierName::Promoted(n)) => n.clone(),
-        None => format!("_t{}", dep.identifier.0),
-    };
-    let mut parts = vec![base];
-    for entry in &dep.path {
-        let prefix = if entry.optional { "?" } else { "" };
-        let prop = match &entry.property {
-            PropertyLiteral::String(s) => s.clone(),
-            PropertyLiteral::Number(n) => format!("{n}"),
-        };
-        parts.push(format!("{prefix}{prop}"));
+    match &ident.name {
+        Some(n) => out.extend_from_slice(n.value()),
+        None => write!(out, "_t{}", dep.identifier.0).unwrap(),
     }
-    parts.join(".")
+    for entry in &dep.path {
+        out.push(b'.');
+        if entry.optional {
+            out.push(b'?');
+        }
+        match &entry.property {
+            PropertyLiteral::String(s) => out.extend_from_slice(s.slice()),
+            PropertyLiteral::Number(n) => write!(out, "{n}").unwrap(),
+        }
+    }
+    out
 }
 
 fn compare_scope_declaration(
@@ -3296,25 +3309,37 @@ fn compare_scope_declaration(
     b: &crate::hir::ReactiveScopeDeclaration,
     env: &Environment,
 ) -> std::cmp::Ordering {
-    ident_sort_key(a.identifier, env).cmp(&ident_sort_key(b.identifier, env))
+    let mut buf_a = [0u8; 24];
+    let mut buf_b = [0u8; 24];
+    let ka = ident_sort_key(a.identifier, env, &mut buf_a);
+    let kb = ident_sort_key(b.identifier, env, &mut buf_b);
+    ka.cmp(kb)
 }
 
-fn ident_sort_key(id: IdentifierId, env: &Environment) -> String {
+fn ident_sort_key<'a>(id: IdentifierId, env: &'a Environment, buf: &'a mut [u8; 24]) -> &'a [u8] {
     let ident = &env.identifiers[id.0 as usize];
     match &ident.name {
-        Some(crate::hir::IdentifierName::Named(n)) => n.clone(),
-        Some(crate::hir::IdentifierName::Promoted(n)) => n.clone(),
-        None => format!("_t{}", id.0),
+        Some(n) => n.value(),
+        None => {
+            use std::io::Write;
+            let mut cursor = std::io::Cursor::new(&mut buf[..]);
+            write!(cursor, "_t{}", id.0).unwrap();
+            let len = cursor.position() as usize;
+            &buf[..len]
+        }
     }
 }
 
 fn maybe_wrap_hook_call(cx: &mut Context, call_expr: Expr, callee_id: IdentifierId) -> Expr {
-    if let Some(guard_name) = cx.env.hook_guard_name.clone() {
-        if cx.env.output_mode == crate::hir::environment::OutputMode::Client
-            && is_hook_identifier(cx, callee_id)
-        {
-            return wrap_hook_call_with_guard(cx, &guard_name, call_expr, 2, 3);
-        }
+    if cx.env.hook_guard_name.is_some()
+        && cx.env.output_mode == crate::hir::environment::OutputMode::Client
+        && is_hook_identifier(cx, callee_id)
+    {
+        let guard_ref = {
+            let name = cx.env.hook_guard_name.as_deref().unwrap();
+            cx.cg.ref_for_name(name)
+        };
+        return wrap_hook_call_with_guard(guard_ref, call_expr, 2, 3);
     }
     call_expr
 }
@@ -3329,15 +3354,8 @@ fn is_hook_identifier(cx: &Context, identifier_id: IdentifierId) -> bool {
         .is_some()
 }
 
-fn wrap_hook_call_with_guard(
-    cx: &mut Context,
-    guard_name: &str,
-    call_expr: Expr,
-    before: u32,
-    after: u32,
-) -> Expr {
+fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after: u32) -> Expr {
     let loc = Loc::EMPTY;
-    let guard_ref = cx.cg.ref_for_name(guard_name);
     let guard_call = |kind: u32| -> Stmt {
         expr_stmt(
             Expr::init(
@@ -3397,14 +3415,12 @@ fn wrap_hook_call_with_guard(
 }
 
 fn create_function_body_hook_guard(
-    cx: &mut Context,
-    guard_name: &str,
+    guard_ref: Ref,
     body_stmts: Vec<Stmt>,
     before: u32,
     after: u32,
 ) -> Stmt {
     let loc = Loc::EMPTY;
-    let guard_ref = cx.cg.ref_for_name(guard_name);
     let guard_call = |kind: u32| -> Stmt {
         expr_stmt(
             Expr::init(

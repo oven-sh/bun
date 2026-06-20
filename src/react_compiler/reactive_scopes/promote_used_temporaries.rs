@@ -1185,13 +1185,20 @@ fn promote_identifier(identifier_id: IdentifierId, state: &mut State, env: &mut 
         "promoteTemporary: Expected to be called only for temporary variables"
     );
     let decl_id = identifier.declaration_id;
-    if state.tags.contains(&decl_id) {
-        // JSX tag temporary: use capitalized name
-        env.identifiers[identifier_id.0 as usize].name =
-            Some(IdentifierName::Promoted(format!("#T{}", decl_id.0)));
+    // JSX tag temporaries use a capitalized name.
+    let kind = if state.tags.contains(&decl_id) {
+        b'T'
     } else {
-        env.identifiers[identifier_id.0 as usize].name =
-            Some(IdentifierName::Promoted(format!("#t{}", decl_id.0)));
-    }
+        b't'
+    };
+    let mut itoa = bun_core::fmt::ItoaBuf::new();
+    let digits = itoa.format(decl_id.0).as_bytes();
+    let mut buf = [0u8; 16];
+    buf[0] = b'#';
+    buf[1] = kind;
+    buf[2..2 + digits.len()].copy_from_slice(digits);
+    env.identifiers[identifier_id.0 as usize].name = Some(IdentifierName::Promoted(
+        crate::hir::StoreStr::new(bun_ast::data_store_dupe_str(&buf[..2 + digits.len()])),
+    ));
     state.promoted.insert(decl_id);
 }

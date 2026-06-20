@@ -184,15 +184,15 @@ pub fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
                 InstructionValue::JsxExpression { tag, .. } => {
                     if let crate::hir::JsxTag::Builtin(builtin) = tag {
                         // Only optimize non-custom-element builtin tags
-                        if !builtin.name.contains('-') {
-                            let tag_name = builtin.name.clone();
+                        if !builtin.name.contains(&b'-') {
+                            let tag_name = builtin.name;
                             // Retain only props that are not known event handlers and not "ref"
                             if let InstructionValue::JsxExpression { props, .. } = &mut instr.value
                             {
                                 props.retain(|prop| match prop {
                                     crate::hir::JsxAttribute::SpreadAttribute { .. } => true,
                                     crate::hir::JsxAttribute::Attribute { name, .. } => {
-                                        !is_known_event_handler(&tag_name, name) && name != "ref"
+                                        !is_known_event_handler(&tag_name, name) && *name != b"ref"
                                     }
                                 });
                             }
@@ -329,15 +329,14 @@ fn has_known_non_render_call(func: &HirFunction, env: &Environment) -> bool {
 }
 
 /// Returns true if the prop name matches the known event handler pattern `on[A-Z]`.
-fn is_known_event_handler(_tag: &str, prop: &str) -> bool {
+fn is_known_event_handler(_tag: &[u8], prop: &[u8]) -> bool {
     if prop.len() < 3 {
         return false;
     }
-    if !prop.starts_with("on") {
+    if !prop.starts_with(b"on") {
         return false;
     }
-    let third_char = prop.as_bytes()[2];
-    third_char.is_ascii_uppercase()
+    prop[2].is_ascii_uppercase()
 }
 
 /// Get the hook kind for an identifier, if its type represents a hook.

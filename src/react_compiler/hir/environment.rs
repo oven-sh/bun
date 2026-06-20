@@ -23,10 +23,10 @@ use crate::hir::*;
 
 /// A variable rename from lowering: the binding at `declaration_start` position
 /// was renamed from `original` to `renamed`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct BindingRename {
-    pub original: String,
-    pub renamed: String,
+    pub original: StoreStr,
+    pub renamed: StoreStr,
     pub declaration_start: u32,
 }
 
@@ -61,16 +61,16 @@ pub struct Environment {
     pub output_mode: OutputMode,
 
     // Source file code (for fast refresh hash computation)
-    pub code: Option<String>,
+    pub code: Option<StoreStr>,
 
     // Source file name (for instrumentation)
-    pub filename: Option<String>,
+    pub filename: Option<StoreStr>,
 
     // Pre-resolved import local names for instrumentation/hook guards.
     // Set by the program-level code before compilation.
-    pub instrument_fn_name: Option<String>,
-    pub instrument_gating_name: Option<String>,
-    pub hook_guard_name: Option<String>,
+    pub instrument_fn_name: Option<StoreStr>,
+    pub instrument_gating_name: Option<StoreStr>,
+    pub hook_guard_name: Option<StoreStr>,
 
     // Renames: tracks variable renames from lowering (original_name → new_name)
     // keyed by binding declaration position, for applying back to the Babel AST.
@@ -95,8 +95,8 @@ pub struct Environment {
     // Type system registries
     globals: GlobalRegistry,
     pub shapes: ShapeRegistry,
-    module_types: HashMap<String, Option<Global>>,
-    module_type_errors: HashMap<String, Vec<String>>,
+    module_types: HashMap<StoreStr, Option<Global>>,
+    module_type_errors: HashMap<StoreStr, Vec<String>>,
 
     // Environment configuration (feature flags, custom hooks, etc.)
     pub config: EnvironmentConfig,
@@ -111,7 +111,7 @@ pub struct Environment {
     // Known names for collision-aware UID generation. Lazily populated from
     // identifiers on first use, then updated with each generated name.
     // Matches Babel's generateUid behavior of checking hasBinding/hasReference.
-    uid_known_names: Option<HashSet<String>>,
+    uid_known_names: Option<HashSet<StoreStr>>,
 }
 
 /// An outlined function entry, stored on Environment during compilation.
@@ -143,7 +143,7 @@ impl Environment {
             }
             let return_type = if hook.transitive_mixed_data {
                 Type::Object {
-                    shape_id: Some(BUILT_IN_MIXED_READONLY_ID.to_string()),
+                    shape_id: Some(BUILT_IN_MIXED_READONLY_ID),
                 }
             } else {
                 Type::Poly
@@ -164,11 +164,11 @@ impl Environment {
         }
 
         // Register reanimated module type when enabled
-        let mut module_types: HashMap<String, Option<Global>> = HashMap::new();
+        let mut module_types: HashMap<StoreStr, Option<Global>> = HashMap::new();
         if config.enable_custom_type_definition_for_reanimated {
             let reanimated_module_type = globals::get_reanimated_module_type(&mut shapes);
             module_types.insert(
-                "react-native-reanimated".to_string(),
+                StoreStr::new(b"react-native-reanimated"),
                 Some(reanimated_module_type),
             );
         }
@@ -231,11 +231,11 @@ impl Environment {
             errors: CompilerError::new(),
             fn_type,
             output_mode: self.output_mode,
-            code: self.code.clone(),
-            filename: self.filename.clone(),
-            instrument_fn_name: self.instrument_fn_name.clone(),
-            instrument_gating_name: self.instrument_gating_name.clone(),
-            hook_guard_name: self.hook_guard_name.clone(),
+            code: self.code,
+            filename: self.filename,
+            instrument_fn_name: self.instrument_fn_name,
+            instrument_gating_name: self.instrument_gating_name,
+            hook_guard_name: self.hook_guard_name,
             renames: AstAlloc::vec(),
             reference_node_ids: HashSet::new(),
             hoisted_identifiers: HashSet::new(),
@@ -480,7 +480,10 @@ impl Environment {
                 }
             }
             NonLocalBinding::Global { name, .. } => {
-                if let Some(ty) = self.globals.get(name) {
+                if let Some(ty) = core::str::from_utf8(name)
+                    .ok()
+                    .and_then(|s| self.globals.get(s))
+                {
                     return Ok(Some(ty.clone()));
                 }
                 if is_hook_name(name) {
@@ -495,7 +498,10 @@ impl Environment {
                 imported,
             } => {
                 if self.is_known_react_module(module) {
-                    if let Some(ty) = self.globals.get(imported) {
+                    if let Some(ty) = core::str::from_utf8(imported)
+                        .ok()
+                        .and_then(|s| self.globals.get(s))
+                    {
                         return Ok(Some(ty.clone()));
                     }
                     if is_hook_name(imported) || is_hook_name(name) {
@@ -506,17 +512,17 @@ impl Environment {
 
                 // Try module type provider. We resolve first, then do property
                 // lookup on the cloned result to avoid double-borrow of self.
-                let module_type = self.resolve_module_type(module);
+                let module_type = self.resolve_module_type(*module);
 
                 // Check for module type validation errors (hook-name vs hook-type mismatches)
-                if let Some(errors) = self.module_type_errors.remove(module.as_str()) {
+                if let Some(errors) = self.module_type_errors.remove(module) {
                     if let Some(first_error) = errors.into_iter().next() {
                         self.record_error(
                             CompilerErrorDetail::new(
                                 ErrorCategory::Config,
                                 "Invalid type configuration for module",
                             )
-                            .with_description(format!("{}", first_error))
+                            .with_description(first_error)
                             .with_loc(loc),
                         )?;
                     }
@@ -541,7 +547,10 @@ impl Environment {
                 let is_default = matches!(binding, NonLocalBinding::ImportDefault { .. });
 
                 if self.is_known_react_module(module) {
-                    if let Some(ty) = self.globals.get(name) {
+                    if let Some(ty) = core::str::from_utf8(name)
+                        .ok()
+                        .and_then(|s| self.globals.get(s))
+                    {
                         return Ok(Some(ty.clone()));
                     }
                     if is_hook_name(name) {
@@ -550,17 +559,17 @@ impl Environment {
                     return Ok(None);
                 }
 
-                let module_type = self.resolve_module_type(module);
+                let module_type = self.resolve_module_type(*module);
 
                 // Check for module type validation errors (hook-name vs hook-type mismatches)
-                if let Some(errors) = self.module_type_errors.remove(module.as_str()) {
+                if let Some(errors) = self.module_type_errors.remove(module) {
                     if let Some(first_error) = errors.into_iter().next() {
                         self.record_error(
                             CompilerErrorDetail::new(
                                 ErrorCategory::Config,
                                 "Invalid type configuration for module",
                             )
-                            .with_description(format!("{}", first_error))
+                            .with_description(first_error)
                             .with_loc(loc),
                         )?;
                     }
@@ -568,7 +577,7 @@ impl Environment {
 
                 if let Some(module_type) = module_type {
                     let imported_type = if is_default {
-                        Self::get_property_type_from_shapes(&self.shapes, &module_type, "default")
+                        Self::get_property_type_from_shapes(&self.shapes, &module_type, b"default")
                     } else {
                         Some(module_type)
                     };
@@ -588,7 +597,7 @@ impl Environment {
                                 )
                                 .with_description(format!(
                                     "Expected type for `import ... from '{}'` {} based on the module name",
-                                    module,
+                                    bun_core::BStr::new(module.slice()),
                                     if expect_hook { "to be a hook" } else { "not to be a hook" }
                                 ))
                                 .with_loc(loc),
@@ -613,7 +622,7 @@ impl Environment {
     fn get_property_type_from_shapes(
         shapes: &ShapeRegistry,
         receiver: &Type,
-        property: &str,
+        property: &[u8],
     ) -> Option<Type> {
         let shape_id = match receiver {
             Type::Object { shape_id } | Type::Function { shape_id, .. } => shape_id.as_deref(),
@@ -621,7 +630,10 @@ impl Environment {
         };
         if let Some(shape_id) = shape_id {
             let shape = shapes.get(shape_id)?;
-            if let Some(ty) = shape.properties.get(property) {
+            if let Some(ty) = core::str::from_utf8(property)
+                .ok()
+                .and_then(|k| shape.properties.get(k))
+            {
                 return Some(ty.clone());
             }
             if let Some(ty) = shape.properties.get("*") {
@@ -639,7 +651,7 @@ impl Environment {
     pub fn get_property_type(
         &mut self,
         receiver: &Type,
-        property: &str,
+        property: &[u8],
     ) -> Result<Option<Type>, CompilerDiagnostic> {
         let shape_id = match receiver {
             Type::Object { shape_id } | Type::Function { shape_id, .. } => shape_id.as_deref(),
@@ -650,7 +662,10 @@ impl Environment {
                 .shapes
                 .get(shape_id)
                 .ok_or_else(|| shape_not_found(shape_id))?;
-            if let Some(ty) = shape.properties.get(property) {
+            if let Some(ty) = core::str::from_utf8(property)
+                .ok()
+                .and_then(|k| shape.properties.get(k))
+            {
                 return Ok(Some(ty.clone()));
             }
             // Fall through to wildcard
@@ -744,18 +759,23 @@ impl Environment {
     /// Resolve the module type provider for a given module name.
     /// Caches results. Checks pre-resolved provider results first, then falls
     /// back to `defaultModuleTypeProvider` (hardcoded).
-    fn resolve_module_type(&mut self, module_name: &str) -> Option<Global> {
-        if let Some(cached) = self.module_types.get(module_name) {
+    fn resolve_module_type(&mut self, module_name: StoreStr) -> Option<Global> {
+        if let Some(cached) = self.module_types.get(&module_name) {
             return cached.clone();
         }
 
         // Check pre-resolved provider results first, then fall back to default
+        let module_str = core::str::from_utf8(module_name.slice()).ok();
         let module_config = self
             .config
             .module_type_provider
             .as_ref()
-            .and_then(|map| map.get(&module_name.to_string()).cloned())
-            .or_else(|| default_module_type_provider(module_name));
+            .and_then(|map| {
+                map.iter()
+                    .find(|(k, _)| k.as_bytes() == module_name.slice())
+                    .map(|(_, v)| v.clone())
+            })
+            .or_else(|| module_str.and_then(default_module_type_provider));
 
         let module_type = module_config.map(|config| {
             let mut type_errors: Vec<String> = Vec::new();
@@ -763,27 +783,21 @@ impl Environment {
                 &mut self.globals,
                 &mut self.shapes,
                 &config,
-                module_name,
+                module_str.unwrap_or_default(),
                 (),
                 &mut type_errors,
             );
-            // Store errors for later reporting when the import is actually used
-            for err in type_errors {
-                self.module_type_errors
-                    .entry(module_name.to_string())
-                    .or_default()
-                    .push(err);
+            if !type_errors.is_empty() {
+                self.module_type_errors.insert(module_name, type_errors);
             }
             ty
         });
-        self.module_types
-            .insert(module_name.to_string(), module_type.clone());
+        self.module_types.insert(module_name, module_type.clone());
         module_type
     }
 
-    fn is_known_react_module(&self, module_name: &str) -> bool {
-        let lower = module_name.to_lowercase();
-        lower == "react" || lower == "react-dom"
+    fn is_known_react_module(&self, module_name: &[u8]) -> bool {
+        module_name.eq_ignore_ascii_case(b"react") || module_name.eq_ignore_ascii_case(b"react-dom")
     }
 
     fn get_custom_hook_type(&mut self) -> Global {
@@ -825,47 +839,50 @@ impl Environment {
     /// Like Babel's `generateUid`, checks for collisions against existing
     /// bindings (source-level identifier names) and previously generated UIDs,
     /// rather than using a blind counter.
-    pub fn generate_globally_unique_identifier_name(&mut self, name: Option<&str>) -> String {
-        let base = name.unwrap_or("temp");
-        // Apply Babel's toIdentifier sanitization:
+    pub fn generate_globally_unique_identifier_name(&mut self, name: Option<&[u8]>) -> StoreStr {
+        let base = name.unwrap_or(b"temp");
+        // Apply Babel's toIdentifier sanitization in a single pass:
         // 1. Replace non-identifier chars with '-'
         // 2. Strip leading '-' and digits
         // 3. CamelCase: replace '-' sequences + optional following char with uppercase of that char
-        let mut dashed = String::new();
-        for c in base.chars() {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
-                dashed.push(c);
+        let mut camel: HirVec<u8> = AstAlloc::vec_with_capacity(base.len());
+        let mut iter = base.iter().copied().peekable();
+        while let Some(&c) = iter.peek() {
+            let is_ident = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+            if c.is_ascii_digit() || !is_ident {
+                iter.next();
             } else {
-                dashed.push('-');
+                break;
             }
         }
-        // Strip leading dashes and digits
-        let trimmed = dashed.trim_start_matches(|c: char| c == '-' || c.is_ascii_digit());
-        // CamelCase conversion: replace sequences of '-' followed by optional char with uppercase
-        let mut camel = String::new();
-        let mut chars = trimmed.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '-' {
-                while chars.peek() == Some(&'-') {
-                    chars.next();
-                }
-                if let Some(next) = chars.next() {
-                    for uc in next.to_uppercase() {
-                        camel.push(uc);
-                    }
+        let mut upper_next = false;
+        for c in iter {
+            if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
+                if upper_next {
+                    camel.push(c.to_ascii_uppercase());
+                    upper_next = false;
+                } else {
+                    camel.push(c);
                 }
             } else {
-                camel.push(c);
+                upper_next = true;
             }
-        }
-        if camel.is_empty() {
-            camel = "temp".to_string();
         }
         // Strip leading '_' and trailing digits (Babel's generateUid behavior)
-        let stripped = camel.trim_start_matches('_');
-        let stripped = stripped.trim_end_matches(|c: char| c.is_ascii_digit());
-        let uid_base = if stripped.is_empty() {
-            "temp"
+        let camel_ref: &[u8] = if camel.is_empty() { b"temp" } else { &camel };
+        let start = camel_ref
+            .iter()
+            .position(|&c| c != b'_')
+            .unwrap_or(camel_ref.len());
+        let stripped_lead = &camel_ref[start..];
+        let end = stripped_lead
+            .iter()
+            .rposition(|c| !c.is_ascii_digit())
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let stripped = &stripped_lead[..end];
+        let uid_base: &[u8] = if stripped.is_empty() {
+            b"temp"
         } else {
             stripped
         };
@@ -876,44 +893,55 @@ impl Environment {
             let mut known = HashSet::new();
             for id in &self.identifiers {
                 if let Some(name) = &id.name {
-                    known.insert(name.value().to_string());
+                    known.insert(StoreStr::new(name.value()));
                 }
             }
             self.uid_known_names = Some(known);
         }
 
-        // Find a name that doesn't collide, matching Babel's generateUid loop
+        // Find a name that doesn't collide, matching Babel's generateUid loop.
+        // Reuse a single buffer across iterations; HashSet::contains accepts &[u8].
+        let known = self.uid_known_names.as_mut().unwrap();
+        let mut uid: HirVec<u8> = AstAlloc::vec_with_capacity(uid_base.len() + 4);
         let mut i = 1u32;
-        let uid = loop {
-            let candidate = if i == 1 {
-                format!("_{}", uid_base)
-            } else {
-                format!("_{}{}", uid_base, i)
-            };
-            i += 1;
-            if !self.uid_known_names.as_ref().unwrap().contains(&candidate) {
-                break candidate;
+        loop {
+            uid.clear();
+            uid.push(b'_');
+            uid.extend_from_slice(uid_base);
+            if i > 1 {
+                let mut num_buf = [0u8; 10];
+                let mut n = i;
+                let mut pos = num_buf.len();
+                while n > 0 {
+                    pos -= 1;
+                    num_buf[pos] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                }
+                uid.extend_from_slice(&num_buf[pos..]);
             }
-        };
+            i += 1;
+            if !known.contains(uid.as_slice()) {
+                break;
+            }
+        }
 
-        // Register the generated name so subsequent calls see it
-        self.uid_known_names.as_mut().unwrap().insert(uid.clone());
-
-        uid
+        let result = StoreStr::new(uid.leak());
+        known.insert(result);
+        result
     }
 
     /// Seed the UID known names set with external names (e.g. from ProgramContext).
     /// This ensures UID generation avoids names generated by previous function compilations,
     /// matching Babel's behavior where the program scope accumulates all generated UIDs.
-    pub fn seed_uid_known_names(&mut self, names: &HashSet<String>) {
+    pub fn seed_uid_known_names(&mut self, names: &HashSet<StoreStr>) {
         match &mut self.uid_known_names {
-            Some(existing) => existing.extend(names.iter().cloned()),
+            Some(existing) => existing.extend(names.iter().copied()),
             None => self.uid_known_names = Some(names.clone()),
         }
     }
 
     /// Return the UID known names accumulated during this compilation.
-    pub fn take_uid_known_names(&mut self) -> Option<HashSet<String>> {
+    pub fn take_uid_known_names(&mut self) -> Option<HashSet<StoreStr>> {
         self.uid_known_names.take()
     }
 
@@ -965,17 +993,17 @@ impl Environment {
     ///
     /// This is analogous to `identifierName` on Babel's SourceLocation,
     /// which the parser sets on every identifier node.
-    pub fn identifier_name_for_id(&self, id: IdentifierId) -> Option<String> {
+    pub fn identifier_name_for_id(&self, id: IdentifierId) -> Option<StoreStr> {
         let ident = &self.identifiers[id.0 as usize];
         if let Some(name) = &ident.name {
-            return Some(name.value().to_string());
+            return Some(StoreStr::new(name.value()));
         }
         // Fall back: find another identifier with the same declaration_id that has a Named name
         let decl_id = ident.declaration_id;
         for other in &self.identifiers {
             if other.declaration_id == decl_id {
                 if let Some(IdentifierName::Named(name)) = &other.name {
-                    return Some(name.clone());
+                    return Some(*name);
                 }
             }
         }
@@ -1028,24 +1056,24 @@ fn shape_not_found(shape_id: &str) -> CompilerDiagnostic {
 
 /// Check if a name matches the React hook naming convention: `use[A-Z0-9]`.
 /// Ported from TS `isHookName` in Environment.ts.
-pub fn is_hook_name(name: &str) -> bool {
+pub fn is_hook_name(name: &[u8]) -> bool {
     if name.len() < 4 {
         return false;
     }
-    if !name.starts_with("use") {
+    if !name.starts_with(b"use") {
         return false;
     }
-    let fourth_char = name.as_bytes()[3];
+    let fourth_char = name[3];
     fourth_char.is_ascii_uppercase() || fourth_char.is_ascii_digit()
 }
 
 /// Returns true if the name follows React naming conventions (component or hook).
 /// Components start with an uppercase letter; hooks match `use[A-Z0-9]`.
-pub fn is_react_like_name(name: &str) -> bool {
+pub fn is_react_like_name(name: &[u8]) -> bool {
     if name.is_empty() {
         return false;
     }
-    let first_char = name.as_bytes()[0];
+    let first_char = name[0];
     if first_char.is_ascii_uppercase() {
         return true;
     }
@@ -1058,15 +1086,15 @@ mod tests {
 
     #[test]
     fn test_is_hook_name() {
-        assert!(is_hook_name("useState"));
-        assert!(is_hook_name("useEffect"));
-        assert!(is_hook_name("useMyHook"));
-        assert!(is_hook_name("use3rdParty"));
-        assert!(!is_hook_name("use"));
-        assert!(!is_hook_name("used"));
-        assert!(!is_hook_name("useless"));
-        assert!(!is_hook_name("User"));
-        assert!(!is_hook_name("foo"));
+        assert!(is_hook_name(b"useState"));
+        assert!(is_hook_name(b"useEffect"));
+        assert!(is_hook_name(b"useMyHook"));
+        assert!(is_hook_name(b"use3rdParty"));
+        assert!(!is_hook_name(b"use"));
+        assert!(!is_hook_name(b"used"));
+        assert!(!is_hook_name(b"useless"));
+        assert!(!is_hook_name(b"User"));
+        assert!(!is_hook_name(b"foo"));
     }
 
     #[test]
@@ -1085,14 +1113,14 @@ mod tests {
     fn test_get_property_type_array() {
         let mut env = Environment::new();
         let array_type = Type::Object {
-            shape_id: Some("BuiltInArray".to_string()),
+            shape_id: Some("BuiltInArray"),
         };
-        let map_type = env.get_property_type(&array_type, "map").unwrap();
+        let map_type = env.get_property_type(&array_type, b"map").unwrap();
         assert!(map_type.is_some());
-        let push_type = env.get_property_type(&array_type, "push").unwrap();
+        let push_type = env.get_property_type(&array_type, b"push").unwrap();
         assert!(push_type.is_some());
         let nonexistent = env
-            .get_property_type(&array_type, "nonExistentMethod")
+            .get_property_type(&array_type, b"nonExistentMethod")
             .unwrap();
         assert!(nonexistent.is_none());
     }
@@ -1113,30 +1141,30 @@ mod tests {
         let mut env = Environment::new();
         // Global binding
         let binding = NonLocalBinding::Global {
-            name: "Math".to_string(),
+            name: "Math".into(),
         };
         let result = env.get_global_declaration(&binding, None).unwrap();
         assert!(result.is_some());
 
         // Import from react
         let binding = NonLocalBinding::ImportSpecifier {
-            name: "useState".to_string(),
-            module: "react".to_string(),
-            imported: "useState".to_string(),
+            name: "useState".into(),
+            module: "react".into(),
+            imported: "useState".into(),
         };
         let result = env.get_global_declaration(&binding, None).unwrap();
         assert!(result.is_some());
 
         // Unknown global
         let binding = NonLocalBinding::Global {
-            name: "unknownThing".to_string(),
+            name: "unknownThing".into(),
         };
         let result = env.get_global_declaration(&binding, None).unwrap();
         assert!(result.is_none());
 
         // Hook-like name gets default hook type
         let binding = NonLocalBinding::Global {
-            name: "useCustom".to_string(),
+            name: "useCustom".into(),
         };
         let result = env.get_global_declaration(&binding, None).unwrap();
         assert!(result.is_some());

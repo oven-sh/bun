@@ -43,15 +43,15 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
     match module_name {
         "shared-runtime" => Some(TypeConfig::Object(ObjectTypeConfig {
             properties: Some(IndexMap::from([
-                ("default".to_string(), primitive_fn(Vec::new(), Effect::Read)),
-                ("graphql".to_string(), primitive_fn(Vec::new(), Effect::Read)),
+                ("default", primitive_fn(Vec::new(), Effect::Read)),
+                ("graphql", primitive_fn(Vec::new(), Effect::Read)),
                 (
-                    "typedArrayPush".to_string(),
+                    "typedArrayPush",
                     primitive_fn(vec![Effect::Store, Effect::Capture], Effect::Capture),
                 ),
-                ("typedLog".to_string(), primitive_fn(Vec::new(), Effect::Read)),
+                ("typedLog", primitive_fn(Vec::new(), Effect::Read)),
                 (
-                    "typedCapture".to_string(),
+                    "typedCapture",
                     TypeConfig::Function(FunctionTypeConfig {
                         positional_params: vec![Effect::Read],
                         rest_param: None,
@@ -65,20 +65,20 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                         impure: None,
                         canonical_name: None,
                         aliasing: Some(AliasingSignatureConfig {
-                            receiver: "@receiver".to_string(),
-                            params: vec!["@value".to_string()],
+                            receiver: "@receiver",
+                            params: vec!["@value"],
                             rest: None,
-                            returns: "@return".to_string(),
+                            returns: "@return",
                             temporaries: Vec::new(),
                             effects: vec![
                                 AliasingEffectConfig::Create {
-                                    into: "@return".to_string(),
+                                    into: "@return",
                                     value: ValueKind::Mutable,
                                     reason: ValueReason::KnownReturnSignature,
                                 },
                                 AliasingEffectConfig::Capture {
-                                    from: "@value".to_string(),
-                                    into: "@return".to_string(),
+                                    from: "@value",
+                                    into: "@return",
                                 },
                             ],
                         }),
@@ -86,7 +86,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                     }),
                 ),
                 (
-                    "typedCreateFrom".to_string(),
+                    "typedCreateFrom",
                     TypeConfig::Function(FunctionTypeConfig {
                         positional_params: vec![Effect::Read],
                         rest_param: None,
@@ -100,21 +100,21 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                         impure: None,
                         canonical_name: None,
                         aliasing: Some(AliasingSignatureConfig {
-                            receiver: "@receiver".to_string(),
-                            params: vec!["@value".to_string()],
+                            receiver: "@receiver",
+                            params: vec!["@value"],
                             rest: None,
-                            returns: "@return".to_string(),
+                            returns: "@return",
                             temporaries: Vec::new(),
                             effects: vec![AliasingEffectConfig::CreateFrom {
-                                from: "@value".to_string(),
-                                into: "@return".to_string(),
+                                from: "@value",
+                                into: "@return",
                             }],
                         }),
                         known_incompatible: None,
                     }),
                 ),
                 (
-                    "typedMutate".to_string(),
+                    "typedMutate",
                     TypeConfig::Function(FunctionTypeConfig {
                         positional_params: vec![Effect::Read, Effect::Capture],
                         rest_param: None,
@@ -128,23 +128,21 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                         impure: None,
                         canonical_name: None,
                         aliasing: Some(AliasingSignatureConfig {
-                            receiver: "@receiver".to_string(),
-                            params: vec!["@object".to_string(), "@value".to_string()],
+                            receiver: "@receiver",
+                            params: vec!["@object", "@value"],
                             rest: None,
-                            returns: "@return".to_string(),
+                            returns: "@return",
                             temporaries: Vec::new(),
                             effects: vec![
                                 AliasingEffectConfig::Create {
-                                    into: "@return".to_string(),
+                                    into: "@return",
                                     value: ValueKind::Primitive,
                                     reason: ValueReason::KnownReturnSignature,
                                 },
-                                AliasingEffectConfig::Mutate {
-                                    value: "@object".to_string(),
-                                },
+                                AliasingEffectConfig::Mutate { value: "@object" },
                                 AliasingEffectConfig::Capture {
-                                    from: "@value".to_string(),
-                                    into: "@object".to_string(),
+                                    from: "@value",
+                                    into: "@object",
                                 },
                             ],
                         }),
@@ -152,7 +150,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                     }),
                 ),
                 (
-                    "useFreeze".to_string(),
+                    "useFreeze",
                     TypeConfig::Hook(HookTypeConfig {
                         positional_params: None,
                         rest_param: None,
@@ -166,7 +164,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                     }),
                 ),
                 (
-                    "useFragment".to_string(),
+                    "useFragment",
                     TypeConfig::Hook(HookTypeConfig {
                         positional_params: None,
                         rest_param: None,
@@ -180,7 +178,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                     }),
                 ),
                 (
-                    "useNoAlias".to_string(),
+                    "useNoAlias",
                     TypeConfig::Hook(HookTypeConfig {
                         positional_params: None,
                         rest_param: None,
@@ -199,13 +197,13 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
         "ReactCompilerTest" => Some(TypeConfig::Object(ObjectTypeConfig {
             properties: Some(IndexMap::from([
                 (
-                    "useHookNotTypedAsHook".to_string(),
+                    "useHookNotTypedAsHook",
                     TypeConfig::TypeReference(TypeReferenceConfig {
                         name: BuiltInTypeRef::Any,
                     }),
                 ),
                 (
-                    "notAhookTypedAsHook".to_string(),
+                    "notAhookTypedAsHook",
                     TypeConfig::Hook(HookTypeConfig {
                         positional_params: None,
                         rest_param: None,
@@ -224,7 +222,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
         "ReactCompilerKnownIncompatibleTest" => Some(TypeConfig::Object(ObjectTypeConfig {
             properties: Some(IndexMap::from([
                 (
-                    "useKnownIncompatible".to_string(),
+                    "useKnownIncompatible",
                     TypeConfig::Hook(HookTypeConfig {
                         positional_params: Some(Vec::new()),
                         rest_param: Some(Effect::Read),
@@ -235,18 +233,18 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                         no_alias: None,
                         aliasing: None,
                         known_incompatible: Some(
-                            "useKnownIncompatible is known to be incompatible".to_string(),
+                            "useKnownIncompatible is known to be incompatible",
                         ),
                     }),
                 ),
                 (
-                    "useKnownIncompatibleIndirect".to_string(),
+                    "useKnownIncompatibleIndirect",
                     TypeConfig::Hook(HookTypeConfig {
                         positional_params: Some(Vec::new()),
                         rest_param: Some(Effect::Read),
                         return_type: Box::new(TypeConfig::Object(ObjectTypeConfig {
                             properties: Some(IndexMap::from([(
-                                "incompatible".to_string(),
+                                "incompatible",
                                 TypeConfig::Function(FunctionTypeConfig {
                                     positional_params: Vec::new(),
                                     rest_param: Some(Effect::Read),
@@ -263,7 +261,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                                     canonical_name: None,
                                     aliasing: None,
                                     known_incompatible: Some(
-                                        "useKnownIncompatibleIndirect returns an incompatible() function that is known incompatible".to_string(),
+                                        "useKnownIncompatibleIndirect returns an incompatible() function that is known incompatible",
                                     ),
                                 }),
                             )])),
@@ -275,7 +273,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                     }),
                 ),
                 (
-                    "knownIncompatible".to_string(),
+                    "knownIncompatible",
                     TypeConfig::Function(FunctionTypeConfig {
                         positional_params: Vec::new(),
                         rest_param: Some(Effect::Read),
@@ -290,7 +288,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                         canonical_name: None,
                         aliasing: None,
                         known_incompatible: Some(
-                            "useKnownIncompatible is known to be incompatible".to_string(),
+                            "useKnownIncompatible is known to be incompatible",
                         ),
                     }),
                 ),
@@ -299,7 +297,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
 
         "useDefaultExportNotTypedAsHook" => Some(TypeConfig::Object(ObjectTypeConfig {
             properties: Some(IndexMap::from([(
-                "default".to_string(),
+                "default",
                 TypeConfig::TypeReference(TypeReferenceConfig {
                     name: BuiltInTypeRef::Any,
                 }),
@@ -308,11 +306,11 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
 
         "react-hook-form" => Some(TypeConfig::Object(ObjectTypeConfig {
             properties: Some(IndexMap::from([(
-                "useForm".to_string(),
+                "useForm",
                 TypeConfig::Hook(HookTypeConfig {
                     return_type: Box::new(TypeConfig::Object(ObjectTypeConfig {
                         properties: Some(IndexMap::from([(
-                            "watch".to_string(),
+                            "watch",
                             TypeConfig::Function(FunctionTypeConfig {
                                 positional_params: Vec::new(),
                                 rest_param: Some(Effect::Read),
@@ -329,7 +327,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                                 canonical_name: None,
                                 aliasing: None,
                                 known_incompatible: Some(
-                                    "React Hook Form's `useForm()` API returns a `watch()` function which cannot be memoized safely.".to_string(),
+                                    "React Hook Form's `useForm()` API returns a `watch()` function which cannot be memoized safely.",
                                 ),
                             }),
                         )])),
@@ -346,7 +344,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
 
         "@tanstack/react-table" => Some(TypeConfig::Object(ObjectTypeConfig {
             properties: Some(IndexMap::from([(
-                "useReactTable".to_string(),
+                "useReactTable",
                 TypeConfig::Hook(HookTypeConfig {
                     positional_params: Some(Vec::new()),
                     rest_param: Some(Effect::Read),
@@ -357,7 +355,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                     no_alias: None,
                     aliasing: None,
                     known_incompatible: Some(
-                        "TanStack Table's `useReactTable()` API returns functions that cannot be memoized safely".to_string(),
+                        "TanStack Table's `useReactTable()` API returns functions that cannot be memoized safely",
                     ),
                 }),
             )])),
@@ -365,7 +363,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
 
         "@tanstack/react-virtual" => Some(TypeConfig::Object(ObjectTypeConfig {
             properties: Some(IndexMap::from([(
-                "useVirtualizer".to_string(),
+                "useVirtualizer",
                 TypeConfig::Hook(HookTypeConfig {
                     positional_params: Some(Vec::new()),
                     rest_param: Some(Effect::Read),
@@ -376,7 +374,7 @@ pub fn default_module_type_provider(module_name: &str) -> Option<TypeConfig> {
                     no_alias: None,
                     aliasing: None,
                     known_incompatible: Some(
-                        "TanStack Virtual's `useVirtualizer()` API returns functions that cannot be memoized safely".to_string(),
+                        "TanStack Virtual's `useVirtualizer()` API returns functions that cannot be memoized safely",
                     ),
                 }),
             )])),

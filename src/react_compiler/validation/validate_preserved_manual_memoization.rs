@@ -11,9 +11,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+use bun_core::BStr;
+
 use crate::collections::IdMap;
 use crate::diagnostics::{
-    CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory, SourceLocation,
+    CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory, SourceLocation,
 };
 use crate::hir::environment::Environment;
 use crate::hir::{
@@ -139,21 +141,18 @@ fn visit_scope(scope_block: &ReactiveScopeBlock, state: &mut VisitorState) {
     // After traversing, validate scope dependencies against manual memo deps
     if let Some(ref memo_state) = state.manual_memo_state {
         if let Some(ref deps_from_source) = memo_state.deps_from_source {
-            let scope = &state.env.scopes[scope_block.scope.0 as usize];
-            let deps = scope.dependencies.clone();
-            let memo_loc = memo_state.loc;
-            let decls = memo_state.decls.clone();
-            let deps_from_source = deps_from_source.clone();
-            let temporaries = state.temporaries.clone();
-            for dep in &deps {
+            let env = &mut *state.env;
+            let scope = &env.scopes[scope_block.scope.0 as usize];
+            for dep in &scope.dependencies {
                 validate_inferred_dep(
                     dep.identifier,
                     &dep.path,
-                    &temporaries,
-                    &decls,
-                    &deps_from_source,
-                    state.env,
-                    memo_loc,
+                    &state.temporaries,
+                    &memo_state.decls,
+                    deps_from_source,
+                    &env.identifiers,
+                    &mut env.errors,
+                    memo_state.loc,
                 );
             }
         }
@@ -161,9 +160,8 @@ fn visit_scope(scope_block: &ReactiveScopeBlock, state: &mut VisitorState) {
 
     // Mark scope and merged scopes as completed
     let scope = &state.env.scopes[scope_block.scope.0 as usize];
-    let merged = scope.merged.clone();
     state.scopes.insert(scope_block.scope);
-    for merged_id in merged {
+    for &merged_id in scope.merged.iter() {
         state.scopes.insert(merged_id);
     }
 }
@@ -206,13 +204,19 @@ fn visit_instruction(instr: &ReactiveInstruction, state: &mut VisitorState) {
 
             // Check that each dependency's scope has completed before the memo
             // TS: for (const {identifier, loc} of eachInstructionValueOperand(value))
-            let operand_places = start_memoize_operands(deps);
-            for place in &operand_places {
-                let ident = &state.env.identifiers[place.identifier.0 as usize];
-                if let Some(scope_id) = ident.scope {
-                    if !state.scopes.contains(&scope_id) && !state.pruned_scopes.contains(&scope_id)
-                    {
-                        record_dep_mutated_later_error(place.loc, state.env);
+            if let Some(deps) = deps {
+                for dep in deps {
+                    let ManualMemoDependencyRoot::NamedLocal { value: place, .. } = &dep.root
+                    else {
+                        continue;
+                    };
+                    let ident = &state.env.identifiers[place.identifier.0 as usize];
+                    if let Some(scope_id) = ident.scope {
+                        if !state.scopes.contains(&scope_id)
+                            && !state.pruned_scopes.contains(&scope_id)
+                        {
+                            record_dep_mutated_later_error(place.loc, state.env);
+                        }
                     }
                 }
             }
@@ -483,19 +487,6 @@ fn record_deps_in_value(value: &ReactiveValue, state: &mut VisitorState) {
     }
 }
 
-/// Get operand places from a StartMemoize instruction's deps.
-fn start_memoize_operands(deps: &Option<HirVec<ManualMemoDependency>>) -> Vec<Place> {
-    let mut result = Vec::new();
-    if let Some(deps) = deps {
-        for dep in deps {
-            if let ManualMemoDependencyRoot::NamedLocal { value, .. } = &dep.root {
-                result.push(value.clone());
-            }
-        }
-    }
-    result
-}
-
 /// Get lvalue places from a Destructure pattern.
 fn destructure_lvalue_places(pattern: &crate::hir::Pattern) -> Vec<&Place> {
     let mut result = Vec::new();
@@ -589,20 +580,12 @@ fn compare_deps(
     if is_subpath
         && (source.path.len() == inferred.path.len()
             || (inferred.path.len() >= source.path.len()
-                && !inferred.path.iter().any(|t| {
-                    t.property == crate::hir::PropertyLiteral::String("current".to_string())
-                })))
+                && !inferred.path.iter().any(|t| is_current_prop(&t.property))))
     {
         CompareDependencyResult::Ok
     } else if is_subpath {
-        if source
-            .path
-            .iter()
-            .any(|t| t.property == crate::hir::PropertyLiteral::String("current".to_string()))
-            || inferred
-                .path
-                .iter()
-                .any(|t| t.property == crate::hir::PropertyLiteral::String("current".to_string()))
+        if source.path.iter().any(|t| is_current_prop(&t.property))
+            || inferred.path.iter().any(|t| is_current_prop(&t.property))
         {
             CompareDependencyResult::RefAccessDifference
         } else {
@@ -613,68 +596,51 @@ fn compare_deps(
     }
 }
 
-/// Pretty-print a reactive scope dependency (e.g., `x.a.b?.c`)
-fn pretty_print_scope_dependency(
-    dep_id: IdentifierId,
-    dep_path: &[DependencyPathEntry],
-    identifiers: &[crate::hir::Identifier],
-) -> String {
-    let ident = &identifiers[dep_id.0 as usize];
-    let root_str = match &ident.name {
-        Some(crate::hir::IdentifierName::Named(n)) => n.clone(),
-        Some(crate::hir::IdentifierName::Promoted(n)) => n.clone(),
-        None => "[unnamed]".to_string(),
-    };
-    let path_str: String = dep_path
-        .iter()
-        .map(|entry| {
-            let prop = match &entry.property {
-                crate::hir::PropertyLiteral::String(s) => s.clone(),
-                crate::hir::PropertyLiteral::Number(n) => format!("{}", n),
-            };
-            if entry.optional {
-                format!("?.{}", prop)
-            } else {
-                format!(".{}", prop)
-            }
-        })
-        .collect();
-    format!("{}{}", root_str, path_str)
+#[inline]
+fn is_current_prop(prop: &crate::hir::PropertyLiteral) -> bool {
+    matches!(prop, crate::hir::PropertyLiteral::String(s) if *s == b"current")
 }
 
-/// Pretty-print a manual memo dependency for error messages.
-fn print_manual_memo_dependency(
-    dep: &ManualMemoDependency,
-    identifiers: &[crate::hir::Identifier],
-    with_optional: bool,
-) -> String {
-    let root_str = match &dep.root {
-        ManualMemoDependencyRoot::NamedLocal { value, .. } => {
-            let ident = &identifiers[value.identifier.0 as usize];
-            match &ident.name {
-                Some(crate::hir::IdentifierName::Named(n)) => n.clone(),
-                Some(crate::hir::IdentifierName::Promoted(n)) => n.clone(),
-                None => "[unnamed]".to_string(),
-            }
-        }
-        ManualMemoDependencyRoot::Global { identifier_name } => identifier_name.clone(),
+fn write_identifier_name(out: &mut impl core::fmt::Write, ident: &Identifier) {
+    let _ = match &ident.name {
+        Some(name) => write!(out, "{}", BStr::new(name.value())),
+        None => out.write_str("[unnamed]"),
     };
-    let path_str: String = dep
-        .path
-        .iter()
-        .map(|entry| {
-            let prop = match &entry.property {
-                crate::hir::PropertyLiteral::String(s) => s.clone(),
-                crate::hir::PropertyLiteral::Number(n) => format!("{}", n),
-            };
-            if with_optional && entry.optional {
-                format!("?.{}", prop)
-            } else {
-                format!(".{}", prop)
-            }
-        })
-        .collect();
-    format!("{}{}", root_str, path_str)
+}
+
+fn write_dep_path(out: &mut impl core::fmt::Write, path: &[DependencyPathEntry]) {
+    for entry in path {
+        let _ = out.write_str(if entry.optional { "?." } else { "." });
+        let _ = write!(out, "{}", entry.property);
+    }
+}
+
+/// Write a reactive scope dependency (e.g., `x.a.b?.c`)
+fn write_scope_dependency(
+    out: &mut impl core::fmt::Write,
+    dep_id: IdentifierId,
+    dep_path: &[DependencyPathEntry],
+    identifiers: &[Identifier],
+) {
+    write_identifier_name(out, &identifiers[dep_id.0 as usize]);
+    write_dep_path(out, dep_path);
+}
+
+/// Write a manual memo dependency for error messages.
+fn write_manual_memo_dependency(
+    out: &mut impl core::fmt::Write,
+    dep: &ManualMemoDependency,
+    identifiers: &[Identifier],
+) {
+    match &dep.root {
+        ManualMemoDependencyRoot::NamedLocal { value, .. } => {
+            write_identifier_name(out, &identifiers[value.identifier.0 as usize]);
+        }
+        ManualMemoDependencyRoot::Global { identifier_name } => {
+            let _ = write!(out, "{}", BStr::new(identifier_name));
+        }
+    }
+    write_dep_path(out, &dep.path);
 }
 
 fn get_compare_dependency_result_description(result: CompareDependencyResult) -> &'static str {
@@ -696,7 +662,8 @@ fn validate_inferred_dep(
     temporaries: &HashMap<IdentifierId, ManualMemoDependency>,
     decls_within_memo_block: &HashSet<DeclarationId>,
     valid_deps_in_memo_block: &[ManualMemoDependency],
-    env: &mut Environment,
+    identifiers: &[Identifier],
+    errors: &mut CompilerError,
     memo_location: Option<SourceLocation>,
 ) {
     // Normalize the dependency through temporaries
@@ -709,7 +676,7 @@ fn validate_inferred_dep(
             loc: temp.loc,
         }
     } else {
-        let ident = &env.identifiers[dep_id.0 as usize];
+        let ident = &identifiers[dep_id.0 as usize];
         // TS: CompilerError.invariant(dep.identifier.name?.kind === 'named', ...)
         if !is_named(ident) {
             return;
@@ -731,7 +698,7 @@ fn validate_inferred_dep(
 
     // Check if the dep was declared within the memo block
     if let ManualMemoDependencyRoot::NamedLocal { value, .. } = &normalized_dep.root {
-        let ident = &env.identifiers[value.identifier.0 as usize];
+        let ident = &identifiers[value.identifier.0 as usize];
         if decls_within_memo_block.contains(&ident.declaration_id) {
             return;
         }
@@ -756,7 +723,8 @@ fn validate_inferred_dep(
         valid_deps_in_memo_block,
         error_diagnostic,
         memo_location,
-        env,
+        identifiers,
+        errors,
     );
 }
 
@@ -768,44 +736,45 @@ fn record_dep_mismatch_error(
     valid_deps_in_memo_block: &[ManualMemoDependency],
     error_diagnostic: Option<CompareDependencyResult>,
     memo_location: Option<SourceLocation>,
-    env: &mut Environment,
+    identifiers: &[Identifier],
+    errors: &mut CompilerError,
 ) {
-    let ident = &env.identifiers[dep_id.0 as usize];
+    let ident = &identifiers[dep_id.0 as usize];
 
-    let extra = if is_named(ident) {
-        // Use the original dep_id/dep_path (matching TS prettyPrintScopeDependency(dep))
-        let dep_str = pretty_print_scope_dependency(dep_id, dep_path, &env.identifiers);
-        let source_deps_str: String = valid_deps_in_memo_block
-            .iter()
-            .map(|d| print_manual_memo_dependency(d, &env.identifiers, true))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let result_desc = error_diagnostic
-            .map(|d| get_compare_dependency_result_description(d).to_string())
-            .unwrap_or_else(|| "Inferred dependency not present in source".to_string());
-        format!(
-            "The inferred dependency was `{}`, but the source dependencies were [{}]. {}",
-            dep_str, source_deps_str, result_desc
-        )
-    } else {
-        String::new()
-    };
-
-    let description = format!(
+    let mut description = String::new();
+    description.push_str(
         "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. \
-         The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. {}",
-        extra
+         The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected.",
     );
+
+    if is_named(ident) {
+        // Use the original dep_id/dep_path (matching TS prettyPrintScopeDependency(dep))
+        description.push_str(" The inferred dependency was `");
+        write_scope_dependency(&mut description, dep_id, dep_path, identifiers);
+        description.push_str("`, but the source dependencies were [");
+        for (i, d) in valid_deps_in_memo_block.iter().enumerate() {
+            if i > 0 {
+                description.push_str(", ");
+            }
+            write_manual_memo_dependency(&mut description, d, identifiers);
+        }
+        description.push_str("]. ");
+        description.push_str(
+            error_diagnostic
+                .map(get_compare_dependency_result_description)
+                .unwrap_or("Inferred dependency not present in source"),
+        );
+    }
 
     let diag = CompilerDiagnostic::new(
         ErrorCategory::PreserveManualMemo,
         "Existing memoization could not be preserved",
-        Some(description.trim().to_string()),
+        Some(description),
     )
     .with_detail(CompilerDiagnosticDetail::Error {
         loc: memo_location,
         message: Some("Could not preserve existing manual memoization".to_string()),
         identifier_name: None,
     });
-    env.record_diagnostic(diag);
+    errors.push_diagnostic(diag);
 }

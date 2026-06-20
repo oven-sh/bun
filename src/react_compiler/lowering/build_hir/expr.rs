@@ -47,7 +47,7 @@ pub(crate) fn lower_expression(
                 builder,
                 InstructionValue::LoadGlobal {
                     binding: NonLocalBinding::Global {
-                        name: "undefined".to_string(),
+                        name: StoreStr::new(b"undefined"),
                     },
                     loc,
                 },
@@ -201,8 +201,8 @@ pub(crate) fn lower_expression(
         }
         Data::ESpread(spread) => lower_expression(builder, &spread.value),
         Data::EImportMeta(_) => Ok(InstructionValue::MetaProperty {
-            meta: "import".to_string(),
-            property: "meta".to_string(),
+            meta: "import",
+            property: "meta",
             loc,
         }),
         Data::ENewTarget(_) => {
@@ -289,8 +289,8 @@ pub(crate) fn lower_expression(
             Ok(unsupported_node("BigIntLiteral", loc))
         }
         Data::ERegExp(re) => Ok(InstructionValue::RegExpLiteral {
-            pattern: utf8(re.pattern(), loc)?,
-            flags: utf8(re.flags(), loc)?,
+            pattern: StoreStr::new(re.pattern()),
+            flags: StoreStr::new(re.flags()),
             loc,
         }),
         Data::EInlinedEnum(e) => lower_expression(builder, &e.value),
@@ -300,7 +300,7 @@ pub(crate) fn lower_expression(
                 builder,
                 InstructionValue::LoadGlobal {
                     binding: NonLocalBinding::Global {
-                        name: "require".to_string(),
+                        name: StoreStr::new(b"require"),
                     },
                     loc,
                 },
@@ -312,14 +312,14 @@ pub(crate) fn lower_expression(
                 builder,
                 InstructionValue::LoadGlobal {
                     binding: NonLocalBinding::Global {
-                        name: "require".to_string(),
+                        name: StoreStr::new(b"require"),
                     },
                     loc,
                 },
             )?;
             Ok(InstructionValue::PropertyLoad {
                 object,
-                property: PropertyLiteral::String("resolve".to_string()),
+                property: PropertyLiteral::String(StoreStr::new(b"resolve")),
                 loc,
             })
         }
@@ -662,7 +662,7 @@ fn lower_simple_assignment(
                 builder,
                 InstructionValue::PropertyStore {
                     object,
-                    property: PropertyLiteral::String(utf8(d.name.slice(), left_loc)?),
+                    property: PropertyLiteral::String(d.name),
                     value: right,
                     loc: left_loc,
                 },
@@ -740,12 +740,15 @@ fn lower_simple_assignment_identifier(
             binding_kind,
         } => {
             if binding_kind == BindingKind::Const {
-                let name = builder.ref_name(ref_)?;
+                let name = builder.host().ref_name(ref_);
                 builder.record_error(CompilerErrorDetail {
                     reason: "Cannot reassign a `const` variable".to_string(),
                     category: ErrorCategory::Syntax,
                     loc: ident_loc,
-                    description: Some(format!("`{}` is declared as const", name)),
+                    description: Some(format!(
+                        "`{}` is declared as const",
+                        bun_core::BStr::new(name)
+                    )),
                     suggestions: None,
                 })?;
                 return Ok(unsupported_node("Identifier", ident_loc));
@@ -792,7 +795,7 @@ fn lower_simple_assignment_identifier(
             }
         }
         _ => {
-            let name = builder.ref_name(ref_)?;
+            let name = StoreStr::new(builder.host().ref_name(ref_));
             let temp = lower_value_to_temporary(
                 builder,
                 InstructionValue::StoreGlobal {
@@ -939,7 +942,7 @@ fn lower_compound_assignment_identifier(
             }
         }
         _ => {
-            let name = builder.ref_name(ref_)?;
+            let name = StoreStr::new(builder.host().ref_name(ref_));
             let temp = lower_value_to_temporary(
                 builder,
                 InstructionValue::StoreGlobal {
@@ -969,7 +972,7 @@ fn lower_unary(
                 let object = lower_expression_to_temporary(builder, &d.target)?;
                 Ok(InstructionValue::PropertyDelete {
                     object,
-                    property: PropertyLiteral::String(utf8(d.name.slice(), loc)?),
+                    property: PropertyLiteral::String(d.name),
                     loc,
                 })
             }
@@ -1188,8 +1191,8 @@ fn lower_template(
         // bailout without re-decoding.
         let value = match &tmpl.head {
             E::TemplateContents::Raw(r) => {
-                let raw = utf8(r.slice(), loc)?;
-                if raw.contains('\\') {
+                let raw_bytes = r.slice();
+                if raw_bytes.contains(&b'\\') {
                     builder.record_error(CompilerErrorDetail {
                         category: ErrorCategory::Todo,
                         reason: "(BuildHIR::lowerExpression) Handle tagged template where cooked value is different from raw value".to_string(),
@@ -1199,8 +1202,9 @@ fn lower_template(
                     })?;
                     return Ok(unsupported_node("TaggedTemplateExpression", loc));
                 }
+                let raw = StoreStr::new(raw_bytes);
                 TemplateQuasi {
-                    cooked: Some(raw.clone()),
+                    cooked: Some(raw),
                     raw,
                 }
             }
@@ -1240,20 +1244,33 @@ fn convert_template_contents(
     match c {
         E::TemplateContents::Cooked(s) => {
             let cooked = if s.is_utf16 {
-                String::from_utf16(s.slice16()).map_err(|_| cold_todo("non-utf16 template", loc))?
+                arena_utf8_from_utf16(s.slice16(), loc)?
             } else {
-                utf8(s.slice8(), loc)?
+                StoreStr::new(s.slice8())
             };
             Ok(TemplateQuasi {
-                raw: cooked.clone(),
+                raw: cooked,
                 cooked: Some(cooked),
             })
         }
         E::TemplateContents::Raw(r) => Ok(TemplateQuasi {
-            raw: utf8(r.slice(), loc)?,
+            raw: StoreStr::new(r.slice()),
             cooked: None,
         }),
     }
+}
+
+fn arena_utf8_from_utf16(
+    units: &[u16],
+    loc: Option<SourceLocation>,
+) -> Result<StoreStr, CompilerError> {
+    let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(units.len() * 3);
+    for r in char::decode_utf16(units.iter().copied()) {
+        let c = r.map_err(|_| cold_todo("non-utf16 template", loc))?;
+        let mut tmp = [0u8; 4];
+        buf.extend_from_slice(c.encode_utf8(&mut tmp).as_bytes());
+    }
+    Ok(StoreStr::new(buf.leak()))
 }
 
 // =============================================================================
@@ -1438,12 +1455,6 @@ fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {
 // Conversion helpers
 // =============================================================================
 
-fn utf8(bytes: &[u8], loc: Option<SourceLocation>) -> Result<String, CompilerError> {
-    core::str::from_utf8(bytes)
-        .map(str::to_owned)
-        .map_err(|_| cold_todo("non-utf8 identifier", loc))
-}
-
 fn convert_js_string(
     s: &E::EString,
     loc: Option<SourceLocation>,
@@ -1468,15 +1479,17 @@ fn convert_js_string(
         return Ok(JsString::from(joined));
     }
     if s.is_utf16 {
-        Ok(JsString::from_code_units(s.slice16().to_vec()))
+        Ok(JsString::from_code_units(s.slice16()))
     } else {
-        Ok(JsString::from(utf8(s.slice8(), loc)?))
+        let s =
+            core::str::from_utf8(s.slice8()).map_err(|_| cold_todo("non-utf8 identifier", loc))?;
+        Ok(JsString::from(s))
     }
 }
 
-fn unsupported_node(node_type: &str, loc: Option<SourceLocation>) -> InstructionValue {
+fn unsupported_node(node_type: &'static str, loc: Option<SourceLocation>) -> InstructionValue {
     InstructionValue::UnsupportedNode {
-        node_type: Some(node_type.to_string()),
+        node_type: Some(node_type),
         original_node: None,
         loc,
     }

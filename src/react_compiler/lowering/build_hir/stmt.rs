@@ -357,7 +357,7 @@ fn ref_in_nested_fn_expr(builder: &HirBuilder, target: Ref, e: &Expr, depth: u32
 pub(crate) fn lower_statement(
     builder: &mut HirBuilder,
     stmt: &Stmt,
-    label: Option<&str>,
+    label: Option<String>,
 ) -> Result<(), CompilerDiagnostic> {
     let stmt_loc = stmt.loc;
     match stmt.data {
@@ -692,20 +692,15 @@ pub(crate) fn lower_statement(
             let continue_target = update_block_id.unwrap_or(test_block_id);
             let body_loc = statement_loc(&for_stmt.body);
             let body_block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
-                builder.loop_scope(
-                    label.map(|s| s.to_string()),
-                    continue_target,
-                    continuation_id,
-                    |builder| {
-                        lower_statement(builder, &for_stmt.body, None)?;
-                        Ok(Terminal::Goto {
-                            block: continue_target,
-                            variant: GotoVariant::Continue,
-                            id: EvaluationOrder(0),
-                            loc: body_loc,
-                        })
-                    },
-                )
+                builder.loop_scope(label, continue_target, continuation_id, |builder| {
+                    lower_statement(builder, &for_stmt.body, None)?;
+                    Ok(Terminal::Goto {
+                        block: continue_target,
+                        variant: GotoVariant::Continue,
+                        id: EvaluationOrder(0),
+                        loc: body_loc,
+                    })
+                })
             })?;
 
             // Emit For terminal, then fill in the test block
@@ -777,20 +772,15 @@ pub(crate) fn lower_statement(
             // Loop body
             let body_loc = statement_loc(&while_stmt.body);
             let loop_block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
-                builder.loop_scope(
-                    label.map(|s| s.to_string()),
-                    conditional_id,
-                    continuation_id,
-                    |builder| {
-                        lower_statement(builder, &while_stmt.body, None)?;
-                        Ok(Terminal::Goto {
-                            block: conditional_id,
-                            variant: GotoVariant::Continue,
-                            id: EvaluationOrder(0),
-                            loc: body_loc,
-                        })
-                    },
-                )
+                builder.loop_scope(label, conditional_id, continuation_id, |builder| {
+                    lower_statement(builder, &while_stmt.body, None)?;
+                    Ok(Terminal::Goto {
+                        block: conditional_id,
+                        variant: GotoVariant::Continue,
+                        id: EvaluationOrder(0),
+                        loc: body_loc,
+                    })
+                })
             })?;
 
             // Emit While terminal, jumping to the conditional block
@@ -831,20 +821,15 @@ pub(crate) fn lower_statement(
             // Loop body, executed at least once unconditionally prior to exit
             let body_loc = statement_loc(&do_while_stmt.body);
             let loop_block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
-                builder.loop_scope(
-                    label.map(|s| s.to_string()),
-                    conditional_id,
-                    continuation_id,
-                    |builder| {
-                        lower_statement(builder, &do_while_stmt.body, None)?;
-                        Ok(Terminal::Goto {
-                            block: conditional_id,
-                            variant: GotoVariant::Continue,
-                            id: EvaluationOrder(0),
-                            loc: body_loc,
-                        })
-                    },
-                )
+                builder.loop_scope(label, conditional_id, continuation_id, |builder| {
+                    lower_statement(builder, &do_while_stmt.body, None)?;
+                    Ok(Terminal::Goto {
+                        block: conditional_id,
+                        variant: GotoVariant::Continue,
+                        id: EvaluationOrder(0),
+                        loc: body_loc,
+                    })
+                })
             })?;
 
             // Jump to the conditional block
@@ -883,20 +868,15 @@ pub(crate) fn lower_statement(
 
             let body_loc = statement_loc(&for_in.body);
             let loop_block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
-                builder.loop_scope(
-                    label.map(|s| s.to_string()),
-                    init_block_id,
-                    continuation_id,
-                    |builder| {
-                        lower_statement(builder, &for_in.body, None)?;
-                        Ok(Terminal::Goto {
-                            block: init_block_id,
-                            variant: GotoVariant::Continue,
-                            id: EvaluationOrder(0),
-                            loc: body_loc,
-                        })
-                    },
-                )
+                builder.loop_scope(label, init_block_id, continuation_id, |builder| {
+                    lower_statement(builder, &for_in.body, None)?;
+                    Ok(Terminal::Goto {
+                        block: init_block_id,
+                        variant: GotoVariant::Continue,
+                        id: EvaluationOrder(0),
+                        loc: body_loc,
+                    })
+                })
             })?;
 
             let value = lower_expression_to_temporary(builder, &for_in.value)?;
@@ -974,20 +954,15 @@ pub(crate) fn lower_statement(
 
             let body_loc = statement_loc(&for_of.body);
             let loop_block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
-                builder.loop_scope(
-                    label.map(|s| s.to_string()),
-                    init_block_id,
-                    continuation_id,
-                    |builder| {
-                        lower_statement(builder, &for_of.body, None)?;
-                        Ok(Terminal::Goto {
-                            block: init_block_id,
-                            variant: GotoVariant::Continue,
-                            id: EvaluationOrder(0),
-                            loc: body_loc,
-                        })
-                    },
-                )
+                builder.loop_scope(label, init_block_id, continuation_id, |builder| {
+                    lower_statement(builder, &for_of.body, None)?;
+                    Ok(Terminal::Goto {
+                        block: init_block_id,
+                        variant: GotoVariant::Continue,
+                        id: EvaluationOrder(0),
+                        loc: body_loc,
+                    })
+                })
             })?;
 
             let value = lower_expression_to_temporary(builder, &for_of.value)?;
@@ -1094,7 +1069,7 @@ pub(crate) fn lower_statement(
 
                 let fallthrough_target = fallthrough;
                 let block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
-                    builder.switch_scope(label.map(|s| s.to_string()), continuation_id, |builder| {
+                    builder.switch_scope(label.clone(), continuation_id, |builder| {
                         for consequent in case.body.iter() {
                             lower_statement(builder, consequent, None)?;
                         }
@@ -1360,7 +1335,7 @@ pub(crate) fn lower_statement(
                 | Data::SForIn(_)
                 | Data::SForOf(_) => {
                     // Labeled loops are special because of continue, push the label down
-                    lower_statement(builder, &labeled_stmt.stmt, Some(&label_name))?;
+                    lower_statement(builder, &labeled_stmt.stmt, Some(label_name))?;
                 }
                 _ => {
                     // All other statements create a continuation block to allow `break`
@@ -1369,7 +1344,7 @@ pub(crate) fn lower_statement(
                     let body_loc = statement_loc(&labeled_stmt.stmt);
 
                     let block = builder.try_enter(BlockKind::Block, |builder, _block_id| {
-                        builder.label_scope(label_name.clone(), continuation_id, |builder| {
+                        builder.label_scope(label_name, continuation_id, |builder| {
                             lower_statement(builder, &labeled_stmt.stmt, None)?;
                             Ok(())
                         })?;
@@ -1405,7 +1380,7 @@ pub(crate) fn lower_statement(
             lower_value_to_temporary(
                 builder,
                 InstructionValue::UnsupportedNode {
-                    node_type: Some("WithStatement".to_string()),
+                    node_type: Some("WithStatement"),
                     original_node: None,
                     loc,
                 },
@@ -1428,7 +1403,7 @@ pub(crate) fn lower_statement(
             lower_value_to_temporary(
                 builder,
                 InstructionValue::UnsupportedNode {
-                    node_type: Some("ClassDeclaration".to_string()),
+                    node_type: Some("ClassDeclaration"),
                     original_node: None,
                     loc,
                 },
@@ -1457,7 +1432,7 @@ pub(crate) fn lower_statement(
             lower_value_to_temporary(
                 builder,
                 InstructionValue::UnsupportedNode {
-                    node_type: Some(node_type_name.to_string()),
+                    node_type: Some(node_type_name),
                     original_node: None,
                     loc,
                 },
@@ -1468,7 +1443,7 @@ pub(crate) fn lower_statement(
             lower_value_to_temporary(
                 builder,
                 InstructionValue::UnsupportedNode {
-                    node_type: Some("TSEnumDeclaration".to_string()),
+                    node_type: Some("TSEnumDeclaration"),
                     original_node: None,
                     loc,
                 },
@@ -1488,7 +1463,7 @@ pub(crate) fn lower_statement(
             lower_value_to_temporary(
                 builder,
                 InstructionValue::UnsupportedNode {
-                    node_type: Some("TSModuleDeclaration".to_string()),
+                    node_type: Some("TSModuleDeclaration"),
                     original_node: None,
                     loc,
                 },
@@ -1642,7 +1617,7 @@ pub(super) fn lower_assignment_binding(
                             let temp = lower_value_to_temporary(
                                 builder,
                                 InstructionValue::UnsupportedNode {
-                                    node_type: Some("Identifier".to_string()),
+                                    node_type: Some("Identifier"),
                                     original_node: None,
                                     loc,
                                 },

@@ -1904,7 +1904,7 @@ impl<'a> DependencyCollectionContext<'a> {
         ) && dep
             .path
             .first()
-            .map(|p| p.property == PropertyLiteral::String("current".to_string()))
+            .map(|p| matches!(&p.property, PropertyLiteral::String(s) if s == b"current"))
             .unwrap_or(false)
         {
             ReactiveScopeDependency {

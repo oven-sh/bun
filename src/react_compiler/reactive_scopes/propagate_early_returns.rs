@@ -15,7 +15,8 @@ use crate::hir::{
     InstructionValue, LValue, NonLocalBinding, Place, PlaceOrSpread, PrimitiveValue,
     PropertyLiteral, ReactiveFunction, ReactiveInstruction, ReactiveLabel, ReactiveScopeBlock,
     ReactiveScopeDeclaration, ReactiveScopeEarlyReturn, ReactiveStatement, ReactiveTerminal,
-    ReactiveTerminalStatement, ReactiveTerminalTargetKind, ReactiveValue, environment::Environment,
+    ReactiveTerminalStatement, ReactiveTerminalTargetKind, ReactiveValue, StoreStr,
+    environment::Environment,
 };
 
 use crate::reactive_scopes::visitors::{
@@ -227,7 +228,7 @@ fn apply_early_return_to_scope(
             }),
             value: ReactiveValue::Instruction(InstructionValue::LoadGlobal {
                 binding: NonLocalBinding::Global {
-                    name: "Symbol".to_string(),
+                    name: StoreStr::new(b"Symbol"),
                 },
                 loc,
             }),
@@ -250,7 +251,7 @@ fn apply_early_return_to_scope(
                     reactive: false,
                     loc: None, // GeneratedSource
                 },
-                property: PropertyLiteral::String("for".to_string()),
+                property: PropertyLiteral::String(StoreStr::new(b"for")),
                 loc,
             }),
             effects: None,
@@ -361,6 +362,17 @@ fn create_temporary_place_id(
 
 fn promote_temporary(env: &mut Environment, identifier_id: IdentifierId) {
     let decl_id = env.identifiers[identifier_id.0 as usize].declaration_id;
-    env.identifiers[identifier_id.0 as usize].name =
-        Some(IdentifierName::Promoted(format!("#t{}", decl_id.0)));
+    env.identifiers[identifier_id.0 as usize].name = Some(promoted_name(b't', decl_id.0));
+}
+
+fn promoted_name(kind: u8, n: u32) -> IdentifierName {
+    let mut itoa = bun_core::fmt::ItoaBuf::new();
+    let digits = itoa.format(n).as_bytes();
+    let mut buf = [0u8; 16];
+    buf[0] = b'#';
+    buf[1] = kind;
+    buf[2..2 + digits.len()].copy_from_slice(digits);
+    IdentifierName::Promoted(StoreStr::new(bun_ast::data_store_dupe_str(
+        &buf[..2 + digits.len()],
+    )))
 }

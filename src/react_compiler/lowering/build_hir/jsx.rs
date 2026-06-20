@@ -7,7 +7,7 @@
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::{
     AstAlloc, BuiltinTag, HirVec, InstructionValue, JsxAttribute, JsxTag, Place, PrimitiveValue,
-    PropertyLiteral, SourceLocation,
+    PropertyLiteral, SourceLocation, StoreStr,
 };
 use bun_ast::expr::Data as ExprData;
 use bun_ast::{E, Expr, G, Loc};
@@ -16,26 +16,11 @@ use super::expr::lower_expression;
 use super::helpers::{lower_expression_to_temporary, lower_identifier, lower_value_to_temporary};
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
-fn estring_to_string(
-    s: &E::EString,
-    loc: &Option<SourceLocation>,
-) -> Result<String, CompilerError> {
+fn estring_to_store_str(s: &E::EString) -> StoreStr {
     if s.is_utf16 {
-        Ok(String::from_utf16_lossy(s.slice16()))
+        super::helpers::arena_str(&bun_core::strings::to_utf8_alloc(s.slice16()))
     } else {
-        core::str::from_utf8(s.slice8())
-            .map(str::to_owned)
-            .map_err(|_| {
-                let mut err = CompilerError::new();
-                err.push_error_detail(CompilerErrorDetail {
-                    category: ErrorCategory::Todo,
-                    reason: "(BuildHIR::lowerJsx) non-utf8 string".to_string(),
-                    description: None,
-                    loc: *loc,
-                    suggestions: None,
-                });
-                err
-            })
+        StoreStr::new(s.slice8())
     }
 }
 
@@ -49,8 +34,8 @@ pub(super) fn lower_jsx_element_name(
             // Upstream (build_hir.rs:6252) gates on `is_ascii_uppercase` of the first char,
             // but Bun's parser only emits EString for `a..=z` — so `_foo` / `$Bar` arrive here
             // as identifiers. Replicate upstream's Builtin classification for non-uppercase.
-            let name = builder.ref_name(id.ref_)?;
-            if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            let name = builder.host().ref_name(id.ref_);
+            if name.first().is_some_and(u8::is_ascii_uppercase) {
                 let place = lower_identifier(builder, id.ref_, loc)?;
                 let load_value = if builder.is_context_identifier(id.ref_) {
                     InstructionValue::LoadContext { place, loc }
@@ -60,12 +45,15 @@ pub(super) fn lower_jsx_element_name(
                 let temp = lower_value_to_temporary(builder, load_value)?;
                 Ok(JsxTag::Place(temp))
             } else {
-                Ok(JsxTag::Builtin(BuiltinTag { name, loc }))
+                Ok(JsxTag::Builtin(BuiltinTag {
+                    name: StoreStr::new(name),
+                    loc,
+                }))
             }
         }
         ExprData::EImportIdentifier(id) => {
-            let name = builder.ref_name(id.ref_)?;
-            if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            let name = builder.host().ref_name(id.ref_);
+            if name.first().is_some_and(u8::is_ascii_uppercase) {
                 let place = lower_identifier(builder, id.ref_, loc)?;
                 let load_value = if builder.is_context_identifier(id.ref_) {
                     InstructionValue::LoadContext { place, loc }
@@ -75,21 +63,29 @@ pub(super) fn lower_jsx_element_name(
                 let temp = lower_value_to_temporary(builder, load_value)?;
                 Ok(JsxTag::Place(temp))
             } else {
-                Ok(JsxTag::Builtin(BuiltinTag { name, loc }))
+                Ok(JsxTag::Builtin(BuiltinTag {
+                    name: StoreStr::new(name),
+                    loc,
+                }))
             }
         }
         ExprData::EString(s) => {
-            let name = estring_to_string(&s, &loc)?;
-            if let Some(idx) = name.find(':') {
-                let namespace = &name[..idx];
-                let local = &name[idx + 1..];
-                if local.contains(':') {
+            let name = estring_to_store_str(&s);
+            let bytes = name.slice();
+            if let Some(idx) = bytes.iter().position(|&b| b == b':') {
+                let namespace = &bytes[..idx];
+                let local = &bytes[idx + 1..];
+                if local.contains(&b':') {
                     builder.record_error(CompilerErrorDetail {
                         category: ErrorCategory::Syntax,
                         reason:
                             "Expected JSXNamespacedName to have no colons in the namespace or name"
                                 .to_string(),
-                        description: Some(format!("Got `{}` : `{}`", namespace, local)),
+                        description: Some(format!(
+                            "Got `{}` : `{}`",
+                            bun_core::BStr::new(namespace),
+                            bun_core::BStr::new(local)
+                        )),
                         loc,
                         suggestions: None,
                     })?;
@@ -97,7 +93,9 @@ pub(super) fn lower_jsx_element_name(
                 let place = lower_value_to_temporary(
                     builder,
                     InstructionValue::Primitive {
-                        value: PrimitiveValue::String(name.into()),
+                        value: PrimitiveValue::String(
+                            bun_core::BStr::new(bytes).to_string().into(),
+                        ),
                         loc,
                     },
                 )?;
@@ -183,22 +181,9 @@ pub(super) fn lower_jsx_member_expression(
             )?
         }
     };
-    let prop_name = core::str::from_utf8(expr.name.slice())
-        .map(str::to_owned)
-        .map_err(|_| {
-            let mut err = CompilerError::new();
-            err.push_error_detail(CompilerErrorDetail {
-                category: ErrorCategory::Todo,
-                reason: "(BuildHIR::lowerJsxMemberExpression) non-utf8 property".to_string(),
-                description: None,
-                loc: expr_loc,
-                suggestions: None,
-            });
-            err
-        })?;
     let value = InstructionValue::PropertyLoad {
         object,
-        property: PropertyLiteral::String(prop_name),
+        property: PropertyLiteral::String(StoreStr::new(expr.name.slice())),
         loc: expr_loc,
     };
     lower_value_to_temporary(builder, value)
@@ -282,14 +267,10 @@ pub(super) fn lower_jsx_call(
             matches!(args[3].data, ExprData::EBoolean(b) if b.value)
         } else {
             match &call.target.data {
-                ExprData::EIdentifier(id) => builder
-                    .ref_name(id.ref_)
-                    .map(|n| n.starts_with("jsxs"))
-                    .unwrap_or(false),
-                ExprData::EImportIdentifier(id) => builder
-                    .ref_name(id.ref_)
-                    .map(|n| n.starts_with("jsxs"))
-                    .unwrap_or(false),
+                ExprData::EIdentifier(id) => builder.host().ref_name(id.ref_).starts_with(b"jsxs"),
+                ExprData::EImportIdentifier(id) => {
+                    builder.host().ref_name(id.ref_).starts_with(b"jsxs")
+                }
                 _ => false,
             }
         };
@@ -302,7 +283,7 @@ pub(super) fn lower_jsx_call(
             if !matches!(key_arg.data, ExprData::EUndefined(_)) {
                 let place = lower_expression_to_temporary(builder, key_arg)?;
                 props.push(JsxAttribute::Attribute {
-                    name: "key".to_string(),
+                    name: StoreStr::new(b"key"),
                     place,
                 });
             }
@@ -330,13 +311,13 @@ pub(super) fn lower_jsx_call(
                 })?;
                 continue;
             };
-            let key_loc = convert_loc(key_expr.loc);
-            let name = estring_to_string(key_str, &key_loc)?;
+            let _key_loc = convert_loc(key_expr.loc);
+            let name = estring_to_store_str(key_str);
             let Some(value_expr) = prop.value.as_ref() else {
                 continue;
             };
 
-            if name == "children" {
+            if name == b"children" {
                 lower_jsx_children(builder, value_expr, is_static_children, &mut children)?;
                 continue;
             }
@@ -372,8 +353,8 @@ pub(super) fn lower_jsx_call(
                         })?;
                         continue;
                     };
-                    let key_loc = convert_loc(key_expr.loc);
-                    let name = estring_to_string(key_str, &key_loc)?;
+                    let _key_loc = convert_loc(key_expr.loc);
+                    let name = estring_to_store_str(key_str);
                     let Some(value_expr) = prop.value.as_ref() else {
                         continue;
                     };

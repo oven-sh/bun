@@ -560,7 +560,7 @@ fn collect_temporaries_sidemap(
                     object, property, ..
                 } => {
                     if is_ref_type(object.identifier, identifiers, types)
-                        && *property == PropertyLiteral::String("current".to_string())
+                        && matches!(property, PropertyLiteral::String(s) if s == b"current")
                     {
                         continue;
                     }
@@ -991,7 +991,7 @@ fn validate_no_ref_access_in_render_impl(
                     InstructionValue::StartMemoize { .. }
                     | InstructionValue::FinishMemoize { .. } => {}
                     InstructionValue::LoadGlobal { binding, .. } => {
-                        if binding.name() == "undefined" {
+                        if binding.name() == b"undefined" {
                             ref_env.set(instr.lvalue.identifier, RefAccessType::Nullable);
                         }
                     }

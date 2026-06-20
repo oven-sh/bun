@@ -99,14 +99,14 @@ pub fn outline_functions(
                 env.functions[function_id.0 as usize] = inner_func;
 
                 // Then generate the name and outline (after recursion, matching TS order)
-                let hint: Option<String> = env.functions[function_id.0 as usize]
+                let hint = env.functions[function_id.0 as usize]
                     .id
-                    .clone()
-                    .or_else(|| env.functions[function_id.0 as usize].name_hint.clone());
-                let generated_name = env.generate_globally_unique_identifier_name(hint.as_deref());
+                    .or(env.functions[function_id.0 as usize].name_hint);
+                let generated_name =
+                    env.generate_globally_unique_identifier_name(hint.map(|s| s.slice()));
 
                 // Set the id on the inner function
-                env.functions[function_id.0 as usize].id = Some(generated_name.clone());
+                env.functions[function_id.0 as usize].id = Some(generated_name);
 
                 // Outline the function
                 let outlined_func = env.functions[function_id.0 as usize].clone();

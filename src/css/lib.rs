@@ -175,9 +175,9 @@ pub mod values_stub {
 
 // ─── stub re-exports referenced cross-crate ────────────────────────────────
 
-/// Hoisted from `css_parser.rs` (gated). Single-variant error type returned by
-/// every `to_css` path; the *kind* lives in `Printer.error_kind` (PrinterError)
-/// — this is just the bubbled signal.
+/// Single-variant error type returned by every `to_css` path; the *kind*
+/// lives in `Printer.error_kind` (PrinterError) — this is just the bubbled
+/// signal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrintErr {
     CSSPrintError,
@@ -375,8 +375,8 @@ pub struct Dimension {
 }
 
 /// CSS lexer token. Data-only definition hoisted out of `css_parser.rs`; the
-/// `to_css*`/`eql`/`hash` impls stay in `css_parser.rs` (gated) since they
-/// depend on `serializer::*` and `generics`.
+/// `to_css*`/`eql`/`hash` impls stay in `css_parser.rs` since they depend on
+/// `serializer::*` and `generics`.
 // Every `&'static [u8]` payload actually borrows the parser arena/source text and
 // must not outlive the arena; `&'static` is the crate-wide placeholder until the
 // bumpalo arena lifetime is plumbed through.

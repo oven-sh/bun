@@ -67,20 +67,6 @@ export {
 "
 `;
 
-exports[`bundler react-compiler/NonComponentUntouched 1`] = `
-"// entry.jsx
-import { jsxDEV } from "react/jsx-dev-runtime";
-function helper(name) {
-  return /* @__PURE__ */ jsxDEV("div", {
-    children: name
-  }, undefined, false, undefined, this);
-}
-export {
-  helper
-};
-"
-`;
-
 exports[`bundler react-compiler/ObjectPatternRestInProps 1`] = `
 "// entry.tsx
 import { jsxDEV } from "react/jsx-dev-runtime";
@@ -204,6 +190,20 @@ function Comp() {
 }
 export {
   Comp
+};
+"
+`;
+
+exports[`bundler react-compiler/NonComponentUntouched 1`] = `
+"// entry.jsx
+import { jsxDEV } from "react/jsx-dev-runtime";
+function helper(name) {
+  return /* @__PURE__ */ jsxDEV("div", {
+    children: name
+  }, undefined, false, undefined, this);
+}
+export {
+  helper
 };
 "
 `;

@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, makeTree, tempDirWithFiles } from "harness";
 import path from "node:path";
 import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
@@ -70,12 +70,16 @@ describe.if(!isWindows)("uv stubs", () => {
     console.log("tempdir:", tempdir);
   });
 
-  afterEach(async () => {
+  afterAll(() => {
     process.chdir(cwd);
   });
 
+  // One subprocess per symbol (~316). Under asan each spawn is ~2s, so
+  // sequential execution exceeds the file timeout; the bodies share no
+  // mutable state (tempdir is read-only after beforeAll), so run them
+  // concurrently.
   for (const symbol of symbols_to_test) {
-    test(`unsupported: ${symbol}`, async () => {
+    test.concurrent(`unsupported: ${symbol}`, async () => {
       const { stderr } = await Bun.$`BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB=1 ${bunExe()} run index.ts ${symbol}`
         .cwd(tempdir)
         .throws(false)

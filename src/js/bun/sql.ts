@@ -28,6 +28,9 @@ interface TransactionState {
 }
 
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
+  if (options.adapter && $isObject(options.adapter) && !$isArray(options.adapter)) {
+    return options.adapter;
+  }
   switch (options.adapter) {
     case "postgres":
       return new PostgresAdapter(options);

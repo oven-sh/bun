@@ -15,8 +15,6 @@ use super::ArrayList;
 /// A property within an `@font-face` rule.
 ///
 /// See [FontFaceRule](FontFaceRule).
-//
-
 pub enum FontFaceProperty {
     /// The `src` property.
     Source(ArrayList<Source>),
@@ -467,8 +465,6 @@ impl FontFormat {
 
 /// A value for the [src](https://drafts.csswg.org/css-fonts/#src-desc)
 /// property in an `@font-face` rule.
-//
-
 pub enum Source {
     /// A `url()` with optional format metadata.
     Url(UrlSource),

@@ -372,9 +372,7 @@ pub(super) fn vendor_prefix_to_css(
 }
 
 /// Port of `CustomIdentFns.toCss` → `Printer.writeIdent` with CSS-module
-/// custom-ident scoping. Both `CustomIdent::to_css` and `Printer::write_ident`
-/// are gated on the css_modules `Pattern::write` borrowck reshape; this is the
-/// non-css-module tail (`serialize_identifier`) that both share.
+/// custom-ident scoping.
 #[inline]
 pub(super) fn custom_ident_to_css(
     ident: &css::css_values::ident::CustomIdent,

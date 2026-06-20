@@ -1298,14 +1298,12 @@ impl<'a> SelectorParser<'a> {
             );
         }
 
-        {
-            let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
-            TokenList::parse_raw(input, &mut args, self.options, 0)?;
-            return Ok(PseudoElement::CustomFunction {
-                name,
-                arguments: TokenList { v: args },
-            });
-        }
+        let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
+        TokenList::parse_raw(input, &mut args, self.options, 0)?;
+        Ok(PseudoElement::CustomFunction {
+            name,
+            arguments: TokenList { v: args },
+        })
     }
 
     fn parse_is_and_where(&self) -> bool {

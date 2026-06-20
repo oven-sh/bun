@@ -1809,25 +1809,22 @@ mod rule_parsers {
             let loc = this.get_loc(start);
             match prelude {
                 AtRulePrelude::FontFace => {
-                    {
-                        let mut decl_parser = css_rules::font_face::FontFaceDeclarationParser;
-                        let mut parser = RuleBodyParser::new(input, &mut decl_parser);
-                        // todo_stuff.think_mem_mgmt
-                        let mut properties: Vec<css_rules::font_face::FontFaceProperty> =
-                            Vec::new();
-                        while let Some(result) = parser.next() {
-                            if let Ok(decl) = result {
-                                properties.push(decl);
-                            }
+                    let mut decl_parser = css_rules::font_face::FontFaceDeclarationParser;
+                    let mut parser = RuleBodyParser::new(input, &mut decl_parser);
+                    // todo_stuff.think_mem_mgmt
+                    let mut properties: Vec<css_rules::font_face::FontFaceProperty> = Vec::new();
+                    while let Some(result) = parser.next() {
+                        if let Ok(decl) = result {
+                            properties.push(decl);
                         }
-                        this.rules
-                            .v
-                            .push(CssRule::FontFace(css_rules::font_face::FontFaceRule {
-                                properties,
-                                loc,
-                            }));
-                        Ok(())
                     }
+                    this.rules
+                        .v
+                        .push(CssRule::FontFace(css_rules::font_face::FontFaceRule {
+                            properties,
+                            loc,
+                        }));
+                    Ok(())
                 }
                 AtRulePrelude::FontPaletteValues(name) => {
                     let rule = css_rules::font_palette_values::FontPaletteValuesRule::parse(
@@ -1906,26 +1903,24 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Keyframes { name, prefix } => {
-                    {
-                        let mut parser = css_rules::keyframes::KeyframesListParser;
-                        let mut iter = RuleBodyParser::new(input, &mut parser);
-                        // todo_stuff.think_mem_mgmt
-                        let mut keyframes: Vec<css_rules::keyframes::Keyframe> = Vec::new();
-                        while let Some(result) = iter.next() {
-                            if let Ok(keyframe) = result {
-                                keyframes.push(keyframe);
-                            }
+                    let mut parser = css_rules::keyframes::KeyframesListParser;
+                    let mut iter = RuleBodyParser::new(input, &mut parser);
+                    // todo_stuff.think_mem_mgmt
+                    let mut keyframes: Vec<css_rules::keyframes::Keyframe> = Vec::new();
+                    while let Some(result) = iter.next() {
+                        if let Ok(keyframe) = result {
+                            keyframes.push(keyframe);
                         }
-                        this.rules.v.push(CssRule::Keyframes(
-                            css_rules::keyframes::KeyframesRule {
-                                name,
-                                keyframes,
-                                vendor_prefix: prefix,
-                                loc,
-                            },
-                        ));
-                        Ok(())
                     }
+                    this.rules
+                        .v
+                        .push(CssRule::Keyframes(css_rules::keyframes::KeyframesRule {
+                            name,
+                            keyframes,
+                            vendor_prefix: prefix,
+                            loc,
+                        }));
+                    Ok(())
                 }
                 AtRulePrelude::Page(selectors) => {
                     let rule =
@@ -2185,29 +2180,27 @@ mod rule_parsers {
             // We parsed a style rule with the `composes` property. Track which
             // properties it used so we can validate it later.
             if matches!(this.composes_state, ComposesState::Allow(_)) {
-                {
-                    let len = input.position() - location;
-                    let mut usage = PropertyBitset::init_empty();
-                    let mut custom_properties: Vec<&'static [u8]> = Vec::new();
-                    fill_property_bit_set(&mut usage, &declarations, &mut custom_properties);
+                let len = input.position() - location;
+                let mut usage = PropertyBitset::init_empty();
+                let mut custom_properties: Vec<&'static [u8]> = Vec::new();
+                fill_property_bit_set(&mut usage, &declarations, &mut custom_properties);
 
-                    let custom_properties_slice = custom_properties.slice();
+                let custom_properties_slice = custom_properties.slice();
 
-                    for ref_ in this.composes_refs.slice() {
-                        let entry =
-                            this.local_properties
-                                .entry(*ref_)
-                                .or_insert_with(|| PropertyUsage {
-                                    range: bun_ast::Range {
-                                        loc: bun_ast::Loc {
-                                            start: i32::try_from(location).expect("int cast"),
-                                        },
-                                        len: i32::try_from(len).expect("int cast"),
+                for ref_ in this.composes_refs.slice() {
+                    let entry =
+                        this.local_properties
+                            .entry(*ref_)
+                            .or_insert_with(|| PropertyUsage {
+                                range: bun_ast::Range {
+                                    loc: bun_ast::Loc {
+                                        start: i32::try_from(location).expect("int cast"),
                                     },
-                                    ..Default::default()
-                                });
-                        entry.fill(&usage, custom_properties_slice);
-                    }
+                                    len: i32::try_from(len).expect("int cast"),
+                                },
+                                ..Default::default()
+                            });
+                    entry.fill(&usage, custom_properties_slice);
                 }
             }
 

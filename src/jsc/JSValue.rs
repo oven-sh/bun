@@ -1649,7 +1649,9 @@ impl JSValue {
             loop_.debug.js_call_count_outside_tick_queue +=
                 usize::from(!loop_.debug.is_inside_tick_queue);
             if loop_.debug.track_last_fn_name && !loop_.debug.is_inside_tick_queue {
-                loop_.debug.last_fn_name = self.get_name(global)?.into();
+                if let Ok(name) = self.get_name(global) {
+                    loop_.debug.last_fn_name = name.into();
+                }
             }
         }
         host_fn::from_js_host_call(global, || {

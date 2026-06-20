@@ -400,11 +400,12 @@ Agent.prototype.removeSocket = function removeSocket(s, options) {
   }
 
   let req;
-  if (this.requests[name]?.length) {
+  const requests = this.requests;
+  if (requests[name]?.length) {
     $debug("removeSocket, have a request, make a socket");
-    req = this.requests[name][0];
+    req = requests[name][0];
   } else {
-    const keys = Object.keys(this.requests);
+    const keys = Object.keys(requests);
     for (let i = 0; i < keys.length; i++) {
       const prop = keys[i];
       if (this.sockets[prop]?.length) break;

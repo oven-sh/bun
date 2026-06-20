@@ -1015,6 +1015,34 @@ impl EventLoop {
         }
     }
 
+    /// Like [`wait_for_promise`] but also returns once the event loop has
+    /// drained (no active handles, tasks, or refs) while `promise` is still
+    /// pending, instead of spinning on `tick_without_idle` forever.
+    ///
+    /// The entry-point loader uses this so that a module blocked on a
+    /// top-level `await` that can never settle (e.g. `await new Promise(() =>
+    /// {})`) hands control back to the caller. The caller then detects the
+    /// still-pending promise and reports an unsettled top-level await, matching
+    /// Node.js (which exits with code 13). In-flight async module loads keep the
+    /// loop alive via a `KeepAlive` ref taken before they dispatch, so a drained
+    /// loop here reliably means no further progress is possible.
+    pub fn wait_for_promise_or_idle(&mut self, promise: jsc::AnyPromise) {
+        let jsc_vm = self.vm_ref().jsc_vm();
+        while promise.status() == PromiseStatus::Pending {
+            if jsc_vm.execution_forbidden() {
+                break;
+            }
+            self.tick();
+            if promise.status() != PromiseStatus::Pending {
+                break;
+            }
+            if !self.vm_ref().is_event_loop_alive() {
+                break;
+            }
+            self.auto_tick();
+        }
+    }
+
     pub fn wakeup(&self) {
         #[cfg(windows)]
         {

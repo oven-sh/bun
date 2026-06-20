@@ -1582,7 +1582,14 @@ impl Run {
                 vm.auto_tick_active();
             }
 
-            if ctx.runtime_options.eval.eval_and_print {
+            // Don't print an eval result while the entry module is suspended on
+            // a top-level `await`: its value isn't available yet (and may never
+            // be). Otherwise `bun -p 'await <never-settles>'` would print
+            // `undefined` as if evaluation had finished.
+            let print_eval_result =
+                ctx.runtime_options.eval.eval_and_print && !vm.entry_point_evaluation_is_pending();
+
+            if print_eval_result {
                 let to_print: JSValue = 'brk: {
                     let result = vm
                         .entry_point_result
@@ -1630,6 +1637,15 @@ impl Run {
             }
 
             vm.on_before_exit();
+
+            // If the entry module's evaluation promise is still pending after the
+            // loop has fully drained (a `beforeExit` handler gets a last chance to
+            // resolve it), the top-level `await` can never settle. Match Node.js:
+            // warn and exit with code 13 instead of spinning forever.
+            if vm.entry_point_evaluation_is_pending() {
+                report_unsettled_top_level_await(vm);
+                vm.exit_handler.exit_code = 13;
+            }
         }
 
         if log_has_msgs(vm) {
@@ -1735,6 +1751,26 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: bun_core::Error) -> ! {
         Output::flush();
     }
     exit_with_unhandled_note(vm);
+}
+
+/// Print Node.js' "Detected unsettled top-level await" diagnostic to stderr.
+/// The entry module is suspended on a top-level `await` that can never settle,
+/// so point at the entry module's `file://` URL. The caller sets exit code 13.
+#[cold]
+#[inline(never)]
+fn report_unsettled_top_level_await(vm: &VirtualMachine) {
+    let main = vm.main();
+    if main.is_empty() {
+        Output::print_errorln("Warning: Detected unsettled top-level await");
+    } else {
+        let url = bun_core::OwnedString::new(bun_jsc::URL::file_url_from_string(
+            bun_core::String::borrow_utf8(main),
+        ));
+        Output::print_errorln(format_args!(
+            "Warning: Detected unsettled top-level await at {url}"
+        ));
+    }
+    Output::flush();
 }
 
 /// Cold tail of `Run::start` when `ANY_UNHANDLED` tripped on an otherwise-clean

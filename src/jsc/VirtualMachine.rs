@@ -2233,6 +2233,25 @@ impl VirtualMachine {
         self.event_loop_mut().wait_for_promise(promise);
     }
 
+    /// Thin forwarder for
+    /// [`crate::event_loop::EventLoop::wait_for_promise_or_idle`].
+    #[inline]
+    pub fn wait_for_promise_or_idle(&mut self, promise: jsc::AnyPromise) {
+        // accessed here (no overlapping `&mut EventLoop`).
+        self.event_loop_mut().wait_for_promise_or_idle(promise);
+    }
+
+    /// True when the entry module's evaluation promise is still pending. Once
+    /// the event loop has drained, this means the entry module is suspended on
+    /// a top-level `await` that can never settle (an unsettled top-level
+    /// await).
+    pub fn entry_point_evaluation_is_pending(&self) -> bool {
+        match self.pending_internal_promise {
+            Some(p) => crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending,
+            None => false,
+        }
+    }
+
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
     /// (needs `Timer::All` for the poll timeout).
     #[inline]
@@ -2399,7 +2418,10 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            // `_or_idle`: return (with the promise still pending) if the loop
+            // drains, so an unsettled top-level await is detected by the caller
+            // instead of spinning forever.
+            self.wait_for_promise_or_idle(jsc::AnyPromise::Internal(promise));
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))

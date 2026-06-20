@@ -1365,7 +1365,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         subprocess.stdio_pipes.with_mut(|pipes| {
             for j in &socket_fd_indices {
                 if let Some(slot @ ExtraPipe::OwnedFd(_)) = pipes.get_mut(*j) {
-                    let ExtraPipe::OwnedFd(fd) = *slot else { unreachable!() };
+                    let ExtraPipe::OwnedFd(fd) = *slot else {
+                        unreachable!()
+                    };
                     *slot = ExtraPipe::UnownedFd(fd);
                 }
             }

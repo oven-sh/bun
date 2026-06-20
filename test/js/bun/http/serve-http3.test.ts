@@ -1105,7 +1105,8 @@ test("Bun.serve closes the TCP listener when the HTTP/3 UDP bind fails", async (
     }
     sock.close();
     if (!err) throw new Error("expected Bun.serve to throw");
-    if (!String(err.message).includes("HTTP/3")) throw new Error("wrong error: " + err.message);
+    const expected = "Failed to listen on UDP port " + port + " for HTTP/3";
+    if (String(err.message) !== expected) throw new Error("wrong error: " + err.message);
     const status = await new Promise(resolve => {
       const c = net.connect(port, "127.0.0.1");
       c.on("connect", () => { c.destroy(); resolve("LEAKED"); });

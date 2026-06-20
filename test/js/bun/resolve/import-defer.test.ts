@@ -366,6 +366,25 @@ describe.concurrent("import defer", () => {
       expect(stderr.toLowerCase()).toContain("error");
     });
 
+    test("import defer is not over-rejected by a bunfig [macros] remap on the specifier", async () => {
+      // bunfig `[macros]` remapping is only consumed for default and
+      // named bindings, never star bindings, so `import defer * as ns`
+      // of a package with a `[macros]` entry must keep working.
+      const { stdout, stderr, exitCode } = await run({
+        "bunfig.toml": `[macros]\n"pkg" = { "debounce" = "./macro-impl.ts" }\n`,
+        "macro-impl.ts": `export default () => "x";`,
+        "node_modules/pkg/package.json": `{"name":"pkg","main":"index.js"}`,
+        "node_modules/pkg/index.js": `exports.a = 1;`,
+        "main.js": `
+          import defer * as ns from "pkg";
+          console.log("a:", ns.a);
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout.split("\n").filter(Boolean)).toEqual(["a: 1"]);
+      expect(exitCode).toBe(0);
+    });
+
     test.each([
       ["with { type: 'macro' }", `import defer * as ns from "./m.js" with { type: "macro" };`],
       ["macro: prefix", `import defer * as ns from "macro:./m.js";`],

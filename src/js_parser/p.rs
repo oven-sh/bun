@@ -4000,13 +4000,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         let mut stmt = stmt_;
         // The macro fast paths below (explicit `with { type: "macro" }` /
-        // `macro:` prefix, or a bunfig `[macros]` remap for this specifier)
-        // register the binding as a compile-time macro ref and drop the
-        // statement before `stmt.phase` is written to the import record. No
-        // macro can produce a module source, and defer has nothing to defer
-        // for a compile-time binding, so reject the combination with a clear
-        // error instead of silently executing the macro.
-        if (is_macro || macro_remap.is_some()) && stmt.phase != bun_ast::ImportPhase::Evaluation {
+        // `macro:` prefix, or a bunfig `[macros]` remap of this specifier's
+        // default export) register the binding as a compile-time macro ref
+        // and drop the statement before `stmt.phase` is written to the
+        // import record. No macro can produce a module source, and defer
+        // has nothing to defer for a compile-time binding, so reject the
+        // combination with a clear error instead of silently executing the
+        // macro. A bunfig remap only contributes when it would actually be
+        // consumed: star bindings are never remapped (the `star_name_loc`
+        // branch below leaves `macro_remap` unread), so `import defer` is
+        // only affected by an explicit `is_macro` trigger; `import source`
+        // has only a default binding, so a remap with no `"default"` key
+        // leaves it untouched.
+        let remap_hits_phase = match stmt.phase {
+            bun_ast::ImportPhase::Source => {
+                macro_remap.is_some_and(|m| m.get(b"default").is_some())
+            }
+            bun_ast::ImportPhase::Defer | bun_ast::ImportPhase::Evaluation => false,
+        };
+        if (is_macro || remap_hits_phase) && stmt.phase != bun_ast::ImportPhase::Evaluation {
             let phase_name: &[u8] = match stmt.phase {
                 bun_ast::ImportPhase::Source => b"\"import source\"",
                 bun_ast::ImportPhase::Defer => b"\"import defer\"",

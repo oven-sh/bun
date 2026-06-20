@@ -636,6 +636,27 @@ describe.concurrent("import source (source phase imports)", () => {
       expect(exitCode).not.toBe(0);
     });
 
+    test("import source is not over-rejected by a bunfig [macros] remap lacking a default key", async () => {
+      // A `[macros]` entry that only maps named exports doesn't touch the
+      // default binding, so `import source` must proceed to the normal
+      // source-phase path (which then rejects the resolved .js file with
+      // the wasm error) rather than the macro-import error.
+      const { stdout, stderr, exitCode } = await run({
+        "bunfig.toml": `[macros]\n"pkg" = { "debounce" = "./macro-impl.ts" }\n`,
+        "macro-impl.ts": `export default () => "x";`,
+        "node_modules/pkg/package.json": `{"name":"pkg","main":"index.js"}`,
+        "node_modules/pkg/index.js": `exports.debounce = () => {};`,
+        "main.js": `
+          import source mod from "pkg";
+          console.log("unreachable", mod);
+        `,
+      });
+      expect(stdout).not.toContain("unreachable");
+      expect(stderr).not.toContain("cannot be combined with a macro import");
+      expect(stderr).toContain("only WebAssembly modules have a module source");
+      expect(exitCode).not.toBe(0);
+    });
+
     test("import source with a non-macro type attribute still errors on non-wasm content", async () => {
       // Static `import source` with `with { type: "json" }` overrides the
       // user attribute with `type: "webassembly"` (the source-phase

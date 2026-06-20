@@ -177,16 +177,16 @@ function validateFamilyOption(options) {
 }
 
 function validateAllOption(options) {
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.all !== undefined) {
-    validateBoolean(options.all);
+  const all = options.all;
+  if (all !== undefined) {
+    validateBoolean(all);
   }
 }
 
 function validateVerbatimOption(options) {
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.verbatim !== undefined) {
-    validateBoolean(options.verbatim);
+  const verbatim = options.verbatim;
+  if (verbatim !== undefined) {
+    validateBoolean(verbatim);
   }
 }
 
@@ -197,9 +197,9 @@ function validateOrder(order) {
 }
 
 function validateOrderOption(options) {
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.order !== undefined) {
-    validateOrder(options.order);
+  const order = options.order;
+  if (order !== undefined) {
+    validateOrder(order);
   }
 }
 

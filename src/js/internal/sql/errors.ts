@@ -52,26 +52,43 @@ class PostgresError extends SQLError implements Bun.SQL.PostgresError {
     super(message);
 
     this.name = "PostgresError";
-    this.code = options.code;
+    const {
+      code,
+      errno,
+      detail,
+      hint,
+      severity,
+      position,
+      internalPosition,
+      internalQuery,
+      where,
+      schema,
+      table,
+      column,
+      dataType,
+      constraint,
+      file,
+      line,
+      routine,
+    } = options;
+    this.code = code;
 
-    /* oxlint-disable bun/no-duplicate-nullish-property-access */
-    if (options.errno !== undefined) this.errno = options.errno;
-    if (options.detail !== undefined) this.detail = options.detail;
-    if (options.hint !== undefined) this.hint = options.hint;
-    if (options.severity !== undefined) this.severity = options.severity;
-    if (options.position !== undefined) this.position = options.position;
-    if (options.internalPosition !== undefined) this.internalPosition = options.internalPosition;
-    if (options.internalQuery !== undefined) this.internalQuery = options.internalQuery;
-    if (options.where !== undefined) this.where = options.where;
-    if (options.schema !== undefined) this.schema = options.schema;
-    if (options.table !== undefined) this.table = options.table;
-    if (options.column !== undefined) this.column = options.column;
-    if (options.dataType !== undefined) this.dataType = options.dataType;
-    if (options.constraint !== undefined) this.constraint = options.constraint;
-    if (options.file !== undefined) this.file = options.file;
-    if (options.line !== undefined) this.line = options.line;
-    if (options.routine !== undefined) this.routine = options.routine;
-    /* oxlint-enable bun/no-duplicate-nullish-property-access */
+    if (errno !== undefined) this.errno = errno;
+    if (detail !== undefined) this.detail = detail;
+    if (hint !== undefined) this.hint = hint;
+    if (severity !== undefined) this.severity = severity;
+    if (position !== undefined) this.position = position;
+    if (internalPosition !== undefined) this.internalPosition = internalPosition;
+    if (internalQuery !== undefined) this.internalQuery = internalQuery;
+    if (where !== undefined) this.where = where;
+    if (schema !== undefined) this.schema = schema;
+    if (table !== undefined) this.table = table;
+    if (column !== undefined) this.column = column;
+    if (dataType !== undefined) this.dataType = dataType;
+    if (constraint !== undefined) this.constraint = constraint;
+    if (file !== undefined) this.file = file;
+    if (line !== undefined) this.line = line;
+    if (routine !== undefined) this.routine = routine;
   }
 }
 
@@ -95,11 +112,11 @@ class SQLiteError extends SQLError implements Bun.SQL.SQLiteError {
 
     this.name = "SQLiteError";
 
-    this.code = options.code;
-    this.errno = options.errno;
+    const { code, errno, byteOffset } = options;
+    this.code = code;
+    this.errno = errno;
 
-    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-    if (options.byteOffset !== undefined) this.byteOffset = options.byteOffset;
+    if (byteOffset !== undefined) this.byteOffset = byteOffset;
   }
 }
 
@@ -122,12 +139,11 @@ class MySQLError extends SQLError implements Bun.SQL.MySQLError {
     super(message);
 
     this.name = "MySQLError";
-    this.code = options.code;
+    const { code, errno, sqlState } = options;
+    this.code = code;
 
-    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-    if (options.errno !== undefined) this.errno = options.errno;
-    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-    if (options.sqlState !== undefined) this.sqlState = options.sqlState;
+    if (errno !== undefined) this.errno = errno;
+    if (sqlState !== undefined) this.sqlState = sqlState;
   }
 }
 

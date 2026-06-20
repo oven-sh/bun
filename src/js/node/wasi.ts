@@ -1250,10 +1250,10 @@ var require_wasi = __commonJS({
                 let position = IS_STDIN || stats.offset === void 0 ? null : Number(stats.offset);
                 let rr = 0;
                 if (IS_STDIN) {
-                  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-                  if (this.getStdin != null) {
+                  const getStdin = this.getStdin;
+                  if (getStdin != null) {
                     if (this.stdinBuffer == null) {
-                      this.stdinBuffer = this.getStdin();
+                      this.stdinBuffer = getStdin.$call(this);
                     }
                     if (this.stdinBuffer != null) {
                       rr = this.stdinBuffer.copy(iov);
@@ -1822,14 +1822,14 @@ var require_wasi = __commonJS({
             if (waitTimeNs > 0) {
               waitTimeNs -= Bun.nanoseconds() - timeOrigin;
               if (waitTimeNs >= 1e6) {
-                if (this.sleep == null && !warnedAboutSleep) {
+                const sleep = this.sleep;
+                if (sleep == null && !warnedAboutSleep) {
                   warnedAboutSleep = true;
                   console.log("(100% cpu burning waiting for stdin: please define a way to sleep!) ");
                 }
-                // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-                if (this.sleep != null) {
+                if (sleep != null) {
                   const ms = nsToMs(waitTimeNs);
-                  this.sleep(ms);
+                  sleep.$call(this, ms);
                 } else {
                   const end = BigInt(bindings.hrtime()) + waitTimeNs;
                   while (BigInt(bindings.hrtime()) < end) {}

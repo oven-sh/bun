@@ -31,9 +31,9 @@ function extractAgentOptions(agent) {
     const newTlsOptions = {};
     let hasTlsOptions = false;
 
-    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-    if (connectOpts.rejectUnauthorized !== undefined) {
-      newTlsOptions.rejectUnauthorized = connectOpts.rejectUnauthorized;
+    const rejectUnauthorized = connectOpts.rejectUnauthorized;
+    if (rejectUnauthorized !== undefined) {
+      newTlsOptions.rejectUnauthorized = rejectUnauthorized;
       hasTlsOptions = true;
     }
     if (connectOpts.ca) {
@@ -1175,16 +1175,12 @@ class WebSocketServer extends EventEmitter {
       ...options,
     };
 
-    if (
-      (options.port == null && !options.server && !options.noServer) ||
-      (options.port != null && (options.server || options.noServer)) ||
-      (options.server && options.noServer)
-    ) {
+    const { port, server, noServer, host, backlog } = options;
+    if ((port == null && !server && !noServer) || (port != null && (server || noServer)) || (server && noServer)) {
       throw new TypeError('One and only one of the "port", "server", or "noServer" options must be specified');
     }
 
-    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-    if (options.port != null) {
+    if (port != null) {
       this._server = http.createServer((req, res) => {
         const body = http.STATUS_CODES[426];
 
@@ -1195,9 +1191,9 @@ class WebSocketServer extends EventEmitter {
         res.end(body);
       });
 
-      this._server.listen(options.port, options.host, options.backlog, callback);
-    } else if (options.server) {
-      this._server = options.server;
+      this._server.listen(port, host, backlog, callback);
+    } else if (server) {
+      this._server = server;
     }
 
     if (this._server) {

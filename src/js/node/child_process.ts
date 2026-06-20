@@ -860,10 +860,10 @@ function normalizeExecFileArgs(file, args, options, callback) {
   }
 
   // Validate argv0, if present.
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.argv0 != null) {
-    validateString(options.argv0, "options.argv0");
-    validateArgumentNullCheck(options.argv0, "options.argv0");
+  const argv0 = options.argv0;
+  if (argv0 != null) {
+    validateString(argv0, "options.argv0");
+    validateArgumentNullCheck(argv0, "options.argv0");
   }
 
   return { file, args, options, callback };
@@ -921,9 +921,9 @@ function normalizeSpawnArguments(file, args, options) {
   }
 
   // Validate detached, if present.
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.detached != null) {
-    validateBoolean(options.detached, "options.detached");
+  const detached = options.detached;
+  if (detached != null) {
+    validateBoolean(detached, "options.detached");
   }
 
   // Validate the uid, if present.
@@ -942,16 +942,16 @@ function normalizeSpawnArguments(file, args, options) {
   }
 
   // Validate argv0, if present.
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.argv0 != null) {
-    validateString(options.argv0, "options.argv0");
-    validateArgumentNullCheck(options.argv0, "options.argv0");
+  const argv0 = options.argv0;
+  if (argv0 != null) {
+    validateString(argv0, "options.argv0");
+    validateArgumentNullCheck(argv0, "options.argv0");
   }
 
   // Validate windowsHide, if present.
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.windowsHide != null) {
-    validateBoolean(options.windowsHide, "options.windowsHide");
+  const windowsHide = options.windowsHide;
+  if (windowsHide != null) {
+    validateBoolean(windowsHide, "options.windowsHide");
   }
 
   let { windowsVerbatimArguments } = options;
@@ -1335,15 +1335,15 @@ class ChildProcess extends EventEmitter {
 
     const has_ipc = $isJSArray(stdio) && stdio.includes("ipc");
 
+    const envPairs = options.envPairs;
     // validate options.envPairs but only if has_ipc. for some reason.
     if (has_ipc) {
-      // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-      if (options.envPairs !== undefined) {
-        validateArray(options.envPairs, "options.envPairs");
+      if (envPairs !== undefined) {
+        validateArray(envPairs, "options.envPairs");
       }
     }
 
-    var env = options[kBunEnv] || parseEnvPairs(options.envPairs) || process.env;
+    var env = options[kBunEnv] || parseEnvPairs(envPairs) || process.env;
 
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;

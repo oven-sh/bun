@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/refs/heads/main/npm/oxlint/configuration_schema.json",
-  "jsPlugins": ["./scripts/oxlint-plugin-bun.js"],
+  "jsPlugins": ["./scripts/oxlint-plugins/bun.js"],
   "categories": {
     "correctness": "error"
   },

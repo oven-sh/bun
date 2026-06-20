@@ -140,28 +140,27 @@ function toArrayBuffer(data) {
 
 function validateBaseConsumerOptions(options) {
   validateObject(options, "options");
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.limit !== undefined) {
-    validateInteger(options.limit, "options.limit", 0);
+  const { limit, encoding } = options;
+  if (limit !== undefined) {
+    validateInteger(limit, "options.limit", 0);
   }
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.encoding !== undefined) {
-    if (typeof options.encoding !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.encoding", "string", options.encoding);
+  if (encoding !== undefined) {
+    if (typeof encoding !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("options.encoding", "string", encoding);
     }
     try {
-      new TextDecoder(options.encoding);
+      new TextDecoder(encoding);
     } catch {
-      throw $ERR_INVALID_ARG_VALUE_RangeError("options.encoding", options.encoding);
+      throw $ERR_INVALID_ARG_VALUE_RangeError("options.encoding", encoding);
     }
   }
 }
 
 function validateConsumerOptions(options) {
   validateBaseConsumerOptions(options);
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.signal !== undefined) {
-    validateAbortSignal(options.signal, "options.signal");
+  const { signal } = options;
+  if (signal !== undefined) {
+    validateAbortSignal(signal, "options.signal");
   }
 }
 

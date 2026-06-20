@@ -680,14 +680,14 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       state.suspended = true;
       return true;
     }
-    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-    if (state.failed !== undefined) {
+    const failed = state.failed;
+    if (failed !== undefined) {
       // Stash the error so the handshake-failure handler emits
       // 'tlsClientError' with it, and return it - the native dispatch
       // detects an Error return and aborts the handshake, dropping the
       // connection without a TLS alert the way Node does.
       stashSNIError(state);
-      return state.failed;
+      return failed;
     }
     return state.selected;
   },
@@ -2434,8 +2434,8 @@ function lookupAndConnect(self, options) {
     return;
   }
 
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.lookup != null) validateFunction(options.lookup, "options.lookup");
+  const optionsLookup = options.lookup;
+  if (optionsLookup != null) validateFunction(optionsLookup, "options.lookup");
 
   if (dns === undefined) dns = require("node:dns");
   const dnsopts = {
@@ -2448,7 +2448,7 @@ function lookupAndConnect(self, options) {
 
   $debug("connect: find host", host, addressType);
   $debug("connect: dns options", dnsopts);
-  const lookup = options.lookup || dns.lookup;
+  const lookup = optionsLookup || dns.lookup;
 
   if (dnsopts.family !== 4 && dnsopts.family !== 6 && !localAddress && autoSelectFamily) {
     $debug("connect: autodetecting", host, port);

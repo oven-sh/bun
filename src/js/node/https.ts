@@ -388,8 +388,8 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (options.pfx) name += options.pfx;
 
   name += ":";
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.rejectUnauthorized !== undefined) name += options.rejectUnauthorized;
+  const rejectUnauthorized = options.rejectUnauthorized;
+  if (rejectUnauthorized !== undefined) name += rejectUnauthorized;
 
   name += ":";
   if (options.servername && options.servername !== options.host) name += options.servername;
@@ -407,8 +407,8 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (options.crl) name += options.crl;
 
   name += ":";
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.honorCipherOrder !== undefined) name += options.honorCipherOrder;
+  const honorCipherOrder = options.honorCipherOrder;
+  if (honorCipherOrder !== undefined) name += honorCipherOrder;
 
   name += ":";
   if (options.ecdhCurve) name += options.ecdhCurve;
@@ -417,8 +417,8 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (options.dhparam) name += options.dhparam;
 
   name += ":";
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.secureOptions !== undefined) name += options.secureOptions;
+  const secureOptions = options.secureOptions;
+  if (secureOptions !== undefined) name += secureOptions;
 
   name += ":";
   if (options.sessionIdContext) name += options.sessionIdContext;

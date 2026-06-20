@@ -784,26 +784,28 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // honor requireHostHeader, like Node.js.
           http_res.writeHead(400, { Connection: "close" });
           http_res.end();
-          // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-        } else if (http_req.headers.expect !== undefined) {
-          // Case-insensitive, token-boundary match like Node's
-          // parserOnIncoming (RFC 7231 5.1.1: expectation values compare
-          // case-insensitively).
-          if (continueExpression.test(http_req.headers.expect)) {
-            if (server.listenerCount("checkContinue") > 0) {
-              server.emit("checkContinue", http_req, http_res);
-            } else {
-              http_res.writeContinue();
-              server.emit("request", http_req, http_res);
-            }
-          } else if (server.listenerCount("checkExpectation") > 0) {
-            server.emit("checkExpectation", http_req, http_res);
-          } else {
-            http_res.writeHead(417);
-            http_res.end();
-          }
         } else {
-          server.emit("request", http_req, http_res);
+          const expectHeader = http_req.headers.expect;
+          if (expectHeader !== undefined) {
+            // Case-insensitive, token-boundary match like Node's
+            // parserOnIncoming (RFC 7231 5.1.1: expectation values compare
+            // case-insensitively).
+            if (continueExpression.test(expectHeader)) {
+              if (server.listenerCount("checkContinue") > 0) {
+                server.emit("checkContinue", http_req, http_res);
+              } else {
+                http_res.writeContinue();
+                server.emit("request", http_req, http_res);
+              }
+            } else if (server.listenerCount("checkExpectation") > 0) {
+              server.emit("checkExpectation", http_req, http_res);
+            } else {
+              http_res.writeHead(417);
+              http_res.end();
+            }
+          } else {
+            server.emit("request", http_req, http_res);
+          }
         }
 
         socket.cork();

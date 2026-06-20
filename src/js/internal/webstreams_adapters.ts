@@ -493,12 +493,12 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
     throw $ERR_INVALID_ARG_TYPE("streamReadable", "stream.Readable", streamReadable);
   }
   validateObject(options, "options");
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.type !== undefined) {
-    validateOneOf(options.type, "options.type", ["bytes", undefined]);
+  const optionsType = options.type;
+  if (optionsType !== undefined) {
+    validateOneOf(optionsType, "options.type", ["bytes", undefined]);
   }
 
-  const isBYOB = options.type === "bytes";
+  const isBYOB = optionsType === "bytes";
   let controller;
   let wasCanceled = false;
   let strategy;

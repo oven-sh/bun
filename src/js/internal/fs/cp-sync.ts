@@ -39,20 +39,17 @@ const defaultCpOptions = {
 };
 
 function decorateSystemError(err, prefix, context) {
-  let message = `${prefix}: ${context.syscall} returned ${context.code} (${context.message})`;
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (context.path !== undefined) message += ` ${context.path}`;
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (context.dest !== undefined) message += ` => ${context.dest}`;
+  const { syscall, code, message: ctxMessage, path, dest, errno } = context;
+  let message = `${prefix}: ${syscall} returned ${code} (${ctxMessage})`;
+  if (path !== undefined) message += ` ${path}`;
+  if (dest !== undefined) message += ` => ${dest}`;
   err.message = message;
   err.name = "SystemError";
   err.info = context;
-  err.errno = context.errno;
-  err.syscall = context.syscall;
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (context.path !== undefined) err.path = context.path;
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (context.dest !== undefined) err.dest = context.dest;
+  err.errno = errno;
+  err.syscall = syscall;
+  if (path !== undefined) err.path = path;
+  if (dest !== undefined) err.dest = dest;
   return err;
 }
 
@@ -137,9 +134,9 @@ function validateCpOptions(options) {
       'Option "dereference" cannot be used in combination with option "verbatimSymlinks"',
     );
   }
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (options.filter !== undefined) {
-    validateFunction(options.filter, "options.filter");
+  const { filter } = options;
+  if (filter !== undefined) {
+    validateFunction(filter, "options.filter");
   }
   options[kValidatedCpOptions] = true;
   return options;

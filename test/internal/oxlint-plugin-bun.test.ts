@@ -1,4 +1,4 @@
-// Tests for the custom oxlint rules in scripts/oxlint-plugin-bun.js.
+// Tests for the custom oxlint rules in scripts/oxlint-plugins/bun.js.
 //
 // The plugin is loaded via `jsPlugins` in oxlint.json and only enabled for
 // src/js/** through an override. These tests exercise the rule directly by
@@ -9,7 +9,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 const root = path.resolve(import.meta.dir, "..", "..");
-const pluginPath = path.join(root, "scripts", "oxlint-plugin-bun.js");
+const pluginPath = path.join(root, "scripts", "oxlint-plugins", "bun.js");
 
 async function runOxlint(files: Record<string, string>) {
   using dir = tempDir("oxlint-plugin-bun", {
@@ -146,7 +146,11 @@ if (self.pos !== undefined) {
 if (self.count !== undefined) {
   self.count++;
 }
-// delete is fine as long as the property is also read without being written
+// delete: not a [[Get]], and a cached local cannot replace the delete
+if (obj.y != null) {
+  delete obj.y;
+}
+// pure read with no write-back: still flagged (positive control)
 if (map.entry != null) {
   entries.push(map.entry);
 }
@@ -156,7 +160,7 @@ if (map.entry != null) {
     expect(stderr).not.toContain("Failed");
     // Only the last case (a pure read with no write-back) should fire.
     expect(diagnostics(stdout)).toEqual([
-      { file: "writes.js", line: 16, rule: "bun(no-duplicate-nullish-property-access)" },
+      { file: "writes.js", line: 20, rule: "bun(no-duplicate-nullish-property-access)" },
     ]);
     expect(exitCode).toBe(1);
   });

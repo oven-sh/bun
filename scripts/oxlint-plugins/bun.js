@@ -55,14 +55,16 @@ function nullishComparisonMember(node) {
 }
 
 /**
- * True if `node` is the target of an assignment (simple or compound) or an
- * update expression.
+ * True if `node` is the target of an assignment (simple or compound), an
+ * update expression, or a `delete`. None of these can be replaced by a read
+ * of a cached local.
  */
 function isWriteTarget(node) {
   const parent = node.parent;
   if (!parent) return false;
   if (parent.type === "AssignmentExpression" && parent.left === node) return true;
   if (parent.type === "UpdateExpression" && parent.argument === node) return true;
+  if (parent.type === "UnaryExpression" && parent.operator === "delete" && parent.argument === node) return true;
   return false;
 }
 

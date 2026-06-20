@@ -59,9 +59,9 @@ function Agent(options): void {
 
   validateOneOf(this.scheduling, "scheduling", ["fifo", "lifo"]);
 
-  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
-  if (this.maxTotalSockets !== undefined) {
-    validateNumber(this.maxTotalSockets, "maxTotalSockets", 1);
+  const maxTotalSockets = this.maxTotalSockets;
+  if (maxTotalSockets !== undefined) {
+    validateNumber(maxTotalSockets, "maxTotalSockets", 1);
   } else {
     this.maxTotalSockets = Infinity;
   }

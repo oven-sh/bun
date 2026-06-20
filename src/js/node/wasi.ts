@@ -1535,22 +1535,16 @@ var require_wasi = __commonJS({
                   noflags |= nodeFsConstants.O_APPEND;
                 }
                 if ((fsFlags & constants_1.WASI_FDFLAG_DSYNC) !== 0) {
-                  if (nodeFsConstants.O_DSYNC) {
-                    noflags |= nodeFsConstants.O_DSYNC;
-                  } else {
-                    noflags |= nodeFsConstants.O_SYNC;
-                  }
+                  const O_DSYNC = nodeFsConstants.O_DSYNC;
+                  noflags |= O_DSYNC ? O_DSYNC : nodeFsConstants.O_SYNC;
                   neededInheriting |= constants_1.WASI_RIGHT_FD_DATASYNC;
                 }
                 if ((fsFlags & constants_1.WASI_FDFLAG_NONBLOCK) !== 0) {
                   noflags |= nodeFsConstants.O_NONBLOCK;
                 }
                 if ((fsFlags & constants_1.WASI_FDFLAG_RSYNC) !== 0) {
-                  if (nodeFsConstants.O_RSYNC) {
-                    noflags |= nodeFsConstants.O_RSYNC;
-                  } else {
-                    noflags |= nodeFsConstants.O_SYNC;
-                  }
+                  const O_RSYNC = nodeFsConstants.O_RSYNC;
+                  noflags |= O_RSYNC ? O_RSYNC : nodeFsConstants.O_SYNC;
                   neededInheriting |= constants_1.WASI_RIGHT_FD_SYNC;
                 }
                 if ((fsFlags & constants_1.WASI_FDFLAG_SYNC) !== 0) {
@@ -2004,8 +1998,9 @@ var require_wasi = __commonJS({
         }
       }
       initWasiFdInfo() {
-        if (this.env["WASI_FD_INFO"] != null) {
-          const fdInfo = JSON.parse(this.env["WASI_FD_INFO"]);
+        const env = this.env;
+        if (env["WASI_FD_INFO"] != null) {
+          const fdInfo = JSON.parse(env["WASI_FD_INFO"]);
           for (const wasi_fd in fdInfo) {
             console.log(wasi_fd);
             const fd = parseInt(wasi_fd);

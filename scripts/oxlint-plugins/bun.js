@@ -31,29 +31,6 @@ function memberExpressionKey(node) {
   return base + "." + property.name;
 }
 
-function isNullOrUndefined(node) {
-  if (!node) return false;
-  if (node.type === "Literal" && node.value === null) return true;
-  if (node.type === "Identifier" && node.name === "undefined") return true;
-  if (node.type === "UnaryExpression" && node.operator === "void") return true;
-  return false;
-}
-
-/**
- * If `node` is `<member> != null|undefined` (or `!==`, either order), return
- * the member expression; otherwise `null`. Only the not-equal forms are
- * considered: `if (x.y == null)` bodies run when the value is nullish, so
- * re-reading it there is not the pattern we're trying to prevent.
- */
-function nullishComparisonMember(node) {
-  if (!node || node.type !== "BinaryExpression") return null;
-  const { operator, left, right } = node;
-  if (operator !== "!=" && operator !== "!==") return null;
-  if (isNullOrUndefined(right) && left.type === "MemberExpression") return left;
-  if (isNullOrUndefined(left) && right.type === "MemberExpression") return right;
-  return null;
-}
-
 /**
  * True if `node` is the target of an assignment (simple or compound), an
  * update expression, or a `delete`. None of these can be replaced by a read
@@ -68,14 +45,70 @@ function isWriteTarget(node) {
   return false;
 }
 
-const READ = 1;
-const WRITE = 2;
+/**
+ * True if `node` is the callee of a call/new/tagged-template. Caching a
+ * method in a local loses the receiver, so `obj.fn()` in the body is not
+ * something a simple `const fn = obj.fn` can replace.
+ */
+function isCallee(node) {
+  const parent = node.parent;
+  if (!parent) return false;
+  if ((parent.type === "CallExpression" || parent.type === "NewExpression") && parent.callee === node) return true;
+  if (parent.type === "TaggedTemplateExpression" && parent.tag === node) return true;
+  return false;
+}
+
+function skipKey(k) {
+  return k === "parent" || k === "type" || k === "loc" || k === "range" || k === "start" || k === "end";
+}
 
 /**
- * Walk `node` collecting read/write flags for the static member expression
- * identified by `key`. Does not descend into nested functions or classes:
- * those run later with a different scope, so caching at the `if` wouldn't
- * help (and the value may legitimately differ by then).
+ * Collect every simple static member-expression read inside the `if` test.
+ * Only the outermost chain is recorded (`a.b.c`, not also `a.b`). Callees and
+ * write targets are ignored: `if (obj.fn())` reads `obj.fn` but the value
+ * itself isn't something a local can reuse.
+ */
+function collectTestMembers(node, out) {
+  if (!node || typeof node !== "object") return;
+  switch (node.type) {
+    case "FunctionDeclaration":
+    case "FunctionExpression":
+    case "ArrowFunctionExpression":
+    case "ClassDeclaration":
+    case "ClassExpression":
+      return;
+    case "MemberExpression":
+      if (!isCallee(node) && !isWriteTarget(node)) {
+        const key = memberExpressionKey(node);
+        if (key !== null) {
+          if (!out.has(key)) out.set(key, node);
+          return;
+        }
+      }
+      break;
+  }
+  for (const k in node) {
+    if (skipKey(k)) continue;
+    const v = node[k];
+    if (Array.isArray(v)) {
+      for (const child of v) {
+        if (child && typeof child === "object") collectTestMembers(child, out);
+      }
+    } else if (v && typeof v === "object" && typeof v.type === "string") {
+      collectTestMembers(v, out);
+    }
+  }
+}
+
+const READ = 1;
+const WRITE = 2;
+const CALLED = 4;
+
+/**
+ * Walk `node` collecting read/write/called flags for the static member
+ * expression identified by `key`. Does not descend into nested functions or
+ * classes: those run later with a different scope, so caching at the `if`
+ * wouldn't help (and the value may legitimately differ by then).
  */
 function memberAccessFlags(node, key) {
   if (!node || typeof node !== "object") return 0;
@@ -90,10 +123,12 @@ function memberAccessFlags(node, key) {
     case "MemberExpression":
       if (memberExpressionKey(node) === key) {
         if (isWriteTarget(node)) {
-          flags |= WRITE;
           // Compound assignments (`+=`, `&&=`) and `++`/`--` also read the
-          // previous value, but the suggested destructure still can't
+          // previous value, but the suggested refactor still can't
           // eliminate the write-back, so treat them purely as writes here.
+          flags |= WRITE;
+        } else if (isCallee(node)) {
+          flags |= CALLED;
         } else {
           flags |= READ;
         }
@@ -101,7 +136,7 @@ function memberAccessFlags(node, key) {
       break;
   }
   for (const k in node) {
-    if (k === "parent" || k === "type" || k === "loc" || k === "range" || k === "start" || k === "end") continue;
+    if (skipKey(k)) continue;
     const v = node[k];
     if (Array.isArray(v)) {
       for (const child of v) {
@@ -114,17 +149,17 @@ function memberAccessFlags(node, key) {
   return flags;
 }
 
-const noDuplicateNullishPropertyAccess = {
+const noDuplicateConditionalPropertyAccess = {
   meta: {
     type: "suggestion",
     docs: {
       description:
-        "Disallow re-reading the same property inside `if (obj.prop != null)`. " +
+        "Disallow reading the same property in an `if` condition and again in its body. " +
         "Destructure or cache the property in a local first so the getter runs once.",
     },
     messages: {
       duplicate:
-        "`{{expr}}` is read again inside `if ({{expr}} {{op}} {{rhs}})`. " +
+        "`{{expr}}` is read in the `if` condition and again in the body. " +
         "Read it into a local first (e.g. `const { {{prop}} } = {{base}}`) so the property is only accessed once.",
     },
     schema: [],
@@ -132,31 +167,31 @@ const noDuplicateNullishPropertyAccess = {
   create(context) {
     return {
       IfStatement(node) {
-        const member = nullishComparisonMember(node.test);
-        if (!member) return;
-        const key = memberExpressionKey(member);
-        if (key === null) return;
+        const members = new Map();
+        collectTestMembers(node.test, members);
+        if (members.size === 0) return;
 
-        const flags = memberAccessFlags(node.consequent, key);
-        // If the body writes to the same property, caching it in a local
-        // would change semantics (later reads would see the stale value).
-        if (flags & WRITE) return;
-        if (!(flags & READ)) return;
+        for (const [key, member] of members) {
+          const flags = memberAccessFlags(node.consequent, key);
+          // If the body writes to the same property, caching it in a local
+          // would change semantics (later reads would see the stale value).
+          if (flags & WRITE) continue;
+          // If the body calls it as a method, caching it in a local loses
+          // the receiver; the simple refactor doesn't apply.
+          if (flags & CALLED) continue;
+          if (!(flags & READ)) continue;
 
-        const dot = key.lastIndexOf(".");
-        const { operator, left, right } = node.test;
-        const rhsNode = isNullOrUndefined(right) ? right : left;
-        context.report({
-          node: node.test,
-          messageId: "duplicate",
-          data: {
-            expr: key,
-            op: operator,
-            rhs: context.sourceCode.getText(rhsNode),
-            prop: key.slice(dot + 1),
-            base: key.slice(0, dot),
-          },
-        });
+          const dot = key.lastIndexOf(".");
+          context.report({
+            node: member,
+            messageId: "duplicate",
+            data: {
+              expr: key,
+              prop: key.slice(dot + 1),
+              base: key.slice(0, dot),
+            },
+          });
+        }
       },
     };
   },
@@ -167,6 +202,6 @@ export default {
     name: "bun",
   },
   rules: {
-    "no-duplicate-nullish-property-access": noDuplicateNullishPropertyAccess,
+    "no-duplicate-conditional-property-access": noDuplicateConditionalPropertyAccess,
   },
 };

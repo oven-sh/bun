@@ -343,8 +343,9 @@ function merge(...args) {
   let sources;
   let options;
 
-  if (args.length > 0 && isMergeOptions(args[args.length - 1])) {
-    options = args[args.length - 1];
+  const argc = args.length;
+  if (argc > 0 && isMergeOptions(args[argc - 1])) {
+    options = args[argc - 1];
     sources = args.slice(0, -1);
   } else {
     sources = args;

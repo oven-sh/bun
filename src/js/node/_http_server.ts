@@ -438,24 +438,26 @@ Server.prototype.listen = function () {
 
   // This logic must align with:
   // - https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L274-L307
-  if (arguments.length > 0) {
-    if (($isObject(arguments[0]) || $isCallable(arguments[0])) && arguments[0] !== null) {
+  const argc = arguments.length;
+  if (argc > 0) {
+    const arg0 = arguments[0];
+    if (($isObject(arg0) || $isCallable(arg0)) && arg0 !== null) {
       // (options[...][, cb])
-      port = arguments[0].port;
-      host = arguments[0].host;
-      socketPath = arguments[0].path;
+      port = arg0.port;
+      host = arg0.host;
+      socketPath = arg0.path;
 
-      const otherTLS = arguments[0].tls;
+      const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
         tls = normalizeServerTls({ ...otherTLS });
       }
-    } else if (typeof arguments[0] === "string" && !(Number(arguments[0]) >= 0)) {
+    } else if (typeof arg0 === "string" && !(Number(arg0) >= 0)) {
       // (path[...][, cb])
-      socketPath = arguments[0];
+      socketPath = arg0;
     } else {
       // ([port][, host][...][, cb])
-      port = arguments[0];
-      if (arguments.length > 1 && typeof arguments[1] === "string") {
+      port = arg0;
+      if (argc > 1 && typeof arguments[1] === "string") {
         host = arguments[1];
       }
     }
@@ -474,8 +476,9 @@ Server.prototype.listen = function () {
     }
   }
 
-  if ($isCallable(arguments[arguments.length - 1])) {
-    onListen = arguments[arguments.length - 1];
+  const lastArg = arguments[argc - 1];
+  if ($isCallable(lastArg)) {
+    onListen = lastArg;
   }
 
   try {
@@ -1523,8 +1526,9 @@ function renderNativeHeaders(res) {
         }
       } else if (key === "keep-alive") hasKeepAlive = true;
       if ($isArray(value)) {
-        if (value.length < 2 || key !== "cookie") {
-          for (let i = 0; i < value.length; i++) {
+        const valueLength = value.length;
+        if (valueLength < 2 || key !== "cookie") {
+          for (let i = 0; i < valueLength; i++) {
             flat.push(name, String(value[i]));
           }
         } else {
@@ -1592,8 +1596,9 @@ function renderNativeHeaders(res) {
       const keepAliveTimeout = res._keepAliveTimeout;
       if (keepAliveTimeout && !hasKeepAlive) {
         let max = "";
-        if (~~res._maxRequestsPerSocket > 0) {
-          max = `, max=${res._maxRequestsPerSocket}`;
+        const maxRequestsPerSocket = res._maxRequestsPerSocket;
+        if (~~maxRequestsPerSocket > 0) {
+          max = `, max=${maxRequestsPerSocket}`;
         }
         flat.push("Keep-Alive", `timeout=${MathFloor(keepAliveTimeout / 1000)}${max}`);
       }
@@ -1882,16 +1887,17 @@ ServerResponse.prototype.writeInformation = function writeInformation(statusCode
 
   if (headers !== undefined && headers !== null) {
     if ($isArray(headers)) {
-      if (headers.length && $isArray(headers[0])) {
-        for (let i = 0; i < headers.length; i++) {
+      const headersLength = headers.length;
+      if (headersLength && $isArray(headers[0])) {
+        for (let i = 0; i < headersLength; i++) {
           const entry = headers[i];
           head += processInformationHeader(entry[0], entry[1]);
         }
       } else {
-        if (headers.length % 2 !== 0) {
+        if (headersLength % 2 !== 0) {
           throw $ERR_INVALID_ARG_VALUE("headers", headers);
         }
-        for (let i = 0; i < headers.length; i += 2) {
+        for (let i = 0; i < headersLength; i += 2) {
           head += processInformationHeader(headers[i], headers[i + 1]);
         }
       }

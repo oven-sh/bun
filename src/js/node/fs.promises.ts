@@ -176,18 +176,11 @@ async function cp(src, dest, options) {
   options = validateCpOptions(options);
   src = getValidatedFsPath(src, "src");
   dest = getValidatedFsPath(dest, "dest");
-  if (
-    !options.filter &&
-    !options.dereference &&
-    !options.preserveTimestamps &&
-    !options.verbatimSymlinks &&
-    !options.mode &&
-    !options.errorOnExist &&
-    options.force
-  ) {
+  const { filter, dereference, preserveTimestamps, verbatimSymlinks, mode, errorOnExist, force, recursive } = options;
+  if (!filter && !dereference && !preserveTimestamps && !verbatimSymlinks && !mode && !errorOnExist && force) {
     const { ok, checked } = await require("internal/fs/cp").tryNativeFastPath(src, dest, options);
     if (ok) {
-      return fs.cp(src, dest, options.recursive, options.errorOnExist, options.force, options.mode);
+      return fs.cp(src, dest, recursive, errorOnExist, force, mode);
     }
     return require("internal/fs/cp").cpFn(src, dest, options, checked);
   }
@@ -1146,14 +1139,15 @@ function asyncWrap(fn: any, name: string) {
             }
           }
           chunk = toUint8Array(chunk);
-          if (bytesRemaining >= 0 && chunk.byteLength > bytesRemaining) {
-            return Promise.$reject($ERR_OUT_OF_RANGE("write", `<= ${bytesRemaining} bytes`, chunk.byteLength));
+          const chunkByteLength = chunk.byteLength;
+          if (bytesRemaining >= 0 && chunkByteLength > bytesRemaining) {
+            return Promise.$reject($ERR_OUT_OF_RANGE("write", `<= ${bytesRemaining} bytes`, chunkByteLength));
           }
-          if (bytesRemaining > 0) bytesRemaining -= chunk.byteLength;
+          if (bytesRemaining > 0) bytesRemaining -= chunkByteLength;
           const position = pos;
-          if (pos >= 0) pos += chunk.byteLength;
+          if (pos >= 0) pos += chunkByteLength;
           acquireRef();
-          return writeAll(chunk, 0, chunk.byteLength, position, signal);
+          return writeAll(chunk, 0, chunkByteLength, position, signal);
         },
 
         writev(chunks, options = kEmptyObject) {

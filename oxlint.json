@@ -87,10 +87,10 @@
     {
       "files": ["src/js/**"],
       "rules": {
-        // Reading `obj.prop` once to null-check and again in the body hits
+        // Reading `obj.prop` in an `if` condition and again in the body hits
         // the property (and any getter/Proxy trap) twice. Destructure or
         // cache the value in a local instead.
-        "bun/no-duplicate-nullish-property-access": "error"
+        "bun/no-duplicate-conditional-property-access": "error"
       }
     }
   ]

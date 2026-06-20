@@ -147,10 +147,11 @@ function validateFlagsOption(options) {
     return;
   }
 
-  validateNumber(options.flags);
+  const flags = options.flags;
+  validateNumber(flags);
 
-  if ((options.flags & ~(dns.ALL | dns.ADDRCONFIG | dns.V4MAPPED)) != 0) {
-    throw $ERR_INVALID_ARG_VALUE("hints", options.flags, "is invalid");
+  if ((flags & ~(dns.ALL | dns.ADDRCONFIG | dns.V4MAPPED)) != 0) {
+    throw $ERR_INVALID_ARG_VALUE("hints", flags, "is invalid");
   }
 }
 
@@ -327,9 +328,10 @@ function lookup(hostname, options, callback) {
       if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
       // Node.js getaddrinfo errors (DNSException) carry the looked-up
       // hostname both as a property and at the end of the message.
-      if (err.syscall === "getaddrinfo" && !err.hostname && hostname) {
+      const syscall = err.syscall;
+      if (syscall === "getaddrinfo" && !err.hostname && hostname) {
         err.hostname = hostname;
-        err.message = `${err.syscall} ${err.code} ${hostname}`;
+        err.message = `${syscall} ${err.code} ${hostname}`;
       }
       callback(err, undefined, undefined);
     });

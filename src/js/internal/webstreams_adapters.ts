@@ -293,8 +293,11 @@ function newWritableStreamFromStreamWritable(streamWritable, options = kEmptyObj
           if (!streamWritable.writableObjectMode && isAnyArrayBuffer(chunk)) {
             chunk = new Uint8Array(chunk);
           }
-          if (streamWritable.writableNeedDrain || !streamWritable.write(chunk)) {
+          const needDrainBefore = streamWritable.writableNeedDrain;
+          if (needDrainBefore || !streamWritable.write(chunk)) {
             backpressurePromise = PromiseWithResolvers();
+            // write() may set writableNeedDrain; the post-write value is
+            // what decides whether we resolve immediately.
             if (!streamWritable.writableNeedDrain) {
               backpressurePromise.resolve();
             }
@@ -636,10 +639,11 @@ function newReadableWritablePairFromDuplex(duplex, options = kEmptyObject) {
     type: options.readableType,
   };
 
-  if (options.readableType == null && options.type != null) {
+  const optionsType = options.type;
+  if (options.readableType == null && optionsType != null) {
     // 'options.type' is a deprecated alias for 'options.readableType'
     emitDEP0201();
-    readableOptions.type = options.type;
+    readableOptions.type = optionsType;
   }
 
   if (isDestroyed(duplex)) {

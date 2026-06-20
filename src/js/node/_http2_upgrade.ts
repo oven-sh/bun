@@ -216,17 +216,19 @@ function socketHandshake(
   tlsSocket.alpnProtocol = nativeHandle?.alpnProtocol ?? null;
 
   // Handle mutual TLS: if the server requested a client cert, check for errors
-  if (tlsSocket._requestCert || tlsSocket._rejectUnauthorized) {
+  const requestCert = tlsSocket._requestCert;
+  const rejectUnauthorized = tlsSocket._rejectUnauthorized;
+  if (requestCert || rejectUnauthorized) {
     if (verifyError) {
       tlsSocket.authorized = false;
       tlsSocket.authorizationError = verifyError.code || verifyError.message;
       ctx.server.emit("tlsClientError", verifyError, tlsSocket);
-      if (tlsSocket._rejectUnauthorized) {
+      if (rejectUnauthorized) {
         tlsSocket.emit("secure", tlsSocket);
         tlsSocket.destroy(verifyError);
         return;
       }
-    } else if (tlsSocket._requestCert) {
+    } else if (requestCert) {
       tlsSocket.authorized = true;
     }
   }

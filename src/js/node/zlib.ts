@@ -82,10 +82,11 @@ function zlibBufferOnData(chunk) {
   if (!this.buffers) this.buffers = [chunk];
   else ArrayPrototypePush.$call(this.buffers, chunk);
   this.nread += chunk.length;
-  if (this.nread > this._maxOutputLength) {
+  const maxOutputLength = this._maxOutputLength;
+  if (this.nread > maxOutputLength) {
     this.close();
     this.removeAllListeners("end");
-    this.cb($ERR_BUFFER_TOO_LARGE(this._maxOutputLength));
+    this.cb($ERR_BUFFER_TOO_LARGE(maxOutputLength));
   }
 }
 
@@ -360,9 +361,10 @@ function processChunkSync(self, chunk, flushFlag) {
       ArrayPrototypePush.$call(buffers, out);
       nread += out.byteLength;
 
-      if (nread > self._maxOutputLength) {
+      const maxOutputLength = self._maxOutputLength;
+      if (nread > maxOutputLength) {
         _close(self);
-        throw $ERR_BUFFER_TOO_LARGE(self._maxOutputLength);
+        throw $ERR_BUFFER_TOO_LARGE(maxOutputLength);
       }
     } else {
       $assert(have === 0, "have should not go down");
@@ -453,10 +455,11 @@ function processCallback() {
   }
 
   // Exhausted the output buffer, or used all the input create a new one.
-  if (availOutAfter === 0 || self._outOffset >= self._chunkSize) {
-    handle.availOutBefore = self._chunkSize;
+  const chunkSize = self._chunkSize;
+  if (availOutAfter === 0 || self._outOffset >= chunkSize) {
+    handle.availOutBefore = chunkSize;
     self._outOffset = 0;
-    self._outBuffer = Buffer.allocUnsafe(self._chunkSize);
+    self._outBuffer = Buffer.allocUnsafe(chunkSize);
   }
 
   if (availOutAfter === 0) {

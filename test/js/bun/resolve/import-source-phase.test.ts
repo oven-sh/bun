@@ -391,6 +391,70 @@ describe.concurrent("import source (source phase imports)", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("source phase import of a Bun.plugin build.module() virtual module is an error", async () => {
+      // The runVirtualModule path in fetchESMSourceCode returns via
+      // handleVirtualModuleResult, whose loader whitelist cannot produce
+      // wasm bytes, so it must reject rather than silently bind the
+      // mock's default export. Evaluation-phase import of the same
+      // specifier must keep working.
+      const { stdout, stderr, exitCode } = await run({
+        "main.js": `
+          import { plugin } from "bun";
+          await plugin({
+            name: "virt",
+            setup(build) {
+              build.module("virtual-wasm", () => ({ loader: "object", exports: { default: 99 } }));
+            },
+          });
+          try {
+            await import.source("virtual-wasm");
+            console.log("unreachable");
+          } catch (e) {
+            console.log("caught:", String(e.message).includes("only WebAssembly modules have a module source"));
+          }
+          console.log("eval:", (await import("virtual-wasm")).default);
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout.split("\n").filter(Boolean)).toEqual(["caught: true", "eval: 99"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("source phase import of a mock.module() registration is an error", async () => {
+      // The isBunTest branch of fetchESMSourceCode runs virtual modules
+      // before the builtin check; it must also reject source-phase
+      // requests instead of binding the mock's default export.
+      const { stdout, stderr, exitCode } = await run(
+        {
+          "mock.test.js": `
+            import { test, expect, mock } from "bun:test";
+            import path from "node:path";
+            test("rejects", async () => {
+              const spec = path.join(import.meta.dir, "fake.wasm");
+              mock.module(spec, () => ({ default: 42 }));
+              let err;
+              try {
+                await import.source(spec);
+              } catch (e) {
+                err = e;
+              }
+              expect(String(err?.message ?? "")).toContain("only WebAssembly modules have a module source");
+              // Evaluation-phase import of the mocked specifier keeps working.
+              expect((await import(spec)).default).toBe(42);
+            });
+          `,
+        },
+        "mock.test.js",
+        ["test"],
+      );
+      expect({ stdout, stderr }).toEqual({
+        stdout: expect.not.stringContaining("(fail)"),
+        stderr: expect.stringContaining(" 1 pass"),
+      });
+      expect(stderr).toContain(" 0 fail");
+      expect(exitCode).toBe(0);
+    });
+
     test("a file without the wasm magic is rejected even with a .wasm extension", async () => {
       const { stdout, stderr, exitCode } = await run({
         "main.js": `

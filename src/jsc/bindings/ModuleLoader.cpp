@@ -969,23 +969,34 @@ static JSValue fetchESMSourceCode(
 
     bool wasModuleMock = false;
 
+    // TC39 source phase imports are lowered by the printer onto
+    // `with { type: "webassembly" }`. Neither builtin modules nor virtual
+    // modules (mock.module / build.module, whose loader whitelist cannot
+    // produce wasm bytes) have a module source, so reject those requests
+    // here rather than silently serving the evaluation-phase module. The
+    // transpile path produces the same error for file-backed non-wasm
+    // modules.
+    const bool isSourcePhase = typeAttribute && !typeAttribute->isEmpty()
+        && typeAttribute->toWTFString(BunString::ZeroCopy) == "webassembly"_s;
+    const auto rejectSourcePhase = [&]() -> JSValue {
+        auto message = makeString(
+            "Source phase import of \""_s,
+            specifier->toWTFString(BunString::ZeroCopy),
+            "\" failed: only WebAssembly modules have a module source"_s);
+        RELEASE_AND_RETURN(scope, reject(createTypeError(globalObject, message)));
+    };
+
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest) {
         JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
+            if (isSourcePhase) [[unlikely]]
+                return rejectSourcePhase();
             RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));
         }
     }
-
-    // TC39 source phase imports are lowered by the printer onto
-    // `with { type: "webassembly" }`. No builtin module has a module source,
-    // so reject that request here rather than silently serving the
-    // evaluation-phase builtin (the transpile path produces the same error
-    // for file-backed non-wasm modules).
-    const bool isSourcePhase = typeAttribute && !typeAttribute->isEmpty()
-        && typeAttribute->toWTFString(BunString::ZeroCopy) == "webassembly"_s;
 
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, referrer, res)) {
         if (!res->success) {
@@ -995,13 +1006,8 @@ static JSValue fetchESMSourceCode(
             RELEASE_AND_RETURN(scope, reject(exception));
         }
 
-        if (isSourcePhase) [[unlikely]] {
-            auto message = makeString(
-                "Source phase import of \""_s,
-                specifier->toWTFString(BunString::ZeroCopy),
-                "\" failed: only WebAssembly modules have a module source"_s);
-            RELEASE_AND_RETURN(scope, reject(createTypeError(globalObject, message)));
-        }
+        if (isSourcePhase) [[unlikely]]
+            return rejectSourcePhase();
 
         // This can happen if it's a `bun build --compile`'d CommonJS file
         if (res->result.value.isCommonJSModule) {
@@ -1071,6 +1077,8 @@ static JSValue fetchESMSourceCode(
         JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
+            if (isSourcePhase) [[unlikely]]
+                return rejectSourcePhase();
             RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));
         }
     }

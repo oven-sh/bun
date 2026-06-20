@@ -159,12 +159,14 @@ pub fn compile_fn(
         context.renames.extend(env.renames.iter().cloned());
     }
 
-    // Check for Invariant errors after lowering, before logging HIR.
-    // In TS, Invariant errors throw from recordError(), aborting lower() before
-    // the HIR entry is logged. The thrown error contains ONLY the Invariant error,
-    // not other recorded (non-Invariant) errors.
-    if env.has_invariant_errors() {
-        return Err(env.take_invariant_errors());
+    // Upstream `lower()` ends with `if (builder.errors.hasAnyErrors()) return Err(...)`
+    // before `builder.build()`, so any error recorded during lowering — Todo
+    // (throw-in-try, var, …), Syntax, or Invariant — short-circuits the
+    // pipeline. The Bun port records to `env.errors` instead; the equivalent
+    // gate lives here so a function known to be rejected does not pay for
+    // `run_hir_passes`.
+    if env.has_errors() {
+        return Err(env.take_errors());
     }
 
     let (reactive_fn, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context)?;
@@ -319,8 +321,8 @@ pub fn compile_outlined_fn(
     let func_node = FunctionNode::Function(&outlined_decl);
     let mut hir = lowering::lower(&func_node, fn_name, &*host, &mut env, import_bindings)?;
 
-    if env.has_invariant_errors() {
-        return Err(env.take_invariant_errors());
+    if env.has_errors() {
+        return Err(env.take_errors());
     }
 
     let (reactive_fn, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context)?;

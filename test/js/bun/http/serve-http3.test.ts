@@ -425,6 +425,61 @@ describe("Bun.serve HTTP/3", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  test("http3 UDP bind failure after TCP listen succeeds does not crash", async () => {
+    // Occupy a UDP port, then Bun.serve({ tls, http3: true }) on that port.
+    // The TCP listen succeeds and links a listen socket into the HttpContext
+    // group; the UDP bind fails and the server is torn down. The teardown
+    // must close the TCP listen socket before destroying the uws app: debug
+    // builds abort on the us_socket_group_deinit() head_listen_sockets
+    // assert, release builds leak the bound TCP socket (observed below by
+    // re-binding the port).
+    const script = `
+      const dgram = require("node:dgram");
+      const net = require("node:net");
+      const udp = dgram.createSocket("udp4");
+      udp.bind(0, "127.0.0.1", () => {
+        const port = udp.address().port;
+        let err;
+        try {
+          const s = Bun.serve({
+            port,
+            hostname: "127.0.0.1",
+            tls: ${JSON.stringify(tls)},
+            http3: true,
+            fetch: () => new Response("x"),
+          });
+          s.stop();
+        } catch (e) {
+          err = e;
+        }
+        console.log(err ? "threw: " + err.message : "no error");
+        const tcp = net.createServer();
+        tcp.on("error", e => {
+          console.log("tcp-rebind: " + e.code);
+          udp.close();
+        });
+        tcp.listen({ port, host: "127.0.0.1", exclusive: true }, () => {
+          console.log("tcp-rebind: ok");
+          tcp.close();
+          udp.close();
+        });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, signalCode: proc.signalCode }).toEqual({
+      stdout: [expect.stringContaining("threw: Failed to listen on UDP port"), "tcp-rebind: ok"],
+      stderr: "",
+      signalCode: null,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("static route (Response value) is mirrored onto H3", async () => {
     await withServer(async port => {
       const res = await fetchH3(port, "/static");

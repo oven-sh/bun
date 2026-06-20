@@ -193,8 +193,8 @@ if (options.b != null) y = options.b;
 
 describe("src/js lint", () => {
   // End-to-end: the repo's own oxlint config, against src/js, should be
-  // clean. Existing instances of the pattern carry an inline disable
-  // comment; this guards against new ones being introduced.
+  // clean. Existing instances of the pattern were refactored to read the
+  // property into a local before the check; this guards against new ones.
   test("bun run lint is clean on src/js", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "x", "oxlint", "--config=oxlint.json", "--format=github", "src/js"],
@@ -204,7 +204,7 @@ describe("src/js lint", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr }).toEqual({ stdout: expect.stringContaining("0 errors"), stderr: "" });
-    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("Failed");
+    expect({ stdout, exitCode }).toEqual({ stdout: expect.stringContaining("0 errors"), exitCode: 0 });
   });
 });

@@ -29,10 +29,8 @@ impl Default for Options {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Pure-byte helpers (lifted from `Parser` so they compile without the
-// Expr-carrying struct). They
-// touch no parser state — exposing them as free fns lets the logic stay
-// un-gated and unit-testable while the AST-dependent body is blocked.
+// Pure-byte helpers. They touch no parser state; exposed as free fns so
+// they are unit-testable without the Expr-carrying struct.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]

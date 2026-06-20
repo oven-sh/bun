@@ -12,8 +12,6 @@ pub use crate::Error;
 // params (crate-wide `&'static`/raw-slice placeholder convention); see lib.rs.
 
 // ───────────────────────── value-type imports ─────────────────────────
-// Real `values/` payloads — the calc lattice has un-gated, so the local
-// stand-ins are gone and `MediaFeatureValue` carries the canonical types.
 use crate::css_values::length::Length;
 use crate::css_values::number::{CSSIntegerFns, CSSNumberFns};
 use crate::css_values::ratio::Ratio;
@@ -1381,9 +1379,6 @@ impl MediaFeatureValue {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         use MediaFeatureValue as V;
         match self {
-            // The real `values::length::Length` owns a calc tree. The local
-            // `value_shims::Length` stand-in is a unit struct, so `Clone` is
-            // faithful until the calc lattice un-gates and the shim is replaced.
             V::Length(l) => V::Length(l.clone()),
             V::Number(n) => V::Number(*n),
             V::Integer(i) => V::Integer(*i),

@@ -202,10 +202,8 @@ mod node {
     pub(super) use super::super::types::SliceWithUnderlyingString;
     pub(super) use super::super::{gid_t, uid_t};
 
-    /// `node::mode_from_js` — forwards to the real impl in
-    /// `super::types::mode_from_js` (now un-gated). Kept as a thin alias so
-    /// the dozens of call sites in `args::*::from_js` keep spelling
-    /// `node::mode_from_js`.
+    /// Thin alias to `super::types::mode_from_js` so the dozens of call
+    /// sites in `args::*::from_js` keep spelling `node::mode_from_js`.
     #[inline]
     pub(super) fn mode_from_js(
         ctx: &bun_jsc::JSGlobalObject,

@@ -68,7 +68,7 @@ impl Default for TimerObjectInternals {
 pub use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
 
 // ──────────────────────────────────────────────────────────────────────────
-// `runImmediateTask` path — un-gated for `__bun_run_immediate_task` (dispatch.rs).
+// `runImmediateTask` path for `__bun_run_immediate_task` (dispatch.rs).
 // ──────────────────────────────────────────────────────────────────────────
 
 // C++ symbol emitted from ImmediateList.cpp / setTimeout.cpp; already linked.

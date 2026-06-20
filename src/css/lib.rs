@@ -161,8 +161,6 @@ pub mod values_stub {
     pub mod color {
         pub use crate::values::color::*;
 
-        /// `Maybe` is now un-gated as `core::result::Result`, so this is a
-        /// straight type alias to the real `values::color::ParseResult`.
         pub type CssColorParseResult = crate::values::color::ParseResult;
 
         /// https://drafts.csswg.org/css-color/#hsl-to-rgb (`hue` is 0..1 here).
@@ -171,11 +169,7 @@ pub mod values_stub {
         pub use crate::css_parser::color::hsl_to_rgb;
     }
 
-    /// Re-export of the real `values/ident.rs` — the data-only stub that used
-    /// to live here (so `generics::ident_eql` could compile) is obsolete:
-    /// `values::ident` is un-gated and `generics.rs` imports it directly.
-    /// The stub `IdentOrRef` had diverged (tagged enum vs packed-u128), so
-    /// this also removes a latent type-confusion hazard.
+    /// Re-export of the real `values/ident.rs`.
     pub mod ident {
         pub use crate::values::ident::*;
     }
@@ -224,7 +218,7 @@ pub type ImportRecordHandler<'a> = printer::ImportInfo<'a>;
 pub use values::color::{CssColor, FloatColor, LABColor, LabColor, PredefinedColor, RGBA};
 pub use values_stub::color::CssColorParseResult;
 
-// Real re-exports from un-gated modules (cross-crate surface).
+// Cross-crate re-exports.
 pub use error::{
     BasicParseError, BasicParseErrorKind, Err, ErrorLocation, MinifyError, MinifyErrorKind,
     ParseError, ParserError, ParserErrorKind, PrinterError, PrinterErrorKind, SelectorError,
@@ -241,8 +235,7 @@ pub use rules::import::ImportConditions;
 
 // ───────────────────────────── VendorPrefix ─────────────────────────────
 // Hoisted from css_parser.rs so leaf modules (targets, prefixes) can compile
-// without pulling in the 6k-line parser hub. css_parser.rs re-exports this
-// when it un-gates.
+// without pulling in the 6k-line parser hub.
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -338,8 +331,7 @@ impl VendorPrefix {
 
 // ───────────────────────── Core lexer/location types ─────────────────────────
 // Hoisted from css_parser.rs / rules/mod.rs so leaf modules (error, dependencies)
-// compile without the 6k-line parser hub. css_parser.rs `pub use crate::{..}`s
-// these when it un-gates.
+// compile without the 6k-line parser hub.
 
 /// Line/column within a single source. Column is 1-based, line is 0-based.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]

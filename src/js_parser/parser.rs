@@ -19,9 +19,8 @@ pub mod ConvertESMExportsForHmr {
 pub use bun_paths::fs;
 
 /// `bun_options_types` is missing several items P.rs/Parser.rs reference
-/// (`JSX`, `ServerComponents`, `ModuleType`, etc.). Per directive we cannot
-/// edit other crates; provide a local `options` mod that re-exports the real
-/// crate plus stand-ins. Tracked in `blocked_on`.
+/// (`JSX`, `ServerComponents`, `ModuleType`, etc.); provide a local
+/// `options` mod that re-exports the real crate plus stand-ins.
 pub mod options {
     pub use bun_options_types::*;
     use std::borrow::Cow;

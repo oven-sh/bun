@@ -41,8 +41,7 @@ const IS_CACHE_ENABLED: bool = false;
 
 pub struct Linker {
     // arena field dropped — global mimalloc (callers pass `bun.default_allocator`)
-    // The un-gated
-    // `Transpiler` struct owns these values directly and also owns `linker:
+    // `Transpiler` owns these values directly and also owns `linker:
     // crate::Linker` by value, so storing references here would alias
     // `&mut self` on every `transpiler.linker.link(...)` call. Use raw
     // pointers and dereference at use-site; same

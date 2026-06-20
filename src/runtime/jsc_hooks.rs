@@ -861,9 +861,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     let loop_ = unsafe { (*el).usockets_loop() };
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
-    // The swap + drain loop is un-gated in
-    // `bun_jsc::event_loop` (per-task body dispatched via `__bun_run_immediate_task`),
-    // so `immediate_tasks` after this call reflects next-tick immediates and
+    // After this call `immediate_tasks` reflects next-tick immediates, so
     // the `has_pending_immediate` read below is correct.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
@@ -3297,11 +3295,6 @@ fn transpile_source_code_inner(
                 // need to copy the ~12 borrowed slices out (perf: was a
                 // per-asset-import `url::URL::clone`).
                 let origin = unsafe { &(*jsc_vm).origin };
-                // Note: `jsc.API.Bun.getPublicPath` is gated behind a
-                // private `_jsc_gated` mod in BunObject.rs; it is a thin
-                // wrapper over `get_public_path_with_asset_prefix` with
-                // `dir = VM.top_level_dir`, `asset_prefix = ""`, `.loose`.
-                // Inline that body here (mirrors filesystem_router.rs).
                 let top_level_dir = Fs::FileSystem::get().top_level_dir;
                 crate::api::bun_object::get_public_path_with_asset_prefix(
                     specifier,

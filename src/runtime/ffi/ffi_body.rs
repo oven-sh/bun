@@ -64,11 +64,8 @@ fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_core::String]) -> Js
     })
 }
 
-// `bun_tcc_sys` is an un-gated workspace crate and a direct dep of
-// `bun_runtime`, so import it unconditionally. Runtime availability is governed
-// by `bun_core::Environment::ENABLE_TINYCC` via the early-return guards in the host-fns
-// below — type resolution for `TCC::{Config, ConfigErr, OutputFormat, State}`
-// must succeed regardless.
+// Runtime availability is governed by `bun_core::Environment::ENABLE_TINYCC`
+// via the early-return guards in the host-fns below.
 use bun_tcc_sys as TCC;
 
 bun_output::declare_scope!(TCC, visible);

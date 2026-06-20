@@ -36,8 +36,6 @@ use bun_ast::{
     B, Binding, BindingNodeIndex, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Scope,
     Stmt, StmtNodeList, Symbol,
 };
-// Round-D/E modules: stub re-exports so type signatures referencing them compile.
-// Real bodies un-gate per-file later.
 use crate::renamer;
 
 // In this AST crate, lists are arena-backed.
@@ -47,9 +45,8 @@ type ListManaged<'a, T> = BumpVec<'a, T>;
 type Map<K, V> = HashMap<K, V>;
 
 /// Erases `P<'a, TS, SCAN>`'s const-generics so helpers like `JSXTag::parse`
-/// can take any instantiation. Only the
-/// surface those helpers actually touch is exposed; widen this as the
-/// parse_* / visit_* sibling files un-gate.
+/// can take any instantiation. Only the surface those helpers actually
+/// touch is exposed.
 pub(crate) trait ParserLike<'a> {
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
     fn log_ptr(&self) -> core::ptr::NonNull<bun_ast::Log>;
@@ -58,10 +55,8 @@ pub(crate) trait ParserLike<'a> {
     fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: bun_ast::Loc) -> Expr;
     fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, bun_core::Error>;
 }
-// Trait + impl defined so Expr methods can bound on it. Method bodies forward
-// to the (currently-gated) inherent impls; until those un-gate, calling through
-// ParserLike panics — which is fine since no live code does so yet (callers are
-// in parse_*/visit_* which are also gated).
+// Trait + impl defined so Expr methods can bound on it. Method bodies
+// forward to the inherent impls.
 impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
     #[inline]
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> {
@@ -140,13 +135,9 @@ impl<'a> ImportRecordList<'a> {
     /// Transfer the
     /// backing storage into a `Vec<ImportRecord>` and leave `self` empty
     /// (so the parser can be dropped without aliasing the records the linker /
-    /// printer now own).
-    ///
-    /// Round-G fix: previously `to_ast` reached through `items_mut()` and
-    /// wrapped the *live* BumpVec slice, leaving `self` non-empty; the BumpVec's
-    /// Drop then ran element destructors on records the returned `Ast` still
-    /// pointed at. This adapter restores move-and-zero semantics for both
-    /// the bump-backed and externally-borrowed variants.
+    /// printer now own). Move-and-zero semantics: if `to_ast` merely borrowed
+    /// the live BumpVec slice, the BumpVec's Drop would then run element
+    /// destructors on records the returned `Ast` still points at.
     pub(crate) fn move_to_baby_list(&mut self, arena: &'a Bump) -> BumpVec<'a, ImportRecord> {
         match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
             Self::Owned(v) => v,
@@ -185,8 +176,7 @@ pub(crate) type MacroCallCountType = u32;
 
 // ─── Re-exports of sibling-module impls ───
 // These are inherent methods on `P` defined in sibling files via separate
-// `impl<...> P<...>` blocks. Round-D/E: those files un-gate per-module; until
-// then their re-exports are gated so the *struct* + core helpers compile.
+// `impl<...> P<...>` blocks.
 pub use crate::parse::*;
 pub use crate::visit::*;
 // Re-export the real visitor so `P::binary_expression_stack` is typed against
@@ -717,11 +707,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIP
     }
 }
 
-// Associated consts kept live (cheap, used by ParserLike + Parser.rs).
-// The full method-body impl block below is gated wholesale — 600+ type errors
-// from method bodies referencing not-yet-real Expr/Symbol/Log surface; un-gate
-// method-groups (scope mgmt → allocate → error reporting → predicates) as
-// that surface lands.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
     pub const ONLY_SCAN_IMPORTS_AND_DO_NOT_VISIT: bool = SCAN_ONLY;
@@ -835,9 +820,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.module_scope
     }
 
-    // ── thin allocate-helpers (un-gated so the parse_*/visit_* mixin bodies
-    //    can reference them; the full bodies with SCAN_ONLY require-scan
-    //    branches stay in the gated block below) ──────────────────────────
     #[inline]
     pub fn new_expr<T>(&mut self, t: T, loc: bun_ast::Loc) -> Expr
     where
@@ -893,11 +875,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Round-D: core helper methods on P. Un-gated in groups; heavy bodies that
-// touch unfinished E/S/ts surface or call into parse_*/visit_* sibling files
-// stay individually ` // blocked_on:` below.
-// ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub const ALLOW_MACROS: bool = !cfg!(target_family = "wasm");
 
@@ -1416,7 +1393,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // blocked_on: is_binding_used; SideEffects::to_boolean; Part fields; named_exports key type
     pub fn tree_shake(&mut self, parts: &mut &'a mut [js_ast::Part], merge: bool) {
         let mut parts_ = core::mem::take(parts);
 
@@ -3951,7 +3927,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Only assert above; do not actually pop.
     }
 
-    // blocked_on: S::Import field set; crate::parser::MacroRefData; ParsedPath fields; ImportItemForNamespaceMap API
     pub fn process_import_statement(
         &mut self,
         stmt_: S::Import,
@@ -4327,7 +4302,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(self.s(stmt, loc))
     }
 
-    // blocked_on: ParsedPath fields; S::Import.items; options::Loader
     #[cold]
     fn validate_and_set_import_type(
         &mut self,
@@ -6243,7 +6217,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // blocked_on: options.features.replace_exports type (currently bool placeholder)
     pub fn is_export_to_eliminate(&self, r#ref: Ref) -> bool {
         let symbol_name = self.load_name_from_ref(r#ref);
         self.options.features.replace_exports.contains(symbol_name)
@@ -6412,7 +6385,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // blocked_on: b(); G::Decl::List; E::Arrow.args slice type; S::SExpr/Return; emitted_namespace_vars.put_no_clobber
     // Large TS namespace/enum lowering body — cold for already-transpiled JS.
     #[cold]
     #[inline(never)]
@@ -6807,11 +6779,6 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
     Some(pkgname)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Round-D/E heavy method bodies (lower_class / to_ast / react_refresh / etc.).
-// lower_class + emit_decorator_metadata_for_prop + serialize_metadata are
-// un-gated and compile against the full bun_ast::ts::Metadata variant set.
-// Remaining individually-gated methods carry their own `blocked_on:` tags.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
         use js_ast::g::PropertyKind;
@@ -7607,9 +7574,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr::init_identifier(r#ref, loc)
     }
 
-    // wrap_inlined_enum: moved to ungated impl (round-G).
 
-    // value_for_define / is_dot_define_match: moved to ungated impl (round-G).
 
     // One statement could potentially expand to several statements
     pub fn stmts_to_single_stmt(&mut self, loc: bun_ast::Loc, stmts: &'a mut [Stmt]) -> Stmt {
@@ -7690,7 +7655,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         res
     }
 
-    // runtime_identifier_ref / runtime_identifier / call_runtime: moved to ungated impl (round-G).
 
     pub fn extract_decls_for_binding(
         binding: Binding,
@@ -7814,9 +7778,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r#ref
     }
 
-    // compute_ts_enums_map() lives in the round-G `to_ast` impl block below
-    // (deduped — earlier draft body removed once both un-gated).
-
     pub fn should_lower_using_declarations(&self, stmts: &[Stmt]) -> bool {
         // TODO: We do not support lowering await, but when we do this needs to point to that var
         let lower_await = false;
@@ -7854,7 +7815,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// with ones that were imported, so that it can share an import record.
     ///
     /// This function replaces all specifier strings with `e_special.resolved_specifier_string`
-    // blocked_on: rewrite_import_meta_hot_accept_string; Log::add_error wants &[u8] (IMPORT_META_HOT_ACCEPT_ERR is &str)
     pub fn handle_import_meta_hot_accept_call(&mut self, call: &mut E::Call) {
         if call.args.len_u32() == 0 {
             return;
@@ -7894,7 +7854,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         call.target.data = js_ast::ExprData::ESpecial(E::Special::HotAcceptVisited);
     }
 
-    // blocked_on: EString::to_utf8 arena arg; ImportRecordList::items() accessor; E::Special::ResolvedSpecifierString takes u32 directly (drop ResolvedSpecifierStringIndex::init)
     fn rewrite_import_meta_hot_accept_string(
         &mut self,
         str_: &mut E::String,
@@ -8269,12 +8228,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
 // ═══════════════════════════════════════════════════════════════════════════
 // P::to_ast — final assembly P→Ast.
-// Split out of the gated block above so the parser entry point
-// (`Parser::parse` → `to_ast`) typechecks. Heavy sub-calls that are still
-// gated (`ImportScanner::scan`, `ConvertESMExportsForHmr`,
-// `apply_repl_transforms`) are wired to their real signatures and un-gated
-// independently. `compute_character_frequency` is fully un-gated
-// (lexer.all_comments + CharFreq.scan live).
+// ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn to_ast(
         &mut self,
@@ -8312,10 +8266,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("hot_module_reloading parse always has at least one part");
             let mut hmr_transform_ctx = ConvertESMExportsForHmr {
                 last_part,
-                // Round-G fix: `bun_paths::fs::Path::is_node_module` is now real
-                // (checks `name.dir` for `<sep>node_modules<sep>` with the
-                // platform separator); the former inline copy mis-handled the
-                // Windows separator via a cross-crate `const_format` const.
                 is_in_node_modules: self.source.path.is_node_module(),
                 imports_seen: Default::default(),
                 export_star_props: Vec::new(),
@@ -8792,9 +8742,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // returned up the `_parse → parse → cache → transpiler` chain (see
         // `js_parser::Result` PERF NOTE).
         Ok(Box::new(js_ast::Ast {
-            // Round-G: `Ast.runtime_imports` is now the real
-            // `parser::Runtime::Imports`; moved out above (P is terminal after
-            // `to_ast`).
             runtime_imports,
             module_scope,
             exports_ref: self.exports_ref,
@@ -9259,15 +9206,6 @@ pub struct LowerUsingDeclarationsContext {
     pub has_await_using: bool,
 }
 
-// Round-H un-gate: `generate_temp_ref` / `call_runtime` are now real (5516/6407),
-// so the only blockers were API-shape divergences. Reshaped:
-//   • `call_runtime` takes `ExprNodeList` → wrap bump slices via `from_bump_slice`
-//   • `DeclaredSymbol.ref_` / `LocRef.ref_` (not `r#ref`)
-//   • `DeclaredSymbolList`/`Vec` API has no arena param in this port
-//   • `G::Decl::List` → `G::DeclList` (free alias; inherent assoc type not used)
-// reconciler-6 re-gate removed: those API divergences are fixed inline below;
-// `generate_temp_ref` is real (round-G, see ~6407). DO NOT re-gate — `visit.rs`
-// calls these via `should_lower_using_declarations` path.
 impl LowerUsingDeclarationsContext {
     pub fn init<'a, const T: bool, const S_: bool>(
         p: &mut P<'a, T, S_>,

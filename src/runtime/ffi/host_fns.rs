@@ -4,12 +4,6 @@
 //!
 //! The JSC-dependent paths are wired against the type identities declared in
 //! `super` (`FFI`, `Function`, `ABIType`, `Step`, `Compiled`).
-//!
-//! TinyCC compile/relocate (`bun_tcc_sys::State` method-ful API) remains
-//! gated; `Function::compile` therefore short-circuits with a `Step::Failed`
-//! when the `tinycc` feature is off (which it always is until
-//! `bun_tcc_sys::tcc` un-gates). The full TCC body is preserved in
-//! `ffi_body.rs` (``) for reference.
 
 use std::ffi::c_void;
 use std::io::Write as _;

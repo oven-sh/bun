@@ -861,10 +861,6 @@ pub(crate) fn to_bytes(
             break 'brk StringPointer::default();
         };
 
-        // Note: `src/sys/File.rs` is still cfg-gated upstream, so the
-        // `make_open` body (open, on-fail mkdir parent + retry) is inlined here
-        // against the live `bun_sys` stub
-        // surface (`openat` / `make_path` / `File::write_all`).
         if Environment::IS_CANARY || Environment::IS_DEBUG {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
                 let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -877,25 +873,15 @@ pub(crate) fn to_bytes(
                 // Scoped block to handle dump failures without skipping module emission
                 'dump: {
                     let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
-                    // Inline of `bun.sys.File.makeOpen(dest_z, flags, 0o664)`:
-                    let file = match Syscall::openat(Fd::cwd(), dest_z, flags, 0o664) {
-                        Ok(fd) => bun_sys::File::from_fd(fd),
-                        Err(_first_err) => {
-                            let dir_path = path::resolve_path::dirname::<path::platform::Auto>(
-                                dest_z.as_bytes(),
+                    let file = match bun_sys::File::make_open(dest_z.as_bytes(), flags, 0o664) {
+                        Ok(file) => file,
+                        Err(e) => {
+                            bun_core::pretty_errorln!(
+                                "<r><red>error<r><d>:<r> failed to open {}: {}",
+                                bstr::BStr::new(dest_path),
+                                e
                             );
-                            let _ = bun_sys::Dir::cwd().make_path(dir_path);
-                            match Syscall::openat(Fd::cwd(), dest_z, flags, 0o664) {
-                                Ok(fd) => bun_sys::File::from_fd(fd),
-                                Err(e) => {
-                                    bun_core::pretty_errorln!(
-                                        "<r><red>error<r><d>:<r> failed to open {}: {}",
-                                        bstr::BStr::new(dest_path),
-                                        e
-                                    );
-                                    break 'dump;
-                                }
-                            }
+                            break 'dump;
                         }
                     };
                     if let Err(e) = file.write_all(buf_bytes) {

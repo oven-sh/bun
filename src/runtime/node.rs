@@ -47,9 +47,7 @@ pub use crypto as node_crypto_binding;
 pub mod fs_events;
 pub use fs_events as FSEvents;
 
-// Sibling modules node_fs.rs imports by `super::` path. Stat/StatFS/time_like
-// are type-only at the surface; their JSC method bodies are re-gated inside
-// each file. dir_iterator + node_fs_constant are JSC-free.
+// Sibling modules node_fs.rs imports by `super::` path.
 #[path = "node/Stat.rs"]
 pub mod stat;
 pub use stat::{Stats, StatsBig, StatsSmall};
@@ -89,10 +87,6 @@ pub mod dirent {
     pub use super::types::DirentKind as Kind;
 }
 
-// node_fs.rs (~4.7kL): async task machinery (AsyncFSTask/UVFSRequest/cp/
-// readdir-recursive) is JSC-dense and re-gated *inside* the file with
-// ``. Sync `impl NodeFS` (read_file/write_file/stat/mkdir et al.),
-// `args::*`, `ret::*` are live.
 #[path = "node/node_fs.rs"]
 pub mod fs;
 
@@ -165,12 +159,6 @@ pub mod zlib {
     pub use super::native_zlib_impl as native_zlib;
     pub use super::native_zstd_impl as native_zstd;
     pub use bun_zlib::NodeMode;
-    // The `NativeZlib` / `NativeBrotli` / `NativeZstd` *struct* re-exports are
-    // intentionally absent — those structs live inside each file's private
-    // `mod _impl { ... }` (JSC-gated) and are not reachable from here. The only
-    // consumers (`node_zlib_binding.rs::_impl::Native*`) are themselves gated
-    // behind a private `_impl` and resolve through `crate::api::Native*` once
-    // un-gated. Re-add the type re-exports when the `_impl` mods go `pub`.
 }
 
 // ─── submodule re-exports ─────────────────────────────────────────────────

@@ -1202,10 +1202,8 @@ pub mod time {
     }
 }
 
-/// `bun.schema`. The full generated API
-/// types live in `bun_api` (tier-2); tier-0 only needs the namespace to
-/// exist so `bun_core::schema::api::StringPointer` etc. resolve as re-exports
-/// once that crate un-gates. For now expose the one type tier-0 itself owns.
+/// `bun.schema`. The full generated API types live in `bun_api` (tier-2);
+/// tier-0 cannot depend on that, so expose the one type tier-0 itself owns.
 pub mod schema {
     pub mod api {
         pub use crate::util::StringPointer;

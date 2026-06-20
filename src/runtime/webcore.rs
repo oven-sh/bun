@@ -100,10 +100,8 @@ pub mod s3_stub {
     pub use crate::webcore::s3::MultiPartUploadOptions;
 }
 
-// `crate::node::types` is now un-gated; forward the real enums so
-// `webcore::node_types::X` and `crate::node::types::X` are the *same* type.
-// The previous local stub definitions caused `expected node_types::PathLike,
-// found node::types::PathLike` mismatches across modules.
+// Forward the real enums so `webcore::node_types::X` and
+// `crate::node::types::X` are the same type.
 pub mod node_types {
     pub use crate::node::types::{PathLike, PathOrBlob, PathOrFileDescriptor};
 }
@@ -261,7 +259,6 @@ impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
 #[path = "webcore/headers_ref.rs"]
 pub mod headers_ref;
 
-// ─── un-gated core types (cycle-5: Body/Blob/Response/Request real) ──────────
 #[path = "webcore/Blob.rs"]
 pub mod blob;
 pub use blob::Any as AnyBlob;

@@ -1,7 +1,5 @@
 // ══════════════════════════════════════════════════════════════════════════
 // `Transpiler` — the legacy single-file transpile path (pre-`bundle_v2`).
-// resolver↔bundler cycle broken in O; `bun_resolver` is now a direct dep so
-// the struct and all method bodies are un-gated and live at this tier.
 // ══════════════════════════════════════════════════════════════════════════
 
 use bun_alloc::Arena;
@@ -156,8 +154,8 @@ impl<'a> Transpiler<'a> {
     pub const IS_CACHE_ENABLED: bool = false;
 
     /// Takes `*mut Log` (not `&'a mut`) because the same
-    /// `*Log` is aliased into `linker.log` / `resolver.log`; the un-gated struct field is
-    /// already a raw pointer for that reason.
+    /// `*Log` is aliased into `linker.log` / `resolver.log`; the struct
+    /// field is a raw pointer for that reason.
     pub fn set_log(&mut self, log: *mut bun_ast::Log) {
         self.log = log;
         self.linker.log = log;
@@ -678,9 +676,8 @@ impl<'a> Transpiler<'a> {
     /// optionally auto-configuring JSX from the nearest `tsconfig.json`.
     pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: bool) {
         // `Linker::init` dropped its `arena` arg (linker.rs:172
-        // — global mimalloc). The
-        // un-gated `crate::linker::Linker` stores raw pointers so
-        // `&mut self.options` etc. coerce directly. Self-reference is
+        // — global mimalloc). `crate::linker::Linker` stores raw pointers
+        // so `&mut self.options` etc. coerce directly. Self-reference is
         // load-bearing — `linker.link()` reads back through these into the
         // owning `Transpiler` — hence raw `*mut`, not `&'a mut` (would alias
         // `&mut self` on every call).
@@ -1168,8 +1165,8 @@ impl<'a> Transpiler<'a> {
     ///   * [`Resolver::init1`] — `bun_resolver`
     ///
     /// `log` / `env_loader_` are raw pointers (not `&'a mut`) to
-    /// match the un-gated struct field types — the same `*Log` is aliased
-    /// into `linker.log` / `resolver.log` (see `set_log`).
+    /// match the struct field types — the same `*Log` is aliased into
+    /// `linker.log` / `resolver.log` (see `set_log`).
     pub fn init(
         arena: &'a Arena,
         log: *mut bun_ast::Log,

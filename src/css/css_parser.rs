@@ -94,9 +94,9 @@ pub use gated_shims::*;
 mod gated_shims {
 
     // ── rules/ leaf-module payload re-exports ────────────────────────────
-    // The leaf modules are un-gated; re-export the real prelude payload types
-    // `AtRulePrelude` carries so the rule-parser impl bodies type-check
-    // against the same structs `CssRule` stores.
+    // Re-export the prelude payload types `AtRulePrelude` carries so the
+    // rule-parser impl bodies type-check against the same structs `CssRule`
+    // stores.
     pub use crate::rules::container::{ContainerCondition, ContainerName};
     pub use crate::rules::keyframes::KeyframesName;
     pub use crate::rules::page::PageSelector;
@@ -1267,12 +1267,7 @@ where
 // ───────────────────── rule_parsers (heavy impl bodies) ──────────────────────
 // Un-gated: `declaration::parse_declaration_impl` + `selectors::parser` are
 // real, so the `QualifiedRuleParser`/`DeclarationParser`/`RuleBodyItemParser`
-// surface and `parse_nested`/`parse_style_block` compile end-to-end. The
-// at-rule arms now call the leaf-module parse fns directly (`LayerName`,
-// `SupportsCondition`, `KeyframesName`, `PageSelector`, `ContainerName`,
-// `ContainerCondition`, `FontPaletteValuesRule`, `PageRule`, `PropertyRule`
-// have un-gated). Only `@font-face`/`@keyframes` block bodies remain
-// inline-``-gated on their `RuleBodyItemParser` trait impls.
+// surface and `parse_nested`/`parse_style_block` compile end-to-end.
 mod rule_parsers {
     use super::*;
     use crate::selectors::parser as selector_parser;
@@ -1814,8 +1809,6 @@ mod rule_parsers {
             let loc = this.get_loc(start);
             match prelude {
                 AtRulePrelude::FontFace => {
-                    // blocked_on: `FontFaceDeclarationParser: RuleBodyItemParser`
-                    // trait impls (rules/font_face.rs gated const block).
                     {
                         let mut decl_parser = css_rules::font_face::FontFaceDeclarationParser;
                         let mut parser = RuleBodyParser::new(input, &mut decl_parser);
@@ -1913,8 +1906,6 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Keyframes { name, prefix } => {
-                    // blocked_on: `KeyframesListParser: RuleBodyItemParser` trait
-                    // impls (rules/keyframes.rs gated const block).
                     {
                         let mut parser = css_rules::keyframes::KeyframesListParser;
                         let mut iter = RuleBodyParser::new(input, &mut parser);
@@ -2194,9 +2185,6 @@ mod rule_parsers {
             // We parsed a style rule with the `composes` property. Track which
             // properties it used so we can validate it later.
             if matches!(this.composes_state, ComposesState::Allow(_)) {
-                // blocked_on: `fill_property_bit_set` (Property variant reflection
-                // — properties_generated PropertyIdTag conversions). The type
-                // structure is real; only the bitset population stays gated.
                 {
                     let len = input.position() - location;
                     let mut usage = PropertyBitset::init_empty();
@@ -2270,10 +2258,6 @@ mod rule_parsers {
         }
     }
 
-    /// `MediaList::parse` thunk. Kept local so the rule-parser arms above
-    /// type-check; becomes a one-line `MediaList::parse(input, options)` forwarder
-    /// once `media_query::MediaList::parse` un-gates.
-    // blocked_on: media_query::{MediaList,MediaQuery}::parse
     #[inline]
     fn parse_media_list(input: &mut Parser, options: &ParserOptions) -> CssResult<MediaList> {
         MediaList::parse(input, options)
@@ -2320,7 +2304,6 @@ pub type BundlerCssRule = CssRule<BundlerAtRule>;
 pub type BundlerLayerBlockRule = css_rules::layer::LayerBlockRule<BundlerAtRule>;
 pub type BundlerSupportsRule = css_rules::supports::SupportsRule<BundlerAtRule>;
 pub type BundlerMediaRule = css_rules::media::MediaRule<BundlerAtRule>;
-// blocked_on: printer.rs PrintResult<R> generic
 pub type BundlerPrintResult = PrintResult<BundlerAtRule>;
 
 pub struct BundlerTailwindState {
@@ -5685,13 +5668,11 @@ impl TokenKind {
 pub use crate::Token;
 
 impl Token {
-    // blocked_on: generics::CssEql/CssHash blanket impls for Token payload set
     pub fn eql(lhs: &Token, rhs: &Token) -> bool {
         // TODO: derive PartialEq once payload lifetimes settle.
         generic::implement_eql(lhs, rhs)
     }
 
-    // blocked_on: generics::CssHash
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         generic::implement_hash(self, hasher)
     }

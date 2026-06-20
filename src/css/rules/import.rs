@@ -115,9 +115,6 @@ impl ImportConditions {
     /// Furthermore, a URL token is not valid in `@media` or `@layer` rules.
     ///
     /// But this could change in the future, so still keeping this function.
-    ///
-    // blocked_on: MediaList::clone_with_import_records (no impl yet on MediaList).
-
     pub fn clone_with_import_records(
         &self,
         arena: &Arena,
@@ -145,9 +142,6 @@ impl ImportConditions {
             (Some(a), Some(b)) => a.eql(b),
         }
     }
-
-    // blocked_on: SupportsCondition::eql (gated in supports.rs on
-    // generics::CssEql derive).
 
     pub fn supports_eql(lhs: &Self, rhs: &Self) -> bool {
         match (&lhs.supports, &rhs.supports) {
@@ -253,8 +247,6 @@ impl ImportRule {
     }
 
     /// The `import_records` here is preserved from esbuild in the case that we do need it, it doesn't seem necessary now
-    // blocked_on: MediaList::clone_with_import_records (no impl yet on MediaList).
-
     pub fn conditions_with_import_records(
         &self,
         arena: &Arena,

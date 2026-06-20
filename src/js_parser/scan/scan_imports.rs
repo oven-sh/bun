@@ -687,7 +687,6 @@ impl<'a> ImportScanner<'a> {
                     // exports.default =
                     // But only if it's anonymous
                     // This monomorphization is the parser `P` only (see fn-level TODO).
-                    // blocked_on: P::module_exports gated (reconciler-6 re-gate in P.rs)
                     if !HOT_MODULE_RELOADING_TRANSFORMATIONS && will_transform_to_common_js {
                         let expr = core::mem::take(&mut st.value).to_expr();
                         // Arena allocation that persists in the AST.

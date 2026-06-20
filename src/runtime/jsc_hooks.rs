@@ -3481,7 +3481,7 @@ fn get_hardcoded_module(
         }
         HardcodedModule::BunInternalForTesting => {
             // Gated behind `--expose-internals` (release) / always-on (debug).
-            if !cfg!(debug_assertions) {
+            if !bun_core::env::IS_DEBUG {
                 let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
                     .load(core::sync::atomic::Ordering::Relaxed);
                 if !allowed {

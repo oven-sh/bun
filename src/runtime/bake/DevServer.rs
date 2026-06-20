@@ -190,7 +190,7 @@ pub struct Options<'a> {
 // (see `bake_body.rs::UserOptions::into_dev_server_options`).
 impl<'a> Options<'a> {
     /// Debug builds dump bundled sources to `.bake-debug` by default.
-    pub const DEFAULT_DUMP_SOURCES: Option<&'static [u8]> = if cfg!(debug_assertions) {
+    pub const DEFAULT_DUMP_SOURCES: Option<&'static [u8]> = if bun_core::env::IS_DEBUG {
         Some(b".bake-debug")
     } else {
         None
@@ -619,7 +619,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             assume_perfect_incremental_bundling,
             bun_core::env_var::feature_flag::BUN_ASSUME_PERFECT_INCREMENTAL
                 .get()
-                .unwrap_or(cfg!(debug_assertions))
+                .unwrap_or(bun_core::env::IS_DEBUG)
         );
         w!(testing_batch_events, TestingBatchEvents::Disabled);
         w!(

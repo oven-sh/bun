@@ -376,8 +376,8 @@ unsafe extern "system" {
 
 pub fn GetFileType(hFile: HANDLE) -> DWORD {
     let rc = GetFileType_raw(hFile);
-    // `syslog!` self-gates on `cfg!(debug_assertions)` (see lib.rs); no extra
-    // feature flag needed (there is no `debug_logs` feature in bun_sys).
+    // `syslog!` self-gates on `env::IS_DEBUG` (see lib.rs); no extra feature
+    // flag needed (there is no `debug_logs` feature in bun_sys).
     bun_sys::syslog!("GetFileType({}) = {}", Fd::from_system(hFile), rc);
     rc
 }

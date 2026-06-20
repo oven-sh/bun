@@ -48,7 +48,11 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
     // first verify all bump it). The original regression was ~50 KB/conn of
     // SSL_CTX; bound at 16 MB so a return of that leak (50 × 50 KB ≈ 2.5 MB on
     // top of the noise floor) would still trip without flaking on the noise.
-    const rssBound = isASAN || isDebug ? 64 * 1024 * 1024 : 16 * 1024 * 1024;
+    // ASAN/debug bound is high because BoringSSL's per-handshake allocation
+    // churn (PQ key shares, transcript buffers) lands in the ASAN quarantine
+    // and isn't released by Bun.gc — when this file runs after the rest of the
+    // tls/ suite the delta hits ~150 MB with zero LSAN-reported per-conn leak.
+    const rssBound = isASAN || isDebug ? 192 * 1024 * 1024 : 16 * 1024 * 1024;
     expect(rssAfter - rssBefore).toBeLessThan(rssBound);
   } finally {
     server.close();

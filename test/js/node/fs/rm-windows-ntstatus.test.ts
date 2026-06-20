@@ -66,13 +66,17 @@ test.skipIf(!isWindows)("fs.rm recursive surfaces a permission error when delete
     "sub/locked.txt": "x",
   });
   const root = String(dir);
-  const file = path.join(root, "sub", "locked.txt");
+  const sub = path.join(root, "sub");
+  const file = path.join(sub, "locked.txt");
 
-  // Deny DELETE access so NtCreateFile(..., DELETE, ...) fails with
-  // STATUS_ACCESS_DENIED. Apply and remove the ACE from the parent so that
-  // if the child panics the temp dir can still be cleaned up; the parent
-  // created the file and therefore has WRITE_DAC on it.
+  // Deny DELETE on the file AND FILE_DELETE_CHILD on its parent so that
+  // NtCreateFile(..., DELETE, ...) fails with STATUS_ACCESS_DENIED: Windows
+  // grants DELETE on a file if either the file's SD allows it or the parent's
+  // SD grants FILE_DELETE_CHILD, so both must be denied. Apply and remove the
+  // ACEs from the test process so that if the child panics the temp dir can
+  // still be cleaned up; this process created both and has WRITE_DAC on them.
   execFileSync("icacls", [file, "/deny", "*S-1-1-0:(D)"], { stdio: "pipe" });
+  execFileSync("icacls", [sub, "/deny", "*S-1-1-0:(DC)"], { stdio: "pipe" });
   try {
     // Run in a child so that if the process panics on an unmapped NTSTATUS we
     // observe it as a non-zero exit code instead of bringing down the runner.
@@ -122,6 +126,9 @@ test.skipIf(!isWindows)("fs.rm recursive surfaces a permission error when delete
     expect(result.async.code).not.toBe("EFAULT");
     expect(["EPERM", "EACCES", "EBUSY"]).toContain(result.async.code);
   } finally {
+    try {
+      execFileSync("icacls", [sub, "/remove:d", "*S-1-1-0"], { stdio: "pipe" });
+    } catch {}
     try {
       execFileSync("icacls", [file, "/remove:d", "*S-1-1-0"], { stdio: "pipe" });
     } catch {}

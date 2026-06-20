@@ -3860,11 +3860,6 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         x if x == windows::ntstatus::SUCCESS => return bun_sys::Result::success(),
         // INVALID_PARAMETER here means that the filesystem does not support FileDispositionInformationEx
         x if x == windows::ntstatus::INVALID_PARAMETER => {}
-        // Another handle already set the delete disposition; the file is on
-        // its way out, which is what the caller asked for.
-        x if x == windows::ntstatus::DELETE_PENDING || x == windows::ntstatus::FILE_DELETED => {
-            return bun_sys::Result::success();
-        }
         // For all other statuses, fall down to the switch below to handle them.
         _ => need_fallback = false,
     }
@@ -3890,6 +3885,12 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
             bun_core::fmt::fmt_path_u16(sub_path_w, Default::default()),
             rc
         );
+    }
+    // Another handle already set the delete disposition; the file is on its
+    // way out, which is what the caller asked for. Checked here so it covers
+    // both the FileDispositionInformationEx result and the legacy fallback.
+    if rc == windows::ntstatus::DELETE_PENDING || rc == windows::ntstatus::FILE_DELETED {
+        return bun_sys::Result::success();
     }
     if let Some(err) = bun_sys::Result::<()>::errno_sys(rc, bun_sys::Tag::NtSetInformationFile) {
         return err;

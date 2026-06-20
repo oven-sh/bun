@@ -106,6 +106,62 @@ export function initializeReadableStream(
   return this;
 }
 
+// https://streams.spec.whatwg.org/#rs-from
+// https://streams.spec.whatwg.org/#readable-stream-from-iterable
+$overriddenName = "from";
+export function from(this, iterable) {
+  const Symbol = globalThis.Symbol;
+
+  let iterator;
+  // `sync` marks an iterator obtained via Symbol.iterator, which CreateAsyncFromSyncIterator
+  // adapts: its next()/return() results are validated and their values awaited before use.
+  let sync = false;
+
+  // GetIterator(iterable, async): reading Symbol.asyncIterator first means a null or
+  // undefined argument throws the same TypeError as Node before any sync fallback.
+  let method = iterable[Symbol.asyncIterator];
+  if (!$isUndefinedOrNull(method)) {
+    if (!$isCallable(method)) throw new TypeError("ReadableStream.from: Symbol.asyncIterator is not a function");
+    iterator = method.$call(iterable);
+  } else {
+    method = iterable[Symbol.iterator];
+    // String() rather than a template literal so a Symbol argument reports
+    // ERR_ARG_NOT_ITERABLE instead of throwing "Cannot convert a Symbol to a string".
+    if ($isUndefinedOrNull(method)) throw $ERR_ARG_NOT_ITERABLE(String(iterable) + " must be iterable");
+    if (!$isCallable(method)) throw new TypeError("ReadableStream.from: Symbol.iterator is not a function");
+    iterator = method.$call(iterable);
+    sync = true;
+  }
+
+  if (!$isObject(iterator)) throw new TypeError("ReadableStream.from: iterator must be an object");
+
+  // The next method is captured once, mirroring GetIteratorFromMethod.
+  const nextMethod = iterator.next;
+
+  async function pull(controller) {
+    const result = nextMethod.$call(iterator);
+    const iterResult = sync ? result : await result;
+    if (!$isObject(iterResult)) throw new TypeError("ReadableStream.from: iterator.next() returned a non-object value");
+    if (iterResult.done) {
+      controller.close();
+    } else {
+      controller.enqueue(sync ? await iterResult.value : iterResult.value);
+    }
+  }
+
+  async function cancel(reason) {
+    const returnMethod = iterator.return;
+    if ($isUndefinedOrNull(returnMethod)) return;
+    if (!$isCallable(returnMethod)) throw new TypeError("ReadableStream.from: iterator.return is not a function");
+    const result = returnMethod.$call(iterator, reason);
+    const iterResult = sync ? result : await result;
+    if (!$isObject(iterResult))
+      throw new TypeError("ReadableStream.from: iterator.return() returned a non-object value");
+  }
+
+  return new ReadableStream({ pull, cancel }, { highWaterMark: 0 });
+}
+
 $linkTimeConstant;
 export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]> {
   if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);

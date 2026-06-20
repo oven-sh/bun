@@ -8,6 +8,7 @@ import {
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { ReadableStream as WebReadableStream } from "node:stream/web";
 import { mkfifo } from "mkfifo";
 import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -481,6 +482,141 @@ it("exists globally", () => {
   expect(typeof WritableStreamDefaultWriter).toBe("function");
   expect(typeof ByteLengthQueuingStrategy).toBe("function");
   expect(typeof CountQueuingStrategy).toBe("function");
+});
+
+// https://github.com/oven-sh/bun/issues/32529
+describe("ReadableStream.from", () => {
+  it("is exposed on the global and node:stream/web constructors", () => {
+    expect(typeof ReadableStream.from).toBe("function");
+    expect(ReadableStream.from.length).toBe(1);
+    expect(ReadableStream.from.name).toBe("from");
+    // node:stream/web re-exports the same constructor as the global
+    expect(WebReadableStream).toBe(ReadableStream);
+    expect(typeof WebReadableStream.from).toBe("function");
+  });
+
+  it("creates a stream from a sync iterable (array)", async () => {
+    const stream = ReadableStream.from([1, 2, 3]);
+    expect(stream).toBeInstanceOf(ReadableStream);
+    const out = [];
+    for await (const chunk of stream) out.push(chunk);
+    expect(out).toEqual([1, 2, 3]);
+  });
+
+  it("creates a stream from a string", async () => {
+    const out = [];
+    for await (const chunk of ReadableStream.from("abc")) out.push(chunk);
+    expect(out).toEqual(["a", "b", "c"]);
+  });
+
+  it("creates a stream from an async generator", async () => {
+    async function* gen() {
+      yield "a";
+      yield "b";
+      yield "c";
+    }
+    const out = [];
+    for await (const chunk of ReadableStream.from(gen())) out.push(chunk);
+    expect(out).toEqual(["a", "b", "c"]);
+  });
+
+  it("enqueues null and undefined chunks without skipping them", async () => {
+    async function* gen() {
+      yield 1;
+      yield undefined;
+      yield null;
+      yield 4;
+    }
+    const out = [];
+    for await (const chunk of ReadableStream.from(gen())) out.push(chunk);
+    expect(out).toEqual([1, undefined, null, 4]);
+  });
+
+  it("awaits promise values yielded by a sync iterable", async () => {
+    const out = [];
+    for await (const chunk of ReadableStream.from([Promise.resolve("x"), Promise.resolve("y")])) out.push(chunk);
+    expect(out).toEqual(["x", "y"]);
+  });
+
+  it("prefers Symbol.asyncIterator over Symbol.iterator", async () => {
+    const obj = {
+      [Symbol.iterator]() {
+        return { next: () => ({ value: "sync", done: false }) };
+      },
+      async *[Symbol.asyncIterator]() {
+        yield "async1";
+        yield "async2";
+      },
+    };
+    const out = [];
+    for await (const chunk of ReadableStream.from(obj)) out.push(chunk);
+    expect(out).toEqual(["async1", "async2"]);
+  });
+
+  it("does not start iterating until the stream is read", async () => {
+    let started = false;
+    async function* gen() {
+      started = true;
+      yield 1;
+    }
+    const stream = ReadableStream.from(gen());
+    expect(started).toBe(false);
+    const reader = stream.getReader();
+    await reader.read();
+    expect(started).toBe(true);
+    reader.releaseLock();
+  });
+
+  it("calls iterator.return with the reason when cancelled", async () => {
+    let returnedWith = Symbol("unset");
+    const iterable = {
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+      async next() {
+        return { value: 1, done: false };
+      },
+      async return(value) {
+        returnedWith = value;
+        return { value, done: true };
+      },
+    };
+    const reader = ReadableStream.from(iterable).getReader();
+    await reader.read();
+    await reader.cancel("my-reason");
+    expect(returnedWith).toBe("my-reason");
+  });
+
+  it("propagates errors thrown by the iterator", async () => {
+    async function* gen() {
+      yield 1;
+      throw new Error("boom");
+    }
+    const out = [];
+    let error;
+    try {
+      for await (const chunk of ReadableStream.from(gen())) out.push(chunk);
+    } catch (e) {
+      error = e;
+    }
+    expect(out).toEqual([1]);
+    expect(error?.message).toBe("boom");
+  });
+
+  it.each([123, true, {}, Symbol("x"), 10n])("throws ERR_ARG_NOT_ITERABLE for %p", value => {
+    let err;
+    try {
+      ReadableStream.from(value);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_ARG_NOT_ITERABLE");
+  });
+
+  it.each([null, undefined])("throws a TypeError for %p", value => {
+    expect(() => ReadableStream.from(value)).toThrow(TypeError);
+  });
 });
 
 it("new Response(stream).body", async () => {

@@ -1332,6 +1332,19 @@ class ChildProcess extends EventEmitter {
 
     const stdio = options.stdio || ["pipe", "pipe", "pipe"];
     const bunStdio = getBunStdioFromOptions(stdio);
+    // Extra "pipe" slots (i >= 3) are wrapped in a net.Socket by
+    // #getBunSpawnIo, which hands the fd to usockets (usockets closes it on
+    // socket close). Use Bun.spawn's "socket-fd" so the parent end is stored
+    // as UnownedFd from the start and Subprocess.finalize_streams never
+    // double-closes it. Async path only: spawnSync never wraps extra fds in
+    // net.Socket (no .stdio on Bun.spawnSync's result yet) and must keep
+    // them OwnedFd so finalize_streams still closes them. On Windows extra
+    // stdio is a libuv pipe handle with no raw-fd handoff, so leave as "pipe".
+    if (process.platform !== "win32") {
+      for (let i = 3; i < bunStdio.length; i++) {
+        if (bunStdio[i] === "pipe") bunStdio[i] = "socket-fd";
+      }
+    }
 
     const has_ipc = $isJSArray(stdio) && stdio.includes("ipc");
 
@@ -1657,15 +1670,6 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
   const result = nodeToBunLookup[item];
   if (result === undefined) {
     throw new Error(`Invalid stdio option[${index}] "${item}"`);
-  }
-  // Extra "pipe" slots (i >= 3) are wrapped in a net.Socket by
-  // #getBunSpawnIo, which hands the fd to usockets (usockets closes it on
-  // socket close). Use Bun.spawn's "socket-fd" so the parent end is stored
-  // as UnownedFd from the start and Subprocess.finalize_streams never
-  // double-closes it. On Windows extra stdio is a libuv pipe handle with no
-  // raw-fd handoff, so "socket-fd" behaves the same as "pipe" there.
-  if (result === "pipe" && index > 2 && process.platform !== "win32") {
-    return "socket-fd";
   }
   return result;
 }

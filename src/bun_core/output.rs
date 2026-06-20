@@ -762,7 +762,7 @@ pub mod stdio {
 
         Source::set_init(stdout, stderr);
 
-        if cfg!(debug_assertions) || Environment::ENABLE_LOGS {
+        if Environment::ENABLE_LOGS {
             init_scoped_debug_writer_at_startup();
         }
     }
@@ -1641,10 +1641,10 @@ macro_rules! declare_scope {
 #[macro_export]
 macro_rules! scoped_log {
     ($scope:path, $fmt:expr $(, $arg:expr)* $(,)?) => {
-        // Gate on `debug_assertions` (== `Environment::ENABLE_LOGS`, env.rs:89) so
-        // release builds dead-strip the body. Do NOT gate on a Cargo feature —
-        // there is no `debug_logs` feature and §Forbidden bans silent no-ops.
-        if cfg!(debug_assertions) && $scope.is_visible() {
+        // Gate on `env::IS_DEBUG` (== `Environment::ENABLE_LOGS`) so release
+        // builds dead-strip the body. Do NOT gate on a Cargo feature — there
+        // is no `debug_logs` feature and §Forbidden bans silent no-ops.
+        if $crate::env::IS_DEBUG && $scope.is_visible() {
             const __NL: &str = $crate::output::_needs_nl($crate::pretty_fmt!($fmt, false));
             // Branch on ANSI *before* `format_args!` so each `$arg` evaluates
             // exactly once.

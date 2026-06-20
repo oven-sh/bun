@@ -1765,10 +1765,17 @@ impl<'a> Transpiler<'a> {
                                     const BYTECODE_EXT: &[u8] = b".jsc";
                                     let mut path_buf2 = bun_paths::PathBuffer::uninit();
                                     let n = path.text.len();
+                                    let total = n + BYTECODE_EXT.len();
+                                    // `ZStr::from_buf` needs `buf[total] == 0`
+                                    // in-bounds; fall back to re-parsing the
+                                    // source instead of panicking on an
+                                    // over-long path.
+                                    if total >= path_buf2.len() {
+                                        break 'brk default_value;
+                                    }
                                     path_buf2[..n].copy_from_slice(path.text);
                                     path_buf2[n..][..BYTECODE_EXT.len()]
                                         .copy_from_slice(BYTECODE_EXT);
-                                    let total = n + BYTECODE_EXT.len();
                                     path_buf2[total] = 0;
                                     let zpath = bun_core::ZStr::from_buf(&path_buf2[..], total);
                                     // spec calls

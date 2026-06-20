@@ -976,8 +976,6 @@ pub fn is_ai_agent() -> bool {
     VALUE.load(Ordering::Relaxed)
 }
 
-// (IS_VERBOSE defined above at L887; ungate exposed a duplicate.)
-
 pub fn set_is_verbose(verbose: bool) {
     IS_VERBOSE.store(verbose, Ordering::Relaxed);
 }

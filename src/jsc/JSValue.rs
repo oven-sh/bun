@@ -1641,8 +1641,24 @@ impl JSValue {
         this_value: JSValue,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
-        // Note: debug-only event-loop bookkeeping is
-        // omitted while VirtualMachine.rs is gated; restore when it un-gates.
+        #[cfg(debug_assertions)]
+        {
+            use crate::virtual_machine::VirtualMachine;
+            // SAFETY: JS-thread singleton; each `&mut EventLoop` reborrow is
+            // dropped before `get_name` (which may re-enter JS) per
+            // `VirtualMachine::event_loop_mut()` contract.
+            let want_name = {
+                let loop_ = VirtualMachine::get().event_loop_mut();
+                let outside = !loop_.debug.is_inside_tick_queue;
+                loop_.debug.js_call_count_outside_tick_queue += usize::from(outside);
+                loop_.debug.track_last_fn_name && outside
+            };
+            if want_name {
+                if let Ok(name) = self.get_name(global) {
+                    VirtualMachine::get().event_loop_mut().debug.last_fn_name = name.into();
+                }
+            }
+        }
         host_fn::from_js_host_call(global, || {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.

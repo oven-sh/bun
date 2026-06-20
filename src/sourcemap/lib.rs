@@ -953,7 +953,7 @@ pub fn parse_json(
 
     if let Some(version) = json.get(b"version") {
         match version.data.as_e_number() {
-            Some(n) if n.value == 3.0 => {}
+            Some(n) if n.value() == 3.0 => {}
             _ => return Err(bun_core::err!("UnsupportedVersion")),
         }
     }

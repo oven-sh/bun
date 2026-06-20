@@ -5829,7 +5829,6 @@ impl DevServer {
                     .zip(g.bundled_files.values())
                     .enumerate()
                 {
-                    // Note: un-gated `incremental_graph::File` is unpacked already.
                     let file = v;
                     let mut buf = paths::path_buffer_pool::get();
                     let normalized_key = self.relative_path(&mut *buf, k);

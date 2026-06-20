@@ -10,8 +10,6 @@ use crate::css_values::position::Position;
 use crate::css_values::rect::Rect;
 
 use crate::css_properties::border_radius::BorderRadius;
-// `shape` is still gated; FillRule referenced only by the (gated) BasicShape::Polygon body.
-
 use crate::css_properties::shape::FillRule;
 
 use crate::css_properties::background::BackgroundRepeat;
@@ -512,7 +510,6 @@ pub enum WebKitMaskSourceType {
     Alpha,
 }
 
-// blocked_on: PropertyId::WebKitMaskComposite variant name (codegen spelling is `WebKitMaskComposite`)
 pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> {
     match property_id {
         PropertyId::MaskBorderSource => Some(PropertyId::MaskBoxImageSource(VendorPrefix::WEBKIT)),

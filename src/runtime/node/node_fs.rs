@@ -9543,6 +9543,7 @@ impl ReaddirEntry for Buffer {
 fn map_anyerror_to_errno(err: bun_core::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EPERM,
+        "PermissionDenied" => E::EPERM,
         "FileTooBig" => E::EFBIG,
         "SymLinkLoop" => E::ELOOP,
         "ProcessFdQuotaExceeded" => E::ENFILE,
@@ -9565,6 +9566,7 @@ fn map_anyerror_to_errno(err: bun_core::Error) -> E {
 fn map_anyerror_to_errno_rm_tree(err: bun_core::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EACCES,
+        "PermissionDenied" => E::EPERM,
         "FileTooBig" => E::EFBIG,
         "SymLinkLoop" => E::ELOOP,
         "ProcessFdQuotaExceeded" => E::ENFILE,

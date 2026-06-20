@@ -904,7 +904,17 @@ pub mod windows {
             NTSTATUS::DELETE_PENDING => E::BUSY,
             NTSTATUS::SHARING_VIOLATION => E::BUSY,
             NTSTATUS::OBJECT_NAME_INVALID => E::INVAL,
-            _ => E::UNKNOWN,
+            NTSTATUS::CANNOT_DELETE => E::PERM,
+            // Any other error status: ask ntdll for the equivalent Win32 error
+            // and run it through the same libuv-derived table Node.js uses.
+            // Filter drivers and cloud-sync placeholders return many NTSTATUS
+            // codes that are not enumerated above; without this fallthrough
+            // they would all surface as `UNKNOWN` (and then `EFAULT` from the
+            // fs.rm error mapping).
+            _ => Win32Error::from_ntstatus(err)
+                .to_system_errno()
+                .map(SystemErrno::to_e)
+                .unwrap_or(E::UNKNOWN),
         }
     }
 }

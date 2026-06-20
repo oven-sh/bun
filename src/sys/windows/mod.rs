@@ -3860,6 +3860,11 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         x if x == windows::ntstatus::SUCCESS => return bun_sys::Result::success(),
         // INVALID_PARAMETER here means that the filesystem does not support FileDispositionInformationEx
         x if x == windows::ntstatus::INVALID_PARAMETER => {}
+        // Another handle already set the delete disposition; the file is on
+        // its way out, which is what the caller asked for.
+        x if x == windows::ntstatus::DELETE_PENDING || x == windows::ntstatus::FILE_DELETED => {
+            return bun_sys::Result::success();
+        }
         // For all other statuses, fall down to the switch below to handle them.
         _ => need_fallback = false,
     }

@@ -142,10 +142,15 @@ export function from(this, iterable) {
     const result = nextMethod.$call(iterator);
     const iterResult = sync ? result : await result;
     if (!$isObject(iterResult)) throw new TypeError("ReadableStream.from: iterator.next() returned a non-object value");
-    if (iterResult.done) {
+    const done = iterResult.done;
+    // CreateAsyncFromSyncIterator awaits the value of every result, even a `done`
+    // one, so a sync iterator handing back a rejected promise surfaces the
+    // rejection instead of leaving it as an unhandled rejection.
+    const value = sync ? await iterResult.value : iterResult.value;
+    if (done) {
       controller.close();
     } else {
-      controller.enqueue(sync ? await iterResult.value : iterResult.value);
+      controller.enqueue(value);
     }
   }
 
@@ -157,6 +162,9 @@ export function from(this, iterable) {
     const iterResult = sync ? result : await result;
     if (!$isObject(iterResult))
       throw new TypeError("ReadableStream.from: iterator.return() returned a non-object value");
+    // Same async-from-sync adaptation: await the value so a rejected promise
+    // rejects cancel() rather than leaking as an unhandled rejection.
+    if (sync) await iterResult.value;
   }
 
   return new ReadableStream({ pull, cancel }, { highWaterMark: 0 });

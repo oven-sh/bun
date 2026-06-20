@@ -603,6 +603,56 @@ describe("ReadableStream.from", () => {
     expect(error?.message).toBe("boom");
   });
 
+  // The async-from-sync iterator adaptation awaits the value of every result, so a
+  // rejected promise value must surface rather than being swallowed.
+  it("surfaces a rejected promise value from a sync iterator's done result", async () => {
+    const err = new Error("late-done");
+    const iterable = {
+      [Symbol.iterator]() {
+        let i = 0;
+        return {
+          next() {
+            return i++ === 0 ? { value: "a", done: false } : { done: true, value: Promise.reject(err) };
+          },
+        };
+      },
+    };
+    const out = [];
+    let caught;
+    try {
+      for await (const chunk of ReadableStream.from(iterable)) out.push(chunk);
+    } catch (e) {
+      caught = e;
+    }
+    expect(out).toEqual(["a"]);
+    expect(caught).toBe(err);
+  });
+
+  it("rejects cancel() when a sync iterator's return() yields a rejected promise value", async () => {
+    const err = new Error("ret-reject");
+    const iterable = {
+      [Symbol.iterator]() {
+        return {
+          next() {
+            return { value: 1, done: false };
+          },
+          return() {
+            return { value: Promise.reject(err), done: true };
+          },
+        };
+      },
+    };
+    const reader = ReadableStream.from(iterable).getReader();
+    await reader.read();
+    let caught;
+    try {
+      await reader.cancel("x");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(err);
+  });
+
   it.each([123, true, {}, Symbol("x"), 10n])("throws ERR_ARG_NOT_ITERABLE for %p", value => {
     let err;
     try {

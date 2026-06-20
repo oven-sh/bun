@@ -451,9 +451,8 @@ function setEnvironmentData(key: unknown, value: unknown): void {
   }
 }
 
-function markAsUntransferable() {
-  throwNotImplemented("worker_threads.markAsUntransferable");
-}
+const markAsUntransferable = $newCppFunction("Worker.cpp", "jsFunction_markAsUntransferable", 1);
+const isMarkedAsUntransferable = $newCppFunction("Worker.cpp", "jsFunction_isMarkedAsUntransferable", 1);
 
 function moveMessagePortToContext() {
   throwNotImplemented("worker_threads.moveMessagePortToContext");
@@ -667,6 +666,7 @@ export default {
     return {};
   },
   markAsUntransferable,
+  isMarkedAsUntransferable,
   moveMessagePortToContext,
   receiveMessageOnPort,
   SHARE_ENV,

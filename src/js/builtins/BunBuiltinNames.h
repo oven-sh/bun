@@ -212,6 +212,7 @@ using namespace JSC;
     macro(underlyingByteSource) \
     macro(underlyingSink) \
     macro(underlyingSource) \
+    macro(untransferable) \
     macro(url) \
     macro(view) \
     macro(warning) \

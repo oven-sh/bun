@@ -45,6 +45,7 @@
 #include "CloseEvent.h"
 #include "JSMessagePort.h"
 #include "JSBroadcastChannel.h"
+#include "BunClientData.h"
 
 namespace WebCore {
 
@@ -662,6 +663,28 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     }
 
     return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
+}
+
+// node:worker_threads.markAsUntransferable(object): tag an object with a hidden
+// private symbol so the structured-clone transfer list ignores it (the object is
+// cloned instead of transferred). A no-op for primitives, matching Node.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_markAsUntransferable, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (auto* object = callFrame->argument(0).getObject())
+        object->putDirect(vm, builtinNames(vm).untransferablePrivateName(), jsBoolean(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    return JSC::JSValue::encode(jsUndefined());
+}
+
+// node:worker_threads.isMarkedAsUntransferable(object): report whether the object
+// carries the mark set by markAsUntransferable(). false for primitives.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_isMarkedAsUntransferable, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    bool marked = false;
+    if (auto* object = callFrame->argument(0).getObject())
+        marked = !object->getDirect(vm, builtinNames(vm).untransferablePrivateName()).isEmpty();
+    return JSC::JSValue::encode(jsBoolean(marked));
 }
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)

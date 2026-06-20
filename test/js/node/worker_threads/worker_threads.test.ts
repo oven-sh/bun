@@ -7,6 +7,7 @@ import wt, {
   BroadcastChannel,
   getEnvironmentData,
   isMainThread,
+  isMarkedAsUntransferable,
   markAsUntransferable,
   MessageChannel,
   MessagePort,
@@ -35,6 +36,7 @@ test("support eval in worker", async () => {
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");
+  expect(wt).toHaveProperty("isMarkedAsUntransferable");
   expect(wt).toHaveProperty("markAsUntransferable");
   expect(wt).toHaveProperty("moveMessagePortToContext");
   expect(wt).toHaveProperty("parentPort");
@@ -51,6 +53,7 @@ test("all worker_threads module properties are present", () => {
 
   expect(getEnvironmentData).toBeFunction();
   expect(isMainThread).toBeBoolean();
+  expect(isMarkedAsUntransferable).toBeFunction();
   expect(markAsUntransferable).toBeFunction();
   expect(moveMessagePortToContext).toBeFunction();
   expect(parentPort).toBeNull();
@@ -64,11 +67,6 @@ test("all worker_threads module properties are present", () => {
   expect(MessageChannel).toBeDefined();
   expect(MessagePort).toBeDefined();
   expect(Worker).toBeDefined();
-
-  expect(() => {
-    // @ts-expect-error no args
-    wt.markAsUntransferable();
-  }).toThrow("not yet implemented");
 
   expect(() => {
     // @ts-expect-error no args
@@ -627,4 +625,93 @@ test("FileHandles nested in Map and Set workerData are transferred", async () =>
   // and Set entries deserialized to the same single instance
   expect(fh.fd).toBe(-1);
   expect(message).toEqual({ sameInstance: true, text: "hello" });
+});
+
+describe("markAsUntransferable / isMarkedAsUntransferable", () => {
+  test("isMarkedAsUntransferable reflects the mark set by markAsUntransferable", () => {
+    const buf = new ArrayBuffer(8);
+    expect(isMarkedAsUntransferable(buf)).toBe(false);
+    expect(markAsUntransferable(buf)).toBeUndefined();
+    expect(isMarkedAsUntransferable(buf)).toBe(true);
+
+    // Works for ordinary objects too, not just ArrayBuffers.
+    const obj = {};
+    markAsUntransferable(obj);
+    expect(isMarkedAsUntransferable(obj)).toBe(true);
+  });
+
+  test("primitives are never marked and marking them is a no-op", () => {
+    for (const value of [0, 1, "", "x", true, null, undefined, Symbol("s")]) {
+      expect(isMarkedAsUntransferable(value)).toBe(false);
+      expect(() => markAsUntransferable(value)).not.toThrow();
+      expect(isMarkedAsUntransferable(value)).toBe(false);
+    }
+  });
+
+  test("marking is idempotent", () => {
+    const buf = new ArrayBuffer(8);
+    markAsUntransferable(buf);
+    markAsUntransferable(buf);
+    expect(isMarkedAsUntransferable(buf)).toBe(true);
+  });
+
+  test("the mark is hidden from property enumeration", () => {
+    const buf = new ArrayBuffer(8);
+    markAsUntransferable(buf);
+    expect(Object.getOwnPropertySymbols(buf)).toHaveLength(0);
+    expect(Object.getOwnPropertyNames(buf)).not.toContain("untransferable");
+    // An unmarked clone carries no mark, and cloning a marked buffer still works.
+    expect(structuredClone(buf).byteLength).toBe(8);
+  });
+
+  test("a marked ArrayBuffer in a transfer list is cloned, not detached", () => {
+    const view = new Uint8Array([1, 2, 3, 4]);
+    markAsUntransferable(view.buffer);
+    const clone = structuredClone(view, { transfer: [view.buffer] }) as Uint8Array;
+    // Source buffer is intact: it was cloned, not transferred.
+    expect(view.buffer.byteLength).toBe(4);
+    expect(Array.from(view)).toEqual([1, 2, 3, 4]);
+    expect(Array.from(clone)).toEqual([1, 2, 3, 4]);
+  });
+
+  test("an unmarked ArrayBuffer in a transfer list is still detached", () => {
+    const view = new Uint8Array([1, 2, 3, 4]);
+    const clone = structuredClone(view, { transfer: [view.buffer] }) as Uint8Array;
+    expect(view.buffer.byteLength).toBe(0); // detached
+    expect(Array.from(clone)).toEqual([1, 2, 3, 4]);
+  });
+
+  test("the documented pooled-buffer example clones instead of transferring", () => {
+    const pooledBuffer = new ArrayBuffer(8);
+    const typedArray1 = new Uint8Array(pooledBuffer);
+    typedArray1[0] = 42;
+    markAsUntransferable(pooledBuffer);
+
+    const { port1, port2 } = new MessageChannel();
+    port1.postMessage(typedArray1, [typedArray1.buffer]);
+    // Still owns its memory -- cloned, not transferred.
+    expect(pooledBuffer.byteLength).toBe(8);
+    expect(typedArray1[0]).toBe(42);
+
+    const received = receiveMessageOnPort(port2);
+    expect(received).toBeDefined();
+    expect((received!.message as Uint8Array)[0]).toBe(42);
+    port1.close();
+    port2.close();
+  });
+
+  test("a marked ArrayBuffer in a Worker transferList is cloned", async () => {
+    const view = new Uint8Array([9, 8, 7, 6]);
+    markAsUntransferable(view.buffer);
+    const worker = new Worker(
+      `const { parentPort, workerData } = require("worker_threads");
+       parentPort.postMessage(Array.from(new Uint8Array(workerData)));`,
+      { eval: true, workerData: view.buffer, transferList: [view.buffer] } as any,
+    );
+    const [message] = await once(worker, "message");
+    await worker.terminate();
+    expect(message).toEqual([9, 8, 7, 6]);
+    // Parent side is intact: cloned, not transferred.
+    expect(view.buffer.byteLength).toBe(4);
+  });
 });

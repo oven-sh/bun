@@ -6217,7 +6217,14 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     Vector<Ref<WebCodecsVideoFrame>> transferredVideoFrames;
 #endif
     HashSet<JSC::JSObject*> uniqueTransferables;
+    const auto& untransferablePrivateName = builtinNames(vm).untransferablePrivateName();
     for (auto& transferable : transferList) {
+        // node:worker_threads.markAsUntransferable(): a marked object is ignored
+        // in the transfer list, so it is cloned in the graph below rather than
+        // transferred (its backing store is left intact).
+        if (!transferable->getDirect(vm, untransferablePrivateName).isEmpty())
+            continue;
+
         if (!uniqueTransferables.add(transferable.get()).isNewEntry) {
             if (toPossiblySharedArrayBuffer(vm, transferable.get())) {
                 return Exception { DataCloneError, "Transfer list contains duplicate ArrayBuffer"_s };

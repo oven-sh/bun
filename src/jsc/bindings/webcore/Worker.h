@@ -194,5 +194,7 @@ private:
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_markAsUntransferable);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_isMarkedAsUntransferable);
 
 } // namespace WebCore

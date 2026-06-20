@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -225,4 +225,165 @@ test("the call record is pushed after the implementation runs, like node", () =>
   expect(inside).toBe(0);
   expect(f.mock.callCount()).toBe(1);
   mock.reset();
+});
+
+describe.concurrent("node:test done callback", () => {
+  async function runInlineTest(source: string) {
+    using dir = tempDir("node-test-done", { "done.test.js": source });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", join(String(dir), "done.test.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("passes when done() is called synchronously, asynchronously, or with a falsy value", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import test from 'node:test';
+      test('sync done', (t, done) => { done(); });
+      test('async done', (t, done) => { setImmediate(done); });
+      test('falsy argument passes', (t, done) => { setImmediate(() => done(0)); });
+    `);
+    // Without done support every test here throws "done is not a function".
+    expect(stderr).toContain("(pass) sync done");
+    expect(stderr).toContain("(pass) async done");
+    expect(stderr).toContain("(pass) falsy argument passes");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("done() passes a test while done(error) or a truthy value fails others", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import test from 'node:test';
+      test('resolves with done', (t, done) => { done(); });
+      test('rejects with an error', (t, done) => { done(new Error('boom-error')); });
+      test('rejects with a truthy value', (t, done) => { setImmediate(() => done('string-failure')); });
+    `);
+    // Without the fix 'resolves with done' throws instead of passing.
+    expect(stderr).toContain("(pass) resolves with done");
+    expect(stderr).toContain("(fail) rejects with an error");
+    expect(stderr).toContain("(fail) rejects with a truthy value");
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("2 fail");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("a failure reported through done(error) from a timer fails the test", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import test from 'node:test';
+      test('async callback test that should FAIL', (t, done) => {
+        setTimeout(() => {
+          if (1 + 1 !== 3) return done(new Error('expected 3, got 2'));
+          done();
+        }, 20);
+      });
+    `);
+    // Without the fix the test passes before the timer fires and the process
+    // exits 0 with "1 pass".
+    expect(stderr).toContain("expected 3, got 2");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("an exception thrown from an async callback while the test is pending fails it", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import test from 'node:test';
+      import assert from 'node:assert';
+      test('throws before done', (t, done) => {
+        setTimeout(() => {
+          assert.ok(false, 'boom-async-throw');
+          done();
+        }, 1);
+      });
+    `);
+    // Without the fix the test completes synchronously and the process exits
+    // before the timer runs, reporting "1 pass".
+    expect(stderr).toContain("boom-async-throw");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("times out when done is never called", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import test from 'node:test';
+      test('never done', { timeout: 100 }, (t, done) => {});
+    `);
+    // Without the fix this resolves synchronously and passes (0 fail); with the
+    // fix it waits for a done that never arrives and times out.
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("fails when a callback-style test also returns a Promise", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import test from 'node:test';
+      test('cb and promise', async (t, done) => { done(); });
+    `);
+    expect(stderr).toContain("passed a callback but also returned a Promise");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("arity-1 tests receive the context, not done", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import test from 'node:test';
+      test('no done', t => { if (typeof t !== 'object' || t === null) throw new Error('expected a context'); });
+    `);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a function declaring more than two parameters is not callback style", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import test from 'node:test';
+      import assert from 'node:assert';
+      test('arity 3', (t, done, extra) => {
+        assert.strictEqual(done, undefined);
+        assert.strictEqual(extra, undefined);
+      });
+    `);
+    // Node only enables callback mode for exactly two parameters.
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("calling done() a second time throws like Node", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import test from 'node:test';
+      import assert from 'node:assert';
+      test('second done throws', (t, done) => {
+        done();
+        assert.throws(() => done(), /callback invoked multiple times/);
+      });
+    `);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("hooks receive a context object and a done callback", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import { test, before, beforeEach } from 'node:test';
+      import assert from 'node:assert';
+      const order = [];
+      before((ctx, done) => {
+        if (typeof ctx !== 'object' || ctx === null) return done(new Error('expected a hook context'));
+        setImmediate(() => { order.push('before'); done(); });
+      });
+      beforeEach((ctx, done) => { setImmediate(() => { order.push('beforeEach'); done(); }); });
+      test('runs after the hooks completed', () => {
+        assert.deepStrictEqual(order, ['before', 'beforeEach']);
+      });
+    `);
+    // Without the fix the hooks complete before their setImmediate callbacks
+    // run, so the test observes an empty order array and fails.
+    expect(stderr).toContain("(pass) runs after the hooks completed");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
 });

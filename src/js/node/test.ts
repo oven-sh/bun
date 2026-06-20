@@ -659,6 +659,73 @@ function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
   return { name, options: options as TestOptions, fn };
 }
 
+// Runs a user test or hook function and completes via `finish`, a single-shot
+// finalizer (safe to call more than once). A function declaring exactly two
+// parameters (`(context, done)`) uses Node's error-first callback style: it
+// receives a `done` callback and only completes once `done` is called (a
+// truthy argument fails, a falsy one passes). Like Node, a synchronous throw
+// or a returned Promise takes precedence over a `done` call made before the
+// function returned, and a second `done` call throws. Any other arity
+// completes synchronously or when its returned Promise settles.
+function runWithDone(fn: TestFn | HookFn, context: TestContext, finish: DoneCallback) {
+  if (fn.length === 2) {
+    let returned = false;
+    let doneCalls = 0;
+    let donePending = false;
+    let doneFailure: unknown;
+    const done = (error?: unknown) => {
+      doneCalls += 1;
+      if (doneCalls > 1) {
+        if (doneCalls === 2) {
+          throw new Error("callback invoked multiple times");
+        }
+        return;
+      }
+      const failure = error ? error : undefined;
+      if (returned) {
+        finish(failure);
+      } else {
+        donePending = true;
+        doneFailure = failure;
+      }
+    };
+
+    let result: unknown;
+    try {
+      result = fn(context, done);
+    } catch (error) {
+      finish(error);
+      return;
+    }
+    returned = true;
+    if (result instanceof Promise) {
+      // Node reports this misuse right away; the promise's own outcome no
+      // longer decides the test, so don't leave its rejection unhandled.
+      (result as Promise<unknown>).then(kDefaultFunction, kDefaultFunction);
+      finish(new Error("passed a callback but also returned a Promise"));
+    } else if (donePending) {
+      finish(doneFailure);
+    }
+    return;
+  }
+
+  let result: unknown;
+  try {
+    result = fn(context);
+  } catch (error) {
+    finish(error);
+    return;
+  }
+  if (result instanceof Promise) {
+    (result as Promise<unknown>).then(
+      () => finish(),
+      error => finish(error),
+    );
+  } else {
+    finish();
+  }
+}
+
 function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, options, fn } = parseTestOptions(arg0, arg1, arg2);
 
@@ -668,7 +735,10 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   const runTest = (done: (error?: unknown) => void) => {
     const originalContext = ctx;
     ctx = context;
+    let finished = false;
     const endTest = (error?: unknown) => {
+      if (finished) return;
+      finished = true;
       try {
         done(error);
       } finally {
@@ -676,18 +746,7 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
       }
     };
 
-    let result: unknown;
-    try {
-      result = fn(context);
-    } catch (error) {
-      endTest(error);
-      return;
-    }
-    if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => endTest()).catch(error => endTest(error));
-    } else {
-      endTest();
-    }
+    runWithDone(fn, context, endTest);
   };
 
   return { name, options, fn: runTest };
@@ -739,25 +798,23 @@ function createHook(arg0: unknown, arg1: unknown) {
   const { fn, options } = parseHookOptions(arg0, arg1);
 
   const runHook = (done: (error?: unknown) => void) => {
-    let result: unknown;
-    try {
-      result = fn();
-    } catch (error) {
+    let finished = false;
+    const endHook = (error?: unknown) => {
+      if (finished) return;
+      finished = true;
       done(error);
-      return;
-    }
-    if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => done()).catch(error => done(error));
-    } else {
-      done();
-    }
+    };
+
+    const context = new TestContext(false, undefined, Bun.main, ctx);
+    runWithDone(fn, context, endHook);
   };
 
   return { options, fn: runHook };
 }
 
-type TestFn = (ctx: TestContext) => unknown | Promise<unknown>;
-type HookFn = () => unknown | Promise<unknown>;
+type DoneCallback = (error?: unknown) => void;
+type TestFn = (ctx: TestContext, done?: DoneCallback) => unknown | Promise<unknown>;
+type HookFn = (ctx: TestContext, done?: DoneCallback) => unknown | Promise<unknown>;
 
 type TestOptions = {
   concurrency?: number | boolean | null;

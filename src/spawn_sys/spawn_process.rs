@@ -412,6 +412,10 @@ pub enum PosixStdio {
     Inherit,
     Ignore,
     Buffer,
+    /// Like `Buffer` at indices >= 3 (creates a socketpair) but the parent
+    /// end is returned as `ExtraPipe::UnownedFd`: the caller owns and closes
+    /// it. Only valid in `extra_fds`.
+    SocketFd,
     Ipc,
     Pipe(Fd),
     // TODO: remove this entry, it doesn't seem to be used
@@ -878,6 +882,10 @@ pub unsafe fn spawn_process_posix(
                 actions.dup2(*fd, fileno)?;
                 set_spawned_stdio(&mut spawned, i, *fd);
             }
+            PosixStdio::SocketFd => {
+                // Rejected at i < 3 in Stdio::extract(); unreachable here.
+                unreachable!("SocketFd at stdin/stdout/stderr");
+            }
         }
     }
 
@@ -909,7 +917,7 @@ pub unsafe fn spawn_process_posix(
                 )?;
                 extra_fds.push(ExtraPipe::Unavailable);
             }
-            PosixStdio::Ipc | PosixStdio::Buffer => {
+            PosixStdio::Ipc | PosixStdio::Buffer | PosixStdio::SocketFd => {
                 let is_ipc = matches!(ipc, PosixStdio::Ipc);
                 let fds: [Fd; 2] =
                     match bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, is_ipc) {
@@ -930,7 +938,15 @@ pub unsafe fn spawn_process_posix(
                 if fds[1] != fileno {
                     actions.close(fds[1])?;
                 }
-                extra_fds.push(ExtraPipe::OwnedFd(fds[0]));
+                if matches!(ipc, PosixStdio::SocketFd) {
+                    // Caller owns the parent end and closes it; Subprocess
+                    // never does (finalize_streams skips UnownedFd). Still
+                    // close it on spawn failure since the caller never gets
+                    // the fd in that case.
+                    extra_fds.push(ExtraPipe::UnownedFd(fds[0]));
+                } else {
+                    extra_fds.push(ExtraPipe::OwnedFd(fds[0]));
+                }
             }
             PosixStdio::Pipe(fd) => {
                 actions.dup2(*fd, fileno)?;

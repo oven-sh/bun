@@ -972,6 +972,40 @@ describe("close handling", () => {
         ).toThrow(msg);
       });
     }
+
+    it("'socket-fd' at index < 3 throws", () => {
+      expect(() =>
+        spawn({
+          cmd: [bunExe(), "-e", ""],
+          env: bunEnv,
+          // @ts-expect-error — intentionally invalid at index 0
+          stdio: ["socket-fd", "pipe", "pipe"],
+        }),
+      ).toThrow("'socket-fd' is only supported at indices >= 3");
+    });
+
+    it.skipIf(isWindows)(
+      "'socket-fd' at index >= 3 exposes a caller-owned fd the subprocess does not close",
+      async () => {
+        const fs = await import("node:fs");
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "require('fs').writeSync(3, 'hello-from-child')"],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "ignore", "socket-fd"],
+        });
+        const fd = proc.stdio[3];
+        expect(typeof fd).toBe("number");
+        await proc.exited;
+        // fd is UnownedFd: the subprocess exited and its finalize_streams
+        // skipped this slot, so the parent end is still open and readable.
+        const buf = Buffer.alloc(64);
+        const n = fs.readSync(fd as number, buf);
+        expect(buf.subarray(0, n).toString()).toBe("hello-from-child");
+        // Caller is responsible for closing it.
+        fs.closeSync(fd as number);
+        expect(() => fs.fstatSync(fd as number)).toThrow();
+      },
+    );
   });
 });
 

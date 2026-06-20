@@ -829,62 +829,6 @@ impl Subprocess<'_> {
         JSValue::from(this.has_killed())
     }
 
-    /// Returns the fd at `stdio[i]` (same value the `.stdio` getter would
-    /// expose) and, on POSIX, downgrades the slot from `OwnedFd` to
-    /// `UnownedFd` so `finalize_streams` does not close it again. Called by
-    /// `node:child_process` before wrapping an extra-stdio pipe in a
-    /// `net.Socket` (`net.connect({fd})` hands the fd to usockets, which
-    /// closes it on socket close). Without the downgrade the fd is
-    /// double-closed: `Fd::close()`'s `debug_assert!(err.is_none())` fires on
-    /// the EBADF in release-asan/release-assertions, and in plain release a
-    /// reused fd number could be closed out from under its new owner.
-    #[bun_jsc::host_fn(method)]
-    pub fn disown_stdio(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let i = frame.argument(0).coerce_to_i32(global)?;
-        // .stdio is [null, null, null, ...stdio_pipes]; callers pass the
-        // user-facing index (>=3) and we map to the vec offset.
-        if i < 3 {
-            return Ok(JSValue::NULL);
-        }
-        let idx = (i as usize) - 3;
-        #[cfg(not(windows))]
-        {
-            let result = this.stdio_pipes.with_mut(|v| match v.get_mut(idx) {
-                Some(slot @ ExtraPipe::OwnedFd(_)) => {
-                    let ExtraPipe::OwnedFd(fd) = *slot else {
-                        unreachable!()
-                    };
-                    *slot = ExtraPipe::UnownedFd(fd);
-                    Some(fd)
-                }
-                Some(ExtraPipe::UnownedFd(fd)) => Some(*fd),
-                Some(ExtraPipe::Unavailable) | None => None,
-            });
-            Ok(match result {
-                Some(fd) => JSValue::js_number(fd.native() as f64),
-                None => JSValue::NULL,
-            })
-        }
-        #[cfg(windows)]
-        {
-            // On Windows extra-stdio entries are libuv pipe handles owned by
-            // Subprocess until `finalize_streams` closes them via `uv_close`;
-            // there is no fd-ownership handoff to neutralize. Return the same
-            // value as the `.stdio` getter for API parity.
-            Ok(match this.stdio_pipes.get().get(idx) {
-                Some(StdioResult::Buffer(buffer)) => {
-                    let fdno: usize = buffer.fd() as usize;
-                    JSValue::js_number(fdno as f64)
-                }
-                _ => JSValue::NULL,
-            })
-        }
-    }
-
     #[bun_jsc::host_fn(getter)]
     pub fn get_stdio(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let array = JSValue::create_empty_array(global, 0)?;

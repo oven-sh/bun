@@ -1246,13 +1246,12 @@ class ChildProcess extends EventEmitter {
       default:
         switch (io) {
           case "pipe":
+          case "socket-fd":
             if (!NetModule) NetModule = require("node:net");
-            if (!handle) return null;
-            // net.connect({fd}) hands the fd to usockets, which closes it on
-            // socket close; $disownStdio() downgrades the slot from OwnedFd to
-            // UnownedFd so Subprocess.finalize_streams doesn't close it again.
-            // It returns a number (fd 0 is valid) or null; check nullish only.
-            const fd = handle.$disownStdio(i);
+            // getBunStdioFromOptions mapped "pipe" at i>=3 to "socket-fd", so
+            // the parent-end fd in handle.stdio[i] is UnownedFd: we own it and
+            // net.connect({fd}) -> usockets will close it on socket close.
+            const fd = handle && handle.stdio[i];
             if (fd == null) return null;
             return NetModule.connect({ fd });
         }
@@ -1277,7 +1276,7 @@ class ChildProcess extends EventEmitter {
       if (element === "undefined") {
         return undefined;
       }
-      if (element !== "pipe") {
+      if (element !== "pipe" && element !== "socket-fd") {
         result[i] = null;
         continue;
       }
@@ -1658,6 +1657,15 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
   const result = nodeToBunLookup[item];
   if (result === undefined) {
     throw new Error(`Invalid stdio option[${index}] "${item}"`);
+  }
+  // Extra "pipe" slots (i >= 3) are wrapped in a net.Socket by
+  // #getBunSpawnIo, which hands the fd to usockets (usockets closes it on
+  // socket close). Use Bun.spawn's "socket-fd" so the parent end is stored
+  // as UnownedFd from the start and Subprocess.finalize_streams never
+  // double-closes it. On Windows extra stdio is a libuv pipe handle with no
+  // raw-fd handoff, so "socket-fd" behaves the same as "pipe" there.
+  if (result === "pipe" && index > 2 && process.platform !== "win32") {
+    return "socket-fd";
   }
   return result;
 }

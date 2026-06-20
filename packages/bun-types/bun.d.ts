@@ -6776,10 +6776,17 @@ declare module "bun" {
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
        * - `number`: The process will write to the file descriptor
        *
+       * At indices >= 3, `"socket-fd"` (POSIX only) is also accepted:
+       * creates a socketpair like `"pipe"`, but the parent-end fd exposed
+       * via {@link Subprocess.stdio} is owned by the caller and is never
+       * closed by the subprocess. Use this when you wrap the fd in
+       * something that will close it itself (e.g. `net.connect({fd})`).
+       * On Windows it behaves the same as `"pipe"`.
+       *
        * @default ["ignore", "pipe", "inherit"] for `spawn`
        * ["ignore", "pipe", "pipe"] for `spawnSync`
        */
-      stdio?: [In, Out, Err, ...Readable[]];
+      stdio?: [In, Out, Err, ...(Readable | "socket-fd")[]];
 
       /**
        * The file descriptor for the standard input. It may be:
@@ -7209,10 +7216,12 @@ declare module "bun" {
     /**
      * Access extra file descriptors passed to the `stdio` option in the options object.
      *
-     * Entries beyond index 2 are `number` for `"pipe"` slots and, on POSIX, for slots
-     * where a raw file descriptor was supplied (the same fd is returned; it remains
-     * owned by the caller and is never closed by the subprocess). Other slots —
-     * including raw fds on Windows — are `null`.
+     * Entries beyond index 2 are `number` for `"pipe"` and `"socket-fd"` slots and,
+     * on POSIX, for slots where a raw file descriptor was supplied (the same fd is
+     * returned). For `"pipe"`, the subprocess owns and closes the fd. For
+     * `"socket-fd"` and raw-fd slots, the fd remains owned by the caller and is
+     * never closed by the subprocess. Other slots — including raw fds on Windows —
+     * are `null`.
      */
     readonly stdio: [null, null, null, ...(number | null)[]];
 

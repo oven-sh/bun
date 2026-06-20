@@ -84,7 +84,6 @@ using namespace JSC;
     macro(decode) \
     macro(dest) \
     macro(dirname) \
-    macro(disownStdio) \
     macro(disturbed) \
     macro(domain) \
     macro(encoding) \

@@ -838,6 +838,8 @@ pub enum InstructionValue {
     },
     StoreGlobal {
         name: StoreStr,
+        /// The original Bun symbol being assigned to. `Ref::NONE` if synthetic.
+        ref_: bun_ast::Ref,
         value: Place,
         loc: Option<SourceLocation>,
     },
@@ -1364,8 +1366,17 @@ pub enum VariableBinding {
     },
 }
 
-#[derive(Debug, Clone)]
-pub enum NonLocalBinding {
+#[derive(Debug, Clone, Copy)]
+pub struct NonLocalBinding {
+    /// The original Bun symbol this reference resolves to. `Ref::NONE` for
+    /// synthetic globals (e.g. `undefined` constructed during lowering with no
+    /// source identifier).
+    pub ref_: bun_ast::Ref,
+    pub kind: NonLocalKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum NonLocalKind {
     ImportDefault {
         name: StoreStr,
         module: StoreStr,
@@ -1390,12 +1401,22 @@ pub enum NonLocalBinding {
 impl NonLocalBinding {
     /// Returns the `name` field common to all variants.
     pub fn name(&self) -> &[u8] {
-        match self {
-            NonLocalBinding::ImportDefault { name, .. }
-            | NonLocalBinding::ImportSpecifier { name, .. }
-            | NonLocalBinding::ImportNamespace { name, .. }
-            | NonLocalBinding::ModuleLocal { name, .. }
-            | NonLocalBinding::Global { name, .. } => name.slice(),
+        match &self.kind {
+            NonLocalKind::ImportDefault { name, .. }
+            | NonLocalKind::ImportSpecifier { name, .. }
+            | NonLocalKind::ImportNamespace { name, .. }
+            | NonLocalKind::ModuleLocal { name, .. }
+            | NonLocalKind::Global { name, .. } => name.slice(),
+        }
+    }
+
+    /// Returns the original Bun `Ref` this binding came from, or `None` if it
+    /// was synthesized during lowering without a source identifier.
+    pub fn ref_(&self) -> Option<bun_ast::Ref> {
+        if self.ref_.is_valid() {
+            Some(self.ref_)
+        } else {
+            None
         }
     }
 }

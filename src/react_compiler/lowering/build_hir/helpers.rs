@@ -245,26 +245,27 @@ pub(super) fn lower_identifier(
                     })?;
                 }
             }
-            let non_local_binding = match binding {
-                VariableBinding::Global { name } => NonLocalBinding::Global { name },
+            let kind = match binding {
+                VariableBinding::Global { name } => NonLocalKind::Global { name },
                 VariableBinding::ImportDefault { name, module } => {
-                    NonLocalBinding::ImportDefault { name, module }
+                    NonLocalKind::ImportDefault { name, module }
                 }
                 VariableBinding::ImportSpecifier {
                     name,
                     module,
                     imported,
-                } => NonLocalBinding::ImportSpecifier {
+                } => NonLocalKind::ImportSpecifier {
                     name,
                     module,
                     imported,
                 },
                 VariableBinding::ImportNamespace { name, module } => {
-                    NonLocalBinding::ImportNamespace { name, module }
+                    NonLocalKind::ImportNamespace { name, module }
                 }
-                VariableBinding::ModuleLocal { name } => NonLocalBinding::ModuleLocal { name },
+                VariableBinding::ModuleLocal { name } => NonLocalKind::ModuleLocal { name },
                 VariableBinding::Identifier { .. } => unreachable!(),
             };
+            let non_local_binding = NonLocalBinding { ref_, kind };
             let instr_value = InstructionValue::LoadGlobal {
                 binding: non_local_binding,
                 loc,
@@ -401,7 +402,7 @@ pub(super) fn lower_member_expression(
 
 pub(super) enum IdentifierForAssignment {
     Place(Place),
-    Global { name: StoreStr },
+    Global { name: StoreStr, ref_: Ref },
 }
 
 #[derive(Clone, Copy)]
@@ -450,7 +451,7 @@ pub(super) fn lower_identifier_for_assignment(
         }
         VariableBinding::Global { name: gname } => {
             if kind == InstructionKind::Reassign {
-                Ok(Some(IdentifierForAssignment::Global { name: gname }))
+                Ok(Some(IdentifierForAssignment::Global { name: gname, ref_ }))
             } else {
                 builder.record_error(CompilerErrorDetail {
                     reason: "Could not find binding for declaration".to_string(),
@@ -465,7 +466,7 @@ pub(super) fn lower_identifier_for_assignment(
         _ => {
             if kind == InstructionKind::Reassign {
                 let name = StoreStr::new(builder.host().ref_name(ref_));
-                Ok(Some(IdentifierForAssignment::Global { name }))
+                Ok(Some(IdentifierForAssignment::Global { name, ref_ }))
             } else {
                 builder.record_error(CompilerErrorDetail {
                     reason: "Could not find binding for declaration".to_string(),
@@ -507,10 +508,15 @@ pub(super) fn lower_assignment(
             let result = lower_identifier_for_assignment(builder, loc, id_loc, kind, ref_)?;
             match result {
                 None => Ok(None),
-                Some(IdentifierForAssignment::Global { name }) => {
+                Some(IdentifierForAssignment::Global { name, ref_ }) => {
                     let temp = lower_value_to_temporary(
                         builder,
-                        InstructionValue::StoreGlobal { name, value, loc },
+                        InstructionValue::StoreGlobal {
+                            name,
+                            ref_,
+                            value,
+                            loc,
+                        },
                     )?;
                     Ok(Some(temp))
                 }

@@ -163,6 +163,22 @@ impl<'h> Codegen<'h> {
         Expr::init_identifier(self.ref_for_name(name), loc)
     }
 
+    /// Emit an identifier expression for the original Bun `Ref` carried through
+    /// HIR. If the symbol is an import, emit `EImportIdentifier` so the linker
+    /// and printer can rewrite it to a namespace property access when react is
+    /// bundled; otherwise emit a plain `EIdentifier`.
+    fn ident_expr_for_ref(&mut self, ref_: Ref, loc: Loc) -> Expr {
+        self.host.record_usage(ref_);
+        if ref_.is_symbol() {
+            if let Some(sym) = self.host.symbols().get(ref_.inner_index() as usize) {
+                if sym.kind == bun_ast::symbol::Kind::Import {
+                    return Expr::init(E::ImportIdentifier::new(ref_, true), loc);
+                }
+            }
+        }
+        Expr::init_identifier(ref_, loc)
+    }
+
     fn ref_for_label(&mut self, id: BlockId) -> Ref {
         if let Some(&r) = self.label_to_ref.get(id) {
             return r;
@@ -1809,9 +1825,10 @@ fn codegen_base_instruction_value(
         InstructionValue::LoadLocal { place, .. } | InstructionValue::LoadContext { place, .. } => {
             codegen_place_to_expression(cx, place)
         }
-        InstructionValue::LoadGlobal { binding, .. } => {
-            Ok(cx.cg.ident_expr(StoreStr::new(binding.name()), loc))
-        }
+        InstructionValue::LoadGlobal { binding, .. } => match binding.ref_() {
+            Some(r) => Ok(cx.cg.ident_expr_for_ref(r, loc)),
+            None => Ok(cx.cg.ident_expr(StoreStr::new(binding.name()), loc)),
+        },
         InstructionValue::CallExpression { callee, args, .. } => {
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;
@@ -2068,9 +2085,15 @@ fn codegen_base_instruction_value(
                 loc,
             ))
         }
-        InstructionValue::StoreGlobal { name, value, .. } => {
+        InstructionValue::StoreGlobal {
+            name, ref_, value, ..
+        } => {
             let rhs = codegen_place_to_expression(cx, value)?;
-            let left = cx.cg.ident_expr(*name, loc);
+            let left = if ref_.is_valid() {
+                cx.cg.ident_expr_for_ref(*ref_, loc)
+            } else {
+                cx.cg.ident_expr(*name, loc)
+            };
             Ok(Expr::init(
                 E::Binary {
                     op: OpCode::BinAssign,

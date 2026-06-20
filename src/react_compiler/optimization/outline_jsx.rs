@@ -15,9 +15,9 @@ use crate::hir::environment::Environment;
 use crate::hir::{
     AstAlloc, BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, HIR, HirFunction,
     IdentifierId, IdentifierName, Instruction, InstructionId, InstructionKind, InstructionValue,
-    JsxAttribute, JsxTag, LValuePattern, NonLocalBinding, ObjectPattern, ObjectProperty,
-    ObjectPropertyKey, ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern, Pattern, Place,
-    ReactFunctionType, ReturnVariant, StoreStr, Terminal,
+    JsxAttribute, JsxTag, LValuePattern, NonLocalBinding, NonLocalKind, ObjectPattern,
+    ObjectProperty, ObjectPropertyKey, ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern,
+    Pattern, Place, ReactFunctionType, ReturnVariant, StoreStr, Terminal,
 };
 use crate::hir_vec;
 
@@ -379,7 +379,10 @@ fn emit_outlined_jsx(
         id: EvaluationOrder(0),
         lvalue: load_place.clone(),
         value: InstructionValue::LoadGlobal {
-            binding: NonLocalBinding::ModuleLocal { name: outlined_tag },
+            binding: NonLocalBinding {
+                ref_: bun_ast::Ref::NONE,
+                kind: NonLocalKind::ModuleLocal { name: outlined_tag },
+            },
             loc: None,
         },
         loc: None,

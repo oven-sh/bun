@@ -14,7 +14,9 @@
 use std::collections::HashSet;
 
 use crate::hir::environment::Environment;
-use crate::hir::{FunctionId, HirFunction, IdentifierId, InstructionValue, NonLocalBinding};
+use crate::hir::{
+    FunctionId, HirFunction, IdentifierId, InstructionValue, NonLocalBinding, NonLocalKind,
+};
 use crate::ssa::enter_ssa::placeholder_function;
 
 /// Outline anonymous function expressions that have no captured context variables.
@@ -115,8 +117,11 @@ pub fn outline_functions(
                 // Replace the instruction value with LoadGlobal
                 let loc = func.instructions[instr_idx].value.loc().cloned();
                 func.instructions[instr_idx].value = InstructionValue::LoadGlobal {
-                    binding: NonLocalBinding::Global {
-                        name: generated_name,
+                    binding: NonLocalBinding {
+                        ref_: bun_ast::Ref::NONE,
+                        kind: NonLocalKind::Global {
+                            name: generated_name,
+                        },
                     },
                     loc,
                 };

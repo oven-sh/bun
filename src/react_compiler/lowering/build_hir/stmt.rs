@@ -1580,10 +1580,15 @@ pub(super) fn lower_assignment_binding(
                     // Error already recorded
                     Ok(None)
                 }
-                Some(IdentifierForAssignment::Global { name }) => {
+                Some(IdentifierForAssignment::Global { name, ref_ }) => {
                     let temp = lower_value_to_temporary(
                         builder,
-                        InstructionValue::StoreGlobal { name, value, loc },
+                        InstructionValue::StoreGlobal {
+                            name,
+                            ref_,
+                            value,
+                            loc,
+                        },
                     )?;
                     Ok(Some(temp))
                 }

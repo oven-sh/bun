@@ -33,7 +33,6 @@ use crate::hir::InstructionId;
 use crate::hir::InstructionValue;
 use crate::hir::ManualMemoDependency;
 use crate::hir::ManualMemoDependencyRoot;
-use crate::hir::NonLocalBinding;
 use crate::hir::Place;
 use crate::hir::PlaceOrSpread;
 use crate::hir::PropertyLiteral;
@@ -41,6 +40,7 @@ use crate::hir::SourceLocation;
 use crate::hir::cfg_utils::create_temporary_place;
 use crate::hir::cfg_utils::mark_instruction_ids;
 use crate::hir::environment::Environment;
+use crate::hir::{NonLocalBinding, NonLocalKind};
 use crate::hir_vec;
 
 // =============================================================================
@@ -731,9 +731,9 @@ fn is_known_react_module(module: &[u8]) -> bool {
 /// callee). Matches upstream's `binding.name === 'React'` check plus
 /// namespace/default imports from a known React module.
 fn is_react_namespace_binding(binding: &NonLocalBinding) -> bool {
-    match binding {
-        NonLocalBinding::ImportNamespace { module, .. }
-        | NonLocalBinding::ImportDefault { module, .. } => is_known_react_module(module.slice()),
+    match binding.kind {
+        NonLocalKind::ImportNamespace { module, .. }
+        | NonLocalKind::ImportDefault { module, .. } => is_known_react_module(module.slice()),
         _ => binding.name() == b"React",
     }
 }
@@ -754,9 +754,9 @@ fn is_react_namespace_binding(binding: &NonLocalBinding) -> bool {
 /// - `ImportDefault`/`ImportNamespace` from known React module: use the local name
 /// - `ImportDefault`/`ImportNamespace` from unknown module: return None
 fn get_hook_detection_name(binding: &NonLocalBinding) -> Option<&[u8]> {
-    match binding {
-        NonLocalBinding::Global { name } => Some(name.slice()),
-        NonLocalBinding::ImportSpecifier {
+    match &binding.kind {
+        NonLocalKind::Global { name } => Some(name.slice()),
+        NonLocalKind::ImportSpecifier {
             imported, module, ..
         } => {
             if is_known_react_module(module.slice()) {
@@ -765,14 +765,14 @@ fn get_hook_detection_name(binding: &NonLocalBinding) -> Option<&[u8]> {
                 None
             }
         }
-        NonLocalBinding::ImportDefault { name, module }
-        | NonLocalBinding::ImportNamespace { name, module } => {
+        NonLocalKind::ImportDefault { name, module }
+        | NonLocalKind::ImportNamespace { name, module } => {
             if is_known_react_module(module.slice()) {
                 Some(name.slice())
             } else {
                 None
             }
         }
-        NonLocalBinding::ModuleLocal { name } => Some(name.slice()),
+        NonLocalKind::ModuleLocal { name } => Some(name.slice()),
     }
 }

@@ -12,7 +12,7 @@
 
 use crate::hir::{
     BlockId, Effect, EvaluationOrder, IdentifierId, IdentifierName, InstructionKind,
-    InstructionValue, LValue, NonLocalBinding, Place, PlaceOrSpread, PrimitiveValue,
+    InstructionValue, LValue, NonLocalBinding, NonLocalKind, Place, PlaceOrSpread, PrimitiveValue,
     PropertyLiteral, ReactiveFunction, ReactiveInstruction, ReactiveLabel, ReactiveScopeBlock,
     ReactiveScopeDeclaration, ReactiveScopeEarlyReturn, ReactiveStatement, ReactiveTerminal,
     ReactiveTerminalStatement, ReactiveTerminalTargetKind, ReactiveValue, StoreStr,
@@ -227,8 +227,11 @@ fn apply_early_return_to_scope(
                 loc: None, // GeneratedSource
             }),
             value: ReactiveValue::Instruction(InstructionValue::LoadGlobal {
-                binding: NonLocalBinding::Global {
-                    name: StoreStr::new(b"Symbol"),
+                binding: NonLocalBinding {
+                    ref_: bun_ast::Ref::NONE,
+                    kind: NonLocalKind::Global {
+                        name: StoreStr::new(b"Symbol"),
+                    },
                 },
                 loc,
             }),

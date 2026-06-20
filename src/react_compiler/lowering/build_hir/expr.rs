@@ -46,8 +46,11 @@ pub(crate) fn lower_expression(
             let place = lower_value_to_temporary(
                 builder,
                 InstructionValue::LoadGlobal {
-                    binding: NonLocalBinding::Global {
-                        name: StoreStr::new(b"undefined"),
+                    binding: NonLocalBinding {
+                        ref_: Ref::NONE,
+                        kind: NonLocalKind::Global {
+                            name: StoreStr::new(b"undefined"),
+                        },
                     },
                     loc,
                 },
@@ -299,8 +302,11 @@ pub(crate) fn lower_expression(
             let place = lower_value_to_temporary(
                 builder,
                 InstructionValue::LoadGlobal {
-                    binding: NonLocalBinding::Global {
-                        name: StoreStr::new(b"require"),
+                    binding: NonLocalBinding {
+                        ref_: Ref::NONE,
+                        kind: NonLocalKind::Global {
+                            name: StoreStr::new(b"require"),
+                        },
                     },
                     loc,
                 },
@@ -311,8 +317,11 @@ pub(crate) fn lower_expression(
             let object = lower_value_to_temporary(
                 builder,
                 InstructionValue::LoadGlobal {
-                    binding: NonLocalBinding::Global {
-                        name: StoreStr::new(b"require"),
+                    binding: NonLocalBinding {
+                        ref_: Ref::NONE,
+                        kind: NonLocalKind::Global {
+                            name: StoreStr::new(b"require"),
+                        },
                     },
                     loc,
                 },
@@ -800,6 +809,7 @@ fn lower_simple_assignment_identifier(
                 builder,
                 InstructionValue::StoreGlobal {
                     name,
+                    ref_,
                     value: right,
                     loc: ident_loc,
                 },
@@ -947,6 +957,7 @@ fn lower_compound_assignment_identifier(
                 builder,
                 InstructionValue::StoreGlobal {
                     name,
+                    ref_,
                     value: binary_place,
                     loc,
                 },

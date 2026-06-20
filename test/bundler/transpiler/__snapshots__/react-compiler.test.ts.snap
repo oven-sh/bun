@@ -126,3 +126,84 @@ export {
 };
 "
 `;
+
+exports[`bundler react-compiler/BundledReactPreservesImportRefs 1`] = `
+"var __create = Object.create;
+var __getProtoOf = Object.getPrototypeOf;
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+function __accessProp(key) {
+  return this[key];
+}
+var __toESMCache_node;
+var __toESMCache_esm;
+var __toESM = (mod, isNodeMode, target) => {
+  var canCache = mod != null && typeof mod === "object";
+  if (canCache) {
+    var cache = isNodeMode ? __toESMCache_node ??= new WeakMap : __toESMCache_esm ??= new WeakMap;
+    var cached = cache.get(mod);
+    if (cached)
+      return cached;
+  }
+  target = mod != null ? __create(__getProtoOf(mod)) : {};
+  const to = isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
+  for (let key of __getOwnPropNames(mod))
+    if (!__hasOwnProp.call(to, key))
+      __defProp(to, key, {
+        get: __accessProp.bind(mod, key),
+        enumerable: true
+      });
+  if (canCache)
+    cache.set(mod, to);
+  return to;
+};
+var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+
+// node_modules/react/index.js
+var require_react = __commonJS((exports) => {
+  exports.useSyncExternalStore = () => 0;
+  exports.useContext = () => 0;
+  exports.createContext = () => ({});
+  exports.createElement = () => null;
+  exports.default = exports;
+});
+
+// entry.tsx
+var import_react = __toESM(require_react(), 1);
+
+// node_modules/react/jsx-dev-runtime.js
+var $jsxDEV = () => null;
+
+// node_modules/react/compiler-runtime.js
+var $c = () => [];
+
+// entry.tsx
+var Ctx = import_react.createContext(0);
+var sub = () => () => {};
+var get = () => 1;
+function Comp() {
+  const $ = $c(3);
+  const v = import_react.useSyncExternalStore(sub, get);
+  const c = import_react.useContext(Ctx);
+  let t0;
+  if ($[0] !== c || $[1] !== v) {
+    t0 = /* @__PURE__ */ $jsxDEV("div", {
+      children: [
+        v,
+        c
+      ]
+    }, undefined, true, undefined, this);
+    $[0] = c;
+    $[1] = v;
+    $[2] = t0;
+  } else {
+    t0 = $[2];
+  }
+  return t0;
+}
+export {
+  Comp
+};
+"
+`;

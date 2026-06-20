@@ -471,15 +471,15 @@ impl Environment {
         binding: &NonLocalBinding,
         loc: Option<SourceLocation>,
     ) -> Result<Option<Global>, CompilerError> {
-        match binding {
-            NonLocalBinding::ModuleLocal { name, .. } => {
+        match &binding.kind {
+            NonLocalKind::ModuleLocal { name, .. } => {
                 if is_hook_name(name) {
                     Ok(Some(self.get_custom_hook_type()))
                 } else {
                     Ok(None)
                 }
             }
-            NonLocalBinding::Global { name, .. } => {
+            NonLocalKind::Global { name, .. } => {
                 if let Some(ty) = core::str::from_utf8(name)
                     .ok()
                     .and_then(|s| self.globals.get(s))
@@ -492,7 +492,7 @@ impl Environment {
                     Ok(None)
                 }
             }
-            NonLocalBinding::ImportSpecifier {
+            NonLocalKind::ImportSpecifier {
                 name,
                 module,
                 imported,
@@ -542,9 +542,9 @@ impl Environment {
                     Ok(None)
                 }
             }
-            NonLocalBinding::ImportDefault { name, module }
-            | NonLocalBinding::ImportNamespace { name, module } => {
-                let is_default = matches!(binding, NonLocalBinding::ImportDefault { .. });
+            NonLocalKind::ImportDefault { name, module }
+            | NonLocalKind::ImportNamespace { name, module } => {
+                let is_default = matches!(binding.kind, NonLocalKind::ImportDefault { .. });
 
                 if self.is_known_react_module(module) {
                     if let Some(ty) = core::str::from_utf8(name)
@@ -1140,31 +1140,43 @@ mod tests {
     fn test_get_global_declaration() {
         let mut env = Environment::new();
         // Global binding
-        let binding = NonLocalBinding::Global {
-            name: "Math".into(),
+        let binding = NonLocalBinding {
+            ref_: bun_ast::Ref::NONE,
+            kind: NonLocalKind::Global {
+                name: "Math".into(),
+            },
         };
         let result = env.get_global_declaration(&binding, None).unwrap();
         assert!(result.is_some());
 
         // Import from react
-        let binding = NonLocalBinding::ImportSpecifier {
-            name: "useState".into(),
-            module: "react".into(),
-            imported: "useState".into(),
+        let binding = NonLocalBinding {
+            ref_: bun_ast::Ref::NONE,
+            kind: NonLocalKind::ImportSpecifier {
+                name: "useState".into(),
+                module: "react".into(),
+                imported: "useState".into(),
+            },
         };
         let result = env.get_global_declaration(&binding, None).unwrap();
         assert!(result.is_some());
 
         // Unknown global
-        let binding = NonLocalBinding::Global {
-            name: "unknownThing".into(),
+        let binding = NonLocalBinding {
+            ref_: bun_ast::Ref::NONE,
+            kind: NonLocalKind::Global {
+                name: "unknownThing".into(),
+            },
         };
         let result = env.get_global_declaration(&binding, None).unwrap();
         assert!(result.is_none());
 
         // Hook-like name gets default hook type
-        let binding = NonLocalBinding::Global {
-            name: "useCustom".into(),
+        let binding = NonLocalBinding {
+            ref_: bun_ast::Ref::NONE,
+            kind: NonLocalKind::Global {
+                name: "useCustom".into(),
+            },
         };
         let result = env.get_global_declaration(&binding, None).unwrap();
         assert!(result.is_some());

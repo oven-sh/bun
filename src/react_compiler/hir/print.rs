@@ -223,14 +223,14 @@ impl fmt::Display for DisplayObjectPropertyKey<'_> {
 struct DisplayNonLocalBinding<'a>(&'a crate::hir::NonLocalBinding);
 impl fmt::Display for DisplayNonLocalBinding<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            crate::hir::NonLocalBinding::Global { name } => {
+        match &self.0.kind {
+            crate::hir::NonLocalKind::Global { name } => {
                 write!(f, "Global {{ name: \"{}\" }}", BStr::new(name.slice()))
             }
-            crate::hir::NonLocalBinding::ModuleLocal { name } => {
+            crate::hir::NonLocalKind::ModuleLocal { name } => {
                 write!(f, "ModuleLocal {{ name: \"{}\" }}", BStr::new(name.slice()))
             }
-            crate::hir::NonLocalBinding::ImportDefault { name, module } => {
+            crate::hir::NonLocalKind::ImportDefault { name, module } => {
                 write!(
                     f,
                     "ImportDefault {{ name: \"{}\", module: \"{}\" }}",
@@ -238,7 +238,7 @@ impl fmt::Display for DisplayNonLocalBinding<'_> {
                     BStr::new(module.slice())
                 )
             }
-            crate::hir::NonLocalBinding::ImportNamespace { name, module } => {
+            crate::hir::NonLocalKind::ImportNamespace { name, module } => {
                 write!(
                     f,
                     "ImportNamespace {{ name: \"{}\", module: \"{}\" }}",
@@ -246,7 +246,7 @@ impl fmt::Display for DisplayNonLocalBinding<'_> {
                     BStr::new(module.slice())
                 )
             }
-            crate::hir::NonLocalBinding::ImportSpecifier {
+            crate::hir::NonLocalKind::ImportSpecifier {
                 name,
                 module,
                 imported,
@@ -1362,6 +1362,7 @@ impl<'a> PrintFormatter<'a> {
                 name,
                 value: val,
                 loc,
+                ..
             } => {
                 self.line("StoreGlobal {");
                 self.indent();

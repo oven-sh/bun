@@ -140,9 +140,11 @@ function toArrayBuffer(data) {
 
 function validateBaseConsumerOptions(options) {
   validateObject(options, "options");
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.limit !== undefined) {
     validateInteger(options.limit, "options.limit", 0);
   }
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.encoding !== undefined) {
     if (typeof options.encoding !== "string") {
       throw $ERR_INVALID_ARG_TYPE("options.encoding", "string", options.encoding);
@@ -157,6 +159,7 @@ function validateBaseConsumerOptions(options) {
 
 function validateConsumerOptions(options) {
   validateBaseConsumerOptions(options);
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.signal !== undefined) {
     validateAbortSignal(options.signal, "options.signal");
   }

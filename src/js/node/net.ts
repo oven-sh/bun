@@ -680,6 +680,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       state.suspended = true;
       return true;
     }
+    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
     if (state.failed !== undefined) {
       // Stash the error so the handshake-failure handler emits
       // 'tlsClientError' with it, and return it - the native dispatch
@@ -2433,6 +2434,7 @@ function lookupAndConnect(self, options) {
     return;
   }
 
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.lookup != null) validateFunction(options.lookup, "options.lookup");
 
   if (dns === undefined) dns = require("node:dns");

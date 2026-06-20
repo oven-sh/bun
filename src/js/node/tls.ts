@@ -687,6 +687,7 @@ function processPfxOptions(options) {
       entry.buf !== undefined
     ) {
       buf = entry.buf;
+      // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
       if (entry.passphrase !== undefined) passphrase = entry.passphrase;
     }
     const parsed = NativeSecureContext.parsePkcs12(buf, passphrase);
@@ -923,6 +924,7 @@ function TLSSocket(socket?, options?) {
   this.secureConnecting = true;
   this._secureEstablished = false;
   this._securePending = true;
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.checkServerIdentity !== undefined) {
     validateFunction(options.checkServerIdentity, "options.checkServerIdentity");
   }
@@ -1038,7 +1040,9 @@ TLSSocket.prototype.renegotiate = function renegotiate(options, callback) {
 
   let requestCert = !!this._requestCert;
   let rejectUnauthorized = !!this._rejectUnauthorized;
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.requestCert !== undefined) requestCert = !!options.requestCert;
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.rejectUnauthorized !== undefined) rejectUnauthorized = !!options.rejectUnauthorized;
   if (requestCert !== this._requestCert || rejectUnauthorized !== this._rejectUnauthorized) {
     socket.setVerifyMode?.(requestCert, rejectUnauthorized);

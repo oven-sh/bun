@@ -177,12 +177,14 @@ function validateFamilyOption(options) {
 }
 
 function validateAllOption(options) {
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.all !== undefined) {
     validateBoolean(options.all);
   }
 }
 
 function validateVerbatimOption(options) {
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.verbatim !== undefined) {
     validateBoolean(options.verbatim);
   }
@@ -195,6 +197,7 @@ function validateOrder(order) {
 }
 
 function validateOrderOption(options) {
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.order !== undefined) {
     validateOrder(options.order);
   }

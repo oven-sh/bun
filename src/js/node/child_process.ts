@@ -860,6 +860,7 @@ function normalizeExecFileArgs(file, args, options, callback) {
   }
 
   // Validate argv0, if present.
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.argv0 != null) {
     validateString(options.argv0, "options.argv0");
     validateArgumentNullCheck(options.argv0, "options.argv0");
@@ -920,6 +921,7 @@ function normalizeSpawnArguments(file, args, options) {
   }
 
   // Validate detached, if present.
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.detached != null) {
     validateBoolean(options.detached, "options.detached");
   }
@@ -940,12 +942,14 @@ function normalizeSpawnArguments(file, args, options) {
   }
 
   // Validate argv0, if present.
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.argv0 != null) {
     validateString(options.argv0, "options.argv0");
     validateArgumentNullCheck(options.argv0, "options.argv0");
   }
 
   // Validate windowsHide, if present.
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.windowsHide != null) {
     validateBoolean(options.windowsHide, "options.windowsHide");
   }
@@ -1333,6 +1337,7 @@ class ChildProcess extends EventEmitter {
 
     // validate options.envPairs but only if has_ipc. for some reason.
     if (has_ipc) {
+      // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
       if (options.envPairs !== undefined) {
         validateArray(options.envPairs, "options.envPairs");
       }

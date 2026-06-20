@@ -388,6 +388,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (options.pfx) name += options.pfx;
 
   name += ":";
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.rejectUnauthorized !== undefined) name += options.rejectUnauthorized;
 
   name += ":";
@@ -406,6 +407,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (options.crl) name += options.crl;
 
   name += ":";
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.honorCipherOrder !== undefined) name += options.honorCipherOrder;
 
   name += ":";
@@ -415,6 +417,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (options.dhparam) name += options.dhparam;
 
   name += ":";
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.secureOptions !== undefined) name += options.secureOptions;
 
   name += ":";

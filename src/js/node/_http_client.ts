@@ -199,6 +199,7 @@ function ClientRequest(input, options, cb) {
 
   this.socketPath = options.socketPath;
 
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.timeout !== undefined) this.timeout = getTimerDuration(options.timeout, "timeout");
 
   const signal = options.signal;
@@ -231,6 +232,7 @@ function ClientRequest(input, options, cb) {
 
   this.insecureHTTPParser = insecureHTTPParser;
 
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.joinDuplicateHeaders !== undefined) {
     validateBoolean(options.joinDuplicateHeaders, "options.joinDuplicateHeaders");
   }

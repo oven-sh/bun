@@ -31,6 +31,7 @@ function extractAgentOptions(agent) {
     const newTlsOptions = {};
     let hasTlsOptions = false;
 
+    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
     if (connectOpts.rejectUnauthorized !== undefined) {
       newTlsOptions.rejectUnauthorized = connectOpts.rejectUnauthorized;
       hasTlsOptions = true;
@@ -1182,6 +1183,7 @@ class WebSocketServer extends EventEmitter {
       throw new TypeError('One and only one of the "port", "server", or "noServer" options must be specified');
     }
 
+    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
     if (options.port != null) {
       this._server = http.createServer((req, res) => {
         const body = http.STATUS_CODES[426];

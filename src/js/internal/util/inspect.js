@@ -1450,6 +1450,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
     }
     throw new AssertionError("handleMaxCallStackSize assertion failed: " + String(err), true);
   }
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (ctx.circular !== undefined) {
     const index = ctx.circular.get(value);
     if (index !== undefined) {
@@ -2297,6 +2298,7 @@ function formatProperty(ctx, value, recurseTimes, key, type, desc, original = va
   let name, str;
   let extra = " ";
   desc ||= ObjectGetOwnPropertyDescriptor(value, key) || { value: value[key], enumerable: true };
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (desc.value !== undefined) {
     const diff = ctx.compact !== true || type !== kObjectType ? 2 : 3;
     ctx.indentationLvl += diff;
@@ -2305,6 +2307,7 @@ function formatProperty(ctx, value, recurseTimes, key, type, desc, original = va
       extra = `\n${StringPrototypeRepeat(" ", ctx.indentationLvl)}`;
     }
     ctx.indentationLvl -= diff;
+    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   } else if (desc.get !== undefined) {
     const label = desc.set !== undefined ? "Getter/Setter" : "Getter";
     const s = ctx.stylize;

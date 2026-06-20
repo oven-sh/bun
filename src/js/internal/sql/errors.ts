@@ -54,6 +54,7 @@ class PostgresError extends SQLError implements Bun.SQL.PostgresError {
     this.name = "PostgresError";
     this.code = options.code;
 
+    /* oxlint-disable bun/no-duplicate-nullish-property-access */
     if (options.errno !== undefined) this.errno = options.errno;
     if (options.detail !== undefined) this.detail = options.detail;
     if (options.hint !== undefined) this.hint = options.hint;
@@ -70,6 +71,7 @@ class PostgresError extends SQLError implements Bun.SQL.PostgresError {
     if (options.file !== undefined) this.file = options.file;
     if (options.line !== undefined) this.line = options.line;
     if (options.routine !== undefined) this.routine = options.routine;
+    /* oxlint-enable bun/no-duplicate-nullish-property-access */
   }
 }
 
@@ -96,6 +98,7 @@ class SQLiteError extends SQLError implements Bun.SQL.SQLiteError {
     this.code = options.code;
     this.errno = options.errno;
 
+    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
     if (options.byteOffset !== undefined) this.byteOffset = options.byteOffset;
   }
 }
@@ -121,7 +124,9 @@ class MySQLError extends SQLError implements Bun.SQL.MySQLError {
     this.name = "MySQLError";
     this.code = options.code;
 
+    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
     if (options.errno !== undefined) this.errno = options.errno;
+    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
     if (options.sqlState !== undefined) this.sqlState = options.sqlState;
   }
 }

@@ -140,6 +140,7 @@ class PerformanceObserverForNodeTypes extends NodePerformanceObserver {
     if (options != null && typeof options === "object") {
       if (options.entryTypes !== undefined && Array.isArray(options.entryTypes)) {
         requested = options.entryTypes;
+        // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
       } else if (options.type !== undefined) {
         requested = [options.type];
         isTypeMode = true;
@@ -272,6 +273,7 @@ export default {
     let highest = Number.MAX_SAFE_INTEGER;
     let figures = 3;
 
+    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
     if (opts.lowest !== undefined) {
       if (typeof opts.lowest === "bigint") {
         lowest = Number(opts.lowest);
@@ -282,6 +284,7 @@ export default {
       }
     }
 
+    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
     if (opts.highest !== undefined) {
       if (typeof opts.highest === "bigint") {
         highest = Number(opts.highest);
@@ -292,6 +295,7 @@ export default {
       }
     }
 
+    // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
     if (opts.figures !== undefined) {
       if (typeof opts.figures !== "number") {
         throw $ERR_INVALID_ARG_TYPE("options.figures", "number", opts.figures);

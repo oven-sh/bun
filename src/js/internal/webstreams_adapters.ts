@@ -493,6 +493,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
     throw $ERR_INVALID_ARG_TYPE("streamReadable", "stream.Readable", streamReadable);
   }
   validateObject(options, "options");
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.type !== undefined) {
     validateOneOf(options.type, "options.type", ["bytes", undefined]);
   }

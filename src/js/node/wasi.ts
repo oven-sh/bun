@@ -1250,6 +1250,7 @@ var require_wasi = __commonJS({
                 let position = IS_STDIN || stats.offset === void 0 ? null : Number(stats.offset);
                 let rr = 0;
                 if (IS_STDIN) {
+                  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
                   if (this.getStdin != null) {
                     if (this.stdinBuffer == null) {
                       this.stdinBuffer = this.getStdin();
@@ -1825,6 +1826,7 @@ var require_wasi = __commonJS({
                   warnedAboutSleep = true;
                   console.log("(100% cpu burning waiting for stdin: please define a way to sleep!) ");
                 }
+                // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
                 if (this.sleep != null) {
                   const ms = nsToMs(waitTimeNs);
                   this.sleep(ms);

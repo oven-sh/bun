@@ -600,6 +600,7 @@ export function readableByteStreamControllerPullInto(controller, view) {
   // of based on typed arrays private variables. However, this is not possible due
   // to bug 167697, which prevents access to typed arrays through their private
   // names unless public name has already been met before.
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (view.BYTES_PER_ELEMENT !== undefined) elementSize = view.BYTES_PER_ELEMENT;
 
   // FIXME: Getting constructor like this is not safe. A safe way of getting

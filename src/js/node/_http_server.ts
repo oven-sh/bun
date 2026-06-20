@@ -784,6 +784,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // honor requireHostHeader, like Node.js.
           http_res.writeHead(400, { Connection: "close" });
           http_res.end();
+          // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
         } else if (http_req.headers.expect !== undefined) {
           // Case-insensitive, token-boundary match like Node's
           // parserOnIncoming (RFC 7231 5.1.1: expectation values compare

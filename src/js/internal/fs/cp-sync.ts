@@ -40,14 +40,18 @@ const defaultCpOptions = {
 
 function decorateSystemError(err, prefix, context) {
   let message = `${prefix}: ${context.syscall} returned ${context.code} (${context.message})`;
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (context.path !== undefined) message += ` ${context.path}`;
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (context.dest !== undefined) message += ` => ${context.dest}`;
   err.message = message;
   err.name = "SystemError";
   err.info = context;
   err.errno = context.errno;
   err.syscall = context.syscall;
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (context.path !== undefined) err.path = context.path;
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (context.dest !== undefined) err.dest = context.dest;
   return err;
 }
@@ -133,6 +137,7 @@ function validateCpOptions(options) {
       'Option "dereference" cannot be used in combination with option "verbatimSymlinks"',
     );
   }
+  // oxlint-disable-next-line bun/no-duplicate-nullish-property-access
   if (options.filter !== undefined) {
     validateFunction(options.filter, "options.filter");
   }

@@ -859,7 +859,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     dev.configuration_hash_key = 'hash_key: {
         let mut h = Wyhash::init(128);
 
-        if cfg!(debug_assertions) {
+        if bun_core::env::IS_DEBUG {
             let stat = match sys::stat(
                 bun_core::self_exe_path()
                     .unwrap_or_else(|e| Output::panic(format_args!("unhandled {}", e))),

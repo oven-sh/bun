@@ -481,7 +481,7 @@ impl RunCommand {
         } else {
             "/tmp"
         };
-        const SUFFIX: &str = if cfg!(debug_assertions) {
+        const SUFFIX: &str = if bun_core::env::IS_DEBUG {
             "/bun-node-debug"
         } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
             "/bun-node"
@@ -600,7 +600,7 @@ impl RunCommand {
                 unsafe { ZStr::from_raw(optional_bun_path.as_ptr(), optional_bun_path.len()) }
             };
 
-            #[cfg(debug_assertions)]
+            #[cfg(bun_debug)]
             {
                 // Debug-only cleanup; failures are ignored. The EEXIST branch
                 // below already handles a stale dir.
@@ -708,7 +708,7 @@ impl RunCommand {
             // The dir name is ASCII-only, so widen the const `&str` byte-by-
             // byte into a small stack buffer at runtime (Rust macros require a
             // single string *literal* token, which `concatcp!` doesn't yield).
-            let dir_name_str: &str = if cfg!(debug_assertions) {
+            let dir_name_str: &str = if bun_core::env::IS_DEBUG {
                 "bun-node-debug"
             } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
                 "bun-node"
@@ -724,7 +724,7 @@ impl RunCommand {
             target_path_buffer[prefix.len() + len..][..dir_name.len()].copy_from_slice(dir_name);
             let dir_slice_len = prefix.len() + len + dir_name.len();
 
-            #[cfg(debug_assertions)]
+            #[cfg(bun_debug)]
             {
                 // Debug builds wipe and recreate the bun-node temp dir so the
                 // ALREADY_EXISTS short-circuit below never reuses a stale

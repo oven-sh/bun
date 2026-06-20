@@ -14,7 +14,7 @@
 //! | 6242–6468 | `jsx` (`lower_jsx_*`) |
 //! | 4257–4361, 5985–6241 | this file: `lower()` entry + `lower_inner()` driver |
 
-use crate::collections::IndexMap;
+use crate::collections::{IndexMap, IndexSet};
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
 };
@@ -89,14 +89,14 @@ pub fn lower(
     // For top-level functions, context is empty (no captured refs)
     let context_map: IndexMap<Ref, Option<SourceLocation>> = IndexMap::new();
 
-    let (hir_func, _used_names, _child_bindings) = lower_inner(
+    let (hir_func, _used_refs, _child_bindings) = lower_inner(
         func,
         ast_id,
         loc,
         host,
         env,
         None, // no pre-existing bindings for top-level
-        None, // no pre-existing used_names for top-level
+        None, // no pre-existing used_refs for top-level
         &context_map,
         scope,
         scope, // component_scope = function_scope for top-level
@@ -117,21 +117,14 @@ pub(super) fn lower_inner<'h>(
     host: &'h dyn Host,
     env: &'h mut Environment,
     parent_bindings: Option<IndexMap<Ref, IdentifierId>>,
-    parent_used_names: Option<IndexMap<String, Ref>>,
+    parent_used_refs: Option<IndexSet<Ref>>,
     context_map: &IndexMap<Ref, Option<SourceLocation>>,
     function_scope: &'h ast::Scope,
     component_scope: &'h ast::Scope,
     context_identifiers: &RefSet,
     import_bindings: &IndexMap<Ref, VariableBinding>,
     is_top_level: bool,
-) -> Result<
-    (
-        HirFunction,
-        IndexMap<String, Ref>,
-        IndexMap<Ref, IdentifierId>,
-    ),
-    CompilerError,
-> {
+) -> Result<(HirFunction, IndexSet<Ref>, IndexMap<Ref, IdentifierId>), CompilerError> {
     // `validate_ts_this_parameter`: Bun's parser strips `this` parameters
     // before this pass runs, so the upstream check is a no-op here.
 
@@ -150,7 +143,7 @@ pub(super) fn lower_inner<'h>(
         parent_bindings,
         Some(context_map.clone()),
         None,
-        parent_used_names,
+        parent_used_refs,
     );
     builder.set_import_bindings(import_bindings.clone());
 
@@ -313,7 +306,7 @@ pub(super) fn lower_inner<'h>(
     builder.pop_scope();
 
     // Build the HIR
-    let (hir_body, instructions, used_names, child_bindings) = builder.build()?;
+    let (hir_body, instructions, used_refs, child_bindings) = builder.build()?;
 
     // Create the returns place
     let returns = create_temporary_place(env, loc);
@@ -339,7 +332,7 @@ pub(super) fn lower_inner<'h>(
             directives,
             aliasing_effects: None,
         },
-        used_names,
+        used_refs,
         child_bindings,
     ))
 }

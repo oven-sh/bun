@@ -303,13 +303,11 @@ fn evaluate_instruction(
             }) = prop_value
             {
                 match prim {
-                    PrimitiveValue::String(s) if s.as_str().is_some_and(is_valid_identifier) => {
+                    PrimitiveValue::String(s) if s.as_bytes().is_some_and(is_valid_identifier) => {
                         let object = object.clone();
                         let loc = *loc;
                         let new_property = PropertyLiteral::String(crate::hir::StoreStr::new(
-                            bun_ast::data_store_dupe_str(
-                                s.as_str().expect("guarded utf8").as_bytes(),
-                            ),
+                            bun_ast::data_store_dupe_str(s.as_bytes().expect("guarded")),
                         ));
                         func.instructions[instr_id.0 as usize].value =
                             InstructionValue::PropertyLoad {
@@ -349,14 +347,12 @@ fn evaluate_instruction(
             }) = prop_value
             {
                 match prim {
-                    PrimitiveValue::String(s) if s.as_str().is_some_and(is_valid_identifier) => {
+                    PrimitiveValue::String(s) if s.as_bytes().is_some_and(is_valid_identifier) => {
                         let object = object.clone();
                         let store_value = value.clone();
                         let loc = *loc;
                         let new_property = PropertyLiteral::String(crate::hir::StoreStr::new(
-                            bun_ast::data_store_dupe_str(
-                                s.as_str().expect("guarded utf8").as_bytes(),
-                            ),
+                            bun_ast::data_store_dupe_str(s.as_bytes().expect("guarded")),
                         ));
                         func.instructions[instr_id.0 as usize].value =
                             InstructionValue::PropertyStore {
@@ -566,26 +562,20 @@ fn evaluate_instruction(
         } => {
             if subexprs.is_empty() {
                 // No subexpressions: join all cooked quasis
-                let mut result_string = String::new();
+                let mut result: Vec<u8> = Vec::new();
                 for q in quasis {
                     match q.cooked {
-                        Some(cooked) => match core::str::from_utf8(cooked.slice()) {
-                            Ok(s) => result_string.push_str(s),
-                            Err(_) => return None,
-                        },
+                        Some(cooked) => result.extend_from_slice(cooked.slice()),
                         None => return None,
                     }
                 }
                 let loc = *loc;
-                let result = Constant::Primitive {
-                    value: PrimitiveValue::String(JsString::from_marker_string(&result_string)),
-                    loc,
-                };
+                let value = PrimitiveValue::String(JsString::from_wtf8_bytes(&result));
                 func.instructions[instr_id.0 as usize].value = InstructionValue::Primitive {
-                    value: PrimitiveValue::String(JsString::from_marker_string(&result_string)),
+                    value: value.clone(),
                     loc,
                 };
-                return Some(result);
+                return Some(Constant::Primitive { value, loc });
             }
 
             if subexprs.len() != quasis.len() - 1 {
@@ -597,11 +587,7 @@ fn evaluate_instruction(
             }
 
             let mut quasi_index = 0usize;
-            let mut result_string =
-                match core::str::from_utf8(quasis[quasi_index].cooked.unwrap().slice()) {
-                    Ok(s) => s.to_owned(),
-                    Err(_) => return None,
-                };
+            let mut result: Vec<u8> = quasis[quasi_index].cooked.unwrap().slice().to_vec();
             quasi_index += 1;
 
             for sub_expr in subexprs {
@@ -611,38 +597,33 @@ fn evaluate_instruction(
                     _ => return None,
                 };
 
-                let expression_str = match sub_prim {
-                    PrimitiveValue::Null => "null".to_string(),
-                    PrimitiveValue::Boolean(b) => b.to_string(),
-                    PrimitiveValue::Number(n) => format_js_number(n.value()),
-                    PrimitiveValue::String(s) => s.to_marker_string(),
+                match sub_prim {
+                    PrimitiveValue::Null => result.extend_from_slice(b"null"),
+                    PrimitiveValue::Boolean(b) => {
+                        result.extend_from_slice(if *b { b"true" } else { b"false" })
+                    }
+                    PrimitiveValue::Number(n) => {
+                        result.extend_from_slice(format_js_number(n.value()).as_bytes())
+                    }
+                    PrimitiveValue::String(s) => match s.as_bytes() {
+                        Some(b) => result.extend_from_slice(b),
+                        None => return None,
+                    },
                     // TS rejects undefined subexpression values
                     PrimitiveValue::Undefined => return None,
                 };
 
-                let suffix = match quasis[quasi_index].cooked {
-                    Some(s) => match core::str::from_utf8(s.slice()) {
-                        Ok(s) => s,
-                        Err(_) => return None,
-                    },
-                    None => return None,
-                };
+                result.extend_from_slice(quasis[quasi_index].cooked.unwrap().slice());
                 quasi_index += 1;
-
-                result_string.push_str(&expression_str);
-                result_string.push_str(suffix);
             }
 
             let loc = *loc;
-            let result = Constant::Primitive {
-                value: PrimitiveValue::String(JsString::from_marker_string(&result_string)),
-                loc,
-            };
+            let value = PrimitiveValue::String(JsString::from_wtf8_bytes(&result));
             func.instructions[instr_id.0 as usize].value = InstructionValue::Primitive {
-                value: PrimitiveValue::String(JsString::from_marker_string(&result_string)),
+                value: value.clone(),
                 loc,
             };
-            Some(result)
+            Some(Constant::Primitive { value, loc })
         }
         InstructionValue::LoadLocal { place, .. } => {
             let place_value = read(constants, place);
@@ -766,7 +747,8 @@ fn read(constants: &Constants, place: &Place) -> Option<Constant> {
 /// Check if a string is a valid JavaScript identifier.
 /// Supports Unicode identifier characters per ECMAScript spec (ID_Start / ID_Continue).
 /// Rejects JS reserved words (matching Babel's `isValidIdentifier` default behavior).
-fn is_valid_identifier(s: &str) -> bool {
+fn is_valid_identifier(s: &[u8]) -> bool {
+    use bun_core::ByteSlice;
     if s.is_empty() {
         return false;
     }
@@ -783,56 +765,64 @@ fn is_valid_identifier(s: &str) -> bool {
 
 /// JS reserved words that cannot be used as identifiers.
 /// Includes keywords, future reserved words, and strict mode reserved words.
-fn is_reserved_word(s: &str) -> bool {
+fn is_reserved_word(s: &[u8]) -> bool {
     matches!(
         s,
-        "break"
-            | "case"
-            | "catch"
-            | "continue"
-            | "debugger"
-            | "default"
-            | "do"
-            | "else"
-            | "finally"
-            | "for"
-            | "function"
-            | "if"
-            | "in"
-            | "instanceof"
-            | "new"
-            | "return"
-            | "switch"
-            | "this"
-            | "throw"
-            | "try"
-            | "typeof"
-            | "var"
-            | "void"
-            | "while"
-            | "with"
-            | "class"
-            | "const"
-            | "enum"
-            | "export"
-            | "extends"
-            | "import"
-            | "super"
-            | "implements"
-            | "interface"
-            | "let"
-            | "package"
-            | "private"
-            | "protected"
-            | "public"
-            | "static"
-            | "yield"
-            | "await"
-            | "delete"
-            | "null"
-            | "true"
-            | "false"
+        b"break"
+            | b"case"
+            | b"catch"
+            | b"continue"
+            | b"debugger"
+            | b"default"
+            | b"do"
+            | b"else"
+            | b"finally"
+            | b"for"
+            | b"function"
+            | b"if"
+            | b"in"
+            | b"instanceof"
+            | b"new"
+            | b"return"
+            | b"switch"
+            | b"this"
+            | b"throw"
+            | b"try"
+            | b"typeof"
+            | b"var"
+            | b"void"
+            | b"while"
+            | b"with"
+            | b"class"
+            | b"const"
+            | b"enum"
+            | b"export"
+            | b"extends"
+            | b"import"
+            | b"super"
+            | b"implements"
+            | b"interface"
+            | b"let"
+            | b"package"
+            | b"private"
+            | b"protected"
+            | b"public"
+            | b"static"
+            | b"yield"
+            | b"await"
+            | b"delete"
+            | b"null"
+            | b"true"
+            | b"false"
     )
+}
+
+fn push_units(out: &mut Vec<u16>, s: &bun_ast::E::EString) {
+    if s.is_utf16 {
+        out.extend_from_slice(s.slice16());
+    } else {
+        out.extend(s.slice8().iter().map(|&b| b as u16));
+    }
 }
 
 /// Check if a character is valid as the start of a JS identifier (ID_Start + _ + $).
@@ -862,7 +852,7 @@ fn is_truthy(value: &PrimitiveValue) -> bool {
             let v = n.value();
             v != 0.0 && !v.is_nan()
         }
-        PrimitiveValue::String(s) => s.len_utf16() != 0,
+        PrimitiveValue::String(s) => !s.is_empty(),
     }
 }
 
@@ -881,13 +871,23 @@ fn evaluate_binary_op(
                 FloatValue::new(l.value() + r.value()),
             )),
             (PrimitiveValue::String(l), PrimitiveValue::String(r)) => {
-                // Concatenate as code units: JS `+` can pair up surrogate
-                // halves split across the operands.
-                let mut units = l.code_units();
-                units.extend(r.code_units());
-                Some(PrimitiveValue::String(
-                    crate::diagnostics::JsString::from_code_units(&units),
-                ))
+                match (l.as_bytes(), r.as_bytes()) {
+                    (Some(lb), Some(rb)) => {
+                        let mut joined = Vec::with_capacity(lb.len() + rb.len());
+                        joined.extend_from_slice(lb);
+                        joined.extend_from_slice(rb);
+                        Some(PrimitiveValue::String(JsString::from_wtf8_bytes(&joined)))
+                    }
+                    _ => {
+                        // Concatenate as code units: JS `+` can pair up
+                        // surrogate halves split across the operands.
+                        let (le, re) = (l.estring(), r.estring());
+                        let mut units = Vec::with_capacity(le.len() + re.len());
+                        push_units(&mut units, le);
+                        push_units(&mut units, re);
+                        Some(PrimitiveValue::String(JsString::from_code_units(&units)))
+                    }
+                }
             }
             _ => None,
         },
@@ -1021,7 +1021,10 @@ fn js_strict_equal(lhs: &PrimitiveValue, rhs: &PrimitiveValue) -> bool {
 
 /// Convert a string to a number using JS `ToNumber` semantics.
 /// In JS: `""` → 0, `" "` → 0, `" 42 "` → 42, `"0x1A"` → 26, `"Infinity"` → Infinity.
-fn js_to_number(s: &str) -> f64 {
+fn js_to_number(s: &[u8]) -> f64 {
+    let Ok(s) = core::str::from_utf8(s) else {
+        return f64::NAN;
+    };
     let trimmed = s.trim();
     if trimmed.is_empty() {
         return 0.0;
@@ -1076,11 +1079,8 @@ fn js_abstract_equal(lhs: &PrimitiveValue, rhs: &PrimitiveValue) -> bool {
         (PrimitiveValue::Number(n), PrimitiveValue::String(s))
         | (PrimitiveValue::String(s), PrimitiveValue::Number(n)) => {
             // String is coerced to number using JS ToNumber semantics.
-            // Ill-formed strings coerce to NaN, like any non-numeric text.
-            let sv = match s.as_str() {
-                Some(utf8) => js_to_number(utf8),
-                None => f64::NAN,
-            };
+            // Non-ASCII content (UTF-16 storage) cannot be numeric → NaN.
+            let sv = s.as_bytes().map(js_to_number).unwrap_or(f64::NAN);
             let nv = n.value();
             if nv.is_nan() || sv.is_nan() {
                 false

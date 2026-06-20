@@ -94,7 +94,7 @@ pub(super) fn lower_jsx_element_name(
                     builder,
                     InstructionValue::Primitive {
                         value: PrimitiveValue::String(
-                            bun_core::BStr::new(bytes).to_string().into(),
+                            crate::diagnostics::JsString::from_wtf8_bytes(bytes),
                         ),
                         loc,
                     },

@@ -2,7 +2,7 @@
 
 use crate::collections::IndexMap;
 use crate::diagnostics::{
-    CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, JsString, SourceLocation,
+    CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, SourceLocation,
 };
 use crate::hir::{
     Effect, FunctionExpressionType, InstructionKind, InstructionValue, LValue, LoweredFunction,
@@ -55,7 +55,7 @@ pub(super) fn lower_function(
     let component_scope = builder.component_scope();
 
     let parent_bindings = builder.bindings().clone();
-    let parent_used_names = builder.used_names().clone();
+    let parent_used_refs = builder.used_refs().clone();
     let context_ids = builder.context_identifiers().clone();
     let import_bindings = builder.import_bindings().clone();
 
@@ -76,14 +76,14 @@ pub(super) fn lower_function(
 
     // Use host_and_env_mut to avoid conflicting borrows
     let (host, env) = builder.host_and_env_mut();
-    let (hir_func, child_used_names, child_bindings) = lower_inner(
+    let (hir_func, child_used_refs, child_bindings) = lower_inner(
         &func,
         id,
         loc,
         host,
         env,
         Some(parent_bindings),
-        Some(parent_used_names),
+        Some(parent_used_refs),
         &merged_context,
         parent_function_scope,
         component_scope,
@@ -92,7 +92,7 @@ pub(super) fn lower_function(
         false, // nested function
     )?;
 
-    builder.merge_used_names(child_used_names);
+    builder.merge_used_refs(child_used_refs);
     builder.merge_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
@@ -115,7 +115,7 @@ pub(super) fn lower_function_declaration(
     let component_scope = builder.component_scope();
 
     let parent_bindings = builder.bindings().clone();
-    let parent_used_names = builder.used_names().clone();
+    let parent_used_refs = builder.used_refs().clone();
     let context_ids = builder.context_identifiers().clone();
     let import_bindings = builder.import_bindings().clone();
 
@@ -135,14 +135,14 @@ pub(super) fn lower_function_declaration(
     };
 
     let (host, env) = builder.host_and_env_mut();
-    let (hir_func, child_used_names, child_bindings) = lower_inner(
+    let (hir_func, child_used_refs, child_bindings) = lower_inner(
         &func,
         func_name,
         loc,
         host,
         env,
         Some(parent_bindings),
-        Some(parent_used_names),
+        Some(parent_used_refs),
         &merged_context,
         parent_function_scope,
         component_scope,
@@ -151,7 +151,7 @@ pub(super) fn lower_function_declaration(
         false, // nested function
     )?;
 
-    builder.merge_used_names(child_used_names);
+    builder.merge_used_refs(child_used_refs);
     builder.merge_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
@@ -243,7 +243,7 @@ pub(super) fn lower_function_for_object_method(
     let component_scope = builder.component_scope();
 
     let parent_bindings = builder.bindings().clone();
-    let parent_used_names = builder.used_names().clone();
+    let parent_used_refs = builder.used_refs().clone();
     let context_ids = builder.context_identifiers().clone();
     let import_bindings = builder.import_bindings().clone();
 
@@ -262,14 +262,14 @@ pub(super) fn lower_function_for_object_method(
     };
 
     let (host, env) = builder.host_and_env_mut();
-    let (hir_func, child_used_names, child_bindings) = lower_inner(
+    let (hir_func, child_used_refs, child_bindings) = lower_inner(
         &func,
         None,
         func_loc,
         host,
         env,
         Some(parent_bindings),
-        Some(parent_used_names),
+        Some(parent_used_refs),
         &merged_context,
         parent_function_scope,
         component_scope,
@@ -278,7 +278,7 @@ pub(super) fn lower_function_for_object_method(
         false, // nested function
     )?;
 
-    builder.merge_used_names(child_used_names);
+    builder.merge_used_refs(child_used_refs);
     builder.merge_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
@@ -371,7 +371,7 @@ pub(super) fn lower_object_property_key(
         // the static-key path. Roped strings fall through to the
         // computed/unsupported arms below.
         Data::EString(s) if s.next.is_none() => {
-            let name = estring_to_marker_string(s);
+            let name = estring_to_store_str(s);
             // Bun stores non-computed identifier keys as `EString`; classify as
             // Identifier when the bytes form a valid identifier so the HIR
             // matches upstream's `Expression::Identifier` arm.
@@ -417,11 +417,10 @@ pub(super) fn lower_object_property_key(
     }
 }
 
-fn estring_to_marker_string(s: &E::EString) -> StoreStr {
+fn estring_to_store_str(s: &E::EString) -> StoreStr {
     debug_assert!(s.next.is_none());
     if s.is_utf16 {
-        let marker = JsString::from_code_units(s.slice16()).to_marker_string();
-        super::helpers::arena_str(marker.as_bytes())
+        super::helpers::arena_str(bun_core::strings::to_utf8_alloc(s.slice16()).as_slice())
     } else {
         StoreStr::new(s.slice8())
     }

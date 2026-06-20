@@ -18,8 +18,10 @@ use crate::diagnostics::{
 };
 use crate::hir::ReactFunctionType;
 use crate::hir::environment::OutputMode;
+use crate::hir::environment_config::EnvironmentConfig;
+#[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 use crate::hir::environment_config::{
-    EnvironmentConfig, ExhaustiveEffectDepsMode, ExternalFunctionConfig, InstrumentationConfig,
+    ExhaustiveEffectDepsMode, ExternalFunctionConfig, InstrumentationConfig,
 };
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::expr::Data as ExprData;

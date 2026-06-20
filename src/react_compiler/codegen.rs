@@ -25,10 +25,9 @@ use bun_ast::{
     b, flags,
 };
 
-use crate::diagnostics::js_string::JsStringRef;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, CompilerErrorDetail,
-    ErrorCategory, JsString, SourceLocation as DiagSourceLocation,
+    ErrorCategory, SourceLocation as DiagSourceLocation,
 };
 use crate::hir::environment::Environment;
 use crate::hir::reactive::{
@@ -38,9 +37,9 @@ use crate::hir::reactive::{
 };
 use crate::hir::{
     ArrayElement, ArrayPattern, BlockId, DeclarationId, FunctionExpressionType, HirVec,
-    IdentifierId, InstructionKind, InstructionValue, JsxAttribute, JsxTag, LogicalOperator,
-    ObjectPattern, ObjectPropertyKey, ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern,
-    Pattern, Place, PlaceOrSpread, PrimitiveValue, PropertyLiteral, ScopeId,
+    IdentifierId, IdentifierName, InstructionKind, InstructionValue, JsxAttribute, JsxTag,
+    LogicalOperator, ObjectPattern, ObjectPropertyKey, ObjectPropertyOrSpread, ObjectPropertyType,
+    ParamPattern, Pattern, Place, PlaceOrSpread, PrimitiveValue, PropertyLiteral, ScopeId,
 };
 use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_function};
 use crate::reactive_scopes::{
@@ -97,45 +96,68 @@ pub struct OutlinedFunction {
     pub fn_type: Option<crate::hir::ReactFunctionType>,
 }
 
+#[derive(Clone, Copy)]
+enum WellKnown {
+    UseMemoCache,
+    MemoCache,
+    Symbol,
+    NaN,
+    Infinity,
+    Underscore,
+}
+
+impl WellKnown {
+    const COUNT: usize = 6;
+}
+
 /// Host-side state shared across nested function-expression codegen so the
 /// same identifier name resolves to the same `Ref` everywhere in the compiled
 /// component.
 pub struct Codegen<'h> {
     pub host: &'h mut dyn Host,
     pub arena: &'h Arena,
-    name_to_ref: HashMap<Vec<u8>, Ref>,
+    id_to_ref: IdMap<IdentifierId, Ref>,
+    well_known: [Option<Ref>; WellKnown::COUNT],
+    name_to_ref: HashMap<StoreStr, Ref>,
     label_to_ref: IdMap<BlockId, Ref>,
 }
 
 impl<'h> Codegen<'h> {
-    pub fn new(
-        host: &'h mut dyn Host,
-        arena: &'h Arena,
-        used_names: impl IntoIterator<Item = (String, Ref)>,
-    ) -> Self {
+    pub fn new(host: &'h mut dyn Host, arena: &'h Arena, memo_cache_import: Option<Ref>) -> Self {
+        let mut well_known = [None; WellKnown::COUNT];
+        well_known[WellKnown::UseMemoCache as usize] = memo_cache_import;
         Codegen {
             host,
             arena,
-            name_to_ref: used_names
-                .into_iter()
-                .map(|(s, r)| (s.into_bytes(), r))
-                .collect(),
+            id_to_ref: IdMap::new(),
+            well_known,
+            name_to_ref: HashMap::new(),
             label_to_ref: IdMap::new(),
         }
     }
 
-    fn ref_for_name(&mut self, name: &[u8]) -> Ref {
-        if let Some(&r) = self.name_to_ref.get(name) {
+    fn ref_for_name(&mut self, name: StoreStr) -> Ref {
+        if let Some(&r) = self.name_to_ref.get(&name) {
+            self.host.record_usage(r);
+            return r;
+        }
+        let r = self.host.new_generated(name.slice());
+        self.name_to_ref.insert(name, r);
+        r
+    }
+
+    fn well_known(&mut self, w: WellKnown, name: &[u8]) -> Ref {
+        if let Some(r) = self.well_known[w as usize] {
             self.host.record_usage(r);
             return r;
         }
         let r = self.host.new_generated(name);
-        self.name_to_ref.insert(name.to_vec(), r);
+        self.well_known[w as usize] = Some(r);
         r
     }
 
-    fn ident_expr(&mut self, name: &[u8], loc: Loc) -> Expr {
-        if name == b"undefined" {
+    fn ident_expr(&mut self, name: StoreStr, loc: Loc) -> Expr {
+        if name.slice() == b"undefined" {
             return Expr::init(E::Undefined {}, loc);
         }
         Expr::init_identifier(self.ref_for_name(name), loc)
@@ -177,10 +199,7 @@ pub fn codegen_function(
     if cx.env.hook_guard_name.is_some()
         && cx.env.output_mode == crate::hir::environment::OutputMode::Client
     {
-        let guard_ref = {
-            let name = cx.env.hook_guard_name.as_deref().unwrap();
-            cx.cg.ref_for_name(name)
-        };
+        let guard_ref = cx.cg.ref_for_name(cx.env.hook_guard_name.unwrap());
         let body_stmts = std::mem::take(&mut compiled.body);
         compiled.body = vec![create_function_body_hook_guard(guard_ref, body_stmts, 0, 1)];
     }
@@ -192,7 +211,10 @@ pub fn codegen_function(
         let loc = Loc::EMPTY;
 
         // const $ = useMemoCache(N)
-        let use_memo_cache = cx.ident_expr(b"useMemoCache", loc);
+        let use_memo_cache = Expr::init_identifier(
+            cx.cg.well_known(WellKnown::UseMemoCache, b"useMemoCache"),
+            loc,
+        );
         let call = Expr::init(
             E::Call {
                 target: use_memo_cache,
@@ -204,7 +226,9 @@ pub fn codegen_function(
             },
             loc,
         );
-        let cache_ref = cx.cg.ref_for_name(cache_name.as_bytes());
+        let cache_ref = cx
+            .cg
+            .well_known(WellKnown::MemoCache, cache_name.as_bytes());
         preface.push(Stmt::alloc(
             S::Local {
                 kind: S::Kind::KConst,
@@ -228,22 +252,19 @@ pub fn codegen_function(
     // Instrument forget: emit instrumentation call at the top of the function body
     if let Some(instrument_config) = cx.env.config.enable_emit_instrument_forget.as_ref() {
         if func.id.is_some() && cx.env.output_mode == crate::hir::environment::OutputMode::Client {
-            let instrument_fn_local = cx
-                .env
-                .instrument_fn_name
-                .as_deref()
-                .unwrap_or(instrument_config.fn_.import_specifier_name.as_bytes());
+            let instrument_fn_local = cx.env.instrument_fn_name.unwrap_or_else(|| {
+                store_str(instrument_config.fn_.import_specifier_name.as_bytes())
+            });
             let target = cx.cg.ident_expr(instrument_fn_local, Loc::EMPTY);
 
             let gating_expr: Option<Expr> = cx
                 .env
                 .instrument_gating_name
-                .as_deref()
                 .map(|name| cx.cg.ident_expr(name, Loc::EMPTY));
             let global_gating_expr: Option<Expr> = instrument_config
                 .global_gating
                 .as_deref()
-                .map(|g| cx.cg.ident_expr(g.as_bytes(), Loc::EMPTY));
+                .map(|g| cx.cg.ident_expr(store_str(g.as_bytes()), Loc::EMPTY));
 
             let if_test = match (gating_expr, global_gating_expr) {
                 (Some(gating), Some(global)) => Expr::init(
@@ -384,8 +405,18 @@ impl<'a, 'h> Context<'a, 'h> {
         self.env.record_error(detail)
     }
 
-    fn ident_expr(&mut self, name: &[u8], loc: Loc) -> Expr {
-        self.cg.ident_expr(name, loc)
+    fn ref_for_id(&mut self, id: IdentifierId) -> Result<Ref, CompilerError> {
+        if let Some(&r) = self.cg.id_to_ref.get(id) {
+            self.cg.host.record_usage(r);
+            return Ok(r);
+        }
+        let Some(name) = &self.env.identifiers[id.0 as usize].name else {
+            return Err(unnamed_identifier_err(id.0));
+        };
+        let (IdentifierName::Named(s) | IdentifierName::Promoted(s)) = name;
+        let r = self.cg.ref_for_name(*s);
+        self.cg.id_to_ref.insert(id, r);
+        Ok(r)
     }
 }
 
@@ -441,7 +472,7 @@ fn codegen_reactive_function(
         count_memo_blocks(func, cx.env);
 
     let id = func.id.as_ref().map(|name| {
-        let r = cx.cg.ref_for_name(name.as_bytes());
+        let r = cx.cg.ref_for_name(store_str(name.as_bytes()));
         LocRef {
             loc: convert_loc(func.loc),
             ref_: r,
@@ -591,7 +622,9 @@ fn codegen_reactive_scope(
     deps.sort_unstable_by(|a, b| compare_scope_dependency(a, b, cx.env));
 
     let cache_name = cx.synthesize_name("$");
-    let cache_ref = cx.cg.ref_for_name(cache_name.as_bytes());
+    let cache_ref = cx
+        .cg
+        .well_known(WellKnown::MemoCache, cache_name.as_bytes());
     let cache_ident = || Expr::init_identifier(cache_ref, loc);
     let cache_slot = |index: u32| {
         Expr::init(
@@ -761,7 +794,8 @@ fn codegen_reactive_scope(
                 early_return.loc,
             ));
         };
-        let name_expr = cx.cg.ident_expr(name.value(), loc);
+        let _ = name;
+        let name_expr = Expr::init_identifier(cx.ref_for_id(early_return.value)?, loc);
         statements.push(Stmt::alloc(
             S::If {
                 test_: Expr::init(
@@ -1182,7 +1216,7 @@ fn extract_for_in_of_lval(
                 loc,
                 suggestions: None,
             })?;
-            let r = cx.cg.ref_for_name(b"_");
+            let r = cx.cg.well_known(WellKnown::Underscore, b"_");
             return Ok((
                 Binding::alloc(cx.cg.arena, b::Identifier { r#ref: r }, Loc::EMPTY),
                 S::Kind::KLet,
@@ -1775,7 +1809,9 @@ fn codegen_base_instruction_value(
         InstructionValue::LoadLocal { place, .. } | InstructionValue::LoadContext { place, .. } => {
             codegen_place_to_expression(cx, place)
         }
-        InstructionValue::LoadGlobal { binding, .. } => Ok(cx.cg.ident_expr(binding.name(), loc)),
+        InstructionValue::LoadGlobal { binding, .. } => {
+            Ok(cx.cg.ident_expr(StoreStr::new(binding.name()), loc))
+        }
         InstructionValue::CallExpression { callee, args, .. } => {
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;
@@ -2034,7 +2070,7 @@ fn codegen_base_instruction_value(
         }
         InstructionValue::StoreGlobal { name, value, .. } => {
             let rhs = codegen_place_to_expression(cx, value)?;
-            let left = cx.cg.ident_expr(name.slice(), loc);
+            let left = cx.cg.ident_expr(*name, loc);
             Ok(Expr::init(
                 E::Binary {
                     op: OpCode::BinAssign,
@@ -2211,7 +2247,7 @@ fn codegen_function_expression(
                 fn_flags |= flags::Function::HasRestArg;
             }
             let fn_name = name.as_ref().map(|n| {
-                let r = cx.cg.ref_for_name(n.slice());
+                let r = cx.cg.ref_for_name(*n);
                 LocRef { loc, ref_: r }
             });
             Expr::init(
@@ -2814,12 +2850,8 @@ fn convert_identifier(
     cx: &mut Context,
     identifier_id: IdentifierId,
 ) -> Result<(Ref, Loc), CompilerError> {
-    let ident = &cx.env.identifiers[identifier_id.0 as usize];
-    let Some(name) = &ident.name else {
-        return Err(unnamed_identifier_err(identifier_id.0));
-    };
-    let loc = ident.loc;
-    Ok((cx.cg.ref_for_name(name.value()), convert_loc(loc)))
+    let loc = cx.env.identifiers[identifier_id.0 as usize].loc;
+    Ok((cx.ref_for_id(identifier_id)?, convert_loc(loc)))
 }
 
 fn codegen_arguments(
@@ -3016,13 +3048,6 @@ fn estring_utf8(s: &str) -> E::EString {
     }
 }
 
-fn estring_js(s: &JsString) -> E::EString {
-    match s.as_ref() {
-        JsStringRef::Utf8(s) => estring_utf8(s),
-        JsStringRef::Wtf16(units) => E::EString::init_utf16(AstAlloc::vec_from_slice(units).leak()),
-    }
-}
-
 #[inline]
 fn string_expr(s: &str, loc: Loc) -> Expr {
     Expr::init(estring_utf8(s), loc)
@@ -3107,7 +3132,7 @@ fn property_access_expr(
 }
 
 fn symbol_for(cx: &mut Context, name: &'static str) -> Expr {
-    let symbol = cx.ident_expr(b"Symbol", Loc::EMPTY);
+    let symbol = Expr::init_identifier(cx.cg.well_known(WellKnown::Symbol, b"Symbol"), Loc::EMPTY);
     let callee = Expr::init(
         E::Dot {
             target: symbol,
@@ -3133,9 +3158,10 @@ fn codegen_primitive_value(cx: &mut Context, value: &PrimitiveValue, loc: Loc) -
         PrimitiveValue::Number(n) => {
             let f = n.value();
             if f.is_nan() {
-                cx.ident_expr(b"NaN", loc)
+                Expr::init_identifier(cx.cg.well_known(WellKnown::NaN, b"NaN"), loc)
             } else if f.is_infinite() {
-                let inf = cx.ident_expr(b"Infinity", loc);
+                let inf =
+                    Expr::init_identifier(cx.cg.well_known(WellKnown::Infinity, b"Infinity"), loc);
                 if f > 0.0 {
                     inf
                 } else {
@@ -3153,7 +3179,10 @@ fn codegen_primitive_value(cx: &mut Context, value: &PrimitiveValue, loc: Loc) -
             }
         }
         PrimitiveValue::Boolean(b) => Expr::init(E::Boolean { value: *b }, loc),
-        PrimitiveValue::String(s) => Expr::init(estring_js(s), loc),
+        PrimitiveValue::String(s) => Expr {
+            data: ExprData::EString(s.as_estring()),
+            loc,
+        },
         PrimitiveValue::Null => Expr::init(E::Null {}, loc),
         PrimitiveValue::Undefined => Expr::init(E::Undefined {}, loc),
     }
@@ -3335,10 +3364,7 @@ fn maybe_wrap_hook_call(cx: &mut Context, call_expr: Expr, callee_id: Identifier
         && cx.env.output_mode == crate::hir::environment::OutputMode::Client
         && is_hook_identifier(cx, callee_id)
     {
-        let guard_ref = {
-            let name = cx.env.hook_guard_name.as_deref().unwrap();
-            cx.cg.ref_for_name(name)
-        };
+        let guard_ref = cx.cg.ref_for_name(cx.env.hook_guard_name.unwrap());
         return wrap_hook_call_with_guard(guard_ref, call_expr, 2, 3);
     }
     call_expr

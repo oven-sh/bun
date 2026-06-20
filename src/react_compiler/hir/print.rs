@@ -162,49 +162,28 @@ impl fmt::Display for DisplayPrimitive<'_> {
             crate::hir::PrimitiveValue::Number(n) => {
                 f.write_str(&crate::hir::format_js_number(n.value()))
             }
-            crate::hir::PrimitiveValue::String(s) => match s.as_str() {
-                Some(utf8) => write_js_escaped_chars(f, utf8.chars()),
-                // Ill-formed strings: escape the well-formed segments exactly like
-                // format_js_string and render each unpaired surrogate as \uXXXX,
-                // matching what TS's JSON.stringify-based printer emits.
-                None => {
-                    f.write_char('"')?;
-                    let mut units = s.code_units().into_iter().peekable();
-                    while let Some(unit) = units.next() {
-                        let is_lead = (0xD800..=0xDBFF).contains(&unit);
-                        let is_trail = (0xDC00..=0xDFFF).contains(&unit);
-                        if is_lead {
-                            if let Some(&next) = units.peek() {
-                                if (0xDC00..=0xDFFF).contains(&next) {
-                                    units.next();
-                                    let cp = 0x10000
-                                        + ((unit as u32 - 0xD800) << 10)
-                                        + (next as u32 - 0xDC00);
-                                    f.write_char(char::from_u32(cp).expect("valid supplementary"))?;
-                                    continue;
-                                }
-                            }
-                        }
-                        if is_lead || is_trail {
-                            write!(f, "\\u{unit:04x}")?;
-                            continue;
-                        }
-                        let c = char::from_u32(unit as u32).expect("BMP non-surrogate is a char");
-                        match c {
-                            '"' => f.write_str("\\\"")?,
-                            '\\' => f.write_str("\\\\")?,
-                            '\n' => f.write_str("\\n")?,
-                            '\r' => f.write_str("\\r")?,
-                            '\t' => f.write_str("\\t")?,
-                            '\u{0008}' => f.write_str("\\b")?,
-                            '\u{000c}' => f.write_str("\\f")?,
-                            c if (c as u32) <= 0x1F => write!(f, "\\u{:04x}", c as u32)?,
-                            c => f.write_char(c)?,
-                        }
-                    }
-                    f.write_char('"')
+            crate::hir::PrimitiveValue::String(s) => {
+                let e = s.estring();
+                if !e.is_utf16 {
+                    return write_js_escaped_chars(f, e.slice8().chars());
                 }
-            },
+                f.write_char('"')?;
+                for r in char::decode_utf16(e.slice16().iter().copied()) {
+                    match r {
+                        Err(e) => write!(f, "\\u{:04x}", e.unpaired_surrogate())?,
+                        Ok('"') => f.write_str("\\\"")?,
+                        Ok('\\') => f.write_str("\\\\")?,
+                        Ok('\n') => f.write_str("\\n")?,
+                        Ok('\r') => f.write_str("\\r")?,
+                        Ok('\t') => f.write_str("\\t")?,
+                        Ok('\u{0008}') => f.write_str("\\b")?,
+                        Ok('\u{000c}') => f.write_str("\\f")?,
+                        Ok(c) if (c as u32) <= 0x1F => write!(f, "\\u{:04x}", c as u32)?,
+                        Ok(c) => f.write_char(c)?,
+                    }
+                }
+                f.write_char('"')
+            }
         }
     }
 }

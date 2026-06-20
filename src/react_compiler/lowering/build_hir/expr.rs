@@ -5,7 +5,7 @@ use crate::diagnostics::{
 };
 use crate::hir::*;
 use bun_ast::expr::Data;
-use bun_ast::{self as ast, E, Expr, G, Loc, OpCode, Ref, symbol};
+use bun_ast::{self as ast, E, Expr, G, Loc, OpCode, Ref, StoreRef, symbol};
 
 use super::function::{lower_function_to_value, lower_object_method};
 use super::helpers::{
@@ -39,7 +39,7 @@ pub(crate) fn lower_expression(
             loc,
         }),
         Data::EString(lit) => Ok(InstructionValue::Primitive {
-            value: PrimitiveValue::String(convert_js_string(lit, loc)?),
+            value: PrimitiveValue::String(convert_js_string(*lit)),
             loc,
         }),
         Data::EUndefined(_) => {
@@ -1455,36 +1455,20 @@ fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {
 // Conversion helpers
 // =============================================================================
 
-fn convert_js_string(
-    s: &E::EString,
-    loc: Option<SourceLocation>,
-) -> Result<JsString, CompilerError> {
-    if s.next.is_some() {
-        let mut joined = String::new();
-        let mut cur = Some(s);
-        while let Some(seg) = cur {
-            if seg.is_utf16 {
-                joined.push_str(
-                    &String::from_utf16(seg.slice16())
-                        .map_err(|_| cold_todo("non-utf16 string", loc))?,
-                );
-            } else {
-                joined.push_str(
-                    core::str::from_utf8(seg.slice8())
-                        .map_err(|_| cold_todo("non-utf8 identifier", loc))?,
-                );
-            }
-            cur = seg.next.as_ref().map(|r| r.get());
-        }
-        return Ok(JsString::from(joined));
+fn convert_js_string(s: StoreRef<E::EString>) -> JsString {
+    if s.get().next.is_none() {
+        return JsString::new(s);
     }
-    if s.is_utf16 {
-        Ok(JsString::from_code_units(s.slice16()))
-    } else {
-        let s =
-            core::str::from_utf8(s.slice8()).map_err(|_| cold_todo("non-utf8 identifier", loc))?;
-        Ok(JsString::from(s))
+    // Roped literal (rare; only from parser-level constant folding): flatten so
+    // every HIR consumer can ignore ropes.
+    let mut joined: Vec<u8> = Vec::with_capacity(s.get().len());
+    let mut cur = Some(s.get());
+    while let Some(seg) = cur {
+        debug_assert!(!seg.is_utf16);
+        joined.extend_from_slice(seg.slice8());
+        cur = seg.next.as_ref().map(|r| r.get());
     }
+    JsString::from_wtf8_bytes(&joined)
 }
 
 fn unsupported_node(node_type: &'static str, loc: Option<SourceLocation>) -> InstructionValue {

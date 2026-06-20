@@ -46,6 +46,17 @@ test.skipIf(!isWindows)("translateNtStatusToE maps delete-related NTSTATUS codes
   // STATUS_MEDIA_WRITE_PROTECTED -> ERROR_WRITE_PROTECT -> EROFS
   expect(translateNtStatusToE(0xc00000a2)).toBe("ROFS");
 
+  // RtlNtStatusToDosError collapses STATUS_NOT_IMPLEMENTED,
+  // STATUS_INVALID_DEVICE_REQUEST and STATUS_ILLEGAL_FUNCTION to
+  // ERROR_INVALID_FUNCTION, which libuv's Win32 table maps to EISDIR for the
+  // DeleteFileW-on-a-directory case. At the NTSTATUS layer these mean the
+  // driver did not implement the request, not that the target is a
+  // directory; mapping to ISDIR would livelock recursive fs.rm by flipping
+  // treat_as_dir. They must surface as NOTSUP.
+  expect(translateNtStatusToE(0xc0000002)).toBe("NOTSUP"); // STATUS_NOT_IMPLEMENTED
+  expect(translateNtStatusToE(0xc0000010)).toBe("NOTSUP"); // STATUS_INVALID_DEVICE_REQUEST
+  expect(translateNtStatusToE(0xc00000af)).toBe("NOTSUP"); // STATUS_ILLEGAL_FUNCTION
+
   // A status that RtlNtStatusToDosError does not recognise maps to
   // ERROR_MR_MID_NOT_FOUND, which has no errno, so we still get UNKNOWN
   // (not a panic).

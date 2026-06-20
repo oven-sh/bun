@@ -909,10 +909,23 @@ pub mod windows {
             // and run it through the same libuv-derived table Node.js uses.
             // Filter drivers and cloud-sync placeholders return many NTSTATUS
             // codes that are not enumerated above; without this fallthrough
-            // they would all surface as `UNKNOWN` (and then `EFAULT` from the
-            // fs.rm error mapping). Codes `RtlNtStatusToDosError` cannot map
-            // still fall back to `E::UNKNOWN` via `to_e()`.
-            _ => Win32Error::from_ntstatus(err).to_e(),
+            // they would all surface as `UNKNOWN`. Codes `RtlNtStatusToDosError`
+            // cannot map still fall back to `E::UNKNOWN` via `to_e()`.
+            //
+            // Exception: the libuv Win32 table maps `ERROR_INVALID_FUNCTION`
+            // to `EISDIR` (because Win32 `DeleteFileW` returns it when called
+            // on a directory). At the NTSTATUS layer that case is
+            // `STATUS_FILE_IS_A_DIRECTORY`, handled explicitly above; anything
+            // else that `RtlNtStatusToDosError` collapses to
+            // `ERROR_INVALID_FUNCTION` (`STATUS_NOT_IMPLEMENTED`,
+            // `STATUS_INVALID_DEVICE_REQUEST`, `STATUS_ILLEGAL_FUNCTION`) means
+            // the driver did not implement the request, not that the target
+            // is a directory. Returning `EISDIR` here would make recursive
+            // `fs.rm` flip `treat_as_dir` forever, so override it to `ENOTSUP`.
+            _ => match Win32Error::from_ntstatus(err).to_e() {
+                E::ISDIR => E::NOTSUP,
+                e => e,
+            },
         }
     }
 }

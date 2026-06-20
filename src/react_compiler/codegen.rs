@@ -38,8 +38,9 @@ use crate::hir::reactive::{
 use crate::hir::{
     ArrayElement, ArrayPattern, BlockId, DeclarationId, FunctionExpressionType, HirVec,
     IdentifierId, IdentifierName, InstructionKind, InstructionValue, JsxAttribute, JsxTag,
-    LogicalOperator, ObjectPattern, ObjectPropertyKey, ObjectPropertyOrSpread, ObjectPropertyType,
-    ParamPattern, Pattern, Place, PlaceOrSpread, PrimitiveValue, PropertyLiteral, ScopeId,
+    LogicalOperator, NonLocalKind, ObjectPattern, ObjectPropertyKey, ObjectPropertyOrSpread,
+    ObjectPropertyType, ParamPattern, Pattern, Place, PlaceOrSpread, PrimitiveValue,
+    PropertyLiteral, ScopeId,
 };
 use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_function};
 use crate::reactive_scopes::{
@@ -1825,10 +1826,15 @@ fn codegen_base_instruction_value(
         InstructionValue::LoadLocal { place, .. } | InstructionValue::LoadContext { place, .. } => {
             codegen_place_to_expression(cx, place)
         }
-        InstructionValue::LoadGlobal { binding, .. } => match binding.ref_() {
-            Some(r) => Ok(cx.cg.ident_expr_for_ref(r, loc)),
-            None => Ok(cx.cg.ident_expr(StoreStr::new(binding.name()), loc)),
-        },
+        InstructionValue::LoadGlobal { binding, .. } => {
+            if let NonLocalKind::BunOpaque(e) = binding.kind {
+                return Ok(e);
+            }
+            match binding.ref_() {
+                Some(r) => Ok(cx.cg.ident_expr_for_ref(r, loc)),
+                None => Ok(cx.cg.ident_expr(StoreStr::new(binding.name()), loc)),
+            }
+        }
         InstructionValue::CallExpression { callee, args, .. } => {
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;

@@ -774,5 +774,6 @@ fn get_hook_detection_name(binding: &NonLocalBinding) -> Option<&[u8]> {
             }
         }
         NonLocalKind::ModuleLocal { name } => Some(name.slice()),
+        NonLocalKind::BunOpaque(_) => None,
     }
 }

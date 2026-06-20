@@ -1375,7 +1375,7 @@ pub struct NonLocalBinding {
     pub kind: NonLocalKind,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub enum NonLocalKind {
     ImportDefault {
         name: StoreStr,
@@ -1396,6 +1396,43 @@ pub enum NonLocalKind {
     Global {
         name: StoreStr,
     },
+    /// A Bun-synthetic value expression the compiler treats as an opaque frozen
+    /// constant. The original `Expr` is carried whole so codegen emits it
+    /// unchanged and the bundler keeps any `import_record_index` / `Ref` /
+    /// variant tag it holds.
+    BunOpaque(bun_ast::Expr),
+}
+
+impl std::fmt::Debug for NonLocalKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ImportDefault { name, module } => f
+                .debug_struct("ImportDefault")
+                .field("name", name)
+                .field("module", module)
+                .finish(),
+            Self::ImportSpecifier {
+                name,
+                module,
+                imported,
+            } => f
+                .debug_struct("ImportSpecifier")
+                .field("name", name)
+                .field("module", module)
+                .field("imported", imported)
+                .finish(),
+            Self::ImportNamespace { name, module } => f
+                .debug_struct("ImportNamespace")
+                .field("name", name)
+                .field("module", module)
+                .finish(),
+            Self::ModuleLocal { name } => {
+                f.debug_struct("ModuleLocal").field("name", name).finish()
+            }
+            Self::Global { name } => f.debug_struct("Global").field("name", name).finish(),
+            Self::BunOpaque(e) => f.debug_tuple("BunOpaque").field(&e.data.tag()).finish(),
+        }
+    }
 }
 
 impl NonLocalBinding {
@@ -1407,6 +1444,20 @@ impl NonLocalBinding {
             | NonLocalKind::ImportNamespace { name, .. }
             | NonLocalKind::ModuleLocal { name, .. }
             | NonLocalKind::Global { name, .. } => name.slice(),
+            NonLocalKind::BunOpaque(e) => {
+                use bun_ast::expr::Tag;
+                match e.data.tag() {
+                    Tag::ERequireString | Tag::ERequireCallTarget => b"require",
+                    Tag::ERequireResolveString | Tag::ERequireResolveCallTarget => {
+                        b"require.resolve"
+                    }
+                    Tag::ERequireMain => b"require.main",
+                    Tag::EImportMetaMain => b"import.meta.main",
+                    Tag::EBranchBoolean => b"feature()",
+                    Tag::ESpecial => b"module.exports",
+                    _ => b"<bun-opaque>",
+                }
+            }
         }
     }
 

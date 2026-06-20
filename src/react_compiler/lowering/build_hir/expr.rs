@@ -298,49 +298,41 @@ pub(crate) fn lower_expression(
         }),
         Data::EInlinedEnum(e) => lower_expression(builder, &e.value),
 
-        Data::ERequireCallTarget => {
-            let place = lower_value_to_temporary(
-                builder,
-                InstructionValue::LoadGlobal {
+        Data::EBranchBoolean(lit) => Ok(InstructionValue::Primitive {
+            value: PrimitiveValue::Boolean(lit.value),
+            loc,
+        }),
+        Data::ERequireCallTarget
+        | Data::ERequireResolveCallTarget
+        | Data::ERequireString(_)
+        | Data::ERequireResolveString(_)
+        | Data::EImportMetaMain(_)
+        | Data::ERequireMain => Ok(InstructionValue::LoadGlobal {
+            binding: NonLocalBinding {
+                ref_: Ref::NONE,
+                kind: NonLocalKind::BunOpaque(*expr),
+            },
+            loc,
+        }),
+        Data::ESpecial(special) => match special {
+            E::Special::ModuleExports | E::Special::ResolvedSpecifierString(_) => {
+                Ok(InstructionValue::LoadGlobal {
                     binding: NonLocalBinding {
                         ref_: Ref::NONE,
-                        kind: NonLocalKind::Global {
-                            name: StoreStr::new(b"require"),
-                        },
+                        kind: NonLocalKind::BunOpaque(*expr),
                     },
                     loc,
-                },
-            )?;
-            Ok(InstructionValue::LoadLocal { place, loc })
-        }
-        Data::ERequireResolveCallTarget => {
-            let object = lower_value_to_temporary(
-                builder,
-                InstructionValue::LoadGlobal {
-                    binding: NonLocalBinding {
-                        ref_: Ref::NONE,
-                        kind: NonLocalKind::Global {
-                            name: StoreStr::new(b"require"),
-                        },
-                    },
-                    loc,
-                },
-            )?;
-            Ok(InstructionValue::PropertyLoad {
-                object,
-                property: PropertyLiteral::String(StoreStr::new(b"resolve")),
-                loc,
-            })
-        }
+                })
+            }
+            E::Special::HotEnabled
+            | E::Special::HotDisabled
+            | E::Special::HotData
+            | E::Special::HotAccept
+            | E::Special::HotAcceptVisited => Err(todo_err("ESpecial", loc)),
+        },
 
         Data::EMissing(_) => Err(todo_err("EMissing", loc)),
         Data::ECommonjsExportIdentifier(_) => Err(todo_err("ECommonjsExportIdentifier", loc)),
-        Data::EBranchBoolean(_) => Err(todo_err("EBranchBoolean", loc)),
-        Data::ERequireString(_) => Err(todo_err("ERequireString", loc)),
-        Data::ERequireResolveString(_) => Err(todo_err("ERequireResolveString", loc)),
-        Data::EImportMetaMain(_) => Err(todo_err("EImportMetaMain", loc)),
-        Data::ERequireMain => Err(todo_err("ERequireMain", loc)),
-        Data::ESpecial(_) => Err(todo_err("ESpecial", loc)),
         Data::ENameOfSymbol(_) => Err(todo_err("ENameOfSymbol", loc)),
     }
 }
@@ -1327,6 +1319,7 @@ fn is_reorderable_expression(
         | Data::ENumber(_)
         | Data::ENull(_)
         | Data::EBoolean(_)
+        | Data::EBranchBoolean(_)
         | Data::EBigInt(_) => true,
         Data::EUnary(unary) => {
             matches!(unary.op, OpCode::UnNot | OpCode::UnPos | OpCode::UnNeg)

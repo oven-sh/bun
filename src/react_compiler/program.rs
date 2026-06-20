@@ -27,8 +27,8 @@ use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{
-    self as ast, E, Expr, G, ImportKind, ImportRecord, Loc, Ref, S, Scope, Stmt, StoreSlice,
-    Symbol, b, flags,
+    self as ast, Expr, G, ImportKind, ImportRecord, Loc, Ref, S, Scope, Stmt, StoreSlice, Symbol,
+    b, flags,
 };
 
 use crate::ReactCompilerOptions;
@@ -653,30 +653,6 @@ fn expr_is_hook(host: &dyn Host, expr: &Expr) -> bool {
     }
 }
 
-fn get_callee_name_if_react_api<'a>(host: &'a dyn Host, callee: &Expr) -> Option<&'a [u8]> {
-    let name: &[u8] = match &callee.data {
-        ExprData::EIdentifier(id) => host.ref_name(id.ref_),
-        ExprData::EImportIdentifier(id) => host.ref_name(id.ref_),
-        ExprData::EDot(member) => {
-            let obj_name = match &member.target.data {
-                ExprData::EIdentifier(obj) => host.ref_name(obj.ref_),
-                ExprData::EImportIdentifier(obj) => host.ref_name(obj.ref_),
-                _ => return None,
-            };
-            if obj_name != b"React" {
-                return None;
-            }
-            member.name.slice()
-        }
-        _ => return None,
-    };
-    if name == b"forwardRef" || name == b"memo" {
-        Some(name)
-    } else {
-        None
-    }
-}
-
 // -----------------------------------------------------------------------
 // AST traversal helpers
 // -----------------------------------------------------------------------
@@ -951,7 +927,7 @@ fn get_react_function_type(
     name: Option<&[u8]>,
     func: &FunctionNode<'_>,
     body_directives: &[&[u8]],
-    parent_callee_name: Option<&[u8]>,
+    in_react_hoc: bool,
     opts: &ReactCompilerOptions,
 ) -> Option<ReactFunctionType> {
     let has_dynamic_gating_directive = opts.dynamic_gating.is_some()
@@ -962,17 +938,17 @@ fn get_react_function_type(
         || has_dynamic_gating_directive
     {
         return Some(
-            get_component_or_hook_like(host, name, func, parent_callee_name)
+            get_component_or_hook_like(host, name, func, in_react_hoc)
                 .unwrap_or(ReactFunctionType::Other),
         );
     }
 
     match opts.compilation_mode.as_deref().unwrap_or("infer") {
         "annotation" => None,
-        "infer" => get_component_or_hook_like(host, name, func, parent_callee_name),
+        "infer" => get_component_or_hook_like(host, name, func, in_react_hoc),
         "syntax" => None,
         "all" => Some(
-            get_component_or_hook_like(host, name, func, parent_callee_name)
+            get_component_or_hook_like(host, name, func, in_react_hoc)
                 .unwrap_or(ReactFunctionType::Other),
         ),
         _ => None,
@@ -983,7 +959,7 @@ fn get_component_or_hook_like(
     host: &dyn Host,
     name: Option<&[u8]>,
     func: &FunctionNode<'_>,
-    parent_callee_name: Option<&[u8]>,
+    in_react_hoc: bool,
 ) -> Option<ReactFunctionType> {
     let body = func.body().stmts.slice();
     if let Some(fn_name) = name {
@@ -1005,14 +981,12 @@ fn get_component_or_hook_like(
         }
     }
 
-    if let Some(callee_name) = parent_callee_name {
-        if callee_name == b"forwardRef" || callee_name == b"memo" {
-            return if calls_hooks_or_creates_jsx_in_stmts(host, body) {
-                Some(ReactFunctionType::Component)
-            } else {
-                None
-            };
-        }
+    if in_react_hoc {
+        return if calls_hooks_or_creates_jsx_in_stmts(host, body) {
+            Some(ReactFunctionType::Component)
+        } else {
+            None
+        };
     }
 
     None
@@ -1094,46 +1068,12 @@ fn leak_stmts(body: Vec<Stmt>) -> StoreSlice<Stmt> {
     StoreSlice::new_mut(v.leak())
 }
 
-fn apply_to_gfn(target: &mut G::Fn, codegen_fn: CodegenFunction) {
-    target.args = leak_args(codegen_fn.params);
-    target.body = G::FnBody {
-        loc: target.body.loc,
-        stmts: leak_stmts(codegen_fn.body),
-    };
-    set_flag(
-        &mut target.flags,
-        flags::Function::IsAsync,
-        codegen_fn.is_async,
-    );
-    set_flag(
-        &mut target.flags,
-        flags::Function::IsGenerator,
-        codegen_fn.generator,
-    );
-    set_flag(
-        &mut target.flags,
-        flags::Function::HasRestArg,
-        codegen_fn.has_rest_arg,
-    );
-}
-
 fn set_flag(flags: &mut flags::FunctionSet, flag: flags::Function, on: bool) {
     if on {
         flags.insert(flag);
     } else {
         flags.remove(flag);
     }
-}
-
-fn apply_to_arrow(target: &mut E::Arrow, codegen_fn: CodegenFunction) {
-    target.args = leak_args(codegen_fn.params);
-    target.body = G::FnBody {
-        loc: target.body.loc,
-        stmts: leak_stmts(codegen_fn.body),
-    };
-    target.is_async = codegen_fn.is_async;
-    target.has_rest_arg = codegen_fn.has_rest_arg;
-    target.prefer_expr = false;
 }
 
 fn build_outlined_decl(outlined: CodegenFunction) -> Stmt {
@@ -1259,123 +1199,74 @@ impl ReactCompilerState {
 }
 
 // -----------------------------------------------------------------------
-// Per-function entry points (called from `visit_stmt.rs` post-visit)
+// Per-function entry points
 // -----------------------------------------------------------------------
 
-/// Consider compiling a `function Foo() {}` declaration. On success the
-/// `func` body/args are replaced in place. Returns `true` if compiled.
-pub fn maybe_compile_function(
-    state: &mut ReactCompilerState,
-    host: &mut dyn Host,
-    func: &mut G::Fn,
-    name: Option<&[u8]>,
-) -> bool {
-    let loc = func.body.loc;
-    let codegen_fn = {
-        let node = FunctionNode::Function(&*func);
-        match maybe_compile_node(state, host, node, name, None, loc) {
-            Some(cf) => cf,
-            None => return false,
-        }
-    };
-    apply_to_gfn(func, codegen_fn);
-    // The compiled body now calls `_c(N)` (the injected runtime import). Record
-    // a use of the declaration's own name so the enclosing Part is not
-    // tree-shaken away while the runtime-import Part — kept unconditionally as
-    // a potentially side-effectful external import — survives, which would
-    // otherwise leave a dangling `react/compiler-runtime` import in output.
-    if let Some(name_ref) = func.name.as_ref().map(|n| n.ref_) {
-        host.record_usage(name_ref);
-    }
-    true
+/// Everything `FunctionNode` reads from a `G::Fn` / `E::Arrow`, captured by
+/// value so the compile hook inside `visit_stmts` doesn't need a pointer back
+/// to the caller's stack. `args` is an arena-backed `StoreSlice` (stable across
+/// the call); the live body is passed separately as the `visit_stmts` buffer.
+#[derive(Clone, Copy)]
+pub struct PendingCompile {
+    pub args: StoreSlice<G::Arg>,
+    pub flags: flags::FunctionSet,
+    pub body_loc: Loc,
+    pub args_loc: Loc,
+    pub binding: Option<Ref>,
+    pub in_react_hoc: bool,
 }
 
-/// Consider compiling a `const Foo = ...` initializer / `export default ...`
-/// expression. Handles `EArrow`, `EFunction`, and `memo(...)` / `forwardRef(...)`
-/// wrapping. On success the function body/args inside `expr` are replaced in
-/// place. Returns `true` if compiled.
-pub fn maybe_compile_expr(
+/// Compiled function pieces that must be written back to the original
+/// `G::Fn` / `E::Arrow` by `visit_func` / arrow-visit (the body has already
+/// been spliced into the `visit_stmts` buffer by the hook).
+#[derive(Clone, Copy)]
+pub struct CompileResult {
+    pub args: StoreSlice<G::Arg>,
+    pub flags: flags::FunctionSet,
+}
+
+/// Compile hook called from `visit_stmts` between its visit phase and its
+/// mangle phase. `body` is the live visited statement buffer. On success the
+/// new body is returned as a `Vec` for the caller to splice into that buffer
+/// (so the existing mangle phase then runs on it), along with the new
+/// args/flags for `visit_func` / arrow-visit to apply.
+pub fn maybe_compile_pending(
     state: &mut ReactCompilerState,
     host: &mut dyn Host,
-    expr: &mut Expr,
+    pending: &PendingCompile,
+    body: &mut [Stmt],
     name: Option<&[u8]>,
-) -> bool {
-    let loc = expr.loc;
-    match &mut expr.data {
-        ExprData::EArrow(a) => {
-            let codegen_fn = {
-                let node = FunctionNode::Arrow(&**a);
-                match maybe_compile_node(state, host, node, name, None, loc) {
-                    Some(cf) => cf,
-                    None => return false,
-                }
-            };
-            apply_to_arrow(a, codegen_fn);
-            true
-        }
-        ExprData::EFunction(f) => {
-            let inner_name_ref = f.func.name.as_ref().map(|n| n.ref_);
-            let inner_name = inner_name_ref.map(|r| host.ref_name(r).to_vec());
-            let codegen_fn = {
-                let node = FunctionNode::Function(&f.func);
-                match maybe_compile_node(
-                    state,
-                    host,
-                    node,
-                    inner_name.as_deref().or(name),
-                    None,
-                    loc,
-                ) {
-                    Some(cf) => cf,
-                    None => return false,
-                }
-            };
-            apply_to_gfn(&mut f.func, codegen_fn);
-            if let Some(name_ref) = inner_name_ref {
-                host.record_usage(name_ref);
-            }
-            true
-        }
-        ExprData::ECall(call) if !call.was_jsx_element => {
-            let callee = match get_callee_name_if_react_api(&*host, &call.target) {
-                Some(n) => n.to_vec(),
-                None => return false,
-            };
-            let Some(arg) = call.args.first_mut() else {
-                return false;
-            };
-            match &mut arg.data {
-                ExprData::EArrow(a) => {
-                    let codegen_fn = {
-                        let node = FunctionNode::Arrow(&**a);
-                        match maybe_compile_node(state, host, node, name, Some(&callee), loc) {
-                            Some(cf) => cf,
-                            None => return false,
-                        }
-                    };
-                    apply_to_arrow(a, codegen_fn);
-                    true
-                }
-                ExprData::EFunction(f) => {
-                    let inner_name_ref = f.func.name.as_ref().map(|n| n.ref_);
-                    let codegen_fn = {
-                        let node = FunctionNode::Function(&f.func);
-                        match maybe_compile_node(state, host, node, name, Some(&callee), loc) {
-                            Some(cf) => cf,
-                            None => return false,
-                        }
-                    };
-                    apply_to_gfn(&mut f.func, codegen_fn);
-                    if let Some(name_ref) = inner_name_ref {
-                        host.record_usage(name_ref);
-                    }
-                    true
-                }
-                _ => false,
-            }
-        }
-        _ => false,
-    }
+) -> Option<(Vec<Stmt>, CompileResult)> {
+    let tmp = G::Fn {
+        name: None,
+        open_parens_loc: pending.args_loc,
+        args: pending.args,
+        body: G::FnBody {
+            loc: pending.body_loc,
+            stmts: StoreSlice::new_mut(body),
+        },
+        flags: pending.flags,
+        ..G::Fn::default()
+    };
+    let cf = maybe_compile_node(
+        state,
+        host,
+        FunctionNode::Function(&tmp),
+        name,
+        pending.in_react_hoc,
+        pending.body_loc,
+    )?;
+    let mut flags = pending.flags;
+    set_flag(&mut flags, flags::Function::IsAsync, cf.is_async);
+    set_flag(&mut flags, flags::Function::IsGenerator, cf.generator);
+    set_flag(&mut flags, flags::Function::HasRestArg, cf.has_rest_arg);
+    Some((
+        cf.body,
+        CompileResult {
+            args: leak_args(cf.params),
+            flags,
+        },
+    ))
 }
 
 fn maybe_compile_node(
@@ -1383,7 +1274,7 @@ fn maybe_compile_node(
     host: &mut dyn Host,
     node: FunctionNode<'_>,
     name: Option<&[u8]>,
-    parent_callee: Option<&[u8]>,
+    in_react_hoc: bool,
     fn_loc: Loc,
 ) -> Option<CodegenFunction> {
     bun_core::scoped_log!(
@@ -1407,7 +1298,7 @@ fn maybe_compile_node(
         name,
         &node,
         &body_directives,
-        parent_callee,
+        in_react_hoc,
         &state.options,
     );
     bun_core::scoped_log!(react_compiler, "  -> fn_type={:?}", fn_type);

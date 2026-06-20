@@ -182,6 +182,114 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("react-compiler/RequireStringPreservesImportRecord", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp() {
+          const mod = require("./other");
+          const path = require.resolve("./other");
+          return <div>{mod.value}{path}</div>;
+        }
+      `,
+      "/other.js": `exports.value = "BUNDLED_OTHER_SENTINEL";`,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Lowering ERequireString to a plain `require("./other")` call drops the
+      // import_record_index, so the bundler would stop tracking the dependency
+      // and emit a runtime require of the literal path. Round-tripping the
+      // import record means the component is memoized AND `./other` is bundled.
+      expect(out).toContain("react/compiler-runtime");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      expect(out).toContain("BUNDLED_OTHER_SENTINEL");
+      expect(out).not.toMatch(/require\(["']\.\/other["']\)/);
+      expect(out).not.toMatch(/require\.resolve\(["']\.\/other["']\)/);
+    },
+  });
+
+  itBundled("react-compiler/BranchBooleanFeatureFlagPreservesDCE", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { feature } from "bun:bundle";
+        export function Comp() {
+          if (feature("FLAG")) {
+            return <div>DEAD_BRANCH_SENTINEL</div>;
+          }
+          return <span>live</span>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    // FLAG is NOT in the enabled feature set, so feature("FLAG") lowers to an
+    // EBranchBoolean(false). The visitor folds `if (false)` before the React
+    // Compiler runs, so the dead arm is dropped and only the live span is
+    // memoized.
+    features: [],
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("react/compiler-runtime");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      expect(out).not.toContain("DEAD_BRANCH_SENTINEL");
+      expect(out).not.toContain("feature(");
+      expect(out).not.toContain("bun:bundle");
+    },
+  });
+
+  itBundled("react-compiler/ForwardRefSiblingFn", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { useState } from "react";
+        export function Comp({ onDone }) {
+          const [x] = useState(0);
+          async function onSubmit() { done(1); }
+          const done = (n) => onDone(n + x);
+          return <button onClick={onSubmit}>{x}</button>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      expect(out).toContain("react/compiler-runtime");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+    },
+  });
+
+  itBundled("react-compiler/SelfRefConstArrow", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import { useState, useLayoutEffect } from "react";
+        export function useTick() {
+          const [n, setN] = useState(0);
+          useLayoutEffect(() => {
+            const tick = () => { setN(1); setTimeout(tick, 10); };
+            setTimeout(tick, 10);
+          }, []);
+          return n;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      expect(out).toContain("react/compiler-runtime");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+    },
+  });
+
   itBundled("react-compiler/NonComponentUntouched", {
     files: {
       "/entry.jsx": /* jsx */ `

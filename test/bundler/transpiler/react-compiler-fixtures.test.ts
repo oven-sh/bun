@@ -203,7 +203,7 @@ function shouldSkip(relPath: string, pragmas: Pragmas): string | null {
 // Known divergences from upstream — Bun produces a different (or no) result.
 // Grow this from CI; each entry must say why.
 // `__proto__: null`: a fixture named "constructor" exists.
-const TODO: Record<string, string> = { __proto__: null } as any;
+const TODO: Record<string, string> = Object.assign(Object.create(null), {});
 
 type Fixture = {
   name: string;
@@ -218,7 +218,8 @@ type Fixture = {
 function discover(): Fixture[] {
   const out: Fixture[] = [];
   for (const md of new Bun.Glob("**/*.expect.md").scanSync(FIXTURE_ROOT)) {
-    const stem = md.slice(0, -".expect.md".length);
+    // Bun.build output paths are POSIX; normalize so `compiled.get(name)` matches on Windows.
+    const stem = md.slice(0, -".expect.md".length).replaceAll("\\", "/");
     let inputPath: string | undefined;
     for (const ext of INPUT_EXTS) {
       const p = join(FIXTURE_ROOT, stem + ext);

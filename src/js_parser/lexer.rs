@@ -336,13 +336,13 @@ pub struct LexerType<
     pub has_newline_before: bool,
     pub has_pure_comment_before: bool,
     pub has_no_side_effect_comment_before: bool,
-    /// Set (and never cleared by `next()`) once a comment containing both
-    /// `react-hooks/` and `eslint-disable` has been scanned. The parser reads
-    /// this at function-body close to set `flags::Function::HasReactHooksSuppression`
-    /// / `E::Arrow::has_react_hooks_suppression`.
+    /// Set (and never cleared by `next()`) once an `eslint-disable[-line|-next-line]`
+    /// comment naming `react-hooks/rules-of-hooks` or `react-hooks/exhaustive-deps`
+    /// has been scanned. The parser reads this at function-body close to set
+    /// `flags::Function::HasReactHooksSuppression` / `E::Arrow::has_react_hooks_suppression`.
     pub has_react_hooks_suppression_before: bool,
-    /// Sticky variant of the above: set when the suppression comment lacks
-    /// `-next-line` (a block-style `eslint-disable`). Never cleared by the
+    /// Sticky variant of the above: set when the suppression comment is a bare
+    /// `eslint-disable` (no `-line`/`-next-line` suffix). Never cleared by the
     /// parser, so it applies to every subsequent function in the file.
     pub has_react_hooks_block_suppression: bool,
     pub preserve_all_comments_before: bool,
@@ -2336,12 +2336,25 @@ lexer_impl_header! {
 
         if self.track_react_suppressions
             && !(self.has_react_hooks_suppression_before && self.has_react_hooks_block_suppression)
-            && strings::contains(&text[..end_comment_text], b"react-hooks/")
-            && strings::contains(&text[..end_comment_text], b"eslint-disable")
         {
-            self.has_react_hooks_suppression_before = true;
-            if !strings::contains(&text[..end_comment_text], b"-next-line") {
-                self.has_react_hooks_block_suppression = true;
+            let body = &text[..end_comment_text];
+            if let Some(i) = strings::index_of(body, b"eslint-disable") {
+                let after = &body[i + b"eslint-disable".len()..];
+                let (is_block, rest) = if strings::has_prefix_comptime(after, b"-next-line") {
+                    (false, &after[b"-next-line".len()..])
+                } else if strings::has_prefix_comptime(after, b"-line") {
+                    (false, &after[b"-line".len()..])
+                } else {
+                    (true, after)
+                };
+                if strings::contains(rest, b"react-hooks/rules-of-hooks")
+                    || strings::contains(rest, b"react-hooks/exhaustive-deps")
+                {
+                    self.has_react_hooks_suppression_before = true;
+                    if is_block {
+                        self.has_react_hooks_block_suppression = true;
+                    }
+                }
             }
         }
 

@@ -107,3 +107,48 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         (index, namespace_ref)
     }
 }
+
+impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
+    /// Port of upstream `findFunctionDeclarationOrExpression` for the
+    /// expression positions (decl init / `export default` / expression
+    /// statement). Returns `Some(in_react_hoc)` only for the shapes the
+    /// Babel plugin accepts, so `react_compiler_candidate_name` cannot leak
+    /// into an unrelated nested arrow.
+    pub fn react_compiler_candidate_expr(&self, expr: &js_ast::Expr) -> Option<bool> {
+        use js_ast::expr::Data;
+        match &expr.data {
+            Data::EArrow(_) | Data::EFunction(_) => Some(false),
+            Data::ECall(call)
+                if !call.was_jsx_element && self.is_react_hoc_callee(&call.target) =>
+            {
+                matches!(
+                    call.args.first().map(|a| &a.data),
+                    Some(Data::EArrow(_) | Data::EFunction(_))
+                )
+                .then_some(true)
+            }
+            _ => None,
+        }
+    }
+
+    fn is_react_hoc_callee(&self, target: &js_ast::Expr) -> bool {
+        use js_ast::expr::Data;
+        let name: &[u8] = match &target.data {
+            Data::EIdentifier(id) => self.load_name_from_ref(id.ref_),
+            Data::EImportIdentifier(id) => self.load_name_from_ref(id.ref_),
+            Data::EDot(member) => {
+                let obj = match &member.target.data {
+                    Data::EIdentifier(o) => self.load_name_from_ref(o.ref_),
+                    Data::EImportIdentifier(o) => self.load_name_from_ref(o.ref_),
+                    _ => return false,
+                };
+                if obj != b"React" {
+                    return false;
+                }
+                member.name.slice()
+            }
+            _ => return false,
+        };
+        name == b"forwardRef" || name == b"memo"
+    }
+}

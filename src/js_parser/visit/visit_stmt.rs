@@ -411,23 +411,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     p.decorator_class_name = Some(js_ast::ClauseItem::DEFAULT_ALIAS);
                 }
+                if p.react_compiler.is_some()
+                    && let Some(in_hoc) = p.react_compiler_candidate_expr(expr)
+                {
+                    p.react_compiler_candidate_name = Some(js_ast::Ref::NONE);
+                    p.react_compiler_in_react_hoc = in_hoc;
+                }
                 p.visit_expr(expr);
+                p.react_compiler_candidate_name = None;
+                p.react_compiler_in_react_hoc = false;
                 p.decorator_class_name = prev_decorator_class_name;
 
                 if p.is_control_flow_dead {
                     restore_dead!();
                     record_on_exit!();
                     return Ok(());
-                }
-
-                if let Some(mut rc) = p.react_compiler.take() {
-                    bun_react_compiler::maybe_compile_expr(
-                        &mut rc,
-                        &mut crate::react_compiler_host::ReactCompilerHost::new(p),
-                        expr,
-                        None,
-                    );
-                    p.react_compiler = Some(rc);
                 }
 
                 // Optionally preserve the name
@@ -593,20 +591,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.react_refresh.hook_ctx_storage =
                             Some(core::ptr::NonNull::from(&mut react_hook_data));
 
+                        if p.react_compiler.is_some() {
+                            p.react_compiler_candidate_name = Some(
+                                func.func
+                                    .name
+                                    .filter(|_| name != js_ast::ClauseItem::DEFAULT_ALIAS)
+                                    .map(|n| n.ref_)
+                                    .unwrap_or(js_ast::Ref::NONE),
+                            );
+                        }
                         let open_parens_loc = func.func.open_parens_loc;
                         func.func = p.visit_func(core::mem::take(&mut func.func), open_parens_loc);
-
-                        if let Some(mut rc) = p.react_compiler.take() {
-                            let owned_name =
-                                (name != js_ast::ClauseItem::DEFAULT_ALIAS).then(|| name.to_vec());
-                            bun_react_compiler::maybe_compile_function(
-                                &mut rc,
-                                &mut crate::react_compiler_host::ReactCompilerHost::new(p),
-                                &mut func.func,
-                                owned_name.as_deref(),
-                            );
-                            p.react_compiler = Some(rc);
-                        }
+                        p.react_compiler_candidate_name = None;
 
                         if p.is_control_flow_dead {
                             p.react_refresh.hook_ctx_storage = prev;
@@ -905,27 +901,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let prev_hook_storage = p.react_refresh.hook_ctx_storage;
         p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
 
+        if p.react_compiler.is_some() && p.current_scope == p.module_scope {
+            p.react_compiler_candidate_name = data.func.name.map(|n| n.ref_);
+        }
         let open_parens_loc = data.func.open_parens_loc;
         data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc);
+        p.react_compiler_candidate_name = None;
 
         let name_ref = data.func.name.expect("infallible: name checked").ref_;
         debug_assert!(name_ref.is_symbol());
         let name_symbol = &p.symbols[name_ref.inner_index() as usize];
         let original_name: &'a [u8] = name_symbol.original_name.slice();
         let remove_overwritten = name_symbol.remove_overwritten_function_declaration();
-
-        if p.current_scope == p.module_scope
-            && let Some(mut rc) = p.react_compiler.take()
-        {
-            let name = original_name.to_vec();
-            bun_react_compiler::maybe_compile_function(
-                &mut rc,
-                &mut crate::react_compiler_host::ReactCompilerHost::new(p),
-                &mut data.func,
-                Some(&name),
-            );
-            p.react_compiler = Some(rc);
-        }
 
         // Handle exporting this function from a namespace
         if data.func.flags.contains(flags::Function::IsExport)
@@ -1221,40 +1208,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         data.kind = kind;
 
-        if p.current_scope == p.module_scope
-            && let Some(mut rc) = p.react_compiler.take()
-        {
-            for decl in data.decls.slice_mut() {
-                let Some(init) = &mut decl.value else {
-                    continue;
-                };
-                let (name, b_ref) = match decl.binding.data {
-                    js_ast::binding::Data::BIdentifier(b) => (
-                        Some(
-                            p.symbols[b.r#ref.inner_index() as usize]
-                                .original_name
-                                .slice()
-                                .to_vec(),
-                        ),
-                        Some(b.r#ref),
-                    ),
-                    _ => (None, None),
-                };
-                let compiled = bun_react_compiler::maybe_compile_expr(
-                    &mut rc,
-                    &mut crate::react_compiler_host::ReactCompilerHost::new(p),
-                    init,
-                    name.as_deref(),
-                );
-                if compiled {
-                    if let Some(b_ref) = b_ref {
-                        p.record_usage(b_ref);
-                    }
-                }
-            }
-            p.react_compiler = Some(rc);
-        }
-
         stmts.push(*stmt);
 
         if p.options.features.react_fast_refresh && p.current_scope == p.module_scope {
@@ -1420,17 +1373,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
-        p.visit_expr(&mut data.value);
-
-        if is_top_level && let Some(mut rc) = p.react_compiler.take() {
-            bun_react_compiler::maybe_compile_expr(
-                &mut rc,
-                &mut crate::react_compiler_host::ReactCompilerHost::new(p),
-                &mut data.value,
-                None,
-            );
-            p.react_compiler = Some(rc);
+        if is_top_level
+            && p.react_compiler.is_some()
+            && let Some(in_hoc) = p.react_compiler_candidate_expr(&data.value)
+        {
+            p.react_compiler_candidate_name = Some(js_ast::Ref::NONE);
+            p.react_compiler_in_react_hoc = in_hoc;
         }
+        p.visit_expr(&mut data.value);
+        p.react_compiler_candidate_name = None;
+        p.react_compiler_in_react_hoc = false;
 
         // `p.stmt_expr_value` is reset to EMissing at every return below.
         macro_rules! restore_stmt_expr {

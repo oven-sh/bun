@@ -293,10 +293,6 @@ struct ValueIdSet {
 const _: () = assert!(std::mem::size_of::<ValueIdSet>() == 16);
 const _: () = assert!(std::mem::size_of::<usize>() == 8);
 
-#[cfg(debug_assertions)]
-#[allow(dead_code)]
-static VALUE_ID_SET_SPILLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 impl ValueIdSet {
     const INLINE_CAP: u32 = 3;
 
@@ -388,8 +384,6 @@ impl ValueIdSet {
             self.words[self.len as usize] = v.0;
             self.len += 1;
         } else {
-            #[cfg(debug_assertions)]
-            VALUE_ID_SET_SPILLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let mut vec = std::mem::ManuallyDrop::new(Vec::<ValueId>::with_capacity(8));
             vec.push(ValueId(self.words[0]));
             vec.push(ValueId(self.words[1]));
@@ -636,7 +630,6 @@ impl std::fmt::Debug for Variables {
 /// and sparse (`HashMap`) for nested function expressions — see [`Variables`].
 #[derive(Debug, Clone)]
 struct InferenceState {
-    is_function_expression: bool,
     /// Kind of each allocation site, indexed by `ValueId.0`. `None` = unset.
     values: Vec<Option<AbstractValue>>,
     /// Points-to set per identifier.
@@ -657,7 +650,6 @@ impl InferenceState {
             }
         };
         InferenceState {
-            is_function_expression,
             values: Vec::new(),
             variables,
             uninitialized_access: std::cell::Cell::new(None),
@@ -781,16 +773,6 @@ impl InferenceState {
             kind: ValueKind::Frozen,
             reason: hashset_of(reason),
         });
-    }
-
-    #[allow(dead_code)]
-    fn mutate(
-        &self,
-        variant: MutateVariant,
-        place_id: IdentifierId,
-        env: &Environment,
-    ) -> MutationResult {
-        self.mutate_with_loc(variant, place_id, env, None)
     }
 
     fn mutate_with_loc(

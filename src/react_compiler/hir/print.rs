@@ -259,6 +259,9 @@ impl fmt::Display for DisplayNonLocalBinding<'_> {
                     BStr::new(imported.slice())
                 )
             }
+            crate::hir::NonLocalKind::BunOpaque(e) => {
+                write!(f, "BunOpaque {{ tag: {:?} }}", e.data.tag())
+            }
         }
     }
 }

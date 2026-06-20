@@ -45,10 +45,6 @@ pub mod analyse_functions;
 pub mod build_reactive_scope_terminals_hir;
 pub mod flatten_reactive_loops_hir;
 pub mod flatten_scopes_with_hooks_or_use_hir;
-#[allow(
-    dead_code,
-    reason = "concurrent edit in progress; sweep deferred to avoid merge conflict"
-)]
 pub mod infer_mutation_aliasing_effects;
 pub mod infer_mutation_aliasing_ranges;
 pub mod infer_reactive_places;

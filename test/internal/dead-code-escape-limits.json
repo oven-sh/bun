@@ -16,6 +16,7 @@
   "src/jsc_macros/lib.rs": 2,
   "src/opaque/lib.rs": 5,
   "src/patch/lib.rs": 2,
+  "src/react_compiler/reactive_scopes/visitors.rs": 1,
   "src/runtime/api/bun/Terminal.rs": 2,
   "src/runtime/cli/test/ChangedFilesFilter.rs": 1,
   "src/runtime/dns_jsc/dns.rs": 5,

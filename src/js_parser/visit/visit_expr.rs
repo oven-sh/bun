@@ -2487,8 +2487,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()
         };
+        let rc_binding = p.react_compiler_candidate_name.take();
+        if rc_binding.is_some() {
+            let mut flags = bun_ast::flags::FUNCTION_NONE;
+            if e_.is_async {
+                flags |= bun_ast::flags::Function::IsAsync;
+            }
+            if e_.has_rest_arg {
+                flags |= bun_ast::flags::Function::HasRestArg;
+            }
+            if e_.has_react_hooks_suppression {
+                flags |= bun_ast::flags::Function::HasReactHooksSuppression;
+            }
+            p.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
+                args: e_.args,
+                flags,
+                body_loc: e_.body.loc,
+                args_loc: e_.body.loc,
+                binding: rc_binding,
+                in_react_hoc: core::mem::take(&mut p.react_compiler_in_react_hoc),
+            });
+        }
         p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, &mut temp_opts)
             .expect("unreachable");
+        p.react_compiler_pending = None;
+        if let Some(result) = p.react_compiler_result.take() {
+            e_.args = result.args;
+            e_.is_async = result.flags.contains(bun_ast::flags::Function::IsAsync);
+            e_.has_rest_arg = result.flags.contains(bun_ast::flags::Function::HasRestArg);
+            e_.prefer_expr = false;
+            if let Some(b) = rc_binding.filter(|r| *r != js_ast::Ref::NONE) {
+                p.record_usage(b);
+            }
+        }
         p.pop_scope();
         p.pop_scope();
 

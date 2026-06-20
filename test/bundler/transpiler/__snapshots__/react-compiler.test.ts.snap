@@ -194,6 +194,80 @@ export {
 "
 `;
 
+exports[`bundler react-compiler/ForwardRefSiblingFn 1`] = `
+"// entry.tsx
+import { useState } from "react";
+import { jsxDEV } from "react/jsx-dev-runtime";
+import { c as _c } from "react/compiler-runtime";
+function Comp(t0) {
+  const $ = _c(6);
+  const { onDone } = t0;
+  const [x] = useState(0);
+  let onSubmit;
+  if ($[0] !== onDone || $[1] !== x) {
+    onSubmit = async function onSubmit() {
+      done(1);
+    };
+    const done = (n) => onDone(n + x);
+    $[0] = onDone;
+    $[1] = x;
+    $[2] = onSubmit;
+  } else {
+    onSubmit = $[2];
+  }
+  let t1;
+  if ($[3] !== onSubmit || $[4] !== x) {
+    t1 = /* @__PURE__ */ jsxDEV("button", {
+      onClick: onSubmit,
+      children: x
+    }, undefined, false, undefined, this);
+    $[3] = onSubmit;
+    $[4] = x;
+    $[5] = t1;
+  } else {
+    t1 = $[5];
+  }
+  return t1;
+}
+export {
+  Comp
+};
+"
+`;
+
+exports[`bundler react-compiler/SelfRefConstArrow 1`] = `
+"// entry.tsx
+import { useState, useLayoutEffect } from "react";
+import { c as _c } from "react/compiler-runtime";
+function useTick() {
+  const $ = _c(2);
+  const [n, setN] = useState(0);
+  let t0;
+  let t1;
+  if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
+    t0 = () => {
+      const tick = () => {
+        setN(1);
+        setTimeout(tick, 10);
+      };
+      setTimeout(tick, 10);
+    };
+    t1 = [];
+    $[0] = t0;
+    $[1] = t1;
+  } else {
+    t0 = $[0];
+    t1 = $[1];
+  }
+  useLayoutEffect(t0, t1);
+  return n;
+}
+export {
+  useTick
+};
+"
+`;
+
 exports[`bundler react-compiler/NonComponentUntouched 1`] = `
 "// entry.jsx
 import { jsxDEV } from "react/jsx-dev-runtime";

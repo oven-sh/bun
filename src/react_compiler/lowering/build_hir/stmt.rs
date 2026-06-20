@@ -10,6 +10,7 @@ use crate::hir::{
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data;
 use bun_ast::{self as ast, Binding, Expr, G, Ref, Stmt, b, s};
+use smallvec::SmallVec;
 
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
@@ -48,22 +49,147 @@ pub(super) fn lower_block_statement_with_scope(
     lower_block_statement_inner(builder, body)
 }
 
-// Upstream's hoisting pass relies on `ScopeInfo`'s position-based reference
-// index (`ref_node_id_to_binding`, `node_to_scope_end`, `identifier_locs`),
-// all of which were dropped in the Bun port (see hir_builder.rs contract).
-// Bun's parser does not retain per-reference source positions, so the
-// statement-range forward-reference analysis cannot be reproduced here. The
-// inner loop therefore degrades to upstream's `hoistable.is_empty()` fast
-// path; `find_context_identifiers` is responsible for marking captured
-// bindings.
+// Upstream's hoisting pass uses Babel `ScopeInfo`'s per-reference Locs to
+// detect a binding referenced textually before its declaration. Bun's parser
+// does not retain per-reference Locs, so the equivalent ordering check is done
+// by statement index: a let/const binding declared at body[j] that is
+// referenced anywhere inside body[i] for some i < j (or inside its own
+// initializer when i == j) gets a `DeclareContext` at block start so EnterSSA
+// sees a definition before the use. The scan is bounded to this block's direct
+// statements; blocks with no let/const fall straight through to lowering.
 fn lower_block_statement_inner(
     builder: &mut HirBuilder,
     body: &[Stmt],
 ) -> Result<(), CompilerDiagnostic> {
-    for body_stmt in body {
+    // Phase 1: collect this block's let/const/function bindings by statement index.
+    let mut decls: SmallVec<[(usize, Ref, ast::Loc, InstructionKind); 8]> = SmallVec::new();
+    for (i, stmt) in body.iter().enumerate() {
+        match &stmt.data {
+            Data::SLocal(local) => {
+                let kind = match local.kind {
+                    s::Kind::KLet => InstructionKind::HoistedLet,
+                    s::Kind::KConst => InstructionKind::HoistedConst,
+                    _ => continue,
+                };
+                for d in local.decls.iter() {
+                    collect_binding_refs(&d.binding, &mut |r, loc| {
+                        decls.push((i, builder.resolve_ref(r), loc, kind));
+                    });
+                }
+            }
+            Data::SFunction(f) => {
+                if let Some(name) = f.func.name {
+                    decls.push((
+                        i,
+                        builder.resolve_ref(name.ref_),
+                        name.loc,
+                        InstructionKind::HoistedFunction,
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if decls.is_empty() {
+        for body_stmt in body {
+            lower_statement(builder, body_stmt, None)?;
+        }
+        return Ok(());
+    }
+
+    // Phase 2: for each statement preceding (or equal to) a decl's index,
+    // scan its subtree for a reference to that decl. Passing depth=1 to the
+    // `ref_in_nested_fn_*` walkers makes them match at any nesting level.
+    // Record the statement index of the first reference so DeclareContext is
+    // emitted immediately before that statement (matching upstream); emitting
+    // it any earlier would extend the variable's mutable range across
+    // unrelated instructions (e.g. a preceding hook call), which causes the
+    // resulting scope to be flattened.
+    let mut hoist: SmallVec<[(usize, Ref, ast::Loc, InstructionKind); 4]> = SmallVec::new();
+    'outer: for (i, stmt) in body.iter().enumerate() {
+        let mut k = 0;
+        while k < decls.len() {
+            let (decl_i, target, loc, kind) = decls[k];
+            let found = if decl_i > i {
+                ref_in_nested_fn_stmt(builder, target, stmt, 1)
+            } else if decl_i == i {
+                // Self-reference: only the initializer expressions of this
+                // statement count (the binding pattern itself is the def).
+                match &stmt.data {
+                    Data::SLocal(local) => local.decls.iter().any(|d| {
+                        d.value
+                            .as_ref()
+                            .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, 1))
+                    }),
+                    _ => false,
+                }
+            } else {
+                false
+            };
+            if found {
+                hoist.push((i, target, loc, kind));
+                decls.swap_remove(k);
+                if decls.is_empty() {
+                    break 'outer;
+                }
+            } else {
+                k += 1;
+            }
+        }
+    }
+
+    let mut h = 0;
+    for (i, body_stmt) in body.iter().enumerate() {
+        while h < hoist.len() && hoist[h].0 == i {
+            let (_, target, loc, kind) = hoist[h];
+            h += 1;
+            if builder.is_context_identifier(target) {
+                continue;
+            }
+            let id_loc = convert_loc(loc);
+            if let VariableBinding::Identifier { identifier, .. } =
+                builder.resolve_identifier(target, id_loc)?
+            {
+                let place = Place {
+                    identifier,
+                    effect: Effect::Unknown,
+                    reactive: false,
+                    loc: id_loc,
+                };
+                lower_value_to_temporary(
+                    builder,
+                    InstructionValue::DeclareContext {
+                        lvalue: LValue { kind, place },
+                        loc: id_loc,
+                    },
+                )?;
+                builder.add_context_identifier(target);
+                builder
+                    .environment_mut()
+                    .add_hoisted_identifier(target.inner_index());
+            }
+        }
         lower_statement(builder, body_stmt, None)?;
     }
     Ok(())
+}
+
+fn collect_binding_refs(binding: &Binding, f: &mut impl FnMut(Ref, ast::Loc)) {
+    match &binding.data {
+        b::B::BIdentifier(id) => f(id.r#ref, binding.loc),
+        b::B::BArray(arr) => {
+            for item in arr.items().iter() {
+                collect_binding_refs(&item.binding, f);
+            }
+        }
+        b::B::BObject(obj) => {
+            for p in obj.properties().iter() {
+                collect_binding_refs(&p.value, f);
+            }
+        }
+        b::B::BMissing(_) => {}
+    }
 }
 
 // Upstream's BlockStatement hoisting (dropped in the Bun port — see above) puts

@@ -472,6 +472,7 @@ impl Environment {
         loc: Option<SourceLocation>,
     ) -> Result<Option<Global>, CompilerError> {
         match &binding.kind {
+            NonLocalKind::BunOpaque(_) => Ok(None),
             NonLocalKind::ModuleLocal { name, .. } => {
                 if is_hook_name(name) {
                     Ok(Some(self.get_custom_hook_type()))

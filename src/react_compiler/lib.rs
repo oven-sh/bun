@@ -33,6 +33,6 @@ pub mod program;
 pub use compile_result::{CompileDiagnostic, CompileOutput};
 pub use options::ReactCompilerOptions;
 pub use program::{
-    Host, JsxImportKind, ReactCompilerState, SymbolHost, collect_import_bindings, finish,
-    has_module_scope_opt_out, maybe_compile_expr, maybe_compile_function,
+    CompileResult, Host, JsxImportKind, PendingCompile, ReactCompilerState, SymbolHost,
+    collect_import_bindings, finish, has_module_scope_opt_out, maybe_compile_pending,
 };

@@ -4819,6 +4819,15 @@ pub mod bv2_impl {
                 }
             }
 
+            // `File.entry_bits` is `AutoBitSet::Dynamic` (global-heap) when
+            // entry points exceed the 64-bit static inline. The slab-only
+            // `MultiArrayList::drop` won't run its destructor.
+            for b in self.linker.graph.files.items_entry_bits_mut() {
+                if let bun_collections::AutoBitSet::Dynamic(d) = b {
+                    d.deinit();
+                }
+            }
+
             // Drop the lazily-created client transpiler (if any) before tearing
             // down workers — the slot
             // is invalidated ahead of `pool.workers_assignments` so no worker can

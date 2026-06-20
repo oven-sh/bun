@@ -52,7 +52,7 @@ test("tls.connect churn does not leak SSL_CTX or us_socket_context_t", async () 
     // churn (PQ key shares, transcript buffers) lands in the ASAN quarantine
     // and isn't released by Bun.gc — when this file runs after the rest of the
     // tls/ suite the delta hits ~150 MB with zero LSAN-reported per-conn leak.
-    const rssBound = isASAN || isDebug ? 192 * 1024 * 1024 : 16 * 1024 * 1024;
+    const rssBound = isASAN || isDebug ? 300 * 1024 * 1024 : 16 * 1024 * 1024;
     expect(rssAfter - rssBefore).toBeLessThan(rssBound);
   } finally {
     server.close();

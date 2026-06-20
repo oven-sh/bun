@@ -41,9 +41,10 @@ NEW_SHA=$(git rev-parse HEAD)
 
 ### 4. Bump Bun
 
-In the bun repo, edit `scripts/build/deps/boringssl.ts`:
+In the bun repo:
 
-- Set `BORINGSSL_COMMIT` to `$NEW_SHA`.
+- `scripts/build/deps/boringssl.ts` — set `BORINGSSL_COMMIT` to `$NEW_SHA`.
+- `test/js/node/process/process.test.js` — update the `boringssl:` entry in `expectedVersions` to `$NEW_SHA`.
 - Regenerate the source lists (the file's header comment has the exact one-liner). Only `gen/sources.json` is authoritative — diff old vs new and apply the delta:
 
   ```sh

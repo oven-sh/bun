@@ -88,7 +88,7 @@ describe("isInternalThread", () => {
       stdout: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "false", exitCode: 0 });
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "false", stderr: "", exitCode: 0 });
   });
 
   test("require exposes isInternalThread as false", async () => {
@@ -103,7 +103,7 @@ describe("isInternalThread", () => {
       stdout: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "false boolean", exitCode: 0 });
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "false boolean", stderr: "", exitCode: 0 });
   });
 
   test("is false inside a user worker", async () => {

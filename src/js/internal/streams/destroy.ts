@@ -308,23 +308,25 @@ function destroyer(stream, err) {
   }
 
   // TODO: Remove isRequest branches.
-  const req = stream.req;
   if (isServerRequest(stream)) {
     stream.socket = null;
     stream.destroy(err);
   } else if (isRequest(stream)) {
     stream.abort();
-  } else if (isRequest(req)) {
-    req.abort();
-  } else if (typeof stream.destroy === "function") {
-    stream.destroy(err);
-  } else if (typeof stream.close === "function") {
-    // TODO: Don't lose err?
-    stream.close();
-  } else if (err) {
-    ProcessNextTick(emitErrorCloseLegacy, stream, err);
   } else {
-    ProcessNextTick(emitCloseLegacy, stream);
+    const req = stream.req;
+    if (isRequest(req)) {
+      req.abort();
+    } else if (typeof stream.destroy === "function") {
+      stream.destroy(err);
+    } else if (typeof stream.close === "function") {
+      // TODO: Don't lose err?
+      stream.close();
+    } else if (err) {
+      ProcessNextTick(emitErrorCloseLegacy, stream, err);
+    } else {
+      ProcessNextTick(emitCloseLegacy, stream);
+    }
   }
 
   if (!stream.destroyed) {

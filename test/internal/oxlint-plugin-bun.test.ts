@@ -10,6 +10,10 @@ import path from "path";
 
 const root = path.resolve(import.meta.dir, "..", "..");
 const pluginPath = path.join(root, "scripts", "oxlint-plugins", "bun.js");
+// Use the pinned oxlint from the repo's devDependencies so the test is
+// hermetic (no registry fetch) and version-locked to the jsPlugins API the
+// plugin is written against.
+const oxlintBin = path.join(root, "node_modules", "oxlint", "bin", "oxlint");
 const RULE = "bun(no-duplicate-conditional-property-access)";
 
 async function runOxlint(files: Record<string, string>) {
@@ -24,7 +28,7 @@ async function runOxlint(files: Record<string, string>) {
     }),
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "x", "oxlint", "--config=oxlint.json", "--format=github", "."],
+    cmd: [bunExe(), oxlintBin, "--config=oxlint.json", "--format=github", "."],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -208,7 +212,7 @@ describe("src/js lint", () => {
   // property into a local before the check; this guards against new ones.
   test("bun run lint is clean on src/js", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "x", "oxlint", "--config=oxlint.json", "--format=github", "src/js"],
+      cmd: [bunExe(), oxlintBin, "--config=oxlint.json", "--format=github", "src/js"],
       cwd: root,
       env: bunEnv,
       stdout: "pipe",

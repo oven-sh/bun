@@ -1585,7 +1585,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
  */
 function getTestTimeout(testPath) {
   if (
-    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic|test\/napi/i.test(
+    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic|test[\\/]napi/i.test(
       testPath,
     )
   ) {

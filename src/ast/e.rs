@@ -372,7 +372,11 @@ pub struct Arrow {
     pub has_rest_arg: bool,
     /// Use shorthand if true and "Body" is a single return statement
     pub prefer_expr: bool,
+    /// See `flags::Function::HasReactHooksSuppression`.
+    pub has_react_hooks_suppression: bool,
 }
+// The fourth bool fits in existing trailing padding.
+const _: () = assert!(core::mem::size_of::<Arrow>() == 32);
 impl Arrow {
     pub const NOOP_RETURN_UNDEFINED: Arrow = Arrow {
         args: crate::StoreSlice::EMPTY,
@@ -383,6 +387,7 @@ impl Arrow {
         is_async: false,
         has_rest_arg: false,
         prefer_expr: false,
+        has_react_hooks_suppression: false,
     };
 }
 impl Default for Arrow {
@@ -396,6 +401,7 @@ impl Default for Arrow {
             is_async: false,
             has_rest_arg: false,
             prefer_expr: false,
+            has_react_hooks_suppression: false,
         }
     }
 }
@@ -1355,6 +1361,14 @@ pub struct Spread {
 }
 
 /// JavaScript string literal type
+// repr(C, align(8)): `StoreStr`/`StoreRef` are `packed(4)`, so under
+// `repr(Rust)` the `data.ptr: NonNull<u8>` lands at a 4-but-not-8-aligned
+// offset, and a `static EString = EString::from_static(b"...")` then emits an
+// `ARM64_RELOC_UNSIGNED` at that offset which arm64 ld rejects. `repr(C)` pins
+// `data` (the only field needing a static relocation) at offset 0; `align(8)`
+// keeps the struct itself 8-aligned. `EString` is arena-stored (never inline
+// in `Expr`), so this does not affect `Expr` size.
+#[repr(C, align(8))]
 pub struct EString {
     // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
     // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
@@ -1362,7 +1376,6 @@ pub struct EString {
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
     // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub data: Str,
-    pub prefer_template: bool,
 
     // A very simple rope implementation
     // We only use this for string folding, so this is kind of overkill
@@ -1370,6 +1383,7 @@ pub struct EString {
     pub next: Option<StoreRef<EString>>,
     pub end: Option<StoreRef<EString>>,
     pub rope_len: u32,
+    pub prefer_template: bool,
     pub is_utf16: bool,
 }
 // Also exported as `String`; `EString` avoids colliding with bun_core::String.

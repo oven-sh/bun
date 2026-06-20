@@ -405,6 +405,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let mut temp_opts = opts;
         func.body = p.parse_fn_body(&mut temp_opts)?;
+        if p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression {
+            func.flags.insert(Flags::Function::HasReactHooksSuppression);
+            // next-line semantics: a suppression marks the enclosing top-level
+            // function and is consumed; it never reaches that function's siblings.
+            if p.fn_or_arrow_data_parse.is_top_level {
+                p.lexer.has_react_hooks_suppression_before = false;
+            }
+        }
 
         Ok(func)
     }
@@ -548,9 +556,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TOpenBrace {
             let body = p.parse_fn_body(data)?;
             p.after_arrow_body_loc = p.lexer.loc();
+            let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before
+                || p.lexer.has_react_hooks_block_suppression;
+            if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
+                p.lexer.has_react_hooks_suppression_before = false;
+            }
             return Ok(E::Arrow {
                 args: args_slice,
                 body,
+                has_react_hooks_suppression,
                 ..Default::default()
             });
         }
@@ -576,6 +590,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);
 
         p.pop_scope();
+        let has_react_hooks_suppression =
+            p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression;
+        if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
+            p.lexer.has_react_hooks_suppression_before = false;
+        }
         Ok(E::Arrow {
             args: args_slice,
             prefer_expr: true,
@@ -583,6 +602,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc: arrow_loc,
                 stmts: bun_ast::StoreSlice::new_mut(stmts),
             },
+            has_react_hooks_suppression,
             ..Default::default()
         })
     }

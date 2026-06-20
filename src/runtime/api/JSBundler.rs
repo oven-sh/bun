@@ -120,6 +120,9 @@ pub mod js_bundler {
         pub entry_points: StringSet,
         pub hot: bool,
         pub react_fast_refresh: bool,
+        pub react_compiler: bun_ast::runtime::ReactCompilerMode,
+        pub react_compiler_parse_test_pragmas: bool,
+        pub react_compiler_output_mode_explicit: bool,
         pub define: StringMap,
         pub loaders: Option<api::LoaderMap>,
         pub dir: OwnedString,
@@ -133,6 +136,7 @@ pub mod js_bundler {
         pub no_macros: bool,
         pub ignore_dce_annotations: bool,
         pub emit_dce_annotations: Option<bool>,
+        pub tree_shaking: Option<bool>,
         pub names: Names,
         pub external: StringSet,
         pub allow_unresolved: Option<StringSet>,
@@ -175,6 +179,9 @@ pub mod js_bundler {
                 entry_points: StringSet::default(),
                 hot: false,
                 react_fast_refresh: false,
+                react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
+                react_compiler_parse_test_pragmas: false,
+                react_compiler_output_mode_explicit: false,
                 define: StringMap::init(false),
                 loaders: None,
                 dir: OwnedString::default(),
@@ -195,6 +202,7 @@ pub mod js_bundler {
                 no_macros: false,
                 ignore_dce_annotations: false,
                 emit_dce_annotations: None,
+                tree_shaking: None,
                 names: Names::default(),
                 external: StringSet::default(),
                 allow_unresolved: None,
@@ -592,6 +600,37 @@ pub mod js_bundler {
                 this.react_fast_refresh = react_fast_refresh;
             }
 
+            if let Some(react_compiler) = config.get_boolean_loose(global_this, "reactCompiler")? {
+                this.react_compiler = if react_compiler {
+                    bun_ast::runtime::ReactCompilerMode::Client
+                } else {
+                    bun_ast::runtime::ReactCompilerMode::Disabled
+                };
+            }
+
+            if let Some(v) =
+                config.get_boolean_loose(global_this, "reactCompilerParseTestPragmas")?
+            {
+                this.react_compiler_parse_test_pragmas = v;
+            }
+
+            if let Some(slice) =
+                config.get_optional_slice(global_this, b"reactCompilerOutputMode")?
+            {
+                this.react_compiler = match slice.slice() {
+                    b"ssr" => bun_ast::runtime::ReactCompilerMode::Ssr,
+                    b"client" => bun_ast::runtime::ReactCompilerMode::Client,
+                    other => {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Expected reactCompilerOutputMode to be 'client' or 'ssr', got {}",
+                            bstr::BStr::new(other)
+                        )));
+                    }
+                };
+                this.react_compiler_output_mode_explicit = true;
+                drop(slice);
+            }
+
             let mut has_out_dir = false;
             if let Some(slice) = config.get_optional_slice(global_this, b"outdir")? {
                 this.outdir.append_slice_exact(slice.slice())?;
@@ -793,6 +832,10 @@ pub mod js_bundler {
 
             if let Some(flag) = config.get_boolean_loose(global_this, "ignoreDCEAnnotations")? {
                 this.ignore_dce_annotations = flag;
+            }
+
+            if let Some(flag) = config.get_boolean_loose(global_this, "treeShaking")? {
+                this.tree_shaking = Some(flag);
             }
 
             if let Some(conditions_value) = config.get_truthy(global_this, "conditions")? {

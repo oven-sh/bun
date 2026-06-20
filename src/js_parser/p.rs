@@ -389,6 +389,24 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// populated before visit pass starts.
     pub react_refresh: ReactRefresh<'a>,
 
+    /// only applicable when `.options.features.react_compiler` is set.
+    /// populated before visit pass starts; `take()`n at each post-visit
+    /// hook site so a `ReactCompilerHost(&mut P)` can borrow alongside it.
+    pub react_compiler: Option<Box<bun_react_compiler::ReactCompilerState>>,
+    /// Binding name from the `S::Function` / `S::Local` / `S::ExportDefault`
+    /// statement currently being visited. Set in `visit_stmt`, consumed by
+    /// `visit_func` / arrow-visit one frame down.
+    pub react_compiler_candidate_name: Option<js_ast::Ref>,
+    /// Set alongside `react_compiler_candidate_name` when the candidate
+    /// expression is a `memo(...)` / `forwardRef(...)` call.
+    pub react_compiler_in_react_hoc: bool,
+    /// See [`bun_react_compiler::PendingCompile`]. Set by `visit_func` /
+    /// arrow-visit, consumed inside `visit_stmts` between visit and mangle.
+    pub react_compiler_pending: Option<bun_react_compiler::PendingCompile>,
+    /// Compiled args/flags written by the `visit_stmts` hook for `visit_func` /
+    /// arrow-visit to apply to the original `G::Fn` / `E::Arrow`.
+    pub react_compiler_result: Option<bun_react_compiler::CompileResult>,
+
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
     pub server_components_wrap_ref: Ref,
@@ -8979,6 +8997,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // literal in the by-value-return shape; now precomputed so the
         // literal below is the *only* write to `*out`). ───
         lexer.track_comments = opts.features.minify_identifiers;
+        lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
 
         if !TYPESCRIPT {
             // This is so it doesn't impact runtime transpiler caching when not in use
@@ -9137,6 +9156,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             enclosing_namespace_arg_ref: None,
             jsx_imports: crate::JSXImportSymbols::default(),
             react_refresh: ReactRefresh::default(),
+            react_compiler: None,
+            react_compiler_candidate_name: None,
+            react_compiler_in_react_hoc: false,
+            react_compiler_pending: None,
+            react_compiler_result: None,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             import_records_for_current_part: BumpVec::new_in(arena),

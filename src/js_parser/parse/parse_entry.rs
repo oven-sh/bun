@@ -178,6 +178,8 @@ impl<'a> Options<'a> {
             filepath_hash_for_hmr: self.filepath_hash_for_hmr,
             features: RuntimeFeatures {
                 react_fast_refresh: f.react_fast_refresh,
+                react_compiler: f.react_compiler,
+                react_compiler_parse_test_pragmas: f.react_compiler_parse_test_pragmas,
                 hot_module_reloading: f.hot_module_reloading,
                 server_components: f.server_components,
                 is_macro_runtime: f.is_macro_runtime,
@@ -313,7 +315,12 @@ impl<'a> Parser<'a> {
         define: &'a Define,
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
-        let lexer = js_lexer::Lexer::init(log, source, bump)?;
+        let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
+        // Must be set before the priming `next()` so leading comments are seen.
+        lexer.track_comments = options.features.minify_identifiers;
+        lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
+        lexer.step();
+        lexer.next()?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
         // chain (the `&'a mut Log` was consumed by `Lexer::init`).
         let log_ptr = lexer.log;
@@ -850,6 +857,32 @@ impl<'a> Parser<'a> {
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
+
+        if p.options.features.react_compiler.is_enabled() {
+            let rc_options = bun_react_compiler::ReactCompilerOptions {
+                enabled: true,
+                is_dev: p.options.jsx.development,
+                parse_test_pragmas: p.options.features.react_compiler_parse_test_pragmas,
+                output_mode: p
+                    .options
+                    .features
+                    .react_compiler
+                    .is_ssr()
+                    .then(|| "ssr".to_owned()),
+                ..Default::default()
+            };
+            let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts);
+            let import_bindings = bun_react_compiler::collect_import_bindings(
+                stmts,
+                p.import_records.items(),
+                p.symbols.as_slice(),
+            );
+            p.react_compiler = Some(Box::new(bun_react_compiler::ReactCompilerState::new(
+                rc_options,
+                opt_out,
+                import_bindings,
+            )));
+        }
 
         let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);
         let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
@@ -2134,6 +2167,57 @@ impl<'a> Parser<'a> {
                     enabled: true,
                 }],
             )?;
+        }
+
+        if let Some(rc_state) = p.react_compiler.take() {
+            let mut rc_stmts: Vec<Stmt> = Vec::new();
+            let result = bun_react_compiler::finish(
+                *rc_state,
+                &mut crate::react_compiler_host::ReactCompilerHost::new(p),
+                &mut rc_stmts,
+            );
+            if let bun_react_compiler::CompileOutput::Error { error, .. } = result {
+                p.log().add_range_error_fmt(
+                    Some(p.source),
+                    bun_ast::Range::NONE,
+                    format_args!("React Compiler: {error}"),
+                );
+            }
+            if !rc_stmts.is_empty() {
+                let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+                for stmt in &rc_stmts {
+                    match &stmt.data {
+                        js_ast::StmtData::SImport(import) => {
+                            declared_symbols.append(DeclaredSymbol {
+                                ref_: import.namespace_ref,
+                                is_top_level: true,
+                            })?;
+                            for item in import.items.iter() {
+                                declared_symbols.append(DeclaredSymbol {
+                                    ref_: item.name.ref_,
+                                    is_top_level: true,
+                                })?;
+                            }
+                        }
+                        js_ast::StmtData::SFunction(func) => {
+                            if let Some(ref_) = func.func.name.map(|n| n.ref_) {
+                                declared_symbols.append(DeclaredSymbol {
+                                    ref_,
+                                    is_top_level: true,
+                                })?;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                before.push(js_ast::Part {
+                    stmts: p.arena.alloc_slice_copy(&rc_stmts).into(),
+                    tag: js_ast::PartTag::ReactCompiler,
+                    declared_symbols,
+                    can_be_removed_if_unused: true,
+                    ..Default::default()
+                });
+            }
         }
 
         if p.react_refresh.register_used || p.react_refresh.signature_used {

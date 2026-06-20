@@ -2774,7 +2774,12 @@ declare module "bun" {
      */
     emitDCEAnnotations?: boolean;
 
-    // treeshaking?: boolean;
+    /**
+     * Whether to enable tree-shaking (removal of unreferenced top-level
+     * declarations and unused exports). Defaults to `true`. Set to `false` to
+     * keep dead code in the output for debugging or test fixtures.
+     */
+    treeShaking?: boolean;
 
     // jsx?:
     //   | "automatic"
@@ -2900,6 +2905,27 @@ declare module "bun" {
      * @default false
      */
     reactFastRefresh?: boolean;
+
+    /**
+     * Run the React Compiler over `.jsx`/`.tsx` source files, automatically
+     * memoizing components and hooks.
+     *
+     * @default false
+     * @experimental
+     */
+    reactCompiler?: boolean;
+
+    /**
+     * Output mode for the React Compiler. `"ssr"` skips memoization (the
+     * `useMemoCache` runtime) for server-rendered output.
+     *
+     * Only applies when {@link reactCompiler} is `true`.
+     *
+     * @default `"client"` when {@link target} is `"browser"`; `"ssr"` when
+     * {@link target} is `"bun"` or `"node"`.
+     * @experimental
+     */
+    reactCompilerOutputMode?: "client" | "ssr";
 
     /**
      * A map of file paths to their contents for in-memory bundling.

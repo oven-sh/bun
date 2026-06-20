@@ -257,6 +257,8 @@ pub struct LexerSnapshot<'a> {
     pub has_newline_before: bool,
     pub has_pure_comment_before: bool,
     pub has_no_side_effect_comment_before: bool,
+    pub has_react_hooks_suppression_before: bool,
+    pub has_react_hooks_block_suppression: bool,
     pub preserve_all_comments_before: bool,
     pub is_legacy_octal_literal: bool,
     pub is_log_disabled: bool,
@@ -276,6 +278,7 @@ pub struct LexerSnapshot<'a> {
     pub string_literal_raw_format: StringLiteralRawFormat,
     pub is_ascii_only: bool,
     pub track_comments: bool,
+    pub track_react_suppressions: bool,
     pub indent_info: IndentInfo,
     // Vec buffer lengths — restore() truncates back to these.
     pub all_comments_len: usize,
@@ -333,6 +336,15 @@ pub struct LexerType<
     pub has_newline_before: bool,
     pub has_pure_comment_before: bool,
     pub has_no_side_effect_comment_before: bool,
+    /// Set (and never cleared by `next()`) once an `eslint-disable[-line|-next-line]`
+    /// comment naming `react-hooks/rules-of-hooks` or `react-hooks/exhaustive-deps`
+    /// has been scanned. The parser reads this at function-body close to set
+    /// `flags::Function::HasReactHooksSuppression` / `E::Arrow::has_react_hooks_suppression`.
+    pub has_react_hooks_suppression_before: bool,
+    /// Sticky variant of the above: set when the suppression comment is a bare
+    /// `eslint-disable` (no `-line`/`-next-line` suffix). Never cleared by the
+    /// parser, so it applies to every subsequent function in the file.
+    pub has_react_hooks_block_suppression: bool,
     pub preserve_all_comments_before: bool,
     pub is_legacy_octal_literal: bool,
     pub is_log_disabled: bool,
@@ -357,6 +369,7 @@ pub struct LexerType<
     /// Only used for JSON stringification when bundling.
     pub is_ascii_only: bool,
     pub track_comments: bool,
+    pub track_react_suppressions: bool,
     pub all_comments: Vec<Range>,
 
     /// Only meaningful when `GUESS_INDENTATION` is set.
@@ -509,6 +522,8 @@ lexer_impl_header! {
             has_newline_before: self.has_newline_before,
             has_pure_comment_before: self.has_pure_comment_before,
             has_no_side_effect_comment_before: self.has_no_side_effect_comment_before,
+            has_react_hooks_suppression_before: self.has_react_hooks_suppression_before,
+            has_react_hooks_block_suppression: self.has_react_hooks_block_suppression,
             preserve_all_comments_before: self.preserve_all_comments_before,
             is_legacy_octal_literal: self.is_legacy_octal_literal,
             is_log_disabled: self.is_log_disabled,
@@ -528,6 +543,7 @@ lexer_impl_header! {
             string_literal_raw_format: self.string_literal_raw_format,
             is_ascii_only: self.is_ascii_only,
             track_comments: self.track_comments,
+            track_react_suppressions: self.track_react_suppressions,
             indent_info: self.indent_info,
             all_comments_len: self.all_comments.len(),
             comments_to_preserve_before_len: self.comments_to_preserve_before.len(),
@@ -548,6 +564,8 @@ lexer_impl_header! {
         self.has_newline_before = original.has_newline_before;
         self.has_pure_comment_before = original.has_pure_comment_before;
         self.has_no_side_effect_comment_before = original.has_no_side_effect_comment_before;
+        self.has_react_hooks_suppression_before = original.has_react_hooks_suppression_before;
+        self.has_react_hooks_block_suppression = original.has_react_hooks_block_suppression;
         self.preserve_all_comments_before = original.preserve_all_comments_before;
         self.is_legacy_octal_literal = original.is_legacy_octal_literal;
         self.is_log_disabled = original.is_log_disabled;
@@ -568,6 +586,7 @@ lexer_impl_header! {
         self.string_literal_raw_format = original.string_literal_raw_format;
         self.is_ascii_only = original.is_ascii_only;
         self.track_comments = original.track_comments;
+        self.track_react_suppressions = original.track_react_suppressions;
         self.indent_info = original.indent_info;
 
         debug_assert!(self.all_comments.len() >= original.all_comments_len);
@@ -2315,6 +2334,30 @@ lexer_impl_header! {
             text.len()
         };
 
+        if self.track_react_suppressions
+            && !(self.has_react_hooks_suppression_before && self.has_react_hooks_block_suppression)
+        {
+            let body = &text[..end_comment_text];
+            if let Some(i) = strings::index_of(body, b"eslint-disable") {
+                let after = &body[i + b"eslint-disable".len()..];
+                let (is_block, rest) = if strings::has_prefix_comptime(after, b"-next-line") {
+                    (false, &after[b"-next-line".len()..])
+                } else if strings::has_prefix_comptime(after, b"-line") {
+                    (false, &after[b"-line".len()..])
+                } else {
+                    (true, after)
+                };
+                if strings::contains(rest, b"react-hooks/rules-of-hooks")
+                    || strings::contains(rest, b"react-hooks/exhaustive-deps")
+                {
+                    self.has_react_hooks_suppression_before = true;
+                    if is_block {
+                        self.has_react_hooks_block_suppression = true;
+                    }
+                }
+            }
+        }
+
         if has_legal_annotation || self.preserve_all_comments_before {
             if is_multiline_comment {
                 // text = lexer.removeMultilineCommentIndent(lexer.source.contents[0..lexer.start], text);
@@ -2662,6 +2705,8 @@ lexer_impl_header! {
             has_newline_before: false,
             has_pure_comment_before: false,
             has_no_side_effect_comment_before: false,
+            has_react_hooks_suppression_before: false,
+            has_react_hooks_block_suppression: false,
             preserve_all_comments_before: false,
             is_legacy_octal_literal: false,
             is_log_disabled: false,
@@ -2684,6 +2729,7 @@ lexer_impl_header! {
             temp_buffer_u16: Vec::new(),
             is_ascii_only: IS_JSON,
             track_comments: false,
+            track_react_suppressions: false,
             all_comments: Vec::new(),
             indent_info: IndentInfo {
                 guess: Indentation::default(),

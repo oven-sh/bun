@@ -1114,6 +1114,7 @@ pub enum PartTag {
     Runtime,
     CjsImports,
     ReactFastRefresh,
+    ReactCompiler,
     DirnameFilename,
     BunTest,
     DeadDueToInlining,

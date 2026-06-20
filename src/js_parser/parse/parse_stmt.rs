@@ -858,7 +858,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if Self::IS_TYPESCRIPT_ENABLED {
-                    if opts.is_typescript_declare && p.lexer.is_contextual_keyword(b"as") {
+                    if p.lexer.is_contextual_keyword(b"as") {
                         // "export as namespace ns;"
                         p.lexer.next()?;
                         p.lexer.expect_contextual_keyword(b"namespace")?;

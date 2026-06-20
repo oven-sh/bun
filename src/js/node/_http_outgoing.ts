@@ -286,8 +286,8 @@ OutgoingMessage.prototype._send = function _send(data, encoding, callback, byteL
   // This is a shameful hack to get the headers and first body chunk onto
   // the same packet. Future versions of Node are going to take care of
   // this at a lower level and in a more general way.
-  const header = this._header;
-  if (!this._headerSent && header !== null) {
+  let header;
+  if (!this._headerSent && (header = this._header) !== null) {
     // `this._header` can be null if OutgoingMessage is used without a proper Socket
     // See: /test/parallel/test-http-outgoing-message-inheritance.js
     if (typeof data === "string" && (encoding === "utf8" || encoding === "latin1" || !encoding)) {

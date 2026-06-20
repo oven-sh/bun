@@ -1552,11 +1552,11 @@ function fromList(n, state) {
   const buf = state.buffer;
   const len = buf.length;
 
-  const stateLength = state.length;
+  let stateLength;
   if ((state[kState] & kObjectMode) !== 0) {
     ret = buf[idx];
     buf[idx++] = null;
-  } else if (!n || n >= stateLength) {
+  } else if (!n || n >= (stateLength = state.length)) {
     // Read it all, truncate the list.
     if ((state[kState] & kDecoder) !== 0) {
       ret = "";
@@ -1570,7 +1570,7 @@ function fromList(n, state) {
       ret = buf[idx];
       buf[idx++] = null;
     } else {
-      ret = Buffer.allocUnsafe(stateLength);
+      ret = Buffer.allocUnsafe(stateLength ?? state.length);
 
       let i = 0;
       while (idx < len) {

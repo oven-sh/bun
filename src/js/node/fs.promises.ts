@@ -1139,11 +1139,12 @@ function asyncWrap(fn: any, name: string) {
             }
           }
           chunk = toUint8Array(chunk);
-          const chunkByteLength = chunk.byteLength;
-          if (bytesRemaining >= 0 && chunkByteLength > bytesRemaining) {
+          let chunkByteLength;
+          if (bytesRemaining >= 0 && (chunkByteLength = chunk.byteLength) > bytesRemaining) {
             return Promise.$reject($ERR_OUT_OF_RANGE("write", `<= ${bytesRemaining} bytes`, chunkByteLength));
           }
           if (bytesRemaining > 0) bytesRemaining -= chunkByteLength;
+          chunkByteLength ??= chunk.byteLength;
           const position = pos;
           if (pos >= 0) pos += chunkByteLength;
           acquireRef();

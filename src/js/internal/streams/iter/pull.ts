@@ -759,14 +759,14 @@ function pipeToSync(source, ...args) {
 
   try {
     for (const batch of pipeline) {
-      const batchLength = batch.length;
-      if (hasWritevSync && batchLength > 1) {
+      let batchLength;
+      if (hasWritevSync && (batchLength = batch.length) > 1) {
         writer.writevSync(batch);
         for (let i = 0; i < batchLength; i++) {
           totalBytes += batch[i].byteLength;
         }
       } else {
-        for (let i = 0; i < batchLength; i++) {
+        for (let i = 0; i < (batchLength ??= batch.length); i++) {
           const chunk = batch[i];
           writer.writeSync(chunk);
           totalBytes += chunk.byteLength;
@@ -860,8 +860,8 @@ async function pipeTo(source, ...args) {
   // Returns undefined on sync success, or a Promise when async fallback
   // is required. Callers must check: const p = writeBatch(b); if (p) await p;
   function writeBatch(batch) {
-    const batchLength = batch.length;
-    if (hasWritev && batchLength > 1) {
+    let batchLength;
+    if (hasWritev && (batchLength = batch.length) > 1) {
       if (!hasWritevSync || !writer.writevSync(batch)) {
         if (hasWritevSync && syncFalseWasAccepted()) {
           for (let i = 0; i < batchLength; i++) {

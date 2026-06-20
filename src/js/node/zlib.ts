@@ -455,8 +455,9 @@ function processCallback() {
   }
 
   // Exhausted the output buffer, or used all the input create a new one.
-  const chunkSize = self._chunkSize;
-  if (availOutAfter === 0 || self._outOffset >= chunkSize) {
+  let chunkSize;
+  if (availOutAfter === 0 || self._outOffset >= (chunkSize = self._chunkSize)) {
+    chunkSize ??= self._chunkSize;
     handle.availOutBefore = chunkSize;
     self._outOffset = 0;
     self._outBuffer = Buffer.allocUnsafe(chunkSize);

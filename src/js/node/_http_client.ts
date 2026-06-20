@@ -346,10 +346,10 @@ function ClientRequest(input, options, cb) {
     this._last = true;
     this.shouldKeepAlive = false;
     let opts = optsWithoutSignal;
-    // optsWithoutSignal is a plain spread copy; safe to read eagerly.
-    const socketPath = opts.socketPath;
-    if (opts.path || socketPath) {
+    let socketPath;
+    if (opts.path || (socketPath = opts.socketPath)) {
       opts = { ...optsWithoutSignal };
+      socketPath ??= opts.socketPath;
       if (socketPath) {
         opts.path = socketPath;
       } else {

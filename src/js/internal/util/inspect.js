@@ -2316,7 +2316,7 @@ function formatProperty(ctx, value, recurseTimes, key, type, desc, original = va
   let extra = " ";
   desc ||= ObjectGetOwnPropertyDescriptor(value, key) || { value: value[key], enumerable: true };
   const descValue = desc.value;
-  const descGet = desc.get;
+  let descGet;
   if (descValue !== undefined) {
     const diff = ctx.compact !== true || type !== kObjectType ? 2 : 3;
     ctx.indentationLvl += diff;
@@ -2325,7 +2325,7 @@ function formatProperty(ctx, value, recurseTimes, key, type, desc, original = va
       extra = `\n${StringPrototypeRepeat(" ", ctx.indentationLvl)}`;
     }
     ctx.indentationLvl -= diff;
-  } else if (descGet !== undefined) {
+  } else if ((descGet = desc.get) !== undefined) {
     const label = desc.set !== undefined ? "Getter/Setter" : "Getter";
     const s = ctx.stylize;
     const sp = "special";
@@ -2424,8 +2424,8 @@ function reduceToSingleString(ctx, output, base, braces, extrasType, recurseTime
       // Consolidate all entries of the local most inner depth up to
       // `ctx.compact`, as long as the properties are smaller than
       // `ctx.breakLength`.
-      const outputLength = output.length;
-      if (ctx.currentDepth - recurseTimes < compact && entries === outputLength) {
+      let outputLength;
+      if (ctx.currentDepth - recurseTimes < compact && entries === (outputLength = output.length)) {
         // Line up all entries on a single line in case the entries do not
         // exceed `breakLength`. Add 10 as constant to start next to all other
         // factors that may reduce `breakLength`.

@@ -93,7 +93,11 @@ describe("isInternalThread", () => {
 
   test("require exposes isInternalThread as false", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", "const wt = require('node:worker_threads'); console.log(wt.isInternalThread, typeof wt.isInternalThread);"],
+      cmd: [
+        bunExe(),
+        "-e",
+        "const wt = require('node:worker_threads'); console.log(wt.isInternalThread, typeof wt.isInternalThread);",
+      ],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",

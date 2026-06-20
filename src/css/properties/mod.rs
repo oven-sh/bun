@@ -5,12 +5,7 @@
 // `properties_generated.rs` carries the 249-variant `Property` /
 // `PropertyId` / `PropertyIdTag` enums referenced by `declaration.rs`,
 // `context.rs`, and `rules/`. Every *value type* the `Property` enum names is
-// re-exposed below via `pub mod $name`. When a leaf .rs file un-gates, its
-// real type replaces the stub transparently (same path, same name).
-//
-// `prefixes::Feature` and the entire `values/` lattice are real, so
-// `PropertyId::set_prefixes_for_targets` / `from_name_and_prefix` and the
-// `Property` payloads that name `css_values::*` resolve directly.
+// re-exposed below via `pub mod $name`.
 
 // ─── Rect / Size shorthand impl + define macros ────────────────────────────
 // Shared by `border.rs` and `margin_padding.rs`.
@@ -125,46 +120,23 @@ macro_rules! impl_size_shorthand {
 // ─── Submodule declarations ────────────────────────────────────────────────
 //
 pub mod align;
-// `animation`: un-gated — real AnimationName / Animation / AnimationIterationCount /
-// AnimationDirection / AnimationPlayState / AnimationFillMode / AnimationTimeline /
-// Scroller / ScrollAxis / ViewTimeline / AnimationRangeStart / AnimationRangeEnd /
-// AnimationRange / TimelineRangeName / AnimationComposition / AnimationHandler
-// live in `animation.rs`.
 pub mod animation;
 pub mod background;
 pub mod border;
-// `border_image`: un-gated — real BorderImage / BorderImageSlice /
-// BorderImageSideWidth / BorderImageRepeat / BorderImageHandler live in
-// `border_image.rs`. parse/to_css for BorderImageSideWidth remain internally
-// gated on the DeriveParse/DeriveToCss proc-macros.
 pub mod border_image;
-// `border_radius`: un-gated — real BorderRadius + BorderRadiusHandler
-// (handle_property/finalize bodies) live in `border_radius.rs`.
 pub mod border_radius;
-// `box_shadow`: un-gated — real BoxShadow + BoxShadowHandler live in
-// `box_shadow.rs`.
 pub mod box_shadow;
 pub mod display;
 pub mod effects;
 pub mod flex;
-// `font`: un-gated — real data types (FontWeight / FontSize / FontStretch /
-// FontFamily / FontStyle / FontVariantCaps / LineHeight / Font / FontHandler)
-// live in `font.rs`. parse/to_css/handle_property bodies remain internally
-// ``-gated there until DeriveParse/DeriveToCss proc-macros +
-// EnumProperty derive land.
 pub mod font;
 pub mod grid;
-// `list`: un-gated — real ListStyleType / CounterStyle / Symbols / Symbol
-// live in `list.rs`. PredefinedCounterStyle / SymbolsType / ListStylePosition /
-// ListStyle / MarkerSide are uninhabited.
 pub mod list;
 pub mod margin_padding;
 pub mod masking;
 pub mod outline;
 pub mod overflow;
 pub mod position;
-// `prefix_handler`: un-gated — real FallbackHandler (handle_property/finalize
-// bodies) lives in `prefix_handler.rs`.
 pub mod prefix_handler;
 pub mod shape;
 pub mod size;
@@ -174,18 +146,8 @@ pub mod transform;
 pub mod transition;
 pub mod ui;
 
-// `css_modules`: un-gated — real `Composes` payload (names/from/loc/
-// cssparser_loc) + `Specifier` enum (Global/ImportRecordIndex) live in
-// `css_modules.rs`. `Composes::to_css` stays internally ``-gated
-// on `CustomIdent::to_css` (Printer::write_ident).
 pub mod css_modules;
 
-// `custom`: un-gated — real data types (TokenList / TokenOrValue /
-// CustomProperty / CustomPropertyName / UnparsedProperty / EnvironmentVariable
-// / Variable / Function / UnresolvedColor / UAEnvironmentVariable) live in
-// `custom.rs`. parse/to_css/deep_clone/eql/hash bodies remain internally
-// ``-gated there until their leaf deps (ident/url/color/
-// generics) un-gate.
 pub mod custom;
 
 pub mod properties_generated;

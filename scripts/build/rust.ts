@@ -503,6 +503,16 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (cfg.release && !cfg.assertions) {
     rustflags.push("-Zlocation-detail=none");
   }
+  // Path remapping (CI reproducibility) — rustc equivalent of the C/C++
+  // `-ffile-prefix-map` entries in flags.ts. Without this, `file!()` /
+  // panic locations and the DWARF compilation-dir from every workspace
+  // crate and vendored Rust dep (lol-html) embed the absolute checkout
+  // path into the release binary (`strings bun | grep $PWD` shows them).
+  // Gated on `cfg.ci` to match the flags.ts entry.
+  if (cfg.ci) {
+    rustflags.push(`--remap-path-prefix=${cfg.cwd}=.`);
+    rustflags.push(`--remap-path-prefix=${cfg.vendorDir}=vendor`);
+  }
   // IR PGO, Rust half — mirrors the C++ `-fprofile-generate`/`-fprofile-use`
   // (flags.ts) so the Rust ~half of bun's `.text` participates too (a port-era
   // `bun` is mostly Rust now; instrumenting only C++ would leave most of the
@@ -542,6 +552,19 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // and the `bun_bin` staticlib has no link step, so it's normally dead — but
   // if a target cdylib ever appears it'd fail with "could not open '-fuse-ld=lld'".
   if (!cfg.windows) rustflags.push(`-Clink-arg=-fuse-ld=lld`);
+  // Keep the clang driver quiet about link args that don't apply to a given
+  // artifact kind: rustc adds `-no-pie` under `-Crelocation-model=static`,
+  // which is meaningless when it links a target cdylib (lol_html_c_api), and
+  // rustc's `linker_messages` lint then re-surfaces clang's
+  // "argument unused during compilation: '-no-pie'" as a warning on every
+  // build-rust job. Same approach as the WebKit configure
+  // (`-Qunused-arguments`); real linker errors still fail the link.
+  if (!cfg.windows) rustflags.push(`-Clink-arg=-Qunused-arguments`);
+  // And allow the lint itself: CI treats new warnings as failures, and the
+  // lint forwards anything any platform's linker prints to stderr - the
+  // -Qunused-arguments above only covers the clang-driver case. Real linker
+  // errors are unaffected (they fail the link, not the lint).
+  rustflags.push(`-Alinker_messages`);
   if (cfg.crossLangLto) {
     // Cross-language LTO: emit LLVM bitcode (not machine code) into the .a
     // so the final lld LTO link sees through Rust↔C++ call edges. The shape

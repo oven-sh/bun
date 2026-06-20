@@ -10,9 +10,9 @@
 // lifecycle_script_runner.rs).
 extern crate bun_sha_hmac as bun_sha;
 extern crate self as bun_install;
-// `bun_output::declare_scope!` / `scoped_log!` in Phase-A drafts → the macros
-// live at `bun_core` crate root (#[macro_export]); alias the crate so the
-// `bun_output::` path resolves in un-gated install modules.
+// `bun_output::declare_scope!` / `scoped_log!` — the macros live at
+// `bun_core` crate root (#[macro_export]); alias the crate so the
+// `bun_output::` path resolves.
 extern crate bun_analytics as analytics;
 extern crate bun_core as bun_output;
 

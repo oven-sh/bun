@@ -1,8 +1,5 @@
-//! cycle-5: un-gated `NewServer` struct + lifecycle skeleton (start/stop/listen),
-//! `AnyServer` dispatch, `AnyRoute`, and the per-file submodules. JS callback
-//! bodies (`on_request`, `on_upgrade`, `from_js`, …) and methods that need
-//! `bun_uws` write/close surface stay ``-gated inside each file.
-//! The full Phase-A draft of every gated body is preserved in `server_body.rs`.
+//! `Bun.serve()`: `NewServer` struct + lifecycle (start/stop/listen),
+//! `AnyServer` dispatch, `AnyRoute`, and per-file submodules.
 
 use bun_collections::VecExt;
 use core::ffi::{c_char, c_int, c_void};
@@ -103,9 +100,6 @@ pub use request_context::RequestContext as NewRequestContext;
 #[path = "AnyRequestContext.rs"]
 pub mod any_request_context;
 pub use any_request_context::AnyRequestContext;
-
-#[path = "InspectorBunFrontendDevServerAgent.rs"]
-pub mod inspector_bun_frontend_dev_server_agent;
 
 // `server_body.rs` holds the large method bodies (`on_request`, `on_upgrade`,
 // route setup, …) split out to keep this module declaration file readable.

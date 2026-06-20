@@ -33,7 +33,7 @@ pub struct Scope {
     pub generated: AstVec<Ref>,
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
-    pub label_ref: Option<Ref>,
+    pub label_ref: Ref,
     pub label_stmt_is_loop: bool,
 
     // If a scope contains a direct eval() expression, then none of the symbols
@@ -70,7 +70,7 @@ impl Scope {
         children: AstAlloc::vec(),
         members: MemberHashMap::new_in(AstAlloc),
         generated: AstAlloc::vec(),
-        label_ref: None,
+        label_ref: Ref::NONE,
         label_stmt_is_loop: false,
         contains_direct_eval: false,
         forbid_arguments: false,
@@ -129,7 +129,7 @@ impl Scope {
         self.members.clear();
         self.parent = None;
         self.id = 0;
-        self.label_ref = None;
+        self.label_ref = Ref::NONE;
         self.label_stmt_is_loop = false;
         self.contains_direct_eval = false;
         self.strict_mode = StrictModeKind::SloppyMode;

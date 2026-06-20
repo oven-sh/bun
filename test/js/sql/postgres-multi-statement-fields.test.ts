@@ -111,11 +111,33 @@ test("simple query with multiple statements uses each RowDescription's column na
   }
 });
 
-// NotificationResponse ('A', sent by NOTIFY) and unknown async messages can arrive
-// between result sets. The protocol reader must consume exactly the message body so
-// the following messages stay correctly framed.
+// NotificationResponse ('A', sent by NOTIFY), NoticeResponse ('N', sent by
+// RAISE NOTICE and server chatter like "relation exists, skipping") and unknown
+// async messages can arrive between result sets. The protocol reader must
+// consume exactly the message body so the following messages stay correctly
+// framed.
 for (const [name, asyncMessage] of [
   ["NotificationResponse", pkt("A", Buffer.concat([int32(4321), cstr("some_channel"), cstr("some payload")]))],
+  // NoticeResponse shares ErrorResponse's field-list format: repeated
+  // (field-type byte + cstring), closed by a single zero byte. It must be
+  // decoded and discarded without failing the query.
+  [
+    "NoticeResponse",
+    pkt(
+      "N",
+      Buffer.concat([
+        Buffer.from("S"),
+        cstr("NOTICE"),
+        Buffer.from("C"),
+        cstr("00000"),
+        Buffer.from("M"),
+        cstr("relation exists, skipping"),
+        Buffer.from([0]),
+      ]),
+    ),
+  ],
+  // Degenerate notice: declared length 4, no field list at all.
+  ["empty NoticeResponse", pkt("N", Buffer.alloc(0))],
   // 'v' = NegotiateProtocolVersion, which the client does not handle explicitly
   ["unknown message type", pkt("v", Buffer.concat([int32(0), int32(0)]))],
 ] as const) {

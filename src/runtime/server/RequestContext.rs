@@ -416,11 +416,6 @@ mod shim {
         bun_ptr::BackRef::from(s).unpipe_without_deref()
     }
 }
-// `Api::FallbackMessageContainer`/`JsException`/`Problems`/`Fallback::render_backend`
-// live in `bun_options_types::schema::api` + `bun_ast::runtime`; both are
-// still being filled in by concurrent ports. The DEBUG_MODE error-page paths
-// that use them stay ``-gated below.
-
 use bun_options_types::schema::api as Api;
 
 use bun_js_parser::parser::Runtime::Fallback;

@@ -333,9 +333,9 @@ impl SideEffects {
                                 // We only do this optimization if the other side is a known primitive with side effects
                                 // to avoid corrupting shared nodes when the other side is an undefined identifier
                                 if matches!(bin.left.data, ExprData::ENumber(_)) {
-                                    bin.left.data = ExprData::ENumber(E::Number { value: 0.0 });
+                                    bin.left.data = ExprData::ENumber(E::Number::new(0.0));
                                 } else if matches!(bin.right.data, ExprData::ENumber(_)) {
-                                    bin.right.data = ExprData::ENumber(E::Number { value: 0.0 });
+                                    bin.right.data = ExprData::ENumber(E::Number::new(0.0));
                                 }
                             }
                             _ => {}
@@ -391,7 +391,7 @@ impl SideEffects {
                             } else if !is_computed {
                                 continue;
                             } else {
-                                let zero = p.new_expr(E::Number { value: 0.0 }, prev_value.loc);
+                                let zero = p.new_expr(E::Number::new(0.0), prev_value.loc);
                                 e_object.properties.mut_(j).value = Some(zero);
                             }
                         }
@@ -907,7 +907,7 @@ impl SideEffects {
                 ok: true,
             },
             ExprData::ENumber(e) => Result {
-                value: e.value != 0.0 && !e.value.is_nan(),
+                value: e.value() != 0.0 && !e.value().is_nan(),
                 side_effects: SideEffects::NoSideEffects,
                 ok: true,
             },

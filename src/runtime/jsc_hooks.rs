@@ -861,9 +861,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     let loop_ = unsafe { (*el).usockets_loop() };
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
-    // The swap + drain loop is un-gated in
-    // `bun_jsc::event_loop` (per-task body dispatched via `__bun_run_immediate_task`),
-    // so `immediate_tasks` after this call reflects next-tick immediates and
+    // After this call `immediate_tasks` reflects next-tick immediates, so
     // the `has_pending_immediate` read below is correct.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
@@ -1273,65 +1271,6 @@ fn load_standalone_sourcemap(
     unsafe { (*graph).find(path)?.sourcemap.load() }
 }
 
-/// `pt.source_maps.get(filename) → pt.bundled_outputs[idx].value.asSlice()`.
-/// The body lives here (not in
-/// `bun_sourcemap_jsc`) because `PerThread` names `bun_bundler::OutputFile`;
-/// the low tier holds only the opaque pointer round-tripped through C++.
-///
-/// # Safety
-/// `pt` is the live `*mut bake::production::PerThread` previously attached via
-/// `BakeGlobalObject__attachPerThreadData` (caller checked
-/// `BakeGlobalObject__isBakeGlobalObject` first). Called on the JS thread.
-/// The returned slice borrows `pt.bundled_outputs` and is valid for the bake
-/// build session (outlives the caller's `parse_json` use).
-unsafe fn bake_per_thread_source_map(
-    pt: *mut c_void,
-    source_filename: &[u8],
-) -> Option<*const [u8]> {
-    // SAFETY: per fn contract — `pt` is the unerased `*mut PerThread` C++
-    // stored opaquely; only this crate knows its layout.
-    let pt = unsafe { &*pt.cast::<crate::bake::production::PerThread>() };
-    let idx = pt.source_maps.get(source_filename)?;
-    Some(std::ptr::from_ref::<[u8]>(
-        pt.bundled_outputs[idx.get() as usize].value.as_slice(),
-    ))
-}
-
-/// `BakeSourceProvider.getExternalData`.
-/// Link-time-resolved by `bun_sourcemap` (declared `extern "Rust"` there) so
-/// `SavedSourceMap::get_with_content`'s `BakeSourceProvider` branch reaches the
-/// real lookup instead of a stub. Returns `None`
-/// if not running under a `Bake::GlobalObject` (caller falls back to disk read),
-/// otherwise the bundled `.map` JSON for `source_filename` (or `b""` if absent).
-#[unsafe(no_mangle)]
-pub(crate) static __BUN_BAKE_EXTERNAL_SOURCEMAP: fn(source_filename: &[u8]) -> Option<*const [u8]> =
-    bake_external_sourcemap;
-
-fn bake_external_sourcemap(source_filename: &[u8]) -> Option<*const [u8]> {
-    unsafe extern "C" {
-        fn BakeGlobalObject__isBakeGlobalObject(global: *mut JSGlobalObject) -> bool;
-        fn BakeGlobalObject__getPerThreadData(global: *mut JSGlobalObject) -> *mut c_void;
-    }
-    let global = VirtualMachine::get().global;
-    // SAFETY: `global` is the live JSGlobalObject for this VM thread.
-    if !unsafe { BakeGlobalObject__isBakeGlobalObject(global) } {
-        return None;
-    }
-    // SAFETY: `global` is a `Bake::GlobalObject` (checked above).
-    let pt = unsafe { BakeGlobalObject__getPerThreadData(global) };
-    if pt.is_null() {
-        // `m_perThreadData` is null between VM init and `PerThread::attach`;
-        // no bundled outputs exist yet, so fall back to disk.
-        return None;
-    }
-    // SAFETY: per `bake_per_thread_source_map` contract — `pt` is the live
-    // non-null `*mut PerThread` per above; called on the JS thread.
-    if let Some(slice) = unsafe { bake_per_thread_source_map(pt, source_filename) } {
-        return Some(slice);
-    }
-    Some(std::ptr::from_ref::<[u8]>(b""))
-}
-
 /// `node_cluster_binding.handleInternalMessageChild(global, data)` — the
 /// `IPCInstance.handleIPCMessage` `.internal` arm.
 ///
@@ -1468,7 +1407,6 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     console_on_before_print,
     console_print_runtime_object,
     load_standalone_sourcemap,
-    bake_per_thread_source_map,
     apply_standalone_runtime_flags,
     parse_worker_exec_argv_allow_addons,
     cron_clear_all_teardown,
@@ -3075,9 +3013,7 @@ fn transpile_source_code_inner(
                                 .module_type
                             })
                             .or_else(|| {
-                                // The async path threads `lr.package_json` (from
-                                // `read_dir_info`) into the store; while that
-                                // path is gated, recover the same lookup here so
+                                // Recover the package.json lookup here so
                                 // a `.cjs` under `"type":"module"` still tags as
                                 // `PackageJsonTypeModule` (mirrors the cache-hit
                                 // branch above).
@@ -3357,11 +3293,6 @@ fn transpile_source_code_inner(
                 // need to copy the ~12 borrowed slices out (perf: was a
                 // per-asset-import `url::URL::clone`).
                 let origin = unsafe { &(*jsc_vm).origin };
-                // Note: `jsc.API.Bun.getPublicPath` is gated behind a
-                // private `_jsc_gated` mod in BunObject.rs; it is a thin
-                // wrapper over `get_public_path_with_asset_prefix` with
-                // `dir = VM.top_level_dir`, `asset_prefix = ""`, `.loose`.
-                // Inline that body here (mirrors filesystem_router.rs).
                 let top_level_dir = Fs::FileSystem::get().top_level_dir;
                 crate::api::bun_object::get_public_path_with_asset_prefix(
                     specifier,
@@ -3520,6 +3451,24 @@ fn get_hardcoded_module(
                 source_code_needs_deref: true,
                 ..ResolvedSource::default()
             }))
+        }
+        HardcodedModule::NodeStreamIter => {
+            // Gated behind `--experimental-stream-iter` (node parity: the
+            // module resolves only when the flag was passed on the CLI;
+            // without it `node:stream/iter` reports "No such built-in
+            // module" and bare `stream/iter` falls through to filesystem
+            // resolution).
+            if !bun_resolve_builtins::stream_iter_enabled() {
+                return None;
+            }
+            Some(js_synthetic_module(b"node:stream/iter", specifier))
+        }
+        HardcodedModule::NodeZlibIter => {
+            // Same `--experimental-stream-iter` gate as `node:stream/iter`.
+            if !bun_resolve_builtins::stream_iter_enabled() {
+                return None;
+            }
+            Some(js_synthetic_module(b"node:zlib/iter", specifier))
         }
         HardcodedModule::BunInternalForTesting => {
             // Gated behind `--expose-internals` (release) / always-on (debug).
@@ -3706,13 +3655,9 @@ export default db;
 // `Bun__transpileFile` helpers — local copies of `options.normalizeSpecifier` /
 // `options.getLoaderAndVirtualSource`.
 //
-// The canonical Rust port (`bun_bundler::options::get_loader_and_virtual_source`)
-// is ``-gated behind a `VmLoaderCtx` vtable that nothing
-// constructs yet, and `Fs::Path::loader` returns the lower-tier
-// `bun_ast::Loader` (a *distinct* nominal type from the
-// `bun_ast::Loader` we need for `TranspileExtra`). Porting the
-// body inline here lets us name `VirtualMachine` directly (no vtable) and look
-// the loader up in `transpiler.options.loaders` (which is already
+// Porting the body inline here lets us name `VirtualMachine` directly (no
+// vtable) and look the loader up in `transpiler.options.loaders` (which is
+// already
 // `StringArrayHashMap<bun_ast::Loader>`), so no inter-enum bridge is required.
 // ────────────────────────────────────────────────────────────────────────────
 

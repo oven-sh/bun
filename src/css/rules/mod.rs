@@ -319,12 +319,6 @@ pub(super) mod dc {
 // `#[derive(DeepClone)]` proc-macro round-trips through a real CSS type.
 
 // ─── shared serialization helpers for leaf rules ──────────────────────────
-// Several leaf-rule `to_css` bodies bottom out on helpers whose canonical
-// homes are still ``-gated outside `rules/` (DeclarationBlock::
-// to_css_block, VendorPrefix::toCss, CustomIdent/DashedIdent ::toCss). The
-// bodies are tiny and have no further blockers, so they're inlined here so the
-// 12 leaf rules can serialize for real. Once the upstream gates drop, callers
-// switch back and these are deleted.
 
 /// `DeclarationBlock` block serialization.
 pub(super) fn decl_block_to_css(

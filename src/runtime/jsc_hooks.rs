@@ -3657,13 +3657,9 @@ export default db;
 // `Bun__transpileFile` helpers — local copies of `options.normalizeSpecifier` /
 // `options.getLoaderAndVirtualSource`.
 //
-// The canonical Rust port (`bun_bundler::options::get_loader_and_virtual_source`)
-// is ``-gated behind a `VmLoaderCtx` vtable that nothing
-// constructs yet, and `Fs::Path::loader` returns the lower-tier
-// `bun_ast::Loader` (a *distinct* nominal type from the
-// `bun_ast::Loader` we need for `TranspileExtra`). Porting the
-// body inline here lets us name `VirtualMachine` directly (no vtable) and look
-// the loader up in `transpiler.options.loaders` (which is already
+// Porting the body inline here lets us name `VirtualMachine` directly (no
+// vtable) and look the loader up in `transpiler.options.loaders` (which is
+// already
 // `StringArrayHashMap<bun_ast::Loader>`), so no inter-enum bridge is required.
 // ────────────────────────────────────────────────────────────────────────────
 

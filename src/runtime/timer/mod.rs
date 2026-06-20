@@ -1,14 +1,5 @@
 //! Timer subsystem: setTimeout/setInterval/setImmediate scheduling and the
 //! event-loop timer heap.
-//!
-//! Structs + state machines are real. JS-facing method bodies
-//! (`set_timeout`/`clear_timer`/`warn_invalid_countdown`/etc.) remain
-//! ``-gated on `bun_jsc` (commented out in Cargo.toml).
-//! `All::insert`/`remove`/`update`/`get_timeout`/`drain_timers` — the surface
-//! `EventLoop::auto_tick` blocks on — are real.
-//!
-//! Full earlier drafts are preserved gated under ` mod *_draft`
-//! so this file can be diffed against `Timer.rs` once `bun_jsc` is green.
 
 use bun_collections::ArrayHashMap;
 use bun_core::{Timespec, TimespecMockMode};

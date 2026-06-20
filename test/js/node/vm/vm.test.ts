@@ -745,6 +745,48 @@ test("can't use bytecode from a different script", () => {
   expect(secondScript.runInThisContext()).toBe(4);
 });
 
+// https://github.com/oven-sh/bun/issues/32530
+describe("Script#sourceMapURL", () => {
+  const source = `
+function myFunc() {}
+//# sourceMappingURL=sourcemap.json
+`;
+
+  test("is available immediately after construction", () => {
+    const script = new Script(source);
+    expect(script.sourceMapURL).toBe("sourcemap.json");
+  });
+
+  test("is available after running the script", () => {
+    const script = new Script(source);
+    script.runInThisContext();
+    expect(script.sourceMapURL).toBe("sourcemap.json");
+  });
+
+  test("is undefined when the source has no sourceMappingURL", () => {
+    const script = new Script("1 + 1;");
+    expect(script.sourceMapURL).toBeUndefined();
+  });
+
+  test("is available with produceCachedData", () => {
+    const script = new Script(source, { produceCachedData: true });
+    expect(script.sourceMapURL).toBe("sourcemap.json");
+  });
+
+  test("is restored from valid cachedData without running", () => {
+    const cachedData = new Script(source).createCachedData();
+    const script = new Script(source, { cachedData });
+    expect(script.cachedDataRejected).toBeFalse();
+    expect(script.sourceMapURL).toBe("sourcemap.json");
+  });
+
+  test("falls back to parsing when cachedData is rejected", () => {
+    const script = new Script(source, { cachedData: Buffer.from("fhqwhgads") });
+    expect(script.cachedDataRejected).toBeTrue();
+    expect(script.sourceMapURL).toBe("sourcemap.json");
+  });
+});
+
 describe("codeGeneration options", () => {
   test("disabling codeGeneration.strings should block eval and Function constructor", () => {
     const context = createContext(

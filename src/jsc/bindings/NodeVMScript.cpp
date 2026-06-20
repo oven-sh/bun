@@ -6,6 +6,7 @@
 #include "JavaScriptCore/JIT.h"
 #include "JavaScriptCore/JSWeakMap.h"
 #include "JavaScriptCore/JSWeakMapInlines.h"
+#include "JavaScriptCore/ParserError.h"
 #include "JavaScriptCore/ProgramCodeBlock.h"
 #include "JavaScriptCore/SourceCodeKey.h"
 
@@ -155,6 +156,15 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         if (!unlinkedBlock) {
             script->cachedDataRejected(TriState::True);
         } else {
+            // Restore the directives recorded in the cached bytecode so
+            // Script#sourceMapURL works without re-parsing the source.
+            auto* provider = script->source().provider();
+            if (StringImpl* directive = unlinkedBlock->sourceURLDirective())
+                provider->setSourceURLDirective(directive);
+            if (StringImpl* directive = unlinkedBlock->sourceMappingURLDirective())
+                provider->setSourceMappingURLDirective(directive);
+            script->directivesResolved(true);
+
             JSC::JSScope* jsScope = globalObject->globalScope();
             JSC::CodeBlock* codeBlock = nullptr;
             {
@@ -175,6 +185,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         script->cacheBytecode();
         // TODO(@heimskr): is there ever a case where bytecode production fails?
         script->cachedDataProduced(true);
+        // cacheBytecode() parsed the source, so the directives are populated.
+        script->directivesResolved(true);
     }
 
     return JSValue::encode(script);
@@ -458,6 +470,16 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
     auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
+    }
+
+    if (!script->directivesResolved()) {
+        // Node makes sourceMapURL available right after construction by compiling
+        // the script eagerly. Bun compiles lazily (on first run), so parse the
+        // source here, without generating bytecode, the first time the directive
+        // is requested. This populates sourceMappingURLDirective on the provider.
+        JSC::ParserError parserError;
+        JSC::checkSyntax(vm, script->source(), parserError);
+        script->directivesResolved(true);
     }
 
     const String& url = script->source().provider()->sourceMappingURLDirective();

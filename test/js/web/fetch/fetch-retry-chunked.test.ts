@@ -1,19 +1,17 @@
-// Regression guard for the HTTP client panic in
-// handle_response_body_chunked_encoding when the body output buffer pointer
-// is unset (Sentry BUN-3BZF: "called Option::unwrap() on a None value" in
-// `InternalState::get_body_buffer`). The panic fires on `body_out_str.unwrap()`
-// when a chunked, uncompressed response is processed while the client's
-// state has no owner buffer attached.
+// Coverage for the chunked-body path on a keep-alive connection that the
+// server drops before responding (on_close with allow_retry == true). Added
+// alongside the None-safe body_out_str guards for Sentry BUN-3BZF; the
+// body_out_str == None state itself is not deterministically reachable from
+// fetch().
 
 import { expect, test } from "bun:test";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 
-// Drive the keep-alive retry path with a chunked, uncompressed response.
 // The server drops every third request without responding, so the client
 // that adopted the pooled socket observes on_close with response_stage ==
 // Pending and allow_retry == true, runs the retry, reconnects, and processes
-// a chunked body. This exercises `get_body_buffer()` on the retried request.
+// a chunked body.
 test("chunked uncompressed body over a retried keep-alive connection", async () => {
   let reqNo = 0;
   const sockets = new Set<net.Socket>();

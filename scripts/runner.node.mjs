@@ -1547,11 +1547,11 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     args: isReallyTest ? testArgs : [...args, absPath],
     cwd: opts["cwd"],
     // release-asan with debug-assertions on runs every spawned subprocess
-    // slower; give each file a bit more headroom so tests with heavy
-    // beforeAll setup (napi node-gyp compiles) don't hit the file wall
-    // before any individual test times out. Kept below the per-test
-    // multiplier so the overall shard stays inside the job timeout.
-    timeout: isReallyTest ? Math.ceil(timeout * (isAsan ? 1.5 : 1)) : 30_000,
+    // slower; give each file more headroom so tests with heavy beforeAll
+    // setup (napi node-gyp compiles) or many subprocess spawns don't hit
+    // the file wall before any individual test times out. Kept below the
+    // per-test multiplier so the overall shard stays inside the job timeout.
+    timeout: isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000,
     env,
     stdout: options.stdout,
     stderr: options.stderr,

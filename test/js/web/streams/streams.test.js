@@ -694,6 +694,63 @@ describe("ReadableStream.from", () => {
   it.each([null, undefined])("throws a TypeError for %p", value => {
     expect(() => ReadableStream.from(value)).toThrow(TypeError);
   });
+
+  // A null-prototype object is not iterable; describing it must not throw a raw
+  // "Cannot convert ... to primitive value" and must still report the code.
+  it("throws ERR_ARG_NOT_ITERABLE for a null-prototype object", () => {
+    let err;
+    try {
+      ReadableStream.from(Object.create(null));
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_ARG_NOT_ITERABLE");
+  });
+
+  it("throws ERR_INVALID_STATE when the iterator method returns a non-object", () => {
+    let err;
+    try {
+      ReadableStream.from({ [Symbol.asyncIterator]: () => 5 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_STATE");
+  });
+
+  it("rejects reads with ERR_INVALID_STATE when next() returns a non-object", async () => {
+    const stream = ReadableStream.from({ [Symbol.asyncIterator]: () => ({ next: () => 5 }) });
+    let err;
+    try {
+      await stream.getReader().read();
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_STATE");
+  });
+
+  it("rejects cancel() with ERR_INVALID_STATE when return() returns a non-object", async () => {
+    const iterable = {
+      [Symbol.iterator]() {
+        return {
+          next: () => ({ value: 1, done: false }),
+          return: () => 5,
+        };
+      },
+    };
+    const reader = ReadableStream.from(iterable).getReader();
+    await reader.read();
+    let err;
+    try {
+      await reader.cancel("x");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_STATE");
+  });
 });
 
 it("new Response(stream).body", async () => {

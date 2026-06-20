@@ -125,15 +125,25 @@ export function from(this, iterable) {
     iterator = method.$call(iterable);
   } else {
     method = iterable[Symbol.iterator];
-    // String() rather than a template literal so a Symbol argument reports
-    // ERR_ARG_NOT_ITERABLE instead of throwing "Cannot convert a Symbol to a string".
-    if ($isUndefinedOrNull(method)) throw $ERR_ARG_NOT_ITERABLE(String(iterable) + " must be iterable");
+    if ($isUndefinedOrNull(method)) {
+      // String() keeps a Symbol argument reporting ERR_ARG_NOT_ITERABLE (a template
+      // literal would throw on Symbols); the try guards null-prototype objects and
+      // throwing toString/Symbol.toPrimitive so they report the code, not a raw
+      // "Cannot convert ... to primitive value" TypeError.
+      let described;
+      try {
+        described = String(iterable);
+      } catch {
+        described = "The argument";
+      }
+      throw $ERR_ARG_NOT_ITERABLE(described + " must be iterable");
+    }
     if (!$isCallable(method)) throw new TypeError("ReadableStream.from: Symbol.iterator is not a function");
     iterator = method.$call(iterable);
     sync = true;
   }
 
-  if (!$isObject(iterator)) throw new TypeError("ReadableStream.from: iterator must be an object");
+  if (!$isObject(iterator)) throw $ERR_INVALID_STATE_TypeError("The iterator method must return an object");
 
   // The next method is captured once, mirroring GetIteratorFromMethod.
   const nextMethod = iterator.next;
@@ -141,7 +151,10 @@ export function from(this, iterable) {
   async function pull(controller) {
     const result = nextMethod.$call(iterator);
     const iterResult = sync ? result : await result;
-    if (!$isObject(iterResult)) throw new TypeError("ReadableStream.from: iterator.next() returned a non-object value");
+    if (!$isObject(iterResult))
+      throw $ERR_INVALID_STATE_TypeError(
+        "The promise returned by the iterator.next() method must fulfill with an object",
+      );
     if (iterResult.done) {
       // A native async iterator's value is not read on the done path (per
       // ReadableStreamFromIterable), but CreateAsyncFromSyncIterator always
@@ -160,7 +173,9 @@ export function from(this, iterable) {
     const result = returnMethod.$call(iterator, reason);
     const iterResult = sync ? result : await result;
     if (!$isObject(iterResult))
-      throw new TypeError("ReadableStream.from: iterator.return() returned a non-object value");
+      throw $ERR_INVALID_STATE_TypeError(
+        "The promise returned by the iterator.return() method must fulfill with an object",
+      );
     // Same async-from-sync adaptation: await the value so a rejected promise
     // rejects cancel() rather than leaking as an unhandled rejection.
     if (sync) await iterResult.value;

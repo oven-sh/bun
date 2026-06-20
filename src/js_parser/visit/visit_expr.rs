@@ -478,6 +478,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             } else {
                                 E::CallUnwrap::Never
                             },
+                            was_jsx_element: true,
                             close_paren_loc: e_.close_tag_loc,
                             ..Default::default()
                         },

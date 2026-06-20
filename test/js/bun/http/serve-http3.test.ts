@@ -480,6 +480,52 @@ describe("Bun.serve HTTP/3", () => {
     expect(stdout).toContain("listening");
     expect(exitCode).toBe(0);
   });
+
+  test("H3 UDP bind failure after TCP listen succeeded throws cleanly", async () => {
+    // Previously the TCP listen socket was still linked to the app's socket
+    // group when deinit ran on this error path, tripping the
+    // head_listen_sockets == NULL assert in us_socket_group_deinit.
+    const script = `
+      const dgram = require("dgram");
+      const net = require("net");
+      const tcp = net.createServer();
+      await new Promise(r => tcp.listen(0, "127.0.0.1", r));
+      const port = tcp.address().port;
+      tcp.close();
+      await new Promise(r => tcp.on("close", r));
+      const udp = dgram.createSocket("udp4");
+      await new Promise((resolve, reject) => {
+        udp.on("error", reject);
+        udp.bind(port, "127.0.0.1", resolve);
+      });
+      try {
+        Bun.serve({
+          port,
+          hostname: "127.0.0.1",
+          tls: ${JSON.stringify(tls)},
+          http3: true,
+          fetch: () => new Response("x"),
+        });
+        console.log("unexpected-success");
+      } catch (e) {
+        console.log("threw:" + e.message);
+      }
+      udp.close();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: expect.stringContaining("threw:Failed to listen on UDP port"),
+      stderr: expect.not.stringContaining("head_listen_sockets"),
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });
 
 // Cases ported from h2o t/40http3 and aioquic interop. Each test gets its own

@@ -1858,6 +1858,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 unsafe { uws_sys::h3::App::destroy(h3a) };
             }
         }
+        // listen()'s post-listen error path (h3 UDP bind failed) can reach
+        // here with the TCP listener still linked into the app's group —
+        // unlink it before App::destroy so us_socket_group_deinit doesn't
+        // assert head_listen_sockets == NULL.
+        if let Some(listener) = this_ref.listener.take() {
+            // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
+            bun_opaque::opaque_deref_mut(listener).close();
+        }
         if let Some(app) = this_ref.app.take() {
             // SAFETY: live uws App handle owned by this server.
             unsafe { uws_sys::NewApp::<SSL>::destroy(app) };

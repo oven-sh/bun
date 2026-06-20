@@ -655,6 +655,33 @@ describe.concurrent("import source (source phase imports)", () => {
       expect(exitCode).not.toBe(0);
     });
 
+    test.each([
+      ["source-first", `import source mod from "pkg";\nimport { foo } from "pkg";`],
+      ["named-first", `import { foo } from "pkg";\nimport source mod from "pkg";`],
+    ])(
+      "a fully bunfig-remapped named import of the same specifier (%s) is not a phase conflict",
+      async (_label, code) => {
+        // `import { foo } from "pkg"` with `[macros].pkg.foo` is fully
+        // remapped: every item becomes a macro ref and the statement drops
+        // to S::Empty (the record becomes Macro::NAMESPACE / IS_UNUSED),
+        // so it never reaches JSC. check_source_phase_conflict runs only
+        // after the remap early-return, so it doesn't match this record
+        // against the source-phase request; both statement orders give
+        // the same result.
+        const { stdout, stderr, exitCode } = await run({
+          "bunfig.toml": `[macros]\n"pkg" = { "foo" = "./macro-impl.ts" }\n`,
+          "macro-impl.ts": `export const foo = () => "macro-output";`,
+          "node_modules/pkg/package.json": `{"name":"pkg","main":"index.js"}`,
+          "node_modules/pkg/index.js": `exports.foo = () => {};`,
+          "main.js": code + `\nconsole.log("unreachable", mod, foo());`,
+        });
+        expect(stdout).not.toContain("unreachable");
+        expect(stderr).not.toContain("both source phase and evaluation phase");
+        expect(stderr).toContain("only WebAssembly modules have a module source");
+        expect(exitCode).not.toBe(0);
+      },
+    );
+
     test("import source is not over-rejected by a bunfig [macros] remap lacking a default key", async () => {
       // A `[macros]` entry that only maps named exports doesn't touch the
       // default binding, so `import source` must proceed to the normal

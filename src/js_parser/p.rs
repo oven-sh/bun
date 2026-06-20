@@ -4168,7 +4168,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if stmt.phase == bun_ast::ImportPhase::Source {
             self.has_source_phase_import_stmt = true;
         }
-        self.check_source_phase_conflict(stmt.import_record_index)?;
 
         if let Some(star) = stmt.star_name_loc.to_nullable() {
             let name = self.load_name_from_ref(stmt.namespace_ref);
@@ -4395,6 +4394,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
             item_refs.shrink_and_free(stmt.items.len() + usize::from(stmt.default_name.is_some()));
         }
+
+        // Defer the same-file source/evaluation conflict check to here,
+        // after the bunfig `[macros]` remap path has had a chance to drop
+        // the statement entirely: when every binding is remapped the
+        // record becomes `Macro::NAMESPACE` / `IS_UNUSED` and `S::Empty`
+        // above, so it never reaches JSC's requested-modules list and
+        // cannot conflict with a source-phase request.
+        self.check_source_phase_conflict(stmt.import_record_index)?;
 
         if path.import_tag != bun_ast::ImportRecordTag::None || path.loader.is_some() {
             self.validate_and_set_import_type(&path, &mut stmt)?;

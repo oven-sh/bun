@@ -391,16 +391,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .get_ptr(name)
                         .map(bun_ptr::BackRef::new)
                     {
-                        {
-                            // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
-                            // which is not mutated during the visit pass.
-                            let replacer = _ptr.get();
-                            if !self.replace_decl_and_possibly_remove(decl, replacer) {
-                                let is_after = self.vis_scope().is_after_const_local_prefix;
-                                self.visit_decl(decl, false, was_const && !is_after, false);
-                            } else {
-                                continue 'outer;
-                            }
+                        // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
+                        // which is not mutated during the visit pass.
+                        let replacer = _ptr.get();
+                        if !self.replace_decl_and_possibly_remove(decl, replacer) {
+                            let is_after = self.vis_scope().is_after_const_local_prefix;
+                            self.visit_decl(decl, false, was_const && !is_after, false);
+                        } else {
+                            continue 'outer;
                         }
                     }
                 }

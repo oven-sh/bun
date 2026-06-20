@@ -1641,6 +1641,8 @@ impl JSValue {
         this_value: JSValue,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
+        // TODO: debug event-loop bookkeeping (js_call_count_outside_tick_queue /
+        // last_fn_name); see JSValue.zig:251 and JSPromise.rs `resolve`/`reject`.
         host_fn::from_js_host_call(global, || {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.

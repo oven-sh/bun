@@ -1356,24 +1356,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    // All fallible init that would call finalize_streams on error has
-    // succeeded; the Subprocess will be returned to JS. Downgrade
-    // 'socket-fd' slots from OwnedFd to UnownedFd so finalize_streams (on
-    // later GC) skips them and the caller is the sole owner via .stdio[i].
-    #[cfg(not(windows))]
-    if !socket_fd_indices.is_empty() {
-        subprocess.stdio_pipes.with_mut(|pipes| {
-            for j in &socket_fd_indices {
-                if let Some(slot @ ExtraPipe::OwnedFd(_)) = pipes.get_mut(*j) {
-                    let ExtraPipe::OwnedFd(fd) = *slot else {
-                        unreachable!()
-                    };
-                    *slot = ExtraPipe::UnownedFd(fd);
-                }
-            }
-        });
-    }
-
     // event_loop points to the live JSC EventLoop for this thread.
     let event_loop_nn = NonNull::new(event_loop).expect("event_loop is null");
     subprocess.stdout.set(Readable::init(
@@ -1694,6 +1676,29 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     **should_close_memfd = false;
+
+    // Every `return Err` above is past; the Subprocess will be returned to
+    // JS. Downgrade 'socket-fd' slots from OwnedFd to UnownedFd so
+    // finalize_streams (on later GC) skips them and the caller is the sole
+    // owner via .stdio[i]. Placed here (not earlier) because the
+    // Writable::init error arm, the has_exception catch-all, the IPC
+    // open-socket failure, and the stdout/stderr Readable::Pipe .start()
+    // error paths all throw after populating stdio_pipes; on those paths
+    // the caller never receives the Subprocess, so the OwnedFd slot must
+    // remain for the GC'd wrapper's finalize_streams to close.
+    #[cfg(not(windows))]
+    if !socket_fd_indices.is_empty() {
+        subprocess.stdio_pipes.with_mut(|pipes| {
+            for j in &socket_fd_indices {
+                if let Some(slot @ ExtraPipe::OwnedFd(_)) = pipes.get_mut(*j) {
+                    let ExtraPipe::OwnedFd(fd) = *slot else {
+                        unreachable!()
+                    };
+                    *slot = ExtraPipe::UnownedFd(fd);
+                }
+            }
+        });
+    }
 
     // Once everything is set up, we can add the abort listener
     // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted

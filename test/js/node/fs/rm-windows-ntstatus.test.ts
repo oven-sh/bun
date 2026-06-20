@@ -14,6 +14,8 @@
 import { translateNtStatusToE } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { execFileSync } from "node:child_process";
+import path from "node:path";
 
 test.skipIf(!isWindows)("translateNtStatusToE maps delete-related NTSTATUS codes to errno", () => {
   // Existing explicit mappings must keep working.
@@ -64,63 +66,64 @@ test.skipIf(!isWindows)("fs.rm recursive surfaces a permission error when delete
     "sub/locked.txt": "x",
   });
   const root = String(dir);
+  const file = path.join(root, "sub", "locked.txt");
 
-  // Run in a child so that if the process panics on an unmapped NTSTATUS we
-  // observe it as a non-zero exit code instead of bringing down the runner.
-  const fixture = `
-    const fs = require("node:fs");
-    const fsp = require("node:fs/promises");
-    const path = require("node:path");
-    const { execFileSync } = require("node:child_process");
-    const root = process.argv[2];
-    const file = path.join(root, "sub", "locked.txt");
-    // Deny DELETE access so NtCreateFile(..., DELETE, ...) fails with
-    // STATUS_ACCESS_DENIED.
-    execFileSync("icacls", [file, "/deny", "*S-1-1-0:(D)"], { stdio: "pipe" });
-    let sync, async_;
-    try {
-      fs.rmSync(root, { recursive: true });
-      sync = { threw: false };
-    } catch (err) {
-      sync = { threw: true, code: err && err.code };
-    }
-    fsp.rm(root, { recursive: true }).then(
-      () => ({ threw: false }),
-      err => ({ threw: true, code: err && err.code }),
-    ).then(r => {
-      async_ = r;
-      try { execFileSync("icacls", [file, "/remove:d", "*S-1-1-0"], { stdio: "pipe" }); } catch {}
-      try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
-      process.stdout.write(JSON.stringify({ sync, async: async_ }));
+  // Deny DELETE access so NtCreateFile(..., DELETE, ...) fails with
+  // STATUS_ACCESS_DENIED. Apply and remove the ACE from the parent so that
+  // if the child panics the temp dir can still be cleaned up; the parent
+  // created the file and therefore has WRITE_DAC on it.
+  execFileSync("icacls", [file, "/deny", "*S-1-1-0:(D)"], { stdio: "pipe" });
+  try {
+    // Run in a child so that if the process panics on an unmapped NTSTATUS we
+    // observe it as a non-zero exit code instead of bringing down the runner.
+    const fixture = `
+      const fs = require("node:fs");
+      const fsp = require("node:fs/promises");
+      const root = process.argv[2];
+      let sync, async_;
+      try {
+        fs.rmSync(root, { recursive: true });
+        sync = { threw: false };
+      } catch (err) {
+        sync = { threw: true, code: err && err.code };
+      }
+      fsp.rm(root, { recursive: true }).then(
+        () => ({ threw: false }),
+        err => ({ threw: true, code: err && err.code }),
+      ).then(r => {
+        async_ = r;
+        process.stdout.write(JSON.stringify({ sync, async: async_ }));
+      });
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture, root],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
-  `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture, root],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Assert the combined shape first so a child panic surfaces its stderr
+    // in the failure diff instead of just "Unexpected end of JSON input".
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 
-  // If the child panicked or hit unreachable, stdout will not contain the
-  // JSON marker and this parse fails with a readable message.
-  expect(() => JSON.parse(stdout)).not.toThrow();
-  void stderr;
+    const result = JSON.parse(stdout) as {
+      sync: { threw: boolean; code?: string };
+      async: { threw: boolean; code?: string };
+    };
 
-  const result = JSON.parse(stdout) as {
-    sync: { threw: boolean; code?: string };
-    async: { threw: boolean; code?: string };
-  };
+    expect(result.sync.threw).toBe(true);
+    expect(result.sync.code).not.toBe("EFAULT");
+    expect(["EPERM", "EACCES", "EBUSY"]).toContain(result.sync.code);
 
-  expect(result.sync.threw).toBe(true);
-  expect(result.sync.code).not.toBe("EFAULT");
-  expect(["EPERM", "EACCES", "EBUSY"]).toContain(result.sync.code);
-
-  expect(result.async.threw).toBe(true);
-  expect(result.async.code).not.toBe("EFAULT");
-  expect(["EPERM", "EACCES", "EBUSY"]).toContain(result.async.code);
-
-  expect(exitCode).toBe(0);
+    expect(result.async.threw).toBe(true);
+    expect(result.async.code).not.toBe("EFAULT");
+    expect(["EPERM", "EACCES", "EBUSY"]).toContain(result.async.code);
+  } finally {
+    try {
+      execFileSync("icacls", [file, "/remove:d", "*S-1-1-0"], { stdio: "pipe" });
+    } catch {}
+  }
 });

@@ -400,7 +400,7 @@ impl Source {
     // into `out.stdout_buffer`/`out.stderr_buffer`. Returning `Self` by value
     // would move the struct after those pointers were captured and dangle them.
     pub fn init(out: &mut Source, stream: StreamType, err_stream: StreamType) {
-        if cfg!(debug_assertions) && bun_alloc::USE_MIMALLOC && !SOURCE_SET.get() {
+        if crate::env::IS_DEBUG && bun_alloc::USE_MIMALLOC && !SOURCE_SET.get() {
             bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::show_errors, 1);
         }
         SOURCE_SET.set(true);
@@ -762,7 +762,11 @@ pub mod stdio {
 
         Source::set_init(stdout, stderr);
 
-        if Environment::ENABLE_LOGS {
+        // `ENABLE_LOGS` gates every reader, but initialize under
+        // `debug_assertions` too so `SCOPED_FILE_WRITER` is never observed
+        // zeroed if a `#[cfg(debug_assertions)]` path reaches it in
+        // release-asan/release-assertions. Cheap (one static write).
+        if cfg!(debug_assertions) || Environment::ENABLE_LOGS {
             init_scoped_debug_writer_at_startup();
         }
     }
@@ -2685,10 +2689,11 @@ pub(crate) fn init_scoped_debug_writer_at_startup() {
 }
 
 fn scoped_writer() -> QuietWriter {
-    // Assert at runtime rather than compile time (a `compile_error!` here
-    // would break every release build); all callers are already gated on
-    // `Environment::ENABLE_LOGS`.
-    #[cfg(debug_assertions)]
+    // All callers are already gated on `Environment::ENABLE_LOGS`; this is a
+    // Debug-build self-check (release-asan/release-assertions enable
+    // `debug_assertions` with `ENABLE_LOGS == false`, so keying on
+    // `debug_assertions` would turn it into a guaranteed abort there).
+    #[cfg(bun_debug)]
     if !Environment::ENABLE_LOGS {
         unreachable!("scopedWriter() should only be called in debug mode");
     }

@@ -907,7 +907,7 @@ impl Runner {
         id: i32,
         javascript_object: JSValue,
     ) -> Result<Expr, MacroError> {
-        if cfg!(debug_assertions) {
+        if bun_core::env::IS_DEBUG {
             bun_core::prettyln!(
                 "<r><d>[macro]<r> call <d><b>{}<r>",
                 bstr::BStr::new(function_name)

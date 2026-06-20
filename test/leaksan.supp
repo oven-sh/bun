@@ -126,4 +126,4 @@ leak:WTF::RunLoop::dispatchAfter
 # inline comment). With debug-assertions on the codegen differs enough that
 # LSAN's conservative stack scan no longer finds the pointers.
 leak:bun_runtime::cli::filter_run::run_scripts_with_filter
-leak:bun_runtime::cli::multi_run::multi_run_entry
+leak:bun_runtime::cli::multi_run::run

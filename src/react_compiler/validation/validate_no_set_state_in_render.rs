@@ -12,9 +12,7 @@ use std::collections::HashSet;
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
 use crate::hir::dominator::compute_unconditional_blocks;
 use crate::hir::environment::Environment;
-use crate::hir::{
-    BlockId, HirFunction, Identifier, IdentifierId, InstructionValue, SourceLocation, Type,
-};
+use crate::hir::{HirFunction, Identifier, IdentifierId, InstructionValue, SourceLocation, Type};
 
 pub fn validate_no_set_state_in_render(
     func: &HirFunction,

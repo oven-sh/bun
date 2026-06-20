@@ -6,7 +6,6 @@
 //! depends on the vendored HIR-level crates unmodified.
 
 #![feature(allocator_api)]
-#![allow(dead_code, unused_imports, unused_variables)]
 
 pub mod collections;
 pub mod diagnostics;
@@ -23,7 +22,6 @@ pub use hir::environment;
 pub use hir::environment_config::EnvironmentConfig;
 
 mod compile_result;
-mod gating;
 mod imports;
 mod options;
 

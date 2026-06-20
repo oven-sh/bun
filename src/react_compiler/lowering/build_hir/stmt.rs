@@ -1578,11 +1578,6 @@ fn lower_for_in_of_left(
     }
 }
 
-#[allow(dead_code)]
-fn expression_loc(expr: &Expr) -> Option<SourceLocation> {
-    convert_loc(expr.loc)
-}
-
 // =============================================================================
 // lower_assignment (Binding-target variant)
 // =============================================================================

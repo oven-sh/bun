@@ -11,8 +11,8 @@ use crate::collections::IndexSet;
 use super::environment::Environment;
 use super::visitors::{each_terminal_successor, terminal_fallthrough};
 use super::{
-    BasicBlock, BlockId, Effect, EvaluationOrder, GotoVariant, HIR, IdentifierId, Instruction,
-    Place, SourceLocation, Terminal,
+    BasicBlock, BlockId, Effect, EvaluationOrder, GotoVariant, HIR, Instruction, Place,
+    SourceLocation, Terminal,
 };
 
 /// Compute a reverse-postorder of blocks reachable from the entry.

@@ -362,18 +362,6 @@ impl<'h> HirBuilder<'h> {
         }
     }
 
-    /// Check if a scope is the component scope or a descendant of it.
-    fn is_scope_within_compiled_function(&self, scope: &ast::Scope) -> bool {
-        let mut current: Option<&ast::Scope> = Some(scope);
-        while let Some(s) = current {
-            if s.id == self.component_scope.id {
-                return true;
-            }
-            current = s.parent.as_deref();
-        }
-        false
-    }
-
     pub fn environment(&self) -> &Environment {
         self.env
     }

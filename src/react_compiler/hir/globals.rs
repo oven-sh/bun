@@ -17,7 +17,6 @@ use crate::hir::object_shape::*;
 use crate::hir::type_config::AliasingEffectConfig;
 use crate::hir::type_config::AliasingSignatureConfig;
 use crate::hir::type_config::ApplyArgConfig;
-use crate::hir::type_config::ApplyArgHoleKind;
 use crate::hir::type_config::BuiltInTypeRef;
 use crate::hir::type_config::TypeConfig;
 use crate::hir::type_config::TypeReferenceConfig;
@@ -577,9 +576,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
                         mutates_function: false,
                         args: vec![
                             ApplyArgConfig::Place("@item".to_string()),
-                            ApplyArgConfig::Hole {
-                                kind: ApplyArgHoleKind::Hole,
-                            },
+                            ApplyArgConfig::Hole {},
                             ApplyArgConfig::Place("@receiver".to_string()),
                         ],
                         into: "@callbackReturn".to_string(),

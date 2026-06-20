@@ -35,9 +35,7 @@ use crate::hir::{
 // =============================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[allow(dead_code)]
 enum MutationKind {
-    None = 0,
     Conditional = 1,
     Definite = 2,
 }
@@ -1159,7 +1157,6 @@ fn collect_param_effects(
                     reason: node.mutation_reason.clone(),
                 });
             }
-            MutationKind::None => {}
         }
     }
 
@@ -1181,7 +1178,6 @@ fn collect_param_effects(
                     },
                 });
             }
-            MutationKind::None => {}
         }
     }
 }

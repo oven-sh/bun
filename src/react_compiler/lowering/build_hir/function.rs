@@ -13,9 +13,8 @@ use bun_ast::{self as ast, E, Expr, G, Loc, Ref};
 
 use super::super::hir_builder::{HirBuilder, convert_loc};
 use super::FunctionNode;
-use super::{
-    gather_captured_context, lower_expression_to_temporary, lower_inner, lower_value_to_temporary,
-};
+use super::helpers::{lower_expression_to_temporary, lower_value_to_temporary};
+use super::{gather_captured_context, lower_inner};
 
 pub(super) fn lower_function_to_value(
     builder: &mut HirBuilder<'_>,

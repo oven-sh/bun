@@ -38,7 +38,7 @@ use crate::program::Host;
 // Per-pass timing (BUN_REACT_COMPILER_TIMING=1) — fixture/dev builds only.
 // ---------------------------------------------------------------------------
 
-#[cfg(any(debug_assertions, feature = "fixtures"))]
+#[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 mod timing {
     use std::collections::BTreeMap;
     use std::sync::{Mutex, Once, OnceLock};
@@ -89,15 +89,15 @@ mod timing {
     }
 }
 
-#[cfg(any(debug_assertions, feature = "fixtures"))]
+#[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 pub(crate) fn ensure_timing_dump_registered() {
     timing::ensure_dump_registered();
 }
-#[cfg(not(any(debug_assertions, feature = "fixtures")))]
+#[cfg(not(any(debug_assertions, bun_asan, feature = "fixtures")))]
 #[inline(always)]
 pub(crate) fn ensure_timing_dump_registered() {}
 
-#[cfg(any(debug_assertions, feature = "fixtures"))]
+#[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 macro_rules! timed {
     ($name:literal, $body:expr) => {{
         if timing::enabled() {
@@ -110,7 +110,7 @@ macro_rules! timed {
         }
     }};
 }
-#[cfg(not(any(debug_assertions, feature = "fixtures")))]
+#[cfg(not(any(debug_assertions, bun_asan, feature = "fixtures")))]
 macro_rules! timed {
     ($name:literal, $body:expr) => {
         $body
@@ -179,7 +179,7 @@ pub fn compile_fn(
         codegen::codegen_function(&reactive_fn, &mut env, &mut cg, unique_identifiers)
     )?;
 
-    #[cfg(any(debug_assertions, feature = "fixtures"))]
+    #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
     if env.config.throw_unknown_exception_testonly {
         return Err(crate::diagnostics::cold_invariant(
             "unexpected error",
@@ -209,7 +209,7 @@ pub fn compile_fn(
     // fixture-gated; without the feature, every entry passes through unchanged.
     let mut compiled_outlined: Vec<OutlinedFunction> = Vec::new();
     for o in codegen_result.outlined {
-        #[cfg(any(debug_assertions, feature = "fixtures"))]
+        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         if let Some(fn_type) = o.fn_type {
             let outlined_name = o.func.name_hint.clone();
             if let Ok(compiled) = compile_outlined_fn(
@@ -248,7 +248,7 @@ pub fn compile_fn(
 /// `ScopeInfo` keyed by fake positions. Bun's lowering reads `Ref` directly
 /// off identifier nodes, so the fake-position scaffolding is unnecessary: the
 /// outlined `CodegenFunction` is wrapped in a `G::Fn` and re-lowered as-is.
-#[cfg(any(debug_assertions, feature = "fixtures"))]
+#[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 #[allow(clippy::too_many_arguments)]
 pub fn compile_outlined_fn(
     codegen_fn: CodegenFunction,
@@ -386,7 +386,7 @@ fn run_hir_passes(
             )?;
         }
 
-        #[cfg(any(debug_assertions, feature = "fixtures"))]
+        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         if env.config.validate_no_jsx_in_try_statements && env.output_mode == OutputMode::Lint {
             let _ = timed!(
                 "ValidateNoJSXInTryStatement",
@@ -394,7 +394,7 @@ fn run_hir_passes(
             );
         }
 
-        #[cfg(any(debug_assertions, feature = "fixtures"))]
+        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         if env.config.validate_no_capitalized_calls.is_some() {
             timed!(
                 "ValidateNoCapitalizedCalls",
@@ -464,7 +464,7 @@ fn run_hir_passes(
             )?;
         }
 
-        #[cfg(any(debug_assertions, feature = "fixtures"))]
+        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         if env.config.validate_no_set_state_in_effects && env.output_mode == OutputMode::Lint {
             let _ = timed!(
                 "ValidateNoSetStateInEffects",
@@ -472,7 +472,7 @@ fn run_hir_passes(
             );
         }
 
-        #[cfg(any(debug_assertions, feature = "fixtures"))]
+        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         if env.config.validate_no_derived_computations_in_effects {
             timed!(
                 "ValidateNoDerivedComputationsInEffects",
@@ -485,7 +485,7 @@ fn run_hir_passes(
             crate::validation::validate_no_freezing_known_mutable_functions(hir, env)
         );
 
-        #[cfg(any(debug_assertions, feature = "fixtures"))]
+        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         if env.config.validate_static_components && env.output_mode == OutputMode::Lint {
             let _ = timed!(
                 "ValidateStaticComponents",
@@ -523,12 +523,12 @@ fn run_hir_passes(
         crate::inference::memoize_fbt_and_macro_operands_in_same_scope(hir, env)
     );
 
-    #[cfg(any(debug_assertions, feature = "fixtures"))]
+    #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
     if env.config.enable_jsx_outlining {
         timed!("OutlineJSX", crate::optimization::outline_jsx(hir, env));
     }
 
-    #[cfg(any(debug_assertions, feature = "fixtures"))]
+    #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
     if env.config.enable_name_anonymous_functions {
         timed!(
             "NameAnonymousFunctions",

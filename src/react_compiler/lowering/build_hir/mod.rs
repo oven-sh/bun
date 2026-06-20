@@ -41,9 +41,8 @@ mod helpers;
 mod jsx;
 mod stmt;
 
-pub(crate) use expr::lower_expression;
-pub(crate) use helpers::*;
-pub(crate) use stmt::lower_statement;
+use expr::lower_expression;
+use helpers::*;
 
 pub(super) use super::hir_builder::FunctionNode;
 
@@ -91,8 +90,8 @@ pub fn lower(
     // `this` parameters before this pass runs, so the upstream check is a
     // no-op here.
 
-    // `build_identifier_loc_index`: not ported — see
-    // `lowering/identifier_loc_index.rs` for the rationale.
+    // `build_identifier_loc_index`: not ported — Bun has no `node_id`; callers
+    // read `Ref` + `Loc` straight off the AST node via `convert_loc`.
 
     // Pre-compute context identifiers: variables captured across function boundaries
     let context_identifiers = find_context_identifiers(func, host, env)?;

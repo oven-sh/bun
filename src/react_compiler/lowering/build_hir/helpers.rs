@@ -3,21 +3,12 @@
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory, cold_todo};
 use crate::hir::*;
 use bun_ast::expr::Data;
-use bun_ast::{self as ast, Expr, G, Loc, OpCode, OptionalChain, Ref};
+use bun_ast::{self as ast, Expr, G, OpCode, OptionalChain, Ref};
 
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
 use super::expr::lower_reorderable_expression;
 use super::lower_expression;
-
-// =============================================================================
-// Source location conversion
-// =============================================================================
-
-#[inline]
-pub(super) fn convert_opt_loc(loc: Loc) -> Option<SourceLocation> {
-    convert_loc(loc)
-}
 
 pub(super) fn utf8_owned(bytes: &[u8]) -> Result<String, CompilerError> {
     core::str::from_utf8(bytes)
@@ -37,18 +28,11 @@ macro_rules! serialize_expression {
         None
     };
 }
-#[allow(unused_macros)]
-macro_rules! serialize_statement {
-    ($e:expr) => {
-        None
-    };
-}
 macro_rules! serialize_pattern {
     ($e:expr) => {
         None
     };
 }
-pub(super) use {serialize_expression, serialize_pattern, serialize_statement};
 
 pub(super) fn expression_type_name(expr: &Expr) -> &'static str {
     match &expr.data {
@@ -138,45 +122,6 @@ pub(super) fn convert_binary_operator(op: OpCode) -> Option<BinaryOperator> {
     })
 }
 
-pub(super) fn convert_compound_assign_operator(op: OpCode) -> Option<BinaryOperator> {
-    use OpCode::*;
-    Some(match op {
-        BinAddAssign => BinaryOperator::Add,
-        BinSubAssign => BinaryOperator::Subtract,
-        BinMulAssign => BinaryOperator::Multiply,
-        BinDivAssign => BinaryOperator::Divide,
-        BinRemAssign => BinaryOperator::Modulo,
-        BinPowAssign => BinaryOperator::Exponent,
-        BinShlAssign => BinaryOperator::ShiftLeft,
-        BinShrAssign => BinaryOperator::ShiftRight,
-        BinUShrAssign => BinaryOperator::UnsignedShiftRight,
-        BinBitwiseOrAssign => BinaryOperator::BitwiseOr,
-        BinBitwiseAndAssign => BinaryOperator::BitwiseAnd,
-        BinBitwiseXorAssign => BinaryOperator::BitwiseXor,
-        _ => return None,
-    })
-}
-
-pub(super) fn convert_logical_operator(op: OpCode) -> Option<LogicalOperator> {
-    use OpCode::*;
-    Some(match op {
-        BinLogicalOr => LogicalOperator::Or,
-        BinLogicalAnd => LogicalOperator::And,
-        BinNullishCoalescing => LogicalOperator::NullishCoalescing,
-        _ => return None,
-    })
-}
-
-pub(super) fn convert_logical_assign_operator(op: OpCode) -> Option<LogicalOperator> {
-    use OpCode::*;
-    Some(match op {
-        BinLogicalOrAssign => LogicalOperator::Or,
-        BinLogicalAndAssign => LogicalOperator::And,
-        BinNullishCoalescingAssign => LogicalOperator::NullishCoalescing,
-        _ => return None,
-    })
-}
-
 pub(super) fn convert_unary_operator(op: OpCode) -> Option<UnaryOperator> {
     use OpCode::*;
     Some(match op {
@@ -186,17 +131,6 @@ pub(super) fn convert_unary_operator(op: OpCode) -> Option<UnaryOperator> {
         UnNot => UnaryOperator::Not,
         UnVoid => UnaryOperator::Void,
         UnTypeof => UnaryOperator::TypeOf,
-        _ => return None,
-    })
-}
-
-pub(super) fn convert_update_operator(op: OpCode) -> Option<(UpdateOperator, bool)> {
-    use OpCode::*;
-    Some(match op {
-        UnPreInc => (UpdateOperator::Increment, true),
-        UnPreDec => (UpdateOperator::Decrement, true),
-        UnPostInc => (UpdateOperator::Increment, false),
-        UnPostDec => (UpdateOperator::Decrement, false),
         _ => return None,
     })
 }

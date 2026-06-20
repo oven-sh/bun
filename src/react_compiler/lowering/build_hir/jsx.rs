@@ -13,7 +13,7 @@ use bun_ast::expr::Data as ExprData;
 use bun_ast::{E, Expr, G, Loc};
 
 use super::expr::lower_expression;
-use super::{lower_expression_to_temporary, lower_identifier, lower_value_to_temporary};
+use super::helpers::{lower_expression_to_temporary, lower_identifier, lower_value_to_temporary};
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
 fn estring_to_string(

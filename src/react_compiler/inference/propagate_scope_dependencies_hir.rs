@@ -75,7 +75,6 @@ pub fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut Enviro
     let scope_deps = collect_dependencies(
         func,
         env,
-        &used_outside_declaring_scope,
         &merged_temporaries,
         &processed_instrs_in_optional,
     );
@@ -789,12 +788,8 @@ fn traverse_optional_block(
 struct PropertyPathNode {
     properties: HashMap<PropertyLiteral, usize>, // index into registry
     optional_properties: HashMap<PropertyLiteral, usize>, // index into registry
-    #[allow(dead_code)]
-    parent: Option<usize>,
     full_path: ReactiveScopeDependency,
     has_optional: bool,
-    #[allow(dead_code)]
-    root: Option<IdentifierId>,
 }
 
 struct PropertyPathRegistry {
@@ -823,7 +818,6 @@ impl PropertyPathRegistry {
         self.nodes.push(PropertyPathNode {
             properties: HashMap::default(),
             optional_properties: HashMap::default(),
-            parent: None,
             full_path: ReactiveScopeDependency {
                 identifier: identifier_id,
                 reactive,
@@ -831,7 +825,6 @@ impl PropertyPathRegistry {
                 loc,
             },
             has_optional: false,
-            root: Some(identifier_id),
         });
         self.roots.insert(identifier_id, idx);
         idx
@@ -862,7 +855,6 @@ impl PropertyPathRegistry {
         self.nodes.push(PropertyPathNode {
             properties: HashMap::default(),
             optional_properties: HashMap::default(),
-            parent: Some(parent_idx),
             full_path: ReactiveScopeDependency {
                 identifier: parent_full_path.identifier,
                 reactive: parent_full_path.reactive,
@@ -870,7 +862,6 @@ impl PropertyPathRegistry {
                 loc: entry.loc,
             },
             has_optional: parent_has_optional || entry.optional,
-            root: None,
         });
         if entry.optional {
             self.nodes[parent_idx]
@@ -960,41 +951,6 @@ struct BlockInfo {
     assumed_non_null_objects: BTreeSet<usize>, // indices into PropertyPathRegistry
 }
 
-#[allow(dead_code)]
-fn collect_hoistable_property_loads(
-    func: &HirFunction,
-    env: &Environment,
-    temporaries: &IdMap<IdentifierId, ReactiveScopeDependency>,
-    hoistable_from_optionals: &IdMap<BlockId, ReactiveScopeDependency>,
-) -> IdMap<BlockId, BlockInfo> {
-    let mut registry = PropertyPathRegistry::new();
-    let known_immutable_identifiers: HashSet<IdentifierId> = if func.fn_type
-        == ReactFunctionType::Component
-        || func.fn_type == ReactFunctionType::Hook
-    {
-        func.params
-            .iter()
-            .filter_map(|p| match p {
-                ParamPattern::Place(place) => Some(place.identifier),
-                _ => None,
-            })
-            .collect()
-    } else {
-        HashSet::default()
-    };
-
-    let assumed_invoked_fns = get_assumed_invoked_functions(func, env);
-    let ctx = CollectHoistableContext {
-        temporaries,
-        known_immutable_identifiers: &known_immutable_identifiers,
-        hoistable_from_optionals,
-        nested_fn_immutable_context: None,
-        assumed_invoked_fns: &assumed_invoked_fns,
-    };
-
-    collect_hoistable_property_loads_impl(func, env, &ctx, &mut registry)
-}
-
 struct CollectHoistableContext<'a> {
     temporaries: &'a IdMap<IdentifierId, ReactiveScopeDependency>,
     known_immutable_identifiers: &'a HashSet<IdentifierId>,
@@ -1051,27 +1007,6 @@ fn get_maybe_non_null_in_instruction(
         }
         _ => None,
     }
-}
-
-#[allow(dead_code)]
-fn collect_hoistable_property_loads_impl(
-    func: &HirFunction,
-    env: &Environment,
-    ctx: &CollectHoistableContext,
-    registry: &mut PropertyPathRegistry,
-) -> IdMap<BlockId, BlockInfo> {
-    let nodes = collect_non_nulls_in_blocks(func, env, ctx, registry);
-    let working = propagate_non_null(func, &nodes, registry);
-    let mut result = IdMap::new();
-    for (k, v) in working.iter() {
-        result.insert(
-            k,
-            BlockInfo {
-                assumed_non_null_objects: v.clone(),
-            },
-        );
-    }
-    result
 }
 
 /// Corresponds to TS `getAssumedInvokedFunctions`.
@@ -1555,28 +1490,6 @@ fn collect_hoistable_and_propagate(
     (working, registry)
 }
 
-// Restructured version used by the main entry point
-#[allow(dead_code)]
-fn key_by_scope_id(
-    func: &HirFunction,
-    block_keyed: &IdMap<BlockId, BlockInfo>,
-) -> IdMap<ScopeId, BlockInfo> {
-    let mut keyed: IdMap<ScopeId, BlockInfo> = IdMap::new();
-    for (_block_id, block) in &func.body.blocks {
-        if let Terminal::Scope {
-            scope,
-            block: inner_block,
-            ..
-        } = &block.terminal
-        {
-            if let Some(info) = block_keyed.get(*inner_block) {
-                keyed.insert(*scope, info.clone());
-            }
-        }
-    }
-    keyed
-}
-
 // =============================================================================
 // DeriveMinimalDependenciesHIR
 // =============================================================================
@@ -1836,15 +1749,12 @@ struct DependencyCollectionContext<'a> {
     dep_stack: Vec<Vec<ReactiveScopeDependency>>,
     deps: IndexMap<ScopeId, Vec<ReactiveScopeDependency>>,
     temporaries: &'a IdMap<IdentifierId, ReactiveScopeDependency>,
-    #[allow(dead_code)]
-    temporaries_used_outside_scope: &'a HashSet<DeclarationId>,
     processed_instrs_in_optional: &'a HashSet<ProcessedInstr>,
     inner_fn_context: Option<EvaluationOrder>,
 }
 
 impl<'a> DependencyCollectionContext<'a> {
     fn new(
-        temporaries_used_outside_scope: &'a HashSet<DeclarationId>,
         temporaries: &'a IdMap<IdentifierId, ReactiveScopeDependency>,
         processed_instrs_in_optional: &'a HashSet<ProcessedInstr>,
     ) -> Self {
@@ -1855,7 +1765,6 @@ impl<'a> DependencyCollectionContext<'a> {
             dep_stack: Vec::new(),
             deps: IndexMap::new(),
             temporaries,
-            temporaries_used_outside_scope,
             processed_instrs_in_optional,
             inner_fn_context: None,
         }
@@ -2243,15 +2152,10 @@ fn handle_instruction(
 fn collect_dependencies(
     func: &HirFunction,
     env: &mut Environment,
-    used_outside_declaring_scope: &HashSet<DeclarationId>,
     temporaries: &IdMap<IdentifierId, ReactiveScopeDependency>,
     processed_instrs_in_optional: &HashSet<ProcessedInstr>,
 ) -> IndexMap<ScopeId, Vec<ReactiveScopeDependency>> {
-    let mut ctx = DependencyCollectionContext::new(
-        used_outside_declaring_scope,
-        temporaries,
-        processed_instrs_in_optional,
-    );
+    let mut ctx = DependencyCollectionContext::new(temporaries, processed_instrs_in_optional);
 
     // Declare params
     for param in &func.params {

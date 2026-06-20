@@ -36,8 +36,6 @@ pub fn outline_jsx(func: &mut HirFunction, env: &mut Environment) {
 /// Data about a JSX instruction for outlining
 struct JsxInstrInfo {
     instr_idx: usize, // index into func.instructions
-    #[allow(dead_code)]
-    instr_id: InstructionId, // the InstructionId
     lvalue_id: IdentifierId,
     eval_order: EvaluationOrder,
 }
@@ -162,7 +160,6 @@ fn outline_jsx_impl(
                     }
                     jsx_group.push(JsxInstrInfo {
                         instr_idx,
-                        instr_id: InstructionId(instr_idx as u32),
                         lvalue_id,
                         eval_order,
                     });

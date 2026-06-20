@@ -6,7 +6,6 @@
 )]
 
 use crate::diagnostics::{CompilerError, SourceLocation};
-use crate::hir::ReactFunctionType;
 
 /// Source location with index and filename fields for logger event serialization.
 /// Matches the Babel SourceLocation format that the TS compiler emits in logger events.
@@ -119,23 +118,6 @@ pub enum OrderedLogItem {
     Debug { entry: DebugLogEntry },
 }
 
-/// Structured error information for the JS shim.
-#[derive(Debug, Clone)]
-pub struct CompilerErrorInfo {
-    pub reason: String,
-    pub description: Option<String>,
-    pub details: Vec<CompilerErrorDetailInfo>,
-    /// When set, the JS shim should throw an Error with this exact message
-    /// instead of formatting through formatCompilerError(). This is used
-    /// for simulated unknown exceptions (throwUnknownException__testonly)
-    /// which in the TS compiler are plain Error objects, not CompilerErrors.
-    pub raw_message: Option<String>,
-    /// Pre-formatted error message produced by Rust, matching the JS
-    /// formatCompilerError() output. When present, the JS shim uses this
-    /// directly instead of calling formatCompilerError() on the JS side.
-    pub formatted_message: Option<String>,
-}
-
 /// Serializable error detail — flat plain object matching the TS
 /// `formatDetailForLogging()` output. All fields are direct properties.
 #[derive(Debug, Clone)]
@@ -194,30 +176,6 @@ impl DebugLogEntry {
             value: value.into(),
         }
     }
-}
-
-/// Codegen output for a single compiled function.
-/// Carries the generated AST fields needed to replace the original function.
-pub struct CodegenFunction {
-    pub loc: Option<SourceLocation>,
-    pub id: Option<bun_ast::Ref>,
-    pub name_hint: Option<String>,
-    pub params: Vec<bun_ast::g::Arg>,
-    pub body: bun_ast::g::FnBody,
-    pub generator: bool,
-    pub is_async: bool,
-    pub memo_slots_used: u32,
-    pub memo_blocks: u32,
-    pub memo_values: u32,
-    pub pruned_memo_blocks: u32,
-    pub pruned_memo_values: u32,
-    pub outlined: Vec<OutlinedFunction>,
-}
-
-/// An outlined function extracted during compilation.
-pub struct OutlinedFunction {
-    pub func: CodegenFunction,
-    pub fn_type: Option<ReactFunctionType>,
 }
 
 /// Logger events emitted during compilation.

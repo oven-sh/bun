@@ -40,7 +40,7 @@ use crate::hir::{
     ArrayElement, ArrayPattern, BlockId, DeclarationId, FunctionExpressionType, HirVec,
     IdentifierId, InstructionKind, InstructionValue, JsxAttribute, JsxTag, LogicalOperator,
     ObjectPattern, ObjectPropertyKey, ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern,
-    Pattern, Place, PlaceOrSpread, PrimitiveValue, PropertyLiteral, ScopeId, SpreadPattern,
+    Pattern, Place, PlaceOrSpread, PrimitiveValue, PropertyLiteral, ScopeId,
 };
 use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_function};
 use crate::reactive_scopes::{
@@ -148,8 +148,7 @@ pub fn codegen_function(
     cg: &mut Codegen<'_>,
     unique_identifiers: HashSet<String>,
 ) -> Result<CodegenFunction, CompilerError> {
-    let fn_name = func.id.as_deref().unwrap_or("[[ anonymous ]]");
-    let mut cx = Context::new(env, cg, fn_name.to_string(), unique_identifiers);
+    let mut cx = Context::new(env, cg, unique_identifiers);
 
     // Fast Refresh: Bun handles HMR via its own React Refresh transform; the
     // upstream `enable_reset_cache_on_source_file_changes` path keys on
@@ -285,16 +284,7 @@ pub fn codegen_function(
         prune_hoisted_contexts(&mut reactive_fn_mut, cx.env)?;
 
         let identifiers = rename_variables(&mut reactive_fn_mut, cx.env);
-        let mut outlined_cx = Context::new(
-            cx.env,
-            cx.cg,
-            reactive_fn_mut
-                .id
-                .as_deref()
-                .unwrap_or("[[ anonymous ]]")
-                .to_string(),
-            identifiers,
-        );
+        let mut outlined_cx = Context::new(cx.env, cx.cg, identifiers);
         let codegen = codegen_reactive_function(&mut outlined_cx, &reactive_fn_mut)?;
         outlined.push(OutlinedFunction {
             func: codegen,
@@ -315,8 +305,6 @@ type Temporaries = IdMap<DeclarationId, Option<Expr>>;
 struct Context<'a, 'h> {
     env: &'a mut Environment,
     cg: &'a mut Codegen<'h>,
-    #[allow(dead_code)]
-    fn_name: String,
     next_cache_index: u32,
     declarations: HashSet<DeclarationId>,
     temp: Temporaries,
@@ -329,13 +317,11 @@ impl<'a, 'h> Context<'a, 'h> {
     fn new(
         env: &'a mut Environment,
         cg: &'a mut Codegen<'h>,
-        fn_name: String,
         unique_identifiers: HashSet<String>,
     ) -> Self {
         Context {
             env,
             cg,
-            fn_name,
             next_cache_index: 0,
             declarations: HashSet::new(),
             temp: IdMap::new(),
@@ -2173,16 +2159,7 @@ fn codegen_function_expression(
     prune_unused_lvalues(&mut reactive_fn_mut, cx.env);
     prune_hoisted_contexts(&mut reactive_fn_mut, cx.env)?;
 
-    let mut inner_cx = Context::new(
-        cx.env,
-        cx.cg,
-        reactive_fn_mut
-            .id
-            .as_deref()
-            .unwrap_or("[[ anonymous ]]")
-            .to_string(),
-        cx.unique_identifiers.clone(),
-    );
+    let mut inner_cx = Context::new(cx.env, cx.cg, cx.unique_identifiers.clone());
     inner_cx.temp.clone_from(&cx.temp);
 
     let fn_result = codegen_reactive_function(&mut inner_cx, &reactive_fn_mut)?;
@@ -2327,16 +2304,8 @@ fn codegen_object_expression(
                         prune_unused_labels(&mut reactive_fn_mut, cx.env)?;
                         prune_unused_lvalues(&mut reactive_fn_mut, cx.env);
 
-                        let mut inner_cx = Context::new(
-                            cx.env,
-                            cx.cg,
-                            reactive_fn_mut
-                                .id
-                                .as_deref()
-                                .unwrap_or("[[ anonymous ]]")
-                                .to_string(),
-                            cx.unique_identifiers.clone(),
-                        );
+                        let mut inner_cx =
+                            Context::new(cx.env, cx.cg, cx.unique_identifiers.clone());
                         inner_cx.temp.clone_from(&cx.temp);
 
                         let fn_result = codegen_reactive_function(&mut inner_cx, &reactive_fn_mut)?;
@@ -2615,7 +2584,6 @@ fn codegen_jsx_element(cx: &mut Context, place: &Place) -> Result<Expr, Compiler
 enum LvalueRef<'a> {
     Place(&'a Place),
     Pattern(&'a Pattern),
-    Spread(&'a SpreadPattern),
 }
 
 fn codegen_lvalue(cx: &mut Context, pattern: &LvalueRef) -> Result<Binding, CompilerError> {
@@ -2628,13 +2596,6 @@ fn codegen_lvalue(cx: &mut Context, pattern: &LvalueRef) -> Result<Binding, Comp
             Pattern::Array(arr) => codegen_array_pattern(cx, arr),
             Pattern::Object(obj) => codegen_object_pattern(cx, obj),
         },
-        LvalueRef::Spread(spread) => {
-            // RestElement is represented by the containing Array/Object via
-            // `has_spread`; the standalone case is the array/object handler's
-            // responsibility — return the inner binding here.
-            let inner = codegen_lvalue(cx, &LvalueRef::Place(&spread.place))?;
-            Ok(inner)
-        }
     }
 }
 
@@ -2715,10 +2676,6 @@ fn codegen_assignment_target(cx: &mut Context, pattern: &LvalueRef) -> Result<Ex
                 ))
             }
         },
-        LvalueRef::Spread(spread) => {
-            let inner = codegen_assignment_target(cx, &LvalueRef::Place(&spread.place))?;
-            Ok(Expr::init(E::Spread { value: inner }, inner.loc))
-        }
     }
 }
 

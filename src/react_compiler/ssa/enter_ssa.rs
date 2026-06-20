@@ -120,18 +120,6 @@ impl SSABuilder {
         })
     }
 
-    #[allow(dead_code)]
-    fn define_context(
-        &mut self,
-        old_place: &Place,
-        env: &mut Environment,
-    ) -> Result<Place, CompilerDiagnostic> {
-        let old_id = old_place.identifier;
-        let new_place = self.define_place(old_place, env)?;
-        self.context.insert(old_id);
-        Ok(new_place)
-    }
-
     /// A function's context places capture a *binding*, not a value: the
     /// variable is only read when the function is later called, so a context
     /// place may reference a binding that is declared after the function

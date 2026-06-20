@@ -29,8 +29,14 @@
 import { describe, test, expect, beforeAll } from "bun:test";
 import { readFileSync, existsSync } from "node:fs";
 import { join, basename } from "node:path";
+import { isDebug, isASAN } from "harness";
 
 const FIXTURE_ROOT = join(import.meta.dir, "react-compiler-fixtures");
+// `parse_fixture_pragmas` and the lint-mode validation passes are
+// `#[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]` — release
+// builds without ASAN compile them out, so pragma-gated fixtures cannot be
+// validated there.
+const HAS_FIXTURE_PRAGMA_SUPPORT = isDebug || isASAN;
 const SNAPSHOT_BUN_OUTPUT = !!process.env.REACT_COMPILER_FIXTURE_SNAPSHOT;
 const FILTER = process.env.REACT_COMPILER_FIXTURE_FILTER;
 
@@ -82,6 +88,10 @@ const IGNORED_PRAGMAS = new Set([
 // Pragmas Bun's `parse_fixture_pragmas` (src/react_compiler/program.rs) reads
 // from the leading comment and applies to ReactCompilerOptions / EnvironmentConfig
 // before compiling. shouldSkip returns null for these — the compiler honours them.
+//
+// `parse_fixture_pragmas` is `#[cfg(any(debug_assertions, feature = "fixtures"))]`:
+// release builds compile it out, so a fixture whose only observable behaviour
+// comes from a pragma-gated EnvironmentConfig flag cannot be checked there.
 const HANDLED_PRAGMAS = new Set([
   "flow",
   "script",
@@ -173,10 +183,18 @@ function shouldSkip(relPath: string, pragmas: Pragmas): string | null {
   // Any remaining pragma maps to an EnvironmentConfig / PluginOptions field
   // Bun cannot set per-invocation yet. Running with the wrong config produces
   // a meaningless diff, so skip until the option lands.
+  let needsPragmaSupport = false;
   for (const key of pragmas.keys()) {
-    if (HANDLED_PRAGMAS.has(key) || IGNORED_PRAGMAS.has(key)) continue;
+    if (IGNORED_PRAGMAS.has(key)) continue;
+    if (HANDLED_PRAGMAS.has(key)) {
+      needsPragmaSupport = true;
+      continue;
+    }
     if (UNSUPPORTED_PRAGMAS.has(key)) return `pragma:@${key} (unsupported)`;
     return `pragma:@${key}`;
+  }
+  if (needsPragmaSupport && !HAS_FIXTURE_PRAGMA_SUPPORT) {
+    return "release build (pragma parsing compiled out)";
   }
 
   return null;

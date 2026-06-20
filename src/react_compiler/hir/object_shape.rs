@@ -191,11 +191,11 @@ impl Clone for ShapeRegistry {
 
 /// Thread-local counter for generating unique anonymous shape IDs.
 /// Mirrors TS `nextAnonId` in ObjectShape.ts.
-fn next_anon_id() -> &'static str {
+fn next_anon_id() -> String {
     use std::sync::atomic::{AtomicU32, Ordering};
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    Box::leak(format!("<generated_{}>", id).into_boxed_str())
+    format!("<generated_{}>", id)
 }
 
 // =============================================================================
@@ -210,14 +210,14 @@ pub fn add_function(
     registry: &mut ShapeRegistry,
     properties: Vec<(String, Type)>,
     sig: FunctionSignatureBuilder,
-    id: Option<&'static str>,
+    id: Option<&str>,
     is_constructor: bool,
 ) -> Type {
-    let shape_id: &'static str = id.unwrap_or_else(next_anon_id);
+    let shape_id: String = id.map(str::to_owned).unwrap_or_else(next_anon_id);
     let return_type = sig.return_type.clone();
     add_shape(
         registry,
-        shape_id,
+        &shape_id,
         properties,
         Some(FunctionSignature {
             positional_params: sig.positional_params,
@@ -236,7 +236,7 @@ pub fn add_function(
         }),
     );
     Type::Function {
-        shape_id: Some(shape_id.to_string()),
+        shape_id: Some(shape_id),
         return_type: Box::new(return_type),
         is_constructor,
     }
@@ -246,16 +246,12 @@ pub fn add_function(
 /// Returns a `Type::Function` representing the added hook.
 #[cold]
 #[inline(never)]
-pub fn add_hook(
-    registry: &mut ShapeRegistry,
-    sig: HookSignatureBuilder,
-    id: Option<&'static str>,
-) -> Type {
-    let shape_id: &'static str = id.unwrap_or_else(next_anon_id);
+pub fn add_hook(registry: &mut ShapeRegistry, sig: HookSignatureBuilder, id: Option<&str>) -> Type {
+    let shape_id: String = id.map(str::to_owned).unwrap_or_else(next_anon_id);
     let return_type = sig.return_type.clone();
     add_shape(
         registry,
-        shape_id,
+        &shape_id,
         Vec::new(),
         Some(FunctionSignature {
             positional_params: sig.positional_params,
@@ -274,7 +270,7 @@ pub fn add_hook(
         }),
     );
     Type::Function {
-        shape_id: Some(shape_id.to_string()),
+        shape_id: Some(shape_id),
         return_type: Box::new(return_type),
         is_constructor: false,
     }
@@ -286,13 +282,13 @@ pub fn add_hook(
 #[inline(never)]
 pub fn add_object(
     registry: &mut ShapeRegistry,
-    id: Option<&'static str>,
+    id: Option<&str>,
     properties: Vec<(String, Type)>,
 ) -> Type {
-    let shape_id: &'static str = id.unwrap_or_else(next_anon_id);
-    add_shape(registry, shape_id, properties, None);
+    let shape_id: String = id.map(str::to_owned).unwrap_or_else(next_anon_id);
+    add_shape(registry, &shape_id, properties, None);
     Type::Object {
-        shape_id: Some(shape_id.to_string()),
+        shape_id: Some(shape_id),
     }
 }
 

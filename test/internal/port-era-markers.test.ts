@@ -6,8 +6,8 @@
 // "cfg-gated" on its own is NOT banned here: it is used legitimately to
 // describe real platform/feature `#[cfg(...)]` attributes.
 
-import { test, expect } from "bun:test";
 import { file } from "bun";
+import { expect, test } from "bun:test";
 import path from "node:path";
 import { globAllSources } from "../../scripts/glob-sources.ts";
 

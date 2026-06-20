@@ -1077,3 +1077,64 @@ describe("Bun.serve HTTP/3 production", () => {
   // (HttpContext.h / Http3Context.h call writeContinue before routing); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
 });
+
+test("Bun.serve http3 UDP bind failure releases the TCP listen socket", async () => {
+  // When the TCP bind succeeds but the HTTP/3 UDP bind on the same port
+  // fails, Bun.serve must close the TCP listen socket before tearing down
+  // the uws App. Otherwise the fd leaks (observable as EADDRINUSE below)
+  // and debug builds abort in us_socket_group_deinit() on a non-empty
+  // head_listen_sockets list.
+  const script = `
+    const net = require("net");
+    const dgram = require("dgram");
+    const tcp = net.createServer();
+    await new Promise(r => tcp.listen(0, "127.0.0.1", r));
+    const port = tcp.address().port;
+    const udp = dgram.createSocket({ type: "udp4", reuseAddr: false });
+    await new Promise((res, rej) => { udp.once("error", rej); udp.bind(port, "127.0.0.1", res); });
+    await new Promise(r => tcp.close(r));
+    let threw = false;
+    try {
+      const s = Bun.serve({
+        port,
+        hostname: "127.0.0.1",
+        tls: ${JSON.stringify(tls)},
+        http3: true,
+        fetch: () => new Response("x"),
+      });
+      s.stop(true);
+    } catch (e) {
+      threw = true;
+      console.log("THREW:" + e.message);
+    }
+    udp.close();
+    if (!threw) {
+      console.log("NOTHROW");
+    } else {
+      const tcp2 = net.createServer();
+      try {
+        await new Promise((res, rej) => {
+          tcp2.once("error", rej);
+          tcp2.listen(port, "127.0.0.1", res);
+        });
+        console.log("REBIND:OK");
+        tcp2.close();
+      } catch (e) {
+        console.log("REBIND:" + e.code);
+      }
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr, signalCode: proc.signalCode }).toEqual({
+    stdout: [expect.stringContaining("THREW:Failed to listen on UDP port"), "REBIND:OK"],
+    stderr: expect.not.stringContaining("Assertion"),
+    signalCode: null,
+  });
+  expect(exitCode).toBe(0);
+});

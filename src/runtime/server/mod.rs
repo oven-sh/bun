@@ -1853,10 +1853,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // config / on_clienterror / h3_alt_svc / dev_server / plugins) is
         // handled by the heap::take drop below — see `impl Drop for NewServer`.
         if Self::HAS_H3 {
+            if let Some(h3l) = this_ref.h3_listener.take() {
+                // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(h3l).close();
+            }
             if let Some(h3a) = this_ref.h3_app.take() {
                 // SAFETY: live H3::App handle owned by this server.
                 unsafe { uws_sys::h3::App::destroy(h3a) };
             }
+        }
+        // listen() may reach here after TCP bind succeeded but H3 bind
+        // failed; close the TCP listener so `us_socket_group_deinit` (via
+        // `~TemplatedApp` below) sees an empty `head_listen_sockets`.
+        if let Some(listener) = this_ref.listener.take() {
+            // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
+            bun_opaque::opaque_deref_mut(listener).close();
         }
         if let Some(app) = this_ref.app.take() {
             // SAFETY: live uws App handle owned by this server.

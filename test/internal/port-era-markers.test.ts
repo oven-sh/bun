@@ -58,9 +58,13 @@ for (const abs of rustSources) {
   const rel = path.relative(root, abs);
   const content = await file(abs).text();
   const lines = content.split("\n");
-  for (const { pattern } of banned) {
-    for (let i = 0; i < lines.length; i++) {
-      if (pattern.test(lines[i])) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // These markers are comment jargon; skip non-comment lines so an
+    // identifier or string literal that happens to match never trips the lint.
+    if (!line.includes("//")) continue;
+    for (const { pattern } of banned) {
+      if (pattern.test(line)) {
         hits[pattern.source].push(`${rel}:${i + 1}`);
       }
     }

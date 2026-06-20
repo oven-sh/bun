@@ -154,7 +154,6 @@ pub mod native_zlib_impl;
 #[path = "node/zlib/NativeZstd.rs"]
 pub mod native_zstd_impl;
 pub mod zlib {
-    // Re-export so `super::NodeMode` resolves inside the gated NativeZstd body.
     pub use super::native_brotli_impl as native_brotli;
     pub use super::native_zlib_impl as native_zlib;
     pub use super::native_zstd_impl as native_zstd;

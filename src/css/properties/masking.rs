@@ -10,8 +10,6 @@ use crate::css_values::position::Position;
 use crate::css_values::rect::Rect;
 
 use crate::css_properties::border_radius::BorderRadius;
-// `shape` is still gated; FillRule referenced only by the (gated) BasicShape::Polygon body.
-
 use crate::css_properties::shape::FillRule;
 
 use crate::css_properties::background::BackgroundRepeat;

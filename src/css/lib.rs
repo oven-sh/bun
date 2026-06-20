@@ -151,10 +151,8 @@ pub mod printer;
 #[path = "values/mod.rs"]
 pub mod values;
 
-/// Data-only value-type stubs re-exported through `values::{color,ident,url}`
-/// while the real `values/*.rs` files stay gated on the calc lattice. These
-/// were the previous `gated_mod!(values, ...)` body — now a real module so
-/// printer.rs / css_parser.rs can name the types.
+/// Re-exports from `values::{color,ident,url}` so callers that still use
+/// the legacy `values_stub` path resolve to the canonical types.
 pub mod values_stub {
     /// Re-export the real `values/color.rs` surface so any remaining
     /// `values_stub::color::*` paths resolve to the canonical types.

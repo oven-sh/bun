@@ -1619,23 +1619,23 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   // Resolve URL based on adapter type
   let resolvedUrl: string | URL | null = stringOrUrl;
 
-  const optionsFilename = "filename" in options ? options.filename : undefined;
-  const optionsUrl = "url" in options ? options.url : undefined;
+  let optionsFilename;
+  let optionsUrl;
   if (options.adapter === "sqlite") {
     // SQLite adapter - only check filename (not url)
-    if (optionsFilename) {
+    if ("filename" in options && (optionsFilename = options.filename)) {
       resolvedUrl = optionsFilename;
     }
   } else if (!options.adapter) {
     // Unknown adapter - check both, filename first (more specific)
-    if (optionsFilename) {
+    if ("filename" in options && (optionsFilename = options.filename)) {
       resolvedUrl = optionsFilename;
-    } else if (optionsUrl) {
+    } else if ("url" in options && (optionsUrl = options.url)) {
       resolvedUrl = optionsUrl;
     }
   } else {
     // Known non-SQLite adapter - only check url (not filename)
-    if (optionsUrl) {
+    if ("url" in options && (optionsUrl = options.url)) {
       resolvedUrl = optionsUrl;
     }
   }

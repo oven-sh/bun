@@ -233,6 +233,7 @@ export interface BundlerTestInput {
   splitting?: boolean;
   serverComponents?: boolean;
   reactCompiler?: boolean;
+  reactCompilerOutputMode?: "client" | "ssr";
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
   unsupportedJSFeatures?: string[];
@@ -498,6 +499,7 @@ function expectBundled(
     runtimeFiles,
     serverComponents = false,
     reactCompiler = false,
+    reactCompilerOutputMode,
     skipOnEsbuild,
     snapshotSourceMap,
     sourceMap,
@@ -1155,6 +1157,7 @@ function expectBundled(
           splitting,
           target,
           reactCompiler,
+          reactCompilerOutputMode,
           bytecode,
           publicPath,
           emitDCEAnnotations,

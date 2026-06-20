@@ -16,10 +16,14 @@ There are two kinds of port:
   `typeinference/`, `optimization/`, `validation/`, `reactive_scopes/`,
   `utils/`) — byte-for-byte copies of the upstream crate's `src/`, modulo
   crate-name/import rewrites. Upstream diffs apply mechanically.
-- **AST-boundary ports** (`lowering/*.rs`, `codegen.rs`, `pipeline.rs`,
-  `program.rs`, `imports.rs`, `gating.rs`, `suppression.rs`,
-  `compile_result.rs`) — re-typed onto `bun_ast` using the mapping in
-  `src/react_compiler/DESIGN.md`. Upstream diffs are re-ported by hand.
+- **AST-boundary ports** (`lowering/build_hir/`, `lowering/*.rs`, `codegen.rs`,
+  `pipeline.rs`, `program.rs`, `imports.rs`, `compile_result.rs`) — re-typed
+  onto `bun_ast` using the mapping in `src/react_compiler/DESIGN.md`. Upstream
+  diffs are re-ported by hand. Upstream's `gating.rs` is folded into
+  `program.rs`; `suppression.rs` is handled by the lexer
+  (`js_parser/lexer.rs`) and consumed in `program.rs`;
+  `identifier_loc_index.rs` is not needed because Bun's `Ref` already
+  provides binding identity.
 
 `react_compiler_ast`, `react_compiler_lowering`, and the `react_compiler`
 umbrella crate are **not** in Bun's tree at all — they exist upstream only as

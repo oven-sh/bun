@@ -2185,9 +2185,12 @@ impl<'a> Parser<'a> {
             }
             if !rc_stmts.is_empty() {
                 let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+                let mut import_record_indices: js_ast::PartImportRecordIndices =
+                    bun_alloc::AstAlloc::vec();
                 for stmt in &rc_stmts {
                     match &stmt.data {
                         js_ast::StmtData::SImport(import) => {
+                            import_record_indices.push(import.import_record_index);
                             declared_symbols.append(DeclaredSymbol {
                                 ref_: import.namespace_ref,
                                 is_top_level: true,
@@ -2214,6 +2217,7 @@ impl<'a> Parser<'a> {
                     stmts: p.arena.alloc_slice_copy(&rc_stmts).into(),
                     tag: js_ast::PartTag::ReactCompiler,
                     declared_symbols,
+                    import_record_indices,
                     can_be_removed_if_unused: true,
                     ..Default::default()
                 });

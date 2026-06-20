@@ -438,8 +438,8 @@ function _storeHeader(this: any, firstLine, headers) {
     } else if (!this.useChunkedEncodingByDefault) {
       this._last = true;
     } else {
-      const contentLength = this._contentLength;
-      if (!state.trailer && !this._removedContLen && typeof contentLength === "number") {
+      let contentLength;
+      if (!state.trailer && !this._removedContLen && typeof (contentLength = this._contentLength) === "number") {
         header += "Content-Length: " + contentLength + "\r\n";
       } else if (!this._removedTE) {
         header += "Transfer-Encoding: chunked\r\n";
@@ -844,8 +844,8 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
     }
   }
 
-  const msgSocket = msg.socket;
-  if (!fromEnd && msgSocket && !msgSocket.writableCorked) {
+  let msgSocket;
+  if (!fromEnd && (msgSocket = msg.socket) && !msgSocket.writableCorked) {
     msgSocket.cork();
     process.nextTick(connectionCorkNT, msgSocket);
   }
@@ -961,8 +961,8 @@ OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
 
   if (typeof callback === "function") this.once("finish", callback);
 
-  const contentLength = this._contentLength;
-  if (strictContentLength(this) && this[kBytesWritten] !== contentLength) {
+  let contentLength;
+  if (strictContentLength(this) && this[kBytesWritten] !== (contentLength = this._contentLength)) {
     throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(this[kBytesWritten], contentLength);
   }
 

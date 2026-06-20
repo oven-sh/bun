@@ -123,8 +123,8 @@ ObjectDefineProperties(Duplex.prototype, {
       // Backward compatibility, the user is explicitly
       // managing destroyed.
       const readableState = this._readableState;
-      const writableState = this._writableState;
-      if (readableState && writableState) {
+      let writableState;
+      if (readableState && (writableState = this._writableState)) {
         readableState.destroyed = value;
         writableState.destroyed = value;
       }

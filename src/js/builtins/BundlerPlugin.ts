@@ -378,9 +378,9 @@ export function runSetupFunction(
       setupResult = $peekPromiseSettledValue(setupResult);
     } else {
       return setupResult.$then(() => {
-        const promises = self.promises;
-        if (is_last && promises !== undefined && promises.length > 0) {
-          const awaitAll = Promise.all(promises);
+        let selfPromises;
+        if (is_last && (selfPromises = self.promises) !== undefined && selfPromises.length > 0) {
+          const awaitAll = Promise.all(selfPromises);
           return awaitAll.$then(processSetupResult);
         }
         return processSetupResult();
@@ -388,8 +388,8 @@ export function runSetupFunction(
     }
   }
 
-  const pendingPromises = this.promises;
-  if (is_last && pendingPromises !== undefined && pendingPromises.length > 0) {
+  let pendingPromises;
+  if (is_last && (pendingPromises = this.promises) !== undefined && pendingPromises.length > 0) {
     const awaitAll = Promise.all(pendingPromises);
     return awaitAll.$then(processSetupResult);
   }

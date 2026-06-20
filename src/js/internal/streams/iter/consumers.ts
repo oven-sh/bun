@@ -140,10 +140,11 @@ function toArrayBuffer(data) {
 
 function validateBaseConsumerOptions(options) {
   validateObject(options, "options");
-  const { limit, encoding } = options;
+  const limit = options.limit;
   if (limit !== undefined) {
     validateInteger(limit, "options.limit", 0);
   }
+  const encoding = options.encoding;
   if (encoding !== undefined) {
     if (typeof encoding !== "string") {
       throw $ERR_INVALID_ARG_TYPE("options.encoding", "string", encoding);

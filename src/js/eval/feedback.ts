@@ -210,8 +210,8 @@ async function promptForEmailInteractive(terminal: TerminalIO, defaultEmail?: st
 
   const render = () => {
     output.write(`\r\x1b[2K${symbols.question} ${bold}Email${reset}: `);
-    const placeholderLength = placeholder.length;
-    if (placeholderActive && placeholderLength > 0) {
+    let placeholderLength;
+    if (placeholderActive && (placeholderLength = placeholder.length) > 0) {
       output.write(`${dim}<${placeholder}>${reset}`);
       output.write(`\x1b[${placeholderLength + 2}D`);
     } else {
@@ -729,10 +729,10 @@ async function main() {
       body: form,
     });
 
-    const status = response.status;
-    if (!response.ok || status !== 200) {
+    let status;
+    if (!response.ok || (status = response.status) !== 200) {
       const bodyText = await response.text().catch(() => "");
-      logError(`Failed to send feedback (${status} ${response.statusText}).`);
+      logError(`Failed to send feedback (${status ?? response.status} ${response.statusText}).`);
       if (bodyText) {
         process.stderr.write(`${bodyText}\n`);
       }

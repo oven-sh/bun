@@ -361,8 +361,8 @@ const SocketHandlers: SocketHandler = {
 
     // A TOS value set before the connection existed (setTypeOfService before
     // connect) is applied to the live handle now.
-    const handle = self._handle;
-    if (self[kSetTOS] !== undefined && handle?.setTypeOfService) {
+    let handle;
+    if (self[kSetTOS] !== undefined && (handle = self._handle)?.setTypeOfService) {
       handle.setTypeOfService(self[kSetTOS]);
     }
 
@@ -422,12 +422,12 @@ const SocketHandlers: SocketHandler = {
         verifyError = checkServerIdentity(hostname, cert);
       }
     }
-    const rejectUnauthorized = self._rejectUnauthorized;
-    if (self._requestCert || rejectUnauthorized) {
+    let rejectUnauthorized;
+    if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        if (rejectUnauthorized) {
+        if (rejectUnauthorized ?? self._rejectUnauthorized) {
           self.destroy(verifyError);
           return;
         }
@@ -488,8 +488,8 @@ function SocketEmitEndNT(self, _err?) {
     // that race from surfacing as an uncaught exception - the no-listener
     // case is already a documented silent close.
     self.once("error", () => {});
-    const errErrno = _err.errno;
-    if (_err.code === undefined && typeof errErrno === "number" && errErrno !== 0) {
+    let errErrno;
+    if (_err.code === undefined && typeof (errErrno = _err.errno) === "number" && errErrno !== 0) {
       // A codeless close error that still carries the errno (Windows IOCP
       // delivers some this way): derive the proper code from it, like Node's
       // errnoException(nread, 'read'). Raw WSA values (-10054, ...) that the
@@ -751,9 +751,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       // way Node does and tear the connection down. A connection that was
       // already reported (handshake timeout, explicit destroy) is not
       // reported a second time when its teardown unwinds the handshake.
-      const alreadyDestroyed = self.destroyed;
-      if (self._hadError || alreadyDestroyed) {
-        if (!alreadyDestroyed) self.destroy();
+      let alreadyDestroyed;
+      if (self._hadError || (alreadyDestroyed = self.destroyed)) {
+        if (!(alreadyDestroyed ?? self.destroyed)) self.destroy();
         return;
       }
       // An SNICallback that reported an error (or returned an invalid
@@ -957,8 +957,8 @@ function onconnection(err, clientHandle) {
   // accepted socket open forever: report it through tlsClientError after
   // handshakeTimeout the way Node does. The timer is cleared when the
   // handshake settles (either way) or the socket closes first.
-  const handshakeTimeout = self._handshakeTimeout;
-  if (isTLS && handshakeTimeout > 0) {
+  let handshakeTimeout;
+  if (isTLS && (handshakeTimeout = self._handshakeTimeout) > 0) {
     const timer = setTimeout(() => {
       _socket[khandshakeTimer] = undefined;
       const err = $ERR_TLS_HANDSHAKE_TIMEOUT();
@@ -1155,12 +1155,12 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         verifyError = checkServerIdentity(hostname, cert);
       }
     }
-    const rejectUnauthorized = self._rejectUnauthorized;
-    if (self._requestCert || rejectUnauthorized) {
+    let rejectUnauthorized;
+    if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        if (rejectUnauthorized) {
+        if (rejectUnauthorized ?? self._rejectUnauthorized) {
           self.destroy(verifyError);
           return;
         }
@@ -1608,8 +1608,8 @@ Socket.prototype.connect = function connect(...args) {
         }
         tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
         this[bunTLSConnectOptions] = tls;
-        const tlsSocket = tls.socket;
-        if (!connection && tlsSocket) {
+        let tlsSocket;
+        if (!connection && (tlsSocket = tls.socket)) {
           connection = tlsSocket;
         }
       }
@@ -2657,8 +2657,8 @@ function internalConnect(self, options, address, port, addressType, localAddress
       self.servername = tls.servername;
       tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
       self[bunTLSConnectOptions] = tls;
-      const tlsSocket = tls.socket;
-      if (!connection && tlsSocket) {
+      let tlsSocket;
+      if (!connection && (tlsSocket = tls.socket)) {
         connection = tlsSocket;
       }
     }
@@ -2808,8 +2808,8 @@ function internalConnectMultiple(context, canceled?) {
       self.servername = tls.servername;
       tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
       self[bunTLSConnectOptions] = tls;
-      const tlsSocket = tls.socket;
-      if (!connection && tlsSocket) {
+      let tlsSocket;
+      if (!connection && (tlsSocket = tls.socket)) {
         connection = tlsSocket;
       }
     }
@@ -2936,8 +2936,8 @@ function afterConnect(status, handle, req, readable, writable) {
   } else {
     let details;
     const localAddress = req.localAddress;
-    const localPort = req.localPort;
-    if (localAddress && localPort) {
+    let localPort;
+    if (localAddress && (localPort = req.localPort)) {
       details = localAddress + ":" + localPort;
     }
     const ex = new ExceptionWithHostPort(status, "connect", req.address, req.port);
@@ -2996,8 +2996,8 @@ function createConnectionError(req, status) {
   let details;
 
   const localAddress = req.localAddress;
-  const localPort = req.localPort;
-  if (localAddress && localPort) {
+  let localPort;
+  if (localAddress && (localPort = req.localPort)) {
     details = localAddress + ":" + localPort;
   }
 
@@ -3696,8 +3696,8 @@ function checkBindError(err, port, handle) {
   if (err === 0 && port > 0 && handle.getsockname) {
     const out = {};
     err = handle.getsockname(out);
-    const outPort = out.port;
-    if (err === 0 && port !== outPort) {
+    let outPort;
+    if (err === 0 && port !== (outPort = out.port)) {
       $debug(`checkBindError, bound to ${outPort} instead of ${port}`);
       const UV_EADDRINUSE = -4091;
       err = UV_EADDRINUSE;

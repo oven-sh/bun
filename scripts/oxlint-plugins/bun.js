@@ -67,8 +67,13 @@ function skipKey(k) {
  * Only the outermost chain is recorded (`a.b.c`, not also `a.b`). Callees and
  * write targets are ignored: `if (obj.fn())` reads `obj.fn` but the value
  * itself isn't something a local can reuse.
+ *
+ * A member expression that appears as the right-hand side of an assignment
+ * (`(local = obj.prop)`) is recorded in `cached` instead of `out`: that is
+ * the inline cache pattern this rule recommends, so a fallback
+ * `local ?? obj.prop` read in the body should not be flagged.
  */
-function collectTestMembers(node, out) {
+function collectTestMembers(node, out, cached) {
   if (!node || typeof node !== "object") return;
   switch (node.type) {
     case "FunctionDeclaration":
@@ -81,7 +86,12 @@ function collectTestMembers(node, out) {
       if (!isCallee(node) && !isWriteTarget(node)) {
         const key = memberExpressionKey(node);
         if (key !== null) {
-          if (!out.has(key)) out.set(key, node);
+          const parent = node.parent;
+          if (parent && parent.type === "AssignmentExpression" && parent.operator === "=" && parent.right === node) {
+            cached.add(key);
+          } else if (!out.has(key)) {
+            out.set(key, node);
+          }
           return;
         }
       }
@@ -92,10 +102,10 @@ function collectTestMembers(node, out) {
     const v = node[k];
     if (Array.isArray(v)) {
       for (const child of v) {
-        if (child && typeof child === "object") collectTestMembers(child, out);
+        if (child && typeof child === "object") collectTestMembers(child, out, cached);
       }
     } else if (v && typeof v === "object" && typeof v.type === "string") {
-      collectTestMembers(v, out);
+      collectTestMembers(v, out, cached);
     }
   }
 }
@@ -168,7 +178,11 @@ const noDuplicateConditionalPropertyAccess = {
     return {
       IfStatement(node) {
         const members = new Map();
-        collectTestMembers(node.test, members);
+        const cached = new Set();
+        collectTestMembers(node.test, members, cached);
+        // A property already cached via `(local = obj.prop)` in the
+        // condition is the pattern this rule recommends; don't flag it.
+        for (const key of cached) members.delete(key);
         if (members.size === 0) return;
 
         for (const [key, member] of members) {

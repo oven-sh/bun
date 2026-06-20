@@ -15,9 +15,9 @@ function urlToHttpOptions(url) {
     options.port = Number(port);
   }
   const username = url.username;
-  const password = url.password;
-  if (username || password) {
-    options.auth = `${decodeURIComponent(username)}:${decodeURIComponent(password)}`;
+  let password;
+  if (username || (password = url.password)) {
+    options.auth = `${decodeURIComponent(username)}:${decodeURIComponent(password ?? url.password)}`;
   }
   return options;
 }

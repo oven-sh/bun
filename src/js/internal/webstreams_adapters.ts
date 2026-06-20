@@ -639,8 +639,8 @@ function newReadableWritablePairFromDuplex(duplex, options = kEmptyObject) {
     type: options.readableType,
   };
 
-  const optionsType = options.type;
-  if (options.readableType == null && optionsType != null) {
+  let optionsType;
+  if (options.readableType == null && (optionsType = options.type) != null) {
     // 'options.type' is a deprecated alias for 'options.readableType'
     emitDEP0201();
     readableOptions.type = optionsType;

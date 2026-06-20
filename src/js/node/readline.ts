@@ -1871,10 +1871,10 @@ var _Interface = class Interface extends InterfaceConstructor {
     this.cursor += dx;
 
     // Bounds check
-    const lineLength = this.line.length;
+    let lineLength;
     if (this.cursor < 0) {
       this.cursor = 0;
-    } else if (this.cursor > lineLength) {
+    } else if (this.cursor > (lineLength = this.line.length)) {
       this.cursor = lineLength;
     }
 

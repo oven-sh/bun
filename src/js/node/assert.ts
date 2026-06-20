@@ -894,8 +894,8 @@ assert.ifError = function ifError(err: unknown): void {
     let message = "ifError got unwanted exception: ";
     const errMessage = typeof err === "object" ? err.message : undefined;
     if (typeof errMessage === "string") {
-      const errConstructor = err.constructor;
-      if (errMessage.length === 0 && errConstructor) {
+      let errConstructor;
+      if (errMessage.length === 0 && (errConstructor = err.constructor)) {
         message += errConstructor.name;
       } else {
         message += errMessage;

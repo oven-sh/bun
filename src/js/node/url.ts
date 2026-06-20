@@ -416,9 +416,9 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
 
   // to support http.request
   const pathname = this.pathname;
-  const search = this.search;
-  if (pathname || search) {
-    this.path = (pathname || "") + (search || "");
+  let search;
+  if (pathname || (search = this.search)) {
+    this.path = (pathname || "") + ((search ?? this.search) || "");
   }
 
   // finally, reconstruct the href based on what has been validated.
@@ -497,10 +497,10 @@ Url.prototype.format = function format() {
     query = "";
 
   const thisHost = this.host;
-  const thisHostname = this.hostname;
+  let thisHostname;
   if (thisHost) {
     host = auth + thisHost;
-  } else if (thisHostname) {
+  } else if ((thisHostname = this.hostname)) {
     host = auth + (thisHostname.indexOf(":") === -1 ? thisHostname : "[" + thisHostname + "]");
     const thisPort = this.port;
     if (thisPort) {
@@ -656,9 +656,9 @@ Url.prototype.resolveObject = function resolveObject(relative) {
     result.port = relative.port;
     // to support http.request
     const resultPathname = result.pathname;
-    const resultSearch = result.search;
-    if (resultPathname || resultSearch) {
-      result.path = (resultPathname || "") + (resultSearch || "");
+    let resultSearch;
+    if (resultPathname || (resultSearch = result.search)) {
+      result.path = (resultPathname || "") + ((resultSearch ?? result.search) || "");
     }
     result.slashes = result.slashes || relative.slashes;
     result.href = result.format();
@@ -863,8 +863,9 @@ Url.prototype.resolveObject = function resolveObject(relative) {
 
   // to support request.http
   const resultPathname = result.pathname;
-  const resultSearch = result.search;
-  if (resultPathname !== null || resultSearch !== null) {
+  let resultSearch;
+  if (resultPathname !== null || (resultSearch = result.search) !== null) {
+    resultSearch ??= result.search;
     // prettier-ignore
     result.path = (resultPathname ? resultPathname : "") +
                   (resultSearch   ? resultSearch   : "");

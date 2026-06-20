@@ -779,15 +779,19 @@ var InternalSecureContext = class SecureContext {
     }
     if (options) {
       validateSecureContextOptions(options);
-      const { cert, key, ca, privateKeyIdentifier, privateKeyEngine } = options;
+      const cert = options.cert;
       if (cert) throwOnInvalidTLSArray("options.cert", cert);
+      const key = options.key;
       if (key) throwOnInvalidTLSArray("options.key", key);
+      const ca = options.ca;
       if (ca) throwOnInvalidTLSArray("options.ca", ca);
       if (options.servername != null && typeof options.servername !== "string")
         throw new TypeError("servername argument must be an string");
       if (options.secureOptions != null && typeof options.secureOptions !== "number")
         throw new TypeError("secureOptions argument must be an number");
+      const privateKeyIdentifier = options.privateKeyIdentifier;
       if (!$isUndefinedOrNull(privateKeyIdentifier)) {
+        const privateKeyEngine = options.privateKeyEngine;
         if ($isUndefinedOrNull(privateKeyEngine))
           throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", privateKeyEngine);
         if (typeof privateKeyEngine !== "string")

@@ -130,6 +130,13 @@ if (obj.handler) {
 if (obj.check()) {
   use(obj.check);
 }
+// inline-assignment in the condition is the recommended fix; a
+// short-circuit fallback read in the body preserves the original
+// access timing and should not be flagged.
+let prop;
+if (other || (prop = obj.prop)) {
+  use(prop ?? obj.prop);
+}
 `,
     });
 

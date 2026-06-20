@@ -138,10 +138,11 @@ class PerformanceObserverForNodeTypes extends NodePerformanceObserver {
     let requested;
     let isTypeMode = false;
     if (options != null && typeof options === "object") {
-      const { entryTypes, type } = options;
+      const entryTypes = options.entryTypes;
+      let type;
       if (entryTypes !== undefined && Array.isArray(entryTypes)) {
         requested = entryTypes;
-      } else if (type !== undefined) {
+      } else if ((type = options.type) !== undefined) {
         requested = [type];
         isTypeMode = true;
       }
@@ -273,8 +274,7 @@ export default {
     let highest = Number.MAX_SAFE_INTEGER;
     let figures = 3;
 
-    const { lowest: lowestOpt, highest: highestOpt, figures: figuresOpt } = opts;
-
+    const lowestOpt = opts.lowest;
     if (lowestOpt !== undefined) {
       if (typeof lowestOpt === "bigint") {
         lowest = Number(lowestOpt);
@@ -285,6 +285,7 @@ export default {
       }
     }
 
+    const highestOpt = opts.highest;
     if (highestOpt !== undefined) {
       if (typeof highestOpt === "bigint") {
         highest = Number(highestOpt);
@@ -295,6 +296,7 @@ export default {
       }
     }
 
+    const figuresOpt = opts.figures;
     if (figuresOpt !== undefined) {
       if (typeof figuresOpt !== "number") {
         throw $ERR_INVALID_ARG_TYPE("options.figures", "number", figuresOpt);

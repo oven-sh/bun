@@ -2871,8 +2871,8 @@ function lazyMinimatch() {
             }
           });
           const filtered = pp.filter(p => p !== exports.GLOBSTAR);
-          const filteredLength = filtered.length;
-          if (this.partial && filteredLength >= 1) {
+          let filteredLength;
+          if (this.partial && (filteredLength = filtered.length) >= 1) {
             const prefixes = [];
             for (let i = 1; i <= filteredLength; i++) {
               prefixes.push(filtered.slice(0, i).join("/"));

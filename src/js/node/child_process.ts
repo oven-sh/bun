@@ -663,8 +663,8 @@ function execFileSync(file, args, options) {
   const inheritStderr = !options.stdio;
   const ret = spawnSync(file, args, options);
 
-  const retStderr = ret.stderr;
-  if (inheritStderr && retStderr) process.stderr.write(retStderr);
+  let retStderr;
+  if (inheritStderr && (retStderr = ret.stderr)) process.stderr.write(retStderr);
 
   const errArgs = [options.argv0 || file];
   ArrayPrototypePush.$apply(errArgs, args);
@@ -700,8 +700,8 @@ function execSync(command, options) {
 
   const ret = spawnSync(opts.file, opts.options);
 
-  const retStderr = ret.stderr;
-  if (inheritStderr && retStderr) process.stderr.write(retStderr);
+  let retStderr;
+  if (inheritStderr && (retStderr = ret.stderr)) process.stderr.write(retStderr);
 
   const err = checkExecSyncError(ret, undefined, command);
 
@@ -778,8 +778,8 @@ function fork(modulePath, args = [], options) {
   let execArgv = options.execArgv || process.execArgv;
   validateArgumentsNullCheck(execArgv, "options.execArgv");
 
-  const processEval = process._eval;
-  if (execArgv === process.execArgv && processEval != null) {
+  let processEval;
+  if (execArgv === process.execArgv && (processEval = process._eval) != null) {
     const index = ArrayPrototypeLastIndexOf.$call(execArgv, processEval);
     if (index > 0) {
       // Remove the -e switch to avoid fork bombing ourselves.

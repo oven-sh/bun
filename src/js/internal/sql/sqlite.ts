@@ -428,10 +428,10 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
 
     // Since SQLite connection is synchronous, we immediately know the result
     const storedError = this.storedError;
-    const db = this.db;
+    let db;
     if (storedError) {
       onConnected(storedError, null);
-    } else if (db) {
+    } else if ((db = this.db)) {
       onConnected(null, db);
     } else {
       onConnected(this.connectionClosedError(), null);

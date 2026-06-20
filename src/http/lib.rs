@@ -2345,9 +2345,14 @@ impl<'a> HTTPClient<'a> {
 
         self.state.response_message_buffer = MutableString::default();
 
-        // copy the NonNull, do NOT `.take()` — the
-        // TooManyRedirects `fail()` below still needs a populated body pointer.
-        let body_out_str = self.state.body_out_str.unwrap();
+        // Copy the NonNull, do NOT `.take()` — the TooManyRedirects `fail()`
+        // below still needs a populated body pointer. No owner buffer means
+        // the request is already terminal; there is nowhere to deliver a
+        // redirected response.
+        let Some(body_out_str) = self.state.body_out_str else {
+            GenHttpContext::<IS_SSL>::close_socket(socket);
+            return;
+        };
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
@@ -3940,9 +3945,13 @@ impl<'a> HTTPClient<'a> {
             b""
         };
         self.state.response_message_buffer = MutableString::default();
-        // copy the NonNull, do NOT `.take()` — the
-        // TooManyRedirects `fail()` below still needs a populated body pointer.
-        let body_out_str = self.state.body_out_str.unwrap();
+        // Copy the NonNull, do NOT `.take()` — the TooManyRedirects `fail()`
+        // below still needs a populated body pointer. No owner buffer means
+        // the request is already terminal; there is nowhere to deliver a
+        // redirected response.
+        let Some(body_out_str) = self.state.body_out_str else {
+            return;
+        };
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);

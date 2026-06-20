@@ -233,6 +233,7 @@ export interface BundlerTestInput {
   splitting?: boolean;
   serverComponents?: boolean;
   reactCompiler?: boolean;
+  reactCompilerOutputMode?: "client" | "ssr";
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
   unsupportedJSFeatures?: string[];
@@ -498,6 +499,7 @@ function expectBundled(
     runtimeFiles,
     serverComponents = false,
     reactCompiler = false,
+    reactCompilerOutputMode,
     skipOnEsbuild,
     snapshotSourceMap,
     sourceMap,
@@ -734,6 +736,9 @@ function expectBundled(
       }
       if (optimizeImports) {
         throw new Error("optimizeImports not possible in backend=CLI (API-only option)");
+      }
+      if (reactCompilerOutputMode) {
+        throw new Error("reactCompilerOutputMode not possible in backend=CLI (API-only option)");
       }
       const cmd = (
         !ESBUILD
@@ -1155,6 +1160,7 @@ function expectBundled(
           splitting,
           target,
           reactCompiler,
+          reactCompilerOutputMode,
           bytecode,
           publicPath,
           emitDCEAnnotations,

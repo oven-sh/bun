@@ -122,7 +122,7 @@ pub mod js_bundler {
         pub react_fast_refresh: bool,
         pub react_compiler: bun_ast::runtime::ReactCompilerMode,
         pub react_compiler_parse_test_pragmas: bool,
-        pub react_compiler_output_mode_explicit: bool,
+        pub react_compiler_output_mode: Option<bun_ast::runtime::ReactCompilerMode>,
         pub define: StringMap,
         pub loaders: Option<api::LoaderMap>,
         pub dir: OwnedString,
@@ -181,7 +181,7 @@ pub mod js_bundler {
                 react_fast_refresh: false,
                 react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
-                react_compiler_output_mode_explicit: false,
+                react_compiler_output_mode: None,
                 define: StringMap::init(false),
                 loaders: None,
                 dir: OwnedString::default(),
@@ -617,7 +617,7 @@ pub mod js_bundler {
             if let Some(slice) =
                 config.get_optional_slice(global_this, b"reactCompilerOutputMode")?
             {
-                this.react_compiler = match slice.slice() {
+                this.react_compiler_output_mode = Some(match slice.slice() {
                     b"ssr" => bun_ast::runtime::ReactCompilerMode::Ssr,
                     b"client" => bun_ast::runtime::ReactCompilerMode::Client,
                     other => {
@@ -626,8 +626,7 @@ pub mod js_bundler {
                             bstr::BStr::new(other)
                         )));
                     }
-                };
-                this.react_compiler_output_mode_explicit = true;
+                });
                 drop(slice);
             }
 

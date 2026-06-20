@@ -953,16 +953,17 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.banner = std::borrow::Cow::Owned(config.banner.list.clone());
         transpiler.options.footer = std::borrow::Cow::Owned(config.footer.list.clone());
         transpiler.options.react_fast_refresh = config.react_fast_refresh;
-        transpiler.options.react_compiler =
-            if config.react_compiler.is_enabled() && !config.react_compiler_output_mode_explicit {
+        transpiler.options.react_compiler = if config.react_compiler.is_enabled() {
+            config.react_compiler_output_mode.unwrap_or_else(|| {
                 if config.target.is_server_side() {
                     bun_ast::runtime::ReactCompilerMode::Ssr
                 } else {
                     bun_ast::runtime::ReactCompilerMode::Client
                 }
-            } else {
-                config.react_compiler
-            };
+            })
+        } else {
+            bun_ast::runtime::ReactCompilerMode::Disabled
+        };
         transpiler.options.react_compiler_parse_test_pragmas =
             config.react_compiler_parse_test_pragmas;
         transpiler.options.metafile = config.metafile;

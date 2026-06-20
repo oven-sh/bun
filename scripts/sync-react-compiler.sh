@@ -82,21 +82,22 @@ declare -a pristine=(
 # Upstream diffs here must be re-ported by hand using the type-mapping table
 # in src/react_compiler/DESIGN.md.
 declare -a boundary=(
-  react_compiler_lowering/src/build_hir.rs:lowering/build_hir.rs
+  react_compiler_lowering/src/build_hir.rs:lowering/build_hir/
   react_compiler_lowering/src/hir_builder.rs:lowering/hir_builder.rs
   react_compiler_lowering/src/find_context_identifiers.rs:lowering/find_context_identifiers.rs
-  react_compiler_lowering/src/identifier_loc_index.rs:lowering/identifier_loc_index.rs
+  "react_compiler_lowering/src/identifier_loc_index.rs:(not ported; binding identity is Ref, see lowering/hir_builder.rs)"
   react_compiler_reactive_scopes/src/codegen_reactive_function.rs:codegen.rs
   react_compiler/src/entrypoint/pipeline.rs:pipeline.rs
   react_compiler/src/entrypoint/program.rs:program.rs
   react_compiler/src/entrypoint/imports.rs:imports.rs
-  react_compiler/src/entrypoint/gating.rs:gating.rs
-  react_compiler/src/entrypoint/suppression.rs:suppression.rs
+  "react_compiler/src/entrypoint/gating.rs:(folded into program.rs)"
+  "react_compiler/src/entrypoint/suppression.rs:(detected in js_parser/lexer.rs, consumed in program.rs)"
   react_compiler/src/entrypoint/compile_result.rs:compile_result.rs
 )
 
 diff_one() {
-  local upstream="compiler/crates/$1" port="src/react_compiler/$2"
+  local upstream="compiler/crates/$1" port="$2"
+  case "$port" in '('*) ;; *) port="src/react_compiler/$port" ;; esac
   local out
   out=$(git -C "$tmp" diff --stat=120 --patch "$old" "$new" -- "$upstream")
   if [ -n "$out" ]; then

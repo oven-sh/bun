@@ -131,6 +131,78 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("react-compiler/OutputModeExplicitSsrOverridesTarget", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        export function Counter() {
+          const [n] = useState(0);
+          return <div>{n}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    reactCompilerOutputMode: "ssr",
+    target: "browser",
+    backend: "api",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // reactCompilerOutputMode: "ssr" with reactCompiler: true overrides the
+      // target-derived default (browser → client) and skips memoization.
+      expect(out).not.toContain("react/compiler-runtime");
+      expect(out).not.toMatch(/\b_c\(\d+\)/);
+      // useState is still lowered by the SSR pass (the named import may
+      // survive, but no call remains).
+      expect(out).not.toContain("useState(");
+    },
+  });
+
+  // https://github.com/oven-sh/bun/pull/32504#discussion_r3447488111
+  itBundled("react-compiler/OutputModeIgnoredWhenCompilerDisabled-Client", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Hello({ name }) {
+          return <div>Hello {name}</div>;
+        }
+      `,
+    },
+    reactCompiler: false,
+    reactCompilerOutputMode: "client",
+    backend: "api",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // reactCompilerOutputMode must not enable the pass on its own.
+      expect(out).not.toContain("react/compiler-runtime");
+      expect(out).not.toMatch(/\b_c\(\d+\)/);
+    },
+  });
+
+  itBundled("react-compiler/OutputModeIgnoredWhenCompilerDisabled-Ssr", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        export function Counter() {
+          const [n] = useState(0);
+          return <div>{n}</div>;
+        }
+      `,
+    },
+    reactCompiler: false,
+    reactCompilerOutputMode: "ssr",
+    backend: "api",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // reactCompilerOutputMode: "ssr" with reactCompiler: false must not run
+      // the SSR pass either: useState stays as a runtime call.
+      expect(out).not.toContain("react/compiler-runtime");
+      expect(out).not.toMatch(/\b_c\(\d+\)/);
+      expect(out).toContain("useState(");
+    },
+  });
+
   itBundled("react-compiler/BundledReactPreservesImportRefs", {
     files: {
       "/entry.tsx": /* tsx */ `
@@ -178,6 +250,42 @@ describe("bundler", () => {
         /(?<![.\w])useSyncExternalStore\(|(?<![.\w])useContext\(|(?<![.\w])React\.createElement\b/,
       );
       // Output must round-trip through Bun's own parser.
+      new Bun.Transpiler({ loader: "js" }).transformSync(out);
+    },
+  });
+
+  // https://github.com/oven-sh/bun/pull/32504#discussion_r3447488114
+  itBundled("react-compiler/BundledCjsCompilerRuntimeSurvivesTreeShaking", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Hello({ name }) {
+          return <div>Hello {name}</div>;
+        }
+        console.log(typeof Hello({ name: "world" }));
+      `,
+      // CJS compiler-runtime so the linker must wire a wrapper dependency
+      // from the ReactCompiler part to this module via import_record_indices.
+      "/node_modules/react/compiler-runtime.js": `
+        exports.c = function (n) { return new Array(n).fill(Symbol.for("RC_RUNTIME_SENTINEL")); };
+      `,
+      "/node_modules/react/index.js": `exports.createElement = () => null;`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = () => "jsx"; exports.jsxs = () => "jsx";`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = () => "jsx";`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: { stdout: "string" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The ReactCompiler part must declare its import record so the linker
+      // keeps react/compiler-runtime live, orders it before the entry, and
+      // wires the CJS wrapper dependency. Without import_record_indices the
+      // module body can be dropped or left uninitialized, and _c is undefined
+      // at runtime. (The linker may rename `_c`, so assert on the runtime
+      // body's sentinel string instead.)
+      expect(out).toContain("RC_RUNTIME_SENTINEL");
       new Bun.Transpiler({ loader: "js" }).transformSync(out);
     },
   });

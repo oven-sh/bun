@@ -175,7 +175,7 @@ impl Method {
 pub struct Failure {
     pub err: bun_core::Error,
     pub step: Step,
-    #[cfg(debug_assertions)]
+    #[cfg(bun_debug)]
     pub debug_trace: bun_core::StoredTrace,
 }
 
@@ -203,7 +203,7 @@ impl InstallResult {
         InstallResult::Failure(Box::new(Failure {
             err,
             step,
-            #[cfg(debug_assertions)]
+            #[cfg(bun_debug)]
             debug_trace: match _trace {
                 Some(t) => bun_core::StoredTrace::from(Some(t)),
                 None => bun_core::StoredTrace::capture(None /* @returnAddress() */),

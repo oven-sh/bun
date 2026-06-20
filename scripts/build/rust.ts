@@ -477,6 +477,20 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     rustflags.push("-Zsanitizer=address");
     rustflags.push("--cfg=bun_asan");
   }
+  // `bun_debug`: the cargo profile is `dev` (a Debug-buildtype build).
+  // `bun_core::env::IS_DEBUG` and `build_options::ENABLE_LOGS` key on this
+  // instead of `cfg!(debug_assertions)` so that release-asan /
+  // release-assertions (which enable `debug-assertions` below for
+  // `debug_assert!()` coverage) don't also flip on Debug-only conveniences:
+  // `DUMP_SOURCE` (per-module writes to /tmp/bun-debug-src/), `debug_warn!`
+  // stderr noise, the `bun-debug` self-name for `npm run` rewrites,
+  // experimental feature-flag defaults. Mirrors Zig's
+  // `builtin.mode == .Debug`, which the Rust port had proxied via
+  // `debug_assertions` only because the two were coextensive until now.
+  rustflags.push("--check-cfg=cfg(bun_debug)");
+  if (cfg.debug) {
+    rustflags.push("--cfg=bun_debug");
+  }
   // `bun_codegen_embed`: embed codegen-output `.js` (`include_bytes!`) instead
   // of reading them from `BUN_CODEGEN_DIR` at runtime. Mirrors Zig
   // `BunBuildOptions.shouldEmbedCode() = optimize != .Debug or codegen_embed`.

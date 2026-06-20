@@ -182,7 +182,7 @@ pub fn argv() -> impl Iterator<Item = &'static [u8]> {
 /// `<tag>`-rewritten. For the compile-time-literal fast path use the macro form.
 #[inline]
 pub fn debug_warn(payload: impl PrettyFmtInput) {
-    if cfg!(debug_assertions) {
+    if crate::env::IS_DEBUG {
         let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
         pretty_errorln!("<yellow>debug warn<r><d>:<r> {}", buf);
         flush();
@@ -208,7 +208,7 @@ pub fn note(payload: impl PrettyFmtInput) {
 /// pre-formatted payload for call sites that build the message dynamically.
 #[inline]
 pub fn debug(payload: impl PrettyFmtInput) {
-    if cfg!(debug_assertions) {
+    if crate::env::IS_DEBUG {
         let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
         pretty_errorln!("<d>DEBUG:<r> {}", buf);
         flush();
@@ -1430,7 +1430,7 @@ macro_rules! println {
 #[macro_export]
 macro_rules! debug {
     ($fmt:expr $(, $arg:expr)* $(,)?) => {
-        if cfg!(debug_assertions) {
+        if $crate::env::IS_DEBUG {
             $crate::pretty_errorln!(concat!("<d>DEBUG:<r> ", $fmt) $(, $arg)*);
             $crate::output::flush();
         }
@@ -2489,7 +2489,7 @@ macro_rules! warn {
 #[macro_export]
 macro_rules! debug_warn {
     ($fmt:expr $(, $arg:expr)* $(,)?) => {
-        if cfg!(debug_assertions) {
+        if $crate::env::IS_DEBUG {
             $crate::pretty_errorln!(concat!("<yellow>debug warn<r><d>:<r> ", $fmt) $(, $arg)*);
             $crate::output::flush();
         }

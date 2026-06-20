@@ -1641,8 +1641,17 @@ impl JSValue {
         this_value: JSValue,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
-        // TODO: debug event-loop bookkeeping (js_call_count_outside_tick_queue /
-        // last_fn_name); see JSValue.zig:251 and JSPromise.rs `resolve`/`reject`.
+        #[cfg(debug_assertions)]
+        {
+            // SAFETY: JS-thread singleton; short-lived `&mut EventLoop` reborrow at use site
+            // per VirtualMachine::event_loop() contract.
+            let loop_ = crate::virtual_machine::VirtualMachine::get().event_loop_mut();
+            loop_.debug.js_call_count_outside_tick_queue +=
+                usize::from(!loop_.debug.is_inside_tick_queue);
+            if loop_.debug.track_last_fn_name && !loop_.debug.is_inside_tick_queue {
+                loop_.debug.last_fn_name = self.get_name(global)?.into();
+            }
+        }
         host_fn::from_js_host_call(global, || {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.

@@ -539,16 +539,7 @@ fn is_selector_unused(
     for component in selector.components.iter() {
         match component {
             Component::Class(ident) | Component::Id(ident) => {
-                // TODO: the ref arm (CSS-modules symbol-table lookup via
-                // `symbols`) is not yet wired; only the ident arm is handled.
-                let actual_ident: &[u8] = match (*ident).as_ident() {
-                    // SAFETY: arena-owned slice (`'static` placeholder for the arena lifetime).
-                    Some(i) => unsafe { crate::arena_str(i.v) },
-                    None => {
-                        let _ = symbols;
-                        continue;
-                    }
-                };
+                let actual_ident: &[u8] = ident.as_original_string(symbols);
                 // Look up the borrowed `&[u8]` against the map's owned
                 // `Box<[u8]>` keys without allocating.
                 struct SliceAdapter;

@@ -461,15 +461,16 @@ where
                     );
                 }
                 css::ComposesState::DisallowNotSingleClass(info) => {
-                    // TODO: attach a note via `ParserOptions::warn_fmt_with_notes`
-                    // ("The parent selector is not a single class selector because
-                    // of the syntax here:" at `info.to_logger_location(...)`).
-                    // For now only the primary warning fires.
-                    let _ = info;
-                    options.warn_fmt(
+                    options.warn_fmt_with_notes(
                         format_args!("\"composes\" only works inside single class selectors"),
                         source_location.line,
                         source_location.column,
+                        Box::new([bun_ast::Data {
+                            text: b"The parent selector is not a single class selector because of the syntax here:"
+                                .as_slice()
+                                .into(),
+                            location: Some(info.to_logger_location(options.filename)),
+                        }]),
                     );
                 }
             }

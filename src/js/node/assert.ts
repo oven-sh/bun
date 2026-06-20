@@ -97,7 +97,8 @@ const NO_EXCEPTION_SENTINEL = {};
 // display purposes.
 
 function innerFail(obj) {
-  if (obj.message instanceof Error) throw obj.message;
+  const objMessage = obj.message;
+  if (objMessage instanceof Error) throw objMessage;
 
   throw new AssertionError(obj);
 }
@@ -670,8 +671,9 @@ function expectedException(actual, expected, message, fn) {
         } else {
           message += `"${name}"`;
         }
-        if (actual.message) {
-          message += `\n\nError message:\n\n${actual.message}`;
+        const actualMessage = actual.message;
+        if (actualMessage) {
+          message += `\n\nError message:\n\n${actualMessage}`;
         }
       } else {
         message += `"${lazyInspect()(actual, { depth: -1 })}"`;
@@ -890,11 +892,13 @@ assert.doesNotReject = async function doesNotReject(fn: () => Promise<unknown>, 
 assert.ifError = function ifError(err: unknown): void {
   if (err !== null && err !== undefined) {
     let message = "ifError got unwanted exception: ";
-    if (typeof err === "object" && typeof err.message === "string") {
-      if (err.message.length === 0 && err.constructor) {
-        message += err.constructor.name;
+    const errMessage = typeof err === "object" ? err.message : undefined;
+    if (typeof errMessage === "string") {
+      let errConstructor;
+      if (errMessage.length === 0 && (errConstructor = err.constructor)) {
+        message += errConstructor.name;
       } else {
-        message += err.message;
+        message += errMessage;
       }
     } else {
       const inspect = lazyInspect();

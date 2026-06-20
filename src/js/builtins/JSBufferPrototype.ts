@@ -97,8 +97,9 @@ export function readIntLE(this: BufferExt, offset, byteLength) {
     case 6: {
       if (typeof offset !== "number" || (offset | 0) !== offset)
         require("internal/validators").validateInteger(offset, "offset");
-      if (!(offset >= 0 && offset <= this.length - byteLength))
-        require("internal/buffer").boundsError(offset, this.length - byteLength);
+      let thisLength;
+      if (!(offset >= 0 && offset <= (thisLength = this.length) - byteLength))
+        require("internal/buffer").boundsError(offset, (thisLength ?? this.length) - byteLength);
     }
   }
   switch (byteLength) {
@@ -140,8 +141,9 @@ export function readIntBE(this: BufferExt, offset, byteLength) {
     case 6: {
       if (typeof offset !== "number" || (offset | 0) !== offset)
         require("internal/validators").validateInteger(offset, "offset");
-      if (!(offset >= 0 && offset <= this.length - byteLength))
-        require("internal/buffer").boundsError(offset, this.length - byteLength);
+      let thisLength;
+      if (!(offset >= 0 && offset <= (thisLength = this.length) - byteLength))
+        require("internal/buffer").boundsError(offset, (thisLength ?? this.length) - byteLength);
     }
   }
   switch (byteLength) {
@@ -183,8 +185,9 @@ export function readUIntLE(this: BufferExt, offset, byteLength) {
     case 6: {
       if (typeof offset !== "number" || (offset | 0) !== offset)
         require("internal/validators").validateInteger(offset, "offset");
-      if (!(offset >= 0 && offset <= this.length - byteLength))
-        require("internal/buffer").boundsError(offset, this.length - byteLength);
+      let thisLength;
+      if (!(offset >= 0 && offset <= (thisLength = this.length) - byteLength))
+        require("internal/buffer").boundsError(offset, (thisLength ?? this.length) - byteLength);
     }
   }
   switch (byteLength) {
@@ -223,8 +226,9 @@ export function readUIntBE(this: BufferExt, offset, byteLength) {
     case 6: {
       if (typeof offset !== "number" || (offset | 0) !== offset)
         require("internal/validators").validateInteger(offset, "offset");
-      if (!(offset >= 0 && offset <= this.length - byteLength))
-        require("internal/buffer").boundsError(offset, this.length - byteLength);
+      let thisLength;
+      if (!(offset >= 0 && offset <= (thisLength = this.length) - byteLength))
+        require("internal/buffer").boundsError(offset, (thisLength ?? this.length) - byteLength);
     }
   }
   switch (byteLength) {

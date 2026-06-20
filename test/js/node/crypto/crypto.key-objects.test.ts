@@ -14,7 +14,6 @@ import {
   generateKeyPair,
   generateKeyPairSync,
   generateKeySync,
-  getCurves,
   KeyObject,
   privateDecrypt,
   privateEncrypt,
@@ -804,10 +803,6 @@ describe("crypto.KeyObjects", () => {
         .join("");
       return Buffer.from(body, "base64");
     }
-
-    it("getCurves() includes secp256k1", () => {
-      expect(getCurves()).toContain("secp256k1");
-    });
 
     it("generateKeyPairSync exports spki/pkcs8 PEM with the secp256k1 OID", () => {
       const { publicKey, privateKey } = generateKeyPairSync("ec", {

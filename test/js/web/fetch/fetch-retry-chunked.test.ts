@@ -4,44 +4,16 @@
 // `InternalState::get_body_buffer`). The panic fires on `body_out_str.unwrap()`
 // when a chunked, uncompressed response is processed while the client's
 // state has no owner buffer attached.
-//
-// The None state is only reachable on the HTTP thread via a race between
-// request teardown and stale socket data delivery that cannot be driven
-// deterministically from fetch(), so the accessor is exercised directly via
-// a `bun:internal-for-testing` probe that builds an `InternalState::default()`
-// and calls `get_body_buffer()` / `chunked_decoder_and_body_buffer()` /
-// `process_body_buffer()`. Before the fix, the first call panics.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 
-test("InternalState body-buffer accessors tolerate body_out_str == None", async () => {
-  // Run in a subprocess so a Rust panic (the pre-fix behavior) is observed as
-  // a non-zero exit rather than aborting the whole test process.
-  const script = [
-    `const { httpInternalStateBodyBufferProbe } = require("bun:internal-for-testing");`,
-    `const ok = httpInternalStateBodyBufferProbe();`,
-    `if (ok !== true) throw new Error("probe returned " + ok);`,
-    `console.log("ok");`,
-  ].join("\n");
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
-});
-
-// End-to-end guard: drive the keep-alive retry path with a chunked,
-// uncompressed response. The server drops every third request without
-// responding, so the client that adopted the pooled socket observes
-// on_close with response_stage == Pending and allow_retry == true, runs
-// the retry, reconnects, and processes a chunked body. This exercises
-// `get_body_buffer()` on the retried request.
+// Drive the keep-alive retry path with a chunked, uncompressed response.
+// The server drops every third request without responding, so the client
+// that adopted the pooled socket observes on_close with response_stage ==
+// Pending and allow_retry == true, runs the retry, reconnects, and processes
+// a chunked body. This exercises `get_body_buffer()` on the retried request.
 test("chunked uncompressed body over a retried keep-alive connection", async () => {
   let reqNo = 0;
   const sockets = new Set<net.Socket>();

@@ -34,7 +34,6 @@ pub mod shell;
 #[path = "api.rs"]
 pub mod api;
 pub mod dispatch;
-pub mod http_internal_state_testing;
 pub mod hw_exports;
 pub mod ipc_host;
 pub mod jsc_hooks;

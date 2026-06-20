@@ -123,6 +123,10 @@ export default [
       stdio: {
         getter: "getStdio",
       },
+      disownStdio: {
+        fn: "disownStdio",
+        length: 1,
+      },
       terminal: {
         getter: "getTerminal",
         cache: true,

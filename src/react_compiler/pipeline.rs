@@ -513,6 +513,14 @@ fn run_hir_passes(
         }
     }
 
+    // Upstream `.unwrap()`s the four validations above, so a recorded error
+    // throws here. The Bun ports record into `env.errors` and return `()`;
+    // gate explicitly so the reactive-scope passes are not run on a function
+    // the end-of-pipeline `has_errors()` check is going to discard anyway.
+    if env.has_errors() {
+        return Err(env.take_errors());
+    }
+
     timed!(
         "InferReactivePlaces",
         crate::inference::infer_reactive_places(hir, env)

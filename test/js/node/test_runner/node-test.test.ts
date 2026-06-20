@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -225,4 +225,90 @@ test("the call record is pushed after the implementation runs, like node", () =>
   expect(inside).toBe(0);
   expect(f.mock.callCount()).toBe(1);
   mock.reset();
+});
+
+describe("node:test done callback", () => {
+  async function runInlineTest(source: string) {
+    using dir = tempDir("node-test-done", { "done.test.js": source });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", join(String(dir), "done.test.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("passes when done() is called synchronously or asynchronously", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import test from 'node:test';
+      test('sync done', (t, done) => { done(); });
+      test('async done', (t, done) => { setImmediate(done); });
+    `);
+    // Without done support both fixtures throw "done is not a function", so the
+    // "2 pass" count is what distinguishes the fix from the bug.
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("done() passes a test while done(error) fails another", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import test from 'node:test';
+      test('ok', (t, done) => { done(); });
+      test('err', (t, done) => { done(new Error('boom-error')); });
+    `);
+    // The "1 pass" count only happens when done() actually resolves the first
+    // test; without the fix both tests throw and nothing passes.
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("1 fail");
+    expect(stderr).toContain("boom-error");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("times out when done is never called", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import test from 'node:test';
+      test('never done', { timeout: 100 }, (t, done) => {});
+    `);
+    // Without the fix this resolves synchronously and passes (0 fail); with the
+    // fix it waits for a done that never arrives and times out.
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("fails when a callback-style test also returns a Promise", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import test from 'node:test';
+      test('cb and promise', async (t, done) => { done(); });
+    `);
+    expect(stderr).toContain("passed a callback but also returned a Promise");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("arity-1 tests receive the context, not done", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import test from 'node:test';
+      test('no done', t => { if (typeof t !== 'object' || t === null) throw new Error('expected a context'); });
+    `);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("hooks receive a done callback", async () => {
+    const { stderr, exitCode } = await runInlineTest(`
+      import { test, beforeEach } from 'node:test';
+      let ran = false;
+      beforeEach((ctx, done) => { setImmediate(() => { ran = true; done(); }); });
+      test('uses hook', () => { if (!ran) throw new Error('hook did not run'); });
+    `);
+    // Without the fix the hook throws "done is not a function" and the test is
+    // not reached, so the "1 pass" count only happens once done works.
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
 });

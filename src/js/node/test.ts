@@ -659,6 +659,62 @@ function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
   return { name, options: options as TestOptions, fn };
 }
 
+// Runs a user test or hook function and completes via `done`, a single-shot
+// finalizer (safe to call more than once). When the function declares a second
+// parameter (`(context, done)`), Node's legacy error-first callback style is
+// used: a `done` callback is supplied and completion waits until it is invoked
+// (`done(error)` fails, a falsy argument passes). Returning a Promise while in
+// callback mode is an error, matching Node. Otherwise the function completes
+// synchronously or when its returned Promise settles.
+function runWithDone(
+  fn: (context: TestContext, done?: (error?: unknown) => void) => unknown,
+  context: TestContext,
+  done: (error?: unknown) => void,
+) {
+  if (fn.length === 2) {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    promise.then(
+      () => done(),
+      error => done(error),
+    );
+    const callback = (error?: unknown) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+    let result: unknown;
+    try {
+      result = fn(context, callback);
+    } catch (error) {
+      done(error);
+      return;
+    }
+    if (result instanceof Promise) {
+      (result as Promise<unknown>).then(kDefaultFunction, kDefaultFunction);
+      done(new Error("passed a callback but also returned a Promise"));
+    }
+    return;
+  }
+
+  let result: unknown;
+  try {
+    result = fn(context);
+  } catch (error) {
+    done(error);
+    return;
+  }
+  if (result instanceof Promise) {
+    (result as Promise<unknown>).then(
+      () => done(),
+      error => done(error),
+    );
+  } else {
+    done();
+  }
+}
+
 function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, options, fn } = parseTestOptions(arg0, arg1, arg2);
 
@@ -668,7 +724,10 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   const runTest = (done: (error?: unknown) => void) => {
     const originalContext = ctx;
     ctx = context;
+    let finished = false;
     const endTest = (error?: unknown) => {
+      if (finished) return;
+      finished = true;
       try {
         done(error);
       } finally {
@@ -676,18 +735,7 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
       }
     };
 
-    let result: unknown;
-    try {
-      result = fn(context);
-    } catch (error) {
-      endTest(error);
-      return;
-    }
-    if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => endTest()).catch(error => endTest(error));
-    } else {
-      endTest();
-    }
+    runWithDone(fn, context, endTest);
   };
 
   return { name, options, fn: runTest };
@@ -739,25 +787,22 @@ function createHook(arg0: unknown, arg1: unknown) {
   const { fn, options } = parseHookOptions(arg0, arg1);
 
   const runHook = (done: (error?: unknown) => void) => {
-    let result: unknown;
-    try {
-      result = fn();
-    } catch (error) {
+    let finished = false;
+    const endHook = (error?: unknown) => {
+      if (finished) return;
+      finished = true;
       done(error);
-      return;
-    }
-    if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => done()).catch(error => done(error));
-    } else {
-      done();
-    }
+    };
+
+    const context = new TestContext(false, undefined, Bun.main, ctx);
+    runWithDone(fn, context, endHook);
   };
 
   return { options, fn: runHook };
 }
 
-type TestFn = (ctx: TestContext) => unknown | Promise<unknown>;
-type HookFn = () => unknown | Promise<unknown>;
+type TestFn = (ctx: TestContext, done?: (error?: unknown) => void) => unknown | Promise<unknown>;
+type HookFn = (ctx: TestContext, done?: (error?: unknown) => void) => unknown | Promise<unknown>;
 
 type TestOptions = {
   concurrency?: number | boolean | null;

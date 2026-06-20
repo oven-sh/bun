@@ -496,7 +496,6 @@ describe("crypto.KeyObjects", () => {
     },
   ].forEach(info => {
     const { keyType, namedCurve } = info;
-    const test = it;
     let privateKey: KeyObject;
     test(`${keyType} ${namedCurve} createPrivateKey from Buffer should work`, async () => {
       const key = createPrivateKey(info.private);
@@ -757,7 +756,6 @@ describe("crypto.KeyObjects", () => {
   });
   describe("Test async elliptic curve key generation with 'jwk' encoding and named curve", () => {
     ["P-384", "P-256", "P-521", "secp256k1"].forEach(curve => {
-      const test = it;
       test(`should work with ${curve}`, async () => {
         const { promise, resolve, reject } = Promise.withResolvers();
         generateKeyPair(
@@ -1204,7 +1202,6 @@ describe("crypto.KeyObjects", () => {
 
   describe("Test sync elliptic curve key generation with 'jwk' encoding and named curve", () => {
     ["P-384", "P-256", "P-521", "secp256k1"].forEach(curve => {
-      const test = it;
       test(`should work with ${curve}`, async () => {
         const { publicKey, privateKey } = generateKeyPairSync("ec", {
           namedCurve: curve,

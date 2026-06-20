@@ -8,10 +8,10 @@ import {
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
-import { ReadableStream as WebReadableStream } from "node:stream/web";
 import { mkfifo } from "mkfifo";
 import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { ReadableStream as WebReadableStream } from "node:stream/web";
 
 it("TransformStream", async () => {
   // https://developer.mozilla.org/en-US/docs/Web/API/TransformStream

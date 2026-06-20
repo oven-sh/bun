@@ -435,10 +435,10 @@ impl Win32ErrorUnwrap for Win32Error {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// DEAD: full 1188-variant MS-ERREF const table. Kept gated for
-// reference; move individual consts up into `bun_windows_sys::Win32Error`
+// DEAD: full 1188-variant MS-ERREF const table. Kept behind `#[cfg(any())]`
+// for reference; move individual consts up into `bun_windows_sys::Win32Error`
 // if a new caller needs one. (Inherent impl on a foreign type is illegal,
-// so this block cannot be un-gated as-is.)
+// so this block cannot be enabled as-is.)
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(any())]
 mod _win32error_full_table {

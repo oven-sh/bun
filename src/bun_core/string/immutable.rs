@@ -50,9 +50,8 @@ pub use unicode_draft::{
 /// surface for the remaining Rust callers.
 pub use visible_impl::visible;
 
-/// Minimal `unicode` surface needed by `immutable.rs` itself (CodepointIterator
-/// + WTF-8 decode). Full transcoding suite (to_utf8_*, convert_utf16_*) lives
-/// in the gated `unicode_draft` module — un-gate after simdutf wiring.
+/// `unicode` surface needed by `immutable.rs` itself (CodepointIterator +
+/// WTF-8 decode). Full transcoding suite lives in `unicode_draft`.
 pub mod unicode {
     use super::CodePoint;
 

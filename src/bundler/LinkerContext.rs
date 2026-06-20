@@ -114,10 +114,7 @@ pub(crate) use debug;
 bun_core::define_scoped_log!(debug_tree_shake, crate::linker_context_mod::TreeShake);
 
 // Re-exports from sibling modules in `linker_context/`.
-// `LinkerGraph` SoA accessors are real now (`` on
-// `JSAst`/`JSMeta`/`File`); the submodule bodies un-gate against those. Module
-// declarations live in `lib.rs::linker_context` — each re-export below is
-// gated alongside its module declaration so partial un-gates compile.
+// Module declarations live in `lib.rs::linker_context`.
 pub use crate::linker_context::scan_imports_and_exports::scan_imports_and_exports;
 
 pub use crate::linker_context::compute_chunks::compute_chunks;
@@ -2160,9 +2157,6 @@ impl<'a> LinkerContext<'a> {
 
         Ok(true)
     }
-
-    // runtime_function: moved to the un-gated forward-decl impl block
-    // (see "Forward-decl shims for scanImportsAndExports.rs callees" below).
 
     pub fn print_code_for_file_in_chunk_js(
         &mut self,

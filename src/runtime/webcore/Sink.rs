@@ -26,9 +26,6 @@ impl JSSink<ArrayBufferSink> {
     }
 }
 
-// Re-export FileSink so gated `streams::Start` references to
-// `crate::webcore::sink::{FileSink, FileSinkOptions, FileSinkInputPath}` resolve
-// once those callers un-gate. The Options/InputPath types live on FileSink.
 pub use crate::webcore::file_sink::FileSink;
 
 /// A `Sink` is a hand-rolled vtable-based writable stream sink.

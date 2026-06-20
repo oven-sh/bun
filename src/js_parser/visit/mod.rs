@@ -359,17 +359,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.is_control_flow_dead = orig_dead;
                     if let BData::BIdentifier(_) = decl.binding.data {
                         if let Some(_ptr) = replacement {
-                            // blocked_on: P::replace_decl_and_possibly_remove is -gated
-                            //   (P.rs); un-gate this call when it lands.
-                            {
-                                // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
-                                // which is not mutated during the visit pass.
-                                let replacer = _ptr.get();
-                                if !self.replace_decl_and_possibly_remove(decl, replacer) {
-                                    continue 'outer;
-                                }
+                            // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
+                            // which is not mutated during the visit pass.
+                            let replacer = _ptr.get();
+                            if !self.replace_decl_and_possibly_remove(decl, replacer) {
+                                continue 'outer;
                             }
-                            let _ = &mut j; // keep 'outer label live until #[cfg] un-gates
                         }
                     }
                 }
@@ -396,18 +391,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .get_ptr(name)
                         .map(bun_ptr::BackRef::new)
                     {
-                        // blocked_on: P::replace_decl_and_possibly_remove is -gated
-                        //   (P.rs); un-gate this call when it lands.
-                        {
-                            // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
-                            // which is not mutated during the visit pass.
-                            let replacer = _ptr.get();
-                            if !self.replace_decl_and_possibly_remove(decl, replacer) {
-                                let is_after = self.vis_scope().is_after_const_local_prefix;
-                                self.visit_decl(decl, false, was_const && !is_after, false);
-                            } else {
-                                continue 'outer;
-                            }
+                        // `BackRef::get` — entry lives in `self.options.features.replace_exports`,
+                        // which is not mutated during the visit pass.
+                        let replacer = _ptr.get();
+                        if !self.replace_decl_and_possibly_remove(decl, replacer) {
+                            let is_after = self.vis_scope().is_after_const_local_prefix;
+                            self.visit_decl(decl, false, was_const && !is_after, false);
+                        } else {
+                            continue 'outer;
                         }
                     }
                 }
@@ -703,30 +694,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // P::stmts_to_single_stmt is ``-gated (P.rs:6267, blocked on
-    // S::Block Default). Inline a local copy until that un-gates.
-    fn stmts_to_single_stmt_(&mut self, loc: bun_ast::Loc, stmts: &'a mut [Stmt]) -> Stmt {
-        if stmts.is_empty() {
-            return Stmt {
-                data: StmtData::SEmpty(S::Empty {}),
-                loc,
-            };
-        }
-
-        if stmts.len() == 1 && !crate::parser::statement_cares_about_scope(&stmts[0]) {
-            // "let" and "const" must be put in a block when in a single-statement context
-            return stmts[0];
-        }
-
-        self.s(
-            S::Block {
-                stmts: bun_ast::StoreSlice::new_mut(stmts),
-                close_brace_loc: bun_ast::Loc::EMPTY,
-            },
-            loc,
-        )
-    }
-
     pub fn visit_loop_body(&mut self, stmt: Stmt) -> Stmt {
         let old_is_inside_loop = self.fn_or_arrow_data_visit.is_inside_loop;
         self.fn_or_arrow_data_visit.is_inside_loop = true;
@@ -755,7 +722,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.features.minify_syntax {
             // `stmts` was consumed above; `items` aliases the slice now
             // stored in `s_block.stmts`.
-            new_stmt = self.stmts_to_single_stmt_(stmt.loc, items);
+            new_stmt = self.stmts_to_single_stmt(stmt.loc, items);
         }
 
         new_stmt
@@ -785,7 +752,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.pop_scope();
         }
 
-        self.stmts_to_single_stmt_(stmt.loc, stmts.into_bump_slice_mut())
+        self.stmts_to_single_stmt(stmt.loc, stmts.into_bump_slice_mut())
     }
 
     pub fn visit_class(

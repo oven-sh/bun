@@ -143,14 +143,8 @@ pub fn get_default_ciphers() -> &'static ZStr {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MOVE-IN: ssl_wrapper (MOVE_DOWN bun_runtime::socket::ssl_wrapper → bun_uws)
-// Requested by: http_jsc
+// ssl_wrapper (moved down from bun_runtime::socket::ssl_wrapper for http_jsc)
 // ═══════════════════════════════════════════════════════════════════════════
-// `bun_boringssl_sys` is currently empty (bindgen not yet run), so every fn
-// body that calls a BoringSSL symbol is re-gated below; the
-// type/struct surface compiles against opaque `SSL`/`SSL_CTX` from
-// `bun_boringssl::c`. `init_from_options` additionally needs
-// `bun_uws_sys::socket_context::BunSocketContextOptions` (gated in lower tier).
 pub mod ssl_wrapper {
     use core::ffi::{c_int, c_void};
     use core::ptr::NonNull;
@@ -1272,15 +1266,9 @@ pub mod ssl_wrapper {
 // Loop / InternalLoopData
 // ═══════════════════════════════════════════════════════════════════════════
 // Mirrors `struct us_internal_loop_data_t` (packages/bun-usockets/src/internal/
-// loop_data.h) and `struct us_loop_t` (epoll_kqueue.h / libuv.h). Defined here
-// rather than re-exported from bun_uws_sys because that crate currently gates
-// every module and only exposes opaques — and we cannot `impl` foreign opaques.
-// When bun_uws_sys un-gates, collapse these into `pub use bun_uws_sys::loop_::*`.
-
-// bun_uws_sys provides the real Loop/PosixLoop/WindowsLoop/InternalLoopData/
-// SocketGroup. Re-export them here so `bun_uws::Loop` and `bun_uws_sys::Loop`
-// are the SAME type (bun_io's EventLoopCtxVTable is typed against the uws_sys
-// version).
+// loop_data.h) and `struct us_loop_t` (epoll_kqueue.h / libuv.h). Re-exported
+// from bun_uws_sys so `bun_uws::Loop` and `bun_uws_sys::Loop` are the same
+// type (bun_io's EventLoopCtxVTable is typed against the uws_sys version).
 pub use bun_uws_sys::loop_::{LoopHandler, us_wakeup_loop};
 pub use bun_uws_sys::{InternalLoopData, Loop, PosixLoop, Timespec, WindowsLoop};
 

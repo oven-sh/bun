@@ -5,38 +5,8 @@ use bun_collections::StringArrayHashMap;
 use bun_collections::VecExt;
 
 use crate::p::P;
-use crate::parser::{ReactRefresh, Ref, TempRef};
+use crate::parser::{ReactRefresh, Ref};
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
-
-// Note: `P::generate_temp_ref` is ``-gated in P.rs (round-6
-// re-gate); replicate it here so this file can un-gate independently
-// (with `scope = current_scope`).
-// `P::will_use_renamer` is private — its body is inlined.
-fn generate_temp_ref<'p, const TS: bool, const SCAN: bool>(
-    p: &mut P<'p, TS, SCAN>,
-    default_name: Option<&'p [u8]>,
-) -> Ref {
-    let will_use_renamer = p.options.bundle || p.options.features.minify_identifiers;
-    let name: &'p [u8] =
-        (if will_use_renamer { default_name } else { None }).unwrap_or_else(|| {
-            p.temp_ref_count += 1;
-            bun_alloc::arena_format!(in p.arena, "__bun_temp_ref_{:x}$", p.temp_ref_count)
-                .into_bump_str()
-                .as_bytes()
-        });
-    let r#ref = p
-        .new_symbol(js_ast::symbol::Kind::Other, name)
-        .expect("oom");
-
-    p.temp_refs_to_declare.push(TempRef {
-        r#ref,
-        ..Default::default()
-    });
-
-    VecExt::append(&mut p.current_scope_mut().generated, r#ref);
-
-    r#ref
-}
 
 pub(crate) struct ConvertESMExportsForHmr<'a> {
     pub last_part: &'a mut js_ast::Part,
@@ -216,7 +186,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 // Otherwise, an identifier must be exported
                 match &st.value {
                     js_ast::StmtOrExpr::Expr(_) => {
-                        let temp_id = generate_temp_ref(p, Some(b"default_export"));
+                        let temp_id = p.generate_temp_ref(Some(b"default_export"));
                         self.last_part
                             .declared_symbols
                             .append(js_ast::DeclaredSymbol {
@@ -614,7 +584,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             // This is technically incorrect in that we've marked this as a
             // top level symbol. but all we care about is preventing name
             // collisions, not necessarily the best minificaiton (dev only)
-            let arg1 = generate_temp_ref(p, Some(original_name.slice()));
+            let arg1 = p.generate_temp_ref(Some(original_name.slice()));
             self.last_part
                 .declared_symbols
                 .append(js_ast::DeclaredSymbol {

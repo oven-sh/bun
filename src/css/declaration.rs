@@ -4,12 +4,6 @@ use bun_alloc::ArenaVecExt as _;
 pub use css::Error;
 use css::{CssResult as Result, PrintErr, Printer};
 
-// The `*Handler` types imported below are the real per-shorthand-group
-// implementations from their leaf modules (BackgroundHandler, BoxShadowHandler,
-// BorderRadiusHandler, …). A few leaf modules still keep individual method
-// bodies internally gated until their deps land — see the per-module status
-// notes at the top of properties/mod.rs; this file composes over whichever
-// surface is live.
 use crate::css_properties::align::AlignHandler;
 use crate::css_properties::background::BackgroundHandler;
 use crate::css_properties::border::BorderHandler;
@@ -486,10 +480,6 @@ where
 }
 
 /// Per-shorthand-group handler state used by `DeclarationBlock::minify`.
-///
-/// Each `*Handler` is the real implementation from its leaf module (see the
-/// per-module status notes in properties/mod.rs for any internally-gated
-/// bodies); `Direction` is the data-only `properties::text` enum.
 pub struct DeclarationHandler<'bump> {
     pub background: BackgroundHandler,
     pub border: BorderHandler,

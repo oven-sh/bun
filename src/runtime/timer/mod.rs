@@ -540,9 +540,7 @@ impl EventLoopDelayMonitor {
     }
 }
 
-// ─── TimerObjectInternals / TimeoutObject / ImmediateObject (struct-only) ───
-// `Flags` is the real packed-u32 state machine; method bodies that touch
-// `bun_jsc::JsRef`/`Debugger` stay gated.
+// ─── TimerObjectInternals / TimeoutObject / ImmediateObject ─────────────────
 
 pub mod timer_object_internals;
 pub use timer_object_internals::{Flags as TimerFlags, TimerObjectInternals};
@@ -1236,12 +1234,6 @@ impl All {
         }
     }
 }
-
-// ─── JS-facing surface (gated on bun_jsc) ────────────────────────────────────
-// `set_timeout`/`set_interval`/`set_immediate`/`sleep`/`clear_*` and the
-// host_fn export thunks all need `JSGlobalObject::bun_vm()`,
-// `JSValue::to_number()`, `bun_core::String::transfer_to_js()`, etc.
-// Kept gated until `bun_jsc.workspace = true` is re-enabled.
 
 // ─── enums / value types ─────────────────────────────────────────────────────
 

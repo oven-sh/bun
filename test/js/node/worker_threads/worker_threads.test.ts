@@ -111,9 +111,18 @@ describe("isInternalThread", () => {
       `const { parentPort, isInternalThread } = require("node:worker_threads"); parentPort.postMessage(isInternalThread);`,
       { eval: true },
     );
-    const result = await new Promise(resolve => worker.on("message", resolve));
-    expect(result).toBe(false);
-    await worker.terminate();
+    try {
+      const result = await new Promise<boolean>((resolve, reject) => {
+        worker.once("message", value => resolve(value as boolean));
+        worker.once("error", reject);
+        worker.once("exit", code => {
+          if (code !== 0) reject(new Error(`worker exited before posting a message (code ${code})`));
+        });
+      });
+      expect(result).toBe(false);
+    } finally {
+      await worker.terminate();
+    }
   });
 });
 

@@ -3,7 +3,7 @@ import { bunEnv, bunExe } from "harness";
 import wt, { Worker } from "worker_threads";
 
 // https://github.com/oven-sh/bun/issues/32532
-describe("isInternalThread", () => {
+describe.concurrent("isInternalThread", () => {
   test("is exported as false on the module object", () => {
     expect(wt).toHaveProperty("isInternalThread");
     expect(wt.isInternalThread).toBe(false);

@@ -1546,7 +1546,11 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
     cwd: opts["cwd"],
-    timeout: isReallyTest ? timeout : 30_000,
+    // Match the per-test asan multiplier above: release-asan with
+    // debug-assertions on runs every spawned subprocess slower, and tests
+    // with heavy beforeAll setup (napi node-gyp compiles, install suites)
+    // otherwise hit the file wall before any individual test times out.
+    timeout: isReallyTest ? timeout * (isAsan ? 3 : 1) : 30_000,
     env,
     stdout: options.stdout,
     stderr: options.stderr,

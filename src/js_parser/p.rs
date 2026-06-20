@@ -3958,6 +3958,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let new_record = &records[new_index];
             let conflict = records[..new_index].iter().any(|record| {
                 record.kind == ImportKind::Stmt
+                    // Macro-import records (the `is_macro` fast path and
+                    // bunfig `[macros]` remapping below) are compile-time
+                    // only: the statement becomes `S::Empty` and the
+                    // record is `IS_UNUSED` / `Macro::NAMESPACE`, so it
+                    // never reaches JSC's requested-modules list and
+                    // cannot collide with a source-phase request.
+                    && record.path.namespace != crate::Macro::NAMESPACE
                     && matches!(
                         (record.phase, new_record.phase),
                         (ImportPhase::Source, ImportPhase::Evaluation)

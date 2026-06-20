@@ -3421,10 +3421,10 @@ unsafe fn maybe_auto_watch_file(
         )
         .is_err()
     {
-        // Close the fd we just opened on macOS;
-        // not a transpile failure (the user didn't open it).
-        #[cfg(target_os = "macos")]
-        if input_fd.is_valid() {
+        // Close the fd we just opened for kqueue; not a transpile failure
+        // (the user didn't open it). Gate on the same condition as the
+        // open above so the open/close pair cannot drift apart.
+        if bun_watcher::REQUIRES_FILE_DESCRIPTORS && input_fd.is_valid() {
             use bun_sys::FdExt as _;
             input_fd.close();
         }

@@ -636,6 +636,28 @@ describe.concurrent("import source (source phase imports)", () => {
       expect(exitCode).not.toBe(0);
     });
 
+    test.each([
+      ["macro-first", `import { fn } from "./m.js" with { type: "macro" };\nimport source mod from "./m.js";`],
+      ["source-first", `import source mod from "./m.js";\nimport { fn } from "./m.js" with { type: "macro" };`],
+    ])(
+      "a macro import of the same specifier (%s) is not a phase conflict with import source",
+      async (_label, code) => {
+        // Macro-import records are compile-time only (the statement becomes
+        // S::Empty and the record is flagged IS_UNUSED / Macro::NAMESPACE),
+        // so they never reach JSC's requested-modules list and cannot
+        // collide with the source-phase request. check_source_phase_conflict
+        // must skip them; the result is order-independent.
+        const { stdout, stderr, exitCode } = await run({
+          "main.js": code + `\nconsole.log("unreachable", fn(), typeof mod);`,
+          "m.js": `export const fn = () => "macro-output"; export default 1;`,
+        });
+        expect(stdout).not.toContain("unreachable");
+        expect(stderr).not.toContain("both source phase and evaluation phase");
+        expect(stderr).toContain("only WebAssembly modules have a module source");
+        expect(exitCode).not.toBe(0);
+      },
+    );
+
     test("import source is not over-rejected by a bunfig [macros] remap lacking a default key", async () => {
       // A `[macros]` entry that only maps named exports doesn't touch the
       // default binding, so `import source` must proceed to the normal

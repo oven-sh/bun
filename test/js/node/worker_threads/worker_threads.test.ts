@@ -35,6 +35,7 @@ test("support eval in worker", async () => {
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");
+  expect(wt).toHaveProperty("isInternalThread");
   expect(wt).toHaveProperty("markAsUntransferable");
   expect(wt).toHaveProperty("moveMessagePortToContext");
   expect(wt).toHaveProperty("parentPort");
@@ -51,6 +52,7 @@ test("all worker_threads module properties are present", () => {
 
   expect(getEnvironmentData).toBeFunction();
   expect(isMainThread).toBeBoolean();
+  expect(wt.isInternalThread).toBe(false);
   expect(markAsUntransferable).toBeFunction();
   expect(moveMessagePortToContext).toBeFunction();
   expect(parentPort).toBeNull();
@@ -74,6 +76,41 @@ test("all worker_threads module properties are present", () => {
     // @ts-expect-error no args
     wt.moveMessagePortToContext();
   }).toThrow("not yet implemented");
+});
+
+describe("isInternalThread", () => {
+  // https://github.com/oven-sh/bun/issues/32532
+  test("named import resolves to false", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "import { isInternalThread } from 'node:worker_threads'; console.log(isInternalThread);"],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "false", exitCode: 0 });
+  });
+
+  test("require exposes isInternalThread as false", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "const wt = require('node:worker_threads'); console.log(wt.isInternalThread, typeof wt.isInternalThread);"],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "false boolean", exitCode: 0 });
+  });
+
+  test("is false inside a user worker", async () => {
+    const worker = new Worker(
+      `const { parentPort, isInternalThread } = require("node:worker_threads"); parentPort.postMessage(isInternalThread);`,
+      { eval: true },
+    );
+    const result = await new Promise(resolve => worker.on("message", resolve));
+    expect(result).toBe(false);
+    await worker.terminate();
+  });
 });
 
 test("all worker_threads worker instance properties are present", async () => {

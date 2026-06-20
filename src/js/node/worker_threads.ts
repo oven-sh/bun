@@ -658,6 +658,9 @@ export default {
   parentPort,
   resourceLimits,
   isMainThread,
+  // Bun does not expose Node's internal worker threads (e.g. the module
+  // loader thread) to user code, so this is always false for reachable code.
+  isInternalThread: false,
   MessageChannel,
   BroadcastChannel,
   MessagePort,

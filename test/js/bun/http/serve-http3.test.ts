@@ -1085,7 +1085,7 @@ test("H3 UDP bind failure after TCP listen succeeds throws cleanly", async () =>
     udp.bind(0, "127.0.0.1", () => {
       const port = udp.address().port;
       try {
-        Bun.serve({
+        const server = Bun.serve({
           port,
           hostname: "127.0.0.1",
           tls: ${JSON.stringify(tls)},
@@ -1093,6 +1093,8 @@ test("H3 UDP bind failure after TCP listen succeeds throws cleanly", async () =>
           fetch() { return new Response("ok"); },
         });
         console.log("unexpected success");
+        server.stop(true);
+        process.exitCode = 1;
       } catch (e) {
         console.log("threw: " + e.message);
       }

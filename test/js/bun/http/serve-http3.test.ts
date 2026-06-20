@@ -468,7 +468,8 @@ describe("Bun.serve HTTP/3", () => {
       udp.bind(0, "0.0.0.0", () => {
         const port = udp.address().port;
         try {
-          Bun.serve({ port, tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response("x") });
+          const s = Bun.serve({ port, tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response("x") });
+          s.stop(true);
           console.log("unexpected-success");
         } catch (e) {
           console.log("caught", e.message);

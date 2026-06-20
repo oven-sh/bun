@@ -31,25 +31,25 @@ function extractAgentOptions(agent) {
     const newTlsOptions = {};
     let hasTlsOptions = false;
 
-    const rejectUnauthorized = connectOpts.rejectUnauthorized;
+    const { rejectUnauthorized, ca, cert, key, passphrase } = connectOpts;
     if (rejectUnauthorized !== undefined) {
       newTlsOptions.rejectUnauthorized = rejectUnauthorized;
       hasTlsOptions = true;
     }
-    if (connectOpts.ca) {
-      newTlsOptions.ca = connectOpts.ca;
+    if (ca) {
+      newTlsOptions.ca = ca;
       hasTlsOptions = true;
     }
-    if (connectOpts.cert) {
-      newTlsOptions.cert = connectOpts.cert;
+    if (cert) {
+      newTlsOptions.cert = cert;
       hasTlsOptions = true;
     }
-    if (connectOpts.key) {
-      newTlsOptions.key = connectOpts.key;
+    if (key) {
+      newTlsOptions.key = key;
       hasTlsOptions = true;
     }
-    if (connectOpts.passphrase) {
-      newTlsOptions.passphrase = connectOpts.passphrase;
+    if (passphrase) {
+      newTlsOptions.passphrase = passphrase;
       hasTlsOptions = true;
     }
 
@@ -168,11 +168,12 @@ class BunWebSocket extends EventEmitter {
       agent = options?.agent;
       if ($isObject(agent)) {
         const agentOpts = extractAgentOptions(agent);
-        if (!proxy && agentOpts.proxy) {
-          proxy = agentOpts.proxy;
+        const { proxy: agentProxy, tls: agentTls } = agentOpts;
+        if (!proxy && agentProxy) {
+          proxy = agentProxy;
         }
-        if (!tlsOptions && agentOpts.tls) {
-          tlsOptions = agentOpts.tls;
+        if (!tlsOptions && agentTls) {
+          tlsOptions = agentTls;
         }
       }
     }
@@ -1196,7 +1197,8 @@ class WebSocketServer extends EventEmitter {
       this._server = server;
     }
 
-    if (this._server) {
+    const ownServer = this._server;
+    if (ownServer) {
       const emitConnection = this.emit.bind(this, "connection");
       const emitListening = this.emit.bind(this, "listening");
       const emitError = this.emit.bind(this, "error");
@@ -1204,14 +1206,14 @@ class WebSocketServer extends EventEmitter {
         this.handleUpgrade(req, socket, head, emitConnection);
       };
 
-      this._server.on("listening", emitListening);
-      this._server.on("error", emitError);
-      this._server.on("upgrade", doUpgrade);
+      ownServer.on("listening", emitListening);
+      ownServer.on("error", emitError);
+      ownServer.on("upgrade", doUpgrade);
 
       this._removeListeners = () => {
-        this._server.removeListener("upgrade", doUpgrade);
-        this._server.removeListener("listening", emitListening);
-        this._server.removeListener("error", emitError);
+        ownServer.removeListener("upgrade", doUpgrade);
+        ownServer.removeListener("listening", emitListening);
+        ownServer.removeListener("error", emitError);
       };
     }
 
@@ -1276,8 +1278,9 @@ class WebSocketServer extends EventEmitter {
         this._removeListeners = this._server = null;
       }
 
-      if (this.clients) {
-        if (!this.clients.size) {
+      const clients = this.clients;
+      if (clients) {
+        if (!clients.size) {
           process.nextTick(server => {
             server._state = CLOSED;
             server.emit("close");
@@ -1316,11 +1319,12 @@ class WebSocketServer extends EventEmitter {
    * @public
    */
   shouldHandle(req) {
-    if (this.options.path) {
+    const optionsPath = this.options.path;
+    if (optionsPath) {
       const index = req.url.indexOf("?");
       const pathname = index !== -1 ? req.url.slice(0, index) : req.url;
 
-      if (pathname !== this.options.path) return false;
+      if (pathname !== optionsPath) return false;
     }
 
     return true;
@@ -1367,12 +1371,13 @@ class WebSocketServer extends EventEmitter {
         headers: protocol ? { "sec-websocket-protocol": protocol } : undefined,
       })
     ) {
-      if (this.clients) {
-        this.clients.add(ws);
+      const clients = this.clients;
+      if (clients) {
+        clients.add(ws);
         ws.on("close", () => {
-          this.clients.delete(ws);
+          clients.delete(ws);
 
-          if (this._shouldEmitClose && !this.clients.size) {
+          if (this._shouldEmitClose && !clients.size) {
             process.nextTick(wsEmitClose, this);
           }
         });

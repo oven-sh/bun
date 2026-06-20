@@ -104,7 +104,8 @@ function Agent(options): void {
     const freeSockets = this.freeSockets[name] || [];
     const freeLen = freeSockets.length;
     let count = freeLen;
-    if (this.sockets[name]) count += this.sockets[name].length;
+    const namedSockets = this.sockets[name];
+    if (namedSockets) count += namedSockets.length;
 
     if (
       this.totalSocketCount > this.maxTotalSockets ||
@@ -179,18 +180,19 @@ Agent.prototype.createConnection = function createConnection(...args) {
 };
 
 Agent.prototype.getName = function getName(options = kEmptyObject) {
-  let name = options.host || "localhost";
+  const { host, port, localAddress, family, socketPath } = options;
+  let name = host || "localhost";
 
   name += ":";
-  if (options.port) name += options.port;
+  if (port) name += port;
 
   name += ":";
-  if (options.localAddress) name += options.localAddress;
+  if (localAddress) name += localAddress;
 
   // Pacify parallel/test-http-agent-getname by only appending the ':' when options.family is set.
-  if (options.family === 4 || options.family === 6) name += `:${options.family}`;
+  if (family === 4 || family === 6) name += `:${family}`;
 
-  if (options.socketPath) name += `:${options.socketPath}`;
+  if (socketPath) name += `:${socketPath}`;
 
   return name;
 };
@@ -217,7 +219,8 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
 
   // Here the agent options will override per-request options.
   options = { __proto__: null, ...options, ...this.options };
-  if (options.socketPath) options.path = options.socketPath;
+  const socketPath = options.socketPath;
+  if (socketPath) options.path = socketPath;
 
   normalizeServerName(options, req);
 
@@ -262,7 +265,8 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
 
 Agent.prototype.createSocket = function createSocket(req, options, cb) {
   options = { __proto__: null, ...options, ...this.options };
-  if (options.socketPath) options.path = options.socketPath;
+  const socketPath = options.socketPath;
+  if (socketPath) options.path = socketPath;
 
   normalizeServerName(options, req);
 
@@ -291,8 +295,9 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
     installListeners(this, s, options);
     cb(null, s);
   });
-  if (this.keepAlive) {
-    options.keepAlive = this.keepAlive;
+  const keepAlive = this.keepAlive;
+  if (keepAlive) {
+    options.keepAlive = keepAlive;
     options.keepAliveInitialDelay = this.keepAliveMsecs;
   }
 

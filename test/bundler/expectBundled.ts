@@ -737,6 +737,9 @@ function expectBundled(
       if (optimizeImports) {
         throw new Error("optimizeImports not possible in backend=CLI (API-only option)");
       }
+      if (reactCompilerOutputMode) {
+        throw new Error("reactCompilerOutputMode not possible in backend=CLI (API-only option)");
+      }
       const cmd = (
         !ESBUILD
           ? [

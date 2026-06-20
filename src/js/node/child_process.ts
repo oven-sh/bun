@@ -1248,9 +1248,9 @@ class ChildProcess extends EventEmitter {
           case "pipe":
             if (!NetModule) NetModule = require("node:net");
             // net.connect({fd}) hands the fd to usockets, which closes it on
-            // socket close; disownStdio() downgrades the slot from OwnedFd to
+            // socket close; $disownStdio() downgrades the slot from OwnedFd to
             // UnownedFd so Subprocess.finalize_streams doesn't close it again.
-            const fd = handle && handle.disownStdio(i);
+            const fd = handle && handle.$disownStdio(i);
             if (!fd) return null;
             return NetModule.connect({ fd });
         }

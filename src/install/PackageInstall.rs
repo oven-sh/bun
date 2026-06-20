@@ -180,6 +180,11 @@ pub struct Failure {
 }
 
 impl Failure {
+    // `Failure` is `Copy` and tiny without the `#[cfg(bun_debug)]` trace
+    // field; clippy's trivially_copy_pass_by_ref fires in that config but
+    // `&self` is correct when the trace field is present. Allow it rather
+    // than vary the signature per-config.
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     #[inline]
     pub(crate) fn is_package_missing_from_cache(&self) -> bool {
         (self.err == bun_core::err!("FileNotFound") || self.err == bun_core::err!("ENOENT"))

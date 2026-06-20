@@ -126,6 +126,7 @@ export default [
       disownStdio: {
         fn: "disownStdio",
         length: 1,
+        privateSymbol: "disownStdio",
       },
       terminal: {
         getter: "getTerminal",

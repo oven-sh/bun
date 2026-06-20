@@ -283,9 +283,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // (awaiting the lowered `import.source()` already yields
                     // the module source — there is no `.default` unwrap).
                     let direct_binding = if import_data.phase == bun_ast::ImportPhase::Source {
-                        import_data
-                            .default_name
-                            .map(|name| name.ref_.expect("infallible: ref bound"))
+                        import_data.default_name.map(|name| name.ref_)
                     } else if !import_data.star_name_loc.is_empty() {
                         Some(import_data.namespace_ref)
                     } else {

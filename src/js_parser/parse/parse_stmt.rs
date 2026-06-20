@@ -1581,7 +1581,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         import_record_index: u32::MAX,
                         default_name: Some(LocRef {
                             loc: p.lexer.loc(),
-                            ref_: Some(p.store_name_in_ref(p.lexer.identifier)?),
+                            ref_: p.store_name_in_ref(p.lexer.identifier)?,
                         }),
                         phase: bun_ast::ImportPhase::Source,
                         ..Default::default()

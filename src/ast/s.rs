@@ -212,7 +212,7 @@ pub struct Import {
     /// TC39 import phase. `Defer` is only valid with a namespace import
     /// (`star_name_loc` is set, `default_name`/`items` are empty); `Source`
     /// is only valid with a default binding (`default_name` is set,
-    /// `star_name_loc` is `None`, `items` are empty).
+    /// `star_name_loc` is empty, `items` are empty).
     pub phase: crate::ImportPhase, // = Evaluation
 }
 

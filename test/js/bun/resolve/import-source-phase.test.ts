@@ -600,6 +600,41 @@ describe.concurrent("import source (source phase imports)", () => {
       expect(exitCode).not.toBe(0);
     });
 
+    test.each([
+      ["with { type: 'macro' }", `import source mod from "./m.js" with { type: "macro" };`],
+      ["macro: prefix", `import source mod from "macro:./m.js";`],
+    ])("import source combined with a macro import (%s) is an error", async (_label, code) => {
+      // The macro fast path in process_import_statement fires before the
+      // phase is recorded, so without this guard the binding would be
+      // registered as a macro ref and the source phase silently dropped.
+      const { stdout, stderr, exitCode } = await run({
+        "main.js": code + `\nconsole.log("unreachable", mod());`,
+        "m.js": `export default () => "macro-output";`,
+      });
+      expect(stdout).not.toContain("unreachable");
+      expect(stderr).toContain('"import source" cannot be combined with a macro import');
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("import source with a non-macro type attribute still errors on non-wasm content", async () => {
+      // Static `import source` with `with { type: "json" }` overrides the
+      // user attribute with `type: "webassembly"` (the source-phase
+      // lowering), so the module loader reads the file as wasm and
+      // rejects it with the same error as any non-wasm file. Dynamic
+      // `import.source(spec, opts)` rejects the second argument at parse
+      // time instead; this pins the static form's behavior.
+      const { stdout, stderr, exitCode } = await run({
+        "main.js": `
+          import source mod from "./data.json" with { type: "json" };
+          console.log("unreachable", mod);
+        `,
+        "data.json": `{"a":1}`,
+      });
+      expect(stdout).not.toContain("unreachable");
+      expect(stderr).toContain("only WebAssembly modules have a module source");
+      expect(exitCode).not.toBe(0);
+    });
+
     test("import source inside a TypeScript namespace is a syntax error", async () => {
       const { exitCode, stderr } = await run(
         {

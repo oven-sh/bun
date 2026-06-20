@@ -3991,6 +3991,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
+        // The macro fast path below runs before `stmt.phase` is written to
+        // the import record, so `import source x from "./y" with { type:
+        // "macro" }` (or the `macro:` prefix) would register the binding as
+        // a macro ref and silently drop the source phase. No macro can
+        // produce a module source, and defer has nothing to defer for a
+        // compile-time binding, so reject both combinations with a clear
+        // error instead of a confusing macro-expansion failure.
+        if is_macro && stmt.phase != bun_ast::ImportPhase::Evaluation {
+            let phase_name: &[u8] = match stmt.phase {
+                bun_ast::ImportPhase::Source => b"\"import source\"",
+                bun_ast::ImportPhase::Defer => b"\"import defer\"",
+                bun_ast::ImportPhase::Evaluation => unreachable!(),
+            };
+            self.log().add_range_error_fmt(
+                Some(self.source),
+                js_lexer::range_of_identifier(self.source, loc),
+                format_args!(
+                    "{} cannot be combined with a macro import",
+                    bstr::BStr::new(phase_name),
+                ),
+            );
+            return Err(bun_core::err!("SyntaxError"));
+        }
         if is_macro {
             let id = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
             self.import_records.items_mut()[id as usize].path.namespace = crate::Macro::NAMESPACE;

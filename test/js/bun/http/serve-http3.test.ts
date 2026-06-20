@@ -461,6 +461,35 @@ describe("Bun.serve HTTP/3", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  test("UDP bind failure with live TCP listener throws cleanly", async () => {
+    const src = `
+      const dgram = require("dgram");
+      const udp = dgram.createSocket("udp4");
+      udp.bind(0, "0.0.0.0", () => {
+        const port = udp.address().port;
+        try {
+          Bun.serve({ port, tls: ${JSON.stringify(tls)}, http3: true, fetch: () => new Response("x") });
+          console.log("unexpected-success");
+        } catch (e) {
+          console.log("caught", e.message);
+        }
+        udp.close();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: expect.stringContaining("caught Failed to listen on UDP port"),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
   test("validation: http3 with unix socket warns and skips H3 listener", async () => {
     using dir = tempDir("serve-http3-unix", {});
     const sock = join(String(dir), "h3.sock");

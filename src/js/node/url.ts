@@ -415,10 +415,10 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
   }
 
   // to support http.request
-  if (this.pathname || this.search) {
-    var p = this.pathname || "";
-    var s = this.search || "";
-    this.path = p + s;
+  const pathname = this.pathname;
+  const search = this.search;
+  if (pathname || search) {
+    this.path = (pathname || "") + (search || "");
   }
 
   // finally, reconstruct the href based on what has been validated.
@@ -496,17 +496,21 @@ Url.prototype.format = function format() {
     host = "",
     query = "";
 
-  if (this.host) {
-    host = auth + this.host;
-  } else if (this.hostname) {
-    host = auth + (this.hostname.indexOf(":") === -1 ? this.hostname : "[" + this.hostname + "]");
-    if (this.port) {
-      host += ":" + this.port;
+  const thisHost = this.host;
+  const thisHostname = this.hostname;
+  if (thisHost) {
+    host = auth + thisHost;
+  } else if (thisHostname) {
+    host = auth + (thisHostname.indexOf(":") === -1 ? thisHostname : "[" + thisHostname + "]");
+    const thisPort = this.port;
+    if (thisPort) {
+      host += ":" + thisPort;
     }
   }
 
-  if (this.query && typeof this.query === "object" && Object.keys(this.query).length) {
-    query = new URLSearchParams(this.query).toString();
+  const thisQuery = this.query;
+  if (thisQuery && typeof thisQuery === "object" && Object.keys(thisQuery).length) {
+    query = new URLSearchParams(thisQuery).toString();
   }
 
   var search = this.search || (query && "?" + query) || "";
@@ -605,7 +609,8 @@ Url.prototype.resolveObject = function resolveObject(relative) {
     return result;
   }
 
-  if (relative.protocol && relative.protocol !== result.protocol) {
+  const relativeProtocol = relative.protocol;
+  if (relativeProtocol && relativeProtocol !== result.protocol) {
     /*
      * if it's a known url protocol, then changing
      * the protocol does weird things
@@ -616,7 +621,7 @@ Url.prototype.resolveObject = function resolveObject(relative) {
      * because that's known to be hostless.
      * anything else is assumed to be absolute.
      */
-    if (!slashedProtocol[relative.protocol]) {
+    if (!slashedProtocol[relativeProtocol]) {
       var keys = Object.keys(relative);
       for (var v = 0; v < keys.length; v++) {
         var k = keys[v];
@@ -626,11 +631,11 @@ Url.prototype.resolveObject = function resolveObject(relative) {
       return result;
     }
 
-    result.protocol = relative.protocol;
+    result.protocol = relativeProtocol;
     if (
       !relative.host &&
-      !(relative.protocol === "file" || relative.protocol === "file:") &&
-      !hostlessProtocol[relative.protocol]
+      !(relativeProtocol === "file" || relativeProtocol === "file:") &&
+      !hostlessProtocol[relativeProtocol]
     ) {
       let relPath = (relative.pathname || "").split("/");
       while (relPath.length && !(relative.host = relPath.shift())) {}
@@ -650,10 +655,10 @@ Url.prototype.resolveObject = function resolveObject(relative) {
     result.hostname = relative.hostname || relative.host;
     result.port = relative.port;
     // to support http.request
-    if (result.pathname || result.search) {
-      var p = result.pathname || "";
-      var s = result.search || "";
-      result.path = p + s;
+    const resultPathname = result.pathname;
+    const resultSearch = result.search;
+    if (resultPathname || resultSearch) {
+      result.path = (resultPathname || "") + (resultSearch || "");
     }
     result.slashes = result.slashes || relative.slashes;
     result.href = result.format();
@@ -678,20 +683,22 @@ Url.prototype.resolveObject = function resolveObject(relative) {
   if (psychotic) {
     result.hostname = "";
     result.port = null;
-    if (result.host) {
-      if (srcPath[0] === "") srcPath[0] = result.host;
-      else srcPath.unshift(result.host);
+    const resultHost = result.host;
+    if (resultHost) {
+      if (srcPath[0] === "") srcPath[0] = resultHost;
+      else srcPath.unshift(resultHost);
     }
     result.host = "";
     if (relative.protocol) {
       relative.hostname = null;
       relative.port = null;
       result.auth = null;
-      if (relative.host) {
+      const relativeHost = relative.host;
+      if (relativeHost) {
         if (relPath[0] === "") {
-          relPath[0] = relative.host;
+          relPath[0] = relativeHost;
         } else {
-          relPath.unshift(relative.host);
+          relPath.unshift(relativeHost);
         }
       }
       relative.host = null;
@@ -701,14 +708,16 @@ Url.prototype.resolveObject = function resolveObject(relative) {
 
   if (isRelAbs) {
     // it's absolute.
-    if (relative.host || relative.host === "") {
-      if (result.host !== relative.host) result.auth = null;
-      result.host = relative.host;
+    const relativeHost = relative.host;
+    if (relativeHost || relativeHost === "") {
+      if (result.host !== relativeHost) result.auth = null;
+      result.host = relativeHost;
       result.port = relative.port;
     }
-    if (relative.hostname || relative.hostname === "") {
-      if (result.hostname !== relative.hostname) result.auth = null;
-      result.hostname = relative.hostname;
+    const relativeHostname = relative.hostname;
+    if (relativeHostname || relativeHostname === "") {
+      if (result.hostname !== relativeHostname) result.auth = null;
+      result.hostname = relativeHostname;
     }
     result.search = relative.search;
     result.query = relative.query;
@@ -724,35 +733,40 @@ Url.prototype.resolveObject = function resolveObject(relative) {
     srcPath = srcPath.concat(relPath);
     result.search = relative.search;
     result.query = relative.query;
-  } else if (relative.search != null && relative.search !== undefined) {
-    /*
-     * just pull out the search.
-     * like href='?foo'.
-     * Put this after the other two cases because it simplifies the booleans
-     */
-    if (psychotic) {
-      result.hostname = result.host = srcPath.shift();
+  } else {
+    const relativeSearch = relative.search;
+    if (relativeSearch != null && relativeSearch !== undefined) {
       /*
-       * occationaly the auth can get stuck only in host
-       * this especially happens in cases like
-       * url.resolveObject('mailto:local1@domain1', 'local2@domain2')
+       * just pull out the search.
+       * like href='?foo'.
+       * Put this after the other two cases because it simplifies the booleans
        */
-      var authInHost = result.host && result.host.indexOf("@") > 0 ? result.host.split("@") : false;
-      if (authInHost) {
-        result.auth = authInHost.shift();
-        result.hostname = result.host = authInHost.shift();
+      if (psychotic) {
+        result.hostname = result.host = srcPath.shift();
+        /*
+         * occationaly the auth can get stuck only in host
+         * this especially happens in cases like
+         * url.resolveObject('mailto:local1@domain1', 'local2@domain2')
+         */
+        var authInHost = result.host && result.host.indexOf("@") > 0 ? result.host.split("@") : false;
+        if (authInHost) {
+          result.auth = authInHost.shift();
+          result.hostname = result.host = authInHost.shift();
+        }
       }
+      result.search = relativeSearch;
+      result.query = relative.query;
+      // to support http.request
+      const resultPathname = result.pathname;
+      const resultSearch = result.search;
+      if (resultPathname !== null || resultSearch !== null) {
+        result.path =
+          (resultPathname ? resultPathname : "") + // force line break
+          (resultSearch ? resultSearch : "");
+      }
+      result.href = result.format();
+      return result;
     }
-    result.search = relative.search;
-    result.query = relative.query;
-    // to support http.request
-    if (result.pathname !== null || result.search !== null) {
-      result.path =
-        (result.pathname ? result.pathname : "") + // force line break
-        (result.search ? result.search : "");
-    }
-    result.href = result.format();
-    return result;
   }
 
   if (!srcPath.length) {
@@ -762,8 +776,9 @@ Url.prototype.resolveObject = function resolveObject(relative) {
      */
     result.pathname = null;
     // to support http.request
-    if (result.search) {
-      result.path = "/" + result.search;
+    const resultSearch = result.search;
+    if (resultSearch) {
+      result.path = "/" + resultSearch;
     } else {
       result.path = null;
     }
@@ -847,10 +862,12 @@ Url.prototype.resolveObject = function resolveObject(relative) {
   }
 
   // to support request.http
-  if (result.pathname !== null || result.search !== null) {
+  const resultPathname = result.pathname;
+  const resultSearch = result.search;
+  if (resultPathname !== null || resultSearch !== null) {
     // prettier-ignore
-    result.path = (result.pathname ? result.pathname : "") +
-                  (result.search   ? result.search   : "");
+    result.path = (resultPathname ? resultPathname : "") +
+                  (resultSearch   ? resultSearch   : "");
   }
   result.auth = relative.auth || result.auth;
   result.slashes = result.slashes || relative.slashes;

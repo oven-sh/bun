@@ -121,8 +121,9 @@ function rewriteForProxiedHttp(req, reqOptions) {
   const requestHost = req.getHeader("host") || "localhost";
   const requestBase = `http://${requestHost}`;
   const requestURL = new URL(req.path, requestBase);
-  if (reqOptions.port) {
-    requestURL.port = reqOptions.port;
+  const reqOptionsPort = reqOptions.port;
+  if (reqOptionsPort) {
+    requestURL.port = reqOptionsPort;
   }
   req.path = requestURL.href;
   return true;
@@ -170,10 +171,12 @@ function ClientRequest(input, options, cb) {
 
   const protocol = options.protocol || defaultAgent.protocol;
   let expectedProtocol = defaultAgent.protocol;
-  if (this.agent?.protocol) expectedProtocol = this.agent.protocol;
+  const agentProtocol = this.agent?.protocol;
+  if (agentProtocol) expectedProtocol = agentProtocol;
 
-  if (options.path) {
-    const path = String(options.path);
+  const optionsPath = options.path;
+  if (optionsPath) {
+    const path = String(optionsPath);
     if (INVALID_PATH_REGEX.test(path)) {
       throw $ERR_UNESCAPED_CHARACTERS("Request path");
     }
@@ -268,12 +271,13 @@ function ClientRequest(input, options, cb) {
   this.host = host;
   this.protocol = protocol;
 
-  if (this.agent) {
+  const thisAgent = this.agent;
+  if (thisAgent) {
     // If there is an agent we should default to Connection:keep-alive,
     // but only if the Agent will actually reuse the connection!
     // If it's not a keepAlive agent, and the maxSockets==Infinity, then
     // there's never a case where this socket will actually be reused
-    if (!this.agent.keepAlive && !NumberIsFinite(this.agent.maxSockets)) {
+    if (!thisAgent.keepAlive && !NumberIsFinite(thisAgent.maxSockets)) {
       this._last = true;
       this.shouldKeepAlive = false;
     } else {
@@ -282,15 +286,16 @@ function ClientRequest(input, options, cb) {
     }
   }
 
-  const headersArray = ArrayIsArray(options.headers);
+  const optionsHeaders = options.headers;
+  const headersArray = ArrayIsArray(optionsHeaders);
   if (!headersArray) {
-    if (options.headers) {
-      const keys = ObjectKeys(options.headers);
+    if (optionsHeaders) {
+      const keys = ObjectKeys(optionsHeaders);
       // Retain for(;;) loop for performance reasons
       // Refs: https://github.com/nodejs/node/pull/30958
       for (let i = 0; i < keys.length; i++) {
         const key = keys[i];
-        this.setHeader(key, options.headers[key]);
+        this.setHeader(key, optionsHeaders[key]);
       }
     }
 
@@ -311,8 +316,9 @@ function ClientRequest(input, options, cb) {
       this.setHeader("Host", hostHeader);
     }
 
-    if (options.auth && !this.getHeader("Authorization")) {
-      this.setHeader("Authorization", "Basic " + Buffer.from(options.auth).toString("base64"));
+    const auth = options.auth;
+    if (auth && !this.getHeader("Authorization")) {
+      this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
     }
 
     if (this.getHeader("expect")) {
@@ -327,23 +333,24 @@ function ClientRequest(input, options, cb) {
     }
   } else {
     rewriteForProxiedHttp(this, optsWithoutSignal);
-    this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", options.headers);
+    this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", optionsHeaders);
   }
 
   this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 
   // initiate connection
-  if (this.agent) {
-    this.agent.addRequest(this, optsWithoutSignal);
+  if (thisAgent) {
+    thisAgent.addRequest(this, optsWithoutSignal);
   } else {
     // No agent, default to Connection:close.
     this._last = true;
     this.shouldKeepAlive = false;
     let opts = optsWithoutSignal;
-    if (opts.path || opts.socketPath) {
+    const socketPath = opts.socketPath;
+    if (opts.path || socketPath) {
       opts = { ...optsWithoutSignal };
-      if (opts.socketPath) {
-        opts.path = opts.socketPath;
+      if (socketPath) {
+        opts.path = socketPath;
       } else {
         opts.path &&= undefined;
       }
@@ -433,8 +440,9 @@ ClientRequest.prototype.destroy = function destroy(err) {
   this.destroyed = true;
 
   // If we're aborting, we don't care about any more response data.
-  if (this.res) {
-    this.res._dump();
+  const res = this.res;
+  if (res) {
+    res._dump();
   }
 
   this[kError] = err;
@@ -491,7 +499,8 @@ function socketCloseListener() {
   // Too bad.  That output wasn't getting written.
   // This is pretty terrible that it doesn't raise an error.
   // Fixed better in v0.10
-  if (req.outputData) req.outputData.length = 0;
+  const outputData = req.outputData;
+  if (outputData) outputData.length = 0;
 
   if (parser) {
     parser.finish();
@@ -558,57 +567,60 @@ function socketOnData(d) {
     socket.destroy();
     req.socket._hadError = true;
     emitErrorEvent(req, ret);
-  } else if (parser.incoming?.upgrade) {
-    // Upgrade (if status code 101) or CONNECT
-    const bytesParsed = ret;
+  } else {
     const res = parser.incoming;
-    req.res = res;
+    if (res?.upgrade) {
+      // Upgrade (if status code 101) or CONNECT
+      const bytesParsed = ret;
+      req.res = res;
 
-    socket.removeListener("data", socketOnData);
-    socket.removeListener("end", socketOnEnd);
-    socket.removeListener("drain", ondrain);
+      socket.removeListener("data", socketOnData);
+      socket.removeListener("end", socketOnEnd);
+      socket.removeListener("drain", ondrain);
 
-    if (req.timeoutCb) socket.removeListener("timeout", req.timeoutCb);
-    socket.removeListener("timeout", responseOnTimeout);
+      const timeoutCb = req.timeoutCb;
+      if (timeoutCb) socket.removeListener("timeout", timeoutCb);
+      socket.removeListener("timeout", responseOnTimeout);
 
-    parser.finish();
-    freeParser(parser, req, socket);
+      parser.finish();
+      freeParser(parser, req, socket);
 
-    const bodyHead = d.slice(bytesParsed, d.length);
+      const bodyHead = d.slice(bytesParsed, d.length);
 
-    const eventName = req.method === "CONNECT" ? "connect" : "upgrade";
-    if (req.listenerCount(eventName) > 0) {
-      req.upgradeOrConnect = true;
+      const eventName = req.method === "CONNECT" ? "connect" : "upgrade";
+      if (req.listenerCount(eventName) > 0) {
+        req.upgradeOrConnect = true;
 
-      // detach the socket
-      socket.emit("agentRemove");
-      socket.removeListener("close", socketCloseListener);
-      socket.removeListener("error", socketErrorListener);
+        // detach the socket
+        socket.emit("agentRemove");
+        socket.removeListener("close", socketCloseListener);
+        socket.removeListener("error", socketErrorListener);
 
-      socket._httpMessage = null;
-      socket.readableFlowing = null;
+        socket._httpMessage = null;
+        socket.readableFlowing = null;
 
-      req.emit(eventName, res, socket, bodyHead);
-      req.destroyed = true;
-      req._closed = true;
-      req.emit("close");
-    } else {
-      // Requested Upgrade or used CONNECT method, but have no handler.
-      socket.destroy();
+        req.emit(eventName, res, socket, bodyHead);
+        req.destroyed = true;
+        req._closed = true;
+        req.emit("close");
+      } else {
+        // Requested Upgrade or used CONNECT method, but have no handler.
+        socket.destroy();
+      }
+    } else if (
+      res?.complete &&
+      // When the status code is informational (100, 102-199),
+      // the server will send a final response after this client
+      // sends a request body, so we must not free the parser.
+      // 101 (Switching Protocols) and all other status codes
+      // should be processed normally.
+      !statusIsInformational(res.statusCode)
+    ) {
+      socket.removeListener("data", socketOnData);
+      socket.removeListener("end", socketOnEnd);
+      socket.removeListener("drain", ondrain);
+      freeParser(parser, req, socket);
     }
-  } else if (
-    parser.incoming?.complete &&
-    // When the status code is informational (100, 102-199),
-    // the server will send a final response after this client
-    // sends a request body, so we must not free the parser.
-    // 101 (Switching Protocols) and all other status codes
-    // should be processed normally.
-    !statusIsInformational(parser.incoming.statusCode)
-  ) {
-    socket.removeListener("data", socketOnData);
-    socket.removeListener("end", socketOnEnd);
-    socket.removeListener("drain", ondrain);
-    freeParser(parser, req, socket);
   }
 }
 
@@ -627,16 +639,18 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
 
   $debug("AGENT incoming response!");
 
-  if (req.res) {
+  const existingRes = req.res;
+  if (existingRes) {
     // We already have a response object, this means the server
     // sent a double response.
     socket.destroy();
-    if (socket.parser) {
+    const parser = socket.parser;
+    if (parser) {
       // https://github.com/nodejs/node/issues/60025
       // Now, parser.incoming is pointed to the new IncomingMessage,
       // we need to rewrite it to the first one and skip all the pending IncomingMessage
-      socket.parser.incoming = req.res;
-      socket.parser.incoming[kSkipPendingData] = true;
+      parser.incoming = existingRes;
+      parser.incoming[kSkipPendingData] = true;
     }
     return 0;
   }
@@ -652,16 +666,17 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
     return 2; // Skip body and treat as Upgrade.
   }
 
-  if (statusIsInformational(res.statusCode)) {
+  const statusCode = res.statusCode;
+  if (statusIsInformational(statusCode)) {
     // Restart the parser, as this is a 1xx informational message.
     req.res = null; // Clear res so that we don't hit double-responses.
     // Maintain compatibility by sending 100-specific events
-    if (res.statusCode === 100) {
+    if (statusCode === 100) {
       req.emit("continue");
     }
     // Send information events to all 1xx responses except 101 Upgrade.
     req.emit("information", {
-      statusCode: res.statusCode,
+      statusCode,
       statusMessage: res.statusMessage,
       httpVersion: res.httpVersion,
       httpVersionMajor: res.httpVersionMajor,
@@ -743,10 +758,11 @@ function responseKeepAlive(req) {
   process.nextTick(emitFreeNT, req);
 
   req.destroyed = true;
-  if (req.res) {
+  const reqRes = req.res;
+  if (reqRes) {
     // Detach socket from IncomingMessage to avoid destroying the freed
     // socket in IncomingMessage.destroy().
-    req.res.socket = null;
+    reqRes.socket = null;
   }
 }
 
@@ -805,8 +821,9 @@ function requestOnFinish() {
 function emitFreeNT(req) {
   req._closed = true;
   req.emit("close");
-  if (req.socket) {
-    req.socket.emit("free");
+  const socket = req.socket;
+  if (socket) {
+    socket.emit("free");
   }
 }
 
@@ -828,8 +845,9 @@ function tickOnSocket(req, socket) {
   socket._httpMessage = req;
 
   // Propagate headers limit from request object to parser
-  if (typeof req.maxHeadersCount === "number") {
-    parser.maxHeaderPairs = req.maxHeadersCount << 1;
+  const maxHeadersCount = req.maxHeadersCount;
+  if (typeof maxHeadersCount === "number") {
+    parser.maxHeaderPairs = maxHeadersCount << 1;
   }
 
   parser.joinDuplicateHeaders = req.joinDuplicateHeaders;
@@ -864,8 +882,9 @@ function listenSocketTimeout(req) {
   // Set timeoutCb so it will get cleaned up on request end.
   req.timeoutCb = emitRequestTimeout;
   // Delegate socket timeout event.
-  if (req.socket) {
-    req.socket.once("timeout", emitRequestTimeout);
+  const reqSocket = req.socket;
+  if (reqSocket) {
+    reqSocket.once("timeout", emitRequestTimeout);
   } else {
     req.on("socket", onSocketListenTimeout);
   }
@@ -961,8 +980,9 @@ ClientRequest.prototype.setTimeout = function setTimeout(msecs, callback) {
   msecs = getTimerDuration(msecs, "msecs");
   if (callback) this.once("timeout", callback);
 
-  if (this.socket) {
-    setSocketTimeout(this.socket, msecs);
+  const socket = this.socket;
+  if (socket) {
+    setSocketTimeout(socket, msecs);
   } else {
     this.once("socket", onSocketSetTimeout.bind(undefined, msecs));
   }

@@ -1007,8 +1007,9 @@ describe("close handling", () => {
         const fd = proc.stdio[3];
         expect(typeof fd).toBe("number");
         await proc.exited;
-        // fd is UnownedFd: the subprocess exited and its finalize_streams
-        // skipped this slot, so the parent end is still open and readable.
+        // fd is UnownedFd: still open and readable here (process exit does
+        // not touch stdio_pipes), and finalize_streams on later GC will skip
+        // this slot. The caller owns the close.
         const buf = Buffer.alloc(64);
         const n = readSync(fd as number, buf);
         expect(buf.subarray(0, n).toString()).toBe("hello-from-child");

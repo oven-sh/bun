@@ -3799,7 +3799,8 @@ mod windows_impl {
         };
         if rc != bun_windows_sys::NTSTATUS::SUCCESS {
             // `errnoSys` for `NTSTATUS` routes through the curated
-            // `translateNTStatusToErrno` table, NOT `RtlNtStatusToDosError`.
+            // `translateNTStatusToErrno` table first, then falls back to
+            // `RtlNtStatusToDosError` for unmapped codes.
             let errno = w::translate_nt_status_to_errno(rc);
             return Err(Error::new(errno, Tag::ftruncate).with_fd(fd));
         }
@@ -7103,10 +7104,11 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     // SAFETY: FFI; attr/basic_info valid for the call duration.
     let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
     if rc != w::NTSTATUS::SUCCESS {
-        // `errnoSys` for
-        // `NTSTATUS` routes through the curated `translateNTStatusToErrno`
-        // table, NOT `RtlNtStatusToDosError`. `directory_exists_at()` then
-        // branches on `ENOENT`, so the mapping must match the spec table.
+        // `errnoSys` for `NTSTATUS` routes through the curated
+        // `translateNTStatusToErrno` table first (so `OBJECT_PATH_NOT_FOUND`
+        // deterministically maps to `ENOENT`, which `directory_exists_at()`
+        // branches on), then falls back to `RtlNtStatusToDosError` for
+        // unmapped codes.
         return Err(Error::from_code(
             windows::translate_nt_status_to_errno(rc),
             Tag::access,

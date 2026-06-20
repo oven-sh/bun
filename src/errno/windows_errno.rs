@@ -910,11 +910,9 @@ pub mod windows {
             // Filter drivers and cloud-sync placeholders return many NTSTATUS
             // codes that are not enumerated above; without this fallthrough
             // they would all surface as `UNKNOWN` (and then `EFAULT` from the
-            // fs.rm error mapping).
-            _ => Win32Error::from_ntstatus(err)
-                .to_system_errno()
-                .map(SystemErrno::to_e)
-                .unwrap_or(E::UNKNOWN),
+            // fs.rm error mapping). Codes `RtlNtStatusToDosError` cannot map
+            // still fall back to `E::UNKNOWN` via `to_e()`.
+            _ => Win32Error::from_ntstatus(err).to_e(),
         }
     }
 }

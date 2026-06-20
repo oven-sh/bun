@@ -727,6 +727,17 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // codegen to lld). ASAN builds don't need intra-Rust LTO; turn it off.
     env.CARGO_PROFILE_RELEASE_LTO = "off";
   }
+  if (cfg.assertions) {
+    // Turn `debug_assert!()` / `#[cfg(debug_assertions)]` on in the release
+    // cargo profile. `cfg.assertions` defaults to `debug || asan`
+    // (config.ts), so release-asan and release-assertions both get Rust
+    // invariant checks to match the C++ side's `-DASSERT_ENABLED=1` (keyed
+    // on the same `cfg.assertions` in flags.ts). Without this override the
+    // workspace `[profile.release]` leaves debug-assertions off and ~3k
+    // `debug_assert!` sites compile to nothing under ASAN. The `dev` profile
+    // (debug builds) already defaults it on, so this is a no-op there.
+    env.CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS = "true";
+  }
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
 
   // ─── Windows .bin/ shim PE ───

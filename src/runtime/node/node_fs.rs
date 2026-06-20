@@ -498,9 +498,7 @@ pub enum Flavor {
 // ──────────────────────────────────────────────────────────────────────────
 // AsyncFSTask / UVFSRequest / NewAsyncCpTask / AsyncReaddirRecursiveTask are
 // the thread-pool wrappers that back every `fs.promises.*` call (and the shell
-// `cp` builtin). Un-gated so the sync `impl NodeFS` body — which references
-// `AsyncCpTask` / `AsyncReaddirRecursiveTask` directly — type-checks, and so
-// `ShellAsyncCpTask` is visible to `crate::shell::builtins::cp`.
+// `cp` builtin).
 mod _async_tasks {
     use super::*;
 

@@ -358,5 +358,3 @@ const _: () = {
             == core::mem::offset_of!(ImportConditions, media)
     );
 };
-
-// silence unused-import warnings on the gated bodies' deps

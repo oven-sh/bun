@@ -1241,9 +1241,7 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 }
 
 // ───────────────────────── deep_clone ─────────────────────────
-// Arena-aware `deep_clone`. Un-gated this round so
-// `rules::dc::{media_list,query_feature}` can route through real impls
-// instead of `#[derive(Clone)]` passthroughs.
+// Arena-aware `deep_clone`.
 //
 // Written as **inherent** methods (not `#[derive(DeepClone)]`):
 // `name`/`qualifier`/`media_type`/`operator` fields are copied by value

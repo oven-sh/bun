@@ -1265,9 +1265,6 @@ where
 }
 
 // ───────────────────── rule_parsers (heavy impl bodies) ──────────────────────
-// Un-gated: `declaration::parse_declaration_impl` + `selectors::parser` are
-// real, so the `QualifiedRuleParser`/`DeclarationParser`/`RuleBodyItemParser`
-// surface and `parse_nested`/`parse_style_block` compile end-to-end.
 mod rule_parsers {
     use super::*;
     use crate::selectors::parser as selector_parser;

@@ -871,7 +871,7 @@ impl TimerObjectInternals {
 
 // ──────────────────────────────────────────────────────────────────────────
 // JS-host-method facade — `do_ref`/`do_unref`/`do_refresh`/`has_ref`/
-// `to_primitive`/`get_destroyed`/`finalize`/`cancel`. Un-gated for
+// `to_primitive`/`get_destroyed`/`finalize`/`cancel`, called from
 // `TimeoutObject.rs` / `ImmediateObject.rs` host-fn shims.
 // ──────────────────────────────────────────────────────────────────────────
 impl TimerObjectInternals {

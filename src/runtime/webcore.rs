@@ -237,10 +237,6 @@ impl HasAutoFlusher for file_sink::FileSink {
     }
 }
 
-// Gated alongside the `HTTPServerWritable` method bodies (see
-// `webcore/streams.rs` ` impl<...> HTTPServerWritable` block) —
-// the inherent `on_auto_flush` lives there. Un-gate together.
-
 impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
     for streams::HTTPServerWritable<SSL, HTTP3>
 {

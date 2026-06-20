@@ -211,13 +211,6 @@ pub enum ScopeError {
     NoValue,
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Re-gated items + shadow stubs
-//
-// `Parser::parse` / `Parser::prepare_str` (unquoted path) / `ConfigIterator`
-// now compile against the live `bun_js_parser::{Expr, ExprData, E::*}` surface.
-// ──────────────────────────────────────────────────────────────────────────
-
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
     load_npmrc_config,

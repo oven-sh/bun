@@ -1643,14 +1643,19 @@ impl JSValue {
     ) -> JsResult<JSValue> {
         #[cfg(debug_assertions)]
         {
-            // SAFETY: JS-thread singleton; short-lived `&mut EventLoop` reborrow at use site
-            // per VirtualMachine::event_loop() contract.
-            let loop_ = crate::virtual_machine::VirtualMachine::get().event_loop_mut();
-            loop_.debug.js_call_count_outside_tick_queue +=
-                usize::from(!loop_.debug.is_inside_tick_queue);
-            if loop_.debug.track_last_fn_name && !loop_.debug.is_inside_tick_queue {
+            use crate::virtual_machine::VirtualMachine;
+            // SAFETY: JS-thread singleton; each `&mut EventLoop` reborrow is
+            // dropped before `get_name` (which may re-enter JS) per
+            // `VirtualMachine::event_loop_mut()` contract.
+            let want_name = {
+                let loop_ = VirtualMachine::get().event_loop_mut();
+                let outside = !loop_.debug.is_inside_tick_queue;
+                loop_.debug.js_call_count_outside_tick_queue += usize::from(outside);
+                loop_.debug.track_last_fn_name && outside
+            };
+            if want_name {
                 if let Ok(name) = self.get_name(global) {
-                    loop_.debug.last_fn_name = name.into();
+                    VirtualMachine::get().event_loop_mut().debug.last_fn_name = name.into();
                 }
             }
         }

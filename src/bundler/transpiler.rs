@@ -1770,13 +1770,10 @@ impl<'a> Transpiler<'a> {
                                     // `path_buf2[total] == 0` already; safe to
                                     // borrow as a NUL-terminated ZStr.
                                     let zpath = bun_core::ZStr::from_buf(&path_buf2[..], total);
-                                    // spec calls
-                                    // `bun.sys.File.toSourceAt(...)` which is
+                                    // `bun.sys.File.toSourceAt(...)` is
                                     // `read_from` + wrap-in-`bun_ast::Source`.
                                     // We only need `.contents`, so call
-                                    // `read_from` directly (the `to_source_at`
-                                    // wrapper is gated as a T1→T2 move-in,
-                                    // sys/File.rs:446).
+                                    // `read_from` directly.
                                     let dir = dirname_fd.unwrap_valid().unwrap_or_else(FD::cwd);
                                     match bun_sys::File::read_from(dir, zpath) {
                                         Ok(contents) if !contents.is_empty() => {

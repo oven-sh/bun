@@ -2603,9 +2603,9 @@ pub mod debug_allocator_data {
     }
 }
 
-/// `bun.feature_flag.*` runtime env-var getters (real impl in env_var.rs, still gated).
-/// feature_flags.rs (compile-time consts) is now real; this stub provides the
-/// `.get()` accessor surface that env_var.rs will replace.
+/// `bun.feature_flag.*` runtime env-var getters. The canonical typed
+/// accessors live in `env_var::feature_flag`; this stub provides the
+/// `.get()` accessor surface for flags not yet wired there.
 pub mod feature_flag {
     macro_rules! flag { ($($name:ident),* $(,)?) => { $(
         #[allow(non_camel_case_types)] pub struct $name;

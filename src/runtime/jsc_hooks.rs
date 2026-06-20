@@ -3013,9 +3013,7 @@ fn transpile_source_code_inner(
                                 .module_type
                             })
                             .or_else(|| {
-                                // The async path threads `lr.package_json` (from
-                                // `read_dir_info`) into the store; while that
-                                // path is gated, recover the same lookup here so
+                                // Recover the package.json lookup here so
                                 // a `.cjs` under `"type":"module"` still tags as
                                 // `PackageJsonTypeModule` (mirrors the cache-hit
                                 // branch above).

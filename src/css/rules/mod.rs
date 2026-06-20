@@ -171,24 +171,16 @@ impl<R> Default for CssRuleList<R> {
 // wise / variant-wise port of `css.implementDeepClone`. `CssRule::deep_clone`
 // (below) dispatches via method-syntax so it picks up the inherent impl.
 //
-// Most leaf rules can't use `#[derive(DeepClone)]` directly yet
-// because two field types still lack an arena-aware `deep_clone(&self,
-// &Arena) -> Self`: `SelectorList` (selectors/parser.rs uses no-arg
-// `deep_clone()`) and `Property` (properties_generated.rs — per-variant body
-// gated on leaf_value_traits). `MediaList` / `QueryFeature` /
-// `DeclarationBlock` now route to their real arena-aware impls. The leaf
-// bodies hand-roll the field walk and route the remaining blocked fields
-// through the `dc::*` passthroughs below. Once an upstream type grows its own
-// `deep_clone(&self, &Arena)`, swap the `dc::foo(&x, bump)` call for
-// `x.deep_clone(bump)` and delete the helper.
+// Most leaf rules can't use `#[derive(DeepClone)]` directly because
+// `SelectorList` uses a no-arg `deep_clone()`. The leaf bodies hand-roll the
+// field walk and route those fields through the `dc::*` passthroughs below.
+// Once an upstream type grows its own `deep_clone(&self, &Arena)`, swap the
+// `dc::foo(&x, bump)` call for `x.deep_clone(bump)` and delete the helper.
 pub(super) mod dc {
     use bun_alloc::Arena;
 
-    /// `DeclarationBlock::deep_clone` — real port body inlined here (the
-    /// canonical impl in declaration.rs is gated on `Property: DeepClone`).
-    /// Field-walk over both `DeclarationList`s, routing each `Property`
-    /// through `dc::property` so the only remaining bottleneck is the
-    /// per-variant `Property::deep_clone` body.
+    /// `DeclarationBlock::deep_clone` — field-walk over both
+    /// `DeclarationList`s, routing each `Property` through `dc::property`.
     ///
     /// Threads the real `'bump` lifetime instead of fabricating
     /// `'static` (PORTING.md §Forbidden: `unsafe { &*(p as *const _) }` to
@@ -662,9 +654,6 @@ impl<R> CssRuleList<R> {
         }
     }
 }
-
-// ── `.style` arm body — preserved verbatim port, gated on StyleRule
-// behavior + selector helpers + DeclarationBlock::deep_clone. ──
 
 fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     rule: &mut CssRule<R>,

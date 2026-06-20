@@ -127,9 +127,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// Raw extern fn pointers fed to
-/// the TCC-JIT'd C trampolines via `add_symbol`. Declared locally while the
-/// `bun_jsc::ffi` module stays gated.
+/// Raw extern fn pointers fed to the TCC-JIT'd C trampolines via `add_symbol`.
 mod exposed_to_ffi {
     use super::{JSGlobalObject, JSValue};
     unsafe extern "C" {

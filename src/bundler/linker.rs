@@ -33,10 +33,8 @@ bun_core::named_error_set!(CSSResolveError);
 
 type HashedFileNameMap = HashMap<u64, &'static [u8]>;
 
-// `_transpiler.Transpiler.isCacheEnabled` is gated in the draft body
-// (`transpiler.rs:1111`). The value is a hard `false`;
-// inline it here so `get_hashed_filename` compiles without depending
-// on the gated `Transpiler` impl.
+// Matches `Transpiler::IS_CACHE_ENABLED`; inlined so `get_hashed_filename`
+// doesn't need a `Transpiler` handle.
 const IS_CACHE_ENABLED: bool = false;
 
 pub struct Linker {

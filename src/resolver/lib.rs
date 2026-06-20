@@ -54,9 +54,8 @@ pub use result::{
 };
 pub use standalone_module_graph::StandaloneModuleGraph;
 
-/// Minimal real subset of `fs.rs` so `bun_resolver::fs::X` paths
-/// resolve for downstream crates. The full draft remains in `fs.rs` (gated)
-/// until bun_alloc::BSSStringList / bun_output land.
+/// `bun_resolver::fs` namespace; re-exports from `fs_full` plus the
+/// in-tree types (`FileSystem`, `RealFS`, `Entry`, ...).
 pub mod fs {
     use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::io::Write as _;

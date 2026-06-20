@@ -11,35 +11,9 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_collections::StringArrayHashMap;
-use bun_core::{self, ZigString};
 use bun_jsc::{self as jsc, JSGlobalObject, JSPropertyIterator, JSValue, JsResult};
 
 use super::{ABIType, Function};
-
-unsafe extern "C" {
-    /// `JSValue::getOwn` — own-property lookup (no prototype-chain walk).
-    /// Declared locally while `bun_jsc::JSValue::get_own` (JSValue.rs) is gated.
-    fn JSC__JSValue__getOwn(
-        value: JSValue,
-        global: *const JSGlobalObject,
-        name: *const bun_core::String,
-    ) -> JSValue;
-}
-
-/// Own-property lookup. Local thin
-/// wrapper while `bun_jsc::JSValue::get_own` stays gated.
-#[inline]
-fn get_own(value: JSValue, global: &JSGlobalObject, key: &[u8]) -> JsResult<Option<JSValue>> {
-    let key_str = bun_core::String::init(ZigString::init(key));
-    // Open a top exception scope before the FFI call (the C++ side has a
-    // ThrowScope whose dtor sets `m_needExceptionCheck`); a post-hoc `has_exception()`
-    // would assert under `BUN_JSC_validateExceptionChecks=1`.
-    bun_jsc::top_scope!(scope, global);
-    // SAFETY: `global` is live; `key_str` borrows `key` for the call duration.
-    let v = unsafe { JSC__JSValue__getOwn(value, global, &raw const key_str) };
-    scope.return_if_exception()?;
-    if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
-}
 
 // ══════════════════════════════════════════════════════════════════════════
 // Symbol-spec parsing — generate_symbols / generate_symbol_for_function
@@ -56,7 +30,7 @@ pub fn generate_symbol_for_function(
 
     let mut abi_types: Vec<ABIType> = Vec::new();
 
-    if let Some(args) = get_own(value, global, b"args")? {
+    if let Some(args) = value.get_own(global, &bun_core::String::static_(b"args"))? {
         if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
             return Ok(Some(global.create_error_instance(format_args!(
                 "Expected an object with \"args\" as an array"

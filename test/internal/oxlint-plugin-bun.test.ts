@@ -5,7 +5,8 @@
 // pointing oxlint at fixture files with a minimal config.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { existsSync } from "fs";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import path from "path";
 
 const root = path.resolve(import.meta.dir, "..", "..");
@@ -15,6 +16,13 @@ const pluginPath = path.join(root, "scripts", "oxlint-plugins", "bun.js");
 // plugin is written against.
 const oxlintBin = path.join(root, "node_modules", "oxlint", "bin", "oxlint");
 const RULE = "bun(no-duplicate-conditional-property-access)";
+
+// oxlint ships a prebuilt NAPI binding that aborts when loaded under the
+// ASAN build; the rule is still enforced in CI by the Lint JavaScript
+// workflow (release bun), so skip here. Also skip if the repo's
+// devDependencies haven't been installed yet.
+const skip = isASAN || !existsSync(oxlintBin);
+const describeOxlint = skip ? describe.skip : describe;
 
 async function runOxlint(files: Record<string, string>) {
   using dir = tempDir("oxlint-plugin-bun", {
@@ -46,7 +54,7 @@ function diagnostics(stdout: string) {
   return out;
 }
 
-describe("bun/no-duplicate-conditional-property-access", () => {
+describeOxlint("bun/no-duplicate-conditional-property-access", () => {
   test("flags re-reading the property inside the if body", async () => {
     const { stdout, stderr, exitCode } = await runOxlint({
       "bad.js": `
@@ -206,7 +214,7 @@ if (options.b != null) y = options.b;
   });
 });
 
-describe("src/js lint", () => {
+describeOxlint("src/js lint", () => {
   // End-to-end: the repo's own oxlint config, against src/js, should be
   // clean. Existing instances of the pattern were refactored to read the
   // property into a local before the check; this guards against new ones.

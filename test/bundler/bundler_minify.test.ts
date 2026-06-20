@@ -646,8 +646,14 @@ describe("bundler", () => {
         capture(10 * 10);
         capture(100 - 50);
         capture(3 ** 4);
-        // Equal-length folds are allowed (result is <= source)
+        // Decimal-result fold that still shrinks (1.1 + 0.2 === 1.3 exactly,
+        // 3 bytes vs the 9-byte source).
         capture(1.1 + 0.2);
+        // Equal-length boundary: with minify_whitespace off the source model
+        // is \`1 / 8\` = 5 bytes (1 + op + 2 spaces + 1) and the fold \`0.125\`
+        // is also 5 bytes, so \`folded_len <= source_len\` folds it. A \`<\` gate
+        // would wrongly keep it.
+        capture(1 / 8);
         // Large powers that would inflate should be preserved
         capture(10 ** 20);
         // \`2 ** 32\` produced a u64 value outside the lemire table range in
@@ -657,7 +663,7 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
-    capture: ["1 / 3", "2 / 3", "1 / 7", "10 / 3", "3", "100", "50", "81", "1.3", "10 ** 20", "2 ** 32"],
+    capture: ["1 / 3", "2 / 3", "1 / 7", "10 / 3", "3", "100", "50", "81", "1.3", "0.125", "10 ** 20", "2 ** 32"],
   });
   // https://github.com/oven-sh/bun/issues/30203
   // With `minify_syntax` on but `minify_whitespace` off, the printer emits

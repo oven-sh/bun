@@ -436,6 +436,13 @@ impl Stdio {
                         "stdio: 'socket-fd' is only supported at indices >= 3"
                     )));
                 }
+                if is_sync {
+                    // Bun.spawnSync's result has no .stdio, so the caller
+                    // could never receive the fd it's supposed to own.
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "stdio: 'socket-fd' cannot be used with spawnSync"
+                    )));
+                }
                 *out_stdio = Stdio::SocketFd;
             } else if str.eql_comptime(b"ipc") {
                 *out_stdio = Stdio::Ipc;

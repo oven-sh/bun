@@ -984,6 +984,18 @@ describe("close handling", () => {
       ).toThrow("'socket-fd' is only supported at indices >= 3");
     });
 
+    it("'socket-fd' with spawnSync throws", () => {
+      // SyncSubprocess has no .stdio, so the caller could never receive
+      // the fd to close; reject rather than leak it.
+      expect(() =>
+        spawnSync({
+          cmd: [bunExe(), "-e", ""],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "ignore", "socket-fd"],
+        }),
+      ).toThrow("'socket-fd' cannot be used with spawnSync");
+    });
+
     it.skipIf(isWindows)(
       "'socket-fd' at index >= 3 exposes a caller-owned fd the subprocess does not close",
       async () => {

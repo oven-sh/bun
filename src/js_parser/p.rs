@@ -17,6 +17,7 @@ use bun_wyhash::Wyhash;
 use crate::defines::{Define, DefineData};
 use crate::lexer as js_lexer;
 use crate::parse::parse_entry::Options as ParserOptions;
+use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
@@ -36,9 +37,6 @@ use bun_ast::{
     B, Binding, BindingNodeIndex, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Scope,
     Stmt, StmtNodeList, Symbol,
 };
-// Round-D/E modules: stub re-exports so type signatures referencing them compile.
-// Real bodies un-gate per-file later.
-use crate::renamer;
 
 // In this AST crate, lists are arena-backed.
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
@@ -47,9 +45,8 @@ type ListManaged<'a, T> = BumpVec<'a, T>;
 type Map<K, V> = HashMap<K, V>;
 
 /// Erases `P<'a, TS, SCAN>`'s const-generics so helpers like `JSXTag::parse`
-/// can take any instantiation. Only the
-/// surface those helpers actually touch is exposed; widen this as the
-/// parse_* / visit_* sibling files un-gate.
+/// can take any instantiation. Only the surface those helpers actually
+/// touch is exposed.
 pub(crate) trait ParserLike<'a> {
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
     fn log_ptr(&self) -> core::ptr::NonNull<bun_ast::Log>;
@@ -58,10 +55,8 @@ pub(crate) trait ParserLike<'a> {
     fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: bun_ast::Loc) -> Expr;
     fn store_name_in_ref(&mut self, name: &'a [u8]) -> Result<Ref, bun_core::Error>;
 }
-// Trait + impl defined so Expr methods can bound on it. Method bodies forward
-// to the (currently-gated) inherent impls; until those un-gate, calling through
-// ParserLike panics — which is fine since no live code does so yet (callers are
-// in parse_*/visit_* which are also gated).
+// Trait + impl defined so Expr methods can bound on it. Method bodies
+// forward to the inherent impls.
 impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
     #[inline]
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> {
@@ -140,13 +135,9 @@ impl<'a> ImportRecordList<'a> {
     /// Transfer the
     /// backing storage into a `Vec<ImportRecord>` and leave `self` empty
     /// (so the parser can be dropped without aliasing the records the linker /
-    /// printer now own).
-    ///
-    /// Round-G fix: previously `to_ast` reached through `items_mut()` and
-    /// wrapped the *live* BumpVec slice, leaving `self` non-empty; the BumpVec's
-    /// Drop then ran element destructors on records the returned `Ast` still
-    /// pointed at. This adapter restores move-and-zero semantics for both
-    /// the bump-backed and externally-borrowed variants.
+    /// printer now own). Move-and-zero semantics: if `to_ast` merely borrowed
+    /// the live BumpVec slice, the BumpVec's Drop would then run element
+    /// destructors on records the returned `Ast` still points at.
     pub(crate) fn move_to_baby_list(&mut self, arena: &'a Bump) -> BumpVec<'a, ImportRecord> {
         match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
             Self::Owned(v) => v,
@@ -185,8 +176,7 @@ pub(crate) type MacroCallCountType = u32;
 
 // ─── Re-exports of sibling-module impls ───
 // These are inherent methods on `P` defined in sibling files via separate
-// `impl<...> P<...>` blocks. Round-D/E: those files un-gate per-module; until
-// then their re-exports are gated so the *struct* + core helpers compile.
+// `impl<...> P<...>` blocks.
 pub use crate::parse::*;
 pub use crate::visit::*;
 // Re-export the real visitor so `P::binary_expression_stack` is typed against
@@ -717,11 +707,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIP
     }
 }
 
-// Associated consts kept live (cheap, used by ParserLike + Parser.rs).
-// The full method-body impl block below is gated wholesale — 600+ type errors
-// from method bodies referencing not-yet-real Expr/Symbol/Log surface; un-gate
-// method-groups (scope mgmt → allocate → error reporting → predicates) as
-// that surface lands.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
     pub const ONLY_SCAN_IMPORTS_AND_DO_NOT_VISIT: bool = SCAN_ONLY;
@@ -835,9 +820,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.module_scope
     }
 
-    // ── thin allocate-helpers (un-gated so the parse_*/visit_* mixin bodies
-    //    can reference them; the full bodies with SCAN_ONLY require-scan
-    //    branches stay in the gated block below) ──────────────────────────
     #[inline]
     pub fn new_expr<T>(&mut self, t: T, loc: bun_ast::Loc) -> Expr
     where
@@ -893,11 +875,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Round-D: core helper methods on P. Un-gated in groups; heavy bodies that
-// touch unfinished E/S/ts surface or call into parse_*/visit_* sibling files
-// stay individually ` // blocked_on:` below.
-// ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub const ALLOW_MACROS: bool = !cfg!(target_family = "wasm");
 
@@ -1287,7 +1264,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.imports_to_convert_from_require
                         .push(DeferredImportNamespace {
                             namespace: LocRef {
-                                ref_: Some(namespace_ref),
+                                ref_: namespace_ref,
                                 loc: arg.loc,
                             },
                             import_record_id: import_record_index,
@@ -1416,7 +1393,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // blocked_on: is_binding_used; SideEffects::to_boolean; Part fields; named_exports key type
     pub fn tree_shake(&mut self, parts: &mut &'a mut [js_ast::Part], merge: bool) {
         let mut parts_ = core::mem::take(parts);
 
@@ -1484,7 +1460,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         break 'can_remove_part false;
                                     }
                                     if let Some(name) = &func.func.name {
-                                        let name_ref = name.ref_.expect("infallible: ref bound");
+                                        let name_ref = name.ref_;
                                         let symbol: &Symbol =
                                             &self.symbols[name_ref.inner_index() as usize];
 
@@ -1511,7 +1487,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         break 'can_remove_part false;
                                     }
                                     if let Some(name) = &class.class.class_name {
-                                        let name_ref = name.ref_.expect("infallible: ref bound");
+                                        let name_ref = name.ref_;
                                         let symbol: &Symbol =
                                             &self.symbols[name_ref.inner_index() as usize];
 
@@ -1641,7 +1617,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            if let Some(r#ref) = scope.label_ref {
+            if let Some(r#ref) = scope.label_ref.to_nullable() {
                 let symbol = &symbols[r#ref.inner_index() as usize];
                 if symbol.slot_namespace() != js_ast::symbol::SlotNamespace::MustNotBeRenamed {
                     // SAFETY: see above.
@@ -1867,7 +1843,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return self.wrap_inlined_enum(
                                     Expr {
                                         loc,
-                                        data: js_ast::ExprData::ENumber(E::Number { value: num }),
+                                        data: js_ast::ExprData::ENumber(E::Number::new(num)),
                                     },
                                     name,
                                 );
@@ -1926,7 +1902,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return self.wrap_inlined_enum(
                             Expr {
                                 loc,
-                                data: js_ast::ExprData::ENumber(E::Number { value: num }),
+                                data: js_ast::ExprData::ENumber(E::Number::new(num)),
                             },
                             name,
                         );
@@ -2032,7 +2008,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 original_name: js_ast::StoreStr::new(b"Response"),
                 alias_loc: bun_ast::Loc::default(),
                 name: LocRef {
-                    ref_: Some(response_ref),
+                    ref_: response_ref,
                     loc: bun_ast::Loc::default(),
                 },
             });
@@ -2054,8 +2030,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.response_ref,
             js_ast::NamedImport {
                 alias: Some(js_ast::StoreStr::new(b"Response")),
-                alias_loc: Some(bun_ast::Loc::default()),
-                namespace_ref: Some(self.bun_app_namespace_ref),
+                alias_loc: bun_ast::Loc::default(),
+                namespace_ref: self.bun_app_namespace_ref,
                 import_record_index: import_record_i,
                 local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                 alias_is_star: false,
@@ -2070,7 +2046,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 import_record_index: import_record_i,
                 is_single_line: true,
                 default_name: None,
-                star_name_loc: None,
+                star_name_loc: bun_ast::Loc::EMPTY,
                 phase_defer: false,
             },
             bun_ast::Loc::default(),
@@ -2162,7 +2138,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 original_name: js_ast::StoreStr::new(alias_name),
                 alias_loc: bun_ast::Loc::default(),
                 name: LocRef {
-                    ref_: Some(ref_),
+                    ref_,
                     loc: bun_ast::Loc::default(),
                 },
             };
@@ -2175,12 +2151,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[ref_.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(js_ast::NamespaceAlias {
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
                         namespace_ref,
                         alias: js_ast::StoreStr::new(alias_name),
                         import_record_index: import_record_i,
                         was_originally_property_access: false,
-                    });
+                    }));
                 }
             }
 
@@ -2189,8 +2165,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ref_,
                 js_ast::NamedImport {
                     alias: Some(js_ast::StoreStr::new(alias_name)),
-                    alias_loc: Some(bun_ast::Loc::default()),
-                    namespace_ref: Some(namespace_ref),
+                    alias_loc: bun_ast::Loc::default(),
+                    namespace_ref,
                     import_record_index: import_record_i,
                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                     alias_is_star: false,
@@ -2206,7 +2182,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 import_record_index: import_record_i,
                 is_single_line: true,
                 default_name: None,
-                star_name_loc: None,
+                star_name_loc: bun_ast::Loc::EMPTY,
                 phase_defer: false,
             },
             bun_ast::Loc::default(),
@@ -2306,7 +2282,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         original_name: js_ast::StoreStr::new(entry.name),
                         alias_loc: bun_ast::Loc::default(),
                         name: LocRef {
-                            ref_: Some(entry.r#ref),
+                            ref_: entry.r#ref,
                             loc: bun_ast::Loc::default(),
                         },
                     });
@@ -2322,8 +2298,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     entry.r#ref,
                     js_ast::NamedImport {
                         alias: Some(js_ast::StoreStr::new(entry.name)),
-                        alias_loc: Some(bun_ast::Loc::EMPTY),
-                        namespace_ref: Some(namespace_ref),
+                        alias_loc: bun_ast::Loc::EMPTY,
+                        namespace_ref,
                         import_record_index,
                         local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                         alias_is_star: false,
@@ -2367,7 +2343,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     import_record_index,
                     is_single_line: false,
                     default_name: None,
-                    star_name_loc: None,
+                    star_name_loc: bun_ast::Loc::EMPTY,
                     phase_defer: false,
                 },
                 bun_ast::Loc::EMPTY,
@@ -3229,12 +3205,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.bun_app_namespace_ref =
                         self.new_symbol(js_ast::symbol::Kind::Other, b"import_bun_app")?;
                     let symbol = &mut self.symbols[self.response_ref.inner_index() as usize];
-                    symbol.namespace_alias = Some(js_ast::NamespaceAlias {
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
                         namespace_ref: self.bun_app_namespace_ref,
                         alias: js_ast::StoreStr::new(b"Response"),
                         was_originally_property_access: false,
                         import_record_index: u32::MAX,
-                    });
+                    }));
                 }
             }
         }
@@ -3247,7 +3223,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn ensure_require_symbol(&mut self) {
-        if self.runtime_imports.__require.is_some() {
+        if !self.runtime_imports.__require.is_empty() {
             return;
         }
         // Call declare_symbol_maybe_generated with the hashed
@@ -3273,7 +3249,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 hashed,
             )
             .expect("oom");
-        self.runtime_imports.__require = Some(ref_);
+        self.runtime_imports.__require = ref_;
         self.runtime_imports.put(b"__require", ref_);
     }
 
@@ -3424,7 +3400,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         //   assert(obj.foo === 2)
                         //
                         if scope_kind == js_ast::scope::Kind::With {
-                            self.symbols[symbol_idx].must_not_be_renamed = true;
+                            self.symbols[symbol_idx].set_must_not_be_renamed(true);
                         }
 
                         if let Some(member_in_scope) =
@@ -3714,7 +3690,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Some(self.b(B::Identifier { r#ref: ex.ref_ }, expr.loc));
             }
             js_ast::ExprData::EArray(ex) => {
-                if let Some(spread) = ex.comma_after_spread {
+                if let Some(spread) = ex.comma_after_spread.to_nullable() {
                     invalid_loc.push(InvalidLoc {
                         loc: spread,
                         kind: crate::parser::InvalidLocTag::Spread,
@@ -3769,7 +3745,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ));
             }
             js_ast::ExprData::EObject(mut ex) => {
-                if let Some(sp) = ex.comma_after_spread {
+                if let Some(sp) = ex.comma_after_spread.to_nullable() {
                     invalid_loc.push(InvalidLoc {
                         loc: sp,
                         kind: crate::parser::InvalidLocTag::Spread,
@@ -3951,7 +3927,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Only assert above; do not actually pop.
     }
 
-    // blocked_on: S::Import field set; crate::parser::MacroRefData; ParsedPath fields; ImportItemForNamespaceMap API
     pub fn process_import_statement(
         &mut self,
         stmt_: S::Import,
@@ -3970,7 +3945,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .insert(bun_ast::ImportRecordFlags::IS_UNUSED);
 
             if let Some(name_loc) = stmt.default_name {
-                let name = self.load_name_from_ref(name_loc.ref_.expect("infallible: ref bound"));
+                let name = self.load_name_from_ref(name_loc.ref_);
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, name_loc.loc, name)?;
                 self.is_import_item.insert(r#ref, ());
                 self.macro_.refs.put(
@@ -3982,7 +3957,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )?;
             }
 
-            if let Some(star) = stmt.star_name_loc {
+            if let Some(star) = stmt.star_name_loc.to_nullable() {
                 let name = self.load_name_from_ref(stmt.namespace_ref);
                 let r#ref = self.declare_symbol(js_ast::symbol::Kind::Other, star, name)?;
                 stmt.namespace_ref = r#ref;
@@ -3997,7 +3972,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
             for item in stmt.items.iter() {
-                let name = self.load_name_from_ref(item.name.ref_.expect("infallible: ref bound"));
+                let name = self.load_name_from_ref(item.name.ref_);
                 let r#ref =
                     self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
                 self.is_import_item.insert(r#ref, ());
@@ -4040,8 +4015,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         continue;
                     }
                     // Declare the symbol and store the ref
-                    let name =
-                        self.load_name_from_ref(item.name.ref_.expect("infallible: ref bound"));
+                    let name = self.load_name_from_ref(item.name.ref_);
                     let r#ref =
                         self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
                     self.bundler_feature_flag_ref = r#ref;
@@ -4076,7 +4050,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // immediately rather than surfacing as odd printer output.
         debug_assert!(
             !stmt.phase_defer
-                || (stmt.star_name_loc.is_some()
+                || (!stmt.star_name_loc.is_empty()
                     && stmt.default_name.is_none()
                     && stmt.items.is_empty())
         );
@@ -4092,7 +4066,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .flags
             .set(bun_ast::ImportRecordFlags::PHASE_DEFER, stmt.phase_defer);
 
-        if let Some(star) = stmt.star_name_loc {
+        if let Some(star) = stmt.star_name_loc.to_nullable() {
             let name = self.load_name_from_ref(stmt.namespace_ref);
             stmt.namespace_ref = self.declare_symbol(js_ast::symbol::Kind::Import, star, name)?;
 
@@ -4139,22 +4113,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Link the default item to the namespace
         if let Some(name_loc) = &mut stmt.default_name {
             'outer: {
-                let name = self.load_name_from_ref(name_loc.ref_.expect("infallible: ref bound"));
+                let name = self.load_name_from_ref(name_loc.ref_);
                 let r#ref =
                     self.declare_symbol(js_ast::symbol::Kind::Import, name_loc.loc, name)?;
-                name_loc.ref_ = Some(r#ref);
+                name_loc.ref_ = r#ref;
                 self.is_import_item.insert(r#ref, ());
 
                 // ensure every e_import_identifier holds the namespace
                 if self.options.features.hot_module_reloading {
                     let symbol = &mut self.symbols[r#ref.inner_index() as usize];
                     if symbol.namespace_alias.is_none() {
-                        symbol.namespace_alias = Some(js_ast::NamespaceAlias {
+                        symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
                             namespace_ref: stmt.namespace_ref,
                             alias: js_ast::StoreStr::new(b"default"),
                             import_record_index: stmt.import_record_index,
                             was_originally_property_access: false,
-                        });
+                        }));
                     }
                 }
 
@@ -4218,9 +4192,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: items_slice[i] is a live initialised `ClauseItem`; the
             // original slot is overwritten or compacted below before any drop.
             let mut item = unsafe { core::ptr::read(&raw const items_slice[i]) };
-            let name = self.load_name_from_ref(item.name.ref_.expect("unreachable"));
+            let name = self.load_name_from_ref(item.name.ref_);
             let r#ref = self.declare_symbol(js_ast::symbol::Kind::Import, item.name.loc, name)?;
-            item.name.ref_ = Some(r#ref);
+            item.name.ref_ = r#ref;
 
             self.is_import_item.insert(r#ref, ());
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
@@ -4231,12 +4205,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[r#ref.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(js_ast::NamespaceAlias {
+                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
                         namespace_ref: stmt.namespace_ref,
                         alias: js_ast::StoreStr::new(alias),
                         import_record_index: stmt.import_record_index,
                         was_originally_property_access: false,
-                    });
+                    }));
                 }
             }
 
@@ -4328,7 +4302,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(self.s(stmt, loc))
     }
 
-    // blocked_on: ParsedPath fields; S::Import.items; options::Loader
     #[cold]
     fn validate_and_set_import_type(
         &mut self,
@@ -4385,13 +4358,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let name = js_ast::LocRef {
             loc,
-            ref_: Some(self.new_symbol(js_ast::symbol::Kind::Other, identifier)?),
+            ref_: self.new_symbol(js_ast::symbol::Kind::Other, identifier)?,
         };
 
-        VecExt::append(
-            &mut self.current_scope_mut().generated,
-            name.ref_.expect("infallible: ref bound"),
-        );
+        VecExt::append(&mut self.current_scope_mut().generated, name.ref_);
 
         Ok(name)
     }
@@ -4423,18 +4393,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match &expr.data {
             js_ast::ExprData::EFunction(func_container) => {
                 if let Some(_name) = &func_container.func.name {
-                    if let Some(r#ref) = _name.ref_ {
-                        return LocRef {
-                            loc,
-                            ref_: Some(r#ref),
-                        };
+                    if let Some(r#ref) = _name.ref_.to_nullable() {
+                        return LocRef { loc, ref_: r#ref };
                     }
                 }
             }
             js_ast::ExprData::EIdentifier(ident) => {
                 return LocRef {
                     loc,
-                    ref_: Some(ident.ref_),
+                    ref_: ident.ref_,
                 };
             }
             js_ast::ExprData::EImportIdentifier(ident) => {
@@ -4443,17 +4410,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     return LocRef {
                         loc,
-                        ref_: Some(ident.ref_),
+                        ref_: ident.ref_,
                     };
                 }
             }
             js_ast::ExprData::EClass(class) => {
                 if let Some(_name) = &class.class_name {
-                    if let Some(r#ref) = _name.ref_ {
-                        return LocRef {
-                            loc,
-                            ref_: Some(r#ref),
-                        };
+                    if let Some(r#ref) = _name.ref_.to_nullable() {
+                        return LocRef { loc, ref_: r#ref };
                     }
                 }
             }
@@ -4941,7 +4905,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         // If these are both functions, remove the overwritten declaration
                         if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
-                            self.symbols[symbol_idx].remove_overwritten_function_declaration = true;
+                            self.symbols[symbol_idx]
+                                .set_remove_overwritten_function_declaration(true);
                         }
                     }
                     MR::BecomePrivateGetSetPair => {
@@ -4971,8 +4936,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn validate_function_name(&mut self, func: &G::Fn, kind: FunctionKind) {
         if let Some(name) = &func.name {
             // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.
-            let original_name: &[u8] = self.symbols
-                [name.ref_.expect("infallible: ref bound").inner_index() as usize]
+            let original_name: &[u8] = self.symbols[name.ref_.inner_index() as usize]
                 .original_name
                 .slice();
 
@@ -5108,7 +5072,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             tag: bun_ast::ImportRecordTag::None,
             loader: None,
             source_index: bun_ast::Index::INVALID,
-            module_id: 0,
             original_path: b"",
             flags: bun_ast::ImportRecordFlags::empty(),
         });
@@ -5169,7 +5132,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //     continue;
                 // }
 
-                self.symbols[member.1.ref_.inner_index() as usize].must_not_be_renamed = true;
+                self.symbols[member.1.ref_.inner_index() as usize].set_must_not_be_renamed(true);
             }
         }
 
@@ -5323,15 +5286,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for i in 0..self.relocated_top_level_vars.len() {
                 // Follow links because "var" declarations may be merged due to hoisting
                 let mut local = self.relocated_top_level_vars[i];
-                while let Some(ref_) = local.ref_ {
-                    let symbol = &self.symbols[ref_.inner_index() as usize];
+                while !local.ref_.is_empty() {
+                    let symbol = &self.symbols[local.ref_.inner_index() as usize];
                     if !symbol.has_link() {
                         break;
                     }
-                    local.ref_ = Some(symbol.link.get());
+                    local.ref_ = symbol.link.get();
                 }
                 self.relocated_top_level_vars[i] = local;
-                let Some(ref_) = local.ref_ else { continue };
+                let Some(ref_) = local.ref_.to_nullable() else {
+                    continue;
+                };
                 let declaration_entry = already_declared.get_or_put(ref_)?;
                 if !declaration_entry.found_existing {
                     let mut decls = bun_alloc::AstAlloc::vec();
@@ -5370,7 +5335,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parts.push(js_ast::Part {
                 stmts: final_stmts,
                 symbol_uses: core::mem::take(&mut self.symbol_uses),
-                import_symbol_property_uses: core::mem::take(&mut self.import_symbol_property_uses),
+                import_symbol_property_uses: {
+                    let m = core::mem::take(&mut self.import_symbol_property_uses);
+                    if m.is_empty() {
+                        None
+                    } else {
+                        Some(bun_alloc::ast_box(m))
+                    }
+                },
                 declared_symbols: self.declared_symbols.to_owned_slice(),
                 import_record_indices: {
                     let v = core::mem::replace(
@@ -5670,7 +5642,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn ignore_usage_of_runtime_require(&mut self) {
         if self.options.features.auto_polyfill_require {
-            debug_assert!(self.runtime_imports.__require.is_some());
+            debug_assert!(!self.runtime_imports.__require.is_empty());
             let r = self.runtime_identifier_ref(bun_ast::Loc::EMPTY, b"__require");
             self.ignore_usage(r);
             self.symbols[self.require_ref.inner_index() as usize].use_count_estimate = self.symbols
@@ -6157,10 +6129,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let new_ref = self
                     .declare_generated_symbol(js_ast::symbol::Kind::Other, symbol_name)
                     .expect("unreachable");
-                let loc_ref = LocRef {
-                    loc,
-                    ref_: Some(new_ref),
-                };
+                let loc_ref = LocRef { loc, ref_: new_ref };
                 VecExt::append(&mut self.module_scope_mut().generated, new_ref);
                 self.is_import_item.insert(new_ref, ());
                 self.jsx_imports.set(kind, loc_ref);
@@ -6248,7 +6217,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // blocked_on: options.features.replace_exports type (currently bool placeholder)
     pub fn is_export_to_eliminate(&self, r#ref: Ref) -> bool {
         let symbol_name = self.load_name_from_ref(r#ref);
         self.options.features.replace_exports.contains(symbol_name)
@@ -6417,7 +6385,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // blocked_on: b(); G::Decl::List; E::Arrow.args slice type; S::SExpr/Return; emitted_namespace_vars.put_no_clobber
     // Large TS namespace/enum lowering body — cold for already-transpiled JS.
     #[cold]
     #[inline(never)]
@@ -6812,11 +6779,6 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
     Some(pkgname)
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Round-D/E heavy method bodies (lower_class / to_ast / react_refresh / etc.).
-// lower_class + emit_decorator_metadata_for_prop + serialize_metadata are
-// un-gated and compile against the full bun_ast::ts::Metadata variant set.
-// Remaining individually-gated methods carry their own `blocked_on:` tags.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
         use js_ast::g::PropertyKind;
@@ -6866,7 +6828,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     for (i, arg) in func.func.args.iter().enumerate() {
                                         for arg_decorator in arg.ts_decorators.slice() {
                                             let arg0 = self.new_expr(
-                                                E::Number { value: i as f64 },
+                                                E::Number::new(i as f64),
                                                 arg_decorator.loc,
                                             );
                                             let args = self
@@ -6911,7 +6873,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             };
 
                         let class_name = s_class.class.class_name.unwrap();
-                        let class_ref = class_name.ref_.expect("infallible: ref bound");
+                        let class_ref = class_name.ref_;
                         let target: Expr = if prop.flags.contains(Flags::Property::IsStatic) {
                             self.record_usage(class_ref);
                             self.new_expr(E::Identifier::init(class_ref), class_name.loc)
@@ -6993,7 +6955,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let mut target: Expr;
                         if prop.flags.contains(Flags::Property::IsStatic) {
                             let class_name = s_class.class.class_name.unwrap();
-                            let class_ref = class_name.ref_.expect("infallible: ref bound");
+                            let class_ref = class_name.ref_;
                             self.record_usage(class_ref);
                             target = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                         } else {
@@ -7217,7 +7179,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     let class_name = s_class.class.class_name.unwrap();
-                    let class_ref = class_name.ref_.expect("infallible: ref bound");
+                    let class_ref = class_name.ref_;
                     let array_items = ExprNodeList::move_from_list(array);
                     let array_expr = self.new_expr(
                         E::Array {
@@ -7606,17 +7568,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn wrap_identifier_hoisting(&mut self, loc: bun_ast::Loc, r#ref: Ref) -> Expr {
-        self.relocated_top_level_vars.push(LocRef {
-            loc,
-            ref_: Some(r#ref),
-        });
+        self.relocated_top_level_vars
+            .push(LocRef { loc, ref_: r#ref });
         self.record_usage(r#ref);
         Expr::init_identifier(r#ref, loc)
     }
-
-    // wrap_inlined_enum: moved to ungated impl (round-G).
-
-    // value_for_define / is_dot_define_match: moved to ungated impl (round-G).
 
     // One statement could potentially expand to several statements
     pub fn stmts_to_single_stmt(&mut self, loc: bun_ast::Loc, stmts: &'a mut [Stmt]) -> Stmt {
@@ -7657,7 +7613,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if scope.kind_stops_hoisting() {
                 break;
             }
-            if let Some(label_ref) = scope.label_ref {
+            if let Some(label_ref) = scope.label_ref.to_nullable() {
                 if scope.kind == js_ast::scope::Kind::Label
                     // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
                     && strings::eql(name, self.symbols[label_ref.inner_index() as usize].original_name.slice())
@@ -7696,8 +7652,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         res
     }
-
-    // runtime_identifier_ref / runtime_identifier / call_runtime: moved to ungated impl (round-G).
 
     pub fn extract_decls_for_binding(
         binding: Binding,
@@ -7821,9 +7775,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r#ref
     }
 
-    // compute_ts_enums_map() lives in the round-G `to_ast` impl block below
-    // (deduped — earlier draft body removed once both un-gated).
-
     pub fn should_lower_using_declarations(&self, stmts: &[Stmt]) -> bool {
         // TODO: We do not support lowering await, but when we do this needs to point to that var
         let lower_await = false;
@@ -7861,7 +7812,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// with ones that were imported, so that it can share an import record.
     ///
     /// This function replaces all specifier strings with `e_special.resolved_specifier_string`
-    // blocked_on: rewrite_import_meta_hot_accept_string; Log::add_error wants &[u8] (IMPORT_META_HOT_ACCEPT_ERR is &str)
     pub fn handle_import_meta_hot_accept_call(&mut self, call: &mut E::Call) {
         if call.args.len_u32() == 0 {
             return;
@@ -7901,7 +7851,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         call.target.data = js_ast::ExprData::ESpecial(E::Special::HotAcceptVisited);
     }
 
-    // blocked_on: EString::to_utf8 arena arg; ImportRecordList::items() accessor; E::Special::ResolvedSpecifierString takes u32 directly (drop ResolvedSpecifierStringIndex::init)
     fn rewrite_import_meta_hot_accept_string(
         &mut self,
         str_: &mut E::String,
@@ -8276,12 +8225,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
 // ═══════════════════════════════════════════════════════════════════════════
 // P::to_ast — final assembly P→Ast.
-// Split out of the gated block above so the parser entry point
-// (`Parser::parse` → `to_ast`) typechecks. Heavy sub-calls that are still
-// gated (`ImportScanner::scan`, `ConvertESMExportsForHmr`,
-// `apply_repl_transforms`) are wired to their real signatures and un-gated
-// independently. `compute_character_frequency` is fully un-gated
-// (lexer.all_comments + CharFreq.scan live).
+// ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn to_ast(
         &mut self,
@@ -8319,10 +8263,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("hot_module_reloading parse always has at least one part");
             let mut hmr_transform_ctx = ConvertESMExportsForHmr {
                 last_part,
-                // Round-G fix: `bun_paths::fs::Path::is_node_module` is now real
-                // (checks `name.dir` for `<sep>node_modules<sep>` with the
-                // platform separator); the former inline copy mis-handled the
-                // Windows separator via a cross-crate `const_format` const.
                 is_in_node_modules: self.source.path.is_node_module(),
                 imports_seen: Default::default(),
                 export_star_props: Vec::new(),
@@ -8512,10 +8452,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 for stmt in part.stmts.iter() {
                     if let js_ast::StmtData::SExportClause(clause) = &stmt.data {
                         for item in clause.items.iter() {
-                            if let Some(import) = self
-                                .named_imports
-                                .get_ptr_mut(&item.name.ref_.expect("infallible: ref bound"))
-                            {
+                            if let Some(import) = self.named_imports.get_ptr_mut(&item.name.ref_) {
                                 import.is_exported = true;
                             }
                         }
@@ -8770,8 +8707,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let uses_exports_ref =
             self.symbols[self.exports_ref.inner_index() as usize].use_count_estimate > 0;
         let uses_require_ref = if self.options.bundle {
-            self.runtime_imports.__require.is_some()
-                && self.symbols[self.runtime_imports.__require.unwrap().inner_index() as usize]
+            !self.runtime_imports.__require.is_empty()
+                && self.symbols[self.runtime_imports.__require.inner_index() as usize]
                     .use_count_estimate
                     > 0
         } else {
@@ -8782,7 +8719,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // parser's accumulated runtime-helper refs into the Ast so the linker /
         // printer can emit `__require`, `__toESM`, etc. Precompute `require_ref`
         // first since it reads `__require` from the same struct we're taking.
-        let require_ref = self.runtime_imports.__require.unwrap_or(self.require_ref);
+        let require_ref = self
+            .runtime_imports
+            .__require
+            .to_nullable()
+            .unwrap_or(self.require_ref);
         let runtime_imports = core::mem::take(&mut self.runtime_imports);
 
         // Re-tag the arena-backed buffer
@@ -8798,9 +8739,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // returned up the `_parse → parse → cache → transpiler` chain (see
         // `js_parser::Result` PERF NOTE).
         Ok(Box::new(js_ast::Ast {
-            // Round-G: `Ast.runtime_imports` is now the real
-            // `parser::Runtime::Imports`; moved out above (P is terminal after
-            // `to_ast`).
             runtime_imports,
             module_scope,
             exports_ref: self.exports_ref,
@@ -9019,7 +8957,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             children: bun_alloc::AstAlloc::vec(),
             generated: bun_alloc::AstAlloc::vec(),
             kind: js_ast::scope::Kind::Entry,
-            label_ref: None,
+            label_ref: Ref::NONE,
             parent: None,
             ..Default::default()
         });
@@ -9265,15 +9203,6 @@ pub struct LowerUsingDeclarationsContext {
     pub has_await_using: bool,
 }
 
-// Round-H un-gate: `generate_temp_ref` / `call_runtime` are now real (5516/6407),
-// so the only blockers were API-shape divergences. Reshaped:
-//   • `call_runtime` takes `ExprNodeList` → wrap bump slices via `from_bump_slice`
-//   • `DeclaredSymbol.ref_` / `LocRef.ref_` (not `r#ref`)
-//   • `DeclaredSymbolList`/`Vec` API has no arena param in this port
-//   • `G::Decl::List` → `G::DeclList` (free alias; inherent assoc type not used)
-// reconciler-6 re-gate removed: those API divergences are fixed inline below;
-// `generate_temp_ref` is real (round-G, see ~6407). DO NOT re-gate — `visit.rs`
-// calls these via `should_lower_using_declarations` path.
 impl LowerUsingDeclarationsContext {
     pub fn init<'a, const T: bool, const S_: bool>(
         p: &mut P<'a, T, S_>,
@@ -9324,13 +9253,11 @@ impl LowerUsingDeclarationsContext {
                         // 1. always pass this param for hopefully better jit performance
                         // 2. pass 1 or 0 to be shorter than `true` or `false`
                         p.new_expr(
-                            E::Number {
-                                value: if local_kind == js_ast::s::Kind::KAwaitUsing {
-                                    1.0
-                                } else {
-                                    0.0
-                                },
-                            },
+                            E::Number::new(if local_kind == js_ast::s::Kind::KAwaitUsing {
+                                1.0
+                            } else {
+                                0.0
+                            }),
                             stmt_loc,
                         ),
                     ]);
@@ -9418,7 +9345,7 @@ impl LowerUsingDeclarationsContext {
                                 exports.push(js_ast::ClauseItem {
                                     name: LocRef {
                                         loc: decl.binding.loc,
-                                        ref_: Some(id_ref),
+                                        ref_: id_ref,
                                     },
                                     alias: p.symbols[id_ref.inner_index() as usize].original_name,
                                     alias_loc: decl.binding.loc,
@@ -9614,7 +9541,7 @@ impl LowerUsingDeclarationsContext {
                 loc,
             );
             let has_err_binding = p.b(B::Identifier { r#ref: has_err_ref }, loc);
-            let has_err_value = p.new_expr(E::Number { value: 1.0 }, loc);
+            let has_err_value = p.new_expr(E::Number::new(1.0), loc);
             let mut decls = bun_alloc::AstAlloc::vec();
             VecExt::append(
                 &mut decls,

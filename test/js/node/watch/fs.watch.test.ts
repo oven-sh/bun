@@ -654,6 +654,33 @@ describe("fs.promises.watch", () => {
     })();
   });
 
+  test("Signal aborted before creating the watcher does not keep the process alive", async () => {
+    const filepath = path.join(testDir, "abort.txt");
+    // If a native watcher were created for a pre-aborted signal, nothing
+    // would ever close it and the process would never exit.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("node:fs");
+        const signal = AbortSignal.abort();
+        (async () => {
+          try {
+            for await (const _ of fs.promises.watch(${JSON.stringify(filepath)}, { signal }));
+            throw new Error("expected AbortError");
+          } catch (e) {
+            if (e.name !== "AbortError") throw e;
+          }
+        })();`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("should work with symlink -> symlink -> dir", async () => {
     const filepath = path.join(testDir, "sym-symlink-indirect");
     const dest = path.join(testDir, "sym-symlink-dest");

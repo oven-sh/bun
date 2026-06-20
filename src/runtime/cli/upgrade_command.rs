@@ -442,7 +442,7 @@ impl UpgradeCommand {
                         if let Some(size_) = asset.as_property(b"size") {
                             if let bun_ast::ExprData::ENumber(n) = &size_.expr.data {
                                 version.size =
-                                    u32::try_from(((n.value.ceil()) as i32).max(0)).unwrap();
+                                    u32::try_from(((n.value().ceil()) as i32).max(0)).unwrap();
                             }
                         }
                         return Ok(Some(version));

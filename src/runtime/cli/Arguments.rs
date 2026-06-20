@@ -267,6 +267,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first"
     ),
     parse_param!(
+        "--experimental-stream-iter        Enable the experimental stream/iter API (node:stream/iter, node:zlib/iter)."
+    ),
+    parse_param!(
         "--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc()."
     ),
     parse_param!(
@@ -1247,6 +1250,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             }
         }
 
+        if args.flag(b"--experimental-stream-iter") {
+            bun_resolve_builtins::set_stream_iter_enabled(true);
+        }
         if args.flag(b"--no-deprecation") {
             Bun__Node__ProcessNoDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
@@ -2384,11 +2390,10 @@ fn parse_build_command_options(
             Global::crash();
         }
 
-        // when using --compile, only `external` works, as we do not
-        // look at the source map comment. so after we validate the
-        // user's choice was in the list, we secretly override it
-        if ctx.bundler_options.compile {
-            opts.source_map = Some(api::SourceMap::External);
-        }
+        // When using --compile, only `external` sourcemaps work, as the
+        // runtime does not look at the source map comment. That override
+        // happens in build_command.rs once it's known whether --compile
+        // produces an executable or a standalone HTML file (browsers do read
+        // the comment, so standalone HTML keeps the user's choice).
     }
 }

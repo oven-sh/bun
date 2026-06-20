@@ -273,7 +273,7 @@ it("process.versions", () => {
   // These are the ACTUAL commits built into bun (not derived values, so
   // bumping a dep requires updating this test too).
   const expectedVersions = {
-    boringssl: "0c5fce43b7ed5eb6001487ee48ac65766f5ddcd1",
+    boringssl: "1a41b9025c2c0a37edd07ff10f6944f03e028522",
     libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
     mimalloc: "afb41757285694f832e7a2f164d35f5717457f96",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
@@ -426,7 +426,7 @@ describe.concurrent(() => {
     });
 
     let [out, exited] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited]);
-    expect(out.trim()).toEqual("v24.3.0");
+    expect(out.trim()).toEqual("v26.3.0");
     expect(exited).toBe(0);
   });
 
@@ -1175,10 +1175,10 @@ it.each(["stdin", "stdout", "stderr"])("%s stream accessor should handle excepti
 });
 
 it("process.versions", () => {
-  expect(process.versions.node).toEqual("24.3.0");
-  expect(process.versions.v8).toEqual("13.6.233.10-node.18");
+  expect(process.versions.node).toEqual("26.3.0");
+  expect(process.versions.v8).toEqual("14.6.202.34-node.20");
   expect(process.versions.napi).toEqual("10");
-  expect(process.versions.modules).toEqual("137");
+  expect(process.versions.modules).toEqual("147");
 });
 
 // On Windows, env var names are case-insensitive. The proxy-related vars

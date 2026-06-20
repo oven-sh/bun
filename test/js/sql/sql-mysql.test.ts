@@ -1092,7 +1092,7 @@ if (isDockerEnabled()) {
           } catch (err) {
             error = err;
           }
-          expect(error.code).toBe("ERR_MYSQL_CONNECTION_FAILED");
+          expect(error.code).toBe("ERR_MYSQL_CONNECTION_REFUSED");
         });
 
         test("dynamic table name", async () => {

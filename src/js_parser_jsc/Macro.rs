@@ -809,17 +809,13 @@ impl<'a> Run<'a> {
 
             T::Integer => {
                 return Ok(Expr::init(
-                    E::Number {
-                        value: value.to_int32() as f64,
-                    },
+                    E::Number::new(value.to_int32() as f64),
                     self.caller.loc,
                 ));
             }
             T::Double => {
                 return Ok(Expr::init(
-                    E::Number {
-                        value: value.as_number(),
-                    },
+                    E::Number::new(value.as_number()),
                     self.caller.loc,
                 ));
             }

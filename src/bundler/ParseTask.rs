@@ -489,11 +489,6 @@ export var __callDispose = (stack, error, hasError) => {
 
 // ══════════════════════════════════════════════════════════════════════════
 // Per-file parse worker — `getAST`/`getCodeForParseTask`/`runFromThreadPool`.
-// The struct/FFI surface and `get_runtime_source` are real. Bodies
-// that touch the still-gated `crate::ThreadPool` Worker module or the opaque
-// `JSBundlerPlugin`/`FileMap` forward-decls remain ``-gated
-// per-function below with explicit `// blocked_on:` notes; they un-gate by
-// deletion once those modules land.
 // ══════════════════════════════════════════════════════════════════════════
 pub mod parse_worker {
     use super::*;
@@ -592,10 +587,6 @@ pub mod parse_worker {
     // getEmptyCSSAST / getEmptyAST
     // ───────────────────────────────────────────────────────────────────────────
 
-    // blocked_on: `js_parser::new_lazy_export_ast` body
-    // (`Parser::to_lazy_export_ast`); `bun_css::BundlerStyleSheet` (gated
-    // upstream); `Expr::init` overload set for arbitrary `E::*` defaults.
-
     // `transpiler: *mut Transpiler` stays raw. Callers
     // (`get_ast`, `run_with_source_code`) may also hold a raw pointer to
     // `(*transpiler).resolver`; materializing `&mut Transpiler` here would assert
@@ -681,14 +672,9 @@ pub mod parse_worker {
                     s.chunk_index.load(core::sync::atomic::Ordering::Relaxed),
                 ),
                 nested_scope_slot: s.nested_scope_slot,
-                did_keep_name: s.did_keep_name,
-                must_start_with_capital_letter_for_jsx: s.must_start_with_capital_letter_for_jsx,
                 kind,
-                must_not_be_renamed: s.must_not_be_renamed,
                 import_item_status,
-                private_symbol_must_be_lowered: s.private_symbol_must_be_lowered,
-                remove_overwritten_function_declaration: s.remove_overwritten_function_declaration,
-                has_been_assigned_to: s.has_been_assigned_to,
+                flags: s.flags,
             });
         }
         out
@@ -697,17 +683,6 @@ pub mod parse_worker {
     // ───────────────────────────────────────────────────────────────────────────
     // getAST
     // ───────────────────────────────────────────────────────────────────────────
-
-    // blocked_on: per-loader branches require:
-    //   - `resolver.caches.js.parse` / `resolver.caches.json.parse_json` (gated in
-    //     `bun_resolver::cache_set`);
-    //   - `bun_parsers::{toml,yaml,json5}` parser entry points;
-    //   - `bun_css::BundlerStyleSheet::parse_bundler` (gated upstream);
-    //   - `crate::HTMLScanner` (gated module);
-    //   - `bun_core::fmt::bytes_to_hex_lower` Display adaptor;
-    //   - `js_parser::new_lazy_export_ast` body.
-    // The signature now names the real `ParserOptions`; body un-gates in lockstep
-    // with the above.
 
     // `transpiler`/`resolver` are raw `*mut`. The caller may pass
     // `resolver = &transpiler.resolver`, so
@@ -1353,12 +1328,6 @@ pub mod parse_worker {
     // getCodeForParseTaskWithoutPlugins
     // ───────────────────────────────────────────────────────────────────────────
 
-    // blocked_on: `BundleV2.file_map` is `Option<NonNull<FileMap>>` where `FileMap`
-    // is an opaque forward-decl (`_opaque: [u8; 0]`); `.get(path)`
-    // requires the real T6 `jsc::api::JSBundler::FileMap` surface. Also blocked on
-    // `bake_types::Framework.built_in_modules` value variant carrying `&[u8]` (vs
-    // `Box<[u8]>` here) and `resolver.caches.fs.read_file_with_allocator` shape.
-
     // `transpiler`/`resolver` are raw `*mut`.
     // Callers pass `resolver = &mut (*transpiler).resolver`; taking
     // `&mut Transpiler` + `&mut Resolver` would be aliased-`&mut` UB. We only
@@ -1522,12 +1491,6 @@ pub mod parse_worker {
     // ───────────────────────────────────────────────────────────────────────────
     // getCodeForParseTask
     // ───────────────────────────────────────────────────────────────────────────
-
-    // blocked_on: `BundleV2.plugins` is `Option<NonNull<JSBundlerPlugin>>` where
-    // `JSBundlerPlugin` is an opaque forward-decl; `.has_on_before_parse_plugins()`
-    // requires the real T6 `jsc::api::JSBundler::Plugin` surface (or a
-    // `dispatch::PluginVTable` slot). Also calls the gated
-    // `get_code_for_parse_task_without_plugins`.
 
     // `transpiler`/`resolver` are raw `*mut` — see
     // `get_code_for_parse_task_without_plugins`.
@@ -1870,8 +1833,6 @@ pub mod parse_worker {
         }
     }
 
-    // blocked_on: calls `get_code_for_parse_task_without_plugins` (gated above).
-
     /// # Safety
     /// `args` and `result_ptr` must point at the live `OnBeforeParseArguments`
     /// / `OnBeforeParseResultWrapper.result` set up by `OnBeforeParsePlugin::run`
@@ -2018,11 +1979,6 @@ pub mod parse_worker {
 
         0
     }
-
-    // blocked_on: `crate::api::JSBundler::Plugin` (T6) — `call_on_before_parse_plugins`
-    // is an `extern "C"` JSC dispatch; needs a `dispatch` vtable slot or the real
-    // `bun_bundler_jsc::JSBundler::Plugin` re-export. Also references the gated
-    // `fetch_source_code` callback above.
 
     impl<'a, 'b: 'a> OnBeforeParsePlugin<'a, 'b> {
         pub fn run(
@@ -2206,10 +2162,6 @@ pub mod parse_worker {
     // getSourceCode
     // ───────────────────────────────────────────────────────────────────────────
 
-    // blocked_on: `crate::ThreadPool::Worker` (lib.rs ` pub mod
-    // ThreadPool` — the bundler worker module, distinct from `bun_threading`).
-    // `Worker.{arena, data.transpiler}` field shape comes from there.
-
     fn get_source_code(
         task: &mut ParseTask,
         this: &mut crate::Worker,
@@ -2261,15 +2213,6 @@ pub mod parse_worker {
     // ───────────────────────────────────────────────────────────────────────────
     // runWithSourceCode
     // ───────────────────────────────────────────────────────────────────────────
-
-    // blocked_on: `crate::ThreadPool::Worker` (gated module) for
-    // `this.{arena, transpiler_for_target, ctx}`; `bake_types::Framework`
-    // missing `server_components` field; `ParserOptions` field-type mismatches
-    // (`allow_unresolved`, `framework`, `unwrap_commonjs_packages`,
-    // `server_components` — bundler's `BundleOptions` types diverge from the
-    // js_parser-local `parser::options` shims); `get_ast`/`get_empty_*` (gated).
-    // Signature is real; body un-gates once the `ThreadPool` module + the
-    // `parser::options` ↔ `BundleOptions` type unification land.
 
     fn run_with_source_code(
         task: &mut ParseTask,
@@ -2371,7 +2314,7 @@ pub mod parse_worker {
         };
 
         if (use_directive == UseDirective::Client
-        && task.known_target != options::Target::BakeServerComponentsSsr
+        && task.known_target != options::Target::ServerComponentsSsr
         && worker_ctx.framework.is_some()
         && worker_ctx
             .framework
@@ -2431,7 +2374,7 @@ pub mod parse_worker {
             None
         })
         .unwrap_or_else(|| {
-            if task.known_target == options::Target::BakeServerComponentsSsr
+            if task.known_target == options::Target::ServerComponentsSsr
                 && topts
                     .framework
                     .as_ref()
@@ -2441,7 +2384,7 @@ pub mod parse_worker {
                     .unwrap()
                     .separate_ssr_graph
             {
-                options::Target::BakeServerComponentsSsr
+                options::Target::ServerComponentsSsr
             } else {
                 topts.target
             }

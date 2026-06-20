@@ -171,9 +171,19 @@ pub enum RefTag {
 /// into the user-bit lane, so for every `Ref` constructed via `new`/`init`
 /// the masking is a no-op and hashing is bit-identical to the pre-shrink
 /// layout — preserving output sha-identity.
-#[repr(transparent)]
+///
+/// `packed(4)` lowers the alignment to 4 without changing the single-scalar
+/// representation, so `Ref` is still passed/returned in one register and
+/// `self.0` is still one `mov`. The align-4 part is what lets the inline
+/// identifier payloads — and therefore `expr::Data` and `Expr` — pack into 16
+/// bytes. All accessors take `self` by value (`Copy`), so the packed-field
+/// reference restriction never applies.
+#[repr(C, packed(4))]
 #[derive(Clone, Copy)]
 pub struct Ref(u64);
+
+const _: () = assert!(core::mem::size_of::<Ref>() == 8);
+const _: () = assert!(core::mem::align_of::<Ref>() == 4);
 
 /// We mask to 31 bits for `source_index`, 28 for `inner_index`.
 pub type RefInt = u32;
@@ -348,12 +358,18 @@ impl Ref {
     #[inline]
     pub const fn eql(self, other: Ref) -> bool {
         // User-bit lane is not part of identity — see type-level doc.
-        (self.0 & !Self::USER_BITS_MASK) == (other.0 & !Self::USER_BITS_MASK)
+        self.as_u64() == other.as_u64()
     }
     /// deprecated alias
     #[inline]
     pub const fn is_null(self) -> bool {
         self.is_empty()
+    }
+    /// `Ref::NONE` → `None`, otherwise `Some(self)`. For sites that previously
+    /// stored `Option<Ref>` and want option combinators on the sentinel form.
+    #[inline]
+    pub fn to_nullable(self) -> Option<Ref> {
+        if self.is_empty() { None } else { Some(self) }
     }
 }
 

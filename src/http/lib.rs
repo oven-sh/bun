@@ -47,7 +47,7 @@ pub mod websocket_http_client;
 #[path = "zlib.rs"]
 pub mod zlib;
 
-// ── crate-root re-exports (real types from un-gated modules) ──
+// ── crate-root re-exports ──
 pub use async_http::AsyncHTTP;
 pub use certificate_info::CertificateInfo;
 pub use decompressor::Decompressor;
@@ -1319,6 +1319,22 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> bun_core::Error {
 // These helpers centralize the unsafe deref of the `Option<NonNull<_>>`
 // fields so the state-machine bodies stay readable.
 impl<'a> HTTPClient<'a> {
+    #[inline]
+    /// Whether closing this socket gracefully would queue our FIN behind
+    /// request-body bytes that have not yet been handed to the kernel - the
+    /// case where the peer (which may have stopped reading the body) would
+    /// never observe the connection closing.
+    pub fn has_unsent_request_body(&self) -> bool {
+        if self.state.request_stage == RequestStage::Done {
+            return false;
+        }
+        if self.flags.is_streaming_request_body {
+            // More body chunks may still be produced by JS.
+            return true;
+        }
+        !self.request_body().is_empty()
+    }
+
     #[inline]
     fn request_body(&self) -> &[u8] {
         // `request_body` is a `RawSlice` into `original_request_body` (sibling
@@ -2628,9 +2644,15 @@ impl<'a> HTTPClient<'a> {
         }
 
         let to_send = &temporary_send_buffer[self.state.request_sent_len..];
-        if cfg!(debug_assertions) {
-            debug_assert!(!socket.is_shutdown());
-            debug_assert!(!socket.is_closed());
+        // The socket can be dead here: on_handshake → on_writable runs while
+        // draining buffered TLS bytes, and a write on the outer connection in
+        // proxy.on_writable (or a close fired from the SSL wrapper's flush)
+        // can mark the socket closed/shut down before we reach this point.
+        // Writing to it would return 0 and the request would hang at
+        // Headers forever. Surface ConnectionClosed so the caller's
+        // close_and_fail runs.
+        if socket.is_closed() || socket.is_shutdown() {
+            return Err(err!(ConnectionClosed));
         }
         let amount = write_to_socket::<IS_SSL>(socket, to_send)?;
         if IS_FIRST_CALL {
@@ -3016,9 +3038,15 @@ impl<'a> HTTPClient<'a> {
                     }
 
                     let to_send = &temporary_send_buffer[self.state.request_sent_len..];
-                    if cfg!(debug_assertions) {
-                        debug_assert!(!socket.is_shutdown());
-                        debug_assert!(!socket.is_closed());
+                    // Same reasoning as send_initial_request_payload: the
+                    // inner TLS handshake can complete from buffered bytes
+                    // after the outer proxy socket is already gone (or
+                    // proxy.on_writable above marked it dead). Writing into
+                    // the tunnel would succeed at the SSL layer and buffer
+                    // forever on a dead outer socket.
+                    if socket.is_closed() || socket.is_shutdown() {
+                        self.close_and_fail::<IS_SSL>(err!(ConnectionClosed), socket);
+                        return;
                     }
                     // just wait and retry when onWritable! if closed internally will call proxy.onClose
                     let Ok(amount) = ProxyTunnel::write(proxy, to_send) else {

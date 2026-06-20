@@ -46,9 +46,6 @@ pub static live_streams: AtomicI32 = AtomicI32::new(0);
 pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;
 
-// Un-gated: Stream/ClientSession/dispatch/encode now compile against the
-// real crate surface (bridge stubs below cover gated HTTPClient methods).
-// They no longer reference bun_str/bun_output/crate::state/crate::Signal.
 #[path = "h2_client/ClientSession.rs"]
 pub mod client_session;
 #[path = "h2_client/dispatch.rs"]

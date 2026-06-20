@@ -124,13 +124,7 @@ edition = "2024"
 #
 # `panic = "abort"` — the `std::panic` hook in `bun_crash_handler` aborts,
 # so `catch_unwind` is unreachable for Rust panics regardless, and no landing
-# pads means smaller `.pdata`/`.xdata`. Re-enabled to root-cause a latent
-# Windows-only `Strong<Impl>* corrupted (0x1)` in the fs/promises writeFile
-# async-iterable path (#53265+) that this codegen exposes: the corruption is
-# not an over-deref (the `raw_ref_count` underflow assert does not fire). The
-# Windows release link is temporarily `/OPT:NOICF` (flags.ts:778) so the PDB
-# symbolicates to the real owning struct instead of an ICF-folded body; once
-# root-caused, restore `/OPT:SAFEICF` there.
+# pads means smaller `.pdata`/`.xdata`.
 #
 # Cross-language LTO (`-C linker-plugin-lto`, so Rust bitcode joins the C++
 # `-flto=full` link) is wired in `scripts/build/rust.ts` behind `cfg.lto`; it

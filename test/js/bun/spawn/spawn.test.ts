@@ -1006,15 +1006,18 @@ describe("close handling", () => {
         });
         const fd = proc.stdio[3];
         expect(typeof fd).toBe("number");
-        await proc.exited;
-        // fd is UnownedFd: still open and readable here (process exit does
-        // not touch stdio_pipes), and finalize_streams on later GC will skip
-        // this slot. The caller owns the close.
-        const buf = Buffer.alloc(64);
-        const n = readSync(fd as number, buf);
-        expect(buf.subarray(0, n).toString()).toBe("hello-from-child");
-        // Caller is responsible for closing it.
-        closeSync(fd as number);
+        try {
+          await proc.exited;
+          // fd is UnownedFd: still open and readable here (process exit does
+          // not touch stdio_pipes), and finalize_streams on later GC will skip
+          // this slot. The caller owns the close.
+          const buf = Buffer.alloc(64);
+          const n = readSync(fd as number, buf);
+          expect(buf.subarray(0, n).toString()).toBe("hello-from-child");
+        } finally {
+          // Caller is responsible for closing it.
+          closeSync(fd as number);
+        }
         expect(() => fstatSync(fd as number)).toThrow(expect.objectContaining({ code: "EBADF" }));
       },
     );

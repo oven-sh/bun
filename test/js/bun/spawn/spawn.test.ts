@@ -14,7 +14,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -987,7 +987,6 @@ describe("close handling", () => {
     it.skipIf(isWindows)(
       "'socket-fd' at index >= 3 exposes a caller-owned fd the subprocess does not close",
       async () => {
-        const fs = await import("node:fs");
         await using proc = spawn({
           cmd: [bunExe(), "-e", "require('fs').writeSync(3, 'hello-from-child')"],
           env: bunEnv,
@@ -999,11 +998,11 @@ describe("close handling", () => {
         // fd is UnownedFd: the subprocess exited and its finalize_streams
         // skipped this slot, so the parent end is still open and readable.
         const buf = Buffer.alloc(64);
-        const n = fs.readSync(fd as number, buf);
+        const n = readSync(fd as number, buf);
         expect(buf.subarray(0, n).toString()).toBe("hello-from-child");
         // Caller is responsible for closing it.
-        fs.closeSync(fd as number);
-        expect(() => fs.fstatSync(fd as number)).toThrow();
+        closeSync(fd as number);
+        expect(() => fstatSync(fd as number)).toThrow();
       },
     );
   });

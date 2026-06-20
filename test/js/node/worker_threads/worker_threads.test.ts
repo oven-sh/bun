@@ -115,9 +115,7 @@ describe("isInternalThread", () => {
       const result = await new Promise<boolean>((resolve, reject) => {
         worker.once("message", value => resolve(value as boolean));
         worker.once("error", reject);
-        worker.once("exit", code => {
-          if (code !== 0) reject(new Error(`worker exited before posting a message (code ${code})`));
-        });
+        worker.once("exit", code => reject(new Error(`worker exited before posting a message (code ${code})`)));
       });
       expect(result).toBe(false);
     } finally {

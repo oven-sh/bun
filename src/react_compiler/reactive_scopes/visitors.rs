@@ -316,7 +316,7 @@ pub fn visit_reactive_function<V: ReactiveFunctionVisitor>(
 }
 
 // =============================================================================
-// Transformed / TransformedValue enums
+// Transformed enum
 // =============================================================================
 
 /// Result of transforming a ReactiveStatement.
@@ -326,17 +326,6 @@ pub enum Transformed<T> {
     Remove,
     Replace(T),
     ReplaceMany(Vec<T>),
-}
-
-/// Result of transforming a ReactiveValue.
-/// TS: `TransformedValue`
-#[allow(
-    dead_code,
-    reason = "Replace is the framework's mutation return; no transform pass returns it yet"
-)]
-pub enum TransformedValue {
-    Keep,
-    Replace(ReactiveValue),
 }
 
 // =============================================================================
@@ -401,20 +390,11 @@ pub trait ReactiveFunctionTransform {
     ) -> Result<(), CompilerError> {
         match value {
             ReactiveValue::OptionalExpression { value: inner, .. } => {
-                let next = self.transform_value(id, inner, state)?;
-                if let TransformedValue::Replace(new_value) = next {
-                    **inner = new_value;
-                }
+                self.transform_value(id, inner, state)?;
             }
             ReactiveValue::LogicalExpression { left, right, .. } => {
-                let next_left = self.transform_value(id, left, state)?;
-                if let TransformedValue::Replace(new_value) = next_left {
-                    **left = new_value;
-                }
-                let next_right = self.transform_value(id, right, state)?;
-                if let TransformedValue::Replace(new_value) = next_right {
-                    **right = new_value;
-                }
+                self.transform_value(id, left, state)?;
+                self.transform_value(id, right, state)?;
             }
             ReactiveValue::ConditionalExpression {
                 test,
@@ -422,18 +402,9 @@ pub trait ReactiveFunctionTransform {
                 alternate,
                 ..
             } => {
-                let next_test = self.transform_value(id, test, state)?;
-                if let TransformedValue::Replace(new_value) = next_test {
-                    **test = new_value;
-                }
-                let next_cons = self.transform_value(id, consequent, state)?;
-                if let TransformedValue::Replace(new_value) = next_cons {
-                    **consequent = new_value;
-                }
-                let next_alt = self.transform_value(id, alternate, state)?;
-                if let TransformedValue::Replace(new_value) = next_alt {
-                    **alternate = new_value;
-                }
+                self.transform_value(id, test, state)?;
+                self.transform_value(id, consequent, state)?;
+                self.transform_value(id, alternate, state)?;
             }
             ReactiveValue::SequenceExpression {
                 instructions,
@@ -445,10 +416,7 @@ pub trait ReactiveFunctionTransform {
                 for instr in instructions.iter_mut() {
                     self.visit_instruction(instr, state)?;
                 }
-                let next = self.transform_value(seq_id, inner, state)?;
-                if let TransformedValue::Replace(new_value) = next {
-                    **inner = new_value;
-                }
+                self.transform_value(seq_id, inner, state)?;
             }
             ReactiveValue::Instruction(instr_value) => {
                 // Collect operands before visiting to avoid borrow conflict
@@ -476,9 +444,8 @@ pub trait ReactiveFunctionTransform {
         id: EvaluationOrder,
         value: &mut ReactiveValue,
         state: &mut Self::State,
-    ) -> Result<TransformedValue, CompilerError> {
-        self.visit_value(id, value, state)?;
-        Ok(TransformedValue::Keep)
+    ) -> Result<(), CompilerError> {
+        self.visit_value(id, value, state)
     }
 
     fn traverse_instruction(
@@ -497,10 +464,7 @@ pub trait ReactiveFunctionTransform {
                 self.visit_lvalue(instruction.id, &place, state)?;
             }
         }
-        let next_value = self.transform_value(instruction.id, &mut instruction.value, state)?;
-        if let TransformedValue::Replace(new_value) = next_value {
-            instruction.value = new_value;
-        }
+        self.transform_value(instruction.id, &mut instruction.value, state)?;
         Ok(())
     }
 
@@ -537,19 +501,10 @@ pub trait ReactiveFunctionTransform {
                 ..
             } => {
                 let id = *id;
-                let next_init = self.transform_value(id, init, state)?;
-                if let TransformedValue::Replace(new_value) = next_init {
-                    *init = new_value;
-                }
-                let next_test = self.transform_value(id, test, state)?;
-                if let TransformedValue::Replace(new_value) = next_test {
-                    *test = new_value;
-                }
+                self.transform_value(id, init, state)?;
+                self.transform_value(id, test, state)?;
                 if let Some(update) = update {
-                    let next_update = self.transform_value(id, update, state)?;
-                    if let TransformedValue::Replace(new_value) = next_update {
-                        *update = new_value;
-                    }
+                    self.transform_value(id, update, state)?;
                 }
                 self.visit_block(loop_block, state)?;
             }
@@ -561,14 +516,8 @@ pub trait ReactiveFunctionTransform {
                 ..
             } => {
                 let id = *id;
-                let next_init = self.transform_value(id, init, state)?;
-                if let TransformedValue::Replace(new_value) = next_init {
-                    *init = new_value;
-                }
-                let next_test = self.transform_value(id, test, state)?;
-                if let TransformedValue::Replace(new_value) = next_test {
-                    *test = new_value;
-                }
+                self.transform_value(id, init, state)?;
+                self.transform_value(id, test, state)?;
                 self.visit_block(loop_block, state)?;
             }
             ReactiveTerminal::ForIn {
@@ -578,10 +527,7 @@ pub trait ReactiveFunctionTransform {
                 ..
             } => {
                 let id = *id;
-                let next_init = self.transform_value(id, init, state)?;
-                if let TransformedValue::Replace(new_value) = next_init {
-                    *init = new_value;
-                }
+                self.transform_value(id, init, state)?;
                 self.visit_block(loop_block, state)?;
             }
             ReactiveTerminal::DoWhile {
@@ -592,10 +538,7 @@ pub trait ReactiveFunctionTransform {
             } => {
                 let id = *id;
                 self.visit_block(loop_block, state)?;
-                let next_test = self.transform_value(id, test, state)?;
-                if let TransformedValue::Replace(new_value) = next_test {
-                    *test = new_value;
-                }
+                self.transform_value(id, test, state)?;
             }
             ReactiveTerminal::While {
                 test,
@@ -604,10 +547,7 @@ pub trait ReactiveFunctionTransform {
                 ..
             } => {
                 let id = *id;
-                let next_test = self.transform_value(id, test, state)?;
-                if let TransformedValue::Replace(new_value) = next_test {
-                    *test = new_value;
-                }
+                self.transform_value(id, test, state)?;
                 self.visit_block(loop_block, state)?;
             }
             ReactiveTerminal::If {

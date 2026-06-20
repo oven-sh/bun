@@ -130,7 +130,6 @@ pub struct UnicodeRange {
     pub end: u32,
 }
 
-
 impl UnicodeRange {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // Attempt to optimize the range to use question mark syntax.
@@ -344,7 +343,6 @@ pub enum FontStyle {
     Oblique(Size2D<Angle>),
 }
 
-
 impl FontStyle {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<FontStyle> {
         use crate::css_properties::font::FontStyle as FontStyleProperty;
@@ -416,7 +414,6 @@ pub enum FontFormat {
     // Arena-owned slice from parser input; TODO(refactor): thread `'i`.
     String(&'static [u8]),
 }
-
 
 impl FontFormat {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<FontFormat> {
@@ -572,7 +569,6 @@ pub struct UrlSource {
     pub tech: ArrayList<FontTechnology>,
 }
 
-
 impl UrlSource {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<UrlSource> {
         let url = Url::parse(input)?;
@@ -675,7 +671,6 @@ impl FontFaceRule {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct FontFaceDeclarationParser;
-
 
 const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};

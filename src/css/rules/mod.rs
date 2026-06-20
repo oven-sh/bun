@@ -588,17 +588,15 @@ impl<R> CssRuleList<R> {
                         doc.rules.minify(context, parent_is_unused)?;
                     }
                     CssRule::Style(_sty) => {
-                        {
-                            minify_style_arm(
-                                rule,
-                                &mut rules,
-                                &mut style_rules,
-                                &mut merge_state,
-                                context,
-                                parent_is_unused,
-                            )?;
-                            break 'arm;
-                        }
+                        minify_style_arm(
+                            rule,
+                            &mut rules,
+                            &mut style_rules,
+                            &mut merge_state,
+                            context,
+                            parent_is_unused,
+                        )?;
+                        break 'arm;
                     }
                     CssRule::CounterStyle(_) => {}
                     CssRule::Scope(scpe) => {

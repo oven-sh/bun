@@ -1833,7 +1833,6 @@ pub mod parse_worker {
         }
     }
 
-
     /// # Safety
     /// `args` and `result_ptr` must point at the live `OnBeforeParseArguments`
     /// / `OnBeforeParseResultWrapper.result` set up by `OnBeforeParsePlugin::run`

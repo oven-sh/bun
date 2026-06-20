@@ -17,6 +17,7 @@ use bun_wyhash::Wyhash;
 use crate::defines::{Define, DefineData};
 use crate::lexer as js_lexer;
 use crate::parse::parse_entry::Options as ParserOptions;
+use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
@@ -36,7 +37,6 @@ use bun_ast::{
     B, Binding, BindingNodeIndex, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Scope,
     Stmt, StmtNodeList, Symbol,
 };
-use crate::renamer;
 
 // In this AST crate, lists are arena-backed.
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
@@ -7574,8 +7574,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr::init_identifier(r#ref, loc)
     }
 
-
-
     // One statement could potentially expand to several statements
     pub fn stmts_to_single_stmt(&mut self, loc: bun_ast::Loc, stmts: &'a mut [Stmt]) -> Stmt {
         if stmts.is_empty() {
@@ -7654,7 +7652,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         res
     }
-
 
     pub fn extract_decls_for_binding(
         binding: Binding,

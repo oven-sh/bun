@@ -1014,7 +1014,7 @@ describe("close handling", () => {
         expect(buf.subarray(0, n).toString()).toBe("hello-from-child");
         // Caller is responsible for closing it.
         closeSync(fd as number);
-        expect(() => fstatSync(fd as number)).toThrow();
+        expect(() => fstatSync(fd as number)).toThrow(expect.objectContaining({ code: "EBADF" }));
       },
     );
   });

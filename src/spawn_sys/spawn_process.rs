@@ -938,15 +938,14 @@ pub unsafe fn spawn_process_posix(
                 if fds[1] != fileno {
                     actions.close(fds[1])?;
                 }
-                if matches!(ipc, PosixStdio::SocketFd) {
-                    // Caller owns the parent end and closes it; Subprocess
-                    // never does (finalize_streams skips UnownedFd). Still
-                    // close it on spawn failure since the caller never gets
-                    // the fd in that case.
-                    extra_fds.push(ExtraPipe::UnownedFd(fds[0]));
-                } else {
-                    extra_fds.push(ExtraPipe::OwnedFd(fds[0]));
-                }
+                // SocketFd: push as OwnedFd here so every error path between
+                // spawn and returning the JS Subprocess (to_close_on_error
+                // above, and the Writable::init error arm's finalize_streams
+                // in js_bun_spawn_bindings.rs) still closes it. The caller's
+                // "I own this fd" contract only begins once they can read
+                // .stdio[i]; the OwnedFd -> UnownedFd downgrade happens in
+                // js_bun_spawn_bindings.rs after all fallible init succeeds.
+                extra_fds.push(ExtraPipe::OwnedFd(fds[0]));
             }
             PosixStdio::Pipe(fd) => {
                 actions.dup2(*fd, fileno)?;

@@ -3990,15 +3990,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt, bun_core::Error> {
         let is_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
+        let macro_remap = if Self::ALLOW_MACROS {
+            self.options
+                .macro_context
+                .as_deref()
+                .and_then(|ctx| ctx.get_remap(path.text))
+        } else {
+            None
+        };
         let mut stmt = stmt_;
-        // The macro fast path below runs before `stmt.phase` is written to
-        // the import record, so `import source x from "./y" with { type:
-        // "macro" }` (or the `macro:` prefix) would register the binding as
-        // a macro ref and silently drop the source phase. No macro can
-        // produce a module source, and defer has nothing to defer for a
-        // compile-time binding, so reject both combinations with a clear
-        // error instead of a confusing macro-expansion failure.
-        if is_macro && stmt.phase != bun_ast::ImportPhase::Evaluation {
+        // The macro fast paths below (explicit `with { type: "macro" }` /
+        // `macro:` prefix, or a bunfig `[macros]` remap for this specifier)
+        // register the binding as a compile-time macro ref and drop the
+        // statement before `stmt.phase` is written to the import record. No
+        // macro can produce a module source, and defer has nothing to defer
+        // for a compile-time binding, so reject the combination with a clear
+        // error instead of silently executing the macro.
+        if (is_macro || macro_remap.is_some()) && stmt.phase != bun_ast::ImportPhase::Evaluation {
             let phase_name: &[u8] = match stmt.phase {
                 bun_ast::ImportPhase::Source => b"\"import source\"",
                 bun_ast::ImportPhase::Defer => b"\"import defer\"",
@@ -4110,15 +4118,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Return empty statement - the import is completely removed
             return Ok(self.s(S::Empty {}, loc));
         }
-
-        let macro_remap = if Self::ALLOW_MACROS {
-            self.options
-                .macro_context
-                .as_deref()
-                .and_then(|ctx| ctx.get_remap(path.text))
-        } else {
-            None
-        };
 
         // `import defer` grammatically admits only `* as ns` (no default
         // binding, no named clause) and `import source` only a default

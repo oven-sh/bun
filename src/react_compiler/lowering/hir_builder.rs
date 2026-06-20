@@ -472,9 +472,9 @@ impl<'h> HirBuilder<'h> {
         &self.used_refs
     }
 
-    pub fn merge_used_refs(&mut self, child_used_refs: IndexSet<Ref>) {
-        for ref_ in child_used_refs.iter() {
-            self.used_refs.insert(*ref_);
+    pub fn merge_used_refs(&mut self, child_used_refs: &IndexSet<Ref>) {
+        for &ref_ in child_used_refs.iter() {
+            self.used_refs.insert(ref_);
         }
     }
 

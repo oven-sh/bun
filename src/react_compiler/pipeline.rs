@@ -178,7 +178,7 @@ pub fn compile_fn(
     // an unused `react/compiler-runtime` import.
     let memo_seed = (context.output_mode == OutputMode::Client).then(|| {
         let memo_cache = context.add_memo_cache_import(host);
-        ("useMemoCache".to_string(), memo_cache.name_ref)
+        memo_cache.name_ref
     });
     let mut cg = Codegen::new(host, arena, memo_seed);
     let codegen_result = timed!(
@@ -327,7 +327,7 @@ pub fn compile_outlined_fn(
 
     let memo_seed = (context.output_mode == OutputMode::Client).then(|| {
         let memo_cache = context.add_memo_cache_import(host);
-        ("useMemoCache".to_string(), memo_cache.name_ref)
+        memo_cache.name_ref
     });
     let mut cg = Codegen::new(host, arena, memo_seed);
     let codegen_result =

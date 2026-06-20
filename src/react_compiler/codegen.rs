@@ -196,12 +196,12 @@ pub fn codegen_function(
 
     // enableEmitHookGuards: wrap entire function body in try/finally with
     // $dispatcherGuard(PushHookGuard=0) / $dispatcherGuard(PopHookGuard=1).
-    if cx.env.hook_guard_name.is_some()
-        && cx.env.output_mode == crate::hir::environment::OutputMode::Client
-    {
-        let guard_ref = cx.cg.ref_for_name(cx.env.hook_guard_name.unwrap());
-        let body_stmts = std::mem::take(&mut compiled.body);
-        compiled.body = vec![create_function_body_hook_guard(guard_ref, body_stmts, 0, 1)];
+    if let Some(hook_guard_name) = cx.env.hook_guard_name {
+        if cx.env.output_mode == crate::hir::environment::OutputMode::Client {
+            let guard_ref = cx.cg.ref_for_name(hook_guard_name);
+            let body_stmts = std::mem::take(&mut compiled.body);
+            compiled.body = vec![create_function_body_hook_guard(guard_ref, body_stmts, 0, 1)];
+        }
     }
 
     let cache_count = compiled.memo_slots_used;
@@ -3360,12 +3360,13 @@ fn ident_sort_key<'a>(id: IdentifierId, env: &'a Environment, buf: &'a mut [u8; 
 }
 
 fn maybe_wrap_hook_call(cx: &mut Context, call_expr: Expr, callee_id: IdentifierId) -> Expr {
-    if cx.env.hook_guard_name.is_some()
-        && cx.env.output_mode == crate::hir::environment::OutputMode::Client
-        && is_hook_identifier(cx, callee_id)
-    {
-        let guard_ref = cx.cg.ref_for_name(cx.env.hook_guard_name.unwrap());
-        return wrap_hook_call_with_guard(guard_ref, call_expr, 2, 3);
+    if let Some(hook_guard_name) = cx.env.hook_guard_name {
+        if cx.env.output_mode == crate::hir::environment::OutputMode::Client
+            && is_hook_identifier(cx, callee_id)
+        {
+            let guard_ref = cx.cg.ref_for_name(hook_guard_name);
+            return wrap_hook_call_with_guard(guard_ref, call_expr, 2, 3);
+        }
     }
     call_expr
 }

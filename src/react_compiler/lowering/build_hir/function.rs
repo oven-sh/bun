@@ -92,7 +92,7 @@ pub(super) fn lower_function(
         false, // nested function
     )?;
 
-    builder.merge_used_refs(child_used_refs);
+    builder.merge_used_refs(&child_used_refs);
     builder.merge_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
@@ -151,7 +151,7 @@ pub(super) fn lower_function_declaration(
         false, // nested function
     )?;
 
-    builder.merge_used_refs(child_used_refs);
+    builder.merge_used_refs(&child_used_refs);
     builder.merge_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
@@ -278,7 +278,7 @@ pub(super) fn lower_function_for_object_method(
         false, // nested function
     )?;
 
-    builder.merge_used_refs(child_used_refs);
+    builder.merge_used_refs(&child_used_refs);
     builder.merge_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);

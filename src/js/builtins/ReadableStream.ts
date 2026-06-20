@@ -142,15 +142,14 @@ export function from(this, iterable) {
     const result = nextMethod.$call(iterator);
     const iterResult = sync ? result : await result;
     if (!$isObject(iterResult)) throw new TypeError("ReadableStream.from: iterator.next() returned a non-object value");
-    const done = iterResult.done;
-    // CreateAsyncFromSyncIterator awaits the value of every result, even a `done`
-    // one, so a sync iterator handing back a rejected promise surfaces the
-    // rejection instead of leaving it as an unhandled rejection.
-    const value = sync ? await iterResult.value : iterResult.value;
-    if (done) {
+    if (iterResult.done) {
+      // A native async iterator's value is not read on the done path (per
+      // ReadableStreamFromIterable), but CreateAsyncFromSyncIterator always
+      // awaits a sync iterator's value, so a rejected promise still surfaces.
+      if (sync) await iterResult.value;
       controller.close();
     } else {
-      controller.enqueue(value);
+      controller.enqueue(sync ? await iterResult.value : iterResult.value);
     }
   }
 

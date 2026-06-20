@@ -653,6 +653,33 @@ describe("ReadableStream.from", () => {
     expect(caught).toBe(err);
   });
 
+  // A native async iterator's done result must close the stream without reading
+  // its value, unlike the sync (CreateAsyncFromSyncIterator) adaptation above.
+  it("does not read the value of an async iterator's done result", async () => {
+    let reads = 0;
+    let i = 0;
+    const iterable = {
+      [Symbol.asyncIterator]() {
+        return {
+          next() {
+            if (i++ === 0) return Promise.resolve({ value: "a", done: false });
+            return Promise.resolve({
+              done: true,
+              get value() {
+                reads++;
+                return undefined;
+              },
+            });
+          },
+        };
+      },
+    };
+    const out = [];
+    for await (const chunk of ReadableStream.from(iterable)) out.push(chunk);
+    expect(out).toEqual(["a"]);
+    expect(reads).toBe(0);
+  });
+
   it.each([123, true, {}, Symbol("x"), 10n])("throws ERR_ARG_NOT_ITERABLE for %p", value => {
     let err;
     try {

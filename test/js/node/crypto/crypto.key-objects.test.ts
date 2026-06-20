@@ -14,6 +14,7 @@ import {
   generateKeyPair,
   generateKeyPairSync,
   generateKeySync,
+  getCurves,
   KeyObject,
   privateDecrypt,
   privateEncrypt,
@@ -850,6 +851,24 @@ describe("crypto.KeyObjects", () => {
       expect(privateKey.export({ type: "pkcs8", format: "pem" })).toBe(privatePem);
       expect(publicKey.export({ type: "spki", format: "pem" })).toBe(publicPem);
       expect((publicKey.export({ format: "jwk" }) as any).crv).toBe("secp256k1");
+    });
+
+    it("SEC1 private key exports and re-imports", () => {
+      // SEC1 import uses BoringSSL's curve OID lookup table, a different path
+      // from SPKI/PKCS8 (EVP). This is the default output of
+      // `openssl ecparam -genkey -name secp256k1`.
+      const { privateKey } = generateKeyPairSync("ec", { namedCurve: "secp256k1" });
+      const sec1 = privateKey.export({ type: "sec1", format: "pem" }) as string;
+      expect(sec1).toContain("-----BEGIN EC PRIVATE KEY-----");
+      const imported = createPrivateKey(sec1);
+      expect(imported.asymmetricKeyDetails?.namedCurve).toBe("secp256k1");
+      expect(imported.export({ type: "sec1", format: "pem" })).toBe(sec1);
+    });
+
+    it("is not listed by getCurves() yet", () => {
+      // Registered for keygen/import/export/ECDH, but intentionally not
+      // advertised until the remaining ECDH parity gaps are addressed.
+      expect(getCurves()).not.toContain("secp256k1");
     });
 
     it("derives a shared secret over ECDH", () => {

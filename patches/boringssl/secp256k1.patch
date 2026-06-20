@@ -1,3 +1,13 @@
+--- a/crypto/ec/ec_asn1.cc
++++ b/crypto/ec/ec_asn1.cc
+@@ -47,6 +47,7 @@ static auto get_all_groups() {
+       EC_group_p256(),
+       EC_group_p384(),
+       EC_group_p521(),
++      EC_group_secp256k1(),
+   };
+ }
+ 
 --- a/crypto/evp/evp_asn1.cc
 +++ b/crypto/evp/evp_asn1.cc
 @@ -415,7 +415,8 @@ int i2d_DSA_PUBKEY(const DSA *dsa, uint8_t **outp) {

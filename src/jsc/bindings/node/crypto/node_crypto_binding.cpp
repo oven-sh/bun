@@ -70,14 +70,21 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject
     Vector<EC_builtin_curve> curves(numCurves);
     EC_get_builtin_curves(curves.begin(), numCurves);
 
-    JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, numCurves);
+    JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
     RETURN_IF_EXCEPTION(scope, {});
 
+    unsigned outIndex = 0;
     for (size_t i = 0; i < numCurves; i++) {
+        // secp256k1 is registered so key generation, import/export, and ECDH
+        // work, but it is intentionally omitted from getCurves() until the
+        // remaining ECDH parity gaps (hybrid point format, error messages) land.
+        if (curves[i].nid == NID_secp256k1) {
+            continue;
+        }
         const char* curveName = OBJ_nid2sn(curves[i].nid);
         auto curveWTFStr = WTF::String::fromUTF8(curveName);
         JSString* curveStr = JSC::jsString(vm, curveWTFStr);
-        result->putDirectIndex(lexicalGlobalObject, i, curveStr);
+        result->putDirectIndex(lexicalGlobalObject, outIndex++, curveStr);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

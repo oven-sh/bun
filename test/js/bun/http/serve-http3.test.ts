@@ -1077,3 +1077,38 @@ describe("Bun.serve HTTP/3 production", () => {
   // (HttpContext.h / Http3Context.h call writeContinue before routing); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
 });
+
+test("H3 UDP bind failure after TCP listen succeeds throws cleanly", async () => {
+  const script = `
+    const dgram = require("node:dgram");
+    const udp = dgram.createSocket("udp4");
+    udp.bind(0, "127.0.0.1", () => {
+      const port = udp.address().port;
+      try {
+        Bun.serve({
+          port,
+          hostname: "127.0.0.1",
+          tls: ${JSON.stringify(tls)},
+          http3: true,
+          fetch() { return new Response("ok"); },
+        });
+        console.log("unexpected success");
+      } catch (e) {
+        console.log("threw: " + e.message);
+      }
+      udp.close();
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: expect.stringContaining("threw: Failed to listen on UDP port"),
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+});

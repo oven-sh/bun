@@ -394,7 +394,7 @@ impl UpgradeCommand {
                     let Some(content_type_) = content_type.expr.as_utf8_string_literal() else {
                         continue;
                     };
-                    if cfg!(debug_assertions) {
+                    if bun_core::env::IS_DEBUG {
                         bun_core::prettyln!("Content-type: {}", bstr::BStr::new(content_type_));
                         Output::flush();
                     }
@@ -406,7 +406,7 @@ impl UpgradeCommand {
 
                 if let Some(name_) = asset.as_property(b"name") {
                     if let Some(name) = name_.expr.as_utf8_string_literal() {
-                        if cfg!(debug_assertions) {
+                        if bun_core::env::IS_DEBUG {
                             let filename = if !use_profile {
                                 Version::ZIP_FILENAME
                             } else {
@@ -434,7 +434,7 @@ impl UpgradeCommand {
                             },
                             None => break 'get_asset,
                         };
-                        if cfg!(debug_assertions) {
+                        if bun_core::env::IS_DEBUG {
                             bun_core::prettyln!("Found Zip {}", bstr::BStr::new(&*version.zip_url));
                             Output::flush();
                         }

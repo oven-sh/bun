@@ -182,7 +182,7 @@ pub fn argv() -> impl Iterator<Item = &'static [u8]> {
 /// `<tag>`-rewritten. For the compile-time-literal fast path use the macro form.
 #[inline]
 pub fn debug_warn(payload: impl PrettyFmtInput) {
-    if cfg!(debug_assertions) {
+    if crate::env::IS_DEBUG {
         let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
         pretty_errorln!("<yellow>debug warn<r><d>:<r> {}", buf);
         flush();
@@ -208,7 +208,7 @@ pub fn note(payload: impl PrettyFmtInput) {
 /// pre-formatted payload for call sites that build the message dynamically.
 #[inline]
 pub fn debug(payload: impl PrettyFmtInput) {
-    if cfg!(debug_assertions) {
+    if crate::env::IS_DEBUG {
         let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
         pretty_errorln!("<d>DEBUG:<r> {}", buf);
         flush();
@@ -400,7 +400,7 @@ impl Source {
     // into `out.stdout_buffer`/`out.stderr_buffer`. Returning `Self` by value
     // would move the struct after those pointers were captured and dangle them.
     pub fn init(out: &mut Source, stream: StreamType, err_stream: StreamType) {
-        if cfg!(debug_assertions) && bun_alloc::USE_MIMALLOC && !SOURCE_SET.get() {
+        if crate::env::IS_DEBUG && bun_alloc::USE_MIMALLOC && !SOURCE_SET.get() {
             bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::show_errors, 1);
         }
         SOURCE_SET.set(true);
@@ -762,6 +762,10 @@ pub mod stdio {
 
         Source::set_init(stdout, stderr);
 
+        // `ENABLE_LOGS` gates every reader, but initialize under
+        // `debug_assertions` too so `SCOPED_FILE_WRITER` is never observed
+        // zeroed if a `#[cfg(debug_assertions)]` path reaches it in
+        // release-asan/release-assertions. Cheap (one static write).
         if cfg!(debug_assertions) || Environment::ENABLE_LOGS {
             init_scoped_debug_writer_at_startup();
         }
@@ -1428,7 +1432,7 @@ macro_rules! println {
 #[macro_export]
 macro_rules! debug {
     ($fmt:expr $(, $arg:expr)* $(,)?) => {
-        if cfg!(debug_assertions) {
+        if $crate::env::IS_DEBUG {
             $crate::pretty_errorln!(concat!("<d>DEBUG:<r> ", $fmt) $(, $arg)*);
             $crate::output::flush();
         }
@@ -1639,10 +1643,10 @@ macro_rules! declare_scope {
 #[macro_export]
 macro_rules! scoped_log {
     ($scope:path, $fmt:expr $(, $arg:expr)* $(,)?) => {
-        // Gate on `debug_assertions` (== `Environment::ENABLE_LOGS`, env.rs:89) so
-        // release builds dead-strip the body. Do NOT gate on a Cargo feature —
-        // there is no `debug_logs` feature and §Forbidden bans silent no-ops.
-        if cfg!(debug_assertions) && $scope.is_visible() {
+        // Gate on `env::IS_DEBUG` (== `Environment::ENABLE_LOGS`) so release
+        // builds dead-strip the body. Do NOT gate on a Cargo feature — there
+        // is no `debug_logs` feature and §Forbidden bans silent no-ops.
+        if $crate::env::IS_DEBUG && $scope.is_visible() {
             const __NL: &str = $crate::output::_needs_nl($crate::pretty_fmt!($fmt, false));
             // Branch on ANSI *before* `format_args!` so each `$arg` evaluates
             // exactly once.
@@ -2487,7 +2491,7 @@ macro_rules! warn {
 #[macro_export]
 macro_rules! debug_warn {
     ($fmt:expr $(, $arg:expr)* $(,)?) => {
-        if cfg!(debug_assertions) {
+        if $crate::env::IS_DEBUG {
             $crate::pretty_errorln!(concat!("<yellow>debug warn<r><d>:<r> ", $fmt) $(, $arg)*);
             $crate::output::flush();
         }
@@ -2683,10 +2687,11 @@ pub(crate) fn init_scoped_debug_writer_at_startup() {
 }
 
 fn scoped_writer() -> QuietWriter {
-    // Assert at runtime rather than compile time (a `compile_error!` here
-    // would break every release build); all callers are already gated on
-    // `Environment::ENABLE_LOGS`.
-    #[cfg(debug_assertions)]
+    // All callers are already gated on `Environment::ENABLE_LOGS`; this is a
+    // Debug-build self-check (release-asan/release-assertions enable
+    // `debug_assertions` with `ENABLE_LOGS == false`, so keying on
+    // `debug_assertions` would turn it into a guaranteed abort there).
+    #[cfg(bun_debug)]
     if !Environment::ENABLE_LOGS {
         unreachable!("scopedWriter() should only be called in debug mode");
     }

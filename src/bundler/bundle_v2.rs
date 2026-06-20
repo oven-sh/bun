@@ -1948,7 +1948,7 @@ pub mod bv2_impl {
                 }
             }
 
-            if cfg!(debug_assertions) && ReachableFiles.is_visible() {
+            if bun_core::env::IS_DEBUG && ReachableFiles.is_visible() {
                 bun_core::scoped_log!(
                     ReachableFiles,
                     "Reachable count: {} / {}",

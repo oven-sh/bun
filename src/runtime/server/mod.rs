@@ -2773,13 +2773,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             );
                             // Re-derive: `h3_listener` was just written by `on_h3_listen`.
                             if this_ref.h3_listener.is_none() {
-                                if attempt < max_attempts {
-                                    // UDP:N is taken — release TCP:N so the next
-                                    // attempt gets a fresh kernel-chosen port.
-                                    // Only retry if TCP actually succeeded.
-                                    // SAFETY: `this` is the live boxed server; no other borrow is live across this take.
-                                    if let Some(ls) = unsafe { (*this).listener.take() } {
-                                        bun_opaque::opaque_deref_mut(ls).close();
+                                // UDP:N is taken — release TCP:N so it isn't still
+                                // linked into the app's socket group when we deinit
+                                // on the throw path below. If we have attempts left,
+                                // retry so the kernel picks a fresh N.
+                                // SAFETY: `this` is the live boxed server; no other borrow is live across this take.
+                                if let Some(ls) = unsafe { (*this).listener.take() } {
+                                    bun_opaque::opaque_deref_mut(ls).close();
+                                    if attempt < max_attempts {
                                         continue;
                                     }
                                 }

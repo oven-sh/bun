@@ -1077,3 +1077,53 @@ describe("Bun.serve HTTP/3 production", () => {
   // (HttpContext.h / Http3Context.h call writeContinue before routing); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
 });
+
+test("Bun.serve closes the TCP listener when the HTTP/3 UDP bind fails", async () => {
+  // TCP listen succeeds, then the QUIC bind on the same port fails; the
+  // error path must close the TCP listener before tearing down the app or
+  // the listen socket stays registered against a freed socket group.
+  const script = `
+    const dgram = require("dgram");
+    const net = require("net");
+    const sock = dgram.createSocket("udp4");
+    await new Promise((resolve, reject) => {
+      sock.on("error", reject);
+      sock.bind(0, "127.0.0.1", resolve);
+    });
+    const port = sock.address().port;
+    let err;
+    try {
+      Bun.serve({
+        port,
+        hostname: "127.0.0.1",
+        tls: ${JSON.stringify(tls)},
+        http3: true,
+        fetch: () => new Response("ok"),
+      });
+    } catch (e) {
+      err = e;
+    }
+    sock.close();
+    if (!err) throw new Error("expected Bun.serve to throw");
+    if (!String(err.message).includes("HTTP/3")) throw new Error("wrong error: " + err.message);
+    const status = await new Promise(resolve => {
+      const c = net.connect(port, "127.0.0.1");
+      c.on("connect", () => { c.destroy(); resolve("LEAKED"); });
+      c.on("error", () => resolve("CLOSED"));
+    });
+    console.log(status);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "CLOSED",
+    stderr: expect.any(String),
+    exitCode: 0,
+    signalCode: null,
+  });
+});

@@ -1125,9 +1125,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !matches!(prop.value.data, bun_ast::binding::Data::BIdentifier(_)) {
                 return None;
             }
-            let Some(mut key) = prop.key.data.as_e_string() else {
-                return None;
-            };
+            let mut key = prop.key.data.as_e_string()?;
             // Duplicate property keys (`{x, x: y}` — valid JS, distinct
             // bindings) would overwrite earlier entries in the alias-keyed
             // map below, leaving the first binding undeclared.

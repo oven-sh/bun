@@ -56,6 +56,18 @@ bun unlink
 bun unlink v1.3.3 (7416672e)
 ```
 
+To remove a previously-linked package from a project, pass its name to `bun unlink`. Bun deletes the linked package from the project's `node_modules` and re-runs install.
+
+```bash terminal icon="terminal"
+cd /path/to/my-app
+bun unlink cool-pkg
+```
+
+What happens to `package.json` depends on how the dependency is specified:
+
+- If the dependency uses the `link:` protocol (added with `bun link --save cool-pkg`), the entry is removed from `package.json`.
+- If the dependency is pinned to a registry version (for example `"cool-pkg": "^1.2.3"`), the entry is left untouched and the published version is reinstalled from the registry. This is useful when you temporarily linked a local copy of a published package and want to switch back to the registry version.
+
 ---
 
 <Link />

@@ -84,6 +84,11 @@ public:
     // Called by the pipe on this port's context thread with one dequeued message.
     void dispatchOneMessage(ScriptExecutionContext&, MessageWithMessagePorts&&);
 
+    // Called by the pipe drain on this port's context thread once the inbox is
+    // empty and the entangled peer has closed: fires 'close' (if a listener is
+    // registered) and tears the port down.
+    void dispatchCloseEventFromPeer();
+
     // Only here for JSMessagePortCustom's GC optimization; always null.
     MessagePort* locallyEntangledPort() { return nullptr; }
 
@@ -117,6 +122,15 @@ private:
 
     void contextDestroyed() final;
 
+    // Fires the 'close' event on this port (once). Safe to call after the port
+    // is detached: it bypasses the detached guard in dispatchEvent().
+    void dispatchCloseEvent();
+    // Task body for the closing port's own asynchronous 'close' event.
+    void dispatchCloseEventSelf();
+    // Schedules dispatchCloseEventSelf() on this port's context. Returns true
+    // if a task was posted (in which case listener teardown is deferred to it).
+    bool scheduleCloseEvent();
+
     bool isEntangled() const { return !m_isDetached; }
 
     // Held for the port's entire lifetime — never nulled — so that the GC
@@ -128,6 +142,8 @@ private:
     bool m_started { false };
     bool m_isDetached { false };
     bool m_hasMessageEventListener { false };
+    bool m_hasCloseEventListener { false };
+    bool m_closeEventDispatched { false };
     bool m_hasRef { false };
 
     uint32_t m_messageEventCount { 0 };

@@ -28,6 +28,7 @@
 #include "MessagePort.h"
 
 #include "BunClientData.h"
+#include "Event.h"
 #include "EventNames.h"
 #include "MessageEvent.h"
 #include "MessagePortPipe.h"
@@ -110,9 +111,15 @@ void MessagePort::close()
 
     // m_pipe is held for the port's whole lifetime (the GC thread reads
     // it in hasPendingActivity()); marking our side Closed is sufficient.
+    // close() also wakes the entangled peer so it can fire its own 'close'
+    // event after draining any queued messages.
     m_pipe->close(m_side);
 
-    removeAllEventListeners();
+    // Fire our own 'close' event asynchronously (Node + HTML semantics), then
+    // tear down listeners. If there is no close listener or JS can't run
+    // (context teardown), tear down synchronously as before. scheduleCloseEvent()
+    // takes its own strong ref, so it is safe to run before releasing m_hasRef.
+    bool scheduledClose = scheduleCloseEvent();
 
     // Release the self-reference taken by jsRef() (set when .onmessage is
     // assigned or .ref() is called from JS). The JS .close() binding calls
@@ -121,6 +128,82 @@ void MessagePort::close()
     // most importantly from contextDestroyed() during Worker teardown.
     // Without this, the self-ref pins the MessagePort past the JS wrapper
     // sweep and it leaks forever.
+    if (m_hasRef) {
+        m_hasRef = false;
+        if (auto* context = scriptExecutionContext())
+            context->unrefEventLoop();
+        deref();
+    }
+
+    if (!scheduledClose)
+        removeAllEventListeners();
+}
+
+void MessagePort::dispatchCloseEvent()
+{
+    if (m_closeEventDispatched)
+        return;
+    m_closeEventDispatched = true;
+
+    auto* context = scriptExecutionContext();
+    if (!context || !context->globalObject())
+        return;
+
+    auto* globalObject = defaultGlobalObject(context->globalObject());
+    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
+        return;
+
+    // Bypass MessagePort::dispatchEvent()'s detached guard: by the time the
+    // close task runs the port is already detached, but the 'close' event must
+    // still reach its listener.
+    EventTarget::dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
+}
+
+void MessagePort::dispatchCloseEventSelf()
+{
+    dispatchCloseEvent();
+    removeAllEventListeners();
+    m_hasMessageEventListener = false;
+    m_hasCloseEventListener = false;
+}
+
+bool MessagePort::scheduleCloseEvent()
+{
+    if (m_closeEventDispatched || !m_hasCloseEventListener)
+        return false;
+
+    auto* context = scriptExecutionContext();
+    if (!context || !context->globalObject())
+        return false;
+
+    auto* globalObject = defaultGlobalObject(context->globalObject());
+    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
+        return false;
+
+    return ScriptExecutionContext::postTaskTo(context->identifier(), [protectedThis = Ref { *this }](ScriptExecutionContext&) {
+        protectedThis->dispatchCloseEventSelf();
+    });
+}
+
+void MessagePort::dispatchCloseEventFromPeer()
+{
+    if (m_isDetached || m_closeEventDispatched || !m_hasCloseEventListener)
+        return;
+
+    // Runs JS (the close handler), which may drop the last external ref.
+    Ref protectedThis { *this };
+    // Stop message delivery and make a re-entrant close() a no-op. The close
+    // branch of hasPendingActivity() (driven by pipe state + the listener
+    // flag) keeps the wrapper alive across the dispatch below.
+    m_isDetached = true;
+
+    dispatchCloseEvent();
+
+    m_pipe->close(m_side);
+    removeAllEventListeners();
+    m_hasMessageEventListener = false;
+    m_hasCloseEventListener = false;
+
     if (m_hasRef) {
         m_hasRef = false;
         if (auto* context = scriptExecutionContext())
@@ -244,12 +327,23 @@ bool MessagePort::hasPendingActivity() const
     // atomic loads. The plain bool reads can observe stale values but
     // cannot crash — at worst the wrapper is collected one cycle early
     // or late, which is the same tolerance as before this refactor.
-    if (!scriptExecutionContext() || m_isDetached)
+    if (!scriptExecutionContext())
+        return false;
+
+    uint64_t s = m_pipe->state(m_side);
+
+    // Keep the wrapper (and its 'close' listener) alive until a pending close
+    // event has been dispatched and torn down. A close is pending when this
+    // side or its peer has closed while a close listener is still registered;
+    // removeAllEventListeners() clears the flag once the event has fired.
+    if (m_hasCloseEventListener && ((s & MessagePortPipe::Closed) || !m_pipe->isOtherSideOpen(m_side)))
+        return true;
+
+    if (m_isDetached)
         return false;
     if (!m_hasMessageEventListener)
         return false;
 
-    uint64_t s = m_pipe->state(m_side);
     // Keep alive if there are messages already queued for us, or the peer
     // is still open and could send more.
     return MessagePortPipe::queuedCount(s) > 0 || m_pipe->isOtherSideOpen(m_side);
@@ -312,6 +406,8 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
     if (eventType == eventNames().messageEvent) {
         start();
         m_hasMessageEventListener = true;
+    } else if (eventType == eventNames().closeEvent) {
+        m_hasCloseEventListener = true;
     }
     return EventTarget::addEventListener(eventType, WTF::move(listener), options);
 }
@@ -321,6 +417,8 @@ bool MessagePort::removeEventListener(const AtomString& eventType, EventListener
     auto result = EventTarget::removeEventListener(eventType, listener, options);
     if (!hasEventListeners(eventNames().messageEvent))
         m_hasMessageEventListener = false;
+    if (!hasEventListeners(eventNames().closeEvent))
+        m_hasCloseEventListener = false;
     return result;
 }
 

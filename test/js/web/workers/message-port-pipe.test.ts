@@ -365,6 +365,116 @@ describe("MessagePort pipe", () => {
   });
 });
 
+// Closing one end of a MessageChannel must fire a 'close' event on both the
+// port that was closed and its entangled peer, asynchronously, after any
+// already-queued messages have been delivered. This matches Node's
+// node:worker_threads MessagePort and the HTML MessagePort 'close' event.
+// https://github.com/oven-sh/bun/issues/32563
+describe("MessagePort close event", () => {
+  async function run(src: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  test.concurrent("fires on the peer after queued messages drain (issue repro)", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { MessageChannel } = require("node:worker_threads");
+      const { port1, port2 } = new MessageChannel();
+      port2.on("message", (message) => console.log(message));
+      port2.on("close", () => console.log("closed!"));
+      port1.postMessage("foobar");
+      port1.close();
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("foobar\nclosed!");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("fires on both ports; message delivered before close", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { MessageChannel } = require("node:worker_threads");
+      const { port1, port2 } = new MessageChannel();
+      const log = [];
+      let n = 0;
+      const finish = () => { if (++n === 2) console.log(JSON.stringify(log)); };
+      port1.on("close", () => { log.push("port1 close"); finish(); });
+      port2.on("message", (m) => log.push("port2 message: " + m));
+      port2.on("close", () => { log.push("port2 close"); finish(); });
+      port1.postMessage("foobar");
+      port1.close();
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const log = JSON.parse(stdout);
+    // Both ports get 'close'; the queued message drains first on port2.
+    expect(log).toContain("port1 close");
+    expect(log).toContain("port2 close");
+    expect(log.indexOf("port2 message: foobar")).toBeGreaterThanOrEqual(0);
+    expect(log.indexOf("port2 message: foobar")).toBeLessThan(log.indexOf("port2 close"));
+  });
+
+  test.concurrent("closing port fires its own close event", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { MessageChannel } = require("node:worker_threads");
+      const { port1, port2 } = new MessageChannel();
+      port1.on("close", () => console.log("port1 closed"));
+      port2.on("message", () => {});
+      port1.close();
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("port1 closed");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("Web API: addEventListener('close') on MessageChannel", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { port1, port2 } = new MessageChannel();
+      port2.addEventListener("message", (e) => console.log("msg:" + e.data));
+      port2.addEventListener("close", () => console.log("closed"));
+      port1.postMessage("x");
+      port1.close();
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("msg:x\nclosed");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("close fires at most once", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { MessageChannel } = require("node:worker_threads");
+      const { port1, port2 } = new MessageChannel();
+      let count = 0;
+      port1.on("close", () => count++);
+      port2.on("message", () => {});
+      port1.close();
+      port1.close();
+      process.on("exit", () => console.log("count=" + count));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("count=1");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("no close listener: channel closes and process exits cleanly", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { MessageChannel } = require("node:worker_threads");
+      const { port1, port2 } = new MessageChannel();
+      port2.on("message", (m) => console.log(m));
+      port1.postMessage("only-message");
+      port1.close();
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("only-message");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // worker.postMessage / parentPort.postMessage go through the same coalesced
 // inbox+batch-drain path as MessagePortPipe. Verify the observable ordering
 // matches Node: messages arrive in order with a microtask checkpoint between

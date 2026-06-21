@@ -98,7 +98,10 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     auto& s = m_sides[side];
 
     RefPtr<MessagePort> port;
-    size_t limit;
+    size_t limit = 0;
+    // Set when the inbox empties while the port is still attached: the port may
+    // then owe a 'close' event (dispatched below, outside the lock).
+    bool emptied = false;
     {
         Locker locker { s.lock };
         // This task was posted to `expectedCtx` (and is running there). If
@@ -112,9 +115,18 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         uint64_t st = s.state.load(std::memory_order_relaxed);
         if (!port || s.inbox.isEmpty()) {
             s.state.store(st & ~DrainScheduled, std::memory_order_release);
-            return;
+            emptied = port && (st & Attached) != 0;
+        } else {
+            limit = std::max<size_t>(s.inbox.size(), 1000);
         }
-        limit = std::max<size_t>(s.inbox.size(), 1000);
+    }
+
+    if (!limit) {
+        // Nothing queued. If our peer has closed, the attached port still owes
+        // a 'close' event.
+        if (emptied && !isOtherSideOpen(side))
+            port->dispatchCloseEventFromPeer();
+        return;
     }
 
     auto* context = port->scriptExecutionContext();
@@ -142,6 +154,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
             uint64_t st = s.state.load(std::memory_order_relaxed);
             if (!(st & Attached) || s.inbox.isEmpty()) {
                 s.state.store(st & ~DrainScheduled, std::memory_order_release);
+                emptied = (st & Attached) != 0;
                 break;
             }
             if (limit-- == 0) {
@@ -165,6 +178,10 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     if (rescheduleCtx)
         scheduleDrain(side, rescheduleCtx);
+    else if (emptied && !isOtherSideOpen(side))
+        // Inbox fully drained and the peer has closed: deliver 'close' after
+        // all queued messages, matching Node's ordering.
+        port->dispatchCloseEventFromPeer();
 }
 
 std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)
@@ -239,6 +256,27 @@ void MessagePortPipe::close(uint8_t side)
             // Closed is terminal; queued messages are dropped.
             s.state.store(Closed, std::memory_order_release);
             dropped = std::exchange(s.inbox, {});
+        }
+
+        // Wake the entangled peer (after its queued messages drain) so it can
+        // dispatch a 'close' event now that this side has closed. Only needed
+        // when the peer is attached and no drain is already in flight; an
+        // in-flight drain observes the Closed bit we just stored (set before
+        // this check) and dispatches close itself. Marked Closed above →
+        // checked here preserves that ordering.
+        {
+            auto& peer = pipe->m_sides[1 - sd];
+            ScriptExecutionContextIdentifier peerCtx = 0;
+            {
+                Locker locker { peer.lock };
+                uint64_t ps = peer.state.load(std::memory_order_relaxed);
+                if ((ps & Attached) && !(ps & DrainScheduled)) {
+                    peer.state.store(ps | DrainScheduled, std::memory_order_release);
+                    peerCtx = peer.ctxId;
+                }
+            }
+            if (peerCtx)
+                pipe->scheduleDrain(1 - sd, peerCtx);
         }
 
         // Harvest transferred pipes before `dropped` destructs so their

@@ -115,22 +115,38 @@ fn write_profile_to_file(
     #[cfg(windows)]
     let output_path_os =
         bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut path_buf_os, path_buf.slice_z());
-    #[cfg(not(windows))]
-    let output_path_os = path_buf.slice_z();
 
-    // Write the profile to disk using bun.sys.File.writeFile
+    // Write the profile to disk.
+    // `slice_z()` borrows `path_buf` mutably, so on non-Windows we re-derive it
+    // at each call site instead of holding a single binding.
+    #[cfg(windows)]
     let result =
         bun_sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
+    #[cfg(not(windows))]
+    let result =
+        bun_sys::File::write_file_os_path(Fd::cwd(), path_buf.slice_z(), profile_slice.slice());
     if let Err(err) = result {
-        // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
+        // If we got ENOENT, PERM, or ACCES, try creating the directory and retry.
         let errno = err.get_errno();
         if errno == Errno::ENOENT || errno == Errno::EPERM || errno == Errno::EACCES {
-            if !config.dir.is_empty() {
-                let _ = Fd::cwd().make_path(config.dir);
+            // Derive the directory from the absolute output path so that a
+            // missing parent of an absolute --cpu-prof-name (not just
+            // --cpu-prof-dir) is created before the retry.
+            let dir_path =
+                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(path_buf.slice());
+            if !dir_path.is_empty() {
+                let _ = Fd::cwd().make_path(dir_path);
                 // Retry write
+                #[cfg(windows)]
                 let retry_result = bun_sys::File::write_file_os_path(
                     Fd::cwd(),
                     output_path_os,
+                    profile_slice.slice(),
+                );
+                #[cfg(not(windows))]
+                let retry_result = bun_sys::File::write_file_os_path(
+                    Fd::cwd(),
+                    path_buf.slice_z(),
                     profile_slice.slice(),
                 );
                 if retry_result.is_err() {

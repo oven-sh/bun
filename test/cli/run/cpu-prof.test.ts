@@ -127,7 +127,9 @@ describe.concurrent("--cpu-prof", () => {
 
   test("--cpu-prof-name honors an absolute path", async () => {
     // An absolute --cpu-prof-name must be written verbatim, not resolved
-    // relative to CWD (which stripped the leading separator).
+    // relative to CWD (which stripped the leading separator). The target's
+    // parent directory does not exist yet, so this also covers creating the
+    // parent of an absolute output path.
     using cwdDir = tempDir("cpu-prof-name-abs-cwd", {
       "test.js": `
         function loop() {
@@ -138,7 +140,7 @@ describe.concurrent("--cpu-prof", () => {
       `,
     });
     using targetDir = tempDir("cpu-prof-name-abs-target", {});
-    const target = join(String(targetDir), "custom.cpuprofile");
+    const target = join(String(targetDir), "nested", "custom.cpuprofile");
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--cpu-prof", "--cpu-prof-name", target, "test.js"],

@@ -145,7 +145,6 @@ test("--heap-prof-dir honors an absolute output directory", async () => {
 
   expect(stdout.trim()).toBe("hello");
   expect(stderr).toContain("Heap profile written to:");
-  expect(exitCode).toBe(0);
 
   // The snapshot must land in the absolute target directory.
   const targetFiles = Array.from(new Bun.Glob("Heap.*.heapsnapshot").scanSync({ cwd: String(targetDir) }));
@@ -154,14 +153,18 @@ test("--heap-prof-dir honors an absolute output directory", async () => {
   // And nothing should have been written anywhere under CWD.
   const cwdFiles = Array.from(new Bun.Glob("**/Heap.*.heapsnapshot").scanSync({ cwd: String(cwdDir) }));
   expect(cwdFiles).toEqual([]);
+
+  expect(exitCode).toBe(0);
 });
 
 test("--heap-prof-name honors an absolute path", async () => {
   // An absolute --heap-prof-name must be written verbatim, not resolved
-  // relative to CWD (which stripped the leading separator).
+  // relative to CWD (which stripped the leading separator). The target's
+  // parent directory does not exist yet, so this also covers creating the
+  // parent of an absolute output path.
   using cwdDir = tempDir("heap-prof-name-abs-cwd", {});
   using targetDir = tempDir("heap-prof-name-abs-target", {});
-  const target = join(String(targetDir), "custom.heapsnapshot");
+  const target = join(String(targetDir), "nested", "custom.heapsnapshot");
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--heap-prof", "--heap-prof-name", target, "-e", `console.log("hello");`],
@@ -175,7 +178,6 @@ test("--heap-prof-name honors an absolute path", async () => {
 
   expect(stdout.trim()).toBe("hello");
   expect(stderr).toContain("Heap profile written to:");
-  expect(exitCode).toBe(0);
 
   // The snapshot must land at the absolute path.
   expect(Bun.file(target).size).toBeGreaterThan(0);
@@ -183,6 +185,8 @@ test("--heap-prof-name honors an absolute path", async () => {
   // And nothing should have been written anywhere under CWD.
   const cwdFiles = Array.from(new Bun.Glob("**/*.heapsnapshot").scanSync({ cwd: String(cwdDir) }));
   expect(cwdFiles).toEqual([]);
+
+  expect(exitCode).toBe(0);
 });
 
 test("--heap-prof-dir specifies output directory for markdown format", async () => {

@@ -240,6 +240,20 @@ public:
         auto clearPausedDepth = WTF::makeScopeExit([&] {
             for (auto* connection : connections)
                 connection->runWhilePausedDepth.fetch_sub(1);
+
+            // A message (e.g. a Debugger.pause) that arrived after the resume batch
+            // was swapped out but before the depth dropped saw depth>0 and skipped
+            // the VM trap, and the resume path breaks out of the loop without
+            // re-draining. Arm the trap now if anything is still queued so it is
+            // serviced at the first post-resume safepoint instead of waiting for an
+            // event-loop tick that a resumed busy loop never reaches.
+            for (auto* connection : connections) {
+                Locker<Lock> locker(connection->jsThreadMessagesLock);
+                if (!connection->jsThreadMessages.isEmpty()) {
+                    global->vm().notifyNeedShellTimeoutCheck();
+                    break;
+                }
+            }
         });
 
         for (auto* connection : connections) {

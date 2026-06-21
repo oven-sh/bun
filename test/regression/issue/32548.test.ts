@@ -73,6 +73,10 @@ test.skipIf(!isASAN)("Debugger.pause interrupts a busy loop and reports call fra
   let stdoutBuf = "";
   let busyReady = false;
   const { promise: busyPromise, resolve: busyResolve, reject: busyReject } = Promise.withResolvers<void>();
+  // Sink: busyPromise is only awaited on the happy path; if an earlier await
+  // throws first, its rejection (child exited before "busy-ready") must not
+  // surface as an unhandled rejection on top of the real failure.
+  busyPromise.catch(() => {});
   (async () => {
     const decoder = new TextDecoder();
     for await (const chunk of proc.stdout as ReadableStream<Uint8Array>) {
@@ -159,6 +163,10 @@ test.skipIf(!isASAN)("Debugger.pause interrupts a busy loop and reports call fra
     ]);
 
     const pausedPromise = waitForEvent("Debugger.paused");
+    // Sink: consumed via Promise.race below only if busyPromise resolves; if an
+    // earlier await throws, failAll() rejects this waiter on WS close, which must
+    // not become an unhandled rejection.
+    pausedPromise.catch(() => {});
     send("Inspector.initialized").catch(() => {});
 
     // Only ask to pause once the loop is provably running. With the bug the

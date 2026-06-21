@@ -31,10 +31,10 @@ bun ./dist/index.js  # Automatically uses index.js.jsc
 When you create an executable with `--compile`, Bun embeds the bytecode in the binary. Both ESM and CommonJS work:
 
 ```bash terminal icon="terminal"
-# ESM (requires --compile)
+# ESM
 bun build ./cli.ts --compile --bytecode --format=esm --outfile=mycli
 
-# CommonJS (works with or without --compile)
+# CommonJS
 bun build ./cli.ts --compile --bytecode --outfile=mycli
 ```
 
@@ -42,9 +42,16 @@ The resulting executable contains both the code and the bytecode.
 
 ### ESM bytecode
 
-ESM bytecode requires `--compile` because Bun embeds module metadata (import/export information) in the compiled binary. With this metadata, the JavaScript engine skips parsing entirely at runtime.
+ESM bytecode works with or without `--compile`. Pass `--format=esm` to opt into it:
 
-Without `--compile`, ESM bytecode would still require parsing the source to analyze module dependencies, which defeats the purpose of bytecode caching.
+```bash terminal icon="terminal"
+bun build ./index.ts --target=bun --bytecode --format=esm --outdir=./dist
+bun ./dist/index.js  # Automatically uses dist/index.js.jsc
+```
+
+Without `--compile`, Bun writes a `.jsc` sidecar next to each `.js` chunk (for example `dist/index.js` and `dist/index.js.jsc`) and loads it automatically at runtime. With `--compile`, the bytecode is embedded into the standalone executable instead.
+
+Because the output is ESM, top-level `await` works, which is not possible with CommonJS output.
 
 ### Combining with other optimizations
 

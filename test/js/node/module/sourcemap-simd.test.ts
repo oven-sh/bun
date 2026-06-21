@@ -4,7 +4,7 @@
 // once with BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP=1 to force the scalar
 // decode) and the full mapping list must be byte-identical.
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -95,9 +95,12 @@ async function dumpMappings(
 // [genColDelta, srcIdxDelta, origLineDelta, origColDelta, nameIdxDelta?]
 // segments. Returns probe points at every segment's ABSOLUTE
 // (generatedLine, generatedColumn) so findEntry hits it exactly.
-function build(
-  lines: number[][][],
-): { mappings: string; probes: Array<[number, number]>; sourcesLen: number; namesLen: number } {
+function build(lines: number[][][]): {
+  mappings: string;
+  probes: Array<[number, number]>;
+  sourcesLen: number;
+  namesLen: number;
+} {
   const parts: string[] = [];
   const probes: Array<[number, number]> = [];
   let srcMax = 0;

@@ -410,13 +410,13 @@ describe("MessagePort close event", () => {
       port1.close();
     `);
     expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
     const log = JSON.parse(stdout);
     // Both ports get 'close'; the queued message drains first on port2.
     expect(log).toContain("port1 close");
     expect(log).toContain("port2 close");
     expect(log.indexOf("port2 message: foobar")).toBeGreaterThanOrEqual(0);
     expect(log.indexOf("port2 message: foobar")).toBeLessThan(log.indexOf("port2 close"));
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("closing port fires its own close event", async () => {

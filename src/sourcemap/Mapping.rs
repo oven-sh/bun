@@ -776,7 +776,14 @@ pub fn parse(
                 generated,
                 original,
                 source_index,
-                name_index,
+                // Rows before any 5-field segment surface as name_index -1.
+                // Without the SIMD pre-pass this happens implicitly: the
+                // list is WithoutNames so append discards this field, and
+                // find()/ensure_with_names() later fill it with -1 via
+                // to_named(). The SIMD pre-pass promotes to WithNames up
+                // front when allow_names is true, so this loop's rows must
+                // carry -1 explicitly until the first 5-field segment.
+                name_index: if has_names { name_index } else { -1 },
             })
             .expect("OOM");
     }

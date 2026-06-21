@@ -247,6 +247,25 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     expect(scalar.error).toBeNull();
   });
 
+  test("all-4-field map with non-empty names: every row has name: null", async () => {
+    // The SIMD pre-pass promotes to WithNames up front when allow_names,
+    // so when the scalar loop resumes for the <N-byte tail (which it
+    // always does) it appends into a WithNames list. Without an explicit
+    // -1 those tail rows would store name_index=0 (the initial
+    // accumulator) and resolve to names[0] instead of null.
+    const segs: number[][] = [];
+    for (let i = 0; i < 200; i++) segs.push([1, 0, 0, 1]);
+    const { mappings, probes, sourcesLen } = build([segs]);
+    expect(mappings.length).toBeGreaterThanOrEqual(128);
+    // Non-empty names array but no 5-field segment: every row must be null.
+    const scalar = await assertSimdMatchesScalar("all-4-field-with-names", mappings, sourcesLen, 3, probes);
+    expect(scalar.error).toBeNull();
+    expect(scalar.entries.length).toBe(200);
+    for (let i = 0; i < 200; i++) {
+      expect({ i, name: scalar.entries[i].name }).toEqual({ i, name: null });
+    }
+  });
+
   test("4-field rows before the first 5-field segment keep name: null", async () => {
     // WithoutNames -> WithNames promotion: scalar copies pre-promotion rows
     // with name_index = -1 (to_named()), so rows before the first 5-field

@@ -530,10 +530,8 @@ describe("MessagePort close event", () => {
 
   // Regression guard: a close listener added after close() (or a close-only
   // peer) must not pin the JS wrapper for the lifetime of the context.
-  test.concurrent(
-    "closed ports with close listeners are collected",
-    async () => {
-      const { stdout, stderr, exitCode } = await run(`
+  test.concurrent("closed ports with close listeners are collected", async () => {
+    const { stdout, stderr, exitCode } = await run(`
       const { heapStats } = require("bun:jsc");
       const { MessageChannel } = require("node:worker_threads");
       const count = () => heapStats().objectTypeCounts.MessagePort || 0;
@@ -582,12 +580,10 @@ describe("MessagePort close event", () => {
       if (leaked > N / 2) { console.error("leaked " + leaked + " MessagePort"); process.exit(1); }
       console.log("OK");
     `);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("OK");
-      expect(exitCode).toBe(0);
-    },
-    60_000,
-  );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // worker.postMessage / parentPort.postMessage go through the same coalesced

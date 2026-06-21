@@ -82,6 +82,11 @@ private:
     void scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier);
     void drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx);
 
+    // Whether `side` may dispatch its peer-close event now: peer is closed and,
+    // re-checked under the lock, this side is still drained with no drain
+    // re-armed by a concurrent send(). Guards a cross-thread TOCTOU.
+    bool readyToDispatchClose(uint8_t side);
+
     struct Side {
         WTF::Lock lock;
         WTF::Deque<MessageWithMessagePorts> inbox WTF_GUARDED_BY_LOCK(lock);

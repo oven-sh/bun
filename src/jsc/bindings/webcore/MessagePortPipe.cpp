@@ -124,7 +124,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     if (!limit) {
         // Nothing queued. If our peer has closed, the attached port still owes
         // a 'close' event.
-        if (emptied && !isOtherSideOpen(side))
+        if (emptied && readyToDispatchClose(side))
             port->dispatchCloseEventFromPeer();
         return;
     }
@@ -191,10 +191,29 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     if (rescheduleCtx)
         scheduleDrain(side, rescheduleCtx);
-    else if (emptied && !isOtherSideOpen(side))
+    else if (emptied && readyToDispatchClose(side))
         // Inbox fully drained and the peer has closed: deliver 'close' after
         // all queued messages, matching Node's ordering.
         port->dispatchCloseEventFromPeer();
+}
+
+bool MessagePortPipe::readyToDispatchClose(uint8_t side)
+{
+    ASSERT(side < 2);
+    // The peer must have closed, and this side must still be drained. Re-check
+    // the inbox/drain state under the lock to close a cross-thread TOCTOU: the
+    // drain loop cleared DrainScheduled and released the lock before we get
+    // here, and a concurrent send() on the peer thread can re-enqueue a message
+    // and re-arm a drain in that window. If it did, dispatching 'close' now
+    // would drop that message (dispatchCloseEventFromPeer -> close() clears the
+    // inbox); instead leave it to the freshly scheduled drain, which will
+    // deliver the message and then dispatch close itself.
+    if (isOtherSideOpen(side))
+        return false;
+    auto& s = m_sides[side];
+    Locker locker { s.lock };
+    uint64_t st = s.state.load(std::memory_order_relaxed);
+    return (st & Attached) && !(st & DrainScheduled) && queuedCount(st) == 0;
 }
 
 std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)

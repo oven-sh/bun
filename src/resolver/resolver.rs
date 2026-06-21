@@ -4870,10 +4870,7 @@ impl<'a> Resolver<'a> {
                 // separators from the substituted text before joining.
                 let mut absolute_original_path: &[u8] = substituted;
                 if !bun_paths::is_absolute(original_path) {
-                    let parts: [&[u8]; 2] = [
-                        abs_base_url,
-                        strings::trim_left(substituted, b"/\\"),
-                    ];
+                    let parts: [&[u8]; 2] = [abs_base_url, strings::trim_left(substituted, b"/\\")];
                     let Some(joined) = self
                         .fs_ref()
                         .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))

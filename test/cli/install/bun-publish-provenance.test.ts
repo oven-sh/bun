@@ -3,12 +3,15 @@ import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "
 import { VerdaccioRegistry, bunEnv, bunExe, stderrForInstall } from "harness";
 import { join } from "path";
 
+// Must be module-scope: test timeouts are captured at `test()`
+// registration, before `beforeAll` runs.
+setDefaultTimeout(1000 * 60 * 5);
+
 // A Verdaccio instance is used only for `registry.createTestDir()` — all
 // actual publish PUTs in these tests go to an in-process `Bun.serve` mock
 // so we can inspect the body.
 const registry = new VerdaccioRegistry();
 beforeAll(async () => {
-  setDefaultTimeout(1000 * 60 * 5);
   await registry.start();
 });
 afterAll(() => {

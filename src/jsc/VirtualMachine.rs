@@ -6412,7 +6412,12 @@ impl VirtualMachine {
     }
 
     /// Records the inherited IPC fd/mode in the waiting state until JS attaches a listener.
-    pub fn init_ipc_instance(&mut self, fd: bun_sys::Fd, mode: crate::ipc::Mode, cluster_worker: bool) {
+    pub fn init_ipc_instance(
+        &mut self,
+        fd: bun_sys::Fd,
+        mode: crate::ipc::Mode,
+        cluster_worker: bool,
+    ) {
         bun_core::scoped_log!(IPC, "initIPCInstance {:?}", fd);
         self.ipc = Some(IPCInstanceUnion::Waiting {
             fd,
@@ -6603,8 +6608,9 @@ unsafe extern "C" fn ipc_drain_pending_microtask(ctx: *mut core::ffi::c_void) {
     // sends first and attaches its listener after an async gap would have the
     // buffered message consumed here before the listener exists. Only drain
     // when a listener is present; otherwise leave the bytes for the normal poll.
-    if !Process__hasMessageListeners(JSGlobalObject::opaque_ref(unsafe { (*instance).global_this }))
-    {
+    if !Process__hasMessageListeners(JSGlobalObject::opaque_ref(unsafe {
+        (*instance).global_this
+    })) {
         return;
     }
     let socket = match unsafe { &(*instance).data.socket } {

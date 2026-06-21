@@ -777,6 +777,12 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // SAFETY: per fn contract — short-lived `&mut *vm` for the field store;
         // `promise` is a live JSC heap cell from `import_ptr` just above.
         unsafe { (*vm).set_pending_internal_promise(Some(promise)) };
+        // The wait loop below tolerates `pending_internal_promise` being
+        // swapped by HMR inside `tick()`/`auto_tick()`; that swap unprotects
+        // this local. Keep an independent scoped protect so the
+        // `.unwrap_or(promise)` fallback and the post-loop `status()` read
+        // stay rooted across a swap (JSC protect is refcounted).
+        let _protected = JSValue::from_cell(promise).protected();
 
         // ── wait ────────────────────────────────────────────────────────
         // HMR `pending_internal_promise` swap loop; non-watcher path uses

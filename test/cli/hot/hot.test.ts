@@ -825,15 +825,20 @@ it(
     const { during, after } = JSON.parse(line);
     // At minimum the entry-point evaluation promise must be protected while
     // stored in pending_internal_promise, both during evaluation and on the
-    // next tick (the window the run loop reads it in).
-    expect({ during: during.n, after: after.n, duringCounts: during.counts, afterCounts: after.counts }).toEqual({
-      during: expect.any(Number),
-      after: expect.any(Number),
+    // next tick (the window the run loop reads it in). Assert on a combined
+    // object so the full protectedObjectTypeCounts map appears in the failure
+    // diff when either >=1 check fails.
+    expect({
+      duringProtectedPromises: during.n >= 1,
+      afterProtectedPromises: after.n >= 1,
+      duringCounts: during.counts,
+      afterCounts: after.counts,
+    }).toEqual({
+      duringProtectedPromises: true,
+      afterProtectedPromises: true,
       duringCounts: expect.any(Object),
       afterCounts: expect.any(Object),
     });
-    expect(during.n).toBeGreaterThanOrEqual(1);
-    expect(after.n).toBeGreaterThanOrEqual(1);
     expect(exitCode).toBe(0);
   },
   timeout,

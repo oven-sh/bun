@@ -464,7 +464,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 crate::parser::DeferredImportNamespace {
                                     namespace: js_ast::LocRef {
                                         loc: decl.binding.loc,
-                                        ref_: Some(local),
+                                        ref_: local,
                                     },
                                     import_record_id: im.import_record_index,
                                     scope: Some(self.current_scope),

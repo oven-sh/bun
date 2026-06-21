@@ -126,6 +126,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let name_static = E::Str::new(name);
 
+        let can_track_dynamic_import_member = identifier_opts.assign_target()
+            == js_ast::AssignTarget::None
+            && !identifier_opts.is_delete_target();
+
         // Loop + match with mutable scrutinee (a restartable switch).
         let mut sw_data = target.data;
         'sw: loop {
@@ -135,7 +139,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // EIdentifier arm so the existing import-item machinery
                     // generates an `E::ImportIdentifier` and tree-shaking applies.
                     if let js_ast::ExprData::EImport(im) = aw.value.data {
-                        if im.namespace_ref.is_valid() {
+                        if im.namespace_ref.is_valid() && can_track_dynamic_import_member {
                             if p.options.code_splitting {
                                 // Split mode: track the alias only; keep the
                                 // expression as-is so the chunk loads lazily.
@@ -146,7 +150,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         name,
                                         LocRef {
                                             loc: name_loc,
-                                            ref_: None,
+                                            ref_: bun_ast::Ref::NONE,
                                         },
                                     )
                                     .expect("oom");
@@ -161,18 +165,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EIdentifier(id) => {
+                    // For an assign/delete target on a dynamic-import namespace
+                    // local (`const ns = await import(...)`, `.then(ns => ...)`),
+                    // do not route into the import-item arm below — that mints
+                    // a `Kind::Import` symbol and `handle_identifier` would emit
+                    // a hard "Cannot assign to import" error where pre-existing
+                    // behavior bundled it. Real `import * as ns` namespace refs
+                    // are `Kind::Import` themselves and keep the error.
+                    if !can_track_dynamic_import_member
+                        && p.import_items_for_namespace.contains_key(&id.ref_)
+                        && p.symbols[id.ref_.inner_index() as usize].kind
+                            != js_ast::symbol::Kind::Import
+                    {
+                        break 'sw;
+                    }
                     // Track-only dynamic-import namespace: `const ns = await import(...)` /
                     // `.then(ns => ...)`. Record the alias so the dynamic chunk can drop
                     // unreferenced exports, but leave the property access intact.
-                    if p.track_only_dynamic_import_namespaces
-                        .contains_key(&id.ref_)
+                    if can_track_dynamic_import_member
+                        && p.track_only_dynamic_import_namespaces
+                            .contains_key(&id.ref_)
                     {
                         if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
                             map.put(
                                 name,
                                 LocRef {
                                     loc: name_loc,
-                                    ref_: None,
+                                    ref_: bun_ast::Ref::NONE,
                                 },
                             )
                             .expect("oom");

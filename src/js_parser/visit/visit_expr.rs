@@ -1411,6 +1411,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     has_catch: p.then_catch_chain.has_catch || p.then_catch_chain.has_multiple_args,
                     has_multiple_args: false,
                 };
+            } else if e_.name == b"finally" {
+                p.then_catch_chain = ThenCatchChain {
+                    next_target: e_.target.data,
+                    has_catch: p.then_catch_chain.has_catch,
+                    has_multiple_args: false,
+                };
             }
         }
 
@@ -1956,21 +1962,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !im.namespace_ref.is_valid() {
                 break 'dyn_import_then;
             }
+            // `.then(fn).catch(err)` / `.then(fn, err)` — a rejection handler
+            // is an explicit signal the import may fail; hoisting would make
+            // it dead. The flag was set during the target visit by
+            // `transpose_import` via the then/catch chain walker.
+            if p.import_records.items()[im.import_record_index as usize]
+                .flags
+                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+            {
+                break 'dyn_import_then;
+            }
             let inline = !p.options.code_splitting;
             let args = e_.args.slice_mut();
-            // `.then(onFulfilled, onRejected)` — a rejection handler is an
-            // explicit signal the import may fail; hoisting would make it
-            // dead. Bail so the import stays lazy/wrapped.
             if args.len() != 1 {
                 break 'dyn_import_then;
             }
             // Only arrows are safe: a `function(m){…}` body can reach the
             // namespace via `arguments[0]` without ever referencing `m`, which
             // would be tracked as zero exports observed and over-tree-shake.
-            let fn_args = match args[0].data {
-                Data::EArrow(arrow) => arrow.args.slice_mut(),
+            let (fn_args, has_rest_arg) = match args[0].data {
+                Data::EArrow(arrow) => (arrow.args.slice_mut(), arrow.has_rest_arg),
                 _ => break 'dyn_import_then,
             };
+            // `(...ns) => …` binds `ns` to `[namespace]`, not the namespace.
+            if has_rest_arg {
+                break 'dyn_import_then;
+            }
             match fn_args.first_mut() {
                 None => {
                     // `.then(() => …)` — no exports observed.
@@ -2023,7 +2040,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 crate::parser::DeferredImportNamespace {
                                     namespace: bun_ast::LocRef {
                                         loc: first_param.binding.loc,
-                                        ref_: Some(local),
+                                        ref_: local,
                                     },
                                     import_record_id: im.import_record_index,
                                     scope: Some(p.current_scope),

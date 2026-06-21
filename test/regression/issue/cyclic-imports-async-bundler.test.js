@@ -26,8 +26,8 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     `,
     "src/RecursiveDependencies/AsyncEntryPoint.ts": `
       export async function AsyncEntryPoint() {
-        const { BaseElement } = await import("./BaseElement");
-        console.log("Launching AsyncEntryPoint", BaseElement());
+        const m = await import("./BaseElement");
+        console.log("Launching AsyncEntryPoint", m.BaseElement(), Object.keys(m).length);
       }
     `,
     "src/RecursiveDependencies/BaseElement.ts": `
@@ -167,20 +167,15 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     });
 
     // src/RecursiveDependencies/AsyncEntryPoint.ts
-    var exports_AsyncEntryPoint = {};
-    __export(exports_AsyncEntryPoint, {
-      AsyncEntryPoint: () => AsyncEntryPoint
-    });
     async function AsyncEntryPoint() {
-      const { BaseElement: BaseElement2 } = await init_BaseElement().then(() => exports_BaseElement);
-      console.log("Launching AsyncEntryPoint", BaseElement2());
+      const m = await init_BaseElement().then(() => exports_BaseElement);
+      console.log("Launching AsyncEntryPoint", m.BaseElement(), Object.keys(m).length);
     }
 
     // src/entryBuild.ts
-    var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
-    AsyncEntryPoint2();
+    AsyncEntryPoint();
 
-    //# debugId=2020261114B67BB564756E2164756E21
+    //# debugId=5592E4D34694407164756E2164756E21
     //# sourceMappingURL=entryBuild.js.map
     "
   `);

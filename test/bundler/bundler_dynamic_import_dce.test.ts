@@ -2014,4 +2014,228 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "2" },
   });
+
+  // `.then(fn).catch(err)` — same explicit-rejection-handler signal as
+  // `.then(fn, err)` (InlineThenRejectHandlerBails). The flag is set by the
+  // existing then/catch chain walker, so the importee stays wrapped and the
+  // throw routes to the handler.
+  itBundled("dynamic_import_dce/InlineThenCatchChainBails", {
+    files: {
+      "/entry.js": /* js */ `
+        await import("./b.js").then(({ c }) => console.log(c)).catch(err => console.log("caught", err.message));
+      `,
+      "/b.js": `throw new Error("boom"); export const c = 1;`,
+    },
+    run: { stdout: "caught boom" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__esm");
+    },
+  });
+
+  itBundled("dynamic_import_dce/SplittingThenCatchChainBails", {
+    files: {
+      "/entry.js": /* js */ `
+        await import("./b.js").then(({ c }) => console.log(c)).catch(err => console.log("caught"));
+      `,
+      "/b.js": `export const c = 1; export const d = "KEEP_d";`,
+    },
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "1" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).toContain("KEEP_d");
+    },
+  });
+
+  // `.then((...ns) => …)` — `ns` binds to `[namespace]`, not the namespace,
+  // so `ns.b` is `undefined`. Tracking must bail or `ns.b` would rewrite to
+  // the live export.
+  itBundled("dynamic_import_dce/InlineThenRestParamBails", {
+    files: {
+      "/entry.js": /* js */ `
+        await import("./b.js").then((...ns) => console.log(ns.b));
+      `,
+      "/b.js": `export const a = "KEEP_A"; export const b = "KEEP_B";`,
+    },
+    format: "esm",
+    run: { stdout: "undefined" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("KEEP_A");
+      api.expectFile("/out.js").toContain("KEEP_B");
+    },
+  });
+
+  // `(await import(...)).foo = v` — writing to the namespace must not route
+  // into the import-item path (which would emit a build-time "Cannot assign
+  // to import" error). The namespace stays untracked so all exports are kept.
+  itBundled("dynamic_import_dce/InlineAwaitDotAssignBails", {
+    files: {
+      "/entry.js": /* js */ `
+        async function f() {
+          (await import("./b.js")).foo = 1;
+          console.log("ok");
+        }
+        await f();
+      `,
+      "/b.js": `export const foo = 0; export const bar = "KEEP_BAR";`,
+    },
+    format: "esm",
+    run: { stdout: "ok" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("KEEP_BAR");
+    },
+  });
+
+  // Direct `eval()` in the same scope as `(await import(...)).foo` — the
+  // synthetic namespace ref is not a source-visible name, so eval cannot
+  // observe it; the rewrite is still safe.
+  itBundled("dynamic_import_dce/InlineAwaitDotWithEval", {
+    files: {
+      "/entry.js": /* js */ `
+        async function f() {
+          eval("1");
+          return (await import("./b.js")).foo;
+        }
+        console.log(await f());
+      `,
+      "/b.js": `export const foo = 7; export const bar = 99;`,
+    },
+    format: "esm",
+    run: { stdout: "7" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("99");
+    },
+  });
+
+  // `const {x, x: y}` — duplicate property keys with distinct binding names
+  // are valid JS. The alias map is keyed by property name, so tracking must
+  // bail to keep both bindings declared.
+  itBundled("dynamic_import_dce/InlineDuplicateDestructureKeyBails", {
+    files: {
+      "/entry.js": /* js */ `
+        const { foo, foo: bar } = await import("./b.js");
+        console.log(foo, bar);
+      `,
+      "/b.js": `export const foo = 3;`,
+    },
+    format: "esm",
+    run: { stdout: "3 3" },
+    onAfterBundle(api) {
+      // The original destructure must survive so both bindings are declared.
+      api.expectFile("/out.js").toMatch(/\{\s*foo:\s*\w+,\s*foo:\s*bar\s*\}/);
+    },
+  });
+
+  // `const ns = await import(); ns.foo = v` — assigning a namespace property
+  // must not turn into a build-time "Cannot assign to import" error. The
+  // namespace use stays counted so the record bails to the wrapped path.
+  itBundled("dynamic_import_dce/InlineConstNsAssignBails", {
+    files: {
+      "/entry.js": /* js */ `
+        async function f() {
+          const ns = await import("./a.js");
+          ns.foo = 1;
+          console.log(ns.foo, ns.bar);
+        }
+        await f();
+      `,
+      "/a.js": `export let foo = 0; export const bar = "KEEP_BAR";`,
+    },
+    format: "esm",
+    run: { stdout: "0 KEEP_BAR" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("KEEP_BAR");
+    },
+  });
+
+  // A sibling `require()` forces ESM-wrap propagation onto the importee. The
+  // surviving `import()` for a tree-shaken record still prints the importee's
+  // `exports_ref`, so that symbol must stay imported.
+  itBundled("dynamic_import_dce/InlineThenWrappedSiblingExportsRefLive", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./a");
+        await import("./b").then(({ x }) => console.log(x));
+      `,
+      "/a.js": `import "./b"; export const aa = 1;`,
+      "/b.js": `export const x = 1; export const y = 2;`,
+    },
+    format: "esm",
+    run: { stdout: "1" },
+  });
+
+  // `.then(...).finally(...).catch(err)` — `.finally` must propagate the
+  // outer `.catch` through the chain so the importee stays wrapped.
+  itBundled("dynamic_import_dce/InlineThenFinallyCatchChainBails", {
+    files: {
+      "/entry.js": /* js */ `
+        await import("./b.js")
+          .then(({ c }) => console.log(c))
+          .finally(() => console.log("cleanup"))
+          .catch(err => console.log("caught", err.message));
+      `,
+      "/b.js": `throw new Error("boom"); export const c = 1;`,
+    },
+    run: { stdout: "cleanup\ncaught boom" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__esm");
+    },
+  });
+
+  // Hazard pin (rollup inlineDynamicImports parity, same family as
+  // InlineLiveBindingNotSnapshot): arrow params are mutable, so promoting a
+  // `.then(({x}) => …)` destructured param to an import binding turns
+  // `x = …` into a write on the importee's live binding. Unbundled prints
+  // "patched orig".
+  itBundled("dynamic_import_dce/InlineThenDestructureReassignLeaks", {
+    files: {
+      "/entry.js": /* js */ `
+        await import("./m.js").then(({ foo }) => {
+          foo = "patched";
+          import("./m.js").then(m2 => console.log(foo, m2.foo));
+        });
+      `,
+      "/m.js": `export let foo = "orig";`,
+    },
+    format: "esm",
+    run: { stdout: "patched patched" },
+  });
+
+  // Hazard pin (same family as InlineTryCatchHoisted): `try { await
+  // import().then(({c}) => …) } catch {}` — the `.then` shape inside a try
+  // body is hoisted past the catch. Unbundled prints "caught boom".
+  itBundled("dynamic_import_dce/InlineTryAwaitThenHoisted", {
+    files: {
+      "/entry.js": /* js */ `
+        try {
+          await import("./b.js").then(({ c }) => console.log(c));
+        } catch (e) {
+          console.log("caught", e.message);
+        }
+      `,
+      "/b.js": `throw new Error("boom"); export const c = 1;`,
+    },
+    format: "esm",
+    run: { error: "boom" },
+  });
+
+  // Hazard pin (same family as InlineHoistOrderingHazard): the synthetic
+  // `S::Import` completes a static cycle when the importee already statically
+  // imports the importer. Unbundled prints "V!".
+  itBundled("dynamic_import_dce/InlineHoistCompletesCycle", {
+    files: {
+      "/entry.js": /* js */ `
+        export const value = "V";
+        const { helper } = await import("./b.js");
+        console.log(helper);
+      `,
+      "/b.js": /* js */ `
+        import { value } from "./entry.js";
+        export const helper = value + "!";
+      `,
+    },
+    format: "esm",
+    run: { stdout: "undefined!" },
+  });
 });

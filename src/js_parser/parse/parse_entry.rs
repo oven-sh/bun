@@ -1232,7 +1232,7 @@ impl<'a> Parser<'a> {
                 let (ns_ref, ns_loc, import_record_id, scope) = {
                     let d = &p.imports_to_convert_from_dynamic_import[i];
                     (
-                        d.namespace.ref_.expect("infallible: ref bound"),
+                        d.namespace.ref_,
                         d.namespace.loc,
                         d.import_record_id,
                         d.scope,
@@ -1244,7 +1244,7 @@ impl<'a> Parser<'a> {
                     // direct `eval()` (or `with`) in scope, which can read the
                     // namespace by name without a tracked property access.
                     symbol.use_count_estimate > 0
-                        || symbol.must_not_be_renamed
+                        || symbol.must_not_be_renamed()
                         || scope.is_some_and(|s| s.contains_direct_eval)
                 };
                 let entry = bun_core::handle_oom(by_record.get_or_put(import_record_id));
@@ -1267,7 +1267,8 @@ impl<'a> Parser<'a> {
                 let track_only = p.track_only_dynamic_import_namespaces.contains_key(&ns_ref);
                 for key in map.keys().iter() {
                     let loc_ref = *map.get(key).unwrap();
-                    if let Some(item_ref) = loc_ref.ref_ {
+                    let item_ref = loc_ref.ref_;
+                    if item_ref.is_valid() {
                         // A ref that wasn't promoted to an import item means
                         // the original binding/declaration was kept (let/var,
                         // default value, multi-decl, …) — it cannot appear in
@@ -1311,20 +1312,22 @@ impl<'a> Parser<'a> {
                 // give them a `namespace_alias` here.
                 if rec.escaped || (inline_mode && !rec.can_inline) {
                     for (alias, loc_ref, owner_ns) in rec.aliases.iter() {
-                        let Some(item_ref) = loc_ref.ref_ else {
+                        let item_ref = loc_ref.ref_;
+                        if !item_ref.is_valid() {
                             continue;
-                        };
+                        }
                         if !p.is_import_item.contains_key(&item_ref) {
                             continue;
                         }
                         let symbol = &mut p.symbols[item_ref.inner_index() as usize];
                         if symbol.namespace_alias.is_none() {
-                            symbol.namespace_alias = Some(js_ast::NamespaceAlias {
-                                namespace_ref: *owner_ns,
-                                alias: *alias,
-                                import_record_index: import_record_id,
-                                was_originally_property_access: true,
-                            });
+                            symbol.namespace_alias =
+                                Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
+                                    namespace_ref: *owner_ns,
+                                    alias: *alias,
+                                    import_record_index: import_record_id,
+                                    was_originally_property_access: true,
+                                }));
                         }
                     }
                     continue;
@@ -1385,16 +1388,16 @@ impl<'a> Parser<'a> {
                             original_name: bun_ast::StoreStr::EMPTY,
                         }
                     });
-                let mut declared_symbols =
-                    bun_ast::DeclaredSymbolList::init_capacity(aliases.len() + 1).expect("oom");
+                let mut declared_symbols = bun_core::handle_oom(
+                    bun_ast::DeclaredSymbolList::init_capacity(aliases.len() + 1),
+                );
                 declared_symbols.append_assume_capacity(DeclaredSymbol {
                     ref_: rec.ns_ref,
                     is_top_level: true,
                 });
                 for (j, (alias, loc_ref, _)) in aliases.iter().enumerate() {
-                    let item_ref = loc_ref
-                        .ref_
-                        .expect("infallible: can_inline implies ref bound");
+                    let item_ref = loc_ref.ref_;
+                    debug_assert!(item_ref.is_valid(), "can_inline implies ref bound");
                     items[j] = js_ast::ClauseItem {
                         alias: *alias,
                         alias_loc: loc_ref.loc,
@@ -1416,7 +1419,7 @@ impl<'a> Parser<'a> {
                         namespace_ref: rec.ns_ref,
                         default_name: None,
                         items: bun_ast::StoreSlice::new(items),
-                        star_name_loc: None,
+                        star_name_loc: bun_ast::Loc::EMPTY,
                         import_record_index: stmt_record_id,
                         is_single_line: true,
                         phase_defer: false,

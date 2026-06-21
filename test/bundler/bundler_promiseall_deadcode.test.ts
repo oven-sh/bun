@@ -11,8 +11,8 @@ describe("bundler", () => {
       `,
       "/AsyncEntryPoint.ts": `
         export async function AsyncEntryPoint() {
-          const { BaseElement } = await import("./BaseElement");
-          console.log("Launching AsyncEntryPoint", BaseElement());
+          const m = await import("./BaseElement");
+          console.log("Launching AsyncEntryPoint", m.BaseElement(), Object.keys(m).length);
         }
       `,
       "/BaseElement.ts": `
@@ -151,20 +151,15 @@ describe("bundler", () => {
         });
 
         // AsyncEntryPoint.ts
-        var exports_AsyncEntryPoint = {};
-        __export(exports_AsyncEntryPoint, {
-          AsyncEntryPoint: () => AsyncEntryPoint
-        });
         async function AsyncEntryPoint() {
-          const { BaseElement: BaseElement2 } = await init_BaseElement().then(() => exports_BaseElement);
-          console.log("Launching AsyncEntryPoint", BaseElement2());
+          const m = await init_BaseElement().then(() => exports_BaseElement);
+          console.log("Launching AsyncEntryPoint", m.BaseElement(), Object.keys(m).length);
         }
 
         // entry.ts
-        var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
-        AsyncEntryPoint2();
+        AsyncEntryPoint();
 
-        //# debugId=42062903F19477CF64756E2164756E21
+        //# debugId=DCBC96278943990864756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);
@@ -192,8 +187,8 @@ describe("bundler", () => {
       `,
       "/AsyncEntryPoint.ts": `
         export async function AsyncEntryPoint() {
-          const { BaseElement } = await import("./BaseElement");
-          console.log("Launching AsyncEntryPoint", BaseElement());
+          const m = await import("./BaseElement");
+          console.log("Launching AsyncEntryPoint", m.BaseElement(), Object.keys(m).length);
         }
       `,
       "/BaseElement.ts": `
@@ -289,8 +284,8 @@ describe("bundler", () => {
       `,
       "/AsyncEntryPoint.ts": `
         export async function AsyncEntryPoint() {
-          const { BaseElement } = await import("./BaseElement");
-          console.log("Launching AsyncEntryPoint", BaseElement());
+          const m = await import("./BaseElement");
+          console.log("Launching AsyncEntryPoint", m.BaseElement(), Object.keys(m).length);
         }
       `,
       "/BaseElement.ts": `
@@ -397,20 +392,15 @@ describe("bundler", () => {
         });
 
         // AsyncEntryPoint.ts
-        var exports_AsyncEntryPoint = {};
-        __export(exports_AsyncEntryPoint, {
-          AsyncEntryPoint: () => AsyncEntryPoint
-        });
         async function AsyncEntryPoint() {
-          const { BaseElement: BaseElement2 } = await Promise.resolve().then(() => (init_BaseElement(), exports_BaseElement));
-          console.log("Launching AsyncEntryPoint", BaseElement2());
+          const m = await Promise.resolve().then(() => (init_BaseElement(), exports_BaseElement));
+          console.log("Launching AsyncEntryPoint", m.BaseElement(), Object.keys(m).length);
         }
 
         // entry.ts
-        var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
-        AsyncEntryPoint2();
+        AsyncEntryPoint();
 
-        //# debugId=BF876FBF618133C264756E2164756E21
+        //# debugId=9937CAE3CC3F316664756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);

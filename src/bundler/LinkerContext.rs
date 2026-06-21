@@ -2330,16 +2330,9 @@ impl<'a> LinkerContext<'a> {
                 Ref::NONE
             },
             is_wrapper_async: flags.is_async_or_has_async_dependency,
-            // The parser always mints a wrapper_ref under code-splitting, but
-            // when `wrap == None` no wrapper *definition* is emitted, so handing
-            // that ref to the printer would print a call to an undefined symbol.
-            // This is reachable for a self-dynamic-import under `splitting:
-            // true` (`import("./self.js")`): is_external_dynamic_import skips
-            // the source_index clear for self-imports, and the splitting branch
-            // never sets `wrap`. Pre-existing esbuild-parity bug — both before
-            // (ReferenceError on the undefined wrapper) and after (bare
-            // `Promise.resolve()` → `undefined` namespace) are wrong; returning
-            // NONE here at least avoids the crash.
+            // `wrap == None` means no wrapper definition is emitted for this
+            // source (reachable for a self-dynamic-import under splitting), so
+            // the printer must not be handed a wrapper symbol to call.
             wrapper_ref: if flags.wrap != WrapKind::None {
                 self.graph.ast.items_wrapper_ref()[source_index as usize]
             } else {

@@ -1060,10 +1060,7 @@ pub fn scan_imports_and_exports(
                         // This must be done for "require()" and "import()" expressions
                         // but does not need to be done for "import" statements since
                         // those just cause us to reference the exports directly.
-                        if other_flags.wrap == WrapKind::Esm
-                            && kind != ImportKind::Stmt
-                            && !rec_flags.contains(ImportRecordFlags::TREE_SHAKEN_DYNAMIC_IMPORT)
-                        {
+                        if other_flags.wrap == WrapKind::Esm && kind != ImportKind::Stmt {
                             this.graph.generate_symbol_import_and_use(
                                 source_index,
                                 part_index as u32,

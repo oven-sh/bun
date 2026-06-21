@@ -4807,7 +4807,8 @@ impl<'a> Resolver<'a> {
                 // because we want the output to always be deterministic
                 let plen = i32::try_from(prefix.len()).expect("int cast");
                 let slen = i32::try_from(suffix.len()).expect("int cast");
-                if path.starts_with(prefix)
+                if path.len() >= prefix.len() + suffix.len()
+                    && path.starts_with(prefix)
                     && path.ends_with(suffix)
                     && (plen > longest_match_prefix_length
                         || (plen == longest_match_prefix_length
@@ -4841,53 +4842,38 @@ impl<'a> Resolver<'a> {
                 let matched_text =
                     &path[longest_match.prefix.len()..path.len() - longest_match.suffix.len()];
 
-                let total_length: Option<u32> = strings::index_of_char(original_path, b'*');
-                let prefix_end = total_length
-                    .map(|v| v as usize)
-                    .unwrap_or(original_path.len());
-                let prefix_parts: [&[u8]; 2] = [abs_base_url, &original_path[0..prefix_end]];
-
-                // Concatenate the matched text with the suffix from the wildcard path
-                let matched_text_with_suffix = bufs!(tsconfig_match_full_buf3);
-                let mut matched_text_with_suffix_len: usize = 0;
-                if total_length.is_some() {
-                    let suffix = strings::trim_left(&original_path[prefix_end..], b"*");
-                    matched_text_with_suffix_len = matched_text.len() + suffix.len();
-                    if matched_text_with_suffix_len > matched_text_with_suffix.len() {
-                        continue;
-                    }
-                    ::bun_core::concat_into(matched_text_with_suffix, &[matched_text, suffix]);
-                }
-
-                // 1. Normalize the base path
-                // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
-                let Some(prefix) = self
-                    .fs_ref()
-                    .abs_buf_checked(&prefix_parts, bufs!(tsconfig_match_full_buf2))
-                else {
-                    continue;
-                };
-
-                // 2. Join the new base path with the matched result
-                // so that "/Users/foo/components/", "/foo/bar" => /Users/foo/components/foo/bar
-                let parts: [&[u8]; 3] = [
-                    prefix,
-                    if matched_text_with_suffix_len > 0 {
-                        strings::trim_left(
-                            &matched_text_with_suffix[0..matched_text_with_suffix_len],
-                            b"/",
-                        )
+                // Build the substituted target path as a contiguous string. The
+                // previous implementation split the target at '*' and rejoined
+                // the pieces via the path joiner, which inserts a separator
+                // between parts and so only worked when '*' sat on a segment
+                // boundary. Substitute textually instead, then resolve once.
+                let substituted_buf = bufs!(tsconfig_match_full_buf3);
+                let substituted: &[u8] =
+                    if let Some(star) = strings::index_of_char(original_path, b'*') {
+                        let star = star as usize;
+                        let before = &original_path[..star];
+                        let after = &original_path[star + 1..];
+                        let total = before.len() + matched_text.len() + after.len();
+                        if total > substituted_buf.len() {
+                            continue;
+                        }
+                        ::bun_core::concat_into(substituted_buf, &[before, matched_text, after]);
+                        &substituted_buf[..total]
                     } else {
-                        b""
-                    },
-                    strings::trim_left(longest_match.suffix, b"/"),
-                ];
-                let Some(absolute_original_path) = self
-                    .fs_ref()
-                    .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))
-                else {
-                    continue;
-                };
+                        original_path
+                    };
+
+                let mut absolute_original_path: &[u8] = substituted;
+                if !bun_paths::is_absolute(absolute_original_path) {
+                    let parts: [&[u8]; 2] = [abs_base_url, substituted];
+                    let Some(joined) = self
+                        .fs_ref()
+                        .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))
+                    else {
+                        continue;
+                    };
+                    absolute_original_path = joined;
+                }
 
                 if self
                     .load_as_file_or_directory(absolute_original_path, kind, out)

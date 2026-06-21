@@ -1125,8 +1125,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !matches!(prop.value.data, bun_ast::binding::Data::BIdentifier(_)) {
                 return None;
             }
-            if prop.key.data.as_e_string().is_none() {
+            let Some(mut key) = prop.key.data.as_e_string() else {
                 return None;
+            };
+            // Duplicate property keys (`{x, x: y}` — valid JS, distinct
+            // bindings) would overwrite earlier entries in the alias-keyed
+            // map below, leaving the first binding undeclared.
+            let key_slice = key.slice(self.arena);
+            for prev in &properties[..i] {
+                if prev.flags.contains(bun_ast::flags::Property::IsSpread) {
+                    continue;
+                }
+                if let Some(mut prev_key) = prev.key.data.as_e_string() {
+                    if prev_key.slice(self.arena) == key_slice {
+                        return None;
+                    }
+                }
             }
         }
         let has_rest = rest_ref.is_some();
@@ -1166,7 +1180,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     alias,
                     LocRef {
                         loc: prop.key.loc,
-                        ref_: Some(local_ref),
+                        ref_: local_ref,
                     },
                 )
                 .expect("oom");
@@ -1179,7 +1193,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .push(DeferredImportNamespace {
                     namespace: LocRef {
                         loc,
-                        ref_: Some(rest),
+                        ref_: rest,
                     },
                     import_record_id,
                     scope: Some(self.current_scope),
@@ -1247,10 +1261,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .push(DeferredImportNamespace {
                         namespace: LocRef {
                             loc: arg.loc,
-                            ref_: Some(ns),
+                            ref_: ns,
                         },
                         import_record_id: import_record_index,
-                        scope: Some(self.current_scope),
+                        // The synthetic ref is not a source-visible name, so a
+                        // direct `eval()` in this scope cannot observe it.
+                        scope: None,
                     });
                 ns
             } else {
@@ -6854,9 +6870,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match expr.data {
             js_ast::ExprData::EDot(ex) => {
                 if parts.len() > 1 {
-                    if ex.optional_chain.is_some() {
-                        return false;
-                    }
                     // Intermediates must be dot expressions
                     let last = parts.len() - 1;
                     let is_tail_match = strings::eql(&parts[last], &ex.name);
@@ -6874,9 +6887,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if parts.len() > 1 {
                     if let js_ast::ExprData::EString(mut s) = index.index.data {
                         if s.is_utf8() {
-                            if index.optional_chain.is_some() {
-                                return false;
-                            }
                             let last = parts.len() - 1;
                             let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
                             return is_tail_match

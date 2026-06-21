@@ -618,10 +618,15 @@ pub(crate) extern "C" fn bun_is_exiting() -> c_int {
 }
 
 pub fn is_exiting() -> bool {
-    IS_EXITING.load(Ordering::Relaxed)
+    // Acquire pairs with the Release store in `exit()` so a thread that
+    // observes `true` here also observes the `EXIT_CODE` written just
+    // before it. The std::set_terminate handler is process-wide and can
+    // fire on any thread.
+    IS_EXITING.load(Ordering::Acquire)
 }
 
-/// The code passed to [`exit`]. Only meaningful when [`is_exiting`] is true.
+/// The code passed to [`exit`]. Only meaningful after [`is_exiting`] has
+/// returned true (which provides the Acquire edge that makes this visible).
 pub fn exit_code() -> c_int {
     EXIT_CODE.load(Ordering::Relaxed)
 }
@@ -653,11 +658,12 @@ unsafe extern "C" {
 
 /// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
 pub fn exit(code: u32) -> ! {
-    // Store the code before setting IS_EXITING so any observer that sees
-    // IS_EXITING also sees the correct code (the std::terminate handler
-    // reads both to decide whether to _Exit cleanly).
+    // Publish the code before flipping IS_EXITING. The Release here pairs
+    // with the Acquire load in `is_exiting()`, so a cross-thread observer
+    // (the process-wide std::set_terminate handler may run on any thread)
+    // that sees IS_EXITING == true also sees EXIT_CODE.
     EXIT_CODE.store(code as i32, Ordering::Relaxed);
-    IS_EXITING.store(true, Ordering::Relaxed);
+    IS_EXITING.store(true, Ordering::Release);
     // MOVE_DOWN: bun_analytics::features → bun_core (move-in pass).
     crate::features::EXITED.fetch_add(1, Ordering::Relaxed);
 

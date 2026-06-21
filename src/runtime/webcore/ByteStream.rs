@@ -364,6 +364,9 @@ impl ByteStream {
                     self.buffer.set(buf);
                 }
                 streams::Result::Err(err) => {
+                    if let streams::StreamError::JSValue(v) = &err {
+                        v.protect();
+                    }
                     self.pending
                         .with_mut(|p| p.result = streams::Result::Err(err));
                 }
@@ -386,6 +389,9 @@ impl ByteStream {
             streams::Result::Err(err) => {
                 if self.buffer_action.get().is_some() {
                     panic!("Expected buffer action to be null");
+                }
+                if let streams::StreamError::JSValue(v) = &err {
+                    v.protect();
                 }
                 self.pending
                     .with_mut(|p| p.result = streams::Result::Err(err));

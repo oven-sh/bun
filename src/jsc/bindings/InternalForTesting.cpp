@@ -8,6 +8,8 @@
 #include "webcore/HTTPHeaderMap.h"
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
+#include <cstdlib>
+#include <exception>
 
 #if ASAN_ENABLED
 #include <sanitizer/lsan_interface.h>
@@ -122,6 +124,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitMemoryPressure, (JSC::JSGlobalObject * g
 JSC_DEFINE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(jsBoolean(Bun__MemoryPressure__isInstalled(defaultGlobalObject(globalObject))));
+}
+
+// Registers an atexit handler that calls std::terminate(), simulating a native
+// addon whose global destructor throws during libc exit(). This binary is
+// built with -fno-exceptions, so we call std::terminate() directly rather than
+// throwing; the observable behavior (the std::set_terminate handler runs while
+// bun_is_exiting() is true) is the same. Lets the Linux/ASAN lane exercise the
+// terminate handler's is-exiting short-circuit, which a real addon cannot: on
+// Linux an addon links the system libstdc++ and so reaches that runtime's
+// terminate handler, not the one Bun installed in its statically-linked copy.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_terminateAtExitForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    std::atexit([] { std::terminate(); });
+    return encodedJSUndefined();
 }
 
 }

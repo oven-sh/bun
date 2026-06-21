@@ -1,7 +1,7 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
 use core::ffi::{c_char, c_int};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use const_format::{concatcp, formatcp};
 
@@ -610,14 +610,25 @@ pub(crate) fn run_exit_callbacks() {
 }
 
 static IS_EXITING: AtomicBool = AtomicBool::new(false);
+static EXIT_CODE: AtomicI32 = AtomicI32::new(0);
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn bun_is_exiting() -> c_int {
     is_exiting() as c_int
 }
 
-pub(crate) fn is_exiting() -> bool {
+pub fn is_exiting() -> bool {
     IS_EXITING.load(Ordering::Relaxed)
+}
+
+/// The code passed to [`exit`]. Only meaningful when [`is_exiting`] is true.
+pub fn exit_code() -> c_int {
+    EXIT_CODE.load(Ordering::Relaxed)
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn bun_exit_code() -> c_int {
+    exit_code()
 }
 
 // libc process-termination entry points used by `exit` /
@@ -633,12 +644,19 @@ unsafe extern "C" {
     #[cfg(unix)]
     #[link_name = "exit"]
     safe fn libc_exit(code: c_int) -> !;
+    #[cfg(target_os = "macos")]
+    #[link_name = "_exit"]
+    safe fn libc__exit(code: c_int) -> !;
     #[cfg(all(unix, not(target_os = "macos")))]
     safe fn quick_exit(code: c_int) -> !;
 }
 
 /// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
 pub fn exit(code: u32) -> ! {
+    // Store the code before setting IS_EXITING so any observer that sees
+    // IS_EXITING also sees the correct code (the std::terminate handler
+    // reads both to decide whether to _Exit cleanly).
+    EXIT_CODE.store(code as i32, Ordering::Relaxed);
     IS_EXITING.store(true, Ordering::Relaxed);
     // MOVE_DOWN: bun_analytics::features → bun_core (move-in pass).
     crate::features::EXITED.fetch_add(1, Ordering::Relaxed);
@@ -657,7 +675,17 @@ pub fn exit(code: u32) -> ! {
 
     #[cfg(target_os = "macos")]
     {
-        libc_exit(code as i32)
+        // ASAN's leak detector runs from an atexit handler, so use full
+        // exit() there. Otherwise match Linux (quick_exit) / Windows
+        // (ExitProcess) and skip global destructors: a native addon's
+        // throwing static destructor would otherwise reach std::terminate
+        // and turn a clean process.exit() into a crash report. macOS libc
+        // has no quick_exit, so run our own at-exit callbacks and _exit.
+        if env::ENABLE_ASAN {
+            libc_exit(code as i32);
+        }
+        Bun__onExit();
+        libc__exit(code as i32);
     }
     #[cfg(windows)]
     {

@@ -126,6 +126,36 @@ test("--heap-prof-dir specifies output directory for V8 format", async () => {
   expect(files.length).toBeGreaterThan(0);
 });
 
+test("--heap-prof-dir honors an absolute output directory", async () => {
+  // Two separate directories: one is the CWD, the other is the absolute
+  // target. An absolute --heap-prof-dir must be written to that directory, not
+  // resolved relative to CWD (which stripped the leading separator).
+  using cwdDir = tempDir("heap-prof-abs-cwd", {});
+  using targetDir = tempDir("heap-prof-abs-target", {});
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--heap-prof", "--heap-prof-dir", String(targetDir), "-e", `console.log("hello");`],
+    cwd: String(cwdDir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("hello");
+  expect(stderr).toContain("Heap profile written to:");
+  expect(exitCode).toBe(0);
+
+  // The snapshot must land in the absolute target directory.
+  const targetFiles = Array.from(new Bun.Glob("Heap.*.heapsnapshot").scanSync({ cwd: String(targetDir) }));
+  expect(targetFiles.length).toBeGreaterThan(0);
+
+  // And nothing should have been written anywhere under CWD.
+  const cwdFiles = Array.from(new Bun.Glob("**/Heap.*.heapsnapshot").scanSync({ cwd: String(cwdDir) }));
+  expect(cwdFiles).toEqual([]);
+});
+
 test("--heap-prof-dir specifies output directory for markdown format", async () => {
   using dir = tempDir("heap-prof-md-dir-test", {
     "profiles": {},

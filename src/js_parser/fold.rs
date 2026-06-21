@@ -170,12 +170,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // do not route into the import-item arm below — that mints
                     // a `Kind::Import` symbol and `handle_identifier` would emit
                     // a hard "Cannot assign to import" error where pre-existing
-                    // behavior bundled it. Real `import * as ns` namespace refs
-                    // are `Kind::Import` themselves and keep the error.
+                    // behavior bundled it. Real `import * as ns` and unwrapped
+                    // `const x = require()` namespace refs keep the error.
                     if !can_track_dynamic_import_member
-                        && p.import_items_for_namespace.contains_key(&id.ref_)
-                        && p.symbols[id.ref_.inner_index() as usize].kind
-                            != js_ast::symbol::Kind::Import
+                        && p.is_dynamic_import_namespace_local.contains_key(&id.ref_)
                     {
                         break 'sw;
                     }

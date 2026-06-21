@@ -2238,4 +2238,20 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "undefined!" },
   });
+
+  // The assign-target bail must not catch unwrapped `const m = require()`
+  // namespaces — `m.foo = v` on those is a build-time error (esbuild parity).
+  itBundled("dynamic_import_dce/UnwrapCjsAssignStillErrors", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = require("react");
+        m.foo = 1;
+        console.log(m.foo);
+      `,
+      "/node_modules/react/index.js": `export const foo = 0; export const bar = 2;`,
+      "/node_modules/react/package.json": `{"name": "react", "main": "./index.js"}`,
+    },
+    format: "esm",
+    bundleErrors: { "/entry.js": ['Cannot assign to import "foo"'] },
+  });
 });

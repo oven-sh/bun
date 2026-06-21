@@ -4862,9 +4862,18 @@ impl<'a> Resolver<'a> {
                         original_path
                     };
 
+                // Only skip the baseUrl join when the *template* is absolute —
+                // a relative template whose substituted text happens to start
+                // with a separator (e.g. key "~*" → target "*", import
+                // "~/util" → matched_text "/util") must still join. The path
+                // joiner resets on a rooted second part, so strip leading
+                // separators from the substituted text before joining.
                 let mut absolute_original_path: &[u8] = substituted;
-                if !bun_paths::is_absolute(absolute_original_path) {
-                    let parts: [&[u8]; 2] = [abs_base_url, substituted];
+                if !bun_paths::is_absolute(original_path) {
+                    let parts: [&[u8]; 2] = [
+                        abs_base_url,
+                        strings::trim_left(substituted, b"/\\"),
+                    ];
                     let Some(joined) = self
                         .fs_ref()
                         .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))

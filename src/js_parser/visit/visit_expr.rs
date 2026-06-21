@@ -2032,6 +2032,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let local = id.r#ref;
                             p.import_items_for_namespace
                                 .insert(local, crate::parser::ImportItemForNamespaceMap::default());
+                            p.is_dynamic_import_namespace_local.insert(local, ());
                             if !inline {
                                 p.track_only_dynamic_import_namespaces.insert(local, ());
                             }

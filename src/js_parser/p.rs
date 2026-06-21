@@ -309,6 +309,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// runtime). Used for `const ns = await import(...)` and
     /// `.then(ns => ...)` shapes.
     pub track_only_dynamic_import_namespaces: RefMap,
+    /// User-declared locals (`const ns`, `.then(ns => …)`, `{...rest}`) that
+    /// hold a dynamic-import namespace. Superset of the track-only set; used
+    /// to gate the assign/delete bail in `maybe_rewrite_property_access`
+    /// without catching unwrap_commonjs `const x = require()` locals.
+    pub is_dynamic_import_namespace_local: RefMap,
     pub unwrap_all_requires: bool,
 
     pub commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
@@ -1187,6 +1192,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.import_items_for_namespace
                 .insert(rest, ImportItemForNamespaceMap::default());
             self.track_only_dynamic_import_namespaces.insert(rest, ());
+            self.is_dynamic_import_namespace_local.insert(rest, ());
             self.imports_to_convert_from_dynamic_import
                 .push(DeferredImportNamespace {
                     namespace: LocRef { loc, ref_: rest },
@@ -9312,6 +9318,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             imports_to_convert_from_dynamic_import: BumpVec::new_in(arena),
             dynamic_import_aliases: Default::default(),
             track_only_dynamic_import_namespaces: Default::default(),
+            is_dynamic_import_namespace_local: Default::default(),
             unwrap_all_requires,
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,

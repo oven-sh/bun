@@ -477,6 +477,27 @@ describe("bundler", () => {
       stdout: "success",
     },
   });
+  itBundled("edgecase/TSConfigPathStarBareTargetSlashMatch", {
+    // Key prefix without a trailing "/" — matched_text starts with "/", but
+    // the target template is relative so the substituted result must still
+    // join against baseUrl (not be treated as filesystem-absolute).
+    files: {
+      "/entry.ts": /* ts */ `
+        import x from "~/util";
+        console.log(x);
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": "./packages",
+            "paths": { "~*": ["*"] }
+          }
+        }
+      `,
+      "/packages/util.ts": `export default "ok";`,
+    },
+    run: { stdout: "ok" },
+  });
 
   itBundled("edgecase/StaticClassNameIssue2806", {
     files: {

@@ -842,6 +842,12 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::send(WebCore::JSBlob* blob)
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
     if (m_state == CLOSING || m_state == CLOSED) {
+        // Mirror the String/ArrayBuffer/ArrayBufferView send() overloads: per
+        // spec, send() after close increases bufferedAmount by the size of the
+        // data instead of transmitting it.
+        size_t payloadSize = Blob__getSize(JSC::JSValue::encode(blob));
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
 
@@ -1235,7 +1241,7 @@ unsigned WebSocket::bufferedAmount() const
 {
     // While OPEN, query the live send-buffer size from the connection so
     // backpressure is observable. Once closed the connection is gone, but the
-    // spec requires bufferedAmount not to reset to 0 — close()/terminate()
+    // spec requires bufferedAmount not to reset to 0: close()/terminate()
     // snapshot the final backlog into m_bufferedAmount, and send() after close
     // adds to m_bufferedAmountAfterClose, so the total only ever increases.
     unsigned buffered = m_bufferedAmount;
@@ -1991,6 +1997,11 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::ping(WebCore::JSBlob* blob)
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
     if (m_state == CLOSING || m_state == CLOSED) {
+        // Match the String/ArrayBuffer/ArrayBufferView ping() overloads, which
+        // accumulate into bufferedAmount after close rather than transmitting.
+        size_t payloadSize = Blob__getSize(JSC::JSValue::encode(blob));
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
 
@@ -2013,6 +2024,11 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::pong(WebCore::JSBlob* blob)
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
     if (m_state == CLOSING || m_state == CLOSED) {
+        // Match the String/ArrayBuffer/ArrayBufferView pong() overloads, which
+        // accumulate into bufferedAmount after close rather than transmitting.
+        size_t payloadSize = Blob__getSize(JSC::JSValue::encode(blob));
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
 

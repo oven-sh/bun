@@ -29,7 +29,7 @@
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 // Windows: inter-process stdio-fd hand-off is not implemented. `FileReader`'s
 // pipe handle is a system-kind `HANDLE` and `Fd::uv()` panics on the non-stdio
@@ -242,33 +242,49 @@ test.skipIf(isWindows)("spawnSync does not brick a stream passed as stdio", asyn
   // `Bun.spawnSync` blocks the JS thread until the child exits, so there is no
   // parent/child read race to prevent, and the quiesce step runs only after
   // the child is already gone. Its irreversible `setFlowing(false)` must not
-  // run on the sync path, or a stream handed to `spawnSync` (here the runner's
-  // own `process.stdin`) would be left permanently unreadable. A sub-bun runner
-  // performs the sync spawn and reports its `process.stdin` flowing state.
-  const RUNNER = `
-    const { spawnSync } = require("child_process");
-    process.stdin.resume();
-    const before = process.stdin.readableFlowing;
-    // Hand our own stdin to a child that exits without reading it.
-    spawnSync(${JSON.stringify(bunExe())}, ["-e", ""], { stdio: [process.stdin, "ignore", "ignore"] });
-    const after = process.stdin.readableFlowing;
-    process.stdout.write("flowing:" + before + "->" + after);
-    process.exit(0);
-  `;
-  using runner = spawn(bunExe(), ["-e", RUNNER], {
-    stdio: ["pipe", "pipe", "inherit"],
+  // run on the sync path, or a stream handed to `spawnSync` would be left
+  // permanently unreadable. Hand a live subprocess's stdout to `spawnSync` and
+  // assert its flowing state is untouched; before the fix `markStreamsAsStdio`
+  // flipped it to `false`.
+  using pSource = spawn(bunExe(), ["-e", "setInterval(() => {}, 1 << 30)"], {
+    stdio: ["ignore", "pipe", "ignore"],
     env: bunEnv,
   });
-  const [out, code] = await Promise.all([
-    collect(runner.stdout!),
-    new Promise<number | null>(r => {
-      if (runner.exitCode != null) return r(runner.exitCode);
-      runner.once("exit", c => r(c));
-    }),
-  ]);
-  // Before the fix `markStreamsAsStdio` flipped flowing to false ("true->false").
-  expect(out).toBe("flowing:true->true");
-  expect(code).toBe(0);
+  pSource.stdout!.resume();
+  const before = (pSource.stdout as any).readableFlowing;
+  // Hand pSource.stdout's fd to a sync child that exits without reading it.
+  spawnSync(bunExe(), ["-e", ""], { stdio: [pSource.stdout!, "ignore", "ignore"], env: bunEnv });
+  const after = (pSource.stdout as any).readableFlowing;
+
+  expect(before).toBe(true);
+  // After the fix the sync path does not quiesce; before it, flowing was false.
+  expect(after).toBe(true);
+});
+
+test.skipIf(isWindows)("a destroyed subprocess stdin does not leak a stale fd to a later spawn", async () => {
+  // Writable-side analogue of the readable test above. `writableFromFileSink`
+  // caches the pipe fd on `stdin.fd`. The WriteStream `_destroy` only nulls it
+  // via `close()`, which it skips on the async path (the sink still has
+  // buffered bytes), so a destroyed stdin can retain a stale fd. `extractStreamFd`
+  // rejects destroyed streams, so `spawn` raises the unsupported-stream-stdio
+  // error instead of `dup2`'ing a closed (or kernel-reused) fd into the child.
+  using pSink = spawn(bunExe(), ["-e", "setInterval(() => {}, 1 << 30)"], {
+    stdio: ["pipe", "ignore", "ignore"],
+    env: bunEnv,
+  });
+  // Write more than the pipe buffer (child never reads) so the FileSink keeps
+  // pending bytes; `destroy()` then takes the async `_destroy` path that never
+  // reaches `close()`, leaving `fd` set without the `extractStreamFd` guard.
+  // The unflushed bytes surface as EPIPE when the sink closes; swallow it, the
+  // stream is `destroyed` synchronously regardless.
+  pSink.stdin!.on("error", () => {});
+  pSink.stdin!.write(Buffer.alloc(1 << 20, 0x61));
+  pSink.stdin!.destroy();
+  expect(pSink.stdin!.destroyed).toBe(true);
+
+  expect(() =>
+    spawn(bunExe(), ["-e", ""], { stdio: ["ignore", pSink.stdin!, "ignore"], env: bunEnv }),
+  ).toThrow(/stream\.(Writable|Readable) stdio/);
 });
 
 function collect(stream: NodeJS.ReadableStream): Promise<string> {

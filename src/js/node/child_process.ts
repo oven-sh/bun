@@ -1755,10 +1755,17 @@ function nodeToBun(
  *     `fs.ReadStream` / `fs.WriteStream` set it after open.
  *   - `item._handle.fd` is a number — Node's `net.Socket`-backed subprocess
  *     streams expose the pipe fd here; we don't emit this but accept it.
+ * A destroyed stream is rejected up front: its fd has been (or is about to be)
+ * closed, and not every destroy path clears the cached `.fd` synchronously
+ * (the `WriteStream` fast-path only nulls it in `close()`, which the async
+ * `_destroy` branch skips when the sink still has buffered bytes). Forwarding
+ * such an fd would `dup2` a stale (possibly kernel-reused) descriptor into the
+ * child, so guarding here covers both the readable and writable sides.
  * Returns `undefined` when no fd is available so the caller can raise the
  * stream-stdio-unsupported error.
  */
 function extractStreamFd(item: any): number | undefined {
+  if (item.destroyed === true) return undefined;
   if (Object.hasOwn(item, "fd")) {
     const fd = item.fd;
     if (typeof fd === "number") return fd;

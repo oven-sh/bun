@@ -581,7 +581,6 @@ impl Writable {
                 JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js()
             }
             Writable::Owned(len) => JSValue::from(len),
-            // The sink owns this promise (kept alive via `protect()` in
             // Negative sentinel; the writer awaits the drain via `flush(true)`.
             Writable::Backpressure(len) => JSValue::js_number(-((len as f64) + 1.0)),
             Writable::OwnedAndDone(len) => JSValue::from(len),

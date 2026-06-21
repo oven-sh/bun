@@ -947,6 +947,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             .emit_dce_annotations
             .unwrap_or(!config.minify.whitespace);
         transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
+        transpiler.options.tree_shaking_override = config.tree_shaking;
         transpiler.options.css_chunking = config.css_chunking;
         transpiler.options.compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
@@ -970,6 +971,19 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.banner = std::borrow::Cow::Owned(config.banner.list.clone());
         transpiler.options.footer = std::borrow::Cow::Owned(config.footer.list.clone());
         transpiler.options.react_fast_refresh = config.react_fast_refresh;
+        transpiler.options.react_compiler = if config.react_compiler.is_enabled() {
+            config.react_compiler_output_mode.unwrap_or_else(|| {
+                if config.target.is_server_side() {
+                    bun_ast::runtime::ReactCompilerMode::Ssr
+                } else {
+                    bun_ast::runtime::ReactCompilerMode::Client
+                }
+            })
+        } else {
+            bun_ast::runtime::ReactCompilerMode::Disabled
+        };
+        transpiler.options.react_compiler_parse_test_pragmas =
+            config.react_compiler_parse_test_pragmas;
         transpiler.options.metafile = config.metafile;
         transpiler.options.metafile_json_path =
             Box::from(config.metafile_json_path.list.as_slice());

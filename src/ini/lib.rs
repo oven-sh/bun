@@ -29,10 +29,8 @@ impl Default for Options {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Pure-byte helpers (lifted from `Parser` so they compile without the
-// Expr-carrying struct). They
-// touch no parser state — exposing them as free fns lets the logic stay
-// un-gated and unit-testable while the AST-dependent body is blocked.
+// Pure-byte helpers. They touch no parser state; exposed as free fns so
+// they are unit-testable without the Expr-carrying struct.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
@@ -212,13 +210,6 @@ pub enum ScopeError {
     #[error("no_value")]
     NoValue,
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Re-gated items + shadow stubs
-//
-// `Parser::parse` / `Parser::prepare_str` (unquoted path) / `ConfigIterator`
-// now compile against the live `bun_js_parser::{Expr, ExprData, E::*}` surface.
-// ──────────────────────────────────────────────────────────────────────────
 
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
@@ -1117,7 +1108,7 @@ mod draft {
                 ExprData::EBoolean(b) => {
                     write!(writer, "{}", if b.value { "true" } else { "false" })
                 }
-                ExprData::ENumber(n) => write!(writer, "{}", n.value),
+                ExprData::ENumber(n) => write!(writer, "{}", n.value()),
                 ExprData::EString(s) => {
                     write!(writer, "{}", bstr::BStr::new(&s.data))
                 }

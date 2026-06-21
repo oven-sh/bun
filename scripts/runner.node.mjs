@@ -1548,7 +1548,12 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
     cwd: opts["cwd"],
-    timeout: isReallyTest ? timeout : 30_000,
+    // release-asan with debug-assertions on runs every spawned subprocess
+    // slower; give each file more headroom so tests with heavy beforeAll
+    // setup (napi node-gyp compiles) or many subprocess spawns don't hit
+    // the file wall before any individual test times out. Kept below the
+    // per-test multiplier so the overall shard stays inside the job timeout.
+    timeout: isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000,
     env,
     stdout: options.stdout,
     stderr: options.stderr,
@@ -1582,7 +1587,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
  */
 function getTestTimeout(testPath) {
   if (
-    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic/i.test(
+    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic|test[\\/]napi/i.test(
       testPath,
     )
   ) {

@@ -98,11 +98,6 @@ impl SupportsCondition {
 }
 
 impl SupportsCondition {
-    // blocked_on: generics::CssHash for PropertyId — `#[derive(CssHash)]` /
-    // `implement_hash` need every field type to provide `.hash(&mut Wyhash)`.
-    // `PropertyId` only impls `core::hash::Hash` today. TODO(refactor): add
-    // `impl CssHash for PropertyId` then swap to `#[derive(CssHash)]`.
-
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         // Hand-expanded because `#[derive(CssHash)]` would require
         // `PropertyId: CssHash` (it only provides `core::hash::Hash`).

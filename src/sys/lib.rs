@@ -4,12 +4,12 @@
 // IS the bun_sys::File the lint routes everyone else through.
 #![allow(clippy::disallowed_types, clippy::disallowed_methods)]
 #![warn(unused_must_use)]
-//! `bun_sys` — syscall wrappers (port of `src/sys/sys.zig`).
+//! `bun_sys` — syscall wrappers.
 
 // `Fd` struct + pure-data accessors are hoisted to `bun_core::Fd`
 // (canonical T0). `fd.rs` is `pub trait FdExt` over that.
 
-// `bun_str` is the historical Zig namespace name; keep a public alias to
+// `bun_str` is a historical namespace name; keep a public alias to
 // `bun_core` so any external `bun_sys::bun_core::…` paths continue to resolve.
 #[cfg(windows)]
 pub extern crate bun_core as bun_str;
@@ -26,9 +26,8 @@ pub use error::Error;
 #[cfg(windows)]
 pub use error::ReturnCodeExt;
 // `bun_sys::Error` is the rich syscall error (errno+tag+path); `bun_core::Error`
-// is the lightweight NonZeroU16 code. They are distinct types (matching Zig:
-// `bun.sys.Error` vs `anyerror`). Downstream that just wants "an error" gets the
-// code via `From`.
+// is the lightweight NonZeroU16 code. They are distinct types. Downstream that
+// just wants "an error" gets the code via `From`.
 impl From<Error> for bun_core::Error {
     #[inline]
     fn from(e: Error) -> bun_core::Error {
@@ -36,11 +35,11 @@ impl From<Error> for bun_core::Error {
         bun_core::Error::from_errno(e.errno as i32)
     }
 }
-/// Port of `SystemError` (src/jsc/SystemError.zig) — the JS-facing rich error
+/// The JS-facing rich error
 /// (path/dest/syscall as `bun.String`). The data side has no JSC dependency:
 /// the `*JSGlobalObject`-taking conversion methods (`toErrorInstance` etc.)
 /// live in `bun_jsc` as inherent extensions. `#[repr(C)]` and field order
-/// match the Zig `extern struct` exactly so the C++ `SystemError__*` externs
+/// are fixed so the C++ `SystemError__*` externs
 /// (BunObject.cpp) read the same layout.
 #[repr(C)]
 pub struct SystemError {
@@ -71,13 +70,11 @@ impl Default for SystemError {
     }
 }
 impl SystemError {
-    /// Zig: `SystemError.getErrno` — `@enumFromInt(this.errno * -1)`.
     /// (`Error::to_system_error` stores `errno` negated to match Node.)
     #[inline]
     pub fn get_errno(&self) -> E {
         e_from_negated(self.errno)
     }
-    /// Zig: `SystemError.deref`.
     pub fn deref(&self) {
         self.path.deref();
         self.code.deref();
@@ -86,7 +83,6 @@ impl SystemError {
         self.hostname.deref();
         self.dest.deref();
     }
-    /// Zig: `SystemError.ref`.
     pub fn ref_(&self) {
         self.path.ref_();
         self.code.ref_();
@@ -97,10 +93,8 @@ impl SystemError {
     }
 }
 impl core::fmt::Display for SystemError {
-    /// Port of `SystemError.format` (SystemError.zig:85). Zig forks on
-    /// `Output.enable_ansi_colors_stderr` to inject ANSI escapes via
-    /// `prettyFmt`; the Rust port emits the colorless variant
-    /// (`prettyFmt(..., false)` collapses `<r>/<red>/<d>/<b>` to nothing) so
+    /// Emits the colorless variant
+    /// (`<r>/<red>/<d>/<b>` markup collapsed to nothing) so
     /// `Display` stays side-effect-free. The colored path is handled by
     /// `bun_core::Output::pretty*` at the call site that prints the error.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -119,23 +113,22 @@ impl core::fmt::Display for SystemError {
 }
 pub mod walker_skippable;
 // `copy_file.rs` — full ioctl_ficlone / copy_file_range / sendfile / r-w-loop
-// state machine (port of `src/sys/copy_file.zig`). Raw kernel
+// state machine. Raw kernel
 // thunks live in `crate::linux`, errno tags use the prefixed `E::E*` form,
 // kernel-version probe goes through `bun_core::linux_kernel_version()`.
 #[path = "copy_file.rs"]
 pub mod copy_file;
 
-// `std.fs.Dir.Entry.Kind` — same set as `bun_core::FileKind`.
+// Directory-entry kind — same set as `bun_core::FileKind`.
 pub use bun_core::FileKind as EntryKind;
 
-// `bun.DirIterator` — ported from `src/runtime/node/dir_iterator.zig`.
+// `bun.DirIterator`.
 //
-// This is copied from std.fs.Dir.Iterator. Differences:
+// A readdir-style directory iterator. Notable behaviors:
 // - returns errors in `bun_sys::Result` (preserves errno + syscall tag)
 // - doesn't mark BADF as unreachable
 // - entry name (`Name`) is a lifetime-erased borrow into the iterator's inline
-//   `buf` on POSIX (Zig: `PathString`), owned `Vec` on Windows
-// - Windows uses the `.u16` path (`NewWrappedIterator(.u16)` in Zig)
+//   `buf` on POSIX, owned `Vec` on Windows
 //
 // The high-tier `bun_runtime::node::dir_iterator` shares this surface; the
 // readdir loop lives here so `walker_skippable` / `bun_glob` / resolver can
@@ -148,7 +141,7 @@ pub mod dir_iterator {
 
     /// Native-encoding directory entry returned by `WrappedIterator::next()`.
     ///
-    /// Zig parity: `IteratorResult { name: PathString, kind }` — `name` is a
+    /// `name` is a
     /// *borrow* into the iterator's internal `buf`. It is invalidated by the
     /// next call to `next()` and by moving/dropping the iterator. Copy it out
     /// (`.slice_u8().to_vec()` etc.) if you need it to outlive the iteration
@@ -162,15 +155,12 @@ pub mod dir_iterator {
     ///
     /// **POSIX**: lifetime-erased borrow (raw pointer + length) into the
     /// iterator's `getdents`/`getdirentries` buffer. The kernel writes
-    /// `d_name` NUL-terminated, so `as_zstr()` needs no copy. Same contract
-    /// as Zig's `PathString.init(name)` (dir_iterator.zig:225) — the slice is
+    /// `d_name` NUL-terminated, so `as_zstr()` needs no copy. The slice is
     /// only valid until the next `next()` call or until the iterator is
     /// moved/dropped. No heap allocation per entry.
     ///
     /// **Windows**: `FILE_DIRECTORY_INFORMATION.FileName` is length-prefixed
-    /// (no NUL) and UTF-16; the Zig `.u8` `NewWrappedIterator` eagerly
-    /// transcodes via `strings.fromWPath` into an iterator-owned `name_data`
-    /// scratch buffer. Here we keep an owning `Vec` per entry (cold path —
+    /// (no NUL) and UTF-16; we keep an owning `Vec` per entry (cold path —
     /// the install hot loop is POSIX-only) so `slice_u8()` can hand out a
     /// borrowed `&[u8]` on every platform.
     #[cfg(not(windows))]
@@ -213,12 +203,11 @@ pub mod dir_iterator {
             let mut v = Vec::with_capacity(s.len() + 1);
             v.extend_from_slice(s);
             v.push(0);
-            // Zig: `strings.fromWPath(self.name_data[0..], dir_info_name)` —
-            // "Trust that Windows gives us valid UTF-16LE".
+            // Trust that Windows gives us valid UTF-16LE.
             let utf8 = bun_core::strings::convert_utf16_to_utf8(Vec::new(), s);
             Name { native: v, utf8 }
         }
-        /// Zig: `name.slice()` — borrow the name as `&[OSPathChar]` (no NUL).
+        /// Borrow the name as `&[OSPathChar]` (no NUL).
         #[cfg(not(windows))]
         #[inline]
         pub fn slice(&self) -> &[OSPathChar] {
@@ -247,7 +236,6 @@ pub mod dir_iterator {
         pub fn slice_u8(&self) -> &[u8] {
             &self.utf8
         }
-        /// Zig: `name.sliceAssumeZ()` — `[:0]const u8` on POSIX.
         #[cfg(not(windows))]
         #[inline]
         pub fn as_zstr(&self) -> &bun_core::ZStr {
@@ -266,8 +254,8 @@ pub mod dir_iterator {
     // 8-byte alignment matches `@alignOf(linux.dirent64)` / Darwin dirent /
     // FILE_DIRECTORY_INFORMATION's LONGLONG-boundary requirement.
     //
-    // Zig: `buf: [8192]u8 align(...)` — *inline*, *uninitialised*. We mirror
-    // that with `MaybeUninit` to skip the 8 KiB `memset` per directory (perf:
+    // `buf` is inline and uninitialised:
+    // `MaybeUninit` skips the 8 KiB `memset` per directory (perf:
     // ~1.4K dirs/install → ~11 MB zalloc churn dropped) and store it inline in
     // `State` so the per-dir heap allocation is gone too. The kernel fills
     // `[0..rc]` before we read; we never index past `end_index`.
@@ -340,8 +328,7 @@ pub mod dir_iterator {
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
             loop {
                 if self.index >= self.end_index {
-                    // glibc doesn't expose getdents64; go straight to the syscall
-                    // (matches Zig's `linux.getdents64` raw-syscall path).
+                    // glibc doesn't expose getdents64; go straight to the syscall.
                     // SAFETY: buf is valid for BUF_SIZE bytes; fd is a plain c_int.
                     let rc = unsafe {
                         super::linux_syscall::getdents64(
@@ -370,7 +357,7 @@ pub mod dir_iterator {
                 self.index = base + reclen;
 
                 // d_name is NUL-terminated within the record. Use a SIMD-vectorized
-                // scan for the terminator (mirrors Zig's `indexOfScalar`); a scalar
+                // scan for the terminator; a scalar
                 // byte loop here showed up in startup profiles on large directories.
                 let name_field = &buf[base + 19..base + reclen];
                 let nul = memchr::memchr(0, name_field).unwrap_or(name_field.len());
@@ -412,7 +399,7 @@ pub mod dir_iterator {
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
             unsafe extern "C" {
-                // Private libsystem symbol; same one Zig's `posix.system.__getdirentries64` hits.
+                // Private libsystem symbol.
                 fn __getdirentries64(
                     fd: libc::c_int,
                     buf: *mut u8,
@@ -584,8 +571,7 @@ pub mod dir_iterator {
     }
 
     // ── Windows ──────────────────────────────────────────────────────────
-    // dir_iterator.zig:233-417 — `NtQueryDirectoryFile` +
-    // `FILE_DIRECTORY_INFORMATION` walk.
+    // `NtQueryDirectoryFile` + `FILE_DIRECTORY_INFORMATION` walk.
     #[cfg(windows)]
     struct State {
         // > This structure must be aligned on a LONGLONG (8-byte) boundary. If
@@ -775,7 +761,7 @@ pub mod dir_iterator {
         dir: Fd,
         // Windows: NtQueryDirectoryFile filter (UNICODE_STRING). On POSIX,
         // ignored (kernel readdir has no name filter; callers post-filter).
-        // PORT NOTE: stored on `State` on Windows so `next()` can pass it.
+        // stored on `State` on Windows so `next()` can pass it.
         #[cfg(not(windows))]
         name_filter: Option<Vec<u16>>,
         state: State,
@@ -803,7 +789,7 @@ pub mod dir_iterator {
         /// iterator is moved or dropped.
         ///
         /// On POSIX `IteratorResult::name` is a lifetime-erased borrow into
-        /// this iterator's inline `buf` (Zig parity: `PathString.init(d_name)`).
+        /// this iterator's inline `buf`.
         /// Copy it out before pushing the iterator into a `Vec` etc.
         #[inline]
         pub fn next(&mut self) -> Result<Option<IteratorResult>> {
@@ -835,10 +821,8 @@ pub mod dir_iterator {
 pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) -> Result<Fd> {
     #[cfg(not(windows))]
     {
-        // PORT NOTE: Zig `openDirForIterationOSPath` uses
-        // `O_DIRECTORY | O_RDONLY | O_CLOEXEC` (`| O_NONBLOCK` on Linux).
         let mut buf = bun_paths::PathBuffer::default();
-        // bun.zig:883 → `sys.openatA` → `std.posix.toPosixPath`: ENAMETOOLONG on
+        // ENAMETOOLONG on
         // overflow, never silently truncate (would open the wrong directory).
         if path.len() >= buf.len() {
             return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(path));
@@ -848,14 +832,11 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
         buf[len] = 0;
         // SAFETY: NUL-terminated above.
         let z = ZStr::from_buf(&buf[..], len);
-        // bun.zig:883 — exactly `O_DIRECTORY | O_CLOEXEC | O_RDONLY` (no NONBLOCK).
         let flags = libc::O_DIRECTORY | libc::O_RDONLY | libc::O_CLOEXEC;
         openat(dir, z, flags, 0)
     }
     #[cfg(windows)]
     {
-        // bun.zig:884 → `sys.openDirAtWindowsA(dir, path, .{ .iterable = true,
-        // .read_only = true })`.
         open_dir_at_windows(
             dir,
             path,
@@ -872,20 +853,17 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
     let fd = fd.as_fd();
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // sys.zig:874 — `bun.invalid_fd` means cwd-relative.
         let dirfd = if fd.is_valid() {
             fd.native()
         } else {
             libc::AT_FDCWD
         };
-        // sys.zig:877 — `lstatat` tags as `.fstatat`.
         linux_syscall::fstatat(dirfd, path, libc::AT_SYMLINK_NOFOLLOW)
             .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()))
     }
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     {
         let mut st = core::mem::MaybeUninit::<libc::stat>::uninit();
-        // sys.zig:874 — `bun.invalid_fd` means cwd-relative.
         let dirfd = if fd.is_valid() {
             fd.native()
         } else {
@@ -904,13 +882,12 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
             // SAFETY: rc == 0 ⇒ kernel populated `st`.
             Ok(unsafe { st.assume_init() })
         } else {
-            // sys.zig:877 — `lstatat` tags as `.fstatat`.
             Err(Error::from_code_int(last_errno(), Tag::fstatat).with_path(path.as_bytes()))
         }
     }
     #[cfg(windows)]
     {
-        // sys.zig:879 — open with `O.NOFOLLOW` (→ `FILE_OPEN_REPARSE_POINT`),
+        // Open with `O.NOFOLLOW` (→ `FILE_OPEN_REPARSE_POINT`),
         // `fstat` the handle, then close.
         match openat_windows_a(fd, path.as_bytes(), O::NOFOLLOW, 0) {
             Ok(file) => {
@@ -922,7 +899,7 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
         }
     }
 }
-/// `bun.getcwdAlloc(allocator)` (bun.zig:1256) — read cwd into a stack
+/// Read cwd into a stack
 /// `PathBuffer`, then duplicate into a heap-owned NUL-terminated `ZBox`.
 pub fn getcwd_alloc() -> Maybe<bun_core::ZBox> {
     let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
@@ -930,7 +907,7 @@ pub fn getcwd_alloc() -> Maybe<bun_core::ZBox> {
     Ok(bun_core::ZBox::from_bytes(&buf[..len]))
 }
 
-/// `bun.sys.getcwdZ(buf)` (sys.zig:349) — `getcwd` returning a NUL-terminated
+/// `getcwd` returning a NUL-terminated
 /// borrow into `buf`. POSIX `getcwd(3)` already NUL-terminates; on Windows
 /// the libuv path does too.
 pub fn getcwd_z(buf: &mut bun_paths::PathBuffer) -> Maybe<&ZStr> {
@@ -960,7 +937,7 @@ use core::ffi::{c_char, c_void};
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from lower-tier crates (PORTING.md crate map).
 // ──────────────────────────────────────────────────────────────────────────
-/// Zig: `bun.errnoToZigErr(errno)` (bun.zig) — re-exported here so callers
+/// Re-exported here so callers
 /// that already depend on `bun_sys` (e.g. `bun_install` Windows paths) can
 /// write `bun_sys::errno_to_zig_err(..)` without also importing `bun_core`.
 pub use bun_core::errno_to_zig_err;
@@ -1006,12 +983,11 @@ impl AsFd for &Dir {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub(crate) mod linux_syscall;
 
-/// Zig: `bun.isRegularFile(mode)` (bun.zig) — `S.ISREG(@intCast(mode))`.
 #[inline]
 pub fn is_regular_file(mode: Mode) -> bool {
     kind_from_mode(mode) == FileKind::File
 }
-/// `std.posix.socket_t` — `c_int` on POSIX, `SOCKET` (`usize`) on Windows.
+/// Native socket type — `c_int` on POSIX, `SOCKET` (`usize`) on Windows.
 #[cfg(not(windows))]
 pub type SocketT = core::ffi::c_int;
 #[cfg(windows)]
@@ -1037,7 +1013,7 @@ pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_c
         return core::ptr::null();
     };
     // strum's `IntoStaticStr` yields a `&str` without a NUL terminator, but the
-    // Zig contract is `?[*:0]const u8` and C++ callers pass it to `fprintf` /
+    // exported contract is `?[*:0]const u8` and C++ callers pass it to `fprintf` /
     // `String::fromLatin1`. Copy into a small thread-local buffer and append
     // the NUL ourselves.
     let name = <&'static str>::from(e).as_bytes();
@@ -1058,7 +1034,7 @@ pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_c
 }
 
 /// Small "fire and forget" wrapper around unlink for C usage that handles
-/// EINTR, Windows path conversion, etc. Zig: `export fn Bun__unlink(ptr, len)`.
+/// EINTR, Windows path conversion, etc.
 ///
 /// # Safety
 /// `ptr[0..=len]` must be a valid NUL-terminated path slice for the call.
@@ -1072,22 +1048,22 @@ pub unsafe extern "C" fn Bun__unlink(ptr: *const u8, len: usize) {
 
 // libuv-style error constants (negated errno on posix, UV_* on Windows). The
 // per-platform `bun_errno` module defines this as `mod uv_e`; re-export under
-// the canonical Zig name so callers can write `bun_sys::UV_E::NOENT`.
+// the canonical name so callers can write `bun_sys::UV_E::NOENT`.
 pub use bun_errno::uv_e as UV_E;
 // `bun_errno::posix` is the small move-down stub (mode_t/E/S/errno). The full
 // `std.posix` surface dependents need (`Sigaction`, `getrlimit`, `tcgetattr`,
 // raw `read`/`write`/`poll`, …) is widened below in this crate's own `posix`
 // module which re-exports the errno stub and layers libc on top.
 
-/// `Maybe(T)` — Zig's `union(enum) { result: T, err: Error }`. In Rust this is
-/// just `Result<T, Error>`; keep the alias so ported call sites type-check.
+/// `Maybe(T)` is just `Result<T, Error>`; keep the alias so existing call
+/// sites type-check.
 pub type Maybe<T> = core::result::Result<T, Error>;
 pub type Result<T> = core::result::Result<T, Error>;
 
-/// Zig `Maybe(T)` static helpers — `.success()`, `.errno(e, tag)`,
-/// `.errnoSys(rc, tag)`. Ported as a trait over `Result<T, Error>` so call
-/// sites can keep writing `bun_sys::Result::<()>::errno_sys(rc, tag)` exactly
-/// as the Zig spells it. Windows-only paths in `windows/mod.rs` lean on these
+/// `Maybe(T)` static helpers — `.success()`, `.errno(e, tag)`,
+/// `.errnoSys(rc, tag)`, as a trait over `Result<T, Error>` so call
+/// sites can write `bun_sys::Result::<()>::errno_sys(rc, tag)`.
+/// Windows-only paths in `windows/mod.rs` lean on these
 /// for the NTSTATUS → `E` mapping.
 pub trait MaybeExt: Sized {
     type T;
@@ -1133,7 +1109,7 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
-/// Flags for [`renameat2`]. Port of `bun.sys.RenameAt2Flags` (sys.zig:2472).
+/// Flags for [`renameat2`].
 /// On Linux maps to `RENAME_EXCHANGE`/`RENAME_NOREPLACE`; on macOS maps to
 /// `RENAME_SWAP`/`RENAME_EXCL`/`RENAME_NOFOLLOW_ANY`.
 #[derive(Clone, Copy, Default)]
@@ -1184,9 +1160,9 @@ impl Renameat2Flags {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Syscall tag — `enum(u8)` in spec (sys.zig:218-326). Newtype-over-u8 here so
-// the discriminants match Zig's positional ordinals 1:1 for FFI / cross-lang
-// comparison. PORTING.md §Forbidden flags wrong-discriminants as a logic-bug.
+// Syscall tag. Newtype-over-u8; the discriminants are part of the FFI /
+// cross-lang comparison surface and must stay stable.
+// PORTING.md §Forbidden flags wrong-discriminants as a logic-bug.
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -1202,8 +1178,8 @@ pub mod O {
     pub const RDONLY: i32 = libc::O_RDONLY;
     pub const WRONLY: i32 = libc::O_WRONLY;
     pub const RDWR: i32 = libc::O_RDWR;
-    // sys.zig:193-197 — on Windows the `O.*` constants are the Zig spec values
-    // (octal, Linux-shaped), NOT MSVCRT `_O_*`. `uv::O::from_bun_o` bit-tests
+    // On Windows the `O.*` constants are fixed octal, Linux-shaped values,
+    // NOT MSVCRT `_O_*`. `uv::O::from_bun_o` bit-tests
     // against these exact values, so re-using `libc::O_CREAT` (0x100) etc.
     // silently dropped CREAT/EXCL/APPEND on Windows.
     #[cfg(unix)]
@@ -1235,7 +1211,7 @@ pub mod O {
     pub const CLOEXEC: i32 = 0o2000000;
     #[cfg(unix)]
     pub const DIRECTORY: i32 = libc::O_DIRECTORY;
-    // sys.zig:202 — non-zero on Windows so `(flags & O::DIRECTORY) != 0`
+    // Non-zero on Windows so `(flags & O::DIRECTORY) != 0`
     // routes `openat_windows_impl` to the directory NtCreateFile path.
     #[cfg(windows)]
     pub const DIRECTORY: i32 = 0o200000;
@@ -1245,7 +1221,7 @@ pub mod O {
     pub const NOATIME: i32 = libc::O_NOATIME;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub const TMPFILE: i32 = libc::O_TMPFILE;
-    // sys.zig:209-212 — Windows defines these (non-zero) so the `O.PATH` /
+    // Windows defines these (non-zero) so the `O.PATH` /
     // `O.NOATIME` bit-tests in `openat_windows_impl` are meaningful.
     #[cfg(windows)]
     pub const PATH: i32 = 0o10000000;
@@ -1259,7 +1235,7 @@ pub mod O {
     pub const NOATIME: i32 = 0;
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     pub const TMPFILE: i32 = 0;
-    // sys.zig:66-216 — defined for every platform; Darwin-only flags map to 0
+    // Defined for every platform; Darwin-only flags map to 0
     // elsewhere so `flags & O.EVTONLY` etc. compile and are no-ops.
     #[cfg(unix)]
     pub const NOFOLLOW: i32 = libc::O_NOFOLLOW;
@@ -1297,15 +1273,14 @@ pub mod O {
     pub const NOFOLLOW_ANY: i32 = 0;
 }
 // ──────────────────────────────────────────────────────────────────────────
-// `File` / `Dir` — high-level handles. Extracted to file.rs / dir.rs
-// (matching Zig's File.zig / module shape).
+// `File` / `Dir` — high-level handles. Extracted to file.rs / dir.rs.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod file;
 pub use file::{File, ReadToEndResult};
 pub mod dir;
 pub use dir::*;
 
-/// `std.fs.cwd()` — Zig callers do `bun_sys::cwd()` for the process cwd `Dir`.
+/// `bun_sys::cwd()` returns the process cwd `Dir`.
 #[inline]
 pub fn cwd() -> Dir {
     Dir::cwd()
@@ -1313,19 +1288,18 @@ pub fn cwd() -> Dir {
 
 #[cfg(unix)]
 pub type Stat = libc::stat;
-/// On Windows `bun.Stat` is libuv's `uv_stat_t` (sys.zig: `bun.Stat == uv.uv_stat_t`).
+/// On Windows `bun.Stat` is libuv's `uv_stat_t`.
 #[cfg(windows)]
 pub type Stat = bun_libuv_sys::uv_stat_t;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Syscall surface — real posix libc FFI. Windows path lives in
-// `windows_impl` (NT/kernel32/libuv triad) below; these `#[cfg(unix)]` impls
-// match `src/sys/sys.zig` posix arms 1:1.
+// `windows_impl` (NT/kernel32/libuv triad) below.
 // ──────────────────────────────────────────────────────────────────────────
 use bun_core::ZStr;
 
 /// Read thread-local libc errno (set by the failing syscall).
-/// Zig: `std.c._errno().*` (sys.zig). On Windows this reads the CRT's
+/// On Windows this reads the CRT's
 /// thread-local `_errno()`; libuv-backed paths that need Win32
 /// `GetLastError()` go through `bun_sys::windows::get_last_errno` instead.
 #[inline]
@@ -1333,8 +1307,8 @@ pub fn last_errno() -> i32 {
     bun_core::ffi::errno()
 }
 
-/// `std.c._errno()` — pointer to thread-local errno. Prefer `last_errno()`
-/// for the value; this exists for callers that match the Zig `*_errno()` API
+/// Pointer to thread-local errno. Prefer `last_errno()`
+/// for the value; this exists for callers that want the `*_errno()` API
 /// shape (`unsafe { *bun_sys::errno() }`).
 #[cfg(unix)]
 #[inline]
@@ -1345,7 +1319,7 @@ pub fn errno() -> *mut i32 {
     bun_core::ffi::errno_ptr()
 }
 
-/// `std.posix.toPosixPath` — copy `path` into a NUL-terminated buffer.
+/// Copy `path` into a NUL-terminated buffer.
 /// Returns `NameTooLong` if `path` contains an interior NUL.
 #[inline]
 pub fn to_posix_path(path: &[u8]) -> core::result::Result<std::ffi::CString, bun_core::Error> {
@@ -1363,8 +1337,7 @@ fn err_with_path(tag: Tag, path: &ZStr) -> Error {
     err_with(tag).with_path(path.as_bytes())
 }
 
-// Syscall tags — discriminants MUST match `sys.zig:218-326` positional
-// ordinals exactly (FFI-observable). Do not reorder; append-only.
+// Syscall tags — discriminants are FFI-observable. Do not reorder; append-only.
 impl Tag {
     pub const TODO: Tag = Tag(0);
     pub const dup: Tag = Tag(1);
@@ -1467,21 +1440,20 @@ impl Tag {
     pub const CloseHandle: Tag = Tag(98);
     pub const SetFilePointerEx: Tag = Tag(99);
     pub const SetEndOfFile: Tag = Tag(100);
-    // ── PORT NOTE: tags below this line are Rust-port-only (no Zig ordinal).
-    // They sit above the Zig range so a Zig-produced `Tag` never collides.
+    // ── later additions — appended above the frozen range so existing
+    // discriminants never shift.
     pub const dup2: Tag = Tag(101);
     pub const fchdir: Tag = Tag(102);
     pub const fchownat: Tag = Tag(103);
     pub const ioctl: Tag = Tag(104);
     pub const getrlimit: Tag = Tag(105);
     pub const setrlimit: Tag = Tag(106);
-    // PORT NOTE: sys.zig folds `inotify_init1`/`inotify_add_watch` under the
-    // generic `.watch` tag; `INotifyWatcher.rs` was ported against the
-    // draft-b1 enum that had a distinct `.inotify` variant. Alias to `.watch`
+    // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
+    // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
     pub const inotify: Tag = Tag::watch;
 
-    /// `@tagName(self)` — must match sys.zig spelling exactly (JS-facing
+    /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
         const NAMES: [&str; 107] = [
@@ -1597,10 +1569,10 @@ impl Tag {
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
 
-    /// sys.zig:327-329 — `Tag.isWindows`: tags strictly above `WriteFile`
+    /// Tags strictly above `WriteFile`
     /// belong to the Windows-only block. Bounded by `SetEndOfFile` so the
-    /// Rust-port-only POSIX tags (`dup2`/`fchdir`/`fchownat`/`ioctl`) parked
-    /// above the Zig range don't read as Windows.
+    /// later-added POSIX tags (`dup2`/`fchdir`/`fchownat`/`ioctl`) parked
+    /// above that range don't read as Windows.
     #[inline]
     pub const fn is_windows(self) -> bool {
         self.0 > Self::WriteFile.0 && self.0 <= Self::SetEndOfFile.0
@@ -1613,7 +1585,7 @@ impl From<Tag> for &'static str {
     }
 }
 
-/// Max single read/write count (sys.zig:1832): Linux caps at 0x7ffff000;
+/// Max single read/write count: Linux caps at 0x7ffff000;
 /// Darwin/BSD use signed 32-bit byte counts.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub const MAX_COUNT: usize = 0x7ffff000;
@@ -1695,7 +1667,7 @@ pub(crate) mod safe_libc {
     }
 }
 
-// ── Darwin `$NOCANCEL` syscall variants (sys.zig:1708,1853,2077,2139,2253,2297)
+// ── Darwin `$NOCANCEL` syscall variants
 // — the plain libc symbols are pthread cancellation points; a cancelled thread
 // torn down mid-syscall leaks fds / corrupts state. Bun always uses the
 // non-cancellable variants on macOS (`bun.darwin.nocancel`).
@@ -1709,7 +1681,7 @@ mod nocancel {
         // STACK, not in registers; a non-variadic 4-arg decl would pass `mode`
         // in a register libc never reads → freshly-created files get a garbage
         // mode (every `Bun.write` / `fs.writeFileSync` / extracted-archive file
-        // came out unreadable). Must be `...` (matches Zig's `std.c.open`).
+        // came out unreadable). Must be `...`.
         // x86-64-macOS and the Linux syscall path tolerate the non-variadic
         // form; arm64-macOS does not.
         #[link_name = "openat$NOCANCEL"]
@@ -1770,8 +1742,7 @@ mod nocancel {
         ) -> isize;
         #[link_name = "poll$NOCANCEL"]
         pub(crate) fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
-        // darwin.zig:12-17 + fd.zig:273 — remaining `$NOCANCEL` variants Bun
-        // links against (close via Zig's std.c on Darwin).
+        // Remaining `$NOCANCEL` variants Bun links against.
         // safe: by-value `c_int` fd; bad fd → -1/EBADF, no UB.
         #[link_name = "close$NOCANCEL"]
         pub(crate) safe fn close(fd: c_int) -> c_int;
@@ -1782,8 +1753,8 @@ mod nocancel {
 mod posix_impl {
     use super::*;
     // Per-platform raw syscall dispatch — macOS uses `$NOCANCEL`; Linux goes
-    // through rustix's linux_raw backend (no libc trampoline, matching Zig's
-    // `std.os.linux`); other POSIX falls back to libc. The Linux hot paths
+    // through rustix's linux_raw backend (no libc trampoline);
+    // other POSIX falls back to libc. The Linux hot paths
     // (open/openat/read/write/close/pread/pwrite/fstat) bypass these `sys_*`
     // dispatchers entirely — see the `#[cfg(target_os = "linux")]` arms on
     // each public fn below — because rustix returns the errno in-band and we
@@ -1907,12 +1878,11 @@ mod posix_impl {
             unsafe { libc::send(fd, buf, n, flags) }
         }
     }
-    // EINTR-retry: most sys.zig wrappers loop `while (true) { …; if errno ==
-    // .INTR continue; }`. NOT all — the macOS `$NOCANCEL` arms for open/openat/
-    // read/write/recv/send (sys.zig:1706-1712,1851-1860,2138-2147,2252-2262,
-    // 2294-2306) issue exactly one call and surface EINTR to the caller without
-    // looping. `check!` keeps the retry for the common path; `check_once!`
-    // matches the spec's single-shot Darwin arms.
+    // EINTR-retry: most wrappers loop on EINTR. NOT all — the macOS
+    // `$NOCANCEL` arms for open/openat/read/write/recv/send issue exactly one
+    // call and surface EINTR to the caller without looping. `check!` keeps the
+    // retry for the common path; `check_once!` is the single-shot variant for
+    // the Darwin arms.
     macro_rules! check {
         ($rc:expr, $tag:expr) => {{
             loop {
@@ -1943,7 +1913,7 @@ mod posix_impl {
             }
         }};
     }
-    // `errnoSysFP` (runtime/node.zig:296) — attaches BOTH `.fd` and `.path`.
+    // Attaches BOTH `.fd` and `.path`.
     macro_rules! check_fp {
         ($rc:expr, $tag:expr, $fd:expr, $path:expr) => {{
             loop {
@@ -1985,15 +1955,14 @@ mod posix_impl {
 
     #[inline]
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
-        // sys.zig:1820 — `open()` is `openat(.cwd(), ..)` on every POSIX target
-        // ("this is what open() does anyway"). Delegating keeps the strace/SYS
-        // shape identical to Zig: `openat(AT_FDCWD, ..)` on Linux/FreeBSD,
-        // `openat$NOCANCEL(AT_FDCWD, ..)` on Darwin.
+        // `open()` is `openat(.cwd(), ..)` on every POSIX target
+        // ("this is what open() does anyway"): `openat(AT_FDCWD, ..)` on
+        // Linux/FreeBSD, `openat$NOCANCEL(AT_FDCWD, ..)` on Darwin.
         openat(Fd::cwd(), path, flags, mode)
     }
     pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
-        // sys.zig:1706-1712 — .mac arm: single `openat$NOCANCEL`, no EINTR retry.
+        // macOS: single `openat$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
         {
             let rc = check_once_p!(
@@ -2027,9 +1996,9 @@ mod posix_impl {
             .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
     }
     pub fn close(fd: Fd) -> Maybe<()> {
-        // fd.zig:266 — call close ONCE; never retry on EINTR (Linux may have already
+        // Call close ONCE; never retry on EINTR (Linux may have already
         // released the fd, retrying would close someone else's). Only EBADF surfaces.
-        // fd.zig:273 — Darwin uses `close$NOCANCEL` (avoid pthread cancellation point).
+        // Darwin uses `close$NOCANCEL` (avoid pthread cancellation point).
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return match super::linux_syscall::close(fd.native()) {
@@ -2053,7 +2022,7 @@ mod posix_impl {
     }
     pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        // sys.zig:2138-2147 — .mac arm: single `read$NOCANCEL`, no EINTR retry.
+        // macOS: single `read$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
         {
             let n = check_once!(
@@ -2079,7 +2048,7 @@ mod posix_impl {
     }
     pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        // sys.zig:1851-1860 — .mac arm: single `write$NOCANCEL`, no EINTR retry.
+        // macOS: single `write$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
         {
             let n = check_once!(
@@ -2159,15 +2128,8 @@ mod posix_impl {
     pub fn fstat(fd: Fd) -> Maybe<Stat> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            return match super::linux_syscall::fstat(fd) {
-                Ok(stat) => Ok(stat),
-                Err(e) if e == libc::EACCES => {
-                    // OHOS: socketpair and certain fd types return EACCES on
-                    // fstat. Return zeroed stat instead of erroring out.
-                    Ok(unsafe { core::mem::zeroed() })
-                }
-                Err(e) => Err(Error::from_code_int(e, Tag::fstat)),
-            };
+            return super::linux_syscall::fstat(fd)
+                .map_err(|e| Error::from_code_int(e, Tag::fstat));
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
@@ -2202,11 +2164,10 @@ mod posix_impl {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // statx (Linux ≥4.11) — sys.zig:614-791. Exposes `birthtime` for node:fs
+    // statx (Linux ≥4.11). Exposes `birthtime` for node:fs
     // `Stats`. On non-Linux these are absent (callers gate on `cfg(linux)`).
     //
-    // Zig went through `std.os.linux.statx` (a raw `syscall5`), so it works on
-    // every Linux ABI. The Rust port uses `libc::statx`, which the `libc` crate
+    // We use `libc::statx`, which the `libc` crate
     // only exposes for glibc/Android (and musl behind the build-time
     // `musl_v1_2_3` cfg the cross-compile build never sets). The `linux_statx`
     // shim below smooths that over: glibc re-exports `libc`; musl and Android
@@ -2217,18 +2178,18 @@ mod posix_impl {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     mod linux_statx {
         // glibc: libc 0.2.x exposes the full surface directly.
-        #[cfg(all(target_os = "linux", not(any(target_env = "musl", target_env = "ohos"))))]
+        #[cfg(all(target_os = "linux", not(target_env = "musl")))]
         pub(super) use libc::{
             STATX_ATIME, STATX_BLOCKS, STATX_BTIME, STATX_CTIME, STATX_GID, STATX_INO, STATX_MODE,
             STATX_MTIME, STATX_NLINK, STATX_SIZE, STATX_TYPE, STATX_UID, statx,
         };
 
-        // musl/Android/OHOS: `libc` gates `statx`/`STATX_*` behind a build-script
+        // musl/Android: `libc` gates `statx`/`STATX_*` behind a build-script
         // `musl_v1_2_3` cfg that cross-compiles can't trigger, and bionic's
         // `statx()` wrapper requires API 30. Define the kernel-ABI struct +
-        // bits ourselves and dispatch via raw `syscall`, matching what Zig's
-        // `std.os.linux.statx` does on every Linux ABI.
-        #[cfg(any(target_env = "musl", target_env = "ohos", target_os = "android"))]
+        // bits ourselves and dispatch via raw `syscall` — works on every
+        // Linux ABI.
+        #[cfg(any(target_env = "musl", target_os = "android"))]
         mod raw {
             #![allow(non_camel_case_types)]
             use core::ffi::{c_char, c_int, c_uint};
@@ -2304,7 +2265,7 @@ mod posix_impl {
                 unsafe { libc::syscall(libc::SYS_statx, dirfd, path, flags, mask, buf) as c_int }
             }
         }
-        #[cfg(any(target_env = "musl", target_env = "ohos", target_os = "android"))]
+        #[cfg(any(target_env = "musl", target_os = "android"))]
         pub(super) use raw::*;
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -2312,12 +2273,10 @@ mod posix_impl {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub static SUPPORTS_STATX_ON_LINUX: core::sync::atomic::AtomicBool =
-        // OHOS: statx verified available (rc=0, no SIGSYS) on 2026-06-07.
         core::sync::atomic::AtomicBool::new(true);
 
     /// `STATX_*` request mask covering every field `node:fs Stats` consumes
-    /// (sys.zig:614 `StatxField` — all variants OR'd, the only mask the Zig
-    /// callers ever pass).
+    /// (all field bits OR'd — the only mask callers ever pass).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub const STATX_MASK_FOR_STATS: u32 = lx::STATX_TYPE
         | lx::STATX_MODE
@@ -2468,7 +2427,7 @@ mod posix_impl {
     }
     pub fn mkdirat(dir: impl AsFd, path: &ZStr, mode: Mode) -> Maybe<()> {
         let dir = dir.as_fd();
-        // sys.zig:809 — `mkdiratZ` tags errors as `.mkdir` (not `.mkdirat`).
+        // Tag errors as `.mkdir` (not `.mkdirat`).
         check_p!(
             // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
             // valid NUL-terminated C string.
@@ -2479,7 +2438,6 @@ mod posix_impl {
         Ok(())
     }
     /// `bun.makePath` — `mkdirat` walking up parents on ENOENT, like `mkdir -p`.
-    /// Port of std.fs.Dir.makePath (Zig std/fs/Dir.zig).
     #[inline]
     pub fn mkdir_recursive_at(dir: impl AsFd, sub_path: &[u8]) -> Maybe<()> {
         let dir = dir.as_fd();
@@ -2494,7 +2452,7 @@ mod posix_impl {
         let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
         bun_paths::make_path_with(it, |p| {
             if p.len() >= buf.len() {
-                // sys.zig:809 — `mkdiratZ` tags as `.mkdir`; keep consistent here.
+                // Tag as `.mkdir`; keep consistent with `mkdirat`.
                 return Err(
                     Error::from_code_int(E::ENAMETOOLONG as _, Tag::mkdir).with_path(sub_path)
                 );
@@ -2543,8 +2501,7 @@ mod posix_impl {
         Ok(())
     }
     /// `renameat2(2)` (Linux) / `renameatx_np` (macOS). FreeBSD and any other
-    /// unix without an atomic-exchange rename get `ENOSYS` when flags are set,
-    /// matching `bun.sys.renameat2` (sys.zig:2503).
+    /// unix without an atomic-exchange rename get `ENOSYS` when flags are set.
     pub fn renameat2(
         from_dir: Fd,
         from: &ZStr,
@@ -2609,9 +2566,8 @@ mod posix_impl {
             renameat(from_dir, from, to_dir, to)
         }
     }
-    /// sys.zig:2884 `unlinkatWithFlags` — explicit `flags` (e.g. `AT_REMOVEDIR`).
-    /// Zig builds the error via `errnoSysFP(.., .unlink, dirfd, to)` so the
-    /// surfaced `SystemError` carries BOTH the dirfd and the path.
+    /// `unlinkat` with explicit `flags` (e.g. `AT_REMOVEDIR`). The error is
+    /// built so the surfaced `SystemError` carries BOTH the dirfd and the path.
     pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
         check_fp!(
             // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
@@ -2623,8 +2579,7 @@ mod posix_impl {
         );
         Ok(())
     }
-    /// sys.zig:2912 `unlinkat` — 2-arg form (`flags = 0`). Zig's surface is
-    /// 2-arg; the 3-arg variant is `unlinkatWithFlags`.
+    /// 2-arg form (`flags = 0`); the 3-arg variant is `unlinkat_with_flags`.
     #[inline]
     pub fn unlinkat(dir: impl AsFd, path: &ZStr) -> Maybe<()> {
         let dir = dir.as_fd();
@@ -2648,7 +2603,7 @@ mod posix_impl {
             path
         );
         let n = n as usize;
-        // sys.zig:2368 — truncation guard + NUL-terminate.
+        // Truncation guard + NUL-terminate.
         if n >= buf.len() {
             return Err(
                 Error::from_code_int(libc::ENAMETOOLONG, Tag::readlink).with_path(path.as_bytes())
@@ -2657,10 +2612,10 @@ mod posix_impl {
         buf[n] = 0;
         Ok(n)
     }
-    /// sys.zig:3897 — `fcntl(F_DUPFD_CLOEXEC, 0)` so the dup'd fd doesn't leak
+    /// `fcntl(F_DUPFD_CLOEXEC, 0)` so the dup'd fd doesn't leak
     /// to children. NOT `dup(2)` (which lacks CLOEXEC).
     pub fn dup(fd: Fd) -> Maybe<Fd> {
-        // sys.zig:959 `errnoSysFd(.., .fcntl, fd)` — attach the fd on error.
+        // Attach the fd on error.
         loop {
             // SAFETY: `fd` is a live descriptor; `F_DUPFD_CLOEXEC` with arg `0`
             // takes no pointer arguments.
@@ -2695,16 +2650,13 @@ mod posix_impl {
         // `buf.len()` bytes (including the NUL).
         let p = unsafe { libc::getcwd(buf.as_mut_ptr().cast(), buf.len()) };
         if p.is_null() {
-            // OHOS: getcwd can fail (deleted cwd, fuse filesystem, etc.).
-            // Fall back to "/" instead of propagating the error.
-            buf[0] = b'/';
-            return Ok(1);
+            return Err(err_with(Tag::getcwd));
         }
         // SAFETY: on success `getcwd` returns `buf`'s pointer NUL-terminated.
         Ok(unsafe { libc::strlen(p) })
     }
 
-    // ── link/perm/time/access group (sys.zig:406-3973 posix arms) ──
+    // ── link/perm/time/access group ──
     pub fn link(src: &ZStr, dest: &ZStr) -> Maybe<()> {
         check_p!(
             // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
@@ -2717,7 +2669,7 @@ mod posix_impl {
     pub fn linkat(src_dir: impl AsFd, src: &ZStr, dest_dir: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let src_dir = src_dir.as_fd();
         let dest_dir = dest_dir.as_fd();
-        // sys.zig:3963 — `linkatZ` tags as `.link`.
+        // Tags as `.link`.
         check_p!(
             // SAFETY: both dir fds are live (or AT_FDCWD); both `ZStr`s are
             // valid NUL-terminated C strings.
@@ -2735,10 +2687,10 @@ mod posix_impl {
         );
         Ok(())
     }
-    /// `linkatTmpfile` (sys.zig:3973): materialize an `O_TMPFILE` fd. Fast path
+    /// Materialize an `O_TMPFILE` fd. Fast path
     /// uses `linkat(tmpfd, "", dirfd, name, AT_EMPTY_PATH)` (requires
     /// CAP_DAC_READ_SEARCH); falls back to `/proc/self/fd/N` + AT_SYMLINK_FOLLOW.
-    /// Linux-only; on other unix this errors with EOPNOTSUPP (Zig same).
+    /// Linux-only; on other unix this errors with EOPNOTSUPP.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn linkat_tmpfile(tmpfd: Fd, dirfd: Fd, name: &ZStr) -> Maybe<()> {
         // 0=unknown, 1=have CAP_DAC_READ_SEARCH, -1=no cap → use /proc fallback.
@@ -2783,7 +2735,7 @@ mod posix_impl {
                     libc::EISDIR | libc::ENOENT | libc::EOPNOTSUPP | libc::EPERM | libc::EINVAL
                         if status == 0 =>
                     {
-                        // sys.zig:4013 — first failure on AT_EMPTY_PATH ⇒ no cap; retry via /proc.
+                        // First failure on AT_EMPTY_PATH ⇒ no cap; retry via /proc.
                         CAP_STATUS.store(-1, core::sync::atomic::Ordering::Relaxed);
                         continue;
                     }
@@ -2798,7 +2750,7 @@ mod posix_impl {
     }
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     pub fn linkat_tmpfile(_tmpfd: Fd, _dirfd: Fd, name: &ZStr) -> Maybe<()> {
-        // sys.zig:4010 — `linkatTmpfile` tags as `.link` (matches Linux arm).
+        // Tags as `.link` (matches Linux arm).
         Err(Error::from_code_int(libc::EOPNOTSUPP, Tag::link).with_path(name.as_bytes()))
     }
     pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
@@ -2814,7 +2766,7 @@ mod posix_impl {
     }
     pub fn readlinkat(fd: impl AsFd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
         let fd = fd.as_fd();
-        // sys.zig:2390 — tags as `.readlink`.
+        // Tags as `.readlink`.
         let n = check_p!(
             // SAFETY: `fd` is a live dir fd; `path` is NUL-terminated (`ZStr`);
             // `readlinkat` writes at most `buf.len()` bytes into `buf`.
@@ -2858,13 +2810,13 @@ mod posix_impl {
         );
         Ok(())
     }
-    /// `lchmod` is BSD/Darwin-only; Linux: `fchmodat(.., AT_SYMLINK_NOFOLLOW)` (sys.zig:434).
+    /// `lchmod` is BSD/Darwin-only; Linux: `fchmodat(.., AT_SYMLINK_NOFOLLOW)`.
     pub fn lchmod(path: &ZStr, mode: Mode) -> Maybe<()> {
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
             // The `libc` crate omits the `lchmod` binding on both Darwin
             // (libSystem since 10.5) and FreeBSD (libc since 3.0). Declare
-            // locally — matches sys.zig:434.
+            // locally.
             unsafe extern "C" {
                 fn lchmod(path: *const libc::c_char, mode: libc::mode_t) -> libc::c_int;
             }
@@ -2876,10 +2828,7 @@ mod posix_impl {
             );
             Ok(())
         }
-        #[cfg(all(
-            not(any(target_os = "macos", target_os = "freebsd")),
-            not(target_env = "ohos")
-        ))]
+        #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         {
             const SYS_FCHMODAT2: libc::c_long = 452;
             loop {
@@ -2905,15 +2854,6 @@ mod posix_impl {
                 }
                 return Ok(());
             }
-        }
-        #[cfg(all(
-            not(any(target_os = "macos", target_os = "freebsd")),
-            target_env = "ohos"
-        ))]
-        {
-            // OHOS: fchmodat2 (#452) is blocked by seccomp → triggers SIGSYS.
-            // Skip the syscall and go directly to the fchmodat fallback.
-            return fchmodat(Fd::cwd(), path, mode, libc::AT_SYMLINK_NOFOLLOW);
         }
     }
     pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {
@@ -2947,7 +2887,6 @@ mod posix_impl {
     }
     pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
         let fd = fd.as_fd();
-        // sys.zig:848 — `bun.invalid_fd` means cwd-relative.
         let dirfd = if fd.is_valid() {
             fd.native()
         } else {
@@ -2981,7 +2920,7 @@ mod posix_impl {
         );
         Ok(())
     }
-    /// sys.zig:3504 — never returns `.err`; any non-zero rc → `Ok(false)`.
+    /// Never errors; any non-zero rc → `Ok(false)`.
     pub fn faccessat(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
         let dir = dir.as_fd();
         // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
@@ -3028,7 +2967,7 @@ mod posix_impl {
         );
         Ok(())
     }
-    /// sys.zig:1748 — Windows uses `GetFileAttributesW`; posix is plain `access`.
+    /// Windows uses `GetFileAttributesW`; posix is plain `access`.
     pub fn exists_z(path: &ZStr) -> bool {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         unsafe { libc::access(path.as_ptr(), libc::F_OK) == 0 }
@@ -3039,8 +2978,7 @@ mod posix_impl {
         // valid NUL-terminated C string.
         unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
     }
-    /// sys.zig:3767 — calls extern C `is_executable_file` (c-bindings.cpp:72-89).
-    /// We FFI to the same symbol so the behaviour is identical.
+    /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.
     pub fn is_executable_file_path(path: &ZStr) -> bool {
         unsafe extern "C" {
             // `c_char`, not `i8` — `char` is unsigned on aarch64/arm/ppc, so
@@ -3052,12 +2990,12 @@ mod posix_impl {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         unsafe { is_executable_file(path.as_ptr()) }
     }
-    /// sys.zig:4152 — `fstat` then `@max(st_size, 0)` (clamp negative).
+    /// `fstat`, then clamp a negative `st_size` to 0.
     pub fn get_file_size(fd: Fd) -> Maybe<u64> {
         Ok(fstat(fd)?.st_size.max(0) as u64)
     }
     /// `realpath` — `realpath$DARWIN_EXTSN` on macOS for proper symlink resolution
-    /// (Zig: `bun.c.realpath`). Writes into `buf` and returns the written slice.
+    /// Writes into `buf` and returns the written slice.
     pub fn realpath<'a>(path: &ZStr, buf: &'a mut bun_core::PathBuffer) -> Maybe<&'a [u8]> {
         #[cfg(target_os = "macos")]
         unsafe extern "C" {
@@ -3081,7 +3019,7 @@ mod posix_impl {
     // ── fcntl/dup/pipe/io group ──
     pub type FcntlInt = isize;
     pub fn fcntl(fd: Fd, cmd: i32, arg: isize) -> Maybe<FcntlInt> {
-        // sys.zig:959-971 — `errnoSysFd(result, .fcntl, fd)`: attach the fd to the error.
+        // Attach the fd to the error.
         loop {
             // SAFETY: `fd` is a live descriptor; `arg` is passed by value and
             // interpreted per `cmd` (no pointer commands flow through here).
@@ -3100,8 +3038,8 @@ mod posix_impl {
         let rc = check!(safe_libc::dup2(old.native(), new.native()), Tag::dup2);
         Ok(Fd::from_native(rc))
     }
-    /// sys.zig:3839 — plain `pipe(&fds)`, NO CLOEXEC. Callers that want CLOEXEC
-    /// set it themselves (matches Zig).
+    /// Plain `pipe(&fds)`, NO CLOEXEC. Callers that want CLOEXEC
+    /// set it themselves.
     pub fn pipe() -> Maybe<[Fd; 2]> {
         let mut fds = [0i32; 2];
         check!(safe_libc::pipe(&mut fds), Tag::pipe);
@@ -3115,7 +3053,7 @@ mod posix_impl {
         Ok(())
     }
     pub fn fdatasync(fd: Fd) -> Maybe<()> {
-        // node_fs.zig:3921 — calls `system.fdatasync` directly on all Unix
+        // `fdatasync` is available on all Unix
         // (macOS has had fdatasync(2) since 10.7). The libc crate omits the
         // Apple binding; `safe_libc::fdatasync` declares it locally.
         check!(safe_libc::fdatasync(fd.native()), Tag::fdatasync);
@@ -3142,10 +3080,10 @@ mod posix_impl {
 
     // ── socket primitives (recv/send/socketpair) ──
     // Full networking lives in `bun_uws_sys`; these are the bare libc wrappers
-    // sys.zig exposes for shell/pipe IPC.
+    // exposed for shell/pipe IPC.
     pub fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        // sys.zig:2252-2262 — isMac arm: single `recvfrom$NOCANCEL`, no EINTR retry.
+        // macOS: single `recvfrom$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
         let n = check_once!(
             // SAFETY: `fd` is a live socket; `buf` is valid for `len` writes.
@@ -3162,9 +3100,9 @@ mod posix_impl {
         Ok(n as usize)
     }
     pub fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
-        // sys.zig:2294-2322 — passes `buf.len` un-clamped (only `recv` clamps via
-        // `adjusted_len`); forward the full length and let the kernel decide.
-        // isMac arm: single `sendto$NOCANCEL`, no EINTR retry.
+        // `buf.len` is passed un-clamped (only `recv` clamps);
+        // forward the full length and let the kernel decide.
+        // macOS: single `sendto$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
         let n = check_once!(
             // SAFETY: `fd` is a live socket; `buf` is valid for `buf.len()` reads.
@@ -3183,25 +3121,25 @@ mod posix_impl {
     pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         recv(fd, buf, MSG_DONTWAIT)
     }
-    /// sys.zig:2205 — `MSG_DONTWAIT | MSG_NOSIGNAL` so a broken-pipe write
+    /// `MSG_DONTWAIT | MSG_NOSIGNAL` so a broken-pipe write
     /// returns EPIPE instead of raising SIGPIPE.
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         send(fd, buf, SEND_FLAGS_NONBLOCK)
     }
     #[cfg(unix)]
     pub const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
-    // sys.zig:2205 — `MSG_DONTWAIT | MSG_NOSIGNAL` on all Unix including macOS
-    // (Darwin defines MSG_NOSIGNAL=0x80000; std/c/darwin.zig:1591).
+    // `MSG_DONTWAIT | MSG_NOSIGNAL` on all Unix including macOS
+    // (Darwin defines MSG_NOSIGNAL=0x80000).
     #[cfg(unix)]
     pub const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
-    /// sys.zig:3054 `setCloseOnExec` — `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
+    /// `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
     pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
         let fl = fcntl(fd, libc::F_GETFD, 0)?;
         fcntl(fd, libc::F_SETFD, fl | libc::FD_CLOEXEC as isize)?;
         Ok(())
     }
 
-    /// sys.zig:3103 `socketpair` — `socketpairImpl(.., for_shell = false)`.
+    /// `socketpair_impl(.., for_shell = false)`.
     /// Linux uses `SOCK_CLOEXEC|SOCK_NONBLOCK` type flags; non-Linux sets
     /// CLOEXEC + nonblock + (Darwin) `SO_NOSIGPIPE` per-fd, closing both on
     /// any post-step error.
@@ -3209,7 +3147,7 @@ mod posix_impl {
         socketpair_impl(domain, ty, proto, nonblock, false)
     }
 
-    /// sys.zig:3125 `socketpairForShell` — `socketpairImpl(.., for_shell = true)`.
+    /// `socketpair_impl(.., for_shell = true)`.
     /// On macOS this skips `SO_NOSIGPIPE` (so the child's writes get SIGPIPE
     /// when the read end closes — required for `yes | head`-style pipelines)
     /// and bumps `SO_RCVBUF`/`SO_SNDBUF` to 128 KB instead. On Linux/other
@@ -3223,7 +3161,6 @@ mod posix_impl {
         socketpair_impl(domain, ty, proto, nonblock, true)
     }
 
-    /// sys.zig:3138 `socketpairImpl`.
     fn socketpair_impl(
         domain: i32,
         ty: i32,
@@ -3252,14 +3189,14 @@ mod posix_impl {
                 safe_libc::close(fds[1]);
                 Err::<[Fd; 2], _>(e)
             };
-            // CLOEXEC first (sys.zig:3173).
+            // CLOEXEC first.
             for &fd in &fds {
                 if let Err(e) = set_close_on_exec(Fd::from_native(fd)) {
                     return close_both(e);
                 }
             }
             // Darwin: SO_NOSIGPIPE on both fds — unless `for_shell`, in which
-            // case bump RCVBUF/SNDBUF instead (sys.zig:3180-3199).
+            // case bump RCVBUF/SNDBUF instead.
             #[cfg(target_os = "macos")]
             {
                 if for_shell {
@@ -3434,7 +3371,7 @@ mod posix_impl {
 
     /// `bun.sys.mmapFile` — open `path` RDWR, fstat for size, mmap [offset, offset+len).
     /// Returns a process-lifetime mmap slice; caller is responsible for
-    /// `munmap`. Mirrors Zig `mmapFile` (sys.zig).
+    /// `munmap`.
     pub fn mmap_file(
         path: &ZStr,
         flags: libc::c_int,
@@ -3470,8 +3407,8 @@ mod posix_impl {
         }
     }
 
-    // ── memfd (Linux only) — sys.zig:3237-3296 ──
-    /// `bun.sys.MemfdFlags` (Zig: `enum(u32)`).
+    // ── memfd (Linux only) ──
+    /// `bun.sys.MemfdFlags`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[repr(u32)]
@@ -3485,7 +3422,6 @@ mod posix_impl {
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     impl MemfdFlags {
-        #[allow(dead_code)]
         #[inline]
         fn older_kernel_flag(self) -> u32 {
             match self {
@@ -3502,12 +3438,18 @@ mod posix_impl {
     static MEMFD_ENOSYS: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
-    /// `bun.sys.canUseMemfd()` — false on non-Linux; on Linux, false once
-    /// `memfd_create` has returned ENOSYS/EPERM/EACCES.
-    /// OHOS: memfd_create verified available on 2026-06-07, no guard needed.
+    /// `bun.sys.canUseMemfd()` — false on non-Linux; on Linux, false when
+    /// `BUN_FEATURE_FLAG_DISABLE_MEMFD` is set or once `memfd_create` has
+    /// returned ENOSYS/EPERM/EACCES.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub fn can_use_memfd() -> bool {
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_MEMFD
+            .get()
+            .unwrap_or(false)
+        {
+            return false;
+        }
         !MEMFD_ENOSYS.load(core::sync::atomic::Ordering::Relaxed)
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -3522,43 +3464,39 @@ mod posix_impl {
     /// [`can_use_memfd`] to false.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn memfd_create(name: &core::ffi::CStr, flags_: MemfdFlags) -> Maybe<Fd> {
-        // OHOS: memfd_create verified available (returned fd=4 on 2026-06-07).
-        {
-            let mut flags: u32 = flags_ as u32;
-            loop {
-                // Android/OHOS: libc may not have memfd_create wrapper.
-                // Raw-syscall it (kernel has had it since 3.17).
-                // SAFETY: `name` is a valid NUL-terminated C string.
-                #[cfg(any(target_os = "android", target_env = "ohos"))]
-                let rc = unsafe {
-                    libc::syscall(libc::SYS_memfd_create, name.as_ptr(), flags) as core::ffi::c_int
-                };
-                // SAFETY: `name` is a valid NUL-terminated C string.
-                #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
-                let rc = unsafe { libc::memfd_create(name.as_ptr(), flags) };
-                if rc < 0 {
-                    let e = last_errno();
-                    if e == libc::EINTR {
-                        continue;
-                    }
-                    if e == libc::EINVAL && flags == flags_ as u32 {
-                        // MFD_EXEC / MFD_NOEXEC_SEAL require Linux 6.3.
-                        flags = flags_.older_kernel_flag();
-                        continue;
-                    }
-                    if e == libc::ENOSYS || e == libc::EPERM || e == libc::EACCES {
-                        MEMFD_ENOSYS.store(true, core::sync::atomic::Ordering::Relaxed);
-                    }
-                    return Err(Error::from_code_int(e, Tag::memfd_create));
+        let mut flags: u32 = flags_ as u32;
+        loop {
+            // bionic only added the `memfd_create()` libc wrapper at API 30; we
+            // link against API 28. Raw-syscall it (kernel has had it since 3.17).
+            // SAFETY: `name` is a valid NUL-terminated C string.
+            #[cfg(target_os = "android")]
+            let rc = unsafe {
+                libc::syscall(libc::SYS_memfd_create, name.as_ptr(), flags) as core::ffi::c_int
+            };
+            // SAFETY: `name` is a valid NUL-terminated C string.
+            #[cfg(target_os = "linux")]
+            let rc = unsafe { libc::memfd_create(name.as_ptr(), flags) };
+            if rc < 0 {
+                let e = last_errno();
+                if e == libc::EINTR {
+                    continue;
                 }
-                return Ok(Fd::from_native(rc));
+                if e == libc::EINVAL && flags == flags_ as u32 {
+                    // MFD_EXEC / MFD_NOEXEC_SEAL require Linux 6.3.
+                    flags = flags_.older_kernel_flag();
+                    continue;
+                }
+                if e == libc::ENOSYS || e == libc::EPERM || e == libc::EACCES {
+                    MEMFD_ENOSYS.store(true, core::sync::atomic::Ordering::Relaxed);
+                }
+                return Err(Error::from_code_int(e, Tag::memfd_create));
             }
+            return Ok(Fd::from_native(rc));
         }
     }
 
-    /// sys.zig:504 — `sendfile(src, dest, len)`. Clamps `len` (avoid EINVAL on
-    /// >2GB), EINTR-retries, and attaches the *source* fd to the error
-    /// (sys.zig:513 `errnoSysFd(rc, .sendfile, src)`).
+    /// `sendfile(src, dest, len)`. Clamps `len` (avoid EINVAL on
+    /// >2GB), EINTR-retries, and attaches the *source* fd to the error.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn sendfile(src: Fd, dest: Fd, len: usize) -> Maybe<usize> {
         let len = len.min(i32::MAX as usize - 1);
@@ -3579,7 +3517,7 @@ mod posix_impl {
     }
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     pub fn sendfile(src: Fd, _dest: Fd, _len: usize) -> Maybe<usize> {
-        // sys.zig:513 `errnoSysFd(rc, .sendfile, src)` — attach the *source* fd.
+        // Attach the *source* fd.
         Err(Error::from_code_int(libc::ENOSYS, Tag::sendfile).with_fd(src))
     }
 }
@@ -3591,7 +3529,7 @@ pub use posix_impl::*;
 pub use bun_alloc::page_size;
 
 /// `bun.jsc.Node.TimeLike` — `timespec` shape, decoupled from JSC (T6).
-/// sys.zig takes this for futimens/utimens; the JSC binding constructs it from
+/// futimens/utimens take this; the JSC binding constructs it from
 /// JS Date/number. T1 owns the data shape.
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
@@ -3629,7 +3567,6 @@ pub const UTIME_OMIT: i64 = -2;
 #[path = "sys_uv.rs"]
 pub mod sys_uv;
 
-/// Zig: `pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else sys;`
 /// On non-Windows, `sys_uv` is just an alias for the regular syscall surface so
 /// callers (e.g. `pack_command`) can write `bun_sys::sys_uv::fstat(fd)` portably.
 #[cfg(not(windows))]
@@ -3641,14 +3578,14 @@ pub mod sys_uv {
 
 #[cfg(windows)]
 mod windows_impl {
-    // PORT: NT/kernel32/libuv triad (sys.zig + sys_uv.zig). The libuv-backed ops
-    // delegate to `crate::sys_uv`; the rest are the windows arms of `sys.zig`.
+    // NT/kernel32/libuv triad. The libuv-backed ops
+    // delegate to `crate::sys_uv`; the rest call NT/kernel32 directly.
     use super::windows as w;
     use super::windows::libuv as uv;
     use super::*;
     use bun_paths::WPathBuffer;
 
-    // ── libuv-backed (sys_uv.zig) ────────────────────────────────────────
+    // ── libuv-backed ─────────────────────────────────────────────────────
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         sys_uv::open(path, flags, mode)
     }
@@ -3659,21 +3596,17 @@ mod windows_impl {
         }
     }
     pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
-        // sys.zig:2161-2183 — `.windows => if (fd.kind == .uv) sys_uv.read(fd,
-        // buf) else { kernel32.ReadFile(fd.native(), …) }`. The libuv path
+        // libuv for uv-kind fds, kernel32 `ReadFile` otherwise. The libuv path
         // requires a CRT fd via `fd.uv()`, which PANICS for HANDLE-backed
         // (`FdKind::System`) Fds — i.e. anything from `openat()`/NtCreateFile.
         if fd.kind() == FdKind::Uv {
             return sys_uv::read(fd, buf);
         }
         let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
-        // PORT NOTE: the Zig spec for `bun.sys.read` returns the raw error, but
-        // every Zig stdin caller (`run_command.zig`, `prompt.zig`, `init`, …)
-        // routes through `std.fs.File.readerStreaming` → `std.os.windows.ReadFile`,
-        // which maps BROKEN_PIPE/HANDLE_EOF → 0 (EOF) and retries on
-        // OPERATION_ABORTED. The Rust port consolidated those callers onto this
-        // function (via `File::stdin().read_to_end_into` / `output_sink().read`),
-        // so the stdlib-ReadFile EOF handling lives here.
+        // Stdin callers route through this function (via
+        // `File::stdin().read_to_end_into` / `output_sink().read`), so the
+        // BROKEN_PIPE/HANDLE_EOF → 0 (EOF) mapping and the OPERATION_ABORTED
+        // retry live here.
         loop {
             let mut amount_read: w::DWORD = 0;
             // SAFETY: FFI; `fd.cast()` is a valid HANDLE, buf valid for `adjusted_len`.
@@ -3698,12 +3631,12 @@ mod windows_impl {
         }
     }
     pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
-        // sys.zig:1876-1909 — `.windows => { kernel32.WriteFile(fd.cast(), …) }`
+        // kernel32 `WriteFile` directly
         // (NOT via libuv — sys_uv::write → fd.uv() panics for HANDLE-backed
-        // Fds). Spec also remaps `ERROR_ACCESS_DENIED → EBADF` (a write to a
+        // Fds). Also remaps `ERROR_ACCESS_DENIED → EBADF` (a write to a
         // read-only-opened HANDLE yields ACCESS_DENIED, which POSIX surfaces
         // as EBADF "fd not open for writing").
-        debug_assert!(!buf.is_empty()); // Zig: `bun.assert(bytes.len > 0)`
+        debug_assert!(!buf.is_empty());
         let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
         let mut bytes_written: w::DWORD = 0;
         // SAFETY: FFI; `fd.cast()` is a valid HANDLE, buf valid for `adjusted_len`.
@@ -3728,14 +3661,9 @@ mod windows_impl {
         Ok(bytes_written as usize)
     }
     pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
-        // sys.zig:2083 — `pread_sym = syscall.pread` (`@compileError` on
-        // Windows), so `bun.sys.pread` itself is uncallable there. The Zig
-        // call sites that need positioned I/O on a HANDLE-backed fd go via
-        // `fd.stdFile().preadAll()` → `std.os.windows.ReadFile` with an
-        // `OVERLAPPED.Offset`. The Rust port has no `stdFile()` escape hatch
-        // (`File::pread_all` routes back here), so do that lowering inline:
+        // Positioned-I/O lowering:
         // libuv path for uv-kind fds, kernel32 ReadFile+OVERLAPPED for system
-        // (HANDLE) fds — matching `std.os.windows.ReadFile`'s error mapping.
+        // (HANDLE) fds.
         if fd.kind() == FdKind::Uv {
             return sys_uv::pread(fd, buf, off);
         }
@@ -3765,7 +3693,7 @@ mod windows_impl {
             if rc == 0 {
                 let er = w::Win32Error::get();
                 match er {
-                    // std.os.windows.ReadFile: BROKEN_PIPE/HANDLE_EOF → 0.
+                    // BROKEN_PIPE/HANDLE_EOF map to EOF (0 bytes read).
                     w::Win32Error::BROKEN_PIPE | w::Win32Error::HANDLE_EOF => return Ok(0),
                     w::Win32Error::OPERATION_ABORTED => continue,
                     _ => return Err(Error::new(er.to_e(), Tag::pread).with_fd(fd)),
@@ -3775,10 +3703,8 @@ mod windows_impl {
         }
     }
     pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
-        // sys.zig:2108 — same `@compileError` story as `pread`. Zig callers
-        // (e.g. updatePackageJSONAndInstall.zig:426 `…stdFile().pwriteAll()`)
-        // reach `std.os.windows.WriteFile` with an `OVERLAPPED.Offset`; do
-        // that here for HANDLE-kind fds since `File::pwrite_all` routes back.
+        // Same lowering as `pread`: kernel32 WriteFile with an
+        // `OVERLAPPED.Offset` for HANDLE-kind fds.
         if fd.kind() == FdKind::Uv {
             return sys_uv::pwrite(fd, buf, off);
         }
@@ -3806,8 +3732,8 @@ mod windows_impl {
         };
         if rc == 0 {
             let er = w::Win32Error::get();
-            // std.os.windows.WriteFile maps INVALID_HANDLE → NotOpenForWriting;
-            // keep parity with `write()` above and surface the raw errno.
+            // Keep parity with `write()` above and surface the raw errno
+            // (no INVALID_HANDLE → NotOpenForWriting remapping).
             let errno = if er == w::Win32Error::ACCESS_DENIED {
                 E::EBADF
             } else {
@@ -3821,13 +3747,10 @@ mod windows_impl {
         sys_uv::stat(path)
     }
     pub fn fstat(fd: Fd) -> Maybe<Stat> {
-        // sys.zig:589-594 — `const uvfd = fd.makeLibUVOwned() catch return
-        // .err(.MFILE, .uv_open_osfhandle); return sys_uv.fstat(uvfd);`.
         // sys_uv::fstat does `fd.uv()` which PANICS for HANDLE-backed
-        // (`FdKind::System`) Fds — i.e. the result of `openat()`. The spec
-        // converts via `_open_osfhandle` first (acknowledged CRT-fd leak; see
-        // the `// TODO: this is a bad usage of makeLibUVOwned` in sys.zig —
-        // a leak is strictly better than the previous guaranteed panic).
+        // (`FdKind::System`) Fds — i.e. the result of `openat()`. Convert
+        // via `_open_osfhandle` first (acknowledged CRT-fd leak —
+        // a leak is strictly better than a guaranteed panic).
         let uvfd = fd
             .make_libuv_owned()
             .map_err(|_| Error::new(E::EMFILE, Tag::uv_open_osfhandle).with_fd(fd))?;
@@ -3846,7 +3769,6 @@ mod windows_impl {
         sys_uv::rename(from, to)
     }
     pub fn symlink(target: &ZStr, link: &ZStr) -> Maybe<()> {
-        // sys.zig:2629 — windows uses `sys_uv.symlinkUV(target, dest, 0)`.
         sys_uv::symlink_uv(target, link, 0)
     }
     pub fn readlink(path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
@@ -3859,7 +3781,7 @@ mod windows_impl {
         sys_uv::fchown(fd, uid as _, gid as _)
     }
     pub fn ftruncate(fd: Fd, len: i64) -> Maybe<()> {
-        // sys.zig:2403-2419 — windows arm calls `NtSetInformationFile(..,
+        // Calls `NtSetInformationFile(..,
         // FileEndOfFileInformation)` directly on the HANDLE (NOT via libuv —
         // sys_uv::ftruncate requires a CRT fd via `fd.uv()`, which fails for
         // HANDLE-backed `Fd`s that have no uv mapping).
@@ -3876,9 +3798,9 @@ mod windows_impl {
             )
         };
         if rc != bun_windows_sys::NTSTATUS::SUCCESS {
-            // sys.zig:2487 `Maybe(void).errnoSysFd(rc, .ftruncate, fd)` —
             // `errnoSys` for `NTSTATUS` routes through the curated
-            // `translateNTStatusToErrno` table, NOT `RtlNtStatusToDosError`.
+            // `translateNTStatusToErrno` table first, then falls back to
+            // `RtlNtStatusToDosError` for unmapped codes.
             let errno = w::translate_nt_status_to_errno(rc);
             return Err(Error::new(errno, Tag::ftruncate).with_fd(fd));
         }
@@ -3900,11 +3822,10 @@ mod windows_impl {
         sys_uv::fdatasync(fd)
     }
 
-    // ── kernel32 / ntdll arms (sys.zig windows branches) ─────────────────
+    // ── kernel32 / ntdll arms ────────────────────────────────────────────
     pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
-        // sys.zig:1773 — `if (Environment.isWindows) return openatWindowsT(u8,
-        // dirfd, file_path, flags, perm)`. Route through the NtCreateFile path
+        // Route through the NtCreateFile path
         // (normalize → `open_file_at_windows_nt_path`) so the result is a
         // HANDLE-backed `Fd` and `O::DIRECTORY`/`O::NOFOLLOW`/`O::PATH` are
         // honoured. Do NOT fall back to libuv `open()` here — that returns a
@@ -3912,7 +3833,7 @@ mod windows_impl {
         super::openat_windows_a(dir, path.as_bytes(), flags, mode)
     }
     pub fn dup(fd: Fd) -> Maybe<Fd> {
-        // sys.zig:3911 — DuplicateHandle on the underlying HANDLE.
+        // DuplicateHandle on the underlying HANDLE.
         let process = w::kernel32::GetCurrentProcess();
         let mut target: w::HANDLE = core::ptr::null_mut();
         let out = unsafe {
@@ -3932,13 +3853,13 @@ mod windows_impl {
         Ok(Fd::from_native(target as _))
     }
     pub fn dup2(old: Fd, new: Fd) -> Maybe<Fd> {
-        // No POSIX dup2 on Windows; sys.zig only dispatches via libuv c-runtime fds.
+        // No POSIX dup2 on Windows.
         // Return ENOTSUP so callers that branch on platform fall back.
         let _ = (old, new);
         Err(Error::new(E::ENOTSUP, Tag::dup2))
     }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
-        // sys.zig:349 — GetCurrentDirectoryW + WTF16→UTF8.
+        // GetCurrentDirectoryW + WTF16→UTF8.
         let mut wbuf = WPathBuffer::default();
         let len =
             unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
@@ -3957,9 +3878,8 @@ mod windows_impl {
     }
     pub fn mkdirat(dir: impl AsFd, path: &ZStr, _mode: Mode) -> Maybe<()> {
         let dir = dir.as_fd();
-        // sys.zig:829 mkdiratW — `openDirAtWindowsNtPath(dir, path,
-        // .{ .iterable = false, .can_rename_or_delete = true, .op = .only_create })`
-        // then close the resulting handle on success.
+        // Open with `op = OnlyCreate`, then close the resulting handle on
+        // success.
         let mut wbuf = WPathBuffer::default();
         let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
         let made = super::open_dir_at_windows_nt_path(
@@ -3978,7 +3898,6 @@ mod windows_impl {
     pub fn renameat(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
         let from_dir = from_dir.as_fd();
         let to_dir = to_dir.as_fd();
-        // sys.zig:2572 — windows arm goes through renameAtW.
         let mut wf = WPathBuffer::default();
         let mut wt = WPathBuffer::default();
         let from_w = bun_paths::string_paths::to_nt_path(&mut wf, from.as_bytes());
@@ -3992,16 +3911,15 @@ mod windows_impl {
         to: &ZStr,
         flags: Renameat2Flags,
     ) -> Maybe<()> {
-        // sys.zig:2538 — `renameat2` collapses to `renameat` on windows; the
+        // `renameat2` collapses to `renameat` on windows; the
         // `noreplace`/`exchange` flags are not honored by NTFS rename.
         let _ = flags;
         renameat(from_dir, from, to_dir, to)
     }
     pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
-        // sys.zig:2884-2896 `unlinkatWithFlags` windows arm: convert to NT path
-        // and call `DeleteFileBun` with `.dir = if (dirfd != bun.invalid_fd)
-        // dirfd.cast() else null` and `.remove_dir = flags & AT.REMOVEDIR != 0`.
-        // `std.posix.AT.REMOVEDIR` on Windows = 0x200 (std/c.zig).
+        // Convert to NT path and call `DeleteFileBun`;
+        // `remove_dir = flags & AT_REMOVEDIR != 0`.
+        // AT_REMOVEDIR on Windows = 0x200.
         const AT_REMOVEDIR: i32 = 0x200;
         let mut wbuf = WPathBuffer::default();
         let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
@@ -4017,7 +3935,7 @@ mod windows_impl {
             },
         )
     }
-    /// sys.zig:2912 `unlinkat` — 2-arg form (`flags = 0`).
+    /// 2-arg form (`flags = 0`).
     #[inline]
     pub fn unlinkat(dir: impl AsFd, path: &ZStr) -> Maybe<()> {
         let dir = dir.as_fd();
@@ -4029,23 +3947,19 @@ mod windows_impl {
         mkdir_recursive_at_mode(dir, sub, 0o777)
     }
     pub fn mkdir_recursive_at_mode(dir: Fd, sub: &[u8], mode: Mode) -> Maybe<()> {
-        // Port of `bun.makePath` (bun.zig:2288). The component-splitting and
+        // `bun.makePath`. The component-splitting and
         // back-then-forward walk live in `bun_paths::{ComponentIterator,
-        // make_path_with}` (faithful `std.fs.path.ComponentIterator` port — it
+        // make_path_with}` (`ComponentIterator`
         // never yields a bare `"C:"` / `"\\server\share"` root, which is what
         // broke the old forward-split impl for absolute paths fed by
         // `bin::Linker::create_windows_shim`).
         //
-        // What stays here is a `.`/`..` *pre-normalize* pass: Zig's
-        // `std.fs.Dir.makePath` calls `std.posix.mkdirat`, which on Windows
-        // normalizes each prefix through `sliceToPrefixedFileW` →
-        // `removeDotDirsSanitized` / `RtlGetFullPathName_U`, collapsing every
-        // `.` and `..` before `NtCreateFile`. Our `mkdirat` below routes
+        // What stays here is a `.`/`..` *pre-normalize* pass: our `mkdirat` below routes
         // through bun's `to_nt_path` which only flips slashes, so a literal
         // `"."`/`".."` ObjectName reaches `NtCreateFile` un-normalized — `.`
         // → `OBJECT_NAME_NOT_FOUND` (ENOENT, not the EEXIST the walk expects)
-        // and `a\..\b` live-locks the walk. Normalizing here matches the
-        // stdlib's effective behavior (compile-outfile-subdirs.test.ts
+        // and `a\..\b` live-locks the walk. Normalizing here preserves the
+        // expected behavior (compile-outfile-subdirs.test.ts
         // "works with . and .. in paths", outfile
         // `./output/../output/./app.exe`).
         use bun_paths::{ComponentIterator, MakePathStep, PathFormat, is_sep_any as is_sep};
@@ -4172,12 +4086,11 @@ mod windows_impl {
         link(s_abs, d_abs)
     }
     pub fn linkat_tmpfile(_tmpfd: Fd, _dirfd: Fd, _name: &ZStr) -> Maybe<()> {
-        // sys.zig:3973 — `if (!Environment.isLinux) @compileError("Linux only")`.
         Err(Error::new(E::ENOTSUP, Tag::link))
     }
     pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let dirfd = dirfd.as_fd();
-        // sys.zig:2641 — windows: resolve `dest` against `dirfd`, then symlinkUV.
+        // Resolve `dest` against `dirfd`, then symlink via libuv.
         let mut db = bun_core::PathBuffer::default();
         let d = super::get_fd_path(dirfd, &mut db)?;
         let mut dj = bun_core::PathBuffer::default();
@@ -4225,22 +4138,22 @@ mod windows_impl {
     }
     pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
         let fd = fd.as_fd();
-        // sys.zig:838-846 — windows arm: `openatWindowsA(fd, path, 0, 0)` (flags=0
+        // `openat(fd, path, 0, 0)` (flags=0
         // → FOLLOWS reparse points) then `fstat(file)`. Do NOT use `lstat` here —
-        // that's the `lstatat` (sys.zig:863) no-follow variant.
+        // that's the `lstatat` no-follow variant.
         let file = openat(fd, path, 0, 0)?;
         let r = fstat(file);
         let _ = close(file);
         r
     }
     pub fn access(path: &ZStr, mode: i32) -> Maybe<()> {
-        // sys.zig:1748-1768 — windows arm: GetFileAttributesW, then if
+        // GetFileAttributesW, then if
         // `(mode & W_OK) != 0` AND the file is read-only AND it is NOT a
         // directory, return `.err = EPERM`.
         const W_OK: i32 = 2;
         // Longer than any path NT can address — reject up front instead of
         // letting the wide conversion below fail-safe to a prefix-only path
-        // (mirrors `PathLikeExt` and the Zig-side fix in oven-sh/bun#27775,
+        // (mirrors `PathLikeExt`; see oven-sh/bun#27775,
         // which handled `access` as one of its call sites). `path` may
         // already carry a `\\?\` prefix (NodeFS::access routes through
         // `slice_z`, which prepends it) — check the unprefixed form so the
@@ -4266,9 +4179,8 @@ mod windows_impl {
     }
     pub fn faccessat(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
         let dir = dir.as_fd();
-        // sys.zig:3504-3531 — `faccessat` NEVER returns `.err`: rc==0 → `.result
-        // = true`, else → `.result = false` regardless of errno. There is no
-        // dedicated windows arm in the spec; collapse all errors to `Ok(false)`.
+        // `faccessat` NEVER errors: success → `Ok(true)`, else `Ok(false)`
+        // regardless of errno; collapse all errors to `Ok(false)`.
         match openat(dir, sub, O::RDONLY, 0) {
             Ok(fd) => {
                 let _ = close(fd);
@@ -4278,8 +4190,7 @@ mod windows_impl {
         }
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        // sys.zig:3612 has `@compileError("TODO: futimens")` on Windows; the
-        // libuv path here predates the spec port. `uv_fs_futime` takes a CRT
+        // `uv_fs_futime` takes a CRT
         // fd, and `fd.uv()` PANICS for HANDLE-backed (`FdKind::System`) Fds.
         // Convert via `make_libuv_owned()` first (passes uv-backed Fds through
         // unchanged) so an `openat()` result no longer crashes.
@@ -4291,7 +4202,7 @@ mod windows_impl {
         let mut req = uv::fs_t::uninitialized();
         let rc =
             unsafe { uv::uv_fs_futime(core::ptr::null_mut(), &mut req, uvfd.uv(), a, m, None) };
-        // Zig: `defer req.deinit()` — fs_t has no Drop impl; uv_fs_req_cleanup
+        // fs_t has no Drop impl; uv_fs_req_cleanup
         // must run before any return (fd-based, so no path buffer is captured,
         // but keep the pattern uniform with utimens/lutimens below).
         req.deinit();
@@ -4314,7 +4225,7 @@ mod windows_impl {
                 None,
             )
         };
-        // Zig: `defer req.deinit()` — uv_fs_utime runs fs__capture_path which
+        // uv_fs_utime runs fs__capture_path which
         // uv__malloc's the WTF-16 path into the req even for sync (cb=NULL)
         // calls; only uv_fs_req_cleanup frees it. fs_t has no Drop impl, so
         // call it explicitly before any return.
@@ -4338,7 +4249,7 @@ mod windows_impl {
                 None,
             )
         };
-        // Zig: `defer req.deinit()` — same fs__capture_path leak as utimens.
+        // Same fs__capture_path leak as utimens.
         req.deinit();
         if let Some(err) = Error::from_uv_rc(rc, Tag::lutime) {
             return Err(err.with_path(path.as_bytes()));
@@ -4346,12 +4257,12 @@ mod windows_impl {
         Ok(())
     }
     pub fn exists_z(path: &ZStr) -> bool {
-        // sys.zig:3482 — windows arm: GetFileAttributesW != INVALID.
+        // GetFileAttributesW != INVALID.
         access(path, 0).is_ok()
     }
     pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
         let dir = dir.as_fd();
-        // sys.zig:3726-3731 — windows arm: `existsAtType(fd, subpath) == .file`.
+        // `exists_at_type(fd, subpath) == File`.
         // Directories yield `false` (resolver/install code uses `existsAt` to
         // mean "a *file* exists here").
         matches!(
@@ -4360,11 +4271,10 @@ mod windows_impl {
         )
     }
     pub fn is_executable_file_path(path: &ZStr) -> bool {
-        // sys.zig:3779-3784 — windows arm: convert to wide and call
-        // `bun.windows.SaferiIsExecutableFileType(path, FALSE)`. Honors the
+        // Convert to wide and call
+        // `SaferiIsExecutableFileType(path, FALSE)`. Honors the
         // system security policy and recognizes `.js/.lnk/.pif/.pl/.shs/.url/
-        // .vbs/...` in addition to `.exe/.cmd/.bat/.com` (per the comment block
-        // at sys.zig:3744-3761). Do NOT hand-roll an extension whitelist —
+        // .vbs/...` in addition to `.exe/.cmd/.bat/.com` . Do NOT hand-roll an extension whitelist —
         // PORTING.md §Forbidden bars re-implementing linked OS API surface.
         let mut wbuf = WPathBuffer::default();
         let wpath = bun_paths::string_paths::to_w_path(&mut wbuf, path.as_bytes());
@@ -4374,13 +4284,13 @@ mod windows_impl {
         unsafe { w::SaferiIsExecutableFileType(wpath.as_ptr(), 0) != w::FALSE }
     }
     pub fn get_file_size(fd: Fd) -> Maybe<u64> {
-        // sys.zig:4140 — GetFileSizeEx.
+        // GetFileSizeEx.
         let mut size: i64 = 0;
         let ok = unsafe { w::kernel32::GetFileSizeEx(fd.native() as w::HANDLE, &mut size) };
         if ok == 0 {
             return Err(Error::new(w::get_last_errno(), Tag::fstat).with_fd(fd));
         }
-        // sys.zig:4217 `@intCast(@max(size, 0))` — clamp defensively so a
+        // Clamp defensively so a
         // negative LARGE_INTEGER never becomes ~18 EB after the i64→u64 cast.
         Ok(size.max(0) as u64)
     }
@@ -4393,11 +4303,10 @@ mod windows_impl {
         r.map(|s| &*s)
     }
     pub fn fcntl(_fd: Fd, _cmd: i32, _arg: isize) -> Maybe<isize> {
-        // sys.zig:959 — `if (Environment.isWindows) @compileError("not implemented")`.
         Err(Error::new(E::ENOTSUP, Tag::fcntl))
     }
     pub fn pipe() -> Maybe<[Fd; 2]> {
-        // sys.zig:3839 — windows: uv_pipe(fds, 0, 0).
+        // uv_pipe(fds, 0, 0).
         let mut fds: [uv::uv_file; 2] = [-1, -1];
         let rc = unsafe { uv::uv_pipe(&mut fds, 0, 0) };
         if let Some(err) = Error::from_uv_rc(rc, Tag::pipe) {
@@ -4417,7 +4326,7 @@ mod windows_impl {
         }
     }
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
-        // sys.zig:2339 — windows: SetFilePointerEx.
+        // SetFilePointerEx.
         let mut new: i64 = 0;
         let ok = unsafe {
             w::SetFilePointerEx(fd.native() as w::HANDLE, offset, &mut new, whence as u32)
@@ -4427,7 +4336,7 @@ mod windows_impl {
         }
         Ok(new)
     }
-    /// sys.zig:3822 `setFileOffsetToEndWindows` — `SetFilePointerEx(.., FILE_END)`
+    /// `SetFilePointerEx(.., FILE_END)`
     /// returning the new offset as `usize`.
     pub fn set_file_offset_to_end_windows(fd: Fd) -> Maybe<usize> {
         let mut new: i64 = 0;
@@ -4439,7 +4348,7 @@ mod windows_impl {
         Ok(usize::try_from(new).expect("int cast"))
     }
     pub fn chdir(path: &ZStr) -> Maybe<()> {
-        // sys.zig:452-455 — windows: `SetCurrentDirectoryW(toWDirPath(..))`.
+        // `SetCurrentDirectoryW(toWDirPath(..))`.
         // `toWDirPath` appends a trailing backslash so e.g. `"C:"` is treated
         // as the drive root, not the drive's saved cwd.
         let mut wbuf = WPathBuffer::default();
@@ -4459,14 +4368,13 @@ mod windows_impl {
         chdir(ZStr::from_buf(&zb.0[..], p.len()))
     }
     pub fn umask(mode: Mode) -> Mode {
-        // sys.zig: `_umask` (msvcrt).
         unsafe extern "C" {
             safe fn _umask(m: core::ffi::c_int) -> core::ffi::c_int;
         }
         _umask(mode as core::ffi::c_int) as Mode
     }
     pub fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
-        // sys.zig:2243-2244 — windows: winsock `recv`. Winsock's `len` is a
+        // Winsock `recv`. Winsock's `len` is a
         // signed `int`, so clamp to `i32::MAX` (NOT `MAX_COUNT == u32::MAX`)
         // before the `usize → i32` cast — otherwise ≥2 GiB buffers wrap to a
         // negative length and Winsock fails with WSAEFAULT.
@@ -4481,7 +4389,7 @@ mod windows_impl {
         Ok(rc as usize)
     }
     pub fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
-        // sys.zig:2294 — windows: winsock `send`. Clamp to `i32::MAX` so the
+        // Winsock `send`. Clamp to `i32::MAX` so the
         // `usize → i32` cast can't wrap to a negative length on huge buffers.
         let len = buf.len().min(i32::MAX as usize) as i32;
         let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags) };
@@ -4499,7 +4407,7 @@ mod windows_impl {
         send(fd, buf, 0)
     }
     pub fn socketpair(_domain: i32, _ty: i32, _proto: i32, _nonblock: bool) -> Maybe<[Fd; 2]> {
-        // sys.zig:3103 — `if (Environment.isWindows) @compileError("use spawnIPCSocket on Windows")`.
+        // Use spawnIPCSocket on Windows instead.
         Err(Error::new(E::ENOTSUP, Tag::socketpair))
     }
     pub fn mmap(
@@ -4510,17 +4418,15 @@ mod windows_impl {
         _fd: Fd,
         _off: i64,
     ) -> Maybe<*mut u8> {
-        // sys.zig:3006 — `if (Environment.isWindows) @compileError("not implemented")`.
         Err(Error::new(E::ENOTSUP, Tag::mmap))
     }
     pub fn munmap(_ptr: *mut u8, _len: usize) -> Maybe<()> {
-        // sys.zig:3231 — `if (Environment.isWindows) @compileError("not implemented")`.
         Err(Error::new(E::ENOTSUP, Tag::munmap))
     }
     pub fn sendfile(src: Fd, _dest: Fd, _len: usize) -> Maybe<usize> {
-        // sys.zig:504 has NO Windows arm — `bun.sys.sendfile` is Linux-only
-        // (`std.os.linux.sendfile` with a *null* offset so the kernel advances
-        // the source fd's file position). The previous port called
+        // `bun.sys.sendfile` is Linux-only
+        // (`sendfile(2)` with a *null* offset so the kernel advances
+        // the source fd's file position). An earlier implementation called
         // `uv_fs_sendfile(..., in_offset=0, ...)`, which (a) re-reads byte 0
         // on every iteration of a chunked copy loop and (b) returned the int
         // rc (always `0` on success) instead of `req.result`. Surface ENOSYS
@@ -4565,7 +4471,7 @@ fn read_fill_vec(
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.PlatformIOVecConst` / `bun.platformIOVecConstCreate` — POSIX
 // `iovec_const` (= `struct iovec` with the writev contract that `base` is
-// not written through). On Windows the Zig original aliases `uv_buf_t`;
+// not written through). On Windows this aliases `uv_buf_t`;
 // that arm lives in `windows_impl` below.
 // Layout matches `libc::iovec` (`{ *void, usize }`) so a `&[PlatformIoVecConst]`
 // can be passed straight to `pwritev(2)`.
@@ -4602,10 +4508,10 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
     {
         // SAFETY: `PlatformIoVecConst` is layout-compatible with `libc::iovec`
         // (asserted above); `pwritev(2)` only reads through `iov_base`.
-        // sys.zig:2064 — Darwin uses `pwritev$NOCANCEL` (avoid cancellation point).
+        // Darwin uses `pwritev$NOCANCEL` (avoid cancellation point).
         #[cfg(target_os = "macos")]
         {
-            // sys.zig:1955-1964 — `.mac` arm: single `pwritev$NOCANCEL`, no
+            // macOS: single `pwritev$NOCANCEL`, no
             // EINTR retry (surfaces EINTR to caller).
             // SAFETY: `fd` is a live descriptor; `vecs` gives an exact
             // (ptr, len) pair of layout-compatible iovecs (asserted above).
@@ -4652,7 +4558,6 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
     }
     #[cfg(windows)]
     {
-        // sys.zig:1953 — `if (Environment.isWindows) return sys_uv.pwritev(...)`.
         // `PlatformIoVecConst` is layout-identical to `uv_buf_t` on Windows
         // (asserted below), so the slice forwards as-is.
         sys_uv::pwritev(fd, vecs, offset)
@@ -4668,8 +4573,8 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
 pub type PlatformIoVec = libc::iovec;
 #[cfg(windows)]
 pub type PlatformIoVec = bun_libuv_sys::uv_buf_t;
-// Zig spells these `PlatformIOVec` / `PlatformIOVecConst`; provide both
-// casings so ported call sites (`sys_uv.rs`) compile without churn.
+// Both casings of `PlatformIOVec` / `PlatformIOVecConst` are provided so
+// existing call sites (`sys_uv.rs`) compile without churn.
 pub use PlatformIoVec as PlatformIOVec;
 pub use PlatformIoVecConst as PlatformIOVecConst;
 
@@ -4685,7 +4590,7 @@ pub fn platform_iovec_create(buf: &mut [u8]) -> PlatformIoVec {
     #[cfg(windows)]
     {
         // `uv_buf_t` on Windows is `{ ULONG len; char* base; }` — order-swapped vs
-        // POSIX iovec. Zig: `comptime bun.assert(bun.PlatformIOVec == uv.uv_buf_t)`.
+        // POSIX iovec.
         PlatformIoVec {
             len: buf.len() as bun_libuv_sys::ULONG,
             base: buf.as_mut_ptr(),
@@ -4722,14 +4627,14 @@ pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
 }
 
 /// `bun.sys.writev` — gather-write. macOS uses `writev$NOCANCEL` with no
-/// EINTR retry (sys.zig:1923-1934); other POSIX retries on EINTR.
+/// EINTR retry; other POSIX retries on EINTR.
 pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(unix)]
     {
         #[cfg(target_os = "macos")]
         {
             // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
-            // the descriptor table. sys.zig:1925 — single shot, surfaces EINTR.
+            // the descriptor table. Single shot, surfaces EINTR.
             let rc = unsafe {
                 nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
             };
@@ -4768,7 +4673,7 @@ pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
 }
 
 /// `bun.sys.readv` — scatter-read. macOS uses `readv$NOCANCEL` with no
-/// EINTR retry (sys.zig:1982-2014); other POSIX retries on EINTR.
+/// EINTR retry; other POSIX retries on EINTR.
 pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
@@ -4779,7 +4684,7 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
         #[cfg(target_os = "macos")]
         {
             // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
-            // each `iov_base`, never the array itself. sys.zig:1991 — single shot.
+            // each `iov_base`, never the array itself. Single shot.
             let rc = unsafe {
                 nocancel::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
             };
@@ -4817,7 +4722,7 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
 }
 
 /// `bun.sys.preadv` — scatter-read at `position`. macOS uses
-/// `preadv$NOCANCEL` with no EINTR retry (sys.zig:2016-2048).
+/// `preadv$NOCANCEL` with no EINTR retry.
 pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
@@ -4827,7 +4732,7 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     {
         #[cfg(target_os = "macos")]
         {
-            // SAFETY: see `readv`. sys.zig:2025 — single shot.
+            // SAFETY: see `readv`. Single shot.
             let rc = unsafe {
                 nocancel::preadv(
                     fd.native(),
@@ -4876,7 +4781,7 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun.StatFS` / `bun.sys.statfs` — sys.zig:547-571.
+// `bun.StatFS` / `bun.sys.statfs`.
 // On POSIX `bun.StatFS` aliases `struct statfs` (Linux/macOS/FreeBSD); on
 // Windows it is `uv_statfs_t` populated from `GetDiskFreeSpace` (handled in
 // `sys_uv`).
@@ -4929,18 +4834,16 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
 }
 
 /// `bun.timespec` — re-exported from `bun_core` so `PosixStat.rs` can spell
-/// `crate::Timespec` (matching the Zig `bun.timespec` namespacing).
+/// `crate::Timespec` (matching the `bun.timespec` namespacing).
 pub use bun_core::Timespec;
 /// `std.time` shim — re-exported from `bun_core` so callers that wrote
-/// `bun_sys::time::timestamp()` (matching Zig's `std.time` import via bun.sys)
-/// resolve without an extra dep.
+/// `bun_sys::time::timestamp()` resolve without an extra dep.
 pub use bun_core::time;
 
 /// `bun.sys.selfProcessMemoryUsage()` — returns the resident set size of the
 /// current process in bytes, or `None` on failure. Thin wrapper around the
 /// C++ `getRSS` shim (lives in `src/jsc/bindings/memory.cpp`).
 pub fn self_process_memory_usage() -> Option<usize> {
-    // TODO(port): move to <area>_sys
     unsafe extern "C" {
         // safe: out-param is `&mut usize` (non-null, valid for write); C++ side
         // only writes the slot and returns a status code — no other preconditions.
@@ -4953,9 +4856,9 @@ pub fn self_process_memory_usage() -> Option<usize> {
     Some(rss)
 }
 
-/// `bun.sys.PosixStat` — uv-shaped stat struct (`src/sys/PosixStat.zig`).
+/// `bun.sys.PosixStat` — uv-shaped stat struct.
 /// Re-exported here so dependents (`node_fs.rs`, `Stat.rs`) can spell
-/// `bun_sys::PosixStat` exactly as the Zig source spells `bun.sys.PosixStat`.
+/// `bun_sys::PosixStat`.
 #[path = "PosixStat.rs"]
 pub mod posix_stat;
 pub use posix_stat::PosixStat;
@@ -4983,21 +4886,20 @@ impl std::io::Read for FileReader {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Additional surface unblocked for dependents.
-// Symbols are real posix wrappers (sys.zig posix arms 1:1); Windows arms route
+// Symbols are real posix wrappers; Windows arms route
 // through the libuv/kernel32 layer in `windows_impl` above.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bun.sys.Error.Int` — backing integer for `errno`.
 pub type ErrorInt = error::Int;
-/// `std.posix.E` — un-prefixed errno enum (`.SUCCESS`, `.AGAIN`, ...).
-/// PORT NOTE: aliased to `bun_errno::E` (= `SystemErrno`); variants currently
+/// Errno enum,
+/// aliased to `bun_errno::E` (= `SystemErrno`); variants currently
 /// keep the `E` prefix (`EAGAIN` not `AGAIN`). Unprefixed associated consts
 /// live on `SystemErrno` directly (errno crate); callers comparing against
 /// `Errno::AGAIN`/`Errno::EXIST` rely on those.
 pub type Errno = E;
 
 /// `bun.sys.File.SizeHint` — pre-reserve hint for `read_to_end_with_array_list`.
-/// Mirrors Zig's `enum { probably_small, unknown_size }` (File.zig:298).
 #[derive(Clone, Copy, Debug)]
 pub enum SizeHint {
     /// Reserve a small fixed buffer (64B).
@@ -5006,26 +4908,26 @@ pub enum SizeHint {
     UnknownSize,
 }
 
-/// `std.process.EnvMap` — owned `KEY → VALUE` map of environment variables.
-/// Minimal real def (no Zig hash-map semantics needed; Rust callers iterate).
+/// Owned `KEY → VALUE` map of environment variables.
+/// Minimal real def (no hash-map semantics needed; callers iterate).
 pub type EnvMap = std::collections::HashMap<String, String>;
 
-/// `bun.sys.syslog` — debug-scoped log under `SYS` (Zig: `Output.scoped(.SYS)`).
-/// PORT NOTE: `bun_core::scoped_log!` only accepts a bare `$scope:ident`, so we
+/// `bun.sys.syslog` — debug-scoped log under `SYS`.
+/// `bun_core::scoped_log!` only accepts a bare `$scope:ident`, so we
 /// re-expand its body verbatim here with the qualified `$crate::fd::SYS` path
 /// and `::bun_core::` helpers — keeping the `[sys] ` tag prefix, trailing-`\n`
-/// append, and `pretty_fmt!` ANSI rewrite (output.zig:893-933) that
+/// append, and `pretty_fmt!` ANSI rewrite that
 /// `ScopedLogger::log()` does *not* add on its own.
 #[macro_export]
 macro_rules! syslog {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        // Gate on `debug_assertions` (== `Environment::ENABLE_LOGS`) — matches
+        // Gate on `env::IS_DEBUG` (== `Environment::ENABLE_LOGS`) — matches
         // bun_core::scoped_log!; there is no `debug_logs` Cargo feature.
-        if cfg!(debug_assertions) && $crate::fd::SYS.is_visible() {
+        if ::bun_core::env::IS_DEBUG && $crate::fd::SYS.is_visible() {
             const __NL: &str =
                 ::bun_core::output::_needs_nl(::bun_core::pretty_fmt!($fmt, false));
             // Branch on ANSI *before* `format_args!` so each `$arg` evaluates
-            // exactly once (Zig builds the args tuple once — output.zig:922-933).
+            // exactly once.
             if ::bun_core::output::_scoped_use_ansi() {
                 $crate::fd::SYS.log(::core::format_args!(
                     concat!(
@@ -5082,7 +4984,7 @@ pub mod c {
         target_os = "openbsd"
     ))]
     pub use libc::{getloadavg, sockaddr_dl, sysctlbyname};
-    /// `std.c.fd_t` / `std.posix.fd_t` — native fd backing int (c_int on POSIX,
+    /// Native fd backing int (c_int on POSIX,
     /// HANDLE on Windows). Use `bun_sys::Fd` everywhere else; this raw alias
     /// exists only for direct libc FFI (e.g. `socketpair`).
     #[cfg(unix)]
@@ -5092,7 +4994,7 @@ pub mod c {
     #[allow(non_camel_case_types)]
     pub type fd_t = bun_core::FdNative;
     /// `bun.c.struct_statfs` — raw `struct statfs` (POSIX) / `uv_statfs_t` (Windows).
-    /// Aliased here so `bun.StatFS` (bun.zig:1703) resolves through `bun_sys::c`.
+    /// Aliased here so `bun.StatFS` resolves through `bun_sys::c`.
     pub use super::StatFS as struct_statfs;
 
     /// libc `dlsym` (RTLD_DEFAULT when `handle` is null).
@@ -5113,7 +5015,7 @@ pub mod c {
         // no caller precondition (dereferencing it is what requires care).
         bun_core::ffi::errno_ptr()
     }
-    // Win32 file APIs frequently spelled `bun.C.*` in Zig (windows.zig flattens
+    // Win32 file APIs frequently spelled `bun.C.*` (the namespace flattens
     // a slice of `kernel32` into `bun.C`). Re-export the handful node_fs.rs
     // reaches via `sys::c::*` so the call sites stay target-neutral.
     #[cfg(windows)]
@@ -5125,10 +5027,10 @@ pub mod c {
         FlushFileBuffers, GetFileAttributesW, SetConsoleCtrlHandler,
     };
 
-    // ── `bun.c` Darwin surface — translate-c symbols Zig picks up via
+    // ── `bun.c` Darwin surface — C symbols picked up via
     // `@cImport` of system headers. The `libc` crate already binds all of
     // these; re-export so callers (`node_os.rs`, `node_fs.rs`, …) keep a
-    // single `bun_sys::c::*` import path matching the Zig namespacing.
+    // single `bun_sys::c::*` import path matching the `bun.c` namespacing.
     #[cfg(target_os = "macos")]
     pub use libc::{
         _NSGetEnviron,
@@ -5236,7 +5138,7 @@ pub mod c {
 
     // ── <mach/mach_init.h> / <mach-o/dyld.h> — declared directly because the
     // `libc` crate has deprecated these in favour of the `mach2` crate. We
-    // bind the C symbols ourselves (as Zig's `std.c` does) so the workspace
+    // bind the C symbols ourselves so the workspace
     // stays free of an extra dependency and of deprecation noise.
     #[cfg(target_os = "macos")]
     unsafe extern "C" {
@@ -5263,8 +5165,7 @@ pub mod c {
         mach_task_self_
     }
     /// `_dyld_get_image_header(i)` — on 64-bit Darwin every loaded image is
-    /// 64-bit, so present it as `*const mach_header_64` (Zig's std does the
-    /// same cast).
+    /// 64-bit, so present it as `*const mach_header_64`.
     #[cfg(target_os = "macos")]
     #[inline]
     pub fn _dyld_get_image_header(image_index: u32) -> *const super::macho::mach_header_64 {
@@ -5293,7 +5194,7 @@ pub mod c {
     }
 
     /// Darwin `sendfile(fd, s, off, *len, *hdtr, flags)`.
-    /// NOTE (SendFile.zig:67): on `EINTR`/`EAGAIN` the kernel still writes the
+    /// NOTE: on `EINTR`/`EAGAIN` the kernel still writes the
     /// bytes-sent count back through `*len` before returning -1 — callers MUST
     /// advance their offset by `*len` even on error. This wrapper is raw (no
     /// EINTR retry); the caller owns the offset bookkeeping.
@@ -5397,11 +5298,10 @@ pub mod c {
     }
 }
 
-// ── `bun.linux` / `std.os.linux` — raw kernel syscalls (Linux + Android). ──
+// ── `linux` — raw kernel syscalls (Linux + Android). ──
 // Android: same kernel ABI; bionic exposes all the libc wrappers used here
-// (`inotify_*`, `ppoll`, `epoll_*`, `IN_*`, `EPOLL*`, `FUTEX_*`). Zig kept this
-// surface under `Environment.isLinux` (true on Android); list both `target_os`
-// values to mirror that.
+// (`inotify_*`, `ppoll`, `epoll_*`, `IN_*`, `EPOLL*`, `FUTEX_*`); list both
+// `target_os` values.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub mod linux {
     use core::ffi::{c_char, c_int};
@@ -5415,12 +5315,12 @@ pub mod linux {
     // `time_t == c_long == i64` on every libc, so spell it `i64` on musl to
     // sidestep the deprecation without changing layout. The `const _` below
     // guards the layout-identical-to-`libc::timespec` invariant.
-    #[cfg(any(target_env = "musl", target_env = "ohos"))]
+    #[cfg(target_env = "musl")]
     type time_t = i64;
-    #[cfg(not(any(target_env = "musl", target_env = "ohos")))]
+    #[cfg(not(target_env = "musl"))]
     type time_t = libc::time_t;
 
-    /// `std.os.linux.timespec` — Zig-shape (`sec`/`nsec`, no `tv_` prefix).
+    /// kernel-shaped timespec (`sec`/`nsec`, no `tv_` prefix).
     /// Layout-identical to `libc::timespec` so a `*const timespec` can be
     /// passed straight to `syscall(SYS_futex, ..)`.
     #[repr(C)]
@@ -5434,14 +5334,14 @@ pub mod linux {
             && core::mem::align_of::<timespec>() == core::mem::align_of::<libc::timespec>()
     );
 
-    /// `std.os.linux.E` — errno; aliased to `bun_errno::E`.
+    /// Errno; aliased to `bun_errno::E`.
     pub type Errno = super::E;
     #[inline]
     pub fn errno() -> c_int {
         super::last_errno()
     }
 
-    /// `std.os.linux.E` — kernel errno enum with unprefixed variants and
+    /// Kernel errno enum with unprefixed variants and
     /// `init(rc)` decoding the `-errno`-in-return-value Linux raw-syscall ABI.
     /// Newtype (not an alias of `bun_errno::E`) because callers match on
     /// `E::AGAIN`/`E::INTR` (no `E` prefix).
@@ -5462,7 +5362,6 @@ pub mod linux {
         /// Decode a raw Linux syscall return (`-errno` on failure, ≥0 on success).
         #[inline]
         pub fn init(rc: isize) -> E {
-            // Zig: `if (rc > -4096) @enumFromInt(-rc) else .SUCCESS`.
             let u = rc as usize;
             if u > (-4096isize) as usize {
                 E((u.wrapping_neg()) as u16)
@@ -5480,7 +5379,7 @@ pub mod linux {
     }
 
     // ── epoll ──
-    /// `std.os.linux.EPOLL` — flag/op constants. Exposed both as a module
+    /// epoll flag/op constants. Exposed both as a module
     /// (`linux::EPOLL::IN`) and flat (`linux::EPOLL_IN`) since callers use both.
     pub mod EPOLL {
         pub const IN: u32 = libc::EPOLLIN as u32;
@@ -5506,7 +5405,7 @@ pub mod linux {
     pub const EPOLL_CTL_DEL: i32 = EPOLL::CTL_DEL;
 
     // ── futex ──
-    /// `std.os.linux.FUTEX` op (cmd + private flag), packed as Zig does.
+    /// futex op (cmd + private flag), packed.
     #[derive(Clone, Copy)]
     pub struct FutexOp {
         pub cmd: FutexCmd,
@@ -5534,8 +5433,8 @@ pub mod linux {
     }
     /// `syscall(SYS_futex, uaddr, op, val)` — 3-arg form (WAKE).
     /// Returns the raw kernel rc (decode with `E::init`).
-    // PORT NOTE: Zig's `std.os.linux.futex_*` invoke the kernel directly and
-    // return `-errno` on failure. `libc::syscall()` is the *glibc* wrapper —
+    // The kernel futex ABI returns `-errno` on
+    // failure. `libc::syscall()` is the *glibc* wrapper —
     // it returns `-1` and sets thread-local errno instead. Translate back to
     // the kernel convention so callers can decode with `E::init(rc)`; without
     // this, every EAGAIN/EINTR from FUTEX_WAIT mis-decodes as EPERM and the
@@ -5569,7 +5468,7 @@ pub mod linux {
         }
     }
 
-    /// inotify mask flags (`std.os.linux.IN`).
+    /// inotify mask flags (`IN_*`).
     pub mod IN {
         pub const ACCESS: u32 = libc::IN_ACCESS;
         pub const MODIFY: u32 = libc::IN_MODIFY;
@@ -5612,7 +5511,7 @@ pub mod linux {
         // declares it `c_int`, which is ABI-correct on every Linux libc.
         crate::safe_libc::inotify_rm_watch(fd, wd)
     }
-    /// Raw `read(2)` returning kernel `usize` (Zig: `std.os.linux.read`).
+    /// Raw `read(2)` returning kernel `usize`.
     #[inline]
     pub unsafe fn read(fd: c_int, buf: *mut u8, count: usize) -> isize {
         // Raw syscall via rustix; libc-convention return preserved for callers
@@ -5620,7 +5519,7 @@ pub mod linux {
         // SAFETY: caller contract — `buf` points to `count` writable bytes.
         unsafe { super::linux_syscall::read_raw(fd, buf, count) }
     }
-    /// Raw `sendfile(out, in, *offset, count)` (Zig: `std.os.linux.sendfile`).
+    /// Raw `sendfile(out, in, *offset, count)`.
     #[inline]
     pub unsafe fn sendfile(out_fd: c_int, in_fd: c_int, offset: *mut i64, count: usize) -> isize {
         // SAFETY: caller contract — `offset` is null or points to a live `i64`
@@ -5646,8 +5545,8 @@ pub mod linux {
         unsafe { super::linux_syscall::epoll_ctl(epfd, op, fd, event) }
     }
 
-    // ── `std.os.linux.*` syscall thunks ──
-    // PORT NOTE: Zig's `std.os.linux.ioctl`/`copy_file_range` are *true* raw
+    // ── raw syscall thunks ──
+    // `ioctl`/`copy_file_range` here are *true* raw
     // syscalls returning the kernel `-errno`-in-`usize` ABI. glibc's
     // `libc::syscall()` is NOT — it returns `-1` and sets thread-local errno
     // on failure. Returning `isize` here routes callers through the
@@ -5655,11 +5554,11 @@ pub mod linux {
     // the kernel-convention `GetErrno for usize` impl which would mis-decode
     // every failure as EPERM (`-1 as usize` → errno 1).
 
-    /// `bun.linux.ioctl_ficlone` (platform/linux.zig:71): raw FICLONE ioctl.
+    /// `bun.linux.ioctl_ficlone`: raw FICLONE ioctl.
     /// Support for FICLONE is dependent on the filesystem driver.
     #[inline]
     pub fn ioctl_ficlone(dest_fd: super::Fd, src_fd: super::Fd) -> isize {
-        // FICLONE = _IOW(0x94, 9, c_int). Value matches Zig's `bun.c.FICLONE`.
+        // FICLONE = _IOW(0x94, 9, c_int).
         const FICLONE: libc::c_ulong = 0x40049409;
         // SAFETY: raw `ioctl(2)`; both fds owned by caller.
         unsafe {
@@ -5672,7 +5571,7 @@ pub mod linux {
         }
     }
 
-    /// `std.os.linux.copy_file_range` raw syscall.
+    /// `copy_file_range` raw syscall.
     #[inline]
     pub unsafe fn copy_file_range(
         in_: c_int,
@@ -5686,7 +5585,7 @@ pub mod linux {
         unsafe { super::linux_syscall::copy_file_range(in_, off_in, out, off_out, len, flags) }
     }
 
-    // `std.os.linux.sendfile` — use the existing `linux::sendfile` (libc
+    // sendfile — use the existing `linux::sendfile` (libc
     // wrapper, isize return) defined above; `get_errno::<isize>` decodes it.
 
     /// `bun.linux.RWFFlagSupport` — runtime probe for `RWF_NOWAIT` (kernel ≥ 4.14).
@@ -5699,7 +5598,7 @@ pub mod linux {
         pub fn is_maybe_supported() -> bool {
             match RWF_STATE.load(core::sync::atomic::Ordering::Relaxed) {
                 0 => {
-                    // platform/linux.zig:44 — kernels 5.9/5.10 have a buggy
+                    // Kernels 5.9/5.10 have a buggy
                     // RWF_NOWAIT (returns EAGAIN spuriously); disable on those.
                     let v = bun_core::linux_kernel_version();
                     let buggy = v.major == 5 && (v.minor == 9 || v.minor == 10);
@@ -5756,7 +5655,7 @@ pub mod darwin {
             os_log::Signpost { log: self, name }
         }
     }
-    /// `std.c.EVFILT` — kqueue filter constants.
+    /// kqueue filter constants.
     pub mod EVFILT {
         pub const READ: i16 = libc::EVFILT_READ;
         pub const WRITE: i16 = libc::EVFILT_WRITE;
@@ -5767,7 +5666,7 @@ pub mod darwin {
         pub const USER: i16 = libc::EVFILT_USER;
         pub const MACHPORT: i16 = libc::EVFILT_MACHPORT;
     }
-    /// `std.c.EV` — kqueue event flags (Darwin).
+    /// kqueue event flags (Darwin).
     pub mod EV {
         pub const ADD: u16 = libc::EV_ADD;
         pub const DELETE: u16 = libc::EV_DELETE;
@@ -5780,7 +5679,7 @@ pub mod darwin {
         pub const EOF: u16 = libc::EV_EOF;
         pub const ERROR: u16 = libc::EV_ERROR;
     }
-    /// `std.c.NOTE` — kqueue fflags (Darwin).
+    /// kqueue fflags (Darwin).
     pub mod NOTE {
         pub const EXIT: u32 = libc::NOTE_EXIT;
         pub const EXITSTATUS: u32 = libc::NOTE_EXITSTATUS;
@@ -5804,9 +5703,9 @@ pub mod darwin {
     /// sites (blob/copy_file.rs) resolve without a direct `libc` dep.
     pub use libc::{ftruncate, truncate};
 
-    /// `bun.darwin.COPYFILE` — Zig `packed struct(u32)` of <copyfile.h> flags.
+    /// `bun.darwin.COPYFILE` — packed-u32 set of <copyfile.h> flags.
     /// Kept as a plain struct + `.bits()` so call sites can use field-init
-    /// syntax (matching the Zig); convert to `u32` at the FFI boundary.
+    /// syntax; convert to `u32` at the FFI boundary.
     #[derive(Clone, Copy, Default)]
     #[allow(non_snake_case)]
     pub struct COPYFILE {
@@ -5845,10 +5744,10 @@ pub mod darwin {
         }
     }
 
-    // ── `std.c.UL` / `std.c.ULOp` — Darwin private __ulock_* flags ──
-    // <xnu/bsd/sys/ulock.h>. Zig models this as `packed struct(u32)`; we keep
-    // a plain struct + `.bits()` so Futex.rs can use field-init syntax (matching
-    // the Zig call sites) while the FFI boundary gets the packed u32.
+    // ── Darwin private __ulock_* flags ──
+    // <xnu/bsd/sys/ulock.h>. Kept as
+    // a plain struct + `.bits()` so Futex.rs can use field-init syntax
+    // while the FFI boundary gets the packed u32.
     #[repr(u8)]
     #[derive(Clone, Copy, Default)]
     pub enum ULOp {
@@ -5979,8 +5878,8 @@ pub mod darwin {
 #[cfg(not(target_os = "macos"))]
 pub mod darwin {}
 
-// ── `std.macho` — Mach-O header parsing (subset). ────────────────────────
-// Port of the slice of Zig std/macho.zig that `crash_handler.zig` uses to
+// ── Mach-O header parsing (subset). ──────────────────────────────────────
+// Just the slice that the crash handler uses to
 // walk dyld load commands and resolve a stable (ASLR-unslid) address for
 // `addr2line`. Only the 64-bit forms are present; Bun does not ship 32-bit
 // Darwin binaries.
@@ -5998,7 +5897,7 @@ pub mod macho {
     pub const LC_SEGMENT_64: u32 = 0x19;
 
     /// `<mach-o/loader.h> mach_header_64`. Layout matches libc's
-    /// `mach_header_64` and Zig std's `std.macho.mach_header_64`.
+    /// `mach_header_64`.
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct mach_header_64 {
@@ -6038,7 +5937,7 @@ pub mod macho {
         pub flags: u32,
     }
     impl segment_command_64 {
-        /// Zig: `segName()` — segment name with trailing NULs trimmed.
+        /// Segment name with trailing NULs trimmed.
         #[inline]
         pub fn seg_name(&self) -> &[u8] {
             bun_core::slice_to_nul(&self.segname)
@@ -6047,8 +5946,8 @@ pub mod macho {
 
     /// Raw `(*const u8, len)` pair so [`LoadCommandIterator`] does not hold a
     /// Rust borrow of its backing buffer. `bun_exe_format::macho` interleaves
-    /// iterator reads with in-place mutation of the same `Vec<u8>` (matching
-    /// the Zig original, which has no borrow checker); a `&'a [u8]` here would
+    /// iterator reads with in-place mutation of the same `Vec<u8>`;
+    /// a `&'a [u8]` here would
     /// force a structural rewrite of that consumer.
     #[derive(Clone, Copy)]
     pub struct RawSlice {
@@ -6081,7 +5980,7 @@ pub mod macho {
         pub fn cmdsize(&self) -> u32 {
             self.hdr.cmdsize
         }
-        /// Zig: `cast(comptime T: type) ?T` — reinterpret the command bytes
+        /// Reinterpret the command bytes
         /// as `T` if large enough. Returns an owned `Copy` value (via
         /// `read_unaligned`) rather than `&T`: the backing buffer may be a
         /// heap `Vec<u8>` with arbitrary alignment, so materialising a typed
@@ -6093,12 +5992,12 @@ pub mod macho {
             // SAFETY: `data.ptr` points into a live Mach-O image buffer with
             // at least `size_of::<T>()` bytes (checked above); `T` is
             // `#[repr(C)]` POD per all callers. `read_unaligned` tolerates any
-            // alignment (mirrors Zig `*align(1) const T`).
+            // alignment.
             Some(unsafe { core::ptr::read_unaligned(self.data.ptr.cast::<T>()) })
         }
     }
 
-    /// Zig: `std.macho.LoadCommandIterator` — walks the load-command region
+    /// Walks the load-command region
     /// that immediately follows a `mach_header_64`.
     ///
     /// SAFETY contract: callers must not reallocate, shrink, or free the
@@ -6195,7 +6094,7 @@ impl DynLib {
         // `transmute_copy` is used over `transmute` because `T` is generic and
         // its size cannot be checked at the definition site; the `const` assert
         // above enforces `size_of::<T>() == size_of::<*mut c_void>()` at
-        // monomorphisation. Same contract as Zig `bun.cast(T, ptr)`.
+        // monomorphisation.
         Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&p) })
     }
     pub fn close(self) {
@@ -6206,7 +6105,7 @@ impl DynLib {
             libc::dlclose(self.handle);
         }
         // Windows: FreeLibrary via windows mod; intentionally leaked here
-        // (Zig `DynLib.close` on Windows is a no-op in our usage).
+        // (close is a no-op on Windows in our usage).
     }
     #[inline]
     pub fn handle(&self) -> *mut c_void {
@@ -6214,7 +6113,7 @@ impl DynLib {
     }
 }
 
-/// `std.c.RTLD` flags for `dlopen`.
+/// `RTLD_*` flags for `dlopen`.
 #[cfg(unix)]
 pub mod RTLD {
     pub const LAZY: i32 = libc::RTLD_LAZY;
@@ -6232,54 +6131,10 @@ pub mod RTLD {
     pub const LOCAL: i32 = 0;
 }
 
-/// OHOS: sign a binary with `binary-sign-tool` if it is not already signed.
-/// Required because OHOS refuses to execute unsigned ELF binaries (exit 126).
-/// Used by `dlopen` (for `.so`/`.node` loading) and by `bun build --compile`
-/// (the output binary is a modified copy of bun whose original signature is
-/// invalidated by the `.bun` section injection).
-#[cfg(target_env = "ohos")]
-pub fn ohos_sign_binary(path: &ZStr) {
-    use std::process::Command;
-    let path_str = match path.as_cstr().to_str() {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-    // Skip if already signed.
-    if Command::new("binary-sign-tool")
-        .args(["display-sign", "-inFile", path_str])
-        .output()
-        .is_ok_and(|o| o.status.success())
-    {
-        return;
-    }
-    let _ = Command::new("binary-sign-tool")
-        .args(["sign", "-selfSign", "1", "-inFile", path_str, "-outFile", path_str])
-        .output();
-}
-
-/// OHOS: sign a binary by byte path (convenience wrapper for callers that
-/// have a `&[u8]` path instead of a `ZStr`).
-#[cfg(target_env = "ohos")]
-pub fn ohos_sign_binary_bytes(path: &[u8]) {
-    let mut buf = Vec::with_capacity(path.len() + 1);
-    buf.extend_from_slice(path);
-    buf.push(0);
-    // `from_slice_with_nul` requires trailing NUL which we just appended.
-    let zstr = ZStr::from_slice_with_nul(&buf);
-    ohos_sign_binary(zstr);
-}
-
-/// sys.zig:4557 — `dlopen(filename, flags)`. Windows → `LoadLibraryA`.
+/// `dlopen(filename, flags)`. Windows → `LoadLibraryA`.
 pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
-    #[cfg(all(unix, not(target_env = "ohos")))]
+    #[cfg(unix)]
     {
-        // SAFETY: filename is NUL-terminated.
-        let p = unsafe { libc::dlopen(filename.as_ptr(), flags) };
-        if p.is_null() { None } else { Some(p) }
-    }
-    #[cfg(target_env = "ohos")]
-    {
-        ohos_sign_binary(filename);
         // SAFETY: filename is NUL-terminated.
         let p = unsafe { libc::dlopen(filename.as_ptr(), flags) };
         if p.is_null() { None } else { Some(p) }
@@ -6292,24 +6147,7 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
         if p.is_null() { None } else { Some(p.cast()) }
     }
 }
-/// C-ABI wrapper so `BunProcess.cpp` (process.dlopen) routes through
-/// `sys::dlopen()` instead of calling `libc::dlopen()` directly.
-/// On OHOS this ensures the file is signed before loading.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__dlopen(path: *const core::ffi::c_char, flags: i32) -> *mut c_void {
-    if path.is_null() {
-        return core::ptr::null_mut();
-    }
-    // SAFETY: path is a valid NUL-terminated C string (caller contract).
-    let len = unsafe { libc::strlen(path) };
-    let z = unsafe { ZStr::from_raw(path.cast::<u8>(), len) };
-    match dlopen(z, flags) {
-        Some(h) => h,
-        None => core::ptr::null_mut(),
-    }
-}
-
-/// sys.zig:4565 — `dlsym(handle, name)`.
+/// `dlsym(handle, name)`.
 pub fn dlsym_impl(handle: Option<*mut c_void>, name: &ZStr) -> Option<*mut c_void> {
     #[cfg(unix)]
     {
@@ -6320,13 +6158,13 @@ pub fn dlsym_impl(handle: Option<*mut c_void>, name: &ZStr) -> Option<*mut c_voi
     }
     #[cfg(windows)]
     {
-        // sys.zig:4565 — Windows arm calls `GetProcAddressA` (which widens
+        // The Windows arm calls `GetProcAddressA` (which widens
         // `name` to UTF-16 and forwards to kernel32 `GetProcAddress`).
         windows::GetProcAddressA(handle, name)
     }
 }
-/// `bun.c.dlsymWithHandle` — once-cached typed lookup. The Zig version
-/// monomorphises per `(Type, name, handle_getter)`; in Rust this is a macro.
+/// `bun.c.dlsymWithHandle` — once-cached typed lookup; one expansion per
+/// `(Type, name, handle_getter)` triple.
 #[macro_export]
 macro_rules! dlsym_with_handle {
     ($T:ty, $name:literal, $handle:expr) => {{
@@ -6352,7 +6190,6 @@ macro_rules! dlsym_with_handle {
         // below) and was obtained from `dlsym`, so it is a valid code address;
         // `Once` provides happens-before for the store. The `const` assert above
         // enforces `size_of::<$T>() == size_of::<*mut c_void>()` at expansion.
-        // Same as Zig `bun.cast($T, ptr)`.
         let p = PTR.load(::core::sync::atomic::Ordering::Relaxed);
         if p.is_null() {
             None
@@ -6362,7 +6199,7 @@ macro_rules! dlsym_with_handle {
     }};
 }
 
-// ── open helpers (sys.zig posix arms) ──
+// ── open helpers (posix arms) ──
 
 /// `openA` — like `open` but takes a non-NUL-terminated slice.
 pub fn open_a(path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
@@ -6381,7 +6218,7 @@ pub fn openat_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd
     let z = ZStr::from_buf(&buf.0[..], path.len());
     openat(dir, z, flags, perm)
 }
-/// sys.zig:1705 `openatOSPath` — `openat` taking a platform-native path
+/// `openatOSPath` — `openat` taking a platform-native path
 /// (`OSPathSliceZ` = `ZStr` on POSIX, `WStr` on Windows). On POSIX this is
 /// identical to `openat`; on Windows it routes through the NT openat path.
 #[cfg(not(windows))]
@@ -6410,16 +6247,16 @@ pub fn mkdirat_z(dir: impl AsFd, path: &ZStr, mode: Mode) -> Maybe<()> {
     let dir = dir.as_fd();
     mkdirat(dir, path, mode)
 }
-/// bun.zig:879 `openDirA` — open a path as an iterable directory fd.
+/// `openDirA` — open a path as an iterable directory fd.
 pub fn open_dir_at(dir: impl AsFd, path: &[u8]) -> Maybe<Fd> {
     let dir = dir.as_fd();
     openat_a(dir, path, O::DIRECTORY | O::CLOEXEC | O::RDONLY, 0)
 }
-/// bun.zig:890 `openDirAbsolute`. PORT NOTE: returns `Fd`, not `std.fs.Dir`.
+/// `openDirAbsolute`. Returns an `Fd`.
 pub fn open_dir_absolute(path: &[u8]) -> Maybe<Fd> {
     open_a(path, O::DIRECTORY | O::CLOEXEC | O::RDONLY, 0)
 }
-/// sys.zig:2615 `symlinkRunningExecutable` — same as `symlink`, except it
+/// `symlinkRunningExecutable` — same as `symlink`, except it
 /// handles ETXTBSY/EBUSY by unlinking the destination and retrying once.
 pub fn symlink_running_executable(target: &ZStr, dest: &ZStr) -> Maybe<()> {
     match symlink(target, dest) {
@@ -6433,13 +6270,13 @@ pub fn symlink_running_executable(target: &ZStr, dest: &ZStr) -> Maybe<()> {
         Ok(()) => Ok(()),
     }
 }
-/// `std.fs.deleteTreeAbsolute` — best-effort recursive delete of an absolute
+/// Best-effort recursive delete of an absolute
 /// path. Routes through `Dir::delete_tree` on the parent directory.
 pub fn delete_tree_absolute(path: &[u8]) -> core::result::Result<(), bun_core::Error> {
     let parent = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(path);
     let base = bun_paths::basename(path);
     if parent.is_empty() || base.is_empty() {
-        // Nothing sensible to do (root or empty); mirror Zig's silent success on ENOENT.
+        // Nothing sensible to do (root or empty); silent success.
         return Ok(());
     }
     let dir = open_dir_absolute(parent)
@@ -6447,11 +6284,11 @@ pub fn delete_tree_absolute(path: &[u8]) -> core::result::Result<(), bun_core::E
         .map_err(bun_core::Error::from)?;
     dir.delete_tree(base)
 }
-/// bun.zig:899 — Windows variant skips `DELETE` access; on POSIX identical.
+/// Windows variant skips `DELETE` access; on POSIX identical.
 pub fn open_dir_absolute_not_for_deleting_or_renaming(path: &[u8]) -> Maybe<Fd> {
     open_dir_absolute(path)
 }
-/// bun.zig:887 `openDirNoRenamingOrDeletingWindows` — open `path` relative to
+/// `openDirNoRenamingOrDeletingWindows` — open `path` relative to
 /// `dir` for iteration only (no `DELETE` access). Windows-only; callers gate.
 #[cfg(windows)]
 pub fn open_dir_no_renaming_or_deleting_windows(dir: Fd, path: &[u8]) -> Maybe<Fd> {
@@ -6475,9 +6312,9 @@ pub fn openat_read_only(dir: Fd, path: &[u8]) -> Maybe<Fd> {
     openat_a(dir, path, O::RDONLY | O::CLOEXEC, 0)
 }
 // ──────────────────────────────────────────────────────────────────────────
-// `openatWindows` family — sys.zig:1217-1490. Maps POSIX-style `O::*` flags
+// `openatWindows` family. Maps POSIX-style `O::*` flags
 // onto an `NtCreateFile` call (or `openDirAtWindows` when `O_DIRECTORY` is
-// set). On POSIX this is a `@compileError` in Zig; the surface is gated.
+// set). The surface is gated to Windows.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
@@ -6485,7 +6322,6 @@ const FILE_SHARE: u32 = bun_windows_sys::FILE_SHARE_READ
     | bun_windows_sys::FILE_SHARE_WRITE
     | bun_windows_sys::FILE_SHARE_DELETE;
 
-/// sys.zig:1217 `WindowsOpenDirOptions`.
 #[cfg(windows)]
 #[derive(Clone, Copy, Default)]
 pub struct WindowsOpenDirOptions {
@@ -6504,7 +6340,6 @@ pub enum WindowsOpenDirOp {
     OpenOrCreate,
 }
 
-/// sys.zig:1457 `NtCreateFileOptions`.
 #[cfg(windows)]
 #[derive(Clone, Copy)]
 pub struct NtCreateFileOptions {
@@ -6527,7 +6362,7 @@ impl Default for NtCreateFileOptions {
     }
 }
 
-/// sys.zig:985 `normalizePathWindows` options.
+/// `normalizePathWindows` options.
 #[cfg(windows)]
 #[derive(Copy, Clone)]
 pub struct NormalizePathWindowsOpts {
@@ -6542,9 +6377,9 @@ impl Default for NormalizePathWindowsOpts {
     }
 }
 
-/// sys.zig:1129 `normalizePathWindows` — convert a (possibly relative) path
+/// `normalizePathWindows` — convert a (possibly relative) path
 /// into an NT object path suitable for `NtCreateFile` against `dir_fd`.
-/// PORT NOTE: u16-only here; the u8 entry points pre-convert via
+/// u16-only here; the u8 entry points pre-convert via
 /// `bun_paths::string_paths::to_nt_path` and call this with the resulting wide slice.
 #[cfg(windows)]
 pub fn normalize_path_windows<'a>(
@@ -6567,7 +6402,7 @@ pub fn normalize_path_windows_opts<'a>(
 
     let mut path = path;
     if bun_paths::is_absolute_windows_wtf16(path) {
-        // sys.zig:1019-1048 — three special-cases that must run BEFORE
+        // Three special-cases that must run BEFORE
         // `normalizeStringGenericTZ`, otherwise device paths get mangled:
         if path.len() >= 4 {
             // (a) `…\nul` / `…\NUL` → literal NT object path `\??\NUL`.
@@ -6618,8 +6453,8 @@ pub fn normalize_path_windows_opts<'a>(
         if opts.add_nt_prefix {
             // Absolute → add `\??\` (idempotent if already present), normalize
             // separators/`.`/`..` and NUL-terminate.
-            // sys.zig:1001/1052 — `nt_prefix_headroom = 8`; `if (path.len >
-            // buf.len -| nt_prefix_headroom) return name_too_long;`.
+            // `nt_prefix_headroom = 8`: reject when `path.len >
+            // buf.len - nt_prefix_headroom`.
             // `normalizeStringGenericTZ` performs no bounds checking of its
             // own, so reserve room for `\??\` + trailing-`\` growth + NUL
             // before calling it. NOTE: `to_nt_path16` is NOT a substitute here
@@ -6640,7 +6475,7 @@ pub fn normalize_path_windows_opts<'a>(
             // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
             return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
         }
-        // sys.zig:1056 `.{ .add_nt_prefix = false }` — produce a Win32 path
+        // `add_nt_prefix = false` — produce a Win32 path
         // (no `\??\` object prefix) for callers that feed kernel32 APIs
         // (CreateDirectoryW / CopyFileW). With .add_nt_prefix = false the
         // normalizer can still grow the input by one u16 (trailing `\` after a
@@ -6685,12 +6520,12 @@ pub fn normalize_path_windows_opts<'a>(
     let base =
         match windows::GetFinalPathNameByHandle(base_fd, Default::default(), &mut base_buf.0[..]) {
             Ok(p) => p,
-            // sys.zig:1080 — `E.BADFD` (errno 77 'file descriptor in bad state'),
+            // `E.BADFD` (errno 77 'file descriptor in bad state'),
             // not `EBADF` (9).
             Err(_) => return Err(Error::from_code(E::BADFD, Tag::open)),
         };
 
-    // Strip a leading drive letter (`C:`) on the relative part (sys.zig:1204).
+    // Strip a leading drive letter (`C:`) on the relative part.
     let mut rel = path;
     if rel.len() >= 2
         && bun_paths::resolve_path::is_drive_letter_t::<u16>(rel[0])
@@ -6701,8 +6536,7 @@ pub fn normalize_path_windows_opts<'a>(
 
     let mut joined = bun_paths::w_path_buffer_pool::get();
     let joined_len = base.len() + 1 + rel.len();
-    // sys.zig:1092 — `if (joined_len > buf1.len -| nt_prefix_headroom) return
-    // name_too_long;`. Reserve 8 u16 for the `\??\` prefix + NUL that
+    // Reserve 8 u16 for the `\??\` prefix + NUL that
     // `normalizeStringGenericTZ` writes into `buf` (same length as `joined`).
     if joined_len > joined.0.len().saturating_sub(8) {
         return Err(too_long());
@@ -6710,8 +6544,7 @@ pub fn normalize_path_windows_opts<'a>(
     joined.0[..base.len()].copy_from_slice(base);
     joined.0[base.len()] = b'\\' as u16;
     joined.0[base.len() + 1..joined_len].copy_from_slice(rel);
-    // sys.zig:1095 — `normalizeStringGenericTZ(u16, joined, buf,
-    // .{ .add_nt_prefix = true, .zero_terminate = true })`. Must collapse
+    // `normalizeStringGenericTZ` with `add_nt_prefix` + `zero_terminate`. Must collapse
     // `.`/`..` segments here: the relative input may be `"."` (e.g.
     // `bun build entry.js` → dirname → `"."`), and the joined `…\.` is
     // rejected by `NtCreateFile` if passed through verbatim.
@@ -6732,7 +6565,7 @@ pub fn normalize_path_windows_opts<'a>(
     Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) })
 }
 
-/// sys.zig:1382 — open a `\\.\…` device path via kernel32 `CreateFileW`
+/// Open a `\\.\…` device path via kernel32 `CreateFileW`
 /// (NtCreateFile cannot open device paths).
 #[cfg(windows)]
 fn open_windows_device_path(
@@ -6761,7 +6594,7 @@ fn open_windows_device_path(
     Ok(Fd::from_system(rc))
 }
 
-/// sys.zig:1231 `openDirAtWindowsNtPath` — `NtCreateFile` with
+/// `openDirAtWindowsNtPath` — `NtCreateFile` with
 /// `FILE_DIRECTORY_FILE`.
 #[cfg(windows)]
 pub fn open_dir_at_windows_nt_path(
@@ -6872,7 +6705,6 @@ pub fn open_dir_at_windows_nt_path(
     }
 }
 
-/// sys.zig:1467 `openFileAtWindowsNtPath`.
 ///
 /// For this function to open an absolute path, it must start with `\??\`.
 /// Otherwise you need a reference file descriptor; the "invalid_fd" file
@@ -6981,7 +6813,7 @@ pub fn open_file_at_windows_nt_path(
     }
 }
 
-/// sys.zig:1003-1012 — `normalizePathWindows(u8, …)` length-checks before
+/// `normalizePathWindows(u8, …)` length-checks before
 /// `convertUTF8toUTF16InBuffer` because simdutf forwards only `output.ptr`
 /// (no output bounds checking). UTF-16 output length ≤ UTF-8 input byte
 /// length, so use `path.len()` as a cheap upper bound; on overflow compute
@@ -7011,8 +6843,8 @@ pub fn open_dir_at_windows_a(
     options: WindowsOpenDirOptions,
 ) -> Maybe<Fd> {
     let dir_fd = dir_fd.as_fd();
-    // sys.zig:1262 `openDirAtWindowsT(u8, …)` → `normalizePathWindows(u8, dirFd,
-    // path, wbuf, .{})` does the UTF-8→UTF-16 conversion internally and THEN
+    // `normalizePathWindows(u8, dirFd, path, wbuf, ..)`
+    // does the UTF-8→UTF-16 conversion internally and THEN
     // applies the absolute/relative/device-path logic. Do the plain transcode
     // here (no NT-prefix, no normalization) so relative inputs stay relative
     // and resolve against `dir_fd`'s `RootDirectory`.
@@ -7028,7 +6860,7 @@ pub fn open_file_at_windows(dir_fd: Fd, path: &[u16], opts: NtCreateFileOptions)
     let norm = normalize_path_windows(dir_fd, path, &mut wbuf.0[..])?;
     open_file_at_windows_nt_path(dir_fd, norm, opts)
 }
-/// sys.zig `openFileAtWindowsA` — UTF-8 entry point: convert to UTF-16 (no
+/// `openFileAtWindowsA` — UTF-8 entry point: convert to UTF-16 (no
 /// NT-prefix yet — `normalize_path_windows` adds that) then defer to
 /// [`open_file_at_windows`].
 #[cfg(windows)]
@@ -7043,7 +6875,7 @@ pub fn open_file_at_windows_a(
     open_file_at_windows(dir_fd, wide, opts)
 }
 
-/// sys.zig:1608 `openatWindowsTMaybeNormalize` — POSIX-flag → NtCreateFile
+/// POSIX-flag → NtCreateFile
 /// translation.
 #[cfg(windows)]
 fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -> Maybe<Fd> {
@@ -7124,19 +6956,19 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     )
 }
 
-/// sys.zig:1685 `openatWindows` — UTF-16 input.
+/// `openatWindows` — UTF-16 input.
 #[cfg(windows)]
 pub fn openat_windows(dir: Fd, path: &[u16], flags: i32, perm: Mode) -> Maybe<Fd> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     let norm = normalize_path_windows(dir, path, &mut wbuf.0[..])?;
     openat_windows_impl(dir, norm, flags, perm)
 }
-/// sys.zig:1690 `openatWindowsA` — UTF-8 input.
+/// `openatWindowsA` — UTF-8 input.
 #[cfg(windows)]
 #[inline(never)]
 pub fn openat_windows_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
     let dir = dir.as_fd();
-    // sys.zig `openatWindowsT(u8, …)` — `normalizePathWindows` does the
+    // `normalizePathWindows` does the
     // UTF-8→UTF-16 conversion internally; mirror that with a plain transcode
     // (no NT-prefix) so relative paths stay relative against `dir`.
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
@@ -7148,9 +6980,9 @@ pub fn openat_windows_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> 
 
 // ── existence checks ──
 
-/// Port of sys.zig `WindowsFileAttributes` — view over the `DWORD` returned
+/// `WindowsFileAttributes` — view over the `DWORD` returned
 /// by `GetFileAttributesW`. Only the two bits the resolver inspects are
-/// surfaced as fields (matching the Zig packed-struct field names) so callers
+/// surfaced as fields so callers
 /// can write `attrs.is_directory` / `attrs.is_reparse_point`.
 #[cfg(windows)]
 #[derive(Clone, Copy)]
@@ -7161,7 +6993,7 @@ pub struct WindowsFileAttributes {
     pub raw: u32,
 }
 
-/// Port of sys.zig:3424 `getFileAttributes`. Accepts a UTF-8 path (the
+/// `getFileAttributes`. Accepts a UTF-8 path (the
 /// resolver only ever calls it with one); the wide-path arm is the
 /// `GetFileAttributesW` body inlined. Returns `None` on
 /// `INVALID_FILE_ATTRIBUTES`.
@@ -7183,7 +7015,7 @@ pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     })
 }
 
-/// sys.zig:3447 — `access(path, F_OK) == 0`. `file_only` ignored on POSIX.
+/// `access(path, F_OK) == 0`. `file_only` ignored on POSIX.
 pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(not(windows))]
     {
@@ -7194,7 +7026,7 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(windows)]
     {
         use bun_windows_sys::externs as w;
-        // sys.zig:3454 — `getFileAttributes(path)`; if `file_only` reject dirs;
+        // `getFileAttributes(path)`; if `file_only` reject dirs;
         // if reparse point, open the target with `OPEN_EXISTING` to follow.
         // SAFETY: path is NUL-terminated UTF-16.
         let attrs = unsafe { w::GetFileAttributesW(path.as_ptr()) };
@@ -7230,17 +7062,16 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
         true
     }
 }
-/// sys.zig:3636 `ExistsAtType`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ExistsAtType {
     File,
     Directory,
 }
-/// sys.zig:3648 Windows tail — `NtQueryAttributesFile` against an
+/// Windows tail — `NtQueryAttributesFile` against an
 /// OBJECT_ATTRIBUTES built from an already NT-prefixed wide path. Shared by the
 /// UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`) entry points so the
-/// `anytype` width-dispatch in Zig's `existsAtType` is preserved without
-/// duplicating the syscall body.
+/// width dispatch does not
+/// duplicate the syscall body.
 #[cfg(windows)]
 fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     use bun_windows_sys::externs as w;
@@ -7273,10 +7104,11 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     // SAFETY: FFI; attr/basic_info valid for the call duration.
     let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
     if rc != w::NTSTATUS::SUCCESS {
-        // sys.zig:3744 `Maybe(bool).errnoSys(rc, .access)` — `errnoSys` for
-        // `NTSTATUS` routes through the curated `translateNTStatusToErrno`
-        // table, NOT `RtlNtStatusToDosError`. `directory_exists_at()` then
-        // branches on `ENOENT`, so the mapping must match the spec table.
+        // `errnoSys` for `NTSTATUS` routes through the curated
+        // `translateNTStatusToErrno` table first (so `OBJECT_PATH_NOT_FOUND`
+        // deterministically maps to `ENOENT`, which `directory_exists_at()`
+        // branches on), then falls back to `RtlNtStatusToDosError` for
+        // unmapped codes.
         return Err(Error::from_code(
             windows::translate_nt_status_to_errno(rc),
             Tag::access,
@@ -7299,7 +7131,7 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
         Err(Error::from_code(E::EUNKNOWN, Tag::access))
     }
 }
-/// sys.zig:3640 — `fstatat` then `S_ISDIR`.
+/// `fstatat` then `S_ISDIR`.
 pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
     #[cfg(unix)]
     {
@@ -7312,15 +7144,15 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
     }
     #[cfg(windows)]
     {
-        // sys.zig:3648 — `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES
+        // `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES
         // built from the (optionally NT-prefixed) wide path.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
         exists_at_type_nt(dir, path)
     }
 }
-/// sys.zig:3712 `existsAtType` — the `std.meta.Child(@TypeOf(subpath)) == u16`
-/// arm. Takes an already-wide path (Windows `OSPathSliceZ`) and routes through
+/// Wide-path arm of `exists_at_type`. Takes an already-wide path (Windows
+/// `OSPathSliceZ`) and routes through
 /// `toNTPath16` instead of re-widening from UTF-8.
 #[cfg(windows)]
 pub fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
@@ -7328,7 +7160,7 @@ pub fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
     let path = bun_paths::string_paths::to_nt_path16(&mut wbuf.0[..], sub).as_slice();
     exists_at_type_nt(dir, path)
 }
-/// sys.zig:3533 — `directoryExistsAt(dir, sub)`. ENOENT → `Ok(false)`.
+/// `directoryExistsAt(dir, sub)`. ENOENT → `Ok(false)`.
 pub fn directory_exists_at(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
     let dir = dir.as_fd();
     match exists_at_type(dir, sub) {
@@ -7337,9 +7169,9 @@ pub fn directory_exists_at(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
         Err(e) => Err(e),
     }
 }
-/// sys.zig:3533 `directoryExistsAt` — wide-path (`u16`) overload for Windows
-/// `OSPathSliceZ` callers (mkdir-recursive, cpSync auto-detect). Mirrors the
-/// `anytype` dispatch instead of forcing a UTF-16 → UTF-8 → UTF-16 round-trip.
+/// `directoryExistsAt` — wide-path (`u16`) overload for Windows
+/// `OSPathSliceZ` callers (mkdir-recursive, cpSync auto-detect). Avoids
+/// a UTF-16 → UTF-8 → UTF-16 round-trip.
 #[cfg(windows)]
 pub fn directory_exists_at_w(dir: Fd, sub: &[u16]) -> Maybe<bool> {
     match exists_at_type_w(dir, sub) {
@@ -7351,7 +7183,7 @@ pub fn directory_exists_at_w(dir: Fd, sub: &[u16]) -> Maybe<bool> {
 
 // ── fcntl / nonblocking / dup ──
 
-/// sys.zig:3599 — `fcntl(fd, F_GETFL, 0)`.
+/// `fcntl(fd, F_GETFL, 0)`.
 #[cfg(unix)]
 pub fn get_fcntl_flags(fd: Fd) -> Maybe<FcntlInt> {
     fcntl(fd, libc::F_GETFL, 0)
@@ -7360,12 +7192,11 @@ pub fn get_fcntl_flags(fd: Fd) -> Maybe<FcntlInt> {
 pub fn get_fcntl_flags(_fd: Fd) -> Maybe<FcntlInt> {
     Err(Error::from_code_int(libc::ENOSYS, Tag::fcntl))
 }
-/// sys.zig:3614.
 #[inline]
 pub fn set_nonblocking(fd: Fd) -> Maybe<()> {
     update_nonblocking(fd, true)
 }
-/// sys.zig:3618 — GETFL → toggle O_NONBLOCK → SETFL (only if changed).
+/// GETFL → toggle O_NONBLOCK → SETFL (only if changed).
 pub fn update_nonblocking(fd: Fd, nonblocking: bool) -> Maybe<()> {
     #[cfg(unix)]
     {
@@ -7386,8 +7217,8 @@ pub fn update_nonblocking(fd: Fd, nonblocking: bool) -> Maybe<()> {
         Ok(())
     }
 }
-/// sys.zig:3873 — `fcntl(F_DUPFD_CLOEXEC)` (POSIX) / `DuplicateHandle` (Win).
-/// `_flags` is ignored (Zig signature parity).
+/// `fcntl(F_DUPFD_CLOEXEC)` (POSIX) / `DuplicateHandle` (Win).
+/// `_flags` is ignored.
 #[inline]
 pub fn dup_with_flags(fd: Fd, _flags: i32) -> Maybe<Fd> {
     dup(fd)
@@ -7402,13 +7233,13 @@ unsafe extern "C" {
     #[cfg(not(windows))]
     safe fn Bun__disableSOLinger(fd: i32);
 }
-/// sys.zig:3835 `disableLinger` — set `SO_LINGER {1,0}` so close sends RST.
+/// `disableLinger` — set `SO_LINGER {1,0}` so close sends RST.
 #[inline]
 pub fn disable_linger(fd: Fd) {
     Bun__disableSOLinger(fd.native());
 }
 
-/// sys.zig:3788 — `lseek(fd, offset, SEEK_SET)`; result discarded.
+/// `lseek(fd, offset, SEEK_SET)`; result discarded.
 pub fn set_file_offset(fd: Fd, offset: u64) -> Maybe<()> {
     lseek(fd, offset as i64, libc::SEEK_SET).map(|_| ())
 }
@@ -7435,7 +7266,7 @@ unsafe extern "C" {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const RWF_NOWAIT: u32 = 0x00000008;
 
-/// sys.zig:4046 — Linux: `preadv2(.., RWF_NOWAIT)`; else plain `read`.
+/// Linux: `preadv2(.., RWF_NOWAIT)`; else plain `read`.
 pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     while linux::RWFFlagSupport::is_maybe_supported() {
@@ -7448,12 +7279,9 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         if rc < 0 {
             let e = last_errno();
             match e {
-                // ESPIPE: preadv2(RWF_NOWAIT) on pipe/FIFO fd returns
-                // "Illegal seek" — pipes don't support positional I/O.
-                // Disable RWF and fall back to plain read().
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES | libc::ESPIPE => {
+                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
                     linux::RWFFlagSupport::disable();
-                    // sys.zig:4070 — only fall through to BLOCKING read if the fd is
+                    // Only fall through to BLOCKING read if the fd is
                     // actually readable now; otherwise return retry (EAGAIN).
                     return match bun_core::is_readable(fd) {
                         bun_core::Pollable::Ready | bun_core::Pollable::Hup => read(fd, buf),
@@ -7468,7 +7296,7 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
     }
     read(fd, buf)
 }
-/// sys.zig:4099 — Linux: `pwritev2(.., RWF_NOWAIT)`; else plain `write`.
+/// Linux: `pwritev2(.., RWF_NOWAIT)`; else plain `write`.
 pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     while linux::RWFFlagSupport::is_maybe_supported() {
@@ -7481,12 +7309,9 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         if rc < 0 {
             let e = last_errno();
             match e {
-                // ESPIPE: pwritev2(RWF_NOWAIT) on pipe/FIFO fd returns
-                // "Illegal seek" — pipes don't support positional I/O.
-                // Disable RWF and fall back to plain write().
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES | libc::ESPIPE => {
+                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
                     linux::RWFFlagSupport::disable();
-                    // sys.zig:4123 — poll before issuing a blocking write.
+                    // Poll before issuing a blocking write.
                     return match bun_core::is_writable(fd) {
                         bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
                         _ => {
@@ -7505,7 +7330,7 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
     write(fd, buf)
 }
 
-/// sys.zig:4536 — `fallocate(fd, 0, offset, len)` on Linux, result discarded; no-op elsewhere.
+/// `fallocate(fd, 0, offset, len)` on Linux, result discarded; no-op elsewhere.
 pub fn preallocate_file(
     fd: FdNative,
     offset: i64,
@@ -7513,7 +7338,7 @@ pub fn preallocate_file(
 ) -> core::result::Result<(), bun_core::Error> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // Result intentionally discarded (Zig: `_ = std.os.linux.fallocate(...)`)
+        // Result intentionally discarded
         // — preallocation is best-effort.
         let _ = safe_libc::fallocate(fd, 0, offset, len);
     }
@@ -7531,7 +7356,7 @@ pub fn kqueue() -> Maybe<Fd> {
     Ok(Fd::from_native(rc))
 }
 
-/// `kevent()` — slice-wrapped Maybe form (sys.zig:2278). Retries on EINTR.
+/// `kevent()` — slice-wrapped Maybe form. Retries on EINTR.
 /// Returns the number of events written into `eventlist`.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 pub fn kevent(
@@ -7581,14 +7406,14 @@ pub fn clonefileat(_from_dir: impl AsFd, from: &ZStr, _to_dir: impl AsFd, to: &Z
 
 // ── getFdPath ──
 
-/// sys.zig:632 `LinuxKernel` — cached probe of `/proc/version` for "freebsd"
+/// Cached probe of `/proc/version` for "freebsd"
 /// (linprocfs hardcodes "des@freebsd.org"). Under FreeBSD's Linuxulator
 /// `/proc/self/fd/*` doesn't readlink, but `/dev/fd/*` does.
 /// 0=unknown, 1=linux, 2=freebsd.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 static LINUX_KERNEL_CACHED: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
-/// sys.zig:3032 `LinuxKernel.cached.load(.acquire) == .freebsd` — non-probing
+/// Non-probing
 /// fast-path check. Returns `true` only when a previous probe already proved
 /// FreeBSD's Linuxulator; never triggers the `/proc/version` read itself.
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -7597,7 +7422,7 @@ fn linux_kernel_cached_is_freebsd() -> bool {
     LINUX_KERNEL_CACHED.load(core::sync::atomic::Ordering::Acquire) == 2
 }
 
-/// sys.zig:659 `LinuxKernel.get()` — probing variant: reads `/proc/version`
+/// Probing variant: reads `/proc/version`
 /// once (memoized) and returns whether this is FreeBSD's Linuxulator.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn linux_kernel_is_freebsd() -> bool {
@@ -7628,7 +7453,7 @@ fn linux_kernel_is_freebsd() -> bool {
     detected == 2
 }
 
-/// sys.zig:2999 `getFdPathFreeBSDLinuxulator` — readlink `/dev/fd/N` (fdescfs).
+/// readlink `/dev/fd/N` (fdescfs).
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn get_fd_path_freebsd_linuxulator<'a>(
     fd: Fd,
@@ -7647,12 +7472,12 @@ fn get_fd_path_freebsd_linuxulator<'a>(
     Ok(&mut out.0[..len])
 }
 
-/// sys.zig:2940 — fd → absolute path. Linux: readlink `/proc/self/fd/N`;
+/// fd → absolute path. Linux: readlink `/proc/self/fd/N`;
 /// macOS: `fcntl(F_GETPATH)`; Windows: `GetFinalPathNameByHandle`.
 pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a mut [u8]> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // sys.zig:3032 — fast path: a previous call already proved this is
+        // Fast path: a previous call already proved this is
         // FreeBSD's Linuxulator. Skip the doomed `/proc/self/fd/N` readlink.
         if linux_kernel_cached_is_freebsd() {
             return get_fd_path_freebsd_linuxulator(fd, out);
@@ -7669,7 +7494,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         match readlink(z, &mut out.0) {
             Ok(len) => return Ok(&mut out.0[..len]),
             Err(e) => {
-                // sys.zig:3046 — under FreeBSD Linuxulator, fall back to
+                // Under FreeBSD Linuxulator, fall back to
                 // `getFdPathFreeBSDLinuxulator` (`/dev/fd/N`). Probing variant
                 // (memoized read of `/proc/version`); only taken once.
                 if linux_kernel_is_freebsd() {
@@ -7689,7 +7514,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     }
     #[cfg(windows)]
     {
-        // sys.zig:3008-3018 — `GetFinalPathNameByHandle` into a wide buffer,
+        // `GetFinalPathNameByHandle` into a wide buffer,
         // then transcode WTF-16 → UTF-8 into `out`.
         let mut wide_buf = bun_paths::w_path_buffer_pool::get();
         let wide_slice = match crate::windows::GetFinalPathNameByHandle(
@@ -7706,7 +7531,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     }
     #[cfg(target_os = "freebsd")]
     {
-        // sys.zig:3054-3066 — FreeBSD: F_KINFO returns a `struct kinfo_file`
+        // FreeBSD: F_KINFO returns a `struct kinfo_file`
         // with `kf_path`. The /dev/fd readlink trick used for the Linuxulator
         // path doesn't resolve to an absolute path on native FreeBSD, so go
         // via fcntl. Mirrors `bun_core::util::fd_path_raw` (T0 sibling).
@@ -7738,7 +7563,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     }
 }
 
-/// sys.zig:2992 — fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).
+/// fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).
 /// `\\?\` prefix and `\\?\UNC\` are stripped. Higher-tier callers
 /// (`bun.getFdPathW`) re-export this. A libc/kernel32-only sibling lives at
 /// `bun_core::fd_path_raw_w` for T0/T1 callers that cannot depend on this
@@ -7763,7 +7588,7 @@ pub fn get_fd_path_w(_fd: Fd, _out: &mut [u16]) -> Maybe<&mut [u16]> {
 
 // ── environ ──
 
-/// `std.os.environ` — borrowed slice of `KEY=VALUE\0` C strings.
+/// Borrowed slice of the process's `KEY=VALUE\0` C strings.
 /// SAFETY note: the returned slice borrows the libc `environ` global; do not
 /// mutate the environment concurrently.
 pub fn environ() -> &'static [*const c_char] {
@@ -7785,7 +7610,7 @@ pub fn environ() -> &'static [*const c_char] {
     #[cfg(windows)]
     {
         // Populated by `windows::env::convert_env_to_wtf8()` at startup
-        // (main.zig:47 → bun_bin/lib.rs). The slice is NUL-terminated WTF-8
+        // (bun_bin/lib.rs). The slice is NUL-terminated WTF-8
         // C strings; the underlying allocation is `Box::leak`'d for the
         // process lifetime so `'static` here is sound.
         // SAFETY: written exactly once at startup before any reader runs.
@@ -7797,7 +7622,7 @@ pub fn environ() -> &'static [*const c_char] {
     }
 }
 
-/// `std.os.environ.ptr` — raw NULL-terminated `**c_char` for FFI envp args
+/// Raw NULL-terminated `**c_char` environment pointer for FFI envp args
 /// (e.g. `posix_spawn`). Unlike [`environ()`] this returns the raw libc
 /// global pointer (already NULL-terminated) rather than a length-bounded
 /// borrowed slice, so it is suitable to pass directly as `envp`.
@@ -7816,7 +7641,7 @@ pub fn environ_ptr() -> *const *const c_char {
     }
 }
 
-// ── moveFileZWithHandle (sys.zig:4266) ──
+// ── moveFileZWithHandle ──
 
 /// `renameat`; on EISDIR removes the dest dir and retries; on EXDEV falls back
 /// to copy-then-unlink. Port of `bun.sys.moveFileZWithHandle`.
@@ -7838,7 +7663,7 @@ pub fn move_file_z_with_handle(
             renameat(from_dir, filename, to_dir, destination).map_err(Into::into)
         }
         Err(e) if e.get_errno() == E::EXDEV => {
-            // Cross-device: full `copyFileZSlowWithHandle` (sys.zig:4305).
+            // Cross-device: full `copyFileZSlowWithHandle`.
             #[cfg(unix)]
             let st = fstat(from_handle).map_err(bun_core::Error::from)?;
             // Unlink dest first — fixes ETXTBUSY on Linux.
@@ -7858,7 +7683,7 @@ pub fn move_file_z_with_handle(
             // Seek input to 0 — caller may have left offset at EOF after writing.
             let _ = lseek(from_handle, 0, libc::SEEK_SET);
             let r = copy_file(from_handle, dst);
-            // sys.zig:4349 — only stamp mode/owner on success; on copy error
+            // Only stamp mode/owner on success; on copy error
             // the partially-written dest keeps its openat() defaults.
             #[cfg(unix)]
             if r.is_ok() {
@@ -7907,12 +7732,10 @@ pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
 pub fn mkdir_recursive(sub_path: &[u8]) -> Maybe<()> {
     mkdir_recursive_at(Fd::cwd(), sub_path)
 }
-/// bun.zig:2319 — Windows-only `makePath` over UTF-16. On POSIX, transcodes
+/// Windows-only `makePath` over UTF-16. On POSIX, transcodes
 /// to UTF-8 and delegates to `mkdir_recursive_at`.
 pub fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
-    // bun.zig:2319-2324 — "was going to copy/paste makePath and use all W
-    // versions but they didn't all exist and this buffer was needed anyway":
-    // transcode UTF-16 → UTF-8, then call `makePath` (`mkdir_recursive_at`).
+    // Transcode UTF-16 → UTF-8, then call `makePath` (`mkdir_recursive_at`).
     let mut buf = bun_paths::PathBuffer::default();
     let utf8 = bun_paths::strings::from_w_path(&mut buf.0[..], sub_path);
     mkdir_recursive_at(dir, utf8.as_bytes())
@@ -7931,7 +7754,7 @@ pub mod posix {
     #[cfg(not(windows))]
     use core::ffi::c_void;
 
-    // ── BSD sysctl(3) family (Zig: `std.posix.sysctlbynameZ`) ──
+    // ── BSD sysctl(3) family ──
     // macOS/FreeBSD only — Linux dropped sysctl(2) and uses procfs instead.
     #[cfg(any(
         target_os = "macos",
@@ -8069,7 +7892,7 @@ pub mod posix {
         Ok(info)
     }
 
-    // ── address families (Zig: `std.posix.AF`) ──
+    // ── address families ──
     // `libc` does not expose `AF_*` on `x86_64-pc-windows-msvc`; route through
     // ws2def.h values there. INET6 is *not* portable (10 on Linux, 30 on
     // Darwin/BSD, 23 on Windows) — keep the `libc` symbol on POSIX.
@@ -8095,14 +7918,14 @@ pub mod posix {
         pub const INET6: c_int = libc::AF_INET6;
     }
 
-    // ── INET6_ADDRSTRLEN (Zig: `std.c.INET6_ADDRSTRLEN` / `ws2ipdef.h`) ──
+    // ── INET6_ADDRSTRLEN (<netinet/in.h> / `ws2ipdef.h`) ──
     // POSIX `netinet/in.h` = 46; Windows `ws2ipdef.h` = 65.
     #[cfg(windows)]
     pub const INET6_ADDRSTRLEN: usize = 65;
     #[cfg(not(windows))]
     pub const INET6_ADDRSTRLEN: usize = 46;
 
-    // ── sockaddr family (Zig: `std.posix.sockaddr`) ──
+    // ── sockaddr family ──
     #[cfg(unix)]
     pub use libc::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
     // Route through `bun_libuv_sys` (not `bun_windows_sys::ws2_32`) so types
@@ -8112,7 +7935,7 @@ pub mod posix {
     #[cfg(windows)]
     pub use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
 
-    // ── access(2) mode bits (Zig: `std.posix.F_OK` etc.) ──
+    // ── access(2) mode bits ──
     // POSIX-standard values; libuv re-uses the same numbers on Windows
     // (`uv/win.h`), so these are target-invariant.
     pub const F_OK: c_int = 0;
@@ -8120,7 +7943,7 @@ pub mod posix {
     pub const W_OK: c_int = 2;
     pub const X_OK: c_int = 1;
 
-    // ── stat mode-kind tests (Zig: `std.posix.S.ISLNK` etc.) ──
+    // ── stat mode-kind tests ──
     // `libc::S_IF*` is `mode_t` (u32 on Linux, u16 on Darwin/FreeBSD); widen to
     // `u32` so the `m: u32` (== `bun_core::Mode`) comparison is uniform.
     #[cfg(unix)]
@@ -8146,7 +7969,7 @@ pub mod posix {
     pub use libc::siginfo_t;
     #[cfg(unix)]
     pub use libc::sigset_t;
-    /// `std.posix.sigaction(sig, &act, *oact)`.
+    /// `sigaction(sig, &act, *oact)`.
     #[cfg(unix)]
     #[inline]
     pub unsafe fn sigaction(sig: c_int, act: *const Sigaction, oact: *mut Sigaction) -> c_int {
@@ -8169,7 +7992,7 @@ pub mod posix {
         pub tv_nsec: i64,
     }
 
-    // ── raw I/O (no `Maybe` wrapping; Zig: `std.posix.read/write`) ──
+    // ── raw I/O (no `Maybe` wrapping) ──
     #[cfg(unix)]
     #[inline]
     pub unsafe fn read(fd: c_int, buf: *mut u8, count: usize) -> isize {
@@ -8200,7 +8023,7 @@ pub mod posix {
     }
 
     // ── poll ──
-    /// `std.posix.pollfd`.
+    /// `struct pollfd`.
     #[cfg(unix)]
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -8213,7 +8036,7 @@ pub mod posix {
     pub const POLL_IN: i16 = libc::POLLIN;
     #[cfg(unix)]
     pub const POLL_OUT: i16 = libc::POLLOUT;
-    /// `bun.sys.poll` (sys.zig:2211-2225) — `poll$NOCANCEL` on Darwin,
+    /// `bun.sys.poll` — `poll$NOCANCEL` on Darwin,
     /// EINTR-retried, tagged `.poll` (NOT `.ppoll`).
     #[cfg(unix)]
     pub fn poll(
@@ -8323,7 +8146,7 @@ pub mod posix {
     }
 
     // ── dynamic loading (Linux/FreeBSD) ──
-    /// `std.posix.dl_iterate_phdr` — iterate loaded ELF objects.
+    /// `dl_iterate_phdr` — iterate loaded ELF objects.
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     #[inline]
     pub unsafe fn dl_iterate_phdr(
@@ -8337,7 +8160,7 @@ pub mod posix {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `std.net` — socket address. Minimal port of Zig's `std.net.Address`
+// Socket address
 // (just the sockaddr union + a couple of constructors; full resolver lives in
 // `bun_dns`). Dependents only need the data shape + Display.
 // ──────────────────────────────────────────────────────────────────────────
@@ -8363,9 +8186,9 @@ pub mod net {
     use sock::*;
 
     // ──────────────────────────────────────────────────────────────────────
-    // Zig `std.posix.sockaddr.in` / `.in6` — un-prefixed field names
+    // `sockaddr_in` / `sockaddr_in6` with un-prefixed field names
     // (`family`/`port`/`addr`/`flowinfo`/`scope_id`) so call sites written
-    // against the Zig shape stay target-agnostic.
+    // against this shape stay target-agnostic.
     //
     // Layout-identical to the C-named ground truth re-exported at
     // `crate::posix::sockaddr_in[6]` (= `libc` on Unix, `ws2_32` via
@@ -8374,8 +8197,8 @@ pub mod net {
     // `in_addr`/`in6_addr`; Rust won't structurally unify.
     //
     // BSD targets carry a leading `len: u8` and `sa_family_t == u8`; the
-    // `ZEROED` const pre-fills `len = size_of::<Self>()` to mirror Zig's
-    // field default so struct-update initializers (`..sockaddr_in::ZEROED`)
+    // `ZEROED` const pre-fills `len = size_of::<Self>()`
+    // so struct-update initializers (`..sockaddr_in::ZEROED`)
     // work uniformly on all targets and in `const` context.
     // ──────────────────────────────────────────────────────────────────────
     #[cfg(unix)]
@@ -8447,14 +8270,14 @@ pub mod net {
             == core::mem::align_of::<crate::posix::sockaddr_in6>()
     );
 
-    /// `std.net.Address` — tagged union over sockaddr_in/in6/un.
+    /// Tagged union over sockaddr_in/in6/un.
     #[derive(Clone, Copy)]
     pub struct Address {
         /// Generic storage; `family()` discriminates.
         pub any: sockaddr_storage,
     }
     impl Address {
-        /// Construct from a borrowed `*const sockaddr` (Zig: `Address.initPosix`).
+        /// Construct from a borrowed `*const sockaddr`.
         /// SAFETY: `addr` must point at a valid sockaddr of the family it declares.
         pub unsafe fn init_posix(addr: *const sockaddr) -> Self {
             // SAFETY: `sockaddr_storage` is a POD C struct; all-zeros is valid.
@@ -8539,7 +8362,6 @@ pub mod net {
     }
     impl fmt::Display for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            // PORT NOTE: Zig's std.net.Address.format prints "ip:port"/"[ip6]:port".
             // Minimal: print family for now; full impl in `bun_dns::address_to_string`.
             match self.as_in4() {
                 Some(v4) => {
@@ -8588,7 +8410,7 @@ pub mod elf {
         pub name: Box<[u8]>,
     }
 
-    /// Port of Zig `std.debug.DebugInfo.lookupModuleDl`: walk loaded ELF objects
+    /// Walk loaded ELF objects
     /// via `dl_iterate_phdr`, returning the one whose `PT_LOAD` segment contains
     /// `address`. Shared by `bun_crash_handler::StackLine::from_address` and
     /// `bun_jsc::btjs::SelfInfo::lookup_module_dl` / `lookup_module_name_dl`.
@@ -8666,7 +8488,7 @@ pub mod freebsd {
     use core::ffi::c_int;
     /// `struct kevent` (FreeBSD).
     pub type Kevent = libc::kevent;
-    /// `std.c.EVFILT` — kqueue filter constants (FreeBSD).
+    /// kqueue filter constants (FreeBSD).
     pub mod EVFILT {
         pub const READ: i16 = libc::EVFILT_READ;
         pub const WRITE: i16 = libc::EVFILT_WRITE;
@@ -8676,7 +8498,7 @@ pub mod freebsd {
         pub const TIMER: i16 = libc::EVFILT_TIMER;
         pub const USER: i16 = libc::EVFILT_USER;
     }
-    /// `std.c.EV` — kqueue event flags (FreeBSD).
+    /// kqueue event flags (FreeBSD).
     pub mod EV {
         pub const ADD: u16 = libc::EV_ADD;
         pub const DELETE: u16 = libc::EV_DELETE;
@@ -8689,7 +8511,7 @@ pub mod freebsd {
         pub const EOF: u16 = libc::EV_EOF;
         pub const ERROR: u16 = libc::EV_ERROR;
     }
-    /// `std.c.NOTE` — kqueue fflags (FreeBSD).
+    /// kqueue fflags (FreeBSD).
     pub mod NOTE {
         pub const EXIT: u32 = libc::NOTE_EXIT;
         pub const FORK: u32 = libc::NOTE_FORK;
@@ -8716,7 +8538,7 @@ pub mod freebsd {
     ) -> c_int {
         unsafe { libc::kevent(kq, changelist, nchanges, eventlist, nevents, timeout) }
     }
-    /// `std.c.copy_file_range` (FreeBSD 13+). Thin re-export so callers don't
+    /// `copy_file_range` (FreeBSD 13+). Thin re-export so callers don't
     /// need a direct `libc` dep. Offset pointers may be null — when null the
     /// kernel uses (and advances) the fd's seek position.
     /// SAFETY: raw `copy_file_range(2)`; caller owns fds and any non-null
@@ -8761,8 +8583,7 @@ impl Drop for CloseOnDrop {
     }
 }
 
-/// `std.fs.Dir.makeOpenPath` reachable as a module (Zig callers do
-/// `bun.makePath` / `bun.makeOpenPath`).
+/// `make_path` / `make_open_path` helpers reachable as a module.
 pub mod make_path {
     use super::*;
     #[inline]
@@ -8775,7 +8596,7 @@ pub mod make_path {
     }
 
     /// Dispatch trait for `make_path::<T>` over `u8` (POSIX) / `u16` (Windows).
-    /// Mirrors Zig's `std.fs.Dir.makePath` taking `OSPathSlice`. Extends the
+    /// `makePath` taking `OSPathSlice`. Extends the
     /// canonical [`bun_paths::PathChar`] with the one syscall-dispatch hook.
     pub trait MakePathUnit: bun_paths::PathChar {
         fn make_path_at(dir: Fd, sub: &[Self]) -> core::result::Result<(), bun_core::Error>;
@@ -8807,7 +8628,7 @@ pub mod make_path {
         make_path_w(dir.fd, sub_path).map_err(Into::into)
     }
 }
-/// Port of `WindowsSymlinkOptions` (sys.zig:2653) — Windows-only flag struct
+/// `WindowsSymlinkOptions` — Windows-only flag struct
 /// plus a process-global "symlink creation has failed once" sticky bit. The
 /// flag is checked by the install linker to decide whether to fall back to
 /// junctions; on POSIX the flag is harmless dead state. Only the sticky bit
@@ -8817,7 +8638,6 @@ pub mod make_path {
 pub struct WindowsSymlinkOptions {
     pub directory: bool,
 }
-/// Zig: `pub var has_failed_to_create_symlink = false;` (sys.zig:2669).
 pub static WINDOWS_SYMLINK_HAS_FAILED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 impl WindowsSymlinkOptions {
@@ -8832,9 +8652,9 @@ impl WindowsSymlinkOptions {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Port of `sys.zig:2653-2902` — Windows-only `symlinkW` / `symlinkOrJunction`
+// Windows-only `symlinkW` / `symlinkOrJunction`
 // / `unlinkW` / `rmdir` / `mkdir` (CreateDirectoryW path). Compiled on
-// Windows; on POSIX these names are absent (matches `@compileError` in spec).
+// Windows; on POSIX these names are absent.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(windows)]
 mod win_symlink_impl {
@@ -8850,19 +8670,16 @@ mod win_symlink_impl {
     const SYMBOLIC_LINK_FLAG_DIRECTORY: u32 = 0x1;
     const SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE: u32 = 0x2;
 
-    /// Zig: `WindowsSymlinkOptions.symlink_flags` — process-global, starts
+    /// `WindowsSymlinkOptions.symlink_flags` — process-global, starts
     /// with `ALLOW_UNPRIVILEGED_CREATE` and is cleared on `INVALID_PARAMETER`
     /// (older Windows).
     ///
-    /// PORT NOTE (deliberate divergence): Zig's `flags()` (sys.zig:2657) does
-    /// `symlink_flags |= DIRECTORY; return symlink_flags;`, which permanently
-    /// stickies the `DIRECTORY` bit into the global after the first directory
-    /// symlink — a Zig bug (a later `directory=false` call still passes
-    /// `SYMBOLIC_LINK_FLAG_DIRECTORY`, so `CreateSymbolicLinkW` creates a
-    /// broken directory symlink for a file target). We do **not** mirror that:
-    /// the global only carries `ALLOW_UNPRIVILEGED_CREATE` (cleared on
-    /// `INVALID_PARAMETER`), and `DIRECTORY` is OR'd into a *local* on each
-    /// call. Upstream fix tracked in sys.zig.
+    /// The global only carries `ALLOW_UNPRIVILEGED_CREATE` (cleared on
+    /// `INVALID_PARAMETER`); `DIRECTORY` is OR'd into a *local* on each call.
+    /// Stickying `DIRECTORY` into the global would make a later
+    /// `directory=false` call still pass `SYMBOLIC_LINK_FLAG_DIRECTORY`, so
+    /// `CreateSymbolicLinkW` would create a broken directory symlink for a
+    /// file target.
     static SYMLINK_FLAGS: AtomicU32 = AtomicU32::new(SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE);
 
     impl WindowsSymlinkOptions {
@@ -8880,7 +8697,7 @@ mod win_symlink_impl {
         }
     }
 
-    /// Port of `sys.zig:2717 symlinkW`. `dest` is the link path, `target` is
+    /// `symlinkW`. `dest` is the link path, `target` is
     /// the path the link points to. Retries once with `flags = 0` if the
     /// kernel rejects `ALLOW_UNPRIVILEGED_CREATE` (`INVALID_PARAMETER`).
     pub fn symlink_w(dest: &WStr, target: &WStr, options: WindowsSymlinkOptions) -> Maybe<()> {
@@ -8898,7 +8715,7 @@ mod win_symlink_impl {
                 }
                 if let Some(sys_errno) = win_err.to_system_errno() {
                     let e: E = sys_errno.to_e();
-                    // Zig: only ENOENT/EEXIST keep `has_failed_to_create_symlink`
+                    // Only ENOENT/EEXIST keep `has_failed_to_create_symlink`
                     // unset; every other failure flips the sticky bit so
                     // `symlinkOrJunction` falls through to junctions next time.
                     if !matches!(e, E::NOENT | E::EXIST) {
@@ -8906,14 +8723,14 @@ mod win_symlink_impl {
                     }
                     return Err(Error::from_code(e, Tag::symlink));
                 }
-                // Win32 error without an errno mapping — Zig falls through to
-                // `return .success` (the `if let` yields `null`). Mirror that.
+                // Win32 error without an errno mapping — treat as success
+                // (the `if let` yields `null`).
             }
             return Ok(());
         }
     }
 
-    /// Port of `sys.zig:2675 symlinkOrJunction`. Tries `CreateSymbolicLinkW`
+    /// `symlinkOrJunction`. Tries `CreateSymbolicLinkW`
     /// (directory flavour) first; on failure other than ENOENT/EEXIST falls
     /// back to a libuv junction. `abs_fallback_junction_target = None` says
     /// `target` is already absolute and reusable for the junction.
@@ -8955,7 +8772,7 @@ mod win_symlink_impl {
         )
     }
 
-    /// Port of `sys.zig:2846 unlinkW` — `DeleteFileW` with errno mapping.
+    /// `unlinkW` — `DeleteFileW` with errno mapping.
     pub fn unlink_w(from: &WStr) -> Maybe<()> {
         // SAFETY: `from` is NUL-terminated.
         let rc = unsafe { windows::DeleteFileW(from.as_ptr()) };
@@ -8965,7 +8782,7 @@ mod win_symlink_impl {
         Ok(())
     }
 
-    /// Port of `sys.zig:mkdirOSPath` (Windows arm) — `CreateDirectoryW` with
+    /// `mkdirOSPath` (Windows arm) — `CreateDirectoryW` with
     /// errno mapping. Named `mkdir_w` for parity with `unlink_w`/`symlink_w`.
     pub fn mkdir_w(path: &WStr) -> Maybe<()> {
         // SAFETY: `path` is NUL-terminated; null security attributes.
@@ -8979,7 +8796,7 @@ mod win_symlink_impl {
 #[cfg(windows)]
 pub use win_symlink_impl::{mkdir_w, symlink_or_junction, symlink_w, unlink_w};
 
-/// Port of `sys.zig:3915 link(u16, ...)` Windows arm — `CreateHardLinkW` with
+/// `link(u16, ...)` Windows arm — `CreateHardLinkW` with
 /// errno mapping. The u8/ZStr overload (`link`) routes through `sys_uv::link`.
 #[cfg(windows)]
 pub fn link_w(src: &bun_core::WStr, dest: &bun_core::WStr) -> Maybe<()> {
@@ -8989,7 +8806,7 @@ pub fn link_w(src: &bun_core::WStr, dest: &bun_core::WStr) -> Maybe<()> {
     Ok(())
 }
 
-/// Port of `sys.zig:2876 rmdir` — `rmdirat(FD.cwd(), to)`. Exposed on all
+/// `rmdir` — `rmdirat(FD.cwd(), to)`. Exposed on all
 /// platforms (POSIX `unlinkat(.., AT_REMOVEDIR)`; Windows `DeleteFileBun`).
 #[inline]
 pub fn rmdir(to: &ZStr) -> Maybe<()> {
@@ -8997,7 +8814,7 @@ pub fn rmdir(to: &ZStr) -> Maybe<()> {
 }
 
 /// Type-style alias so callers can write `bun_sys::MakePath::make_path::<T>(..)`
-/// (Zig: `bun.MakePath` namespace re-export).
+/// (the `bun.MakePath` namespace re-export).
 pub use make_path as MakePath;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -9005,7 +8822,7 @@ pub use make_path as MakePath;
 // ──────────────────────────────────────────────────────────────────────────
 
 bitflags::bitflags! {
-    /// `std.fs.File.OpenFlags` — convenience flagset for `open_file*` helpers.
+    /// Convenience flagset for `open_file*` helpers.
     #[derive(Clone, Copy, Default)]
     pub struct OpenFlags: i32 {
         const READ_ONLY  = O::RDONLY;
@@ -9018,22 +8835,22 @@ bitflags::bitflags! {
     }
 }
 
-/// `std.fs.openFileAbsoluteZ` — open an absolute, NUL-terminated path.
+/// Open an absolute, NUL-terminated path.
 #[inline]
 pub fn open_file_absolute_z(path: &ZStr, flags: OpenFlags) -> Maybe<File> {
     open(path, flags.bits() | O::CLOEXEC, 0).map(File::from_fd)
 }
-/// `std.fs.cwd().openFile` — non-NUL-terminated convenience.
+/// Open a path relative to the cwd — non-NUL-terminated convenience.
 #[inline]
 pub fn open_file(path: &[u8], flags: OpenFlags) -> Maybe<File> {
     open_a(path, flags.bits() | O::CLOEXEC, 0).map(File::from_fd)
 }
-/// bun.zig:883 — `openDirForIteration(dir, sub)`.
+/// `openDirForIteration(dir, sub)`.
 #[inline]
 pub fn open_dir_for_iteration(dir: Fd, path: &[u8]) -> Maybe<Fd> {
     open_dir_at(dir, path)
 }
-/// bun.zig:1303 — `bun.getFdPathZ(fd, buf)`. Wraps [`get_fd_path`] then
+/// `bun.getFdPathZ(fd, buf)`. Wraps [`get_fd_path`] then
 /// NUL-terminates in-place so callers receive a `&ZStr`.
 pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a ZStr> {
     let len = get_fd_path(fd, out)?.len();
@@ -9043,7 +8860,7 @@ pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'
 }
 
 /// `&[u8]`-taking convenience over [`renameat_concurrently`] — Z-terminates both
-/// paths into stack buffers (Zig signature is `[:0]const u8`).
+/// paths into stack buffers.
 pub fn renameat_concurrently_a(
     from_dir_fd: Fd,
     from: &[u8],
@@ -9051,7 +8868,7 @@ pub fn renameat_concurrently_a(
     to: &[u8],
     opts: RenameatConcurrentlyOptions,
 ) -> Maybe<()> {
-    // Z-terminate both paths into stack buffers (Zig signature is `[:0]const u8`).
+    // Z-terminate both paths into stack buffers.
     let mut from_buf = bun_paths::PathBuffer::default();
     let from_len = from.len().min(from_buf.0.len() - 1);
     from_buf.0[..from_len].copy_from_slice(&from[..from_len]);
@@ -9073,13 +8890,12 @@ pub fn renameat_concurrently_a(
 pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
     dir_iterator::iterate(dir)
 }
-/// sys.zig:3482 — `bun.sys.exists`. Non-NUL-terminated convenience over
+/// `bun.sys.exists`. Non-NUL-terminated convenience over
 /// [`exists_z`]: copies into a stack `PathBuffer`, NUL-terminates, then
 /// `access(path, F_OK)` (POSIX) / `GetFileAttributesW` (Windows).
 pub fn exists(path: &[u8]) -> bool {
     let mut buf = bun_paths::PathBuffer::default();
     if path.len() >= buf.0.len() {
-        // Zig: `std.posix.toPosixPath(path) catch return false`
         return false;
     }
     buf.0[..path.len()].copy_from_slice(path);
@@ -9088,19 +8904,20 @@ pub fn exists(path: &[u8]) -> bool {
     let z = ZStr::from_buf(&buf.0[..], path.len());
     exists_z(z)
 }
-/// sys.zig:4246 — `moveFileZ`. Tries the rename first (no source open on the
-/// hot path); on EISDIR removes the dest dir and retries; on EXDEV falls back
-/// to the slow open+copy path. Only opens the source inside the EXDEV branch.
+/// `moveFileZ`. Routes through
+/// [`renameat_concurrently_without_fallback`] (renameat2 NOREPLACE → EXCHANGE →
+/// delete-tree + rename); on EISDIR removes the dest dir and
+/// retries; on EXDEV falls back to the slow open+copy path. Only opens the
+/// source inside the EXDEV branch.
 pub fn move_file_z(
     from_dir: Fd,
     filename: &ZStr,
     to_dir: Fd,
     destination: &ZStr,
 ) -> core::result::Result<(), bun_core::Error> {
-    // TODO(port): renameatConcurrentlyWithoutFallback (renameat2 NOREPLACE →
-    // EXCHANGE → deleteTree) — sys.zig:2480. Plain `renameat` for now.
-    match renameat(from_dir, filename, to_dir, destination) {
+    match renameat_concurrently_without_fallback(from_dir, filename, to_dir, destination) {
         Ok(()) => Ok(()),
+        // allow over-writing an empty directory
         Err(e) if e.get_errno() == E::EISDIR => {
             #[cfg(unix)]
             // SAFETY: destination is NUL-terminated.
@@ -9115,7 +8932,7 @@ pub fn move_file_z(
         Err(e) => Err(e.into()),
     }
 }
-/// sys.zig:4291 — `moveFileZSlow`: open source, unlink, copy to dest.
+/// `moveFileZSlow`: open source, unlink, copy to dest.
 pub fn move_file_z_slow(
     from_dir: Fd,
     filename: &ZStr,
@@ -9133,7 +8950,7 @@ pub fn move_file_z_slow(
     let _ = close(in_handle);
     r
 }
-/// sys.zig:4305 — `copyFileZSlowWithHandle` (POSIX read/write fallback arm).
+/// `copyFileZSlowWithHandle` (POSIX read/write fallback arm).
 pub fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
     #[cfg(unix)]
     let st = fstat(in_handle)?;
@@ -9152,7 +8969,7 @@ pub fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZSt
     }
     let _ = lseek(in_handle, 0, libc::SEEK_SET);
     let r = copy_file(in_handle, dst);
-    // sys.zig:4349 — only stamp mode/owner on success; on copy error the
+    // Only stamp mode/owner on success; on copy error the
     // partially-written dest keeps its openat() defaults.
     #[cfg(unix)]
     if r.is_ok() {
@@ -9170,9 +8987,8 @@ pub fn renameat_z(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr
     renameat(from_dir, from, to_dir, to)
 }
 
-/// sys.zig:2461 — option struct for [`renameat_concurrently`]. Zig used a
-/// `comptime` anonymous struct param `{ move_fallback: bool = false }`; Rust
-/// surfaces it as a runtime options struct so callers can build it inline.
+/// Option struct for [`renameat_concurrently`];
+/// callers can build it inline.
 #[derive(Default, Clone, Copy)]
 pub struct RenameatConcurrentlyOptions {
     pub move_fallback: bool,
@@ -9180,8 +8996,8 @@ pub struct RenameatConcurrentlyOptions {
 /// Alias: `bun_install` call sites spell this `RenameOptions`.
 pub type RenameOptions = RenameatConcurrentlyOptions;
 
-/// sys.zig:4296 — `moveFileZSlowMaybe`. Thin wrapper kept for source parity
-/// with Zig callers (`renameatConcurrently` falls back through here).
+/// `moveFileZSlowMaybe`. Thin wrapper
+/// (`renameatConcurrently` falls back through here).
 #[inline]
 pub fn move_file_z_slow_maybe(
     from_dir: Fd,
@@ -9192,7 +9008,7 @@ pub fn move_file_z_slow_maybe(
     move_file_z_slow(from_dir, filename, to_dir, destination)
 }
 
-/// sys.zig:2461 — `renameatConcurrently`. Tries an atomic NOREPLACE rename,
+/// `renameatConcurrently`. Tries an atomic NOREPLACE rename,
 /// then EXCHANGE, then a racy delete-tree + rename. With `move_fallback` set,
 /// an EXDEV result falls through to a slow open/copy.
 pub fn renameat_concurrently(
@@ -9216,7 +9032,7 @@ pub fn renameat_concurrently(
     }
 }
 
-/// sys.zig:2480 — `renameatConcurrentlyWithoutFallback`.
+/// `renameatConcurrentlyWithoutFallback`.
 pub fn renameat_concurrently_without_fallback(
     from_dir_fd: Fd,
     from: &ZStr,
@@ -9337,7 +9153,7 @@ impl Default for PathOrFileDescriptor<'_> {
         PathOrFileDescriptor::Fd(Fd::INVALID)
     }
 }
-/// Args struct (Zig: anon-struct init at call sites).
+/// Args struct.
 pub struct WriteFileArgs<'a> {
     pub data: WriteFileData<'a>,
     pub encoding: WriteFileEncoding,
@@ -9390,7 +9206,7 @@ pub fn write_file_with_path_buffer(
 
 /// `bun.fetchCacheDirectoryPath` — resolve `$BUN_INSTALL_CACHE_DIR` /
 /// `$XDG_CACHE_HOME/.bun/install/cache` / `$HOME/.bun/install/cache`.
-/// PORT NOTE: full env-override chain lives in `bun_install`; this is the
+/// full env-override chain lives in `bun_install`; this is the
 /// fallback so the symbol resolves at T1. Returns an owned path (caller frees).
 pub fn fetch_cache_directory_path() -> Vec<u8> {
     if let Some(v) = bun_core::getenv_z(bun_core::zstr!("BUN_INSTALL_CACHE_DIR")) {
@@ -9409,9 +9225,8 @@ pub fn fetch_cache_directory_path() -> Vec<u8> {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bun_core::output::QuietWriter` is an opaque `[*mut (); 4]`. We stash the
-/// raw fd in slot 0 and ignore the rest. (Zig's `QuietWriter` is `{ context:
-/// File { handle: Fd } }`; the buffering layer in Zig is the std-adapter, which
-/// we route to `QuietWriterAdapter` below.)
+/// raw fd in slot 0 and ignore the rest. (The buffering layer is routed to
+/// `QuietWriterAdapter` below.)
 #[inline]
 fn qw_fd(qw: &bun_core::output::QuietWriter) -> Fd {
     // SAFETY: `QuietWriter` is `#[repr(C)] { _opaque: [*mut (); 4] }` (asserted
@@ -9437,7 +9252,7 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
 fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
     while !bytes.is_empty() {
         match write(fd, bytes) {
-            Ok(0) => return false, // short write → give up (matches Zig quiet semantics)
+            Ok(0) => return false, // short write → give up
             Ok(n) => bytes = &bytes[n..],
             Err(_) => return false,
         }

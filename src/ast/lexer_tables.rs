@@ -714,6 +714,7 @@ bun_core::comptime_string_map! {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 

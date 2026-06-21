@@ -999,9 +999,11 @@ export function handleDirectStreamError(e) {
 
   this.error = this.flush = this.write = this.close = this.end = $onReadableStreamDirectControllerClosed;
 
-  if (typeof this.$underlyingSource.close === "function") {
+  const underlyingSource = this.$underlyingSource;
+  const underlyingClose = underlyingSource.close;
+  if (typeof underlyingClose === "function") {
     try {
-      this.$underlyingSource.close.$call(this.$underlyingSource, e);
+      underlyingClose.$call(underlyingSource, e);
     } catch {}
   }
 
@@ -1156,9 +1158,11 @@ export function onCloseDirectStream(reason) {
   if (!sink) return;
 
   $putByIdDirectPrivate(stream, "state", $streamClosing);
-  if (typeof this.$underlyingSource.close === "function") {
+  const underlyingSource = this.$underlyingSource;
+  const underlyingClose = underlyingSource.close;
+  if (typeof underlyingClose === "function") {
     try {
-      this.$underlyingSource.close.$call(this.$underlyingSource, reason);
+      underlyingClose.$call(underlyingSource, reason);
     } catch {}
   }
 
@@ -1640,9 +1644,10 @@ export function readableStreamDefaultControllerCancel(controller, reason) {
 
 export function readableStreamDefaultControllerPull(controller) {
   var queue = $getByIdDirectPrivate(controller, "queue");
-  if (queue.content.isNotEmpty()) {
+  const content = queue.content;
+  if (content.isNotEmpty()) {
     const chunk = $dequeueValue(queue);
-    if ($getByIdDirectPrivate(controller, "closeRequested") && queue.content.isEmpty()) {
+    if ($getByIdDirectPrivate(controller, "closeRequested") && content.isEmpty()) {
       $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
     } else $readableStreamDefaultControllerCallPullIfNeeded(controller);
 

@@ -1561,6 +1561,66 @@ describe("readFile", () => {
   });
 });
 
+describe("open with a numeric flag boxed as a double", () => {
+  // https://github.com/oven-sh/bun/issues/32505
+  // Go's `syscall/js` (GOOS=js GOARCH=wasm) reads every argument out of wasm
+  // linear memory with DataView.getFloat64, so a valid integer flag such as
+  // 578 (O_RDWR|O_CREAT|O_TRUNC) reaches fs.open boxed as a double instead of
+  // an int32. Node accepts any integer-valued number; Bun must too.
+  const asDouble = (n: number) => new Float64Array([n])[0];
+
+  it("openSync accepts a double-boxed flag and honors it", () => {
+    using dir = tempDir("fs-flags-double", {});
+    const file = join(String(dir), "sync.txt");
+    const flags = asDouble(constants.O_RDWR | constants.O_CREAT | constants.O_TRUNC);
+    expect(Number.isInteger(flags)).toBe(true);
+
+    const fd = openSync(file, flags, 0o666);
+    try {
+      writeSync(fd, "hello\n");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file, "utf8")).toBe("hello\n");
+  });
+
+  it("async open accepts a double-boxed flag and honors it", async () => {
+    using dir = tempDir("fs-flags-double-async", {});
+    const file = join(String(dir), "async.txt");
+    const flags = asDouble(constants.O_RDWR | constants.O_CREAT | constants.O_TRUNC);
+
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    fs.open(file, flags, 0o666, (err, fd) => (err ? reject(err) : resolve(fd)));
+    const fd = await promise;
+    try {
+      writeSync(fd, "world\n");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file, "utf8")).toBe("world\n");
+  });
+
+  it("promises.open accepts a double-boxed flag and honors it", async () => {
+    using dir = tempDir("fs-flags-double-promise", {});
+    const file = join(String(dir), "promise.txt");
+    const flags = asDouble(constants.O_RDWR | constants.O_CREAT | constants.O_TRUNC);
+
+    const handle = await promises.open(file, flags, 0o666);
+    try {
+      await handle.write("promise\n");
+    } finally {
+      await handle.close();
+    }
+    expect(readFileSync(file, "utf8")).toBe("promise\n");
+  });
+
+  it("still rejects a non-integer numeric flag", () => {
+    using dir = tempDir("fs-flags-double-reject", {});
+    const file = join(String(dir), "bad.txt");
+    expect(() => openSync(file, asDouble(578.5), 0o666)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  });
+});
+
 describe("writeFileSync", () => {
   it("works", () => {
     const path = `${tmpdirSync()}/writeFileSync.txt`;
@@ -1941,7 +2001,7 @@ describe("rm", () => {
 
   // On Windows a leading-separator, drive-less path like "/foo/bar" is
   // "rooted" and must be resolved against the cwd's drive. existsSync/
-  // statSync/unlinkSync all do this; recursive rmSync/rmdirSync must agree
+  // statSync/unlinkSync all do this; recursive rmSync must agree
   // or cleanup helpers (rmSync(dir, { recursive: true, force: true })) silently
   // no-op on directories existsSync just said were there.
   //
@@ -1963,14 +2023,6 @@ describe("rm", () => {
     fs.writeFileSync(dir + "/inner.txt", "x");
     expect(fs.existsSync(dir)).toBe(true);
     fs.rmSync(dir, { recursive: true, force: true });
-    expect(fs.existsSync(dir)).toBe(false);
-  });
-
-  it.skipIf(!sameDriveAsCwd)("rmdirSync recursive agrees with existsSync for rooted POSIX-style paths", () => {
-    const dir = `${drivelessTmp}/bun-rmdir-posix-path-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    fs.mkdirSync(dir + "/nested", { recursive: true });
-    expect(fs.existsSync(dir)).toBe(true);
-    fs.rmdirSync(dir, { recursive: true });
     expect(fs.existsSync(dir)).toBe(false);
   });
 });
@@ -2039,25 +2091,21 @@ describe("rmdir", () => {
 
     expect(existsSync(path + "/file.txt")).toBe(true);
 
-    await promises.rmdir(path, { recursive: true });
+    await expect(promises.rmdir(path, { recursive: true })).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
+    await promises.rm(path, { recursive: true, force: true });
     expect(existsSync(path + "/file.txt")).toBe(false);
   });
-  it("removes a dir recursively", done => {
+  it("throws for recursive: true like node", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
     } catch (e) {}
     expect(existsSync(path)).toBe(true);
-    rmdir(join(path, "../../"), { recursive: true }, err => {
-      try {
-        expect(existsSync(path)).toBe(false);
-        done(err);
-      } catch (e) {
-        return done(e);
-      } finally {
-        done();
-      }
-    });
+    expect(() => {
+      rmdir(join(path, "../../"), { recursive: true }, () => {});
+    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    rmSync(join(path, "../../"), { recursive: true, force: true });
+    expect(existsSync(path)).toBe(false);
   });
 });
 
@@ -2080,13 +2128,16 @@ describe("rmdirSync", () => {
     rmdirSync(path);
     expect(existsSync(path)).toBe(false);
   });
-  it("removes a dir recursively", () => {
+  it("throws for recursive: true like node", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
     } catch (e) {}
     expect(existsSync(path)).toBe(true);
-    rmdirSync(join(path, "../../"), { recursive: true });
+    expect(() => rmdirSync(join(path, "../../"), { recursive: true })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+    rmSync(join(path, "../../"), { recursive: true, force: true });
     expect(existsSync(path)).toBe(false);
   });
 });
@@ -2576,7 +2627,7 @@ describe("createWriteStream", () => {
 });
 
 describe("fs/promises", () => {
-  const { exists, mkdir, readFile, rmdir, stat, writeFile } = promises;
+  const { exists, mkdir, readFile, rm, rmdir, stat, writeFile } = promises;
 
   it("should not segfault on exception", async () => {
     try {
@@ -3003,13 +3054,16 @@ describe("fs/promises", () => {
       await rmdir(path);
       expect(await exists(path)).toBe(false);
     });
-    it("removes a dir recursively", async () => {
+    it("throws for recursive: true like node", async () => {
       const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
       try {
         await mkdir(path, { recursive: true });
       } catch (e) {}
       expect(await exists(path)).toBe(true);
-      await rmdir(join(path, "../../"), { recursive: true });
+      await expect(rmdir(join(path, "../../"), { recursive: true })).rejects.toMatchObject({
+        code: "ERR_INVALID_ARG_VALUE",
+      });
+      await rm(join(path, "../../"), { recursive: true, force: true });
       expect(await exists(path)).toBe(false);
     });
   });

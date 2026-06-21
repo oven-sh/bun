@@ -1,8 +1,5 @@
-//! cycle-5: un-gated `NewServer` struct + lifecycle skeleton (start/stop/listen),
-//! `AnyServer` dispatch, `AnyRoute`, and the per-file submodules. JS callback
-//! bodies (`on_request`, `on_upgrade`, `from_js`, …) and methods that need
-//! `bun_uws` write/close surface stay ``-gated inside each file.
-//! The full Phase-A draft of every gated body is preserved in `server_body.rs`.
+//! `Bun.serve()`: `NewServer` struct + lifecycle (start/stop/listen),
+//! `AnyServer` dispatch, `AnyRoute`, and per-file submodules.
 
 use bun_collections::VecExt;
 use core::ffi::{c_char, c_int, c_void};

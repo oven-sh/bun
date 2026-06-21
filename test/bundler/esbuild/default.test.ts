@@ -3649,7 +3649,12 @@ describe.concurrent("bundler", () => {
     },
   });
   itBundled("default/TopLevelAwaitWithNestedDynamicImport", {
-    // Test nested dynamic imports with top-level await
+    // Test nested dynamic imports with top-level await.
+    //
+    // Bun tree-shakes `const ns = await import()` / destructured
+    // `await import()` (esbuild does not), so both a.js and b.js are hoisted
+    // to static imports and evaluate eagerly at chunk load. esbuild would
+    // print "Start Entry" first.
     files: {
       "/entry.js": `
         console.log('Start Entry');
@@ -3668,9 +3673,9 @@ describe.concurrent("bundler", () => {
     },
     format: "esm",
     run: {
-      stdout: `Start Entry
+      stdout: `Start b.js
   Start a.js
-  Start b.js
+  Start Entry
   Entry a.js plus value from b.js`,
     },
   });
@@ -3694,9 +3699,9 @@ describe.concurrent("bundler", () => {
     },
     format: "esm",
     run: {
-      stdout: `Start Entry
-  Start a.js
+      stdout: `Start a.js
   Start b.js
+  Start Entry
   Entry a.js plus value from b.js`,
     },
   });

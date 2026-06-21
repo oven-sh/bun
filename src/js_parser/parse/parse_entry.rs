@@ -1207,6 +1207,228 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Finalize tree-shaking analysis for `import("str")` calls. Several
+        // namespace refs may exist for one import record (the synthetic ref
+        // from `transpose_import` plus a `const ns = …` / `.then(ns => …)`
+        // local). A record is fully tracked only when *every* such ref had all
+        // its uses accounted for (`use_count_estimate == 0`); the alias set is
+        // the union across them.
+        if !p.imports_to_convert_from_dynamic_import.as_slice().is_empty() {
+            #[derive(Default)]
+            struct PerRecord {
+                escaped: bool,
+                can_inline: bool,
+                ns_ref: bun_ast::Ref,
+                ns_loc: bun_ast::Loc,
+                aliases: Vec<(bun_ast::StoreStr, bun_ast::LocRef, bun_ast::Ref)>,
+            }
+            let mut by_record: bun_collections::ArrayHashMap<u32, PerRecord> = Default::default();
+            let arena = p.arena;
+            for i in 0..p.imports_to_convert_from_dynamic_import.len() {
+                let (ns_ref, ns_loc, import_record_id, scope) = {
+                    let d = &p.imports_to_convert_from_dynamic_import[i];
+                    (
+                        d.namespace.ref_.expect("infallible: ref bound"),
+                        d.namespace.loc,
+                        d.import_record_id,
+                        d.scope,
+                    )
+                };
+                let escaped = {
+                    let symbol = &p.symbols[ns_ref.inner_index() as usize];
+                    // `must_not_be_renamed` / `contains_direct_eval` cover
+                    // direct `eval()` (or `with`) in scope, which can read the
+                    // namespace by name without a tracked property access.
+                    symbol.use_count_estimate > 0
+                        || symbol.must_not_be_renamed
+                        || scope.is_some_and(|s| s.contains_direct_eval)
+                };
+                let entry = bun_core::handle_oom(by_record.get_or_put(import_record_id));
+                if !entry.found_existing {
+                    *entry.value_ptr = PerRecord {
+                        escaped: false,
+                        can_inline: true,
+                        ns_ref,
+                        ns_loc,
+                        aliases: Vec::new(),
+                    };
+                }
+                let rec = entry.value_ptr;
+                if escaped {
+                    rec.escaped = true;
+                }
+                let Some(map) = p.import_items_for_namespace.get(&ns_ref) else {
+                    continue;
+                };
+                let track_only = p.track_only_dynamic_import_namespaces.contains_key(&ns_ref);
+                for key in map.keys().iter() {
+                    let loc_ref = *map.get(key).unwrap();
+                    // Per-reference filtering: a destructured local that is
+                    // never read does not keep its alias alive in the chunk.
+                    if let Some(item_ref) = loc_ref.ref_ {
+                        if p.symbols[item_ref.inner_index() as usize].use_count_estimate == 0
+                            && !track_only
+                        {
+                            continue;
+                        }
+                        // A ref that wasn't promoted to an import item means
+                        // the original binding/declaration was kept (let/var,
+                        // default value, multi-decl, …) — it cannot appear in
+                        // a synthetic top-level `S::Import`.
+                        if !p.is_import_item.contains_key(&item_ref) {
+                            rec.can_inline = false;
+                        }
+                    } else {
+                        rec.can_inline = false;
+                    }
+                    let alias = arena.alloc_slice_copy(key);
+                    rec.aliases
+                        .push((bun_ast::StoreStr::new(alias), loc_ref, ns_ref));
+                }
+                if track_only {
+                    rec.can_inline = false;
+                }
+            }
+
+            let inline_mode = !p.options.code_splitting;
+            for (import_record_id, rec) in
+                by_record.keys().iter().copied().zip(by_record.values().iter())
+            {
+                // When the namespace escaped (or, in inline mode, a track-only
+                // shape forced a bail), the record stays an ordinary wrapped
+                // dynamic import. Any import-item refs that were eagerly
+                // created during property-access rewriting must then print as
+                // `ns.alias` against the namespace they were derived from, so
+                // give them a `namespace_alias` here.
+                if rec.escaped || (inline_mode && !rec.can_inline) {
+                    for (alias, loc_ref, owner_ns) in rec.aliases.iter() {
+                        let Some(item_ref) = loc_ref.ref_ else { continue };
+                        if !p.is_import_item.contains_key(&item_ref) {
+                            continue;
+                        }
+                        let symbol = &mut p.symbols[item_ref.inner_index() as usize];
+                        if symbol.namespace_alias.is_none() {
+                            symbol.namespace_alias = Some(js_ast::NamespaceAlias {
+                                namespace_ref: *owner_ns,
+                                alias: *alias,
+                                import_record_index: import_record_id,
+                                was_originally_property_access: true,
+                            });
+                        }
+                    }
+                    continue;
+                }
+                let mut aliases: Vec<(bun_ast::StoreStr, bun_ast::LocRef, bun_ast::Ref)> =
+                    rec.aliases.clone();
+                aliases.sort_by(|a, b| b.0.slice().cmp(a.0.slice()));
+                aliases.dedup_by(|a, b| a.0.slice() == b.0.slice());
+
+                // Record the (possibly empty) alias set so the linker can
+                // narrow the dynamic entry's exports.
+                let alias_slice = arena
+                    .alloc_slice_fill_with::<bun_ast::StoreStr, _>(aliases.len(), |j| aliases[j].0);
+                bun_core::handle_oom(
+                    p.dynamic_import_aliases
+                        .put(import_record_id, bun_ast::StoreSlice::new(alias_slice)),
+                );
+
+                if !inline_mode {
+                    continue;
+                }
+
+                // Inline mode: flag the record so the linker treats it like a
+                // static import (no wrapping); the surviving `import()` call
+                // (if any) prints as `Promise.resolve()`.
+                p.import_records.items_mut()[import_record_id as usize]
+                    .flags
+                    .insert(bun_ast::ImportRecordFlags::TREE_SHAKEN_DYNAMIC_IMPORT);
+
+                if aliases.is_empty() {
+                    continue;
+                }
+
+                // Emit a synthetic top-level `import {…} from "…"` so
+                // `scan_imports` creates `NamedImport` entries and the linker
+                // binds the import-item refs. The synthetic statement gets its
+                // own `Stmt`-kind record (cloned from the dynamic one) so a
+                // CommonJS importee lowers to a synchronous `__toESM(require())`
+                // — the original record must stay `Dynamic` for any surviving
+                // `import()` expression.
+                let stmt_record_id = {
+                    let (range, path) = {
+                        let orig = &p.import_records.items()[import_record_id as usize];
+                        (orig.range, orig.path)
+                    };
+                    p.add_import_record_by_range_and_path(
+                        bun_ast::ImportKind::Stmt,
+                        range,
+                        &path,
+                    )
+                };
+                p.import_records.items_mut()[stmt_record_id as usize]
+                    .flags
+                    .insert(bun_ast::ImportRecordFlags::TREE_SHAKEN_DYNAMIC_IMPORT);
+
+                let items =
+                    arena.alloc_slice_fill_with::<js_ast::ClauseItem, _>(aliases.len(), |_| {
+                        js_ast::ClauseItem {
+                            alias: bun_ast::StoreStr::EMPTY,
+                            alias_loc: bun_ast::Loc::EMPTY,
+                            name: bun_ast::LocRef::default(),
+                            original_name: bun_ast::StoreStr::EMPTY,
+                        }
+                    });
+                let mut declared_symbols =
+                    bun_ast::DeclaredSymbolList::init_capacity(aliases.len() + 1)
+                        .expect("oom");
+                declared_symbols.append_assume_capacity(DeclaredSymbol {
+                    ref_: rec.ns_ref,
+                    is_top_level: true,
+                });
+                for (j, (alias, loc_ref, _)) in aliases.iter().enumerate() {
+                    let item_ref = loc_ref.ref_.expect("infallible: can_inline implies ref bound");
+                    items[j] = js_ast::ClauseItem {
+                        alias: *alias,
+                        alias_loc: loc_ref.loc,
+                        name: *loc_ref,
+                        original_name: *alias,
+                    };
+                    declared_symbols.append_assume_capacity(DeclaredSymbol {
+                        ref_: item_ref,
+                        is_top_level: true,
+                    });
+                }
+
+                let import_stmt = arena.alloc_slice_fill_with::<Stmt, _>(1, |_| Stmt {
+                    loc: rec.ns_loc,
+                    data: js_ast::StmtData::SEmpty(S::Empty {}),
+                });
+                import_stmt[0] = Stmt::alloc(
+                    S::Import {
+                        namespace_ref: rec.ns_ref,
+                        default_name: None,
+                        items: bun_ast::StoreSlice::new(items),
+                        star_name_loc: None,
+                        import_record_index: stmt_record_id,
+                        is_single_line: true,
+                        phase_defer: false,
+                    },
+                    rec.ns_loc,
+                );
+                let mut import_record_indices =
+                    bun_ast::PartImportRecordIndices::init_capacity(1);
+                import_record_indices.append_assume_capacity(stmt_record_id);
+                before.push(js_ast::Part {
+                    stmts: import_stmt.into(),
+                    declared_symbols,
+                    import_record_indices,
+                    can_be_removed_if_unused: true,
+                    tag: bun_ast::PartTag::ImportToConvertFromRequire,
+                    ..Default::default()
+                });
+            }
+        }
+
         // This is a workaround for broken module environment checks in packages like lodash-es
         // https://github.com/lodash/lodash/issues/5660
         let mut force_esm = false;

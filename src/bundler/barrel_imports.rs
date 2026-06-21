@@ -530,6 +530,16 @@ pub(crate) fn schedule_barrel_deferred_imports(
             continue;
         }
         if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
+            if ir
+                .flags
+                .contains(import_record::Flags::TREE_SHAKEN_DYNAMIC_IMPORT)
+            {
+                // Every consumer was tracked; the synthetic `S::Import` the
+                // parser emitted carries the named bindings, so the
+                // named-import loop above already requested only the used
+                // exports.
+                continue;
+            }
             // require() and import() expose the full module namespace — preserve all exports.
             let (_, value) = RequestedExports::entry(&mut this.requested_exports, target);
             *value = RequestedExports::All;

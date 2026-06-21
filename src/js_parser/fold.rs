@@ -130,7 +130,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut sw_data = target.data;
         'sw: loop {
             match sw_data {
+                js_ast::ExprData::EAwait(aw) => {
+                    // `(await import("str")).foo` — route the namespace into the
+                    // EIdentifier arm so the existing import-item machinery
+                    // generates an `E::ImportIdentifier` and tree-shaking applies.
+                    if let js_ast::ExprData::EImport(im) = aw.value.data {
+                        if im.namespace_ref.is_valid() {
+                            if p.options.code_splitting {
+                                // Split mode: track the alias only; keep the
+                                // expression as-is so the chunk loads lazily.
+                                p.import_items_for_namespace
+                                    .get_mut(&im.namespace_ref)
+                                    .unwrap()
+                                    .put(name, LocRef {
+                                        loc: name_loc,
+                                        ref_: None,
+                                    })
+                                    .expect("oom");
+                                p.ignore_usage(im.namespace_ref);
+                            } else {
+                                sw_data = js_ast::ExprData::EIdentifier(E::Identifier {
+                                    ref_: im.namespace_ref,
+                                });
+                                continue 'sw;
+                            }
+                        }
+                    }
+                }
                 js_ast::ExprData::EIdentifier(id) => {
+                    // Track-only dynamic-import namespace: `const ns = await import(...)` /
+                    // `.then(ns => ...)`. Record the alias so the dynamic chunk can drop
+                    // unreferenced exports, but leave the property access intact.
+                    if p.track_only_dynamic_import_namespaces.contains_key(&id.ref_) {
+                        if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
+                            map.put(name, LocRef {
+                                loc: name_loc,
+                                ref_: None,
+                            })
+                            .expect("oom");
+                            p.ignore_usage(id.ref_);
+                        }
+                        break 'sw;
+                    }
                     // Rewrite property accesses on explicit namespace imports as an identifier.
                     // This lets us replace them easily in the printer to rebind them to
                     // something else without paying the cost of a whole-tree traversal during

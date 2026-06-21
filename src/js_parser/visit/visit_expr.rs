@@ -1936,6 +1936,106 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
 
+        // `import("str").then(<fn>)` — record which exports the callback
+        // observes so a split chunk can drop the rest. The call itself is
+        // left untouched (lazy load preserved); inline-mode hoisting is
+        // handled for the `await` shapes only.
+        'dyn_import_then: {
+            if !p.options.bundle {
+                break 'dyn_import_then;
+            }
+            let Data::EDot(dot) = e_.target.data else {
+                break 'dyn_import_then;
+            };
+            if dot.name.slice() != b"then" {
+                break 'dyn_import_then;
+            }
+            let Data::EImport(im) = dot.target.data else {
+                break 'dyn_import_then;
+            };
+            if !im.namespace_ref.is_valid() {
+                break 'dyn_import_then;
+            }
+            let inline = !p.options.code_splitting;
+            let args = e_.args.slice_mut();
+            // `.then(onFulfilled, onRejected)` — a rejection handler is an
+            // explicit signal the import may fail; hoisting would make it
+            // dead. Bail so the import stays lazy/wrapped.
+            if args.len() != 1 {
+                break 'dyn_import_then;
+            }
+            let fn_args = match args[0].data {
+                Data::EArrow(arrow) => arrow.args.slice_mut(),
+                Data::EFunction(func) => func.func.args.slice_mut(),
+                _ => break 'dyn_import_then,
+            };
+            match fn_args.first_mut() {
+                None => {
+                    // `.then(() => …)` — no exports observed.
+                    p.ignore_usage(im.namespace_ref);
+                }
+                Some(first_param) => {
+                    if first_param.default.is_some() {
+                        break 'dyn_import_then;
+                    }
+                    match first_param.binding.data {
+                        js_ast::binding::Data::BObject(obj) => {
+                            let Some(keep_decl) = p.try_track_dynamic_import_destructure(
+                                im.namespace_ref,
+                                im.import_record_index,
+                                obj.properties(),
+                                inline,
+                            ) else {
+                                break 'dyn_import_then;
+                            };
+                            p.ignore_usage(im.namespace_ref);
+                            if inline && !keep_decl {
+                                // The body's references to the destructured
+                                // locals will rewrite to `E::ImportIdentifier`
+                                // (they were marked `is_import_item`). Replace
+                                // the destructuring pattern with a dead temp
+                                // so `Promise.resolve().then(_ => …)` doesn't
+                                // throw on `undefined`.
+                                let temp = p.generate_temp_ref(None);
+                                first_param.binding = p.b(
+                                    bun_ast::B::Identifier { r#ref: temp },
+                                    first_param.binding.loc,
+                                );
+                            }
+                        }
+                        js_ast::binding::Data::BIdentifier(id) => {
+                            // `.then(ns => …)` — register `ns` as a namespace
+                            // so `ns.foo` inside the body is recorded. Track-
+                            // only in split mode (keeps `ns.foo` verbatim);
+                            // full rewrite in inline mode so the importee
+                            // tree-shakes. The body is visited *after* this
+                            // block so the registration is observed there.
+                            let local = id.r#ref;
+                            p.import_items_for_namespace.insert(
+                                local,
+                                crate::parser::ImportItemForNamespaceMap::default(),
+                            );
+                            if !inline {
+                                p.track_only_dynamic_import_namespaces.insert(local, ());
+                            }
+                            p.ignore_usage(im.namespace_ref);
+                            p.imports_to_convert_from_dynamic_import.push(
+                                crate::parser::DeferredImportNamespace {
+                                    namespace: bun_ast::LocRef {
+                                        loc: first_param.binding.loc,
+                                        ref_: Some(local),
+                                    },
+                                    import_record_id: im.import_record_index,
+                                    scope: Some(p.current_scope),
+                                },
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         let is_macro_ref: bool = if Self::ALLOW_MACROS {
             let possible_macro_ref = match &e_.target.data {
                 Data::EImportIdentifier(ident) => Some(ident.ref_),

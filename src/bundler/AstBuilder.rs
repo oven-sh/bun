@@ -576,6 +576,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             exports_kind: ExportsKind::Esm,
             named_imports: core::mem::take(&mut self.named_imports),
             named_exports: core::mem::take(&mut self.named_exports),
+            dynamic_import_aliases: Default::default(),
             top_level_symbols_to_parts,
             char_freq: bun_ast::CharFreq { freqs: [0; 64] },
             flags: Default::default(),

@@ -106,6 +106,27 @@ impl LinkerContext<'_> {
             &[js_meta::ProbablyTypescriptType],
         ) = unsafe { (&*meta.imports_to_bind, &*meta.probably_typescript_type) };
 
+        // When this file is *only* reachable as a code-splitting `import()`
+        // target and every importer's use was tracked, drop exports nobody
+        // referenced so the chunk tree-shakes them.
+        let dyn_import_filter: Option<&js_meta::DynamicImportReferencedAliases> = {
+            let files = c.graph.files.split_raw();
+            // SAFETY: read-only per-row access; column never mutated in step 5.
+            let entry_point_kinds: &[crate::EntryPoint::Kind] = unsafe { &*files.entry_point_kind };
+            if entry_point_kinds[id as usize] == crate::EntryPoint::Kind::DynamicImport {
+                // SAFETY: read-only per-row access; written in step 1, frozen
+                // before step 5 dispatch.
+                let col: &[js_meta::DynamicImportReferencedAliases] =
+                    unsafe { &*meta.dynamic_import_referenced_aliases };
+                match &col[id as usize] {
+                    js_meta::DynamicImportReferencedAliases::Partial(_) => Some(&col[id as usize]),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+
         // Now that all exports have been resolved, sort and filter them to create
         // something we can iterate over later.
         // SAFETY: SoA column pointers stay valid for the worker step (no realloc).
@@ -154,6 +175,13 @@ impl LinkerContext<'_> {
                 // do is to silently omit them from the export list.
                 if probably_typescript_type[this_id as usize].contains(&export_.data.import_ref) {
                     continue;
+                }
+                if let Some(js_meta::DynamicImportReferencedAliases::Partial(set)) =
+                    dyn_import_filter
+                {
+                    if !set.contains(alias) {
+                        continue;
+                    }
                 }
                 re_exports_count += inner_count;
 

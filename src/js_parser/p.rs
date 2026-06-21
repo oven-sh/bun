@@ -301,6 +301,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     /// Used with unwrap_commonjs_packages
     pub imports_to_convert_from_require: List<'a, DeferredImportNamespace>,
+    pub imports_to_convert_from_dynamic_import: List<'a, DeferredImportNamespace>,
+    pub dynamic_import_aliases: bun_ast::ast_result::DynamicImportAliases,
+    /// Namespace refs whose property accesses are recorded for dynamic-import
+    /// alias tracking but NOT rewritten to `E::ImportIdentifier` (the
+    /// expression stays as `ns.foo` so a split-out chunk can serve it at
+    /// runtime). Used for `const ns = await import(...)` and
+    /// `.then(ns => ...)` shapes.
+    pub track_only_dynamic_import_namespaces: RefMap,
     pub unwrap_all_requires: bool,
 
     pub commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
@@ -1073,6 +1081,113 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
+    /// Record the destructured property names of an `await import()` /
+    /// `import().then(({...}) => ...)` result under the given namespace ref.
+    /// Returns `None` (and records nothing) if any property is not a simple
+    /// `{ident}` / `{alias: ident}` shape — the caller must then bail to the
+    /// untracked path. When `make_import_items` is set the local binding
+    /// becomes an import-item symbol so subsequent references print as
+    /// `E::ImportIdentifier`.
+    ///
+    /// A trailing `{...rest}` is supported: `rest` is registered as a
+    /// track-only namespace under the same import record so later `rest.foo`
+    /// accesses are recorded. A property with a default (`{a = 1}`) records
+    /// the key but forces the caller to keep the destructure intact.
+    /// `Some(true)` is returned to tell the caller it must keep the original
+    /// binding/declaration intact (no inline rewrite); `Some(false)` means
+    /// every property became an import item and the binding can be dropped.
+    pub fn try_track_dynamic_import_destructure(
+        &mut self,
+        namespace_ref: Ref,
+        import_record_id: u32,
+        properties: &[bun_ast::B::Property],
+        make_import_items: bool,
+    ) -> Option<bool> {
+        let mut rest_ref: Option<(Ref, bun_ast::Loc)> = None;
+        let mut has_default = false;
+        for (i, prop) in properties.iter().enumerate() {
+            if prop.flags.contains(bun_ast::flags::Property::IsSpread) {
+                if i + 1 != properties.len() {
+                    return None;
+                }
+                let bun_ast::binding::Data::BIdentifier(id) = prop.value.data else {
+                    return None;
+                };
+                rest_ref = Some((id.r#ref, prop.value.loc));
+                continue;
+            }
+            if prop.flags.contains(bun_ast::flags::Property::IsComputed) {
+                return None;
+            }
+            if prop.default_value.is_some() {
+                has_default = true;
+            }
+            if !matches!(prop.value.data, bun_ast::binding::Data::BIdentifier(_)) {
+                return None;
+            }
+            if prop.key.data.as_e_string().is_none() {
+                return None;
+            }
+        }
+        let has_rest = rest_ref.is_some();
+        // A rest binding or default value forces the caller to keep the
+        // destructure intact, so the named bindings must stay as plain locals
+        // too (no import-item rewrite, no synthetic S::Import).
+        let keep_decl = has_rest || has_default;
+        let make_import_items = make_import_items && !keep_decl;
+        let arena = self.arena;
+        for prop in properties {
+            if prop.flags.contains(bun_ast::flags::Property::IsSpread) {
+                continue;
+            }
+            let alias: &'a [u8] = prop
+                .key
+                .data
+                .as_e_string()
+                .expect("infallible: checked above")
+                .slice(arena);
+            let bun_ast::binding::Data::BIdentifier(id) = prop.value.data else {
+                unreachable!();
+            };
+            let local_ref = id.r#ref;
+            if make_import_items {
+                self.is_import_item.insert(local_ref, ());
+                // The original code is `const {x} = await import(...)` — `x`
+                // is `undefined` at runtime when the importee has no `x`
+                // export. Mark Generated so the linker warns (not errors) and
+                // rewrites to `void 0` on a NoMatch.
+                self.symbols[local_ref.inner_index() as usize].import_item_status =
+                    bun_ast::ImportItemStatus::Generated;
+            }
+            self.import_items_for_namespace
+                .get_mut(&namespace_ref)
+                .unwrap()
+                .put(
+                    alias,
+                    LocRef {
+                        loc: prop.key.loc,
+                        ref_: Some(local_ref),
+                    },
+                )
+                .expect("oom");
+        }
+        if let Some((rest, loc)) = rest_ref {
+            self.import_items_for_namespace
+                .insert(rest, ImportItemForNamespaceMap::default());
+            self.track_only_dynamic_import_namespaces.insert(rest, ());
+            self.imports_to_convert_from_dynamic_import
+                .push(DeferredImportNamespace {
+                    namespace: LocRef {
+                        loc,
+                        ref_: Some(rest),
+                    },
+                    import_record_id,
+                    scope: Some(self.current_scope),
+                });
+        }
+        Some(keep_decl)
+    }
+
     pub fn transpose_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         // The argument must be a string
         if let Some(mut str_) = arg.data.as_e_string() {
@@ -1104,11 +1219,50 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.import_records_for_current_part
                 .push(import_record_index);
 
+            // Mint a namespace symbol for this import() so that property
+            // accesses / destructuring of the awaited result can be recorded
+            // as import items and tree-shaken. The single recorded usage marks
+            // the namespace as "escaped" until a consumer (`s_local`,
+            // `maybe_rewrite_property_access`, `.then` lowering) accounts for
+            // it via `ignore_usage`.
+            let namespace_ref = if self.options.bundle
+                && self.options.output_format != options::Format::InternalBakeDev
+            {
+                let path_name = fs::PathName::init(str_.slice(self.arena));
+                let name: &'a [u8] = bun_alloc::arena_format!(
+                    in self.arena,
+                    "import_{}",
+                    bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
+                )
+                .into_bump_str()
+                .as_bytes();
+                let ns = self
+                    .new_symbol(js_ast::symbol::Kind::Other, name)
+                    .expect("oom");
+                VecExt::append(&mut self.module_scope_mut().generated, ns);
+                self.import_items_for_namespace
+                    .insert(ns, ImportItemForNamespaceMap::default());
+                self.record_usage(ns);
+                self.imports_to_convert_from_dynamic_import
+                    .push(DeferredImportNamespace {
+                        namespace: LocRef {
+                            loc: arg.loc,
+                            ref_: Some(ns),
+                        },
+                        import_record_id: import_record_index,
+                        scope: Some(self.current_scope),
+                    });
+                ns
+            } else {
+                Ref::NONE
+            };
+
             return self.new_expr(
                 E::Import {
                     expr: arg,
                     import_record_index,
                     options: state.import_options,
+                    namespace_ref,
                 },
                 state.loc,
             );
@@ -1132,6 +1286,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 expr: arg,
                 options: state.import_options,
                 import_record_index: u32::MAX,
+                namespace_ref: Ref::NONE,
             },
             state.loc,
         )
@@ -1286,6 +1441,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 loc: arg.loc,
                             },
                             import_record_id: import_record_index,
+                            scope: None,
                         });
                     self.import_items_for_namespace
                         .insert(namespace_ref, ImportItemForNamespaceMap::default());
@@ -8769,6 +8925,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             exports_kind,
             named_imports: core::mem::take(&mut *self.named_imports),
             named_exports: core::mem::take(&mut self.named_exports),
+            dynamic_import_aliases: core::mem::take(&mut self.dynamic_import_aliases),
             import_keyword: self.esm_import_keyword,
             export_keyword: self.esm_export_keyword,
             top_level_symbols_to_parts,
@@ -9141,6 +9298,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             declared_symbols_for_reuse: Default::default(),
             runtime_imports: RuntimeImports::default(),
             imports_to_convert_from_require: BumpVec::new_in(arena),
+            imports_to_convert_from_dynamic_import: BumpVec::new_in(arena),
+            dynamic_import_aliases: Default::default(),
+            track_only_dynamic_import_namespaces: Default::default(),
             unwrap_all_requires,
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,

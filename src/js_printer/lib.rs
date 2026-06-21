@@ -2789,7 +2789,10 @@ pub mod __gated_printer {
                 }
 
                 // Internal "import()" of async ESM
-                if record.kind == ImportKind::Dynamic && meta.is_wrapper_async {
+                if record.kind == ImportKind::Dynamic
+                    && meta.is_wrapper_async
+                    && meta.wrapper_ref.is_valid()
+                {
                     self.print_space_before_identifier();
                     self.print_symbol(meta.wrapper_ref);
                     self.print(b"()");

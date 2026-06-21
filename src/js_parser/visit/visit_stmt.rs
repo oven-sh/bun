@@ -1145,6 +1145,90 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         data.decls.truncate(new_len);
 
+        // `const|let|var <binding> = await import("str")` — record which
+        // exports of the importee are used so the linker can tree-shake the
+        // rest. For `const {x}` in inline (non-splitting) mode the bindings
+        // become import items and the whole declaration is dropped; every
+        // other shape (split mode, `let`/`var`, identifier binding, exported
+        // decl, multi-declarator) keeps the statement verbatim and only
+        // tracks aliases.
+        if p.options.bundle {
+            let single = data.decls.len_u32() == 1;
+            let is_const = data.kind == S::Kind::KConst;
+            let is_var = data.kind == S::Kind::KVar;
+            for decl_i in 0..data.decls.len_u32() as usize {
+                let decl = &data.decls.slice()[decl_i];
+                let Some(value) = decl.value else { continue };
+                let js_ast::ExprData::EAwait(aw) = value.data else { continue };
+                let js_ast::ExprData::EImport(im) = aw.value.data else { continue };
+                if !im.namespace_ref.is_valid() {
+                    continue;
+                }
+                // Only a single-declarator non-exported `const` may be
+                // hoisted to a synthetic top-level import. `let`/`var`
+                // bindings can be reassigned (turning them into immutable
+                // import items would break that); multi-declarator drops are
+                // not implemented.
+                let inline = single && is_const && !p.options.code_splitting && !data.is_export;
+                match decl.binding.data {
+                    js_ast::binding::Data::BObject(obj) => {
+                        let Some(keep_decl) = p.try_track_dynamic_import_destructure(
+                            im.namespace_ref,
+                            im.import_record_index,
+                            obj.properties(),
+                            inline,
+                        ) else {
+                            continue;
+                        };
+                        p.ignore_usage(im.namespace_ref);
+                        if inline && !keep_decl {
+                            return Ok(());
+                        }
+                    }
+                    js_ast::binding::Data::BIdentifier(id) if !data.is_export => {
+                        // `var ns` redeclaration resolves to the same ref;
+                        // re-registering would clobber the alias map populated
+                        // between the two decls (rspack gates on `kind != var`
+                        // for this reason).
+                        if is_var {
+                            continue;
+                        }
+                        // `const|let ns = await import("str")` — register `ns`
+                        // as a namespace so later `ns.foo` accesses are
+                        // recorded. In split mode the access stays as `ns.foo`
+                        // (track only); in inline mode it is rewritten to an
+                        // import item so the importee tree-shakes. The
+                        // declaration is kept either way: when fully tracked
+                        // it prints as `await Promise.resolve()` (a dead
+                        // binding), and when `ns` escapes the record stays
+                        // untracked so the wrapped namespace is assigned as
+                        // before.
+                        let local = id.r#ref;
+                        if p.import_items_for_namespace.contains_key(&local) {
+                            continue;
+                        }
+                        p.import_items_for_namespace
+                            .insert(local, crate::parser::ImportItemForNamespaceMap::default());
+                        if !inline {
+                            p.track_only_dynamic_import_namespaces.insert(local, ());
+                        }
+                        p.ignore_usage(im.namespace_ref);
+                        p.imports_to_convert_from_dynamic_import.push(
+                            crate::parser::DeferredImportNamespace {
+                                namespace: bun_ast::LocRef {
+                                    loc: decl.binding.loc,
+                                    ref_: Some(local),
+                                },
+                                import_record_id: im.import_record_index,
+                                scope: Some(p.current_scope),
+                            },
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // Handle being exported inside a namespace
         if data.is_export && p.enclosing_namespace_arg_ref.is_some() {
             for d in data.decls.slice() {

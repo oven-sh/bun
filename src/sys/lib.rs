@@ -6171,6 +6171,16 @@ pub fn ohos_sign_binary_bytes(path: &[u8]) {
     ohos_sign_binary(zstr);
 }
 
+/// C-compatible entry point for `dlopen` — called from C++ as `Bun__dlopen`.
+/// OHOS needs this Rust wrapper (rather than bare `libc::dlopen`) to handle
+/// OHOS dlopen restrictions (see Appendix C in plan file).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__dlopen(path: *const c_char, flags: c_int) -> *mut c_void {
+    // SAFETY: caller guarantees `path` is a valid NUL-terminated C string.
+    let z = unsafe { ZStr::from_c_ptr(path) };
+    dlopen(z, flags).unwrap_or(core::ptr::null_mut())
+}
+
 /// `dlopen(filename, flags)`. Windows → `LoadLibraryA`.
 pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
     #[cfg(unix)]

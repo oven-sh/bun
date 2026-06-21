@@ -468,6 +468,13 @@ void us_socket_ipc_recv_pending(struct us_socket_t *s) {
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return;
     }
+    /* This recv would reuse the shared recv_buf. If another socket's on_data is
+     * still on the stack (it drained microtasks, which ran us here), recv'ing now
+     * would clobber the bytes that frame has not consumed yet. Leave them for the
+     * next poll in that case; delivery is just deferred, not lost. */
+    if (us_internal_recv_buf_is_busy()) {
+        return;
+    }
     us_internal_dispatch_ready_poll((struct us_poll_t *) s, 0, 0, LIBUS_SOCKET_READABLE);
 #endif
 }

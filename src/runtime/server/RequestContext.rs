@@ -2084,15 +2084,6 @@ where
                             |this, off, resp| Self::on_writable_response_stream(this, off, resp),
                             std::ptr::from_mut::<Self>(this),
                         );
-                        // Root the controller cell while we own the sink: see
-                        // `HTTPServerWritable::controller_strong`. Released
-                        // when `destroy_sink` drops the box.
-                        if let Some(ptr) = response_stream.sink.signal.ptr {
-                            response_stream.sink.controller_strong = jsc::strong::Optional::create(
-                                JSValue::from_encoded(ptr.as_ptr() as usize),
-                                global_this,
-                            );
-                        }
 
                         // TODO: should this timeout?
                         let body_value = this.response_weakref.get().unwrap().get_body_value();

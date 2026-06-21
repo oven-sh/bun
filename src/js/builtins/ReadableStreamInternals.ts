@@ -880,29 +880,9 @@ export function assignStreamIntoResumableSink(stream, sink) {
 }
 
 // Bound (via `this`) to readStreamIntoSink's per-request state object so the
-// callbacks the native sink stores in m_onPull/m_onClose hold only that small
-// state, not the whole readStreamIntoSink activation. The native sink fires
-// the drain callback (signal.ready -> m_onPull) once the socket has room
-// again; resolving the parked capability resumes the read loop. The close
-// callback resumes the same waiter so an abort while paused does not hang.
-export function readStreamIntoSinkOnDrain(this: { drainCapability: any }) {
-  var cap = this.drainCapability;
-  if (cap) {
-    this.drainCapability = undefined;
-    cap.resolve.$call();
-  }
-}
-
-export function readStreamIntoSinkOnClose(
-  this: { drainCapability: any; didThrow: boolean; didClose: boolean },
-  stream,
-  reason,
-) {
-  var cap = this.drainCapability;
-  if (cap) {
-    this.drainCapability = undefined;
-    cap.resolve.$call();
-  }
+// onClose callback the native sink stores in m_onClose holds only that small
+// state, not the whole readStreamIntoSink activation.
+export function readStreamIntoSinkOnClose(this: { didThrow: boolean; didClose: boolean }, stream, reason) {
   if (!this.didThrow && !this.didClose && stream && stream.$state !== $streamClosed) {
     $readableStreamCancel(stream, reason);
   }
@@ -912,10 +892,9 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
   var started = false;
   const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark") || 0;
 
-  // Mutable state the sink callbacks need; bound below so they don't capture
-  // this function's scope.
-  var state = { __proto__: null, didThrow: false, didClose: false, drainCapability: undefined };
-  var onSinkDrain = isNative ? $readStreamIntoSinkOnDrain.bind(state) : undefined;
+  // Mutable state onSinkClose needs; bound so it does not capture this
+  // function's scope.
+  var state = { __proto__: null, didThrow: false, didClose: false };
   var onSinkClose = isNative ? $readStreamIntoSinkOnClose.bind(state) : undefined;
 
   try {
@@ -927,7 +906,7 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       // abort, for example. So we have to start it, if only so that we can
       // receive a notification when it closes or cancels.
       // https://github.com/oven-sh/bun/issues/6758
-      if (isNative) $startDirectStream.$call(sink, stream, onSinkDrain, onSinkClose, stream.$asyncContext);
+      if (isNative) $startDirectStream.$call(sink, stream, undefined, onSinkClose, stream.$asyncContext);
       sink.start({ highWaterMark });
       started = true;
 
@@ -939,16 +918,18 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
     }
 
     if (!started) {
-      if (isNative) $startDirectStream.$call(sink, stream, onSinkDrain, onSinkClose, stream.$asyncContext);
+      if (isNative) $startDirectStream.$call(sink, stream, undefined, onSinkClose, stream.$asyncContext);
       sink.start({ highWaterMark });
     }
 
     for (var i = 0, values = many.value, length = many.value.length; i < length; i++) {
-      // A negative result means the bytes were accepted but the transport is
-      // backed up; pause until the sink's drain signal fires.
-      if (sink.write(values[i]) < 0 && isNative) {
-        var cap = (state.drainCapability = $newPromiseCapability(Promise));
-        await cap.promise;
+      // The native sink returns its pending-flush Promise when the transport
+      // is backed up; await it (only if still pending — an already-drained
+      // socket resolves it before we get here) so we stop pulling until the
+      // socket catches up.
+      var wrote = sink.write(values[i]);
+      if ($isPromise(wrote) && $isPromisePending(wrote)) {
+        await wrote;
       }
     }
     values = many = undefined;
@@ -966,9 +947,9 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
         return sink.end();
       }
 
-      if (sink.write(value) < 0 && isNative) {
-        var cap = (state.drainCapability = $newPromiseCapability(Promise));
-        await cap.promise;
+      var wrote = sink.write(value);
+      if ($isPromise(wrote) && $isPromisePending(wrote)) {
+        await wrote;
       }
     }
   } catch (e) {

@@ -2582,8 +2582,11 @@ it("type: direct stream awaiting controller.flush(true) under backpressure does 
         async pull(controller) {
           pullEntries++;
           for (let i = 0; i < TOTAL_CHUNKS; i++) {
-            if (controller.write(CHUNK) < 0) {
-              await controller.flush(true);
+            const wrote = controller.write(CHUNK);
+            // write() returns the pending-flush promise when the socket is
+            // backed up; await it to pause until the drain.
+            if (wrote && typeof wrote.then === "function") {
+              await wrote;
             }
             writes++;
           }

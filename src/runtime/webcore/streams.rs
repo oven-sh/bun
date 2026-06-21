@@ -406,10 +406,11 @@ pub enum Writable {
     Err(SysError),
     Done,
     Owned(BlobSizeType),
-    /// `len` bytes were accepted, but the transport is now backed up. The
-    /// writer should pause until the sink's drain signal (`signal.ready()`).
-    /// `to_js()` returns the negated count so JS can branch on `< 0`.
-    Backpressure(BlobSizeType),
+    /// The bytes were accepted, but the transport is now backed up. Carries
+    /// the sink's `pending_flush` promise (already protected by the sink),
+    /// resolved by `flush_promise()` once the socket drains. `to_js()` returns
+    /// the promise so JS can await it only when still pending.
+    Backpressure(*mut JSPromise),
     OwnedAndDone(BlobSizeType),
     TemporaryAndDone(BlobSizeType),
     Temporary(BlobSizeType),
@@ -578,7 +579,10 @@ impl Writable {
                 JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js()
             }
             Writable::Owned(len) => JSValue::from(len),
-            Writable::Backpressure(len) => JSValue::js_number(-(len.max(1) as f64)),
+            // The sink owns this promise (kept alive via `protect()` in
+            // `pending_flush_promise`); hand the same value to the caller.
+            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+            Writable::Backpressure(prom) => JSPromise::opaque_ref(prom).to_js(),
             Writable::OwnedAndDone(len) => JSValue::from(len),
             Writable::TemporaryAndDone(len) => JSValue::from(len),
             Writable::Temporary(len) => JSValue::from(len),
@@ -1096,14 +1100,6 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub ctx: Option<*mut c_void>,
 
     pub auto_flusher: AutoFlusher,
-
-    /// GC root for the JS controller cell while the streaming promise is
-    /// pending. While the JS reader loop is parked on a drain promise (no
-    /// pending `reader.read()` to root it via the stream), nothing else keeps
-    /// the controller — and so this sink — reachable. Set by RequestContext in
-    /// the pending-promise branch of `do_render_stream`; released when the
-    /// owning RequestContext drops this struct via `destroy()`.
-    pub controller_strong: crate::webcore::jsc::strong::Optional,
 }
 
 impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTTP3> {
@@ -1128,7 +1124,6 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
             on_first_write: None,
             ctx: None,
             auto_flusher: AutoFlusher::default(),
-            controller_strong: crate::webcore::jsc::strong::Optional::empty(),
         }
     }
 }
@@ -1279,16 +1274,36 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.has_backpressure && self.end_len > 0
     }
 
-    /// `len` bytes were accepted by `send`/`send_readable`. Surface uWS's
-    /// real backpressure signal to JS so the producer can pause until
-    /// `on_writable` fires the drain signal.
+    /// `len` bytes were accepted by `send`/`send_readable`. When uWS reports
+    /// the socket is now backed up, return the (lazily created) `pending_flush`
+    /// promise so the JS writer can await the drain; `on_writable` resolves it
+    /// via `flush_promise()`. Otherwise just report the byte count.
     #[inline]
-    fn writable_result(&self, len: BlobSizeType) -> Writable {
+    fn writable_result(&mut self, len: BlobSizeType) -> Writable {
         if self.has_backpressure && !self.done && !self.requested_end {
-            Writable::Backpressure(len)
+            Writable::Backpressure(self.pending_flush_promise())
         } else {
             Writable::Owned(len)
         }
+    }
+
+    /// Park (or reuse) the `pending_flush` promise that `on_writable` →
+    /// `flush_promise()` resolves once the socket drains. Same promise as
+    /// `flush_from_js(true)` would return. `global_this` is installed at sink
+    /// construction (before any write), so it is always available here.
+    fn pending_flush_promise(&mut self) -> *mut JSPromise {
+        if let Some(prom) = self.pending_flush {
+            return prom;
+        }
+        self.wrote_at_start_of_flush = self.wrote;
+        let prom: *mut JSPromise = std::ptr::from_mut(JSPromise::create(self.global_this()));
+        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+        let value = JSPromise::opaque_ref(prom).to_js();
+        // Keep it alive until `flush_promise`/`destroy` releases the root. This
+        // also roots the JS writer's await chain while it is parked here.
+        value.protect();
+        self.pending_flush = Some(prom);
+        prom
     }
 
     fn send_without_auto_flusher(&mut self, buf: &[u8]) -> bool {
@@ -1443,9 +1458,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         // Streaming-write drain: uWS already holds the data (our buffer is
-        // empty), so there is nothing to resend. Resolve any flush waiter and
-        // signal the JS writer it can resume. Handled before the try_end resend
-        // bookkeeping below, which assumes a non-empty buffer.
+        // empty), so there is nothing to resend. Resolve any flush(true) waiter
+        // — that promise is the resume signal for both readStreamIntoSink and
+        // direct-stream callers. Handled before the try_end resend bookkeeping
+        // below, which assumes a non-empty buffer.
         if self.readable_slice().is_empty() {
             if self.done {
                 self.signal.close(None);
@@ -1453,15 +1469,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 self.finalize();
                 return true;
             }
-            // If a flush(true) waiter was parked, resolving it is the resume
-            // signal — don't also fire signal.ready(), which for direct
-            // streams re-invokes the user's pull(controller) and would run a
-            // second pull while the first is still suspended on the await.
-            let had_flush_waiter = self.pending_flush.is_some();
             let _ = self.flush_promise(); // TODO: properly propagate exception upwards
-            if !had_flush_waiter && !self.done && !self.requested_end && !self.has_backpressure() {
-                self.signal.ready(None, None);
-            }
             return true;
         }
 
@@ -1504,13 +1512,11 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         // flush the javascript promise from calling .flush()
-        let had_flush_waiter = self.pending_flush.is_some();
         let _ = self.flush_promise(); // TODO: properly propagate exception upwards
 
         // pending_flush or callback could have caused another send()
-        // so we check again if we should report readiness. Skip when a
-        // flush(true) waiter was just resolved — see the empty-buffer branch.
-        if !had_flush_waiter && !self.done && !self.requested_end && !self.has_backpressure() {
+        // so we check again if we should report readiness
+        if !self.done && !self.requested_end && !self.has_backpressure() {
             // no pending and total_written > 0
             if total_written > 0 && self.readable_slice().is_empty() {
                 self.signal.ready(Some(total_written as BlobSizeType), None);

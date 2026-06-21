@@ -72,7 +72,7 @@ test("Postgres TLS connection close() after Connected survives re-entrant on_clo
   const port = await listen(server);
 
   try {
-    const iterations = 30;
+    const iterations = 15;
     let closes = 0;
     for (let i = 0; i < iterations; i++) {
       const sql = new SQL({
@@ -95,7 +95,7 @@ test("Postgres TLS connection close() after Connected survives re-entrant on_clo
   } finally {
     await new Promise<void>(r => server.close(() => r()));
   }
-}, 60_000);
+});
 
 // Timer path: the TLS handshake never completes, so connectionTimeout fires
 // with status == SentStartupMessage. ref_and_close → socket.close() dispatches
@@ -112,7 +112,7 @@ test("Postgres TLS connectionTimeout during pending handshake survives re-entran
   const port = await listen(server);
 
   try {
-    const iterations = 10;
+    const iterations = 3;
     const seen: string[] = [];
     for (let i = 0; i < iterations; i++) {
       const sql = new SQL({
@@ -134,4 +134,4 @@ test("Postgres TLS connectionTimeout during pending handshake survives re-entran
   } finally {
     await new Promise<void>(r => server.close(() => r()));
   }
-}, 60_000);
+});

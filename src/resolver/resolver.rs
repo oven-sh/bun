@@ -360,7 +360,6 @@ use crate::dir_info::HashMapExt as _;
 pub struct Bufs {
     pub extension_path: PathBuffer,
     pub tsconfig_match_full_buf: PathBuffer,
-    pub tsconfig_match_full_buf2: PathBuffer,
     pub tsconfig_match_full_buf3: PathBuffer,
 
     pub esm_subpath: [u8; 512],

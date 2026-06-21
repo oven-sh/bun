@@ -30,7 +30,7 @@ pub struct ImportRecord {
     // &'static [u8] as a placeholder.
     pub original_path: &'static [u8],
 
-    /// Pack all boolean flags into 2 bytes to reduce padding overhead.
+    /// Pack all boolean flags into 4 bytes to reduce padding overhead.
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
     pub flags: Flags,
 }

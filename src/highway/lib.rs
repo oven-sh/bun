@@ -614,7 +614,7 @@ pub fn parse_mappings(
 
     // SAFETY: `bytes` is a valid readable range; `out.generated` and
     // `out.original` are each writable for `2*cap` i32s, `out.src_idx` and
-    // `out.name_idx` for `cap` i32s; `state` is a `#[repr(C)]` struct of 8
+    // `out.name_idx` for `cap` i32s; `state` is a `#[repr(C)]` struct of 10
     // contiguous i32s matching the kernel's `kSt*` indices; `err_at` is a
     // valid write target. The kernel writes at most `cap` rows and never
     // reads past `bytes.len()`.

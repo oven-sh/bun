@@ -5,7 +5,7 @@
 // decode) and the full mapping list must be byte-identical.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 
 const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -45,7 +45,7 @@ async function dumpMappings(
   namesLen: number,
   probes: Array<[number, number]>,
   disableSimd: boolean,
-): Promise<{ entries: Entry[]; error: string | null }> {
+): Promise<{ entries: Entry[]; error: string | null; debug: string }> {
   const sources = Array.from({ length: sourcesLen }, (_, i) => `s${i}.js`);
   const names = Array.from({ length: namesLen }, (_, i) => `n${i}`);
   const script = `
@@ -78,6 +78,9 @@ async function dumpMappings(
   } else {
     delete env.BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP;
   }
+  // Debug builds only: enable the SourceMap scoped log so the caller can
+  // verify the SIMD path actually fired (see assertSimdMatchesScalar).
+  if (isDebug) env.BUN_DEBUG_SourceMap = "1";
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
     env,
@@ -88,7 +91,12 @@ async function dumpMappings(
   if (exitCode !== 0) {
     throw new Error(`child exited ${exitCode}\nstderr: ${stderr}\nstdout: ${stdout}`);
   }
-  return JSON.parse(stdout);
+  // Scoped debug logs (BUN_DEBUG_SourceMap) go to stdout; the JSON payload
+  // is the final line with no trailing newline.
+  const lines = stdout.split("\n");
+  const json = lines[lines.length - 1];
+  const debug = lines.slice(0, -1).join("\n") + stderr;
+  return { ...JSON.parse(json), debug };
 }
 
 // Build a mappings string from a list of generated lines, each a list of
@@ -146,6 +154,13 @@ async function assertSimdMatchesScalar(
   ]);
   expect({ label, error: simd.error }).toEqual({ label, error: scalar.error });
   expect({ label, entries: simd.entries }).toEqual({ label, entries: scalar.entries });
+  // Prove the SIMD path actually ran (debug builds only: the scoped log is
+  // compiled out of release). Guards against the feature flag or threshold
+  // silently routing both children through the scalar path.
+  if (isDebug) {
+    expect({ label, simdRan: simd.debug.includes("simd consumed") }).toEqual({ label, simdRan: true });
+    expect({ label, scalarRan: scalar.debug.includes("simd consumed") }).toEqual({ label, scalarRan: false });
+  }
   return scalar;
 }
 
@@ -212,6 +227,28 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     expect(mappings.length).toBeGreaterThanOrEqual(128);
     const scalar = await assertSimdMatchesScalar("4-5-mixed", mappings, sourcesLen, namesLen, probes);
     expect(scalar.error).toBeNull();
+  });
+
+  test("4-field rows before the first 5-field segment keep name: null", async () => {
+    // WithoutNames -> WithNames promotion: scalar copies pre-promotion rows
+    // with name_index = -1 (to_named()), so rows before the first 5-field
+    // segment resolve to name: null, and 4-field rows AFTER it carry the
+    // previous 5-field's name forward. The first 5-field is placed in the
+    // same SIMD chunk as the preceding 4-field rows so the backfill path
+    // is exercised.
+    const segs: number[][] = [];
+    for (let i = 0; i < 80; i++) segs.push([1, 0, 0, 1]);
+    segs.push([1, 0, 0, 1, 0]); // first 5-field at index 80
+    for (let i = 0; i < 60; i++) segs.push([1, 0, 0, 1]);
+    const { mappings, probes, sourcesLen, namesLen } = build([segs]);
+    expect(mappings.length).toBeGreaterThanOrEqual(128);
+    const scalar = await assertSimdMatchesScalar("name-promotion", mappings, sourcesLen, namesLen, probes);
+    expect(scalar.error).toBeNull();
+    expect(scalar.entries[0].name).toBeNull();
+    expect(scalar.entries[79].name).toBeNull();
+    expect(scalar.entries[80].name).toBe("n0");
+    expect(scalar.entries[81].name).toBe("n0");
+    expect(scalar.entries[139].name).toBe("n0");
   });
 
   test("1-field (generated-column-only) segments are skipped but accumulate", async () => {

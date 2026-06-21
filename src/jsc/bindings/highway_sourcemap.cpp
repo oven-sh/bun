@@ -161,7 +161,10 @@ static inline int32_t DecodeVlqSextets(const uint8_t* sextets, uint64_t cont,
     uint32_t shift = 0;
     for (;;) {
         const uint32_t s = sextets[p];
-        vlq |= (s & 31u) << shift;
+        // `& 31u` matches the scalar decoder (src/base64/lib.rs::decode_impl)
+        // so an over-long (>= 8-byte) VLQ produces the same garbage value
+        // here as it does there, instead of a shift-width-UB.
+        vlq |= (s & 31u) << (shift & 31u);
         const bool more = (cont >> p) & 1;
         p += 1;
         if (!more || p >= end)
@@ -169,6 +172,23 @@ static inline int32_t DecodeVlqSextets(const uint8_t* sextets, uint64_t cont,
         shift += 5;
     }
     return SignMag(vlq);
+}
+
+// Wrapping i32 add/sub. Signed overflow is UB in C++; the Rust scalar path
+// (`Ordinal::add_scalar`, release build) wraps, and the subsequent `< 0`
+// range check catches the wrapped result. Doing the arithmetic in the
+// unsigned domain gives the same defined-wrap behaviour here. With the
+// accumulator in [0, i32::MAX] (range-checked on the previous segment) and
+// |delta| <= i32::MAX (the VLQ's sign-magnitude domain), every out-of-range
+// sum lands in [i32::MIN, 0) after the wrap, so `< 0` is the complete
+// range check.
+static inline int32_t WrapAdd(int32_t a, int32_t b)
+{
+    return static_cast<int32_t>(static_cast<uint32_t>(a) + static_cast<uint32_t>(b));
+}
+static inline int32_t WrapSub(int32_t a, int32_t b)
+{
+    return static_cast<int32_t>(static_cast<uint32_t>(a) - static_cast<uint32_t>(b));
 }
 
 } // namespace sourcemap_vlq
@@ -347,12 +367,12 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             const int32_t nv = has_names ? name_idx : -1;
             for (size_t k = 0; k < kSeg5; ++k) {
                 const int32_t d0 = dp[0];
-                gen_col += d0;
+                gen_col = WrapAdd(gen_col, d0);
                 sort |= d0;
-                src_idx += dp[1];
-                orig_line += dp[2];
-                orig_col += dp[3];
-                range |= gen_col | src_idx | (sources_count - 1 - src_idx)
+                src_idx = WrapAdd(src_idx, dp[1]);
+                orig_line = WrapAdd(orig_line, dp[2]);
+                orig_col = WrapAdd(orig_col, dp[3]);
+                range |= gen_col | src_idx | WrapSub(sources_count - 1, src_idx)
                     | orig_line | orig_col;
                 og[2 * k] = gen_line;
                 og[2 * k + 1] = gen_col;
@@ -405,13 +425,13 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 // N < 64; for N == 64 an all-';' block makes ~semi == 0.
                 const uint64_t ns = ~semi;
                 if (HWY_UNLIKELY(ns == 0)) {
-                    gen_line += static_cast<int32_t>(N);
+                    gen_line = WrapAdd(gen_line, static_cast<int32_t>(N));
                     gen_col = 0;
                     p = N;
                     break;
                 }
                 const size_t run = static_cast<size_t>(hwy::Num0BitsBelowLS1Bit_Nonzero64(ns));
-                gen_line += static_cast<int32_t>(run);
+                gen_line = WrapAdd(gen_line, static_cast<int32_t>(run));
                 gen_col = 0;
                 delim >>= run;
                 semi >>= run;
@@ -487,7 +507,7 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             // Accumulate and range-check. On any out-of-range value, bail at
             // this segment's start WITHOUT committing: scalar re-decodes it
             // and reports the exact same ParseResult::Fail as before.
-            const int32_t n_gen_col = gen_col + d_gen;
+            const int32_t n_gen_col = WrapAdd(gen_col, d_gen);
             if (HWY_UNLIKELY(n_gen_col < 0))
                 goto bail;
 
@@ -502,10 +522,10 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 continue;
             }
 
-            const int32_t n_src_idx = src_idx + d_src;
-            const int32_t n_orig_line = orig_line + d_ol;
-            const int32_t n_orig_col = orig_col + d_oc;
-            if (HWY_UNLIKELY((n_src_idx | (sources_count - 1 - n_src_idx)
+            const int32_t n_src_idx = WrapAdd(src_idx, d_src);
+            const int32_t n_orig_line = WrapAdd(orig_line, d_ol);
+            const int32_t n_orig_col = WrapAdd(orig_col, d_oc);
+            if (HWY_UNLIKELY((n_src_idx | WrapSub(sources_count - 1, n_src_idx)
                                  | n_orig_line | n_orig_col)
                     < 0))
                 goto bail;
@@ -517,7 +537,7 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             orig_line = n_orig_line;
             orig_col = n_orig_col;
             if (field_count == 5) {
-                name_idx += d_name;
+                name_idx = WrapAdd(name_idx, d_name);
                 has_names = 1;
             }
 

@@ -870,6 +870,19 @@ test.concurrent("--isolate: require(esm) caches a BunTranspiledModule SourceProv
   }
 });
 
+// LeakSanitizer only exists in ASAN builds, and `detect_leaks=1` is a
+// startup error on platforms without LSan (macOS arm64); the CI lane
+// that leak-checks is linux x64-asan.
+const leakCheckEnv = {
+  ...bunEnv,
+  // The CI runner sets this for outer test processes; the exit path
+  // must be leak-clean without the full destruct-on-exit teardown too.
+  BUN_DESTRUCT_VM_ON_EXIT: undefined,
+  BUN_TEST_PARALLEL_SCALE_MS: "0",
+  ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1",
+  LSAN_OPTIONS: `malloc_context_size=30:print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "leaksan.supp")}`,
+};
+
 // At exit, the final file's `expect()` wrapper boxes (and the `RefData` /
 // `BunTestCell` they pin) are freed only by GC finalizers, and no collection
 // used to run between the last test and `exit()`. With LeakSanitizer active
@@ -885,19 +898,6 @@ describe.concurrent("exit is leak-clean under LeakSanitizer", () => {
       test("f${i}", () => { expect(1 + 1).toBe(2); });
     `;
   }
-
-  // LeakSanitizer only exists in ASAN builds, and `detect_leaks=1` is a
-  // startup error on platforms without LSan (macOS arm64); the CI lane
-  // that leak-checks is linux x64-asan.
-  const leakCheckEnv = {
-    ...bunEnv,
-    // The CI runner sets this for outer test processes; the exit path
-    // must be leak-clean without the full destruct-on-exit teardown too.
-    BUN_DESTRUCT_VM_ON_EXIT: undefined,
-    BUN_TEST_PARALLEL_SCALE_MS: "0",
-    ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1",
-    LSAN_OPTIONS: `malloc_context_size=30:print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "leaksan.supp")}`,
-  };
 
   test.skipIf(!isASAN || !isLinux).each([
     ["serial", []],
@@ -920,5 +920,88 @@ describe.concurrent("exit is leak-clean under LeakSanitizer", () => {
     expect(stderr).not.toContain("LeakSanitizer");
     expect(stderr).toContain(`${FILE_COUNT} pass`);
     expect(exitCode).toBe(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/32183
+// Failing runs must exit 1 (not SIGABRT from LeakSanitizer's exit scan):
+// printing a failure caches a ParsedSourceMap in the saved-source-map table,
+// and --bail used to Global::exit(1) mid-run with no teardown at all.
+describe.concurrent("failing exits are leak-clean under LeakSanitizer", () => {
+  const runLeakChecked = async (args: string[], files: Record<string, string>) => {
+    using dir = tempDir("test-fail-exit-lsan", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args, "."],
+      env: leakCheckEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  test.skipIf(!isASAN || !isLinux)("failing test, serial", async () => {
+    const { stderr, exitCode } = await runLeakChecked([], {
+      "a.test.js": `
+        import { test, expect } from "bun:test";
+        test("fails", () => { expect(1 + 1).toBe(3); });
+      `,
+    });
+    expect(stderr).not.toContain("LeakSanitizer");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test.skipIf(!isASAN || !isLinux)("failing test, --parallel", async () => {
+    // The failure prints (and caches a source map) inside the worker, whose
+    // abort would not change the coordinator's exit code, so the stderr
+    // assertion is the load-bearing one.
+    const { stderr, exitCode } = await runLeakChecked(["--parallel=2"], {
+      "a.test.js": `
+        import { test, expect } from "bun:test";
+        test("fails", () => { expect(1 + 1).toBe(3); });
+      `,
+      "b.test.js": `
+        import { test, expect } from "bun:test";
+        test("passes", () => { expect(1 + 1).toBe(2); });
+      `,
+    });
+    expect(stderr).not.toContain("LeakSanitizer");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test.skipIf(!isASAN || !isLinux)("--bail mid-file", async () => {
+    const { stdout, stderr, exitCode } = await runLeakChecked(["--bail"], {
+      "a.test.js": `
+        import { test, expect } from "bun:test";
+        test("fails", () => { expect(1 + 1).toBe(3); });
+        test("after bail", () => { console.log("MARKER_AFTER_BAIL"); });
+      `,
+      "b.test.js": `
+        import { test, expect } from "bun:test";
+        test("also fails", () => { expect(1 + 1).toBe(3); });
+      `,
+    });
+    expect(stderr).not.toContain("LeakSanitizer");
+    expect(stderr).toContain("Bailed out after 1 failure");
+    // Nothing may run after the bail: not the rest of the bailing file...
+    expect(stdout).not.toContain("MARKER_AFTER_BAIL");
+    // ...and not the other file (whichever file ran first, it failed).
+    expect(stderr).toContain("Ran 1 test across 1 file.");
+    expect(exitCode).toBe(1);
+  });
+
+  test.skipIf(!isASAN || !isLinux)("--bail on module evaluation failure", async () => {
+    const { stderr, exitCode } = await runLeakChecked(["--bail"], {
+      "a.test.js": `
+        import { expect } from "bun:test";
+        expect(1 + 1).toBe(3);
+      `,
+    });
+    expect(stderr).not.toContain("LeakSanitizer");
+    expect(stderr).toContain("Bailed out after 1 failure");
+    expect(exitCode).toBe(1);
   });
 });

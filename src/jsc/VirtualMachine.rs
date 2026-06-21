@@ -2798,6 +2798,10 @@ pub enum IPCInstanceUnion {
     Waiting {
         fd: bun_sys::Fd,
         mode: crate::ipc::Mode,
+        /// Set when `NODE_UNIQUE_ID` was inherited, i.e. this is a
+        /// `node:cluster` worker. Captured at env-parse time because the
+        /// cluster module deletes the variable during its own setup.
+        cluster_worker: bool,
     },
     Initialized(*mut IPCInstance),
 }
@@ -2894,6 +2898,8 @@ impl IPCInstance {
 unsafe extern "C" {
     safe fn Process__emitMessageEvent(global: &JSGlobalObject, value: JSValue, handle: JSValue);
     safe fn Process__emitDisconnectEvent(global: &JSGlobalObject);
+    #[cfg(not(windows))]
+    safe fn Process__hasMessageListeners(global: &JSGlobalObject) -> bool;
 }
 
 /// `IPC.SendQueue` owner dispatch for the child-side `IPCInstance`. Mirrors
@@ -3238,6 +3244,11 @@ impl VirtualMachine {
                 .map(|i| map.map.swap_remove_at(i).1)
                 .and_then(|v| crate::ipc::Mode::from_string(&v.value))
                 .unwrap_or(crate::ipc::Mode::Json);
+            // `node:cluster` workers inherit `NODE_UNIQUE_ID`. Capture it here:
+            // the cluster module deletes the variable during its own setup, and
+            // its internal handshake must not be disturbed by the startup drain.
+            // Check presence only (cluster reads it from `process.env` in JS).
+            let cluster_worker = map.map.get_index(b"NODE_UNIQUE_ID").is_some();
             // Accept only
             // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
             // Parsing as `u32` then `as i32` would silently wrap values in
@@ -3246,7 +3257,7 @@ impl VirtualMachine {
                 .ok()
                 .filter(|&n| n >= 0)
             {
-                Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_uv(fd), mode),
+                Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_uv(fd), mode, cluster_worker),
                 None => bun_core::warn!(
                     "Failed to parse IPC channel number '{}'",
                     bstr::BStr::new(&fd_s[..])
@@ -6401,17 +6412,28 @@ impl VirtualMachine {
     }
 
     /// Records the inherited IPC fd/mode in the waiting state until JS attaches a listener.
-    pub fn init_ipc_instance(&mut self, fd: bun_sys::Fd, mode: crate::ipc::Mode) {
+    pub fn init_ipc_instance(&mut self, fd: bun_sys::Fd, mode: crate::ipc::Mode, cluster_worker: bool) {
         bun_core::scoped_log!(IPC, "initIPCInstance {:?}", fd);
-        self.ipc = Some(IPCInstanceUnion::Waiting { fd, mode });
+        self.ipc = Some(IPCInstanceUnion::Waiting {
+            fd,
+            mode,
+            cluster_worker,
+        });
     }
 
     /// Returns the initialized IPC instance, lazily creating it from the waiting fd/mode.
     pub fn get_ipc_instance(&mut self) -> Option<*mut IPCInstance> {
-        let (fd, mode) = match self.ipc.as_ref()? {
+        let (fd, mode, cluster_worker) = match self.ipc.as_ref()? {
             IPCInstanceUnion::Initialized(inst) => return Some(*inst),
-            IPCInstanceUnion::Waiting { fd, mode } => (*fd, *mode),
+            IPCInstanceUnion::Waiting {
+                fd,
+                mode,
+                cluster_worker,
+            } => (*fd, *mode, *cluster_worker),
         };
+        // Only the non-Windows startup-drain path reads this.
+        #[cfg(windows)]
+        let _ = cluster_worker;
 
         bun_core::scoped_log!(IPC, "getIPCInstance {:?}", fd);
 
@@ -6542,9 +6564,14 @@ impl VirtualMachine {
         // like Node, instead of one event-loop iteration later. Deferred rather
         // than read inline so the `message` handler never fires synchronously
         // from inside `process.on(...)` / `process.send(...)`.
+        //
+        // Skip cluster workers: their internal handshake runs on its own message
+        // protocol during bootstrap and must not be reordered by an early drain.
         #[cfg(not(windows))]
-        self.global()
-            .queue_microtask_callback(instance, ipc_drain_pending_microtask);
+        if !cluster_worker {
+            self.global()
+                .queue_microtask_callback(instance, ipc_drain_pending_microtask);
+        }
 
         Some(instance)
     }
@@ -6570,6 +6597,16 @@ unsafe extern "C" fn ipc_drain_pending_microtask(ctx: *mut core::ffi::c_void) {
     // SAFETY: scheduled during the same synchronous turn that created
     // `instance`; the microtask checkpoint runs at the end of that turn, before
     // the event loop could close the channel and free the instance.
+    // Reading a message with no `message` listener attached would decode and
+    // then drop it (`Process__emitMessageEvent` no-ops without a listener). The
+    // channel is also adopted lazily from `process.send()`, so a child that
+    // sends first and attaches its listener after an async gap would have the
+    // buffered message consumed here before the listener exists. Only drain
+    // when a listener is present; otherwise leave the bytes for the normal poll.
+    if !Process__hasMessageListeners(JSGlobalObject::opaque_ref(unsafe { (*instance).global_this }))
+    {
+        return;
+    }
     let socket = match unsafe { &(*instance).data.socket } {
         crate::ipc::SocketUnion::Open(s) => *s,
         _ => return,

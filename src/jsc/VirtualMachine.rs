@@ -3247,8 +3247,10 @@ impl VirtualMachine {
             // `node:cluster` workers inherit `NODE_UNIQUE_ID`. Capture it here:
             // the cluster module deletes the variable during its own setup, and
             // its internal handshake must not be disturbed by the startup drain.
-            // Check presence only (cluster reads it from `process.env` in JS).
-            let cluster_worker = map.map.get_index(b"NODE_UNIQUE_ID").is_some();
+            // Match the module's own truthiness check (`if (NODE_UNIQUE_ID)`): an
+            // empty value does not start the worker handshake, so do not treat it
+            // as a cluster worker.
+            let cluster_worker = map.get(b"NODE_UNIQUE_ID").is_some_and(|v| !v.is_empty());
             // Accept only
             // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
             // Parsing as `u32` then `as i32` would silently wrap values in

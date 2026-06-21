@@ -109,17 +109,20 @@ void MessagePort::close()
         return;
     m_isDetached = true;
 
-    // m_pipe is held for the port's whole lifetime (the GC thread reads
-    // it in hasPendingActivity()); marking our side Closed is sufficient.
-    m_pipe->close(m_side);
+    // m_pipe is held for the port's whole lifetime (the GC thread reads it in
+    // hasPendingActivity()); marking our side Closed is sufficient. Record
+    // whether this is an explicit script close() so the peer only fires its
+    // 'close' for that, not for a GC/teardown/drop close (which would make
+    // non-script death observable from JS).
+    bool byScript = canRunScript();
+    m_pipe->close(m_side, byScript);
 
     // Wake the entangled peer so it can fire its own 'close' event after
-    // draining any queued messages — but only for a real close() from script.
-    // A close via context teardown (contextDestroyed) or GC (~MessagePort calls
-    // the pipe directly, bypassing this method) deliberately does NOT fire the
-    // peer's 'close': hasPendingActivity() correspondingly does not pin a port
-    // whose peer died that way. Gate on the context being able to run JS.
-    if (canRunScript())
+    // draining any queued messages — only for a real close() from script.
+    // contextDestroyed() during teardown and ~MessagePort (which calls the pipe
+    // directly, bypassing this method) leave it un-woken, so the peer is
+    // neither woken nor pinned waiting for a close that will never come.
+    if (byScript)
         m_pipe->wakePeerForClose(m_side);
 
     // Fire our own 'close' event asynchronously (Node + HTML semantics), then
@@ -154,10 +157,11 @@ void MessagePort::close()
 
 void MessagePort::startForClose()
 {
-    // Register with the pipe so MessagePortPipe::close() on the peer can
-    // schedule a drain that reaches us and dispatches 'close'. Unlike start(),
-    // this does not set m_started, so a later 'message' listener still runs
-    // start() and re-attaches to flush any buffered messages. attach() is
+    // Attach to the pipe so the peer can wake this port to dispatch 'close'
+    // (the wake comes from the peer's close() via wakePeerForClose(), or from
+    // this attach() itself if the peer has already script-closed). Unlike
+    // start(), this does not set m_started, so a later 'message' listener still
+    // runs start() and re-attaches to flush any buffered messages. attach() is
     // idempotent, so calling it again from start() is harmless.
     if (!isEntangled())
         return;

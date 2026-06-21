@@ -528,6 +528,28 @@ describe("MessagePort close event", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("a peer closed by drop-in-transit (not an explicit close) does not fire close", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { MessageChannel } = require("node:worker_threads");
+      const { port1: A, port2: B } = new MessageChannel();
+      B.close();
+      const inner = new MessageChannel();
+      // inner.port1 is dropped in transit (B is closed), closing its pipe side
+      // via ~TransferredMessagePort — NOT an explicit script close().
+      A.postMessage(null, [inner.port1]);
+      A.close();
+      const log = [];
+      inner.port2.on("close", () => log.push("close")); // listener added after the drop
+      await Bun.sleep(0);
+      // A non-script close must not surface as a 'close' event (otherwise GC /
+      // drop / teardown timing would be observable from JS).
+      console.log(JSON.stringify(log));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("[]");
+    expect(exitCode).toBe(0);
+  });
+
   // Regression guard: a close listener added after close() (or a close-only
   // peer) must not pin the JS wrapper for the lifetime of the context.
   test.concurrent("closed ports with close listeners are collected", async () => {

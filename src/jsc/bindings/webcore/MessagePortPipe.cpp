@@ -200,15 +200,16 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 bool MessagePortPipe::readyToDispatchClose(uint8_t side)
 {
     ASSERT(side < 2);
-    // The peer must have closed, and this side must still be drained. Re-check
-    // the inbox/drain state under the lock to close a cross-thread TOCTOU: the
-    // drain loop cleared DrainScheduled and released the lock before we get
-    // here, and a concurrent send() on the peer thread can re-enqueue a message
-    // and re-arm a drain in that window. If it did, dispatching 'close' now
-    // would drop that message (dispatchCloseEventFromPeer -> close() clears the
-    // inbox); instead leave it to the freshly scheduled drain, which will
-    // deliver the message and then dispatch close itself.
-    if (isOtherSideOpen(side))
+    // The peer must have closed via an explicit script close() (a GC/teardown/
+    // drop close must not surface as a 'close' event), and this side must still
+    // be drained. Re-check the inbox/drain state under the lock to close a
+    // cross-thread TOCTOU: the drain loop cleared DrainScheduled and released
+    // the lock before we get here, and a concurrent send() on the peer thread
+    // can re-enqueue a message and re-arm a drain in that window. If it did,
+    // dispatching 'close' now would drop that message (dispatchCloseEventFromPeer
+    // -> close() clears the inbox); instead leave it to the freshly scheduled
+    // drain, which will deliver the message and then dispatch close itself.
+    if (!isOtherSideClosedByScript(side))
         return false;
     auto& s = m_sides[side];
     Locker locker { s.lock };
@@ -237,12 +238,14 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContextIdentifier ctxI
         s.ctxId = ctxId;
         s.port = WTF::move(port);
         uint64_t st = s.state.load(std::memory_order_relaxed);
-        uint64_t ns = (st | Attached) & ~Closed;
+        uint64_t ns = (st | Attached) & ~(Closed | ClosedByScript);
         // Schedule a drain if there is work to dispatch: queued messages, or a
-        // peer that has already closed (a 'close' event is owed). The latter
-        // covers a 'close' listener added after the peer closed, which would
-        // otherwise have missed the peer's wake-up in close().
-        if (!(st & DrainScheduled) && (queuedCount(st) > 0 || !isOtherSideOpen(side))) {
+        // peer that has closed via an explicit script close() (a 'close' event
+        // is owed). The latter covers a 'close' listener added after the peer's
+        // close(), which would otherwise have missed the peer's wake-up. A peer
+        // closed by GC/teardown/drop is deliberately NOT woken here — firing
+        // 'close' for it would make that non-script death observable from JS.
+        if (!(st & DrainScheduled) && (queuedCount(st) > 0 || isOtherSideClosedByScript(side))) {
             ns |= DrainScheduled;
             wakeCtx = ctxId;
         }
@@ -295,7 +298,7 @@ void MessagePortPipe::detach(uint8_t side)
     s.state.fetch_and(~uint64_t(Attached | DrainScheduled), std::memory_order_acq_rel);
 }
 
-void MessagePortPipe::close(uint8_t side)
+void MessagePortPipe::close(uint8_t side, bool closedByScript)
 {
     ASSERT(side < 2);
 
@@ -305,12 +308,19 @@ void MessagePortPipe::close(uint8_t side)
     // chain of nested transferred ports overflows the native stack. Drain the
     // cascade iteratively instead: steal transferred pipes from each batch of
     // dropped messages into a stack-local worklist and close them in a loop.
+    //
+    // `closedByScript` applies only to the top-level side being closed; the
+    // transferred ports harvested below are dropped in transit, not
+    // script-closed, so they never set ClosedByScript.
     Vector<std::pair<RefPtr<MessagePortPipe>, uint8_t>> worklist;
     worklist.append({ this, side });
+    bool topLevel = true;
 
     while (!worklist.isEmpty()) {
         auto [pipe, sd] = worklist.takeLast();
         auto& s = pipe->m_sides[sd];
+        uint64_t closedState = Closed | (topLevel && closedByScript ? ClosedByScript : 0);
+        topLevel = false;
 
         Deque<MessageWithMessagePorts> dropped;
         {
@@ -318,7 +328,7 @@ void MessagePortPipe::close(uint8_t side)
             s.ctxId = 0;
             s.port = nullptr;
             // Closed is terminal; queued messages are dropped.
-            s.state.store(Closed, std::memory_order_release);
+            s.state.store(closedState, std::memory_order_release);
             dropped = std::exchange(s.inbox, {});
         }
 

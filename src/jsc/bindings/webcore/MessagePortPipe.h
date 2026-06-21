@@ -44,6 +44,12 @@ public:
         Closed = 1ull << 0, // close() was called on this side; drops further deliveries.
         DrainScheduled = 1ull << 1, // a drain task for this side is in flight.
         Attached = 1ull << 2, // ctxId/port are valid; ok to schedule drains.
+        // Closed specifically via an explicit script close() (MessagePort::close
+        // while JS can run), as opposed to GC (~MessagePort), drop-in-transit
+        // (~TransferredMessagePort), or context teardown. Only a script close
+        // fires the peer's 'close' event; deriving that from the bare Closed bit
+        // would make GC/teardown timing observable from JS.
+        ClosedByScript = 1ull << 3,
 
         QueuedShift = 8,
         QueuedOne = 1ull << QueuedShift,
@@ -62,7 +68,9 @@ public:
     // means "just buffer, don't dispatch" (used before start()).
     void attach(uint8_t side, ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<MessagePort>);
     void detach(uint8_t side);
-    void close(uint8_t side);
+    // `closedByScript` records whether this is an explicit script close() (which
+    // fires the peer's 'close') vs a GC/teardown/drop close (which does not).
+    void close(uint8_t side, bool closedByScript = false);
 
     // Schedules the entangled peer to dispatch its 'close' event after this
     // side has been marked Closed. Only safe from a live (script-running)
@@ -72,6 +80,9 @@ public:
     // Lockless snapshot for the GC visitor / hasPendingActivity.
     uint64_t state(uint8_t side) const { return m_sides[side].state.load(std::memory_order_acquire); }
     bool isOtherSideOpen(uint8_t side) const { return !(state(1 - side) & Closed); }
+    // Whether the peer closed via an explicit script close() (the only kind
+    // that should fire this side's 'close' event).
+    bool isOtherSideClosedByScript(uint8_t side) const { return state(1 - side) & ClosedByScript; }
 
     // Equality is by identity; used to reject "port posted through itself".
     bool operator==(const MessagePortPipe& other) const { return this == &other; }

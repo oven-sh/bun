@@ -52,6 +52,20 @@ public:
         }
     }
 
+    // Move every element into `arguments` and clear the backing vector in one
+    // pass under a single cellLock. Prefer this over a takeFirst() loop, which
+    // is O(n^2) (Vector::removeAt(0) memmove + per-element lock acquire).
+    void drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& arguments)
+    {
+        WTF::Locker locker { owner->cellLock() };
+        arguments.ensureCapacity(arguments.size() + m_list.size());
+        for (JSC::WriteBarrier<T>& value : m_list) {
+            if (auto* cell = value.get())
+                arguments.append(cell);
+        }
+        m_list.clear();
+    }
+
     template<typename Visitor>
     void visit(JSC::JSCell* owner, Visitor& visitor)
     {
@@ -64,18 +78,6 @@ public:
     bool isEmpty() const
     {
         return m_list.isEmpty();
-    }
-
-    T* takeFirst(JSC::JSCell* owner)
-    {
-        WTF::Locker locker { owner->cellLock() };
-        if (m_list.isEmpty()) {
-            return nullptr;
-        }
-
-        T* value = m_list.first().get();
-        m_list.removeAt(0);
-        return value;
     }
 
     template<typename MatchFunction>

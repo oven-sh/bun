@@ -426,7 +426,18 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
     const uint64_t kComma5 = comma5;
     const uint64_t kMask5 = MaskBelow(kSeg5 * 5);
 
-    size_t rows = 0;
+    // Running output cursors. `os` advances by one per committed row; it
+    // is the sole row counter (rows-so-far == os - out_src_idx). `og`/`oo`
+    // advance by two (the [line, col] pair). Keeping these as pointers
+    // instead of indexing by `rows` each iteration drops `rows` from the
+    // live-register set and removes the per-row `2 * rows` offset
+    // computation.
+    int32_t* og = out_generated;
+    int32_t* oo = out_original;
+    int32_t* os = out_src_idx;
+    int32_t* on = out_name_idx;
+    const int32_t* const os_end = out_src_idx + cap;
+
     size_t pos = 0;
 
     // A segment that starts inside a block but whose delimiter hasn't been
@@ -452,19 +463,17 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
         // runs of it; the serial accumulate is a straight dependency
         // chain of adds with one fused range check at the end.
         if (((cont_bits | semi_bits | invalid_bits | (delim_bits ^ kComma5)) & kMask5) == 0
-            && HWY_LIKELY(rows + kSeg5 <= cap)) {
+            && HWY_LIKELY(os + kSeg5 <= os_end)) {
             const int32_t s_gc = gen_col, s_si = src_idx,
                           s_ol = orig_line, s_oc = orig_col;
             int32_t sort = 0, range = 0;
             const int8_t* dp = deltas;
-            int32_t* og = out_generated + 2 * rows;
-            int32_t* oo = out_original + 2 * rows;
-            int32_t* os = out_src_idx + rows;
-            int32_t* on = out_name_idx ? out_name_idx + rows : nullptr;
             // 4-field rows carry the previous 5-field segment's name, or
             // -1 if none seen yet (matches the scalar parser: rows appended
             // before `ensure_with_names` get name_index = -1 via to_named).
             const int32_t nv = has_names ? name_idx : -1;
+            // kSeg5 is fixed per ISA so the compiler fully unrolls this;
+            // the `2 * k` indices become constant displacements.
             for (size_t k = 0; k < kSeg5; ++k) {
                 const int32_t d0 = dp[0];
                 gen_col = WrapAdd(gen_col, d0);
@@ -495,7 +504,11 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 goto general;
             }
             needs_sort |= (sort < 0) ? 1 : 0;
-            rows += kSeg5;
+            og += 2 * kSeg5;
+            oo += 2 * kSeg5;
+            os += kSeg5;
+            if (on)
+                on += kSeg5;
             pos += kSeg5 * 5;
             state[kStFastBlocks] += 1;
             continue;
@@ -581,7 +594,7 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             if (HWY_LIKELY(seg_cont == 0 && field_count >= 4)) {
                 // All 1-char: the precomputed i8 deltas[] ARE the field
                 // values. field_count == seg_len here, in {4, 5}.
-                if (HWY_UNLIKELY(rows >= cap))
+                if (HWY_UNLIKELY(os >= os_end))
                     goto bail;
                 const int8_t* dp = deltas + p;
                 d_gen = dp[0];
@@ -595,7 +608,7 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 // sextets into a fixed u16 lane. After the shuffle, lane k
                 // holds (b1<<8)|b0 and the decoded delta is
                 // SignMag((b0 & 31) | ((b1 & 31) << 5)), all in [-511,511].
-                if (HWY_UNLIKELY(rows >= cap))
+                if (HWY_UNLIKELY(os >= os_end))
                     goto bail;
                 const hn::CappedTag<uint8_t, 16> d8;
                 const hn::CappedTag<uint16_t, 8> d16;
@@ -622,7 +635,7 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 // 2-char 5th field at positions 8-9 (seg_cont bit 8 set).
                 // seg_len <= 10 and field_count >= 4 bound any single VLQ
                 // to <= 7 sextets, so DecodeVlqSextets' shift stays < 32.
-                if (HWY_UNLIKELY(rows >= cap))
+                if (HWY_UNLIKELY(os >= os_end))
                     goto bail;
                 size_t q = p;
                 d_gen = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
@@ -683,14 +696,18 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 has_names = 1;
             }
 
-            out_generated[2 * rows] = gen_line;
-            out_generated[2 * rows + 1] = gen_col;
-            out_original[2 * rows] = orig_line;
-            out_original[2 * rows + 1] = orig_col;
-            out_src_idx[rows] = src_idx;
-            if (out_name_idx)
-                out_name_idx[rows] = has_names ? name_idx : -1;
-            rows += 1;
+            og[0] = gen_line;
+            og[1] = gen_col;
+            oo[0] = orig_line;
+            oo[1] = orig_col;
+            *os = src_idx;
+            og += 2;
+            oo += 2;
+            os += 1;
+            if (on) {
+                *on = has_names ? name_idx : -1;
+                on += 1;
+            }
 
             const size_t adv = seg_len + ((semi >> seg_len) & 1 ? 0 : 1);
             p += adv;
@@ -726,7 +743,7 @@ done:
     state[kStNameIdx] = name_idx;
     state[kStNeedsSort] = needs_sort;
     state[kStHasNames] = has_names;
-    return rows;
+    return static_cast<size_t>(os - out_src_idx);
 }
 
 } // namespace HWY_NAMESPACE

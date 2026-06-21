@@ -415,7 +415,8 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     for (let i = 0; i < 60; i++) head.push([1, 0, 0, 1]);
     const { mappings: headM, probes } = build([head]);
     const mappings = headM + ",CAACAC," + "CAAC,".repeat(40).slice(0, -1);
-    for (let i = 0; i <= 40; i++) probes.push([0, 61 + i * 1 + 1]);
+    // Probe the 5-field row at column 61 and every tail row after it.
+    for (let i = 0; i <= 41; i++) probes.push([0, 61 + i]);
     expect(mappings.length).toBeGreaterThanOrEqual(128);
     await assertSimdMatchesScalar("6-field", mappings, 1, 1, probes);
   });

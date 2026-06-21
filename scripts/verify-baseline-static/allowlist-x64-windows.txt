@@ -641,13 +641,19 @@ bun::N_AVX3_ZEN4::VisibleUTF16WidthImpl                              [AVX, AVX2,
 
 # ----------------------------------------------------------------------------
 # Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
-# Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets. (6 symbols)
+# Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets. (12 symbols)
 # ----------------------------------------------------------------------------
+bun::N_AVX2::CountDelimsImpl                                         [AVX, AVX2]
 bun::N_AVX2::ParseMappingsImpl                                       [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX3::CountDelimsImpl                                         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3::ParseMappingsImpl                                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX10_2::CountDelimsImpl                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX10_2::ParseMappingsImpl                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_DL::CountDelimsImpl                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_DL::ParseMappingsImpl                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_SPR::CountDelimsImpl                                     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_SPR::ParseMappingsImpl                                   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_ZEN4::CountDelimsImpl                                    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX3_ZEN4::ParseMappingsImpl                                  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 
 

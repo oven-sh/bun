@@ -282,9 +282,9 @@ test.skipIf(isWindows)("a destroyed subprocess stdin does not leak a stale fd to
   pSink.stdin!.destroy();
   expect(pSink.stdin!.destroyed).toBe(true);
 
-  expect(() =>
-    spawn(bunExe(), ["-e", ""], { stdio: ["ignore", pSink.stdin!, "ignore"], env: bunEnv }),
-  ).toThrow(/stream\.(Writable|Readable) stdio/);
+  expect(() => spawn(bunExe(), ["-e", ""], { stdio: ["ignore", pSink.stdin!, "ignore"], env: bunEnv })).toThrow(
+    /stream\.(Writable|Readable) stdio/,
+  );
 });
 
 function collect(stream: NodeJS.ReadableStream): Promise<string> {

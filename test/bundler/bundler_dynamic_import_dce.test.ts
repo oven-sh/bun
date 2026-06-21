@@ -579,7 +579,8 @@ describe("bundler", () => {
   itBundled("dynamic_import_dce/RolldownIssue4646", {
     files: {
       "/entry.js": /* js */ `
-        // destructured: only 'a' is consumed -> d1.b should be tree-shaken
+        // destructured + re-exported -> bail (the re-export does not bump
+        // use_count, so tracking would over-tree-shake), keep all of d1
         export const { a } = await import("./d1.js");
         // namespace captured as default export -> bail, keep all of d2
         export default await import("./d2.js");
@@ -587,13 +588,13 @@ describe("bundler", () => {
         export const d3 = await import("./d3.js");
         // arrow returns the namespace promise -> bail, keep all of d4
         export const d4 = () => import("./d4.js");
-  
+
         const ns4 = await d4();
         console.log(a, d3.a, d3.b, ns4.a, ns4.b);
       `,
       "/d1.js": /* js */ `
         export const a = "d1a";
-        export const b = "DROPPED_d1b";
+        export const b = "KEEP_d1b";
       `,
       "/d2.js": /* js */ `
         export const a = "d2a";
@@ -618,8 +619,8 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const all = readAllOutputs(api.outdir);
-      // d1: destructured await import -> unused export 'b' is dropped from the dynamic chunk
-      expect(all).not.toContain("DROPPED");
+      // d1: exported destructure -> bail, all exports retained
+      expect(all).toContain("KEEP_d1b");
       // d2/d3/d4: namespace escapes -> bail out, all exports retained
       expect(all).toContain("KEEP_d2b");
       expect(all).toContain("KEEP_d3b");
@@ -1362,6 +1363,107 @@ describe("bundler", () => {
     },
   });
 
+  // `.catch(h).then(({a})=>…)` — `.then`'s receiver is the `.catch()` ECall,
+  // not an EImport, so the tracker never fires and all exports are kept. Pin
+  // this so a future "walk through .catch/.finally" refactor can't silently
+  // narrow a chunk whose error handler observes the full namespace.
+  itBundled("dynamic_import_dce/BailoutCatchThenChain", {
+    files: {
+      "/entry.js": /* js */ `
+        await import("./b.js").catch(e => {}).then(({ c }) => console.log(c));
+      `,
+      "/b.js": `export const c = 1; export const d = "KEEP_d";`,
+    },
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "1" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).toContain("KEEP_d");
+    },
+  });
+
+  // `.then(function(m){…})` — `function` bodies can reach the namespace via
+  // `arguments[0]` without ever referencing `m`. Tracking must bail (all
+  // exports kept) for both split and inline mode.
+  itBundled("dynamic_import_dce/SplittingThenFunctionArgumentsBailout", {
+    files: {
+      "/entry.js": /* js */ `
+        await import("./lib.js").then(function (m) { console.log(arguments[0].b); });
+      `,
+      "/lib.js": `export const a = "A"; export const b = "KEEP_B";`,
+    },
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "KEEP_B" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).toContain("KEEP_B");
+    },
+  });
+
+  itBundled("dynamic_import_dce/InlineThenFunctionArgumentsBailout", {
+    files: {
+      "/entry.js": /* js */ `
+        import("./lib.js").then(function (m) { console.log(arguments[0].b); });
+      `,
+      "/lib.js": `export const a = "A"; export const b = "KEEP_B";`,
+    },
+    format: "esm",
+    run: { stdout: "KEEP_B" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("KEEP_B");
+    },
+  });
+
+  // `export const {x} = await import(...)` — `x` may be re-exported without
+  // any local read (use_count_estimate == 0). Tracking must bail so the kept
+  // declaration destructures the real namespace, not `Promise.resolve()`.
+  itBundled("dynamic_import_dce/SplittingExportedDestructureKept", {
+    files: {
+      "/entry.js": `export const { value } = await import("./lib.js");`,
+      "/lib.js": `export const value = "KEEP_VALUE"; export const unused = "DROP";`,
+      "/consumer.js": `import { value } from "./out/entry.js"; console.log(value);`,
+    },
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/consumer.js", stdout: "KEEP_VALUE" },
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).toContain("KEEP_VALUE");
+    },
+  });
+
+  itBundled("dynamic_import_dce/InlineExportedDestructureKept", {
+    files: {
+      "/entry.js": `export const { value } = await import("./lib.js");`,
+      "/lib.js": `export const value = "KEEP_VALUE";`,
+      "/consumer.js": `import { value } from "./out.js"; console.log(value);`,
+    },
+    format: "esm",
+    run: { file: "/consumer.js", stdout: "KEEP_VALUE" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("KEEP_VALUE");
+    },
+  });
+
+  // `let {c}` where `c` is never read — the kept declaration must still
+  // destructure the real namespace (not bare `Promise.resolve()` → TypeError).
+  itBundled("dynamic_import_dce/InlineLetDestructureUnused", {
+    files: {
+      "/entry.js": /* js */ `
+        async function main() { let { c } = await import("./b.js"); console.log("after"); }
+        await main();
+      `,
+      "/b.js": `export const c = "KEPT_c";`,
+    },
+    format: "esm",
+    run: { stdout: "after" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("KEPT_c");
+    },
+  });
+
   // `let {c}` is mutable: hoisting it to an immutable import binding would
   // break reassignment. Inline mode bails (importee stays wrapped, all
   // exports kept).
@@ -1859,5 +1961,57 @@ describe("bundler", () => {
     },
     format: "esm",
     run: { stdout: "42" },
+  });
+
+  // `.then()` shape (no `await` in entry) where the importee has TLA. The
+  // synthetic Stmt record propagates `is_async_or_has_async_dependency` to the
+  // importer — the entry chunk becomes a TLA module even though the source had
+  // no `await`. Correct given the new semantics; pin that it runs.
+  itBundled("dynamic_import_dce/InlineThenTargetHasTLA", {
+    files: {
+      "/entry.js": `import("./tla.js").then(({ v }) => console.log(v));`,
+      "/tla.js": `export const v = await Promise.resolve(42); export const d = "DROPPED";`,
+    },
+    format: "esm",
+    run: { stdout: "42" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("DROPPED");
+    },
+  });
+
+  // Importee exports a `then` function — the namespace is a thenable, so at
+  // runtime `await import("./b")` does NOT resolve to the namespace; it
+  // resolves to whatever `b.then(resolve)` passes. After inline-mode hoisting
+  // the `await` never executes and `v` is bound to `b`'s `v` export instead.
+  // This is the same accepted divergence as rollup `inlineDynamicImports`;
+  // unbundled / esbuild / pre-hoist Bun print "unwrapped".
+  itBundled("dynamic_import_dce/InlineThenableImporteeHazard", {
+    files: {
+      "/entry.js": /* js */ `
+        const { v } = await import("./b.js");
+        console.log(v);
+      `,
+      "/b.js": `export const v = "direct"; export function then(r) { r({ v: "unwrapped" }); }`,
+    },
+    format: "esm",
+    run: { stdout: "direct" },
+  });
+
+  // `const {x}` snapshots `x` at destructure time; after inline hoist `x` is a
+  // LIVE import binding. If the importee mutates `export let x` after init the
+  // bundled program observes the new value where the original observed the
+  // old. Same family as InlineHoistOrderingHazard (rollup parity); unbundled
+  // prints "1".
+  itBundled("dynamic_import_dce/InlineLiveBindingNotSnapshot", {
+    files: {
+      "/entry.js": /* js */ `
+        const { x, bump } = await import("./b.js");
+        bump();
+        console.log(x);
+      `,
+      "/b.js": `export let x = 1; export const bump = () => { x = 2; };`,
+    },
+    format: "esm",
+    run: { stdout: "2" },
   });
 });

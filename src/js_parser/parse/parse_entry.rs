@@ -1267,20 +1267,22 @@ impl<'a> Parser<'a> {
                 let track_only = p.track_only_dynamic_import_namespaces.contains_key(&ns_ref);
                 for key in map.keys().iter() {
                     let loc_ref = *map.get(key).unwrap();
-                    // Per-reference filtering: a destructured local that is
-                    // never read does not keep its alias alive in the chunk.
                     if let Some(item_ref) = loc_ref.ref_ {
+                        // A ref that wasn't promoted to an import item means
+                        // the original binding/declaration was kept (let/var,
+                        // default value, multi-decl, …) — it cannot appear in
+                        // a synthetic top-level `S::Import`. Clear `can_inline`
+                        // BEFORE the zero-use skip so an unused-but-kept
+                        // binding still forces the bail.
+                        if !p.is_import_item.contains_key(&item_ref) {
+                            rec.can_inline = false;
+                        }
+                        // Per-reference filtering: a destructured local that is
+                        // never read does not keep its alias alive in the chunk.
                         if p.symbols[item_ref.inner_index() as usize].use_count_estimate == 0
                             && !track_only
                         {
                             continue;
-                        }
-                        // A ref that wasn't promoted to an import item means
-                        // the original binding/declaration was kept (let/var,
-                        // default value, multi-decl, …) — it cannot appear in
-                        // a synthetic top-level `S::Import`.
-                        if !p.is_import_item.contains_key(&item_ref) {
-                            rec.can_inline = false;
                         }
                     } else {
                         rec.can_inline = false;

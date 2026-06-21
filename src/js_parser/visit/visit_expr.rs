@@ -1964,9 +1964,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if args.len() != 1 {
                 break 'dyn_import_then;
             }
+            // Only arrows are safe: a `function(m){…}` body can reach the
+            // namespace via `arguments[0]` without ever referencing `m`, which
+            // would be tracked as zero exports observed and over-tree-shake.
             let fn_args = match args[0].data {
                 Data::EArrow(arrow) => arrow.args.slice_mut(),
-                Data::EFunction(func) => func.func.args.slice_mut(),
                 _ => break 'dyn_import_then,
             };
             match fn_args.first_mut() {

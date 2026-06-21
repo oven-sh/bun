@@ -617,6 +617,16 @@ pub(crate) fn schedule_barrel_deferred_imports(
         {
             continue;
         }
+        if ir
+            .flags
+            .contains(import_record::Flags::TREE_SHAKEN_DYNAMIC_IMPORT)
+        {
+            // Every consumer was tracked; the synthetic `S::Import` the
+            // parser emitted carries the named bindings, so the
+            // named-import loop above already requested only the used
+            // exports.
+            continue;
+        }
         let should_add = ir.kind == ImportKind::Require || ir.kind == ImportKind::Dynamic;
         if should_add {
             queue.push(BarrelWorkItem {

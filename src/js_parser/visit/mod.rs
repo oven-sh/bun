@@ -257,12 +257,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
         &mut self,
         decls: &mut [G::Decl],
-        was_const: bool,
+        kind: LocalKind,
+        is_export: bool,
     ) -> usize {
+        let was_const = kind == LocalKind::KConst;
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
         // while scanning ahead.
         let len = decls.len();
+        let single = len == 1;
         let mut i: usize = 0;
         'outer: while i < len {
             // SAFETY: i < len; we need disjoint borrows of decls[i] (read/mutate)
@@ -385,6 +388,86 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             }
                         }
+                    }
+                }
+
+                // `const|let|var <binding> = await import("str")` — record which
+                // exports of the importee are used so the linker can tree-shake
+                // the rest. For `const {x}` in inline (non-splitting) mode the
+                // bindings become import items and the whole declaration is
+                // dropped via `continue 'outer`; every other shape (split mode,
+                // `let`/`var`, identifier binding, exported decl, multi-
+                // declarator) keeps the statement and only tracks aliases.
+                'dyn_import_await: {
+                    if !self.options.bundle {
+                        break 'dyn_import_await;
+                    }
+                    let ExprData::EAwait(aw) = val.data else { break 'dyn_import_await };
+                    let ExprData::EImport(im) = aw.value.data else { break 'dyn_import_await };
+                    if !im.namespace_ref.is_valid() {
+                        break 'dyn_import_await;
+                    }
+                    // Only a single-declarator non-exported `const` may be
+                    // hoisted to a synthetic top-level import. `let`/`var`
+                    // bindings can be reassigned (turning them into immutable
+                    // import items would break that); multi-declarator drops
+                    // are not implemented.
+                    let inline = single && was_const && !self.options.code_splitting && !is_export;
+                    match decl.binding.data {
+                        BData::BObject(obj) if !is_export => {
+                            let Some(keep_decl) = self.try_track_dynamic_import_destructure(
+                                im.namespace_ref,
+                                im.import_record_index,
+                                obj.properties(),
+                                inline,
+                            ) else {
+                                break 'dyn_import_await;
+                            };
+                            self.ignore_usage(im.namespace_ref);
+                            if inline && !keep_decl {
+                                continue 'outer;
+                            }
+                        }
+                        BData::BIdentifier(id) if !is_export => {
+                            // `var ns` redeclaration resolves to the same ref;
+                            // re-registering would clobber the alias map
+                            // populated between the two decls (rspack gates on
+                            // `kind != var` for this reason).
+                            if kind == LocalKind::KVar {
+                                break 'dyn_import_await;
+                            }
+                            // `const|let ns = await import("str")` — register
+                            // `ns` as a namespace so later `ns.foo` accesses
+                            // are recorded. In split mode the access stays as
+                            // `ns.foo` (track only); in inline mode it is
+                            // rewritten to an import item so the importee
+                            // tree-shakes. The declaration is kept either way:
+                            // when fully tracked it prints as
+                            // `await Promise.resolve()` (a dead binding), and
+                            // when `ns` escapes the record stays untracked so
+                            // the wrapped namespace is assigned as before.
+                            let local = id.r#ref;
+                            if self.import_items_for_namespace.contains_key(&local) {
+                                break 'dyn_import_await;
+                            }
+                            self.import_items_for_namespace
+                                .insert(local, ImportItemForNamespaceMap::default());
+                            if !inline {
+                                self.track_only_dynamic_import_namespaces.insert(local, ());
+                            }
+                            self.ignore_usage(im.namespace_ref);
+                            self.imports_to_convert_from_dynamic_import.push(
+                                crate::parser::DeferredImportNamespace {
+                                    namespace: js_ast::LocRef {
+                                        loc: decl.binding.loc,
+                                        ref_: Some(local),
+                                    },
+                                    import_record_id: im.import_record_index,
+                                    scope: Some(self.current_scope),
+                                },
+                            );
+                        }
+                        _ => {}
                     }
                 }
 

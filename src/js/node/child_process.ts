@@ -1753,8 +1753,15 @@ function nodeToBun(
  * stream-stdio-unsupported error.
  */
 function extractStreamFd(item: any): number | undefined {
-  if (Object.hasOwn(item, "fd") && typeof item.fd === "number") return item.fd;
-  if (item._handle && typeof item._handle.fd === "number") return item._handle.fd;
+  if (Object.hasOwn(item, "fd")) {
+    const fd = item.fd;
+    if (typeof fd === "number") return fd;
+  }
+  const handle = item._handle;
+  if (handle) {
+    const fd = handle.fd;
+    if (typeof fd === "number") return fd;
+  }
   return undefined;
 }
 

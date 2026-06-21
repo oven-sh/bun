@@ -712,10 +712,9 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
 
             const size_t adv = seg_len + ((semi >> seg_len) & 1 ? 0 : 1);
             p += adv;
-            // `adv` can equal N (the segment filled the block exactly; only
-            // reachable on N==64 targets), which would be a shift-by-width
-            // on the three uint64_t bitmaps below. Break first; the outer
-            // loop reloads the next block.
+            // adv <= 11 (seg_len <= 10 was enforced above) so the shifts
+            // below are always defined; this break is loop termination
+            // once cumulative p has consumed the block.
             if (p >= N)
                 break;
             delim >>= adv;

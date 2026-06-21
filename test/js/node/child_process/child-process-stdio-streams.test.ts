@@ -1,31 +1,21 @@
 // https://github.com/oven-sh/bun/issues/30831
+// https://github.com/oven-sh/bun/issues/25498
 //
-// `child_process.spawn` was unable to pipe one subprocess's stdio stream into
-// another: `spawn(..., { stdio: [..., otherProc.stdin, ...] })` threw
-// `stream.Readable stdio @ N` (unsupported) because `nodeToBun()` in
+// `child_process.spawn` / `spawnSync` could not pipe one subprocess's stdio
+// stream into another: `spawn(..., { stdio: [..., otherProc.stdin, ...] })`
+// threw `stream.Readable stdio @ N` because `nodeToBun()` in
 // `node:child_process` looked for `.fd` / `_handle.fd` on the stream (Node's
 // `subprocess.stdin` is a `net.Socket` that exposes its pipe fd there), but
 // Bun's `subprocess.stdin` is a `WriteStream` wrapping a `FileSink` and
 // `subprocess.stdout`/`stderr` is a `Readable` wrapping a native
-// `ReadableStream`. Neither surfaced the underlying pipe fd.
+// `ReadableStream`, neither of which surfaced the underlying pipe fd.
 //
-// Fix (three parts — removing any of the first three breaks one of the first
-// three tests; the fourth test guards the ordering of part 2):
-//   1. Surface `.fd` on both wrappers at construction time from the
-//      underlying sink/source, so `nodeToBun` can forward the fd.
-//   2. When `nodeToBun` extracts an fd from a stream, record the stream in a
-//      `streamsToQuiesce` list; after `Bun.spawn` succeeds, pause each one
-//      and tag it `kIsUsedAsStdio`. Mirrors Node's `getValidStdio`
-//      post-spawn `readStop`/`pause`, without which the parent's own
-//      `PipeReader` races the child for the pipe's bytes. The quiesce
-//      runs AFTER spawn because `setFlowing(false)` is sticky at the
-//      native layer with no user-recoverable counterpart — if we paused
-//      pre-spawn and spawn then threw, the source stream would be stuck
-//      forever.
-//   3. `Bun.spawn`'s POSIX path clears `O_NONBLOCK` on the caller-supplied
-//      fd before `dup2`; otherwise the child inherits non-blocking mode (the
-//      parent set it for async reads) and a synchronous reader like `cat`
-//      gets `EAGAIN: Resource temporarily unavailable` on its first read.
+// The fix surfaces `.fd` on both wrappers, records forwarded streams so they
+// can be quiesced after `Bun.spawn` succeeds (mirroring Node's `getValidStdio`
+// `readStop`/`pause`, so the parent's `PipeReader` does not race the child for
+// the pipe bytes), clears `O_NONBLOCK` on the caller-supplied fd before `dup2`
+// (so a synchronous child reader does not get `EAGAIN`), and rejects destroyed
+// streams so a stale fd is never forwarded.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
@@ -104,7 +94,7 @@ test.skipIf(isWindows)(
     const sourceStderr = collect(pSource.stderr!);
     // `markStreamsAsStdio` unregisters the FilePoll on `pSource.stdout`, so
     // without the close-accounting fix in `#handleOnExit` this `'close'`
-    // promise never resolves even after `pSource` exits — guard that path.
+    // promise never resolves even after `pSource` exits; guard that path.
     const sourceClose = new Promise<void>(r => pSource.once("close", () => r()));
 
     using pFilter = spawn(bunExe(), ["-e", UPPER], {
@@ -127,10 +117,10 @@ test.skipIf(isWindows)(
         pFilter.once("exit", code => r(code));
       }),
     ]);
-    // `'close'` should also fire — otherwise libraries like `execa` that
-    // await close (not exit) hang indefinitely. If this promise never
-    // resolves (pre-fix behavior), the test times out rather than
-    // racing its own setTimeout.
+    // `'close'` should also fire, otherwise libraries like `execa` that await
+    // close (not exit) hang indefinitely. If this promise never resolves
+    // (pre-fix behavior), the test times out rather than racing its own
+    // setTimeout.
     await sourceClose;
     expect(filterErr).toBe("");
     expect(sourceErr).toBe("");
@@ -145,8 +135,8 @@ test.skipIf(isWindows)(
   async () => {
     // `process.stdout.fd === 1` / `process.stderr.fd === 2` are set by
     // `getStdioWriteStream`. These have always been numeric-fd objects in
-    // Bun, so they were already accepted by `nodeToBun`'s `.fd` lookup — but
-    // this PR routes them through the new `extractStreamFd` + `streamsToQuiesce`
+    // Bun, so they were already accepted by `nodeToBun`'s `.fd` lookup; this
+    // PR routes them through the new `extractStreamFd` + `streamsToQuiesce`
     // path too, and a later refactor could accidentally drop them. A
     // sub-bun runner actually performs the passthrough spawn and prints
     // whether it succeeded to *its* stdout, which the outer test captures.
@@ -231,10 +221,10 @@ test.skipIf(isWindows)("a destroyed subprocess stdout does not leak a stale fd t
   expect((pSource.stdout as any).fd).toBeNull();
 
   // The destroyed stream must not be accepted as stdio with that stale fd:
-  // `extractStreamFd` now returns undefined, so `spawn` raises the
-  // unsupported-stream-stdio error instead of `dup2`'ing a closed fd.
+  // `extractStreamFd` returns undefined for it, so `spawn` raises a
+  // destroyed-stream error instead of `dup2`'ing a closed fd.
   expect(() => spawn(bunExe(), ["-e", ""], { stdio: [pSource.stdout!, "pipe", "ignore"], env: bunEnv })).toThrow(
-    /stream\.Readable stdio/,
+    /Cannot use a destroyed stream/,
   );
 });
 
@@ -266,8 +256,8 @@ test.skipIf(isWindows)("a destroyed subprocess stdin does not leak a stale fd to
   // caches the pipe fd on `stdin.fd`. The WriteStream `_destroy` only nulls it
   // via `close()`, which it skips on the async path (the sink still has
   // buffered bytes), so a destroyed stdin can retain a stale fd. `extractStreamFd`
-  // rejects destroyed streams, so `spawn` raises the unsupported-stream-stdio
-  // error instead of `dup2`'ing a closed (or kernel-reused) fd into the child.
+  // rejects destroyed streams, so `spawn` raises a destroyed-stream error
+  // instead of `dup2`'ing a closed (or kernel-reused) fd into the child.
   using pSink = spawn(bunExe(), ["-e", "setInterval(() => {}, 1 << 30)"], {
     stdio: ["pipe", "ignore", "ignore"],
     env: bunEnv,
@@ -283,7 +273,7 @@ test.skipIf(isWindows)("a destroyed subprocess stdin does not leak a stale fd to
   expect(pSink.stdin!.destroyed).toBe(true);
 
   expect(() => spawn(bunExe(), ["-e", ""], { stdio: ["ignore", pSink.stdin!, "ignore"], env: bunEnv })).toThrow(
-    /stream\.(Writable|Readable) stdio/,
+    /Cannot use a destroyed stream/,
   );
 });
 

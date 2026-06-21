@@ -1730,6 +1730,9 @@ function nodeToBun(
       streamsToQuiesce.push(item);
       return fd;
     }
+    if (item.destroyed === true) {
+      throw new Error(`Cannot use a destroyed stream as stdio[${index}]`);
+    }
     throw new Error(`TODO: stream.Readable stdio @ ${index}`);
   }
   if (isNodeStreamWritable(item)) {
@@ -1737,6 +1740,9 @@ function nodeToBun(
     if (fd !== undefined) {
       streamsToQuiesce.push(item);
       return fd;
+    }
+    if (item.destroyed === true) {
+      throw new Error(`Cannot use a destroyed stream as stdio[${index}]`);
     }
     throw new Error(`TODO: stream.Writable stdio @ ${index}`);
   }

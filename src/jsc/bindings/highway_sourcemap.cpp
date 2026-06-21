@@ -161,9 +161,12 @@ static inline int32_t DecodeVlqSextets(const uint8_t* sextets, uint64_t cont,
     uint32_t shift = 0;
     for (;;) {
         const uint32_t s = sextets[p];
-        // `& 31u` matches the scalar decoder (src/base64/lib.rs::decode_impl)
-        // so an over-long (>= 8-byte) VLQ produces the same garbage value
-        // here as it does there, instead of a shift-width-UB.
+        // Callers bound each VLQ to <= 7 sextets (via the seg_len <= 10 /
+        // field_count >= 4 guard, and the seg_len <= 7 guard for
+        // field_count == 1), so shift <= 30 here. The `& 31u` is
+        // belt-and-braces: it keeps the shift defined even if a future
+        // caller relaxes those bounds, and matches the scalar decoder's
+        // masked shift (src/base64/lib.rs::decode_impl).
         vlq |= (s & 31u) << (shift & 31u);
         const bool more = (cont >> p) & 1;
         p += 1;
@@ -173,6 +176,65 @@ static inline int32_t DecodeVlqSextets(const uint8_t* sextets, uint64_t cont,
     }
     return SignMag(vlq);
 }
+
+// Masked-VByte field-gather shuffle table. Entry `cont` (the segment's
+// continuation-bit pattern, low 8 bits) is a 16-byte pshufb mask that
+// gathers each of up to 5 VLQs' first and second sextets into fixed u16
+// slots: byte 2k is field k's first sextet, byte 2k+1 is its second
+// sextet or 0x80 (pshufb writes 0 there). The shuffle operates on a
+// 16-byte load of `sextets + p` so indices are segment-relative.
+//
+// Only valid when every VLQ in the segment is at most 2 sextets (i.e. no
+// two adjacent 1-bits in `cont`) and seg_len <= 10. Entries for `cont`
+// values with adjacent 1-bits have idx[15] == kShufBad; the caller falls
+// back to DecodeVlqSextets for those (<0.1% of segments on real maps).
+//
+// After the shuffle, each u16 lane k holds (b1 << 8) | b0; the decoded
+// value is SignMag((b0 & 31) | ((b1 & 31) << 5)), which fits an i16.
+static constexpr uint8_t kShufBad = 0xFE;
+
+struct ShufEntry {
+    uint8_t idx[16];
+};
+
+static constexpr ShufEntry MakeShufEntry(uint32_t cont)
+{
+    ShufEntry e {};
+    for (int i = 0; i < 16; i++)
+        e.idx[i] = 0x80;
+    // Adjacent 1-bits → some VLQ is 3+ sextets; mark as unsupported.
+    if (cont & (cont >> 1)) {
+        e.idx[15] = kShufBad;
+        return e;
+    }
+    int pos = 0;
+    for (int k = 0; k < 5; k++) {
+        e.idx[2 * k] = static_cast<uint8_t>(pos);
+        if ((cont >> pos) & 1) {
+            e.idx[2 * k + 1] = static_cast<uint8_t>(pos + 1);
+            pos += 2;
+        } else {
+            e.idx[2 * k + 1] = 0x80;
+            pos += 1;
+        }
+    }
+    e.idx[15] = 0;
+    return e;
+}
+
+struct ShufTable {
+    ShufEntry e[256];
+};
+
+static constexpr ShufTable BuildShufTable()
+{
+    ShufTable t {};
+    for (uint32_t c = 0; c < 256; c++)
+        t.e[c] = MakeShufEntry(c);
+    return t;
+}
+
+alignas(16) static constexpr ShufTable kShufTable = BuildShufTable();
 
 // Wrapping i32 add/sub. Signed overflow is UB in C++; the Rust scalar path
 // (`Ordinal::add_scalar`, release build) wraps, and the subsequent `< 0`
@@ -315,7 +377,11 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
     int32_t needs_sort = state[kStNeedsSort];
     int32_t has_names = state[kStHasNames];
 
-    alignas(64) uint8_t sextets[64];
+    // sextets[] is N bytes of decoded base64 plus 16 bytes of slack so a
+    // 16-byte shuffle load from `sextets + p` is in-bounds for any p < N.
+    // The slack is never read through the shuffle mask (indices past
+    // seg_len are 0x80), but the load itself must be valid.
+    alignas(64) uint8_t sextets[64 + 16] = {};
     alignas(64) int8_t deltas[64];
 
     // A block that is wall-to-wall "XXXX," (4 one-char fields + comma) has
@@ -342,17 +408,22 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
         uint64_t delim_bits, semi_bits, cont_bits, invalid_bits;
         ClassifyBlock(d, bytes + pos, sextets, delim_bits, semi_bits, cont_bits, invalid_bits);
 
+        // Sign-magnitude decode every sextet in SIMD (one-char VLQ values
+        // are in [-15, 15], which fits i8). Done once per block: both the
+        // uniform fast path and the general loop's cont==0 case read these
+        // directly instead of calling SignMag per byte.
+        {
+            const auto sx = hn::Load(d, sextets);
+            hn::Store(SignMagI8(d, sx), hn::RebindToSigned<decltype(d)>(), deltas);
+        }
+
         // Uniform-block fast path: every segment is a 4-field, all-1-char
         // "XXXX," and the block starts on a segment boundary. This is the
         // measured 76% case on bundler output, and large maps have long
-        // runs of it. Sign-magnitude decode of every sextet happens in SIMD
-        // (values fit i8), then the serial accumulate is a straight
-        // dependency chain of adds with one fused range check at the end.
+        // runs of it; the serial accumulate is a straight dependency
+        // chain of adds with one fused range check at the end.
         if (((cont_bits | semi_bits | invalid_bits | (delim_bits ^ kComma5)) & kMask5) == 0
             && HWY_LIKELY(rows + kSeg5 <= cap)) {
-            const auto sx = hn::Load(d, sextets);
-            hn::Store(SignMagI8(d, sx), hn::RebindToSigned<decltype(d)>(), deltas);
-
             const int32_t s_gc = gen_col, s_si = src_idx,
                           s_ol = orig_line, s_oc = orig_col;
             int32_t sort = 0, range = 0;
@@ -462,46 +533,79 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
 
             // The LAST sextet of a VLQ has cont==0, so a VLQ whose final
             // byte still has cont set is truncated by the delimiter.
-            if (HWY_UNLIKELY((cont >> (seg_len - 1)) & 1))
+            // And seg_len > 10 means at least one VLQ is > 2 chars for
+            // field_count 5 (or > 7 chars for field_count 1, which the
+            // scalar decoder rejects as no-progress); hand both to scalar.
+            if (HWY_UNLIKELY(((cont >> (seg_len - 1)) & 1) || seg_len > 10))
                 goto bail;
             const uint64_t seg_cont = cont & ((uint64_t { 1 } << seg_len) - 1);
             const size_t field_count = seg_len - static_cast<size_t>(hwy::PopCount(seg_cont));
 
             int32_t d_gen, d_src = 0, d_ol = 0, d_oc = 0, d_name = 0;
-            const uint8_t* sp = sextets + p;
-            if (HWY_LIKELY(field_count == 4 && seg_cont == 0)) {
-                // Hot path: 4 one-char fields.
+            if (HWY_LIKELY(seg_cont == 0 && field_count >= 4)) {
+                // All 1-char: the precomputed i8 deltas[] ARE the field
+                // values. field_count == seg_len here, in {4, 5}.
                 if (HWY_UNLIKELY(rows >= cap))
                     goto bail;
-                d_gen = SignMag(sp[0]);
-                d_src = SignMag(sp[1]);
-                d_ol = SignMag(sp[2]);
-                d_oc = SignMag(sp[3]);
+                const int8_t* dp = deltas + p;
+                d_gen = dp[0];
+                d_src = dp[1];
+                d_ol = dp[2];
+                d_oc = dp[3];
+                d_name = (field_count == 5) ? dp[4] : 0;
+            } else if (HWY_LIKELY(field_count >= 4 && (seg_cont >> 8) == 0
+                           && kShufTable.e[seg_cont & 0xFF].idx[15] != kShufBad)) {
+                // Masked-VByte gather: one pshufb packs each field's 1-2
+                // sextets into a fixed u16 lane. After the shuffle, lane k
+                // holds (b1<<8)|b0 and the decoded delta is
+                // SignMag((b0 & 31) | ((b1 & 31) << 5)), all in [-511,511].
+                if (HWY_UNLIKELY(rows >= cap))
+                    goto bail;
+                const hn::CappedTag<uint8_t, 16> d8;
+                const hn::CappedTag<uint16_t, 8> d16;
+                const hn::CappedTag<int16_t, 8> di16;
+                const auto v_in = hn::LoadU(d8, sextets + p);
+                const auto v_shuf = hn::Load(d8, kShufTable.e[seg_cont & 0xFF].idx);
+                const auto gathered = hn::BitCast(d16, hn::TableLookupBytes(v_in, v_shuf));
+                const auto lo5 = hn::And(gathered, hn::Set(d16, uint16_t { 0x001F }));
+                const auto hi5 = hn::ShiftRight<3>(hn::And(gathered, hn::Set(d16, uint16_t { 0x1F00 })));
+                const auto raw = hn::Or(lo5, hi5);
+                const auto sgn = hn::BitCast(di16,
+                    hn::Sub(hn::Zero(d16), hn::And(raw, hn::Set(d16, uint16_t { 1 }))));
+                const auto mag = hn::BitCast(di16, hn::ShiftRight<1>(raw));
+                const auto dv = hn::Sub(hn::Xor(mag, sgn), sgn);
+                alignas(16) int16_t df[8];
+                hn::Store(dv, di16, df);
+                d_gen = df[0];
+                d_src = df[1];
+                d_ol = df[2];
+                d_oc = df[3];
+                d_name = (field_count == 5) ? df[4] : 0;
+            } else if (HWY_LIKELY(field_count >= 4)) {
+                // 4/5-field segment with at least one 3+ -char VLQ, or a
+                // 2-char 5th field at positions 8-9 (seg_cont bit 8 set).
+                // seg_len <= 10 and field_count >= 4 bound any single VLQ
+                // to <= 7 sextets, so DecodeVlqSextets' shift stays < 32.
+                if (HWY_UNLIKELY(rows >= cap))
+                    goto bail;
+                size_t q = p;
+                d_gen = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
+                d_src = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
+                d_ol = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
+                d_oc = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
+                if (field_count == 5)
+                    d_name = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
+            } else if (field_count == 1) {
+                // 1-field segments don't emit a row (scalar skips them),
+                // only gen-col moves. seg_len <= 10; a 1-field VLQ of 8+
+                // sextets makes the scalar decoder return no-progress, so
+                // bail to scalar for byte-identical error reporting.
+                if (HWY_UNLIKELY(seg_len > 7))
+                    goto bail;
+                size_t q = p;
+                d_gen = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
             } else {
-                if (field_count != 4 && field_count != 5 && field_count != 1)
-                    goto bail;
-                if (field_count != 1 && HWY_UNLIKELY(rows >= cap))
-                    goto bail;
-                if (seg_cont == 0) {
-                    d_gen = SignMag(sp[0]);
-                    if (field_count >= 4) {
-                        d_src = SignMag(sp[1]);
-                        d_ol = SignMag(sp[2]);
-                        d_oc = SignMag(sp[3]);
-                        if (field_count == 5)
-                            d_name = SignMag(sp[4]);
-                    }
-                } else {
-                    size_t q = p;
-                    d_gen = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
-                    if (field_count >= 4) {
-                        d_src = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
-                        d_ol = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
-                        d_oc = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
-                        if (field_count == 5)
-                            d_name = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
-                    }
-                }
+                goto bail; // field_count in {2, 3}
             }
 
             // Accumulate and range-check. On any out-of-range value, bail at
@@ -515,10 +619,12 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 needs_sort |= (d_gen < 0) ? 1 : 0;
                 gen_col = n_gen_col;
                 const size_t adv = seg_len + ((semi >> seg_len) & 1 ? 0 : 1);
+                p += adv;
+                if (p >= N)
+                    break;
                 delim >>= adv;
                 semi >>= adv;
                 cont >>= adv;
-                p += adv;
                 continue;
             }
 
@@ -550,10 +656,16 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             rows += 1;
 
             const size_t adv = seg_len + ((semi >> seg_len) & 1 ? 0 : 1);
+            p += adv;
+            // `adv` can equal N (the segment filled the block exactly; only
+            // reachable on N==64 targets), which would be a shift-by-width
+            // on the three uint64_t bitmaps below. Break first; the outer
+            // loop reloads the next block.
+            if (p >= N)
+                break;
             delim >>= adv;
             semi >>= adv;
             cont >>= adv;
-            p += adv;
         }
 
         pos += p;

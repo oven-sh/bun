@@ -185,18 +185,33 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
   test("mixed 1/2/3-char VLQs in each of the four positions", async () => {
     // |v| in [0,15] -> 1 char, [16,511] -> 2 chars, [512,16383] -> 3 chars.
     const segs: number[][] = [];
-    let oc = 0;
     for (let i = 0; i < 120; i++) {
       const gc = [3, 40, 600][i % 3];
       const ol = [0, 1, 33, 0][i % 4];
-      const want = [2, 100, 700, 5][i % 4];
-      const step = want;
-      segs.push([gc, 0, ol, step]);
-      oc += step;
+      const doc = [2, 100, 700, 5][i % 4];
+      segs.push([gc, 0, ol, doc]);
     }
     const { mappings, probes, sourcesLen } = build([segs]);
     expect(mappings.length).toBeGreaterThanOrEqual(128);
     const scalar = await assertSimdMatchesScalar("mixed-vlq-widths", mappings, sourcesLen, 0, probes);
+    expect(scalar.error).toBeNull();
+    expect(scalar.entries.length).toBe(120);
+  });
+
+  test("2-char VLQ in each of the five positions (Masked-VByte shuffle)", async () => {
+    // Each segment has exactly one 2-char VLQ, rotating through all five
+    // field positions, so every kShufTable entry with a single set bit
+    // (cont = 1<<k for k in 0..4) is exercised.
+    const segs: number[][] = [];
+    for (let i = 0; i < 120; i++) {
+      const f = [1, 0, 0, 1, i === 0 ? 0 : 0];
+      f[i % 5] = 40; // 2-char VLQ
+      if (i % 5 !== 4) f.pop(); // 4-field unless the 2-char is the name
+      segs.push(f);
+    }
+    const { mappings, probes, sourcesLen, namesLen } = build([segs]);
+    expect(mappings.length).toBeGreaterThanOrEqual(128);
+    const scalar = await assertSimdMatchesScalar("shuffle-single-2char", mappings, sourcesLen, namesLen, probes);
     expect(scalar.error).toBeNull();
     expect(scalar.entries.length).toBe(120);
   });
@@ -388,6 +403,24 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
       originalSource: "s0.js",
       name: null,
     });
+  });
+
+  test("over-long VLQ (>= 8 cont bytes): SIMD bails, scalar rejects", async () => {
+    // 'g' is sextet 32 (cont bit set, payload 0). Eight in a row then
+    // "AAAA," is a 12-byte segment whose first field has 9 sextets.
+    // Scalar caps at 8 bytes and returns no-progress -> ParseResult::Fail;
+    // SIMD must bail at this segment so scalar reports the same error.
+    const head: number[][] = [];
+    for (let i = 0; i < 60; i++) head.push([1, 0, 0, 1]);
+    const { mappings: headM } = build([head]);
+    const mappings = headM + ",ggggggggAAAA,AAAA";
+    expect(mappings.length).toBeGreaterThanOrEqual(128);
+    const [simd, scalar] = await Promise.all([
+      dumpMappings(mappings, 1, 0, [], false),
+      dumpMappings(mappings, 1, 0, [], true),
+    ]);
+    expect(scalar.error).toContain("Missing generated column value");
+    expect(simd.error).toEqual(scalar.error);
   });
 
   test("out-of-range source index: identical ParseResult::Fail", async () => {

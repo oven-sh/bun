@@ -6865,6 +6865,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match expr.data {
             js_ast::ExprData::EDot(ex) => {
                 if parts.len() > 1 {
+                    if ex.optional_chain.is_some() {
+                        return false;
+                    }
                     // Intermediates must be dot expressions
                     let last = parts.len() - 1;
                     let is_tail_match = strings::eql(&parts[last], &ex.name);
@@ -6882,6 +6885,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if parts.len() > 1 {
                     if let js_ast::ExprData::EString(mut s) = index.index.data {
                         if s.is_utf8() {
+                            if index.optional_chain.is_some() {
+                                return false;
+                            }
                             let last = parts.len() - 1;
                             let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
                             return is_tail_match

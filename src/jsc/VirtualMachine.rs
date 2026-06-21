@@ -288,8 +288,10 @@ pub struct VirtualMachine {
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
     pub resolved_path_dups: Vec<Box<[u8]>>,
     pub is_us_loop_entered: bool,
+    /// Entry-point evaluation promise. Always GC-protected while `Some`;
+    /// every write goes through [`set_pending_internal_promise`] which
+    /// balances the previous `protect()`.
     pub pending_internal_promise: Option<*mut JSInternalPromise>,
-    pub pending_internal_promise_is_protected: bool,
     pub pending_internal_promise_reported_at: u32,
     pub hot_reload_deferred: bool,
     pub entry_point_result: EntryPointResult,
@@ -2292,16 +2294,12 @@ impl VirtualMachine {
     /// so it must be a GC root while stored here. Balances the previous
     /// `protect()` before taking the new one.
     pub fn set_pending_internal_promise(&mut self, promise: Option<*mut JSInternalPromise>) {
-        if self.pending_internal_promise_is_protected {
-            if let Some(prev) = self.pending_internal_promise {
-                JSValue::from_cell(prev).unprotect();
-            }
-            self.pending_internal_promise_is_protected = false;
+        if let Some(prev) = self.pending_internal_promise {
+            JSValue::from_cell(prev).unprotect();
         }
         self.pending_internal_promise = promise;
         if let Some(p) = promise {
             JSValue::from_cell(p).protect();
-            self.pending_internal_promise_is_protected = true;
         }
     }
 

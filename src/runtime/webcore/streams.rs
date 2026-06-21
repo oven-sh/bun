@@ -1453,8 +1453,13 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 self.finalize();
                 return true;
             }
+            // If a flush(true) waiter was parked, resolving it is the resume
+            // signal — don't also fire signal.ready(), which for direct
+            // streams re-invokes the user's pull(controller) and would run a
+            // second pull while the first is still suspended on the await.
+            let had_flush_waiter = self.pending_flush.is_some();
             let _ = self.flush_promise(); // TODO: properly propagate exception upwards
-            if !self.done && !self.requested_end && !self.has_backpressure() {
+            if !had_flush_waiter && !self.done && !self.requested_end && !self.has_backpressure() {
                 self.signal.ready(None, None);
             }
             return true;
@@ -1499,11 +1504,13 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         // flush the javascript promise from calling .flush()
+        let had_flush_waiter = self.pending_flush.is_some();
         let _ = self.flush_promise(); // TODO: properly propagate exception upwards
 
         // pending_flush or callback could have caused another send()
-        // so we check again if we should report readiness
-        if !self.done && !self.requested_end && !self.has_backpressure() {
+        // so we check again if we should report readiness. Skip when a
+        // flush(true) waiter was just resolved — see the empty-buffer branch.
+        if !had_flush_waiter && !self.done && !self.requested_end && !self.has_backpressure() {
             // no pending and total_written > 0
             if total_written > 0 && self.readable_slice().is_empty() {
                 self.signal.ready(Some(total_written as BlobSizeType), None);

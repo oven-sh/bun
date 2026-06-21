@@ -2566,3 +2566,74 @@ it("resumes a backpressured Response(ReadableStream) once the client drains and 
     socket.destroy();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/32469
+it("type: direct stream awaiting controller.flush(true) under backpressure does not re-enter pull", async () => {
+  const CHUNK = Buffer.alloc(256 * 1024, 67);
+  const TOTAL_CHUNKS = 512; // 128 MiB
+  let pullEntries = 0;
+  let writes = 0;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          pullEntries++;
+          for (let i = 0; i < TOTAL_CHUNKS; i++) {
+            if (controller.write(CHUNK) < 0) {
+              await controller.flush(true);
+            }
+            writes++;
+          }
+          await controller.end();
+        },
+      } as any);
+      return new Response(stream);
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
+  const { promise: bodyDone, resolve: onBodyDone } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+  let received = 0;
+  socket.on("data", chunk => {
+    received += chunk.length;
+  });
+  socket.on("close", () => onBodyDone());
+  socket.once("data", () => {
+    socket.pause();
+    onStalled();
+  });
+
+  try {
+    await stalled;
+
+    // Wait for pull to pause under backpressure.
+    let last = -1;
+    let stable = 0;
+    while (stable < 8 && writes < TOTAL_CHUNKS) {
+      await Bun.sleep(25);
+      if (writes === last) stable++;
+      else {
+        stable = 0;
+        last = writes;
+      }
+    }
+    expect(writes).toBeLessThan(TOTAL_CHUNKS);
+
+    socket.resume();
+    await bodyDone;
+
+    // pull must have been entered exactly once — the drain signal resolves the
+    // flush(true) promise, it must not also re-invoke the user's pull.
+    expect(pullEntries).toBe(1);
+    expect(writes).toBe(TOTAL_CHUNKS);
+    expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
+  } finally {
+    socket.destroy();
+  }
+});

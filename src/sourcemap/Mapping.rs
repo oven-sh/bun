@@ -492,14 +492,6 @@ const SEMICOLON_RUN: [u8; HALF_USIZE] = [b';'; HALF_USIZE];
 /// runtime-dispatched ISA; 128 bytes guarantees at least two full blocks.
 const SIMD_THRESHOLD: usize = 128;
 
-/// Output-column chunk size for the SIMD pass. The kernel writes directly
-/// into the `MultiArrayList` column arrays (no intermediate buffer), so the
-/// only per-chunk scratch is a `SIMD_CHUNK_ROWS` i32 name-index overflow
-/// buffer for the without-names variant (4 KiB at 1 Ki rows), boxed rather
-/// than stack-local because this path can run while formatting a
-/// stack-overflow error.
-const SIMD_CHUNK_ROWS: usize = 1024;
-
 pub fn parse(
     bytes: &[u8],
     estimated_mapping_count: Option<usize>,
@@ -808,11 +800,13 @@ enum SimdResult {
     OutOfMemory,
 }
 
-/// SIMD fast path for `parse`: drives `bun_highway::parse_mappings` over
-/// `bytes` in `SIMD_CHUNK_ROWS`-row chunks, writing decoded segments
-/// DIRECTLY into the `MultiArrayList` column arrays (no intermediate
-/// buffer). Returns the byte offset and accumulator state at which the
-/// scalar loop should take over (the tail, or the first anomaly).
+/// SIMD fast path for `parse`: count delimiters to bound the row count,
+/// reserve the `MultiArrayList` once, then decode the whole input in one
+/// `bun_highway::parse_mappings` call that writes directly into the
+/// column arrays (no intermediate buffer, no chunking, no
+/// geometric-growth reallocs). Returns the byte offset and accumulator
+/// state at which the scalar loop should take over (the tail, or the
+/// first anomaly).
 fn parse_simd(
     bytes: &[u8],
     mapping: &mut List,
@@ -828,156 +822,113 @@ fn parse_simd(
     const _: () = assert!(size_of::<LineColumnOffset>() == size_of::<[i32; 2]>());
     const _: () = assert!(align_of::<LineColumnOffset>() == align_of::<[i32; 2]>());
 
-    // name_index scratch for the WithoutNames variant (which has no
-    // name_index column). Boxed rather than stack-local because this path
-    // can run while formatting a stack-overflow error. Only allocated on
-    // first use.
-    let mut name_scratch: Option<Box<[i32; SIMD_CHUNK_ROWS]>> = None;
+    // Segments on a line are comma-separated and lines are semicolon-
+    // separated, so `delims + 1` upper-bounds the segment count (and
+    // therefore the row count). This is within a few percent of the
+    // actual count on real maps and lets us reserve exactly once instead
+    // of paying ~log1.5(N) geometric-growth memcpys (the dominant cost of
+    // the scalar path on large inputs). The final list is the same size
+    // the scalar path ends up at; we just skip the intermediate copies.
+    let seg_bound = bun_highway::count_mapping_delims(bytes).saturating_add(1);
+
+    // When the caller wants names, switch to the with-names variant
+    // before reserving so the reserve lands on the right list. This uses
+    // 24 bytes/row instead of 20 even when the input turns out to have no
+    // 5-field segments; in exchange there is no mid-stream copy-on-
+    // promotion and no name-index scratch buffer. Rows before the first
+    // 5-field segment still get name_index == -1 (the kernel writes -1
+    // until has_names flips), matching scalar's `to_named()` behaviour.
+    if options.allow_names {
+        if mapping.ensure_with_names().is_err() {
+            return SimdResult::OutOfMemory;
+        }
+    }
 
     let mut state = ParseMappingsState::default();
-    let mut pos: usize = 0;
-    let mut has_names = false;
+    let mut err_at: usize = 0;
 
-    loop {
-        // Reserve SIMD_CHUNK_ROWS slots on the list and hand the kernel raw
-        // column pointers into that region. `ensure_unused_capacity` grows
-        // geometrically (same policy as the scalar path's per-row append),
-        // so peak memory matches scalar; there is no upfront over-reserve.
-        let base = mapping.len();
-        let (rows, err_at);
-        match &mut mapping.r#impl {
-            ListValue::WithoutNames(list) => {
-                if list.ensure_unused_capacity(SIMD_CHUNK_ROWS).is_err() {
-                    return SimdResult::OutOfMemory;
-                }
-                let ni = name_scratch.get_or_insert_with(|| Box::new([0i32; SIMD_CHUNK_ROWS]));
-                let mut ea: usize = 0;
-                // SAFETY: `ensure_unused_capacity(SIMD_CHUNK_ROWS)` guarantees
-                // each column has at least `base + SIMD_CHUNK_ROWS` slots.
-                // `items_raw` returns the column base; the kernel writes only
-                // indices `[base, base+cap)`. `LineColumnOffset` is repr(C)
-                // over two i32s so reinterpreting as `[[i32; 2]]` is sound.
-                let r = unsafe {
-                    let generated = core::slice::from_raw_parts_mut(
-                        list.items_raw::<"generated", LineColumnOffset>()
-                            .add(base)
-                            .cast::<[i32; 2]>(),
-                        SIMD_CHUNK_ROWS,
-                    );
-                    let original = core::slice::from_raw_parts_mut(
-                        list.items_raw::<"original", LineColumnOffset>()
-                            .add(base)
-                            .cast::<[i32; 2]>(),
-                        SIMD_CHUNK_ROWS,
-                    );
-                    let src_idx = core::slice::from_raw_parts_mut(
-                        list.items_raw::<"source_index", i32>().add(base),
-                        SIMD_CHUNK_ROWS,
-                    );
-                    bun_highway::parse_mappings(
-                        &bytes[pos..],
-                        &mut ParseMappingsOut {
-                            generated,
-                            original,
-                            src_idx,
-                            name_idx: &mut **ni,
-                        },
-                        sources_count,
-                        &mut state,
-                        &mut ea,
-                    )
-                };
-                // SAFETY: capacity reserved above; every slot in
-                // `base..base+r` was just initialized by the kernel.
-                unsafe { list.set_len(base + r) };
-                rows = r;
-                err_at = ea;
-            }
-            ListValue::WithNames(list) => {
-                if list.ensure_unused_capacity(SIMD_CHUNK_ROWS).is_err() {
-                    return SimdResult::OutOfMemory;
-                }
-                let mut ea: usize = 0;
-                // SAFETY: same as the WithoutNames arm above, plus the
-                // name_index column.
-                let r = unsafe {
-                    let generated = core::slice::from_raw_parts_mut(
-                        list.items_raw::<"generated", LineColumnOffset>()
-                            .add(base)
-                            .cast::<[i32; 2]>(),
-                        SIMD_CHUNK_ROWS,
-                    );
-                    let original = core::slice::from_raw_parts_mut(
-                        list.items_raw::<"original", LineColumnOffset>()
-                            .add(base)
-                            .cast::<[i32; 2]>(),
-                        SIMD_CHUNK_ROWS,
-                    );
-                    let src_idx = core::slice::from_raw_parts_mut(
-                        list.items_raw::<"source_index", i32>().add(base),
-                        SIMD_CHUNK_ROWS,
-                    );
-                    let name_idx = core::slice::from_raw_parts_mut(
-                        list.items_raw::<"name_index", i32>().add(base),
-                        SIMD_CHUNK_ROWS,
-                    );
-                    bun_highway::parse_mappings(
-                        &bytes[pos..],
-                        &mut ParseMappingsOut {
-                            generated,
-                            original,
-                            src_idx,
-                            name_idx,
-                        },
-                        sources_count,
-                        &mut state,
-                        &mut ea,
-                    )
-                };
-                // SAFETY: capacity reserved above; every slot in
-                // `base..base+r` was just initialized by the kernel.
-                unsafe { list.set_len(base + r) };
-                rows = r;
-                err_at = ea;
-            }
-        }
-
-        // First 5-field segment seen: switch the list to the with-names
-        // variant (copies existing rows; happens at most once). The rows
-        // just appended carry over; their name_index column is filled from
-        // `name_scratch` (which the kernel wrote the accumulated name index
-        // to even while the list was WithoutNames).
-        if options.allow_names && state.has_names != 0 && !has_names {
-            if mapping.ensure_with_names().is_err() {
+    let base = mapping.len();
+    let rows = match &mut mapping.r#impl {
+        ListValue::WithoutNames(list) => {
+            if list
+                .ensure_total_capacity(base.saturating_add(seg_bound))
+                .is_err()
+            {
                 return SimdResult::OutOfMemory;
             }
-            if let (ListValue::WithNames(list), Some(ni)) =
-                (&mut mapping.r#impl, name_scratch.as_ref())
+            // SAFETY: `ensure_total_capacity(base + seg_bound)` guarantees
+            // every column has at least that many slots. `items_raw`
+            // returns the column base; the kernel writes only indices
+            // [base, base + cap). `LineColumnOffset` is repr(C) over two
+            // i32s so reinterpreting as `*mut [i32; 2]` is sound. The
+            // three column ranges are disjoint (separate SoA columns).
+            let r = unsafe {
+                bun_highway::parse_mappings(
+                    bytes,
+                    &ParseMappingsOut {
+                        generated: list
+                            .items_raw::<"generated", LineColumnOffset>()
+                            .add(base)
+                            .cast::<[i32; 2]>(),
+                        original: list
+                            .items_raw::<"original", LineColumnOffset>()
+                            .add(base)
+                            .cast::<[i32; 2]>(),
+                        src_idx: list.items_raw::<"source_index", i32>().add(base),
+                        name_idx: core::ptr::null_mut(),
+                        cap: seg_bound,
+                    },
+                    sources_count,
+                    &mut state,
+                    &mut err_at,
+                )
+            };
+            // SAFETY: capacity reserved above; every slot in
+            // `base..base+r` was just initialized by the kernel.
+            unsafe { list.set_len(base + r) };
+            r
+        }
+        ListValue::WithNames(list) => {
+            if list
+                .ensure_total_capacity(base.saturating_add(seg_bound))
+                .is_err()
             {
-                let ni_ptr = list.items_raw::<"name_index", i32>();
-                for i in 0..rows {
-                    // SAFETY: `ensure_with_names` reserved `len()` slots and
-                    // `base + i < base + rows = len()`.
-                    unsafe { *ni_ptr.add(base + i) = ni[i] };
-                }
+                return SimdResult::OutOfMemory;
             }
-            has_names = true;
+            // SAFETY: as above, plus the name_index column.
+            let r = unsafe {
+                bun_highway::parse_mappings(
+                    bytes,
+                    &ParseMappingsOut {
+                        generated: list
+                            .items_raw::<"generated", LineColumnOffset>()
+                            .add(base)
+                            .cast::<[i32; 2]>(),
+                        original: list
+                            .items_raw::<"original", LineColumnOffset>()
+                            .add(base)
+                            .cast::<[i32; 2]>(),
+                        src_idx: list.items_raw::<"source_index", i32>().add(base),
+                        name_idx: list.items_raw::<"name_index", i32>().add(base),
+                        cap: seg_bound,
+                    },
+                    sources_count,
+                    &mut state,
+                    &mut err_at,
+                )
+            };
+            // SAFETY: capacity reserved above; every slot in
+            // `base..base+r` was just initialized by the kernel.
+            unsafe { list.set_len(base + r) };
+            r
         }
-
-        pos += err_at;
-
-        // rows == cap and there's still input: the kernel stopped because
-        // output filled, not because of an anomaly. Re-enter with fresh
-        // capacity (state was already written back by the kernel).
-        if rows == SIMD_CHUNK_ROWS && pos < bytes.len() {
-            continue;
-        }
-        break;
-    }
+    };
 
     scoped_log!(
         SourceMap,
-        "simd fast={} slow={} blocks",
+        "simd rows={} seg_bound={} fast={} slow={} blocks",
+        rows,
+        seg_bound,
         state.fast_blocks,
         state.slow_blocks
     );
@@ -989,8 +940,8 @@ fn parse_simd(
     }
 
     SimdResult::Done {
-        resume_at: pos,
+        resume_at: err_at,
         state,
-        has_names,
+        has_names: options.allow_names && state.has_names != 0,
     }
 }

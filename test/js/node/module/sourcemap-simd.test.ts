@@ -207,7 +207,7 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     // (cont = 1<<k for k in 0..4) is exercised.
     const segs: number[][] = [];
     for (let i = 0; i < 120; i++) {
-      const f = [1, 0, 0, 1, i === 0 ? 0 : 0];
+      const f = [1, 0, 0, 1, 0];
       f[i % 5] = 40; // 2-char VLQ
       if (i % 5 !== 4) f.pop(); // 4-field unless the 2-char is the name
       segs.push(f);
@@ -406,6 +406,18 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
       originalSource: "s0.js",
       name: null,
     });
+  });
+
+  test("6-field segment: SIMD bails, scalar re-decodes", async () => {
+    // Scalar decodes 5 fields then treats the 6th byte as a fresh 1-field
+    // segment; SIMD can't replicate that in one step so it must bail.
+    const head: number[][] = [];
+    for (let i = 0; i < 60; i++) head.push([1, 0, 0, 1]);
+    const { mappings: headM, probes } = build([head]);
+    const mappings = headM + ",CAACAC," + "CAAC,".repeat(40).slice(0, -1);
+    for (let i = 0; i <= 40; i++) probes.push([0, 61 + i * 1 + 1]);
+    expect(mappings.length).toBeGreaterThanOrEqual(128);
+    await assertSimdMatchesScalar("6-field", mappings, 1, 1, probes);
   });
 
   test("over-long VLQ (>= 8 cont bytes): SIMD bails, scalar rejects", async () => {

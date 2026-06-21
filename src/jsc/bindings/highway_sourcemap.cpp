@@ -350,11 +350,40 @@ static HWY_INLINE hn::Vec<hn::RebindToSigned<D>> SignMagI8(D d, hn::Vec<D> sx)
     return hn::Sub(hn::Xor(mag, s), s);
 }
 
+// Count of ',' and ';' bytes. Segments on a line are comma-separated and
+// lines are semicolon-separated, so `count + 1` upper-bounds the number of
+// segments (and therefore rows). Used once up front so the output list can
+// be reserved exactly, skipping the geometric-growth reallocs the scalar
+// path pays.
+size_t CountDelimsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len)
+{
+    const hn::ScalableTag<uint8_t> d;
+    const size_t N = hn::Lanes(d);
+    const auto comma = hn::Set(d, uint8_t { ',' });
+    const auto semi = hn::Set(d, uint8_t { ';' });
+
+    size_t count = 0;
+    size_t i = 0;
+    if (len >= N) {
+        for (; i + N <= len; i += N) {
+            const auto v = hn::LoadU(d, bytes + i);
+            count += hn::CountTrue(d, hn::Or(hn::Eq(v, comma), hn::Eq(v, semi)));
+        }
+    }
+    for (; i < len; i++) {
+        const uint8_t b = bytes[i];
+        count += (b == ',' || b == ';') ? 1 : 0;
+    }
+    return count;
+}
+
 // Output columns match the `MultiArrayList<Mapping>` SoA layout so the Rust
 // caller can bulk-copy each into the corresponding column:
 //   out_generated[i] = { gen_line, gen_col }   (LineColumnOffset, repr(C))
 //   out_original[i]  = { orig_line, orig_col } (LineColumnOffset, repr(C))
 //   out_src_idx[i], out_name_idx[i]            (i32)
+// out_name_idx may be null (WithoutNames list variant); the kernel still
+// accumulates name_idx in state but skips the per-row store.
 size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
     int32_t* HWY_RESTRICT out_generated, int32_t* HWY_RESTRICT out_original,
     int32_t* HWY_RESTRICT out_src_idx, int32_t* HWY_RESTRICT out_name_idx,
@@ -431,7 +460,7 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             int32_t* og = out_generated + 2 * rows;
             int32_t* oo = out_original + 2 * rows;
             int32_t* os = out_src_idx + rows;
-            int32_t* on = out_name_idx + rows;
+            int32_t* on = out_name_idx ? out_name_idx + rows : nullptr;
             // 4-field rows carry the previous 5-field segment's name, or
             // -1 if none seen yet (matches the scalar parser: rows appended
             // before `ensure_with_names` get name_index = -1 via to_named).
@@ -450,7 +479,8 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 oo[2 * k] = orig_line;
                 oo[2 * k + 1] = orig_col;
                 os[k] = src_idx;
-                on[k] = nv;
+                if (on)
+                    on[k] = nv;
                 dp += 5;
             }
             if (HWY_UNLIKELY(range < 0)) {
@@ -540,6 +570,12 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 goto bail;
             const uint64_t seg_cont = cont & ((uint64_t { 1 } << seg_len) - 1);
             const size_t field_count = seg_len - static_cast<size_t>(hwy::PopCount(seg_cont));
+            // 6..10 fields: the scalar parser decodes five then treats the
+            // rest as a fresh segment (and {2,3} fail decode_vlq on the
+            // delimiter). Neither matches a straight read of 4-5 deltas,
+            // so hand anything outside {1,4,5} to scalar.
+            if (HWY_UNLIKELY(field_count > 5))
+                goto bail;
 
             int32_t d_gen, d_src = 0, d_ol = 0, d_oc = 0, d_name = 0;
             if (HWY_LIKELY(seg_cont == 0 && field_count >= 4)) {
@@ -652,7 +688,8 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             out_original[2 * rows] = orig_line;
             out_original[2 * rows + 1] = orig_col;
             out_src_idx[rows] = src_idx;
-            out_name_idx[rows] = has_names ? name_idx : -1;
+            if (out_name_idx)
+                out_name_idx[rows] = has_names ? name_idx : -1;
             rows += 1;
 
             const size_t adv = seg_len + ((semi >> seg_len) & 1 ? 0 : 1);
@@ -701,8 +738,14 @@ HWY_AFTER_NAMESPACE();
 namespace bun {
 
 HWY_EXPORT(ParseMappingsImpl);
+HWY_EXPORT(CountDelimsImpl);
 
 extern "C" {
+
+size_t highway_count_mapping_delims(const uint8_t* bytes, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(CountDelimsImpl)(bytes, len);
+}
 
 size_t highway_parse_mappings(const uint8_t* bytes, size_t len,
     int32_t* out_generated, int32_t* out_original,

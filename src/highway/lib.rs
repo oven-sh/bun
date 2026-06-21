@@ -85,6 +85,8 @@ unsafe extern "C" {
         state: *mut i32,
         err_at: *mut usize,
     ) -> usize;
+
+    fn highway_count_mapping_delims(bytes: *const u8, len: usize) -> usize;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -568,65 +570,75 @@ pub struct ParseMappingsState {
     pub slow_blocks: i32,
 }
 
-/// Output columns for [`parse_mappings`], one row per 4- or 5-field segment,
-/// holding ABSOLUTE (accumulated) values. `generated` and `original` are
-/// `[line, column]` i32 pairs per row (byte-compatible with
-/// `bun_sourcemap::LineColumnOffset`, which is `repr(C)`); `src_idx` and
-/// `name_idx` are one i32 per row.
-pub struct ParseMappingsOut<'a> {
-    pub generated: &'a mut [[i32; 2]],
-    pub original: &'a mut [[i32; 2]],
-    pub src_idx: &'a mut [i32],
-    pub name_idx: &'a mut [i32],
+/// Count of `,` and `;` bytes in `bytes`. `count + 1` is an upper bound on
+/// the number of segments (and therefore the number of output rows) for a
+/// source-map `mappings` string.
+#[inline(always)]
+pub fn count_mapping_delims(bytes: &[u8]) -> usize {
+    if bytes.is_empty() {
+        return 0;
+    }
+    // SAFETY: `bytes.ptr/len` are a valid readable range.
+    unsafe { highway_count_mapping_delims(bytes.as_ptr(), bytes.len()) }
+}
+
+/// Raw output column pointers for [`parse_mappings`]. Each points to `cap`
+/// writable rows: `generated`/`original` as `[line, column]` i32 pairs
+/// (byte-compatible with `bun_sourcemap::LineColumnOffset`, which is
+/// `repr(C)`); `src_idx`/`name_idx` as one i32 per row. `name_idx` may be
+/// null when the caller doesn't store names.
+pub struct ParseMappingsOut {
+    pub generated: *mut [i32; 2],
+    pub original: *mut [i32; 2],
+    pub src_idx: *mut i32,
+    pub name_idx: *mut i32,
+    pub cap: usize,
 }
 
 /// SIMD decode of a source-map `mappings` string. Writes one row per 4- or
-/// 5-field segment (accumulated absolute values) into `out`, up to the
-/// shortest column's length. On return, `err_at` is the byte offset in
-/// `bytes` where the caller should resume with the scalar decoder (== len
-/// when the whole input was consumed), and `state` holds the accumulator at
-/// that offset. Returns the number of rows written.
+/// 5-field segment (accumulated absolute values) into `out`, up to
+/// `out.cap`. On return, `err_at` is the byte offset in `bytes` where the
+/// caller should resume with the scalar decoder (== len when the whole
+/// input was consumed), and `state` holds the accumulator at that offset.
+/// Returns the number of rows written.
 ///
 /// Any anomaly (invalid byte, unsupported field count, out-of-range value,
 /// segment longer than one SIMD block, output capacity exhausted, < one
 /// block of input remaining) ends the SIMD pass at the start of the
 /// offending segment; the scalar decoder owns all error reporting, so error
 /// messages and byte offsets are unchanged from a pure-scalar parse.
+///
+/// # Safety
+/// `out.generated`, `out.original` and `out.src_idx` must each be valid
+/// for `out.cap` writes of their element type; `out.name_idx` likewise when
+/// non-null. The four ranges must not overlap each other or `bytes`.
 #[inline]
-pub fn parse_mappings(
+pub unsafe fn parse_mappings(
     bytes: &[u8],
-    out: &mut ParseMappingsOut<'_>,
+    out: &ParseMappingsOut,
     sources_count: i32,
     state: &mut ParseMappingsState,
     err_at: &mut usize,
 ) -> usize {
-    let cap = out
-        .generated
-        .len()
-        .min(out.original.len())
-        .min(out.src_idx.len())
-        .min(out.name_idx.len());
-
-    if bytes.is_empty() || cap == 0 {
+    if bytes.is_empty() || out.cap == 0 {
         *err_at = 0;
         return 0;
     }
 
-    // SAFETY: `bytes` is a valid readable range; `out.generated` and
-    // `out.original` are each writable for `2*cap` i32s, `out.src_idx` and
-    // `out.name_idx` for `cap` i32s; `state` is a `#[repr(C)]` struct of 10
+    // SAFETY: caller contract covers the output pointers; `bytes` is a
+    // valid readable range; `state` is a `#[repr(C)]` struct of 10
     // contiguous i32s matching the kernel's `kSt*` indices; `err_at` is a
-    // valid write target. The kernel writes at most `cap` rows and never
-    // reads past `bytes.len()`.
+    // valid write target. The kernel writes at most `out.cap` rows and
+    // never reads past `bytes.len()`.
     unsafe {
         highway_parse_mappings(
             bytes.as_ptr(),
             bytes.len(),
-            out.generated.as_mut_ptr().cast::<i32>(),
-            out.original.as_mut_ptr().cast::<i32>(),
-            out.src_idx.as_mut_ptr(),
-            out.name_idx.as_mut_ptr(),
-            cap,
+            out.generated.cast::<i32>(),
+            out.original.cast::<i32>(),
+            out.src_idx,
+            out.name_idx,
+            out.cap,
             sources_count,
             core::ptr::from_mut::<ParseMappingsState>(state).cast::<i32>(),
             err_at,

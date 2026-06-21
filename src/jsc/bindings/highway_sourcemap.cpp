@@ -178,11 +178,11 @@ static inline int32_t DecodeVlqSextets(const uint8_t* sextets, uint64_t cont,
 }
 
 // Masked-VByte field-gather shuffle table. Entry `cont` (the segment's
-// continuation-bit pattern, low 8 bits) is a 16-byte pshufb mask that
+// continuation-bit pattern, low 8 bits) is a 16-byte shuffle mask that
 // gathers each of up to 5 VLQs' first and second sextets into fixed u16
 // slots: byte 2k is field k's first sextet, byte 2k+1 is its second
-// sextet or 0x80 (pshufb writes 0 there). The shuffle operates on a
-// 16-byte load of `sextets + p` so indices are segment-relative.
+// sextet or 0x80 (TableLookupBytesOr0 zeros there). The shuffle operates
+// on a 16-byte load of `sextets + p` so indices are segment-relative.
 //
 // Only valid when every VLQ in the segment is at most 2 sextets (i.e. no
 // two adjacent 1-bits in `cont`) and seg_len <= 10. Entries for `cont`
@@ -616,7 +616,10 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 const hn::CappedTag<int16_t, 8> di16;
                 const auto v_in = hn::LoadU(d8, sextets + p);
                 const auto v_shuf = hn::Load(d8, kShufTable.e[seg_cont & 0xFF].idx);
-                const auto gathered = hn::BitCast(d16, hn::TableLookupBytes(v_in, v_shuf));
+                // 0x80 indices mark absent second sextets. Highway only
+                // guarantees zero-on-high-bit for the Or0 variant (free on
+                // x86/NEON, one extra select on SVE).
+                const auto gathered = hn::BitCast(d16, hn::TableLookupBytesOr0(v_in, v_shuf));
                 const auto lo5 = hn::And(gathered, hn::Set(d16, uint16_t { 0x001F }));
                 const auto hi5 = hn::ShiftRight<3>(hn::And(gathered, hn::Set(d16, uint16_t { 0x1F00 })));
                 const auto raw = hn::Or(lo5, hi5);

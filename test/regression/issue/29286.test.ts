@@ -6,7 +6,7 @@
 // loads, so top-level `await` works without embedding the runtime.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 test("issue #29286: --bytecode --format=esm --outdir emits .jsc sidecar", async () => {
@@ -113,4 +113,60 @@ test("issue #29286: Bun.build({ bytecode: true, format: 'esm' }) no longer requi
   expect(stdout).toMatch(/outputs: (entry\.js),/);
   expect(stdout).toContain("entry.js.jsc");
   expect(exitCode).toBe(0);
+});
+
+// Two entrypoints sharing an import produce a separate non-entry chunk with
+// its own .jsc sidecar; running an entry loads that chunk at runtime. Covers
+// the multi-chunk ESM bytecode path (code splitting + sidecar load), which the
+// single-file cases above don't reach.
+test("issue #29286: shared ESM bytecode chunk loads and runs", async () => {
+  using dir = tempDir("29286-split", {
+    "shared.ts": `export const value = await Promise.resolve(42);`,
+    "a.ts": `import { value } from "./shared.ts"; console.log("a:", value);`,
+    "b.ts": `import { value } from "./shared.ts"; console.log("b:", value);`,
+  });
+
+  await using build = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "build",
+      "./a.ts",
+      "./b.ts",
+      "--bytecode",
+      "--format=esm",
+      "--target=bun",
+      "--splitting",
+      "--outdir=dist",
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildStderr).not.toContain("ESM bytecode requires");
+  expect(buildExit).toBe(0);
+
+  // A shared chunk (distinct from a.js / b.js) must exist with a .jsc sidecar.
+  const distDir = join(String(dir), "dist");
+  const entries = readdirSync(distDir);
+  const sharedJsc = entries.find(f => f.endsWith(".jsc") && !/^(a|b)\.js\.jsc$/.test(f));
+  expect(sharedJsc).toBeDefined();
+
+  // Running the entry pulls the shared chunk through the async path.
+  await using run = Bun.spawn({
+    cmd: [bunExe(), join(distDir, "a.js")],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [runStdout, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  expect({ stdout: runStdout.trim(), stderr: runStderr, exitCode: runExit }).toEqual({
+    stdout: "a: 42",
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
 });

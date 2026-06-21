@@ -271,6 +271,10 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 #endif
 
+// Defined in BunDebugger.cpp. Registers the inspector's VM-interrupt dispatch
+// callback; must run before the first VM freezes g_jscConfig.
+extern "C" void Bun__Debugger__initVMInterruptDispatch();
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup)
 {
     static std::once_flag jsc_init_flag;
@@ -345,6 +349,12 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 }
             }
             JSC::Options::assertOptionsAreCoherent();
+
+            // Register the inspector's VM-interrupt dispatch callback while
+            // g_jscConfig is still writable. Config::finalize() freezes it once
+            // the first VM is constructed. This lets Debugger.pause interrupt a
+            // busy JS loop instead of waiting for the event loop to tick.
+            Bun__Debugger__initVMInterruptDispatch();
         }); // end JSC::initialize lambda
     }); // end std::call_once lambda
 

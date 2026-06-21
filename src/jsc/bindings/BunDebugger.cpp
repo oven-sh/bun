@@ -6,6 +6,8 @@
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 #include <JavaScriptCore/Debugger.h>
+#include <JavaScriptCore/JSCConfig.h>
+#include <JavaScriptCore/VM.h>
 #include <wtf/Condition.h>
 #include "ScriptExecutionContext.h"
 #include "debug-helpers.h"
@@ -400,6 +402,7 @@ public:
             ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
+            interruptInspectedThreadIfBusy();
         }
     }
 
@@ -416,7 +419,34 @@ public:
             ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
+            interruptInspectedThreadIfBusy();
         }
+    }
+
+    // The task posted above only runs when the inspected thread next turns its
+    // event loop. A thread spinning in JS that never yields (e.g. `while (true)
+    // {}`) would never drain it, so a Debugger.pause sent while JS is running
+    // would be ignored forever. Fire a VM trap so the inspected thread is
+    // interrupted at its next safepoint (a loop back-edge) and services the
+    // queued messages there via dispatchPendingMessagesOnVMInterrupt(). This is
+    // how V8/Node break a busy isolate (v8::Isolate::RequestInterrupt) and how
+    // WebKit's own WebInspectorInterruptDispatcher breaks into a running page.
+    void interruptInspectedThreadIfBusy()
+    {
+        auto* inspectedGlobalObject = this->globalObject;
+        if (!inspectedGlobalObject)
+            return;
+
+        // Already paused: runWhilePaused services messages once notifyPausedThread()
+        // wakes it, so the thread is parked in C++ rather than running JS. Firing a
+        // trap here would just leave the SignalSender polling (every 1ms) for a
+        // safepoint that won't be reached until the debugger resumes. The isPaused()
+        // read races with the JS thread but is only a best-effort optimization: the
+        // posted task and notifyPausedThread() already cover both states.
+        if (auto* debugger = inspectedGlobalObject->debugger(); debugger && debugger->isPaused())
+            return;
+
+        inspectedGlobalObject->vm().notifyNeedShellTimeoutCheck();
     }
 
     WTF::Vector<WTF::String, 12> debuggerThreadMessages;
@@ -437,6 +467,48 @@ public:
 
     bool hasEverConnected = false;
 };
+
+// Runs on the inspected JS thread when the NeedShellTimeoutCheck VM trap is
+// serviced at a safepoint (see interruptInspectedThreadIfBusy). It drains the
+// inspector messages queued from the debugger thread so that a Debugger.pause
+// (or any command) delivered while the thread is spinning in JS takes effect
+// without waiting for the event loop to tick. Dispatching here calls
+// InspectorDebuggerAgent::pause() -> Debugger::schedulePauseAtNextOpportunity(),
+// which enables stepping and deopts the running code so the pause lands at the
+// next statement.
+static void dispatchPendingMessagesOnVMInterrupt(JSC::VM& vm)
+{
+    Vector<BunInspectorConnection*, 8> connections;
+    {
+        Locker<Lock> locker(inspectorConnectionsLock);
+        if (!inspectorConnections)
+            return;
+        for (auto& entry : *inspectorConnections) {
+            for (auto* connection : entry.value) {
+                if (connection->globalObject && &connection->globalObject->vm() == &vm)
+                    connections.append(connection);
+            }
+        }
+    }
+
+    for (auto* connection : connections) {
+        ConnectionStatus status = connection->status.load();
+        if (status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting)
+            continue;
+        auto* context = ScriptExecutionContext::getScriptExecutionContext(connection->scriptExecutionContextIdentifier);
+        if (!context)
+            continue;
+        connection->receiveMessagesOnInspectorThread(*context, static_cast<Zig::GlobalObject*>(connection->globalObject), true);
+    }
+}
+
+// Must run before the first VM is constructed: Config::finalize() freezes
+// g_jscConfig when a VM is created, after which this assignment would fault.
+// Called from JSCInitialize() (ZigGlobalObject.cpp) inside JSC::initialize().
+extern "C" void Bun__Debugger__initVMInterruptDispatch()
+{
+    g_jscConfig.shellTimeoutCheckCallback = dispatchPendingMessagesOnVMInterrupt;
+}
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSend);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDisconnect);

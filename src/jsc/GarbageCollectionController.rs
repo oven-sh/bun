@@ -20,7 +20,6 @@
 
 use core::ffi::c_int;
 
-#[cfg(debug_assertions)]
 use bun_uws as uws;
 
 use crate::VM;

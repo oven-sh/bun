@@ -211,7 +211,6 @@ test.skipIf(!isASAN)("Debugger.pause interrupts a busy loop and reports call fra
     try {
       ws.close();
     } catch {}
-    proc.kill();
-    await proc.exited.catch(() => {});
+    // `await using proc` kills the child and awaits its exit on scope exit.
   }
 });

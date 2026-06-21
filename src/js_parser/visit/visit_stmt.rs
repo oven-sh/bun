@@ -1159,8 +1159,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             for decl_i in 0..data.decls.len_u32() as usize {
                 let decl = &data.decls.slice()[decl_i];
                 let Some(value) = decl.value else { continue };
-                let js_ast::ExprData::EAwait(aw) = value.data else { continue };
-                let js_ast::ExprData::EImport(im) = aw.value.data else { continue };
+                let js_ast::ExprData::EAwait(aw) = value.data else {
+                    continue;
+                };
+                let js_ast::ExprData::EImport(im) = aw.value.data else {
+                    continue;
+                };
                 if !im.namespace_ref.is_valid() {
                     continue;
                 }

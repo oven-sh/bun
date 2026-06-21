@@ -169,8 +169,10 @@ pub fn scan_imports_and_exports(
                 continue;
             }
 
-            for (import_record_index, record) in
-                col_ref!(import_records_list)[id].as_slice().iter().enumerate()
+            for (import_record_index, record) in col_ref!(import_records_list)[id]
+                .as_slice()
+                .iter()
+                .enumerate()
             {
                 if !record.source_index.is_valid() {
                     continue;
@@ -1060,8 +1062,7 @@ pub fn scan_imports_and_exports(
                         // those just cause us to reference the exports directly.
                         if other_flags.wrap == WrapKind::Esm
                             && kind != ImportKind::Stmt
-                            && !rec_flags
-                                .contains(ImportRecordFlags::TREE_SHAKEN_DYNAMIC_IMPORT)
+                            && !rec_flags.contains(ImportRecordFlags::TREE_SHAKEN_DYNAMIC_IMPORT)
                         {
                             this.graph.generate_symbol_import_and_use(
                                 source_index,

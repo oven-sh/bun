@@ -1213,7 +1213,11 @@ impl<'a> Parser<'a> {
         // local). A record is fully tracked only when *every* such ref had all
         // its uses accounted for (`use_count_estimate == 0`); the alias set is
         // the union across them.
-        if !p.imports_to_convert_from_dynamic_import.as_slice().is_empty() {
+        if !p
+            .imports_to_convert_from_dynamic_import
+            .as_slice()
+            .is_empty()
+        {
             #[derive(Default)]
             struct PerRecord {
                 escaped: bool,
@@ -1291,8 +1295,11 @@ impl<'a> Parser<'a> {
             }
 
             let inline_mode = !p.options.code_splitting;
-            for (import_record_id, rec) in
-                by_record.keys().iter().copied().zip(by_record.values().iter())
+            for (import_record_id, rec) in by_record
+                .keys()
+                .iter()
+                .copied()
+                .zip(by_record.values().iter())
             {
                 // When the namespace escaped (or, in inline mode, a track-only
                 // shape forced a bail), the record stays an ordinary wrapped
@@ -1302,7 +1309,9 @@ impl<'a> Parser<'a> {
                 // give them a `namespace_alias` here.
                 if rec.escaped || (inline_mode && !rec.can_inline) {
                     for (alias, loc_ref, owner_ns) in rec.aliases.iter() {
-                        let Some(item_ref) = loc_ref.ref_ else { continue };
+                        let Some(item_ref) = loc_ref.ref_ else {
+                            continue;
+                        };
                         if !p.is_import_item.contains_key(&item_ref) {
                             continue;
                         }
@@ -1359,11 +1368,7 @@ impl<'a> Parser<'a> {
                         let orig = &p.import_records.items()[import_record_id as usize];
                         (orig.range, orig.path)
                     };
-                    p.add_import_record_by_range_and_path(
-                        bun_ast::ImportKind::Stmt,
-                        range,
-                        &path,
-                    )
+                    p.add_import_record_by_range_and_path(bun_ast::ImportKind::Stmt, range, &path)
                 };
                 p.import_records.items_mut()[stmt_record_id as usize]
                     .flags
@@ -1379,14 +1384,15 @@ impl<'a> Parser<'a> {
                         }
                     });
                 let mut declared_symbols =
-                    bun_ast::DeclaredSymbolList::init_capacity(aliases.len() + 1)
-                        .expect("oom");
+                    bun_ast::DeclaredSymbolList::init_capacity(aliases.len() + 1).expect("oom");
                 declared_symbols.append_assume_capacity(DeclaredSymbol {
                     ref_: rec.ns_ref,
                     is_top_level: true,
                 });
                 for (j, (alias, loc_ref, _)) in aliases.iter().enumerate() {
-                    let item_ref = loc_ref.ref_.expect("infallible: can_inline implies ref bound");
+                    let item_ref = loc_ref
+                        .ref_
+                        .expect("infallible: can_inline implies ref bound");
                     items[j] = js_ast::ClauseItem {
                         alias: *alias,
                         alias_loc: loc_ref.loc,
@@ -1415,8 +1421,7 @@ impl<'a> Parser<'a> {
                     },
                     rec.ns_loc,
                 );
-                let mut import_record_indices =
-                    bun_ast::PartImportRecordIndices::init_capacity(1);
+                let mut import_record_indices = bun_ast::PartImportRecordIndices::init_capacity(1);
                 import_record_indices.append_assume_capacity(stmt_record_id);
                 before.push(js_ast::Part {
                     stmts: import_stmt.into(),

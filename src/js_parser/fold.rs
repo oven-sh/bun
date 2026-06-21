@@ -142,10 +142,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.import_items_for_namespace
                                     .get_mut(&im.namespace_ref)
                                     .unwrap()
-                                    .put(name, LocRef {
-                                        loc: name_loc,
-                                        ref_: None,
-                                    })
+                                    .put(
+                                        name,
+                                        LocRef {
+                                            loc: name_loc,
+                                            ref_: None,
+                                        },
+                                    )
                                     .expect("oom");
                                 p.ignore_usage(im.namespace_ref);
                             } else {
@@ -161,12 +164,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Track-only dynamic-import namespace: `const ns = await import(...)` /
                     // `.then(ns => ...)`. Record the alias so the dynamic chunk can drop
                     // unreferenced exports, but leave the property access intact.
-                    if p.track_only_dynamic_import_namespaces.contains_key(&id.ref_) {
+                    if p.track_only_dynamic_import_namespaces
+                        .contains_key(&id.ref_)
+                    {
                         if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
-                            map.put(name, LocRef {
-                                loc: name_loc,
-                                ref_: None,
-                            })
+                            map.put(
+                                name,
+                                LocRef {
+                                    loc: name_loc,
+                                    ref_: None,
+                                },
+                            )
                             .expect("oom");
                             p.ignore_usage(id.ref_);
                         }

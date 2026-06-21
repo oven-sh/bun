@@ -2011,10 +2011,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // tree-shakes. The body is visited *after* this
                             // block so the registration is observed there.
                             let local = id.r#ref;
-                            p.import_items_for_namespace.insert(
-                                local,
-                                crate::parser::ImportItemForNamespaceMap::default(),
-                            );
+                            p.import_items_for_namespace
+                                .insert(local, crate::parser::ImportItemForNamespaceMap::default());
                             if !inline {
                                 p.track_only_dynamic_import_namespaces.insert(local, ());
                             }

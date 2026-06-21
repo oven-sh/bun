@@ -212,6 +212,65 @@ test.skipIf(isWindows)("spawn failure (ENOENT) does not leave a passed-in source
   expect(sourceExit).toBe(0);
 });
 
+test.skipIf(isWindows)("a destroyed subprocess stdout does not leak a stale fd to a later spawn", async () => {
+  // `constructNativeReadable` caches the pipe fd on `stream.fd` for stdio
+  // hand-off. `destroy()` closes that fd, so it must also clear `stream.fd`;
+  // otherwise the destroyed stream reports a stale (closed or kernel-reused)
+  // fd and a later `spawn` would `dup2` the wrong descriptor into the child.
+  using pSource = spawn(bunExe(), ["-e", 'process.stdout.write("hi")'], {
+    stdio: ["ignore", "pipe", "ignore"],
+    env: bunEnv,
+  });
+  // Drain to EOF so the stream auto-destroys, then wait for `'close'`.
+  const drained = collect(pSource.stdout!);
+  await new Promise<void>(r => pSource.once("close", () => r()));
+  expect(await drained).toBe("hi");
+
+  expect(pSource.stdout!.destroyed).toBe(true);
+  // The fix nulls `fd` on destroy; before it, `fd` stayed a stale number.
+  expect((pSource.stdout as any).fd).toBeNull();
+
+  // The destroyed stream must not be accepted as stdio with that stale fd:
+  // `extractStreamFd` now returns undefined, so `spawn` raises the
+  // unsupported-stream-stdio error instead of `dup2`'ing a closed fd.
+  expect(() =>
+    spawn(bunExe(), ["-e", ""], { stdio: [pSource.stdout!, "pipe", "ignore"], env: bunEnv }),
+  ).toThrow(/stream\.Readable stdio/);
+});
+
+test.skipIf(isWindows)("spawnSync does not brick a stream passed as stdio", async () => {
+  // `Bun.spawnSync` blocks the JS thread until the child exits, so there is no
+  // parent/child read race to prevent, and the quiesce step runs only after
+  // the child is already gone. Its irreversible `setFlowing(false)` must not
+  // run on the sync path, or a stream handed to `spawnSync` (here the runner's
+  // own `process.stdin`) would be left permanently unreadable. A sub-bun runner
+  // performs the sync spawn and reports its `process.stdin` flowing state.
+  const RUNNER = `
+    const { spawnSync } = require("child_process");
+    process.stdin.resume();
+    const before = process.stdin.readableFlowing;
+    // Hand our own stdin to a child that exits without reading it.
+    spawnSync(${JSON.stringify(bunExe())}, ["-e", ""], { stdio: [process.stdin, "ignore", "ignore"] });
+    const after = process.stdin.readableFlowing;
+    process.stdout.write("flowing:" + before + "->" + after);
+    process.exit(0);
+  `;
+  using runner = spawn(bunExe(), ["-e", RUNNER], {
+    stdio: ["pipe", "pipe", "inherit"],
+    env: bunEnv,
+  });
+  const [out, code] = await Promise.all([
+    collect(runner.stdout!),
+    new Promise<number | null>(r => {
+      if (runner.exitCode != null) return r(runner.exitCode);
+      runner.once("exit", c => r(c));
+    }),
+  ]);
+  // Before the fix `markStreamsAsStdio` flipped flowing to false ("true->false").
+  expect(out).toBe("flowing:true->true");
+  expect(code).toBe(0);
+});
+
 function collect(stream: NodeJS.ReadableStream): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];

@@ -534,7 +534,10 @@ function spawnSync(file, args, options) {
   options.killSignal = sanitizeKillSignal(options.killSignal);
 
   const stdio = options.stdio || "pipe";
-  const { bunStdio, streamsToQuiesce } = getBunStdioFromOptions(stdio);
+  // Sync path: only the `bunStdio` fd mapping matters. Unlike async `spawn`,
+  // the source streams are not quiesced (see below at the `Bun.spawnSync`
+  // call), so `streamsToQuiesce` is intentionally ignored here.
+  const { bunStdio } = getBunStdioFromOptions(stdio);
 
   var { input } = options;
   if (input) {
@@ -578,9 +581,12 @@ function spawnSync(file, args, options) {
       killSignal: options.killSignal,
       maxBuffer: options.maxBuffer,
     });
-    // Only quiesce source streams after spawn has taken over the fd —
-    // see `markStreamsAsStdio`.
-    if (streamsToQuiesce.length > 0) markStreamsAsStdio(streamsToQuiesce);
+    // No quiescing on the sync path. `Bun.spawnSync` blocks the JS thread
+    // until the child exits, so the parent's reader can't race it, and this
+    // line only runs once the child is already gone. Calling
+    // `markStreamsAsStdio` here would have no upside and its irreversible
+    // `setFlowing(false)` would permanently brick the source stream (e.g.
+    // `process.stdin`). Node likewise does not mark streams in `spawnSync`.
   } catch (err) {
     error = err;
     stdout = null;

@@ -245,6 +245,11 @@ function destroy(this: NativeReadable, error: any, cb: () => void) {
   if (ptr) {
     ptr.cancel(error);
   }
+  // `ptr.cancel` closes the underlying pipe fd, so clear the cached `fd` that
+  // `constructNativeReadable` exposed for stdio hand-off — otherwise a
+  // destroyed stream still reports a stale (closed or kernel-reused) fd to
+  // `child_process.spawn`. Mirrors the WriteStream fast-path `close()`.
+  this.fd = null;
   if (cb) {
     process.nextTick(cb);
   }

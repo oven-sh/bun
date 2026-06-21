@@ -916,7 +916,12 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
     }
 
     for (var i = 0, values = many.value, length = many.value.length; i < length; i++) {
-      sink.write(values[i]);
+      // The native sink returns a Promise when the transport is backed up;
+      // await it so we stop pulling until the socket drains (backpressure).
+      const writeResult = sink.write(values[i]);
+      if (writeResult && $isPromise(writeResult)) {
+        await writeResult;
+      }
     }
 
     var streamState = $getByIdDirectPrivate(stream, "state");
@@ -932,7 +937,10 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
         return sink.end();
       }
 
-      sink.write(value);
+      const writeResult = sink.write(value);
+      if (writeResult && $isPromise(writeResult)) {
+        await writeResult;
+      }
     }
   } catch (e) {
     didThrow = true;

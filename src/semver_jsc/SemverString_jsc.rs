@@ -13,5 +13,3 @@ impl SemverStringJsc for SemverString {
         bun_string_jsc::create_utf8_for_js(global, self.slice(buffer))
     }
 }
-
-// ported from: src/semver_jsc/SemverString_jsc.zig

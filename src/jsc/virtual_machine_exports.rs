@@ -9,10 +9,11 @@ use crate::{
 use bun_bundler::transpiler::PluginResolver;
 use bun_core::String as BunString;
 use bun_event_loop::ManagedTask::ManagedTask;
-use bun_sourcemap::{BakeSourceProvider, DevServerSourceProvider};
+use bun_sourcemap::SourceProviderMap;
+use bun_sourcemap::parsed_source_map::AnySourceProvider;
 
-// Zig: comptime { if (Environment.isWindows) @export(&Bun__ZigGlobalObject__uvLoop, ...) }
-// Handled below by `#[cfg(windows)]` on the fn definition itself.
+// `Bun__ZigGlobalObject__uvLoop` is Windows-only: `#[cfg(windows)]` on the fn
+// definition itself.
 //
 // `#[unsafe(no_mangle)] extern "C"` thunks for everything below are emitted by
 // `src/codegen/generate-host-exports.ts` from the `// HOST_EXPORT(Sym, c)`
@@ -42,7 +43,6 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     if let Some(overridden) = vm.overridden_performance_now {
         return overridden;
     }
-    // PORT NOTE: Zig `std.time.Timer.read()`; the Rust field is `Instant`.
     vm.origin_timer.elapsed().as_nanos() as u64
 }
 
@@ -155,9 +155,9 @@ pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise)
 struct HandledPromiseContext {
     // VM-lifetime backref (JSC_BORROW) — `GlobalRef` encapsulates the deref.
     global_this: crate::GlobalRef,
-    // PORT NOTE: Zig stored a bare JSValue rooted via `.protect()`/`.unprotect()`.
-    // PORTING.md forbids bare JSValue fields on heap-allocated structs; `Strong`
-    // is the prescribed root type and its `Drop` releases the handle slot.
+    // PORTING.md forbids bare JSValue fields on heap-allocated structs;
+    // `Strong` is the prescribed root type and its `Drop` releases the
+    // handle slot.
     promise: Strong,
 }
 
@@ -280,45 +280,10 @@ pub fn get_verbose_fetch_value() -> i32 {
     }
 }
 
-// HOST_EXPORT(Bun__addBakeSourceProviderSourceMap, c)
-pub fn add_bake_source_provider_source_map(
-    vm: &mut VirtualMachine,
-    opaque_source_provider: *mut c_void,
-    specifier: &BunString,
-) {
-    // PERF(port): was stack-fallback alloc — profile if hot
-    let slice = specifier.to_utf8();
-    vm.source_mappings.put_bake_source_provider(
-        opaque_source_provider.cast::<BakeSourceProvider>(),
-        slice.slice(),
-    );
-}
-
-// HOST_EXPORT(Bun__addDevServerSourceProvider, c)
-pub fn add_dev_server_source_provider(
-    vm: &mut VirtualMachine,
-    opaque_source_provider: *mut c_void,
-    specifier: &BunString,
-) {
-    // PERF(port): was stack-fallback alloc — profile if hot
-    let slice = specifier.to_utf8();
-    vm.source_mappings.put_dev_server_source_provider(
-        opaque_source_provider.cast::<DevServerSourceProvider>(),
-        slice.slice(),
-    );
-}
-
-// HOST_EXPORT(Bun__removeDevServerSourceProvider, c)
-pub fn remove_dev_server_source_provider(
-    vm: &mut VirtualMachine,
-    opaque_source_provider: *mut c_void,
-    specifier: &BunString,
-) {
-    // PERF(port): was stack-fallback alloc — profile if hot
-    let slice = specifier.to_utf8();
-    vm.source_mappings
-        .remove_dev_server_source_provider(opaque_source_provider, slice.slice());
-}
+// `Bun__addBakeSourceProviderSourceMap` / `Bun__addDevServerSourceProvider` /
+// `Bun__removeDevServerSourceProvider` live in
+// `bun_runtime::bake::source_provider_exports` (their callers are bake's C++
+// source providers; LAYERING).
 
 // HOST_EXPORT(Bun__addSourceProviderSourceMap, c)
 pub fn add_source_provider_source_map(
@@ -326,10 +291,15 @@ pub fn add_source_provider_source_map(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
-    vm.source_mappings
-        .put_zig_source_provider(opaque_source_provider, slice.slice());
+    vm.source_mappings.put_source_provider(
+        AnySourceProvider::new(
+            opaque_source_provider
+                .cast::<SourceProviderMap>()
+                .cast_const(),
+        ),
+        slice.slice(),
+    );
 }
 
 // HOST_EXPORT(Bun__removeSourceProviderSourceMap, c)
@@ -338,10 +308,9 @@ pub fn remove_source_provider_source_map(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings
-        .remove_zig_source_provider(opaque_source_provider, slice.slice());
+        .remove_source_provider(opaque_source_provider, slice.slice());
 }
 
 #[crate::host_fn(export = "Bun__setSyntheticAllocationLimitForTesting")]
@@ -372,5 +341,3 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
         .store(limit, core::sync::atomic::Ordering::Relaxed);
     Ok(JSValue::js_number(prev as f64))
 }
-
-// ported from: src/jsc/virtual_machine_exports.zig

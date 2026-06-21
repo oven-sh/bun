@@ -854,7 +854,7 @@ export function assignStreamIntoResumableSink(stream, sink) {
     }
 
     // Native ResumableSink invokes this as (undefined, reason) — see
-    // ResumableSink.cancel in ResumableSink.zig. The first slot is unused
+    // the native ResumableSink.cancel. The first slot is unused
     // here (we close over `stream`), but the parameter is required so the
     // abort reason lands in the right argument.
     function cancelStream(_, reason: Error | null) {
@@ -999,9 +999,11 @@ export function handleDirectStreamError(e) {
 
   this.error = this.flush = this.write = this.close = this.end = $onReadableStreamDirectControllerClosed;
 
-  if (typeof this.$underlyingSource.close === "function") {
+  const underlyingSource = this.$underlyingSource;
+  const underlyingClose = underlyingSource.close;
+  if (typeof underlyingClose === "function") {
     try {
-      this.$underlyingSource.close.$call(this.$underlyingSource, e);
+      underlyingClose.$call(underlyingSource, e);
     } catch {}
   }
 
@@ -1156,9 +1158,11 @@ export function onCloseDirectStream(reason) {
   if (!sink) return;
 
   $putByIdDirectPrivate(stream, "state", $streamClosing);
-  if (typeof this.$underlyingSource.close === "function") {
+  const underlyingSource = this.$underlyingSource;
+  const underlyingClose = underlyingSource.close;
+  if (typeof underlyingClose === "function") {
     try {
-      this.$underlyingSource.close.$call(this.$underlyingSource, reason);
+      underlyingClose.$call(underlyingSource, reason);
     } catch {}
   }
 
@@ -1606,6 +1610,20 @@ export function readableStreamCancel(stream: ReadableStream, reason: any) {
   if (state === $streamErrored) return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
   $readableStreamClose(stream);
 
+  // Spec (ReadableStreamCancel step 6): perform each pending readIntoRequest's
+  // close steps with undefined, i.e. resolve { value: undefined, done: true }.
+  // This lives here and not in readableStreamClose - at ordinary close a BYOB
+  // read stays pending until the source responds with byobRequest.respond(0).
+  const reader = $getByIdDirectPrivate(stream, "reader");
+  if (reader && $isReadableStreamBYOBReader(reader)) {
+    const readIntoRequests = $getByIdDirectPrivate(reader, "readIntoRequests");
+    if (readIntoRequests?.isNotEmpty()) {
+      $putByIdDirectPrivate(reader, "readIntoRequests", $createFIFO());
+      for (var request = readIntoRequests.shift(); request; request = readIntoRequests.shift())
+        $fulfillPromise(request, { value: undefined, done: true });
+    }
+  }
+
   const controller = $getByIdDirectPrivate(stream, "readableStreamController");
   if (controller === null) return Promise.$resolve();
 
@@ -1626,9 +1644,10 @@ export function readableStreamDefaultControllerCancel(controller, reason) {
 
 export function readableStreamDefaultControllerPull(controller) {
   var queue = $getByIdDirectPrivate(controller, "queue");
-  if (queue.content.isNotEmpty()) {
+  const content = queue.content;
+  if (content.isNotEmpty()) {
     const chunk = $dequeueValue(queue);
-    if ($getByIdDirectPrivate(controller, "closeRequested") && queue.content.isEmpty()) {
+    if ($getByIdDirectPrivate(controller, "closeRequested") && content.isEmpty()) {
       $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
     } else $readableStreamDefaultControllerCallPullIfNeeded(controller);
 
@@ -1675,8 +1694,18 @@ export function readableStreamClose(stream) {
         $fulfillPromise(request, { value: undefined, done: true });
     }
   }
+  // Note: pending BYOB readIntoRequests are intentionally NOT drained here.
+  // Spec (ReadableStreamClose) only handles default readers; a BYOB read
+  // pending at close stays pending until the source calls
+  // byobRequest.respond(0), which returns a zero-length view of the caller's
+  // (transferred) buffer. The drain-with-undefined step belongs to
+  // ReadableStreamCancel only.
 
-  $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "closedPromiseCapability").resolve.$call();
+  // Direct streams store an empty `{}` sentinel in the reader slot (see
+  // $readDirectStream) to mark themselves locked without a real reader, so it
+  // has no closedPromiseCapability to resolve.
+  const closedPromiseCapability = $getByIdDirectPrivate(reader, "closedPromiseCapability");
+  if (closedPromiseCapability) closedPromiseCapability.resolve.$call();
 }
 
 export function readableStreamFulfillReadRequest(stream, chunk, done) {

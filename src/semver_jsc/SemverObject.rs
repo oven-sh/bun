@@ -18,8 +18,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 pub(crate) fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // PERF(port): was ArenaAllocator + stackFallback(512) — profile if it shows up on a hot path.
-    // (allocator params dropped; to_slice() owns its buffer and Drops)
+    // `to_slice()` owns its buffer and frees it on Drop.
 
     let arguments = frame.arguments_old::<2>();
     let arguments = arguments.slice();
@@ -71,8 +70,6 @@ pub(crate) fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
 #[bun_jsc::host_fn]
 pub(crate) fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // PERF(port): was ArenaAllocator + stackFallback(512) — profile if it shows up on a hot path.
-
     let arguments = frame.arguments_old::<2>();
     let arguments = arguments.slice();
     if arguments.len() < 2 {
@@ -99,7 +96,7 @@ pub(crate) fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
 
     let left_version = left_result.version.min();
 
-    // `Query::parse` can only fail with OOM (Zig: `try` propagates allocator error).
+    // `Query::parse` can only fail with OOM.
     let right_group = match query::parse(
         right.slice(),
         SlicedString::init(right.slice(), right.slice()),
@@ -118,5 +115,3 @@ pub(crate) fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
         left.slice(),
     )))
 }
-
-// ported from: src/semver_jsc/SemverObject.zig

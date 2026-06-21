@@ -32,7 +32,7 @@ using namespace WebViewProto;
 // isReachableFromOpaqueRoots predicate reads the atomic activity count:
 // under `bun test` the closure → view → m_pendingNavigate → promise →
 // reaction → closure cycle has no external root (the test-function promise
-// goes out of Zig scope after runTestCallback returns). This IS the root.
+// goes out of scope after runTestCallback returns). This IS the root.
 // ---------------------------------------------------------------------------
 
 class JSWebViewWeakOwner final : public JSC::WeakHandleOwner {
@@ -63,7 +63,7 @@ void settleSlot(JSGlobalObject* g, JSWebView* v,
     if (ok)
         p->resolve(g, g->vm(), value);
     else
-        p->reject(g->vm(), g, value);
+        p->reject(g->vm(), value);
 }
 
 // --- WebViewEventTarget ----------------------------------------------------

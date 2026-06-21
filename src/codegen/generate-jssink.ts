@@ -122,7 +122,6 @@ function header() {
             {
                 m_sinkPtr = sinkPtr;
                 m_onDestroy = onDestroy;
-                ${name === "FileSink" ? "FileSink__assertLive(sinkPtr);" : ""}
             }
                                                                                                                                                                                     
             void finishCreation(JSC::VM&);
@@ -181,7 +180,6 @@ function header() {
                 {
                     m_sinkPtr = sinkPtr;
                     m_onDestroy = onDestroy;
-                    ${name === "FileSink" ? "FileSink__assertLive(sinkPtr);" : ""}
                 }
                                                                                                                                                                                         
                 void finishCreation(JSC::VM&);
@@ -206,10 +204,6 @@ JSC_DECLARE_CUSTOM_GETTER(function${name}__getter);
 #include "Sink.h"
 
 extern "C" bool JSSink_isSink(JSC::JSGlobalObject*, JSC::EncodedJSValue);
-// #53265 probe v4: panics with creation backtrace if sinkPtr->magic != LIVE.
-// Called from JSFileSink/JSReadableFileSinkController inline constructors below.
-// No-op on non-Windows (see FileSink.rs).
-extern "C" void FileSink__assertLive(const void* sinkPtr);
 
 namespace WebCore {
 using namespace JSC;
@@ -288,14 +282,11 @@ async function implementation() {
 #include <JavaScriptCore/WeakInlines.h>
 
 extern "C" void Bun__onSinkDestroyed(uintptr_t destructor, void* sinkPtr);
-// #53265 probe v4: panics with creation backtrace if sinkPtr->magic != LIVE.
-// No-op on non-Windows (see FileSink.rs).
-extern "C" void FileSink__assertLive(const void* sinkPtr);
-
 namespace WebCore {
 using namespace JSC;
 
 ${classes.map(name => `extern "C" size_t ${name}__memoryCost(void* sinkPtr);`).join("\n")}
+${classes.map(name => `extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue controllerValue);`).join("\n")}
 
 JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
@@ -644,6 +635,7 @@ ${controller}::~${controller}()
     }
 
     if (m_sinkPtr) {
+        ${name}__controllerDetached(m_sinkPtr, JSC::JSValue::encode(this));
         ${name}__finalize(m_sinkPtr);
     }
 }
@@ -663,6 +655,10 @@ void JS${controllerName}::detach() {
         auto destroy = m_onDestroy;
         m_onDestroy = 0;
         Bun__onSinkDestroyed(destroy, m_sinkPtr);
+    }
+
+    if (m_sinkPtr) {
+        ${name}__controllerDetached(m_sinkPtr, JSC::JSValue::encode(this));
     }
 
     m_sinkPtr = nullptr;
@@ -1033,16 +1029,14 @@ extern "C" void ${name}__onClose(JSC::EncodedJSValue controllerValue, JSC::Encod
 // `BUN_DECLARE_HOST_FUNCTION(${name}__{construct,write,end,flush,start})` plus
 // the two non-host-fn externs `${name}__getInternalFd` / `${name}__memoryCost`.
 // Each thunk calls an inherent method on the real sink struct in
-// `crate::webcore` (mirroring Zig's `@import("…").${name}.<fn>`); a missing
-// method is a compile error.
+// `crate::webcore`; a missing method is a compile error.
 //
 // Calling convention: `BUN_DECLARE_HOST_FUNCTION` and `endWithSink` use
 // `SYSV_ABI` (= `extern "sysv64"` on win-x64, `"C"` elsewhere) — wrapped in
 // `bun_jsc::jsc_host_abi!`. The remaining `ZIG_DECL` / plain `extern "C"`
 // symbols (finalize/close/updateRef/getInternalFd/memoryCost) stay `extern "C"`.
 function rustSink() {
-  // All sink structs live (or will live) under `crate::webcore`; the Zig
-  // originals are `src/runtime/webcore/streams.zig::${name}`.
+  // All sink structs live (or will live) under `crate::webcore`.
   const sinkPaths: Record<string, string> = {
     ArrayBufferSink: "crate::webcore::array_buffer_sink::ArrayBufferSink",
     FileSink: "crate::webcore::file_sink::FileSink",
@@ -1131,6 +1125,17 @@ pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
     templ += `#[unsafe(no_mangle)]
 pub extern "C" fn ${name}__finalize(this: &mut ${name}) {
     ${JSSinkT}::js_finalize(this)
+}
+
+`;
+
+    // extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue)
+    // — called from JSReadable${name}Controller::detach() and its destructor.
+    // C++ caller null-checks `m_sinkPtr` before calling.
+    symbols.push(`${name}__controllerDetached`);
+    templ += `#[unsafe(no_mangle)]
+pub extern "C" fn ${name}__controllerDetached(this: &mut ${name}, controller: JSValue) {
+    ${JSSinkT}::js_controller_detached(this, controller)
 }
 
 `;

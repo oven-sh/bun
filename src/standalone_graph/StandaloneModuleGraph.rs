@@ -24,8 +24,8 @@ use bun_paths::{OSPathBuffer, WPathBuffer};
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
 
-// TODO(port): bun_webcore::Blob — `cached_blob` is only ever set from
-// `bun_runtime` (higher tier); model as opaque erased pointer here.
+// `bun_webcore::Blob` lives in a higher tier and `cached_blob` is only ever
+// set from `bun_runtime`, so it is modeled as an opaque erased pointer here.
 bun_opaque::opaque_ffi! {
     /// Opaque stand-in for `bun_webcore::Blob`. Only stored as `NonNull<Blob>`.
     pub struct Blob;
@@ -58,10 +58,9 @@ pub const BASE_PATH: &str = "/$bunfs/";
 #[cfg(windows)]
 pub const BASE_PATH: &str = "B:\\~BUN\\";
 
-// TODO(port): Zig version takes `target: Environment.OperatingSystem` + `comptime suffix`
-// and concatenates at comptime. Rust cannot const-concat with a runtime enum branch
-// nor across a `const fn` boundary. Could expose as a `macro_rules!` over
-// `const_format::concatcp!`; for now we materialize the two call-sites directly.
+// Rust cannot const-concat with a runtime enum branch nor across a `const fn`
+// boundary, so the two call-site combinations are materialized directly with
+// `const_format::concatcp!`.
 #[cfg(windows)]
 pub const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
 #[cfg(not(windows))]
@@ -72,12 +71,11 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("
 #[cfg(not(windows))]
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("/$bunfs/", "root/");
 
-// TODO(port): Zig used a nested `Instance` struct holding a static var. Model
-// as a process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
-// `get()` returns a raw `*mut` to mirror Zig's `?*StandaloneModuleGraph`; callers
-// mutate `wtf_string` / `cached_blob` / `sourcemap` lazily. TODO(refactor):
-// push interior mutability down to those per-`File` fields (`UnsafeCell<…>`) so
-// read-only paths (`find`, `entry_point`, `stat`) can take `&self`.
+// A process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
+// `get()` returns a raw `*mut`; callers
+// mutate `wtf_string` / `cached_blob` / `sourcemap` lazily. A future reshape
+// could push interior mutability down to those per-`File` fields (`UnsafeCell<…>`)
+// so read-only paths (`find`, `entry_point`, `stat`) can take `&self`.
 struct Instance(core::cell::UnsafeCell<StandaloneModuleGraph>);
 // SAFETY: the graph is populated once at startup before any worker threads;
 // post-init mutation is limited to per-`File` lazy fields. NOTE: `INIT_LOCK`
@@ -90,8 +88,8 @@ static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
 
 impl StandaloneModuleGraph {
     pub fn get() -> Option<*mut StandaloneModuleGraph> {
-        // Mirrors Zig's `?*StandaloneModuleGraph`: a raw pointer with no
-        // uniqueness invariant. Do NOT hand out `&'static mut` here — multiple
+        // A raw pointer with no uniqueness invariant. Do NOT hand out
+        // `&'static mut` here — multiple
         // callers (resolver, sourcemap loader, worker threads) may hold the
         // result concurrently, and overlapping `&mut` is UB regardless of
         // whether either side writes.
@@ -104,10 +102,9 @@ impl StandaloneModuleGraph {
     }
 }
 
-// TODO(port): Zig `targetBasePublicPath(target, comptime suffix: [:0]const u8) [:0]const u8`
-// concatenates at comptime via `++`. A runtime `suffix: &[u8]` parameter cannot be
-// const-concatenated. All Zig callers pass either `""` or `"root/"`, so the runtime
-// variant special-cases those two literals.
+// A runtime `suffix: &[u8]` parameter cannot be
+// const-concatenated. All callers pass either `""` or `"root/"`, so the runtime
+// variant special-cases those two literals (`unreachable!` guards anything new).
 pub fn target_base_public_path(
     target: bun_core::Environment::OperatingSystem,
     suffix: &'static [u8],
@@ -145,9 +142,9 @@ pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
 }
 
 impl StandaloneModuleGraph {
-    // TODO(port): interior mutability — Zig returns `*File` and callers mutate
-    // `wtf_string` / `cached_blob`. Using `&mut self` here may force callers to
-    // hold `&mut StandaloneModuleGraph`; could switch to `UnsafeCell` fields.
+    // Callers mutate `wtf_string` / `cached_blob`, so these accessors take
+    // `&mut self`. Switching to `UnsafeCell` per-`File`
+    // fields would let read-only paths take `&self`; see the `Instance` note above.
     pub fn entry_point(&mut self) -> &mut File {
         &mut self.files.values_mut()[self.entry_point_id as usize]
     }
@@ -185,10 +182,10 @@ impl StandaloneModuleGraph {
 // startup, never freed). The raw-pointer / `Cell` fields it carries are
 // `bun_runtime`-owned caches (`cached_blob`, `wtf_string`, source-map state)
 // that are only ever touched from the JS main thread under the API lock; the
-// resolver-facing read path below touches none of them. Zig stored this as a
-// plain `*StandaloneModuleGraph` shared across worker threads with no
-// synchronization; mirror that here so the `Send + Sync` supertrait on
-// `bun_resolver::StandaloneModuleGraph` is satisfied.
+// resolver-facing read path below touches none of them. The graph pointer is
+// shared across worker threads through the resolver, which is why the
+// `Send + Sync` supertrait on `bun_resolver::StandaloneModuleGraph` must be
+// satisfied.
 unsafe impl Send for StandaloneModuleGraph {}
 // SAFETY: see `Send` impl — post-init mutation is confined to per-`File` lazy caches on the JS thread.
 unsafe impl Sync for StandaloneModuleGraph {}
@@ -278,9 +275,10 @@ pub enum ModuleFormat {
 
 #[cfg(target_os = "macos")]
 mod macho {
-    // TODO(port): move to standalone_graph_sys
+    // Declared inline rather than in a dedicated `*_sys` crate: this crate is
+    // the symbol's only consumer.
     unsafe extern "C" {
-        pub(super) fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // align(1) in Zig
+        pub(super) fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // possibly unaligned
     }
 
     /// Returns `(base, len)` for the embedded `__BUN` section data. Kept as a
@@ -334,7 +332,8 @@ mod pe {
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 mod elf {
-    // TODO(port): move to standalone_graph_sys
+    // Declared inline rather than in a dedicated `*_sys` crate: this crate is
+    // the symbol's only consumer.
     unsafe extern "C" {
         pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
     }
@@ -376,11 +375,9 @@ pub struct File {
     pub loader: Loader,
     pub contents: &'static ZStr,
     pub sourcemap: LazySourceMap,
-    // TODO(port): lifetime — assigned in runtime/api/ (out of crate)
     pub cached_blob: Option<NonNull<Blob>>,
     pub encoding: Encoding,
     pub wtf_string: BunString,
-    // TODO(port): Zig type is []u8 (mutable) obtained via @constCast on section bytes.
     // BACKREF into the embedded section; JSC mutates the bytecode buffer in place.
     pub bytecode: *mut [u8],
     pub module_info: *mut [u8],
@@ -426,8 +423,6 @@ impl File {
         // We don't want this to free.
         self.wtf_string.dupe_ref()
     }
-
-    // TODO(port): move to *_jsc — `pub const blob = @import("../runtime/api/standalone_graph_jsc.zig").fileBlob;`
 }
 
 pub enum LazySourceMap {
@@ -459,16 +454,13 @@ impl LazySourceMap {
                 let ism = SourceMap::InternalSourceMap {
                     data: blob.as_ptr(),
                 };
-                // PORT NOTE: `from_internal` fills `internal = Some(ism)` +
+                // Note: `from_internal` fills `internal = Some(ism)` +
                 // `input_line_count = ism.input_line_count()` and defaults the rest.
                 let mut stored = SourceMap::ParsedSourceMap::from_internal(ism);
 
                 let source_files_count = serialized.source_files_count();
-                // TODO(port): Zig allocated a single `[]?[]u8` of len*2 and reinterpreted
-                // the first half as `[][]const u8` for file_names. Rust splits into two
-                // separate Vecs to avoid the punning.
-                // PERF(port): `external_source_names` is `Vec<Box<[u8]>>` so we
-                // copy the section bytes; Zig held a borrowed slice. Could switch
+                // PERF: `external_source_names` is `Vec<Box<[u8]>>` so we
+                // copy the section bytes. Could switch
                 // the field to `Vec<&'static [u8]>` for the standalone path.
                 let mut file_names: Vec<Box<[u8]>> = Vec::with_capacity(source_files_count);
                 let decompressed_contents_slice: Vec<Option<Vec<u8>>> =
@@ -494,16 +486,17 @@ impl LazySourceMap {
                 });
 
                 stored.external_source_names = file_names;
-                // Zig: `.underlying_provider = .{ .data = @truncate(@intFromPtr(data)) }`
-                // (kind = .zig, load_hint = .none implicit). `from_provider` packs the
-                // same triple into the `SourceContentPtr` bitfield.
+                // `from_provider` stores the pointer as a raw address in
+                // `SourceContentPtr.data`; the provider dispatch is never
+                // invoked for this type-punned pointer (guarded by
+                // `is_standalone_module_graph`).
                 stored.underlying_provider = SourceMap::SourceContentPtr::from_provider(
                     bun_core::heap::into_raw(data).cast::<SourceMap::SourceProviderMap>(),
                 );
                 stored.is_standalone_module_graph = true;
 
                 let parsed = Arc::new(stored);
-                // PERF(port): Zig did parsed.ref() (intrusive) to never free; Arc clone held in self.
+                // The Arc clone held in self keeps the parsed map alive.
                 *self = LazySourceMap::Parsed(Arc::clone(&parsed));
                 Some(parsed)
             }
@@ -551,9 +544,9 @@ impl StandaloneModuleGraph {
             });
         }
 
-        // Zig's `raw_bytes: []u8` aliases freely — this function hands out read-only subslices
+        // This function hands out read-only subslices
         // (name/contents/sourcemap) AND writable subslices (bytecode/module_info, which JSC
-        // mutates in place) into the same allocation. In Rust we must not derive the writable
+        // mutates in place) into the same allocation. We must not derive the writable
         // ones from a `&[u8]` reborrow (writing through const-derived provenance is UB), and we
         // must not hold a long-lived `&[u8]` that *spans* a writable subrange (a foreign write
         // would invalidate it under Stacked/Tree Borrows). Keep `(raw_ptr, raw_len)` raw and
@@ -564,8 +557,7 @@ impl StandaloneModuleGraph {
         // SAFETY: modules metadata blob is a read-only subrange of `[0, raw_len)` disjoint
         // from bytecode/module_info, serialized by `to_bytes`.
         let modules_list_bytes = unsafe { slice_to(raw_const, raw_len, offsets.modules_ptr) };
-        // PORT NOTE: StandaloneModuleGraph.zig:309 builds `[]align(1) const CompiledModuleGraphFile`
-        // because the modules blob sits at an arbitrary byte offset in the section. In Rust,
+        // Note: the modules blob sits at an arbitrary byte offset in the section, and
         // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
         // → 4-byte). We instead iterate by index and `read_unaligned` each fixed-size record into a
         // local (`CompiledModuleGraphFile` is `Copy`/POD), so no `&T` ever points at unaligned memory.
@@ -601,7 +593,6 @@ impl StandaloneModuleGraph {
                     slice_to_z(raw_const, raw_len, module.bytecode_origin_path),
                 )
             };
-            // PERF(port): was putAssumeCapacity
             let _ = modules.put(
                 name.as_bytes(),
                 File {
@@ -610,7 +601,9 @@ impl StandaloneModuleGraph {
                     contents,
                     sourcemap: if module.sourcemap.length > 0 {
                         LazySourceMap::Serialized(SerializedSourceMap {
-                            // TODO(port): @alignCast — alignment of source map bytes
+                            // `&[u8]` is align(1), and every structured read
+                            // from these bytes (header / StringPointer tables)
+                            // goes through `read_unaligned` in SerializedSourceMap.
                             bytes: sourcemap_bytes,
                         })
                     } else {
@@ -718,10 +711,8 @@ pub(crate) fn to_bytes(
     compile_exec_argv: &[u8],
     flags: Flags,
 ) -> Result<Vec<u8>, BunError> {
-    // TODO(port): bun_perf::PerfEvent::StandaloneModuleGraph_serialize — generated
-    // enum is still a `_Stub` placeholder; restore the trace call once the generator emits
-    // real variants.
-    // let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraph_serialize);
+    // RAII trace handle ends on drop.
+    let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
 
     let mut entry_point_id: Option<usize> = None;
     let mut string_builder = bun_core::StringBuilder::default();
@@ -773,7 +764,6 @@ pub(crate) fn to_bytes(
 
     let mut source_map_header_list: Vec<u8> = Vec::new();
     let mut source_map_string_list: Vec<u8> = Vec::new();
-    // PERF(port): was arena bulk-free (source_map_arena)
 
     for output_file in output_files {
         if !output_file.output_kind.is_file_in_standalone_mode() {
@@ -785,6 +775,16 @@ pub(crate) fn to_bytes(
         };
 
         let dest_path = bun_core::strings::remove_leading_dot_slash(&output_file.dest_path);
+
+        // Windows: store the key with `/`. The template printer emits native
+        // `\` into `dest_path`, but `find_assume_standalone_path` normalizes
+        // lookups to `/`, so a `\` key would miss (ENOENT). Zig normalized this
+        // in place in `Chunk.zig`; the Rust port only normalizes a scratch copy.
+        #[cfg(windows)]
+        let mut dest_path_buf = PathBuffer::uninit();
+        #[cfg(windows)]
+        let dest_path: &[u8] =
+            path::resolve_path::platform_to_posix_buf::<u8>(dest_path, &mut dest_path_buf);
 
         let bytecode: StringPointer = 'brk: {
             if output_file.bytecode_index != u32::MAX {
@@ -861,11 +861,6 @@ pub(crate) fn to_bytes(
             break 'brk StringPointer::default();
         };
 
-        // PORT NOTE: Zig used `bun.sys.File.makeOpen` (open, on-fail mkdir parent +
-        // retry). `src/sys/File.rs` is still cfg-gated upstream, so the
-        // `make_open` body is inlined here against the live `bun_sys` stub
-        // surface (`openat` / `make_path` / `File::write_all`).
-        // Zig: `if (comptime bun.Environment.is_canary or bun.Environment.isDebug)`
         if Environment::IS_CANARY || Environment::IS_DEBUG {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
                 let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -878,25 +873,15 @@ pub(crate) fn to_bytes(
                 // Scoped block to handle dump failures without skipping module emission
                 'dump: {
                     let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
-                    // Inline of `bun.sys.File.makeOpen(dest_z, flags, 0o664)`:
-                    let file = match Syscall::openat(Fd::cwd(), dest_z, flags, 0o664) {
-                        Ok(fd) => bun_sys::File::from_fd(fd),
-                        Err(_first_err) => {
-                            let dir_path = path::resolve_path::dirname::<path::platform::Auto>(
-                                dest_z.as_bytes(),
+                    let file = match bun_sys::File::make_open(dest_z.as_bytes(), flags, 0o664) {
+                        Ok(file) => file,
+                        Err(e) => {
+                            bun_core::pretty_errorln!(
+                                "<r><red>error<r><d>:<r> failed to open {}: {}",
+                                bstr::BStr::new(dest_path),
+                                e
                             );
-                            let _ = bun_sys::Dir::cwd().make_path(dir_path);
-                            match Syscall::openat(Fd::cwd(), dest_z, flags, 0o664) {
-                                Ok(fd) => bun_sys::File::from_fd(fd),
-                                Err(e) => {
-                                    bun_core::pretty_errorln!(
-                                        "<r><red>error<r><d>:<r> failed to open {}: {}",
-                                        bstr::BStr::new(dest_path),
-                                        e
-                                    );
-                                    break 'dump;
-                                }
-                            }
+                            break 'dump;
                         }
                     };
                     if let Err(e) = file.write_all(buf_bytes) {
@@ -961,7 +946,6 @@ pub(crate) fn to_bytes(
         };
 
         if output_file.source_map_index != u32::MAX {
-            // PERF(port): Zig used defer clearRetainingCapacity + arena.reset(.retain_capacity)
             serialize_json_source_map_for_standalone(
                 &mut source_map_header_list,
                 &mut source_map_string_list,
@@ -974,13 +958,11 @@ pub(crate) fn to_bytes(
             source_map_header_list.clear();
             source_map_string_list.clear();
         }
-        // PERF(port): was appendAssumeCapacity
         modules.push(module);
     }
 
     // SAFETY: `CompiledModuleGraphFile` is `#[repr(C)]` POD with no padding-dependent
-    // invariants; reinterpreting its backing storage as bytes is the same as Zig's
-    // `std.mem.sliceAsBytes`.
+    // invariants; reinterpreting its backing storage as bytes is sound.
     let modules_as_bytes: &[u8] = unsafe {
         core::slice::from_raw_parts(
             modules.as_ptr().cast::<u8>(),
@@ -1002,21 +984,29 @@ pub(crate) fn to_bytes(
     let _ = string_builder.append(offsets_as_bytes);
     let _ = string_builder.append(TRAILER);
 
-    // SAFETY: string_builder.ptr was set by allocate() above.
-    let output_bytes = unsafe {
-        core::slice::from_raw_parts_mut(string_builder.ptr.unwrap().as_ptr(), string_builder.len)
-    };
-
     #[cfg(debug_assertions)]
     {
-        // An expensive sanity check:
-        // TODO(port): from_bytes wants &'static mut; debug-only sanity check elided.
-        // let mut graph = StandaloneModuleGraph::from_bytes(output_bytes, offsets)?;
-        // debug_assert_eq!(graph.files.count(), modules.len());
+        // An expensive sanity check: round-trip
+        // the serialized bytes and verify the module count survives. The graph
+        // only borrows the builder's buffer transiently — it is unlocked and
+        // dropped before the buffer is moved out below.
+        let graph = StandaloneModuleGraph::from_bytes(
+            string_builder.ptr.unwrap().as_ptr(),
+            string_builder.len,
+            offsets,
+        )?;
+        debug_assert_eq!(graph.files.count(), modules.len());
+        graph.files.unlock_pointers();
     }
 
-    // TODO(port): StringBuilder owns the buffer; return it as Vec<u8>.
-    Ok(output_bytes.to_vec())
+    // StringBuilder owns the buffer; hand it back without copying. `cap` may
+    // exceed `len` (sourcemap capacity is over-estimated above), so truncate
+    // the reconstituted Vec down to the written prefix — the `[len, cap)` tail
+    // is never read.
+    let len = string_builder.len;
+    let mut output = string_builder.move_to_slice().into_vec();
+    output.truncate(len);
+    Ok(output)
 }
 
 pub(crate) type InjectOptions = WindowsOptions;
@@ -1075,14 +1065,14 @@ pub(crate) fn inject(
 ) -> Fd {
     let _ = inject_options;
     let mut buf = PathBuffer::uninit();
-    // PORT NOTE: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
+    // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
     // buffer instead, so hoist that owner here so it outlives the loop.
     let mut zname_owned: Option<Box<[u8]>> = None;
     let mut zname: &ZStr = match bun_fs::FileSystem::tmpname(
         b"bun-build",
         &mut buf[..],
-        // i64 → u64 bitcast (Zig: `@bitCast`).
+        // i64 → u64 bitcast.
         bun_core::time::milli_timestamp() as u64,
     ) {
         Ok(n) => n,
@@ -1124,9 +1114,8 @@ pub(crate) fn inject(
             // retain the pointers past return.
             if unsafe { w::CopyFileW(in_buf.as_ptr(), out_buf.as_ptr(), w::FALSE) } == w::FALSE {
                 let e = w::Win32Error::get();
-                // Zig prints `@errorName(err)` (e.g. `AccessDenied`); map the
-                // Win32 code through the errno table so users see a name, not
-                // a raw integer.
+                // Map the Win32 code through the errno table so users see a
+                // name, not a raw integer.
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {:?}",
                     e.to_system_errno()
@@ -1207,8 +1196,7 @@ pub(crate) fn inject(
                                         zname.as_bytes(),
                                         &[0],
                                     ]);
-                                    // PORT NOTE: Zig leaked the concat buffer here. PORTING.md
-                                    // §Forbidden bans `mem::forget`; the buffer is parked in
+                                    // Note: the concat buffer is parked in
                                     // `zname_owned` (declared at fn entry) so it outlives the
                                     // loop and drops at fn exit.
                                     let len = zname_z.len().saturating_sub(1);
@@ -1229,8 +1217,6 @@ pub(crate) fn inject(
                                 _ => break,
                             }
                         }
-                        // PORT NOTE: Zig falls through to `unreachable` on retry == 2; the
-                        // print+return above is dead code in Zig too (kept for diff parity).
                     }
                 }
             }
@@ -1314,8 +1300,6 @@ pub(crate) fn inject(
                 return Fd::INVALID;
             }
 
-            // PERF(port): Zig used writer.adaptToNewApi(&buffer) with a 512KB stack
-            // buffer. `std::io::BufWriter` heap-allocates the buffer instead.
             let mut buffered_writer = std::io::BufWriter::with_capacity(
                 512 * 1024,
                 bun_sys::FileWriter(cloned_executable_fd),
@@ -1524,8 +1508,8 @@ pub(crate) fn inject(
 use bun_core::Environment::OperatingSystem as CompileTargetOs;
 pub use bun_options_types::compile_target::CompileTarget;
 
-/// Port of `CompileTarget.downloadToPath` (CompileTarget.zig). Moved up from
-/// `bun_options_types` (T3) so it can name `bun_http::AsyncHTTP` directly
+/// Moved up from `bun_options_types` (T3) so it can name
+/// `bun_http::AsyncHTTP` directly
 /// instead of routing through `extern "Rust"` shims; the only callers are the
 /// two `download*` fns below in this crate.
 pub(crate) fn download_to_path(
@@ -1553,10 +1537,11 @@ pub(crate) fn download_to_path(
         let url_str_copy: Box<[u8]> = Box::from(url_str);
         let url = bun_url::URL::parse(&url_str_copy);
         {
-            // TODO(port): errdefer progress.end() — `start` returns `&mut Node`
-            // borrowing `refresher`, so a scopeguard capturing it would alias.
-            // Could reshape with a guard that re-borrows on drop.
-            // PORT NOTE: reshaped for borrowck — `get_http_proxy_for` borrows
+            // The unconditional
+            // `progress.end()` below is sufficient: no fallible call sits between
+            // `refresher.start` and it, so every exit path (including the
+            // error returns after it) ends the node exactly once.
+            // Note: reshaped for borrowck — `get_http_proxy_for` borrows
             // `env` for the proxy URL lifetime; read the bool first.
             let reject_unauthorized = env.get_tls_reject_unauthorized();
             let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
@@ -1606,7 +1591,7 @@ pub(crate) fn download_to_path(
             }
 
             {
-                // PORT NOTE: reshaped for borrowck — `refresher.start` borrows
+                // Note: reshaped for borrowck — `refresher.start` borrows
                 // `refresher` mutably; do gunzip work first, drive progress around it.
                 refresher.start(b"Decompressing", 0);
                 let gunzip_result = (|| -> Result<(), BunError> {
@@ -1689,7 +1674,7 @@ pub(crate) fn download_to_path(
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],
-    root_dir: Fd, // TODO(port): was std.fs.Dir
+    root_dir: Fd,
     module_prefix: &[u8],
     outfile: &[u8],
     env: &mut bun_dotenv::Loader,
@@ -1701,7 +1686,6 @@ pub fn to_executable(
 ) -> Result<CompileResult, BunError> {
     #[cfg(windows)]
     let _ = root_dir;
-    // TODO(port): narrow error set
     let bytes = match to_bytes(
         module_prefix,
         output_files,
@@ -1722,9 +1706,8 @@ pub fn to_executable(
     }
     // bytes drops at end of scope
 
-    // PORT NOTE: Zig tracked `free_self_exe` to decide whether the slice was
-    // allocator-owned. `ZBox` always owns its bytes and drops on scope exit,
-    // so the flag is unnecessary.
+    // `ZBox` always owns its bytes and drops on scope exit, so no
+    // ownership flag is needed.
     let self_exe: bun_core::ZBox = if let Some(path) = self_exe_path {
         bun_core::ZBox::from_vec_with_nul(path.to_vec())
     } else if target.is_default() {
@@ -1739,7 +1722,6 @@ pub fn to_executable(
         }
     } else {
         let mut exe_path_buf = PathBuffer::uninit();
-        // TODO(port): std.fmt.allocPrintSentinel — build NUL-terminated owned string.
         let mut version_str: Vec<u8> = Vec::new();
         let _ = write!(&mut version_str, "{}", target);
         version_str.push(0);
@@ -1787,11 +1769,10 @@ pub fn to_executable(
     };
 
     let fd = inject(&bytes, &self_exe, windows_options, target);
-    // PORT NOTE: Zig's `defer if (fd != invalid) fd.close()` reads `fd` at scope exit
-    // after later reassignments. A scopeguard closure capturing `fd` by value would not
-    // observe those writes; capturing by `&mut` conflicts with later uses. Explicit
+    // Note: a scopeguard closure capturing `fd` by value would not observe
+    // later reassignments; capturing by `&mut` conflicts with later uses. Explicit
     // `if fd != Fd::INVALID { fd.close(); }` calls are inserted at every return below
-    // (both error and success paths) to match Zig behavior.
+    // (both error and success paths).
     debug_assert!(fd.kind() == bun_sys::FdKind::System);
 
     #[cfg(unix)]
@@ -1860,7 +1841,7 @@ pub fn to_executable(
         // SAFETY: NUL-terminated wide strings constructed above. Pass the
         // full-buffer pointer (not a `[..len]` sub-slice) so the pointer's
         // provenance covers the trailing NUL at index `len` that the W-suffix
-        // API will read — matches Zig's `buf[0..len :0].ptr` sentinel slice.
+        // API will read.
         if unsafe {
             windows::kernel32::MoveFileExW(
                 temp_buf_u16.as_ptr(),
@@ -1925,7 +1906,7 @@ pub fn to_executable(
     #[cfg(not(windows))]
     {
         let mut buf2 = PathBuffer::uninit();
-        // PORT NOTE: borrowck — `get_fd_path` returns `&mut [u8]` borrowing `buf2`;
+        // Note: borrowck — `get_fd_path` returns `&mut [u8]` borrowing `buf2`;
         // copy it into an owned buffer so `temp_posix_buf` can also borrow `buf2`'s
         // sibling without overlap.
         let temp_location: Vec<u8> = match bun_sys::get_fd_path(fd, &mut buf2) {
@@ -1940,8 +1921,6 @@ pub fn to_executable(
                 )));
             }
         };
-        // TODO(port): std.posix.toPosixPath — copy into NUL-terminated fixed buffer.
-        // `resolve_path::z` does the same (copy + NUL) and yields `&ZStr`.
         let mut temp_posix_buf = PathBuffer::uninit();
         let temp_posix = path::resolve_path::z(&temp_location, &mut temp_posix_buf);
         let outfile_basename = bun_paths::basename(outfile);
@@ -2120,8 +2099,8 @@ impl StandaloneModuleGraph {
                 let end_unaligned = base as usize + len;
                 let end = (end_unaligned + page - 1) & !(page - 1);
 
-                // std.posix.madvise hits `unreachable` on unexpected errnos; this is a
-                // best-effort hint, so call libc directly and just log on failure.
+                // This is a best-effort hint, so call libc madvise directly and
+                // just log on failure rather than treating errors as fatal.
                 // SAFETY: start..end covers a mapped range of the executable image.
                 let rc = unsafe {
                     libc::madvise(
@@ -2199,8 +2178,7 @@ impl SerializedSourceMap {
         Some(&self.bytes[start..][..head.map_bytes_length as usize])
     }
 
-    // PORT NOTE: Zig types these arrays as `[]align(1) const StringPointer` because the
-    // serialized byte buffer carries no alignment guarantee. Materializing a Rust
+    // Note: the serialized byte buffer carries no alignment guarantee. Materializing a
     // `&[StringPointer]` would require `align_of::<StringPointer>() == 4` alignment
     // (UB otherwise), so expose count + indexed unaligned reads instead.
 
@@ -2238,8 +2216,7 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 ) -> Result<(), BunError> {
     use bun_ast::ExprData as AstData;
 
-    // PERF(port): Zig threaded an arena allocator through; here we own a local
-    // bump arena and drop it on return (matches `defer arena.free`).
+    // We own a local bump arena and drop it on return.
     let arena = bun_alloc::Arena::new();
 
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_source);
@@ -2366,5 +2343,3 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     debug_assert!(header_list.len() == string_payload_start_location);
     Ok(())
 }
-
-// ported from: src/standalone_graph/StandaloneModuleGraph.zig

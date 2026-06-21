@@ -16,16 +16,12 @@
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-// ── src/sql/jsc/{mysql,postgres}.zig ─────────────────────────────────────────
 pub use bun_sql_jsc::mysql::create_binding as sql_jsc_mysql_create_binding;
 pub use bun_sql_jsc::postgres::create_binding as sql_jsc_postgres_create_binding;
 
-// ── src/crash_handler/crash_handler.zig js_bindings.generate ────────────────
-// Zig aliases this to `runtime/api/crash_handler_jsc.zig::js_bindings`; the
-// real body already lives in this crate.
+// The real body already lives in this crate.
 pub use crate::api::crash_handler_jsc::js_bindings::generate as crash_handler_crash_handler_js_bindings_generate;
 
-// ── src/install/**.zig ──────────────────────────────────────────────────────
 pub use bun_install_jsc::dependency_jsc::dependency_from_js as install_dependency_from_js;
 pub use bun_install_jsc::dependency_jsc::tag_infer_from_js as install_dependency_version_tag_infer_from_js;
 pub use bun_install_jsc::hosted_git_info_jsc::js_from_url as install_hosted_git_info_testing_ap_is_js_from_url;
@@ -35,47 +31,40 @@ pub use bun_install_jsc::npm_jsc::architecture_is_match as install_npm_architect
 pub use bun_install_jsc::npm_jsc::operating_system_is_match as install_npm_operating_system_js_function_operating_system_is_match;
 pub use bun_install_jsc::npm_jsc::package_manifest_bindings_generate as install_npm_package_manifest_bindings_generate;
 
-// ── src/ini/ini.zig IniTestingAPIs ──────────────────────────────────────────
-// PORT NOTE: the `*_jsc` bodies were lifted into `bun_install_jsc::ini_jsc`
+// The `*_jsc` bodies live in `bun_install_jsc::ini_jsc`
 // (ini's only JSC consumer is `bun install`'s npmrc loader).
 pub use bun_install_jsc::ini_jsc::ini_testing_load_npmrc_from_js as ini_ini_ini_testing_ap_is_load_npmrc_from_js;
 pub use bun_install_jsc::ini_jsc::ini_testing_parse as ini_ini_ini_testing_ap_is_parse;
 
-// ── src/jsc/*.zig ───────────────────────────────────────────────────────────
 pub use bun_jsc::bindgen_test::get_bindgen_test_functions as jsc_bindgen_test_get_bindgen_test_functions;
 pub use bun_jsc::counters::create_counters_object as jsc_counters_create_counters_object;
 pub use bun_jsc::event_loop::get_active_tasks as jsc_event_loop_get_active_tasks;
 pub use bun_jsc::virtual_machine_exports::Bun__setSyntheticAllocationLimitForTesting as jsc_virtual_machine_exports_bun__set_synthetic_allocation_limit_for_testing;
-// `src/jsc/ipc.zig emitHandleIPCMessage` is implemented in this crate
-// (`ipc_host.rs`) because it dereferences `Subprocess`, a runtime type.
+// `emit_handle_ipc_message` is implemented in this crate (`ipc_host.rs`)
+// because it dereferences `Subprocess`, a runtime type.
 pub use crate::ipc_host::emit_handle_ipc_message as jsc_ipc_emit_handle_ipc_message;
 
-// ── src/string/*.zig ────────────────────────────────────────────────────────
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp as string_escape_reg_exp_js_escape_reg_exp;
 pub use bun_jsc::bun_string_jsc::js_escape_reg_exp_for_package_name_matching as string_escape_reg_exp_js_escape_reg_exp_for_package_name_matching;
 pub use bun_jsc::bun_string_jsc::unicode_testing_apis::to_utf16_alloc_sentinel as bun_core_string_immutable_unicode_testing_ap_is_to_utf16_alloc_sentinel;
 
-// ── src/patch/patch.zig TestingAPIs ─────────────────────────────────────────
 pub use bun_patch_jsc::testing::patch_apply as patch_patch_testing_ap_is_apply;
 pub use bun_patch_jsc::testing::patch_make_diff as patch_patch_testing_ap_is_make_diff;
 pub use bun_patch_jsc::testing::patch_parse as patch_patch_testing_ap_is_parse;
 
-// ── src/sourcemap/InternalSourceMap.zig TestingAPIs ─────────────────────────
 pub use bun_sourcemap_jsc::internal_jsc::testing_find as sourcemap_internal_source_map_testing_ap_is_find;
 pub use bun_sourcemap_jsc::internal_jsc::testing_from_vlq as sourcemap_internal_source_map_testing_ap_is_from_vlq;
 pub use bun_sourcemap_jsc::internal_jsc::testing_to_vlq as sourcemap_internal_source_map_testing_ap_is_to_vlq;
 
-// ── src/sys/{sys,Error}.zig TestingAPIs ─────────────────────────────────────
 pub use bun_sys_jsc::error_jsc::TestingAPIs::sigaction_layout as sys_sys_testing_ap_is_sigaction_layout;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::sys_error_name_from_libuv as sys_error_testing_ap_is_sys_error_name_from_libuv;
+pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_nt_status_to_e as sys_sys_testing_ap_is_translate_nt_status_to_e;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_testing_ap_is_translate_uv_error_to_e;
 
-// ── src/http/{H2Client,H3Client}.zig TestingAPIs ────────────────────────────
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;
 pub use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_testing_ap_is_quic_live_counts;
 
-// ── src/bun.zig getUseSystemCA ──────────────────────────────────────────────
-/// Port of `src/bun.zig:getUseSystemCA`. Lives here (not in `src/bun.rs`)
+/// Lives here (not in `src/bun.rs`)
 /// because the flag it reads — `cli::Arguments::Bun__Node__UseSystemCA` — is
 /// owned by `bun_runtime`; placing the body in a lower crate would invert the
 /// dependency edge.
@@ -88,7 +77,6 @@ pub(crate) fn bun_get_use_system_ca(
     Ok(JSValue::js_boolean(v))
 }
 
-// ── src/css/jsc/css_internals.zig ───────────────────────────────────────────
 mod css {
     pub use bun_css_jsc::css_internals::{
         _test, attr_test, minify_error_test_with_options, minify_test, minify_test_with_options,
@@ -104,7 +92,6 @@ pub use css::prefix_test as css_jsc_css_internals_prefix_test;
 pub use css::prefix_test_with_options as css_jsc_css_internals_prefix_test_with_options;
 pub use css::test_with_options as css_jsc_css_internals_test_with_options;
 
-// ── src/collections/linear_fifo.zig TestingAPIs (test-only) ─────────────────
 // `LinearFifo` has no JSC consumer of its own; this `bun:internal-for-testing`
 // probe lives in `bun_runtime` (which depends on both `bun_collections` and
 // `bun_jsc`) rather than inventing a JSC edge into the collections crate.

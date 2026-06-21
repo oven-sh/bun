@@ -36,10 +36,8 @@ impl AdditionalOnAbortCallback {
     }
 }
 
-// PORT NOTE (transport selection): Zig `NewRequestContext` is a comptime
-// type-function over `(ssl_enabled, debug_mode, ThisServer, http3)` and picks
-// `Resp = uws.H3.Response | uws.NewApp(ssl).Response` / `Req = uws.H3.Request |
-// uws.Request` at comptime. Stable Rust cannot drive an associated type from a
+// NOTE (transport selection): the response/request handle types vary with
+// `(ssl_enabled, http3)`. Stable Rust cannot drive an associated type from a
 // const-generic `bool` without specialization, and an early `Transport`
 // helper-trait approach forced `where TransportFor<SSL,H3>: Transport` bounds
 // onto every generic that named `RequestContext` (which Rust then *cannot*
@@ -103,7 +101,6 @@ impl AnyResponseExt for uws::AnyResponse {
 /// frame unwinds), so reads/writes are safe `Cell` ops — no raw `*mut bool`.
 pub type DeferDeinitFlag = bun_ptr::BackRef<core::cell::Cell<bool>>;
 
-// `jsc.WebCore.HTTPServerWritable(ssl_enabled, http3)` — comptime type fn.
 pub type ResponseStream<const SSL_ENABLED: bool, const HTTP3: bool> =
     crate::webcore::streams::HTTPServerWritable<SSL_ENABLED, HTTP3>;
 pub type ResponseStreamJSSink<const SSL_ENABLED: bool, const HTTP3: bool> =
@@ -111,20 +108,22 @@ pub type ResponseStreamJSSink<const SSL_ENABLED: bool, const HTTP3: bool> =
 
 /// This pre-allocates up to 2,048 RequestContext structs.
 /// It costs about 655,632 bytes.
-// TODO(port): bun.HiveArray(RequestContext, if (bun.heap_breakdown.enabled) 0 else 2048).Fallback
+// Capacity 0 when heap-breakdown is enabled routes every allocation through
+// the fallback heap path so the per-type malloc zones can attribute them.
+pub const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
+    0
+} else {
+    2048
+};
 pub type RequestContextStackAllocator<
     ThisServer,
     const SSL: bool,
     const DBG: bool,
     const H3: bool,
-> = bun_collections::hive_array::Fallback<RequestContext<ThisServer, SSL, DBG, H3>, 2048>;
-
-thread_local! {
-    // TODO(port): Zig `pub threadlocal var pool: ?*RequestContextStackAllocator = null;` is
-    // per-monomorphization. Rust thread_local! cannot be generic; Phase B: move into ThisServer
-    // or use a per-instantiation static via macro.
-    static POOL: core::cell::Cell<*mut c_void> = const { core::cell::Cell::new(core::ptr::null_mut()) };
-}
+> = bun_collections::hive_array::Fallback<
+    RequestContext<ThisServer, SSL, DBG, H3>,
+    REQUEST_CONTEXT_POOL_CAPACITY,
+>;
 
 pub struct RequestContext<
     ThisServer,
@@ -137,12 +136,9 @@ pub struct RequestContext<
     /// pointee is live for the holder's entire lifetime. `None` once detached.
     pub server: Option<bun_ptr::BackRef<ThisServer>>,
     pub resp: Option<uws::AnyResponse>,
-    /// thread-local default heap allocator
-    /// this prevents an extra pthread_getspecific() call which shows up in profiling
-    // TODO(port): allocator field deleted — global mimalloc per PORTING.md §Allocators.
     pub req: Option<*mut Req<SSL_ENABLED, HTTP3>>,
     pub request_weakref: request::WeakRef,
-    // PORT NOTE: Zig `?*AbortSignal`. `Arc<AbortSignal>` was wrong —
+    // NOTE: `Arc<AbortSignal>` was wrong —
     // `AbortSignal` is an opaque ZST FFI handle; an `Arc` of a ZST never owns
     // the C++ allocation. Store the raw pointer. The request holds TWO counts:
     // the intrusive C++ `RefPtr` (+1 from `AbortSignal::new()`/`ref_()`) and a
@@ -160,8 +156,11 @@ pub struct RequestContext<
 
     /// We can only safely free once the request body promise is finalized
     /// and the response is rejected
-    // TODO(port): bare JSValue heap field — kept alive via manual protect()/unprotect()
-    // (response_protected flag); revisit bun_jsc::Strong in Phase B.
+    // Deliberately a bare JSValue with manual protect()/unprotect() gated by
+    // the `response_protected` flag: plain Blob/InternalBlob
+    // bodies intentionally leave the value unprotected on the hot path and
+    // fall back to `response_weakref` (see its doc below), so a `Strong`
+    // here would root the Response unconditionally and change GC behavior.
     pub response_jsvalue: JSValue,
     pub ref_count: u8,
 
@@ -282,8 +281,8 @@ use bun_jsc::SysErrorJsc as _;
 
 /// RAII: releases one intrusive ref on a [`RequestContext`] at scope exit.
 ///
-/// Replaces the Zig `defer ctx.deref()` pattern in promise-callback host
-/// functions — `NativePromiseContext::take` hands back a +1 ref, and the
+/// In promise-callback host
+/// functions, `NativePromiseContext::take` hands back a +1 ref, and the
 /// callback must drop it on every exit path. Holds the raw pointer (not
 /// `&mut`) so the body can keep using its own `&mut Self` view without
 /// borrowck conflict; the `&mut` is formed only at drop time.
@@ -314,9 +313,7 @@ where
 /// `from_js` returns the C++-owned cell pointer for `value`. The caller must
 /// guarantee that:
 /// - no other Rust `&mut Response` aliasing this cell is live for the
-///   lifetime of the returned reference (the .zig spec returns a raw
-///   `?*Response` with no exclusivity claim — the `&mut` here is a port-side
-///   upgrade), and
+///   lifetime of the returned reference, and
 /// - `value` is kept GC-rooted (ensure_still_alive / protect()) for as long
 ///   as the returned reference is used, so the JSC-owned allocation outlives
 ///   the borrow.
@@ -364,14 +361,13 @@ mod shim {
         // See `signal_aborted` — counted ref keeps pointee live.
         bun_ptr::BackRef::from(s).signal(g, r)
     }
-    /// Release BOTH refcounts the request holds on its AbortSignal, mirroring
-    /// the Zig `defer { signal.pendingActivityUnref(); signal.unref(); }` pair.
+    /// Release BOTH refcounts the request holds on its AbortSignal.
     /// `pending_activity_unref()` drops the GC-visibility count and `unref()`
     /// drops the intrusive C++ `RefPtr` count taken at creation. `s` must not
     /// be dereferenced after this call.
     #[inline]
     pub(super) fn signal_release(s: NonNull<AbortSignal>) {
-        // See `signal_aborted`. Order matches Zig: pending-activity first,
+        // See `signal_aborted`. Order: pending-activity first,
         // then the owning intrusive ref (which may free). `BackRef` is dropped
         // before `unref()` returns, so no dangling deref.
         let signal = bun_ptr::BackRef::from(s);
@@ -420,21 +416,15 @@ mod shim {
         bun_ptr::BackRef::from(s).unpipe_without_deref()
     }
 }
-// `Api::FallbackMessageContainer`/`JsException`/`Problems`/`Fallback::render_backend`
-// live in `bun_options_types::schema::api` + `bun_ast::runtime`; both are
-// still being filled in by concurrent ports. The DEBUG_MODE error-page paths
-// that use them stay ``-gated below.
-
 use bun_options_types::schema::api as Api;
 
 use bun_js_parser::parser::Runtime::Fallback;
 
-/// PORT NOTE: `Api.JsException` is split across two crates in the Rust port —
+/// NOTE: `Api.JsException` is split across two crates —
 /// `bun_jsc::schema_api::JsException` (carries `stack`, used by
 /// `VirtualMachine::run_error_handler`) and `bun_options_types::schema::api::
-/// JsException` (peechy-encodable, `stack` omitted to break the dep cycle). In
-/// Zig these are the *same* struct, so `runErrorHandler` populates the list and
-/// `Problems.exceptions` consumes it directly. Bridge the two here so the
+/// JsException` (peechy-encodable, `stack` omitted to break the dep cycle).
+/// Bridge the two here so the
 /// fallback page actually carries the captured exceptions instead of an empty
 /// array (react-response.test.ts asserts `exceptions[0].message`).
 fn jsc_exceptions_to_api(list: jsc::ExceptionList) -> Vec<Api::JsException> {
@@ -456,18 +446,17 @@ macro_rules! ctx_log { ($($t:tt)*) => { bun_core::scoped_log!(RequestContext, $(
 macro_rules! stream_log { ($($t:tt)*) => { bun_core::scoped_log!(ReadableStream, $($t)*) }; }
 
 /// Per-monomorphization C-ABI shim table for the four promise-reaction host
-/// fns. Zig's `toJSHostFn(onResolve)` mints a fresh `extern fn` per comptime
-/// instantiation **and `@export`s the same pointer**, so the value passed to
-/// `then_with_value` is identical to the `Bun__HTTPRequestContext*__on*`
-/// symbol that C++'s `GlobalObject::promiseHandlerID` compares against.
+/// fns. The value passed to `then_with_value` must be identical to the
+/// `Bun__HTTPRequestContext*__on*` symbol that C++'s
+/// `GlobalObject::promiseHandlerID` compares against.
 ///
-/// In Rust the `#[no_mangle]` exports cannot live on a generic fn, so they are
+/// The `#[no_mangle]` exports cannot live on a generic fn, so they are
 /// emitted as concrete wrappers by `request_ctx_exports!` below. The trait
 /// impls — also emitted by that macro — point at those *exported* wrappers
 /// (not the inner generic shims), so `Self::ON_RESOLVE` and the C++ side agree
 /// on the function-pointer identity and `promiseHandlerID` resolves.
 ///
-/// PORT NOTE (layering): expressed as a trait (not inherent consts) so
+/// NOTE (layering): expressed as a trait (not inherent consts) so
 /// downstream `where`-clauses that already name it keep type-checking.
 pub trait RequestContextHostFns {
     const ON_RESOLVE: bun_jsc::JSHostFn;
@@ -551,8 +540,7 @@ where
     // `host_on_*::<..>` shims: the function-pointer value is what C++'s
     // `GlobalObject::promiseHandlerID` compares against (ZigGlobalObject.cpp),
     // and the exported wrapper has a different address from the generic it
-    // forwards to. The Zig spec gets this for free because `@export` re-labels
-    // the existing fn; in Rust we route through a const-fn lookup keyed on the
+    // forwards to. We route through a const-fn lookup keyed on the
     // (SSL, DEBUG, H3) tuple so the blanket impl can name concrete exports.
     const ON_RESOLVE: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, H3).0;
     const ON_REJECT: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, H3).1;
@@ -622,8 +610,7 @@ where
     }
 
     /// Take the pooled request-body slot out of `self`; the handle's `Drop`
-    /// releases the `+1`. Mirrors the Zig `body.unref()` on `deinit` /
-    /// final body chunk.
+    /// releases the `+1`.
     #[inline]
     fn request_body_take_unref(&mut self) {
         self.request_body.take();
@@ -646,7 +633,7 @@ where
         if let Some(server) = self.server {
             // SAFETY: BACKREF. `ServerLike::vm()` returns `&VirtualMachine`
             // but `drain_microtasks` needs `&mut`; cast through the raw
-            // pointer (Zig held a `*VirtualMachine`).
+            // pointer.
             unsafe {
                 let vm = std::ptr::from_ref::<VirtualMachine>((*server).vm()).cast_mut();
                 (*vm).drain_microtasks();
@@ -717,22 +704,34 @@ where
                     "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
                 );
             } else if !value.is_empty() && !global_this.has_exception() {
-                // TODO(port): jsc::ConsoleObject::Formatter has no Default;
-                // JSValue::to_fmt lives on a trait not in scope here. Fall back
-                // to the generic message until those land.
-                let _ = value;
-                bun_core::err_generic!("Expected a Response object");
+                let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
+                formatter.quote_strings = true;
+                bun_core::err_generic!(
+                    "Expected a Response object, but received '{}'",
+                    jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value),
+                );
+                // `formatter` drops here.
             } else {
                 bun_core::err_generic!("Expected a Response object");
             }
 
             Output::flush();
             if !global_this.has_exception() {
-                let _ = writer;
-                // TODO(port): write_trace wants `impl bun_io::Write`; Output::error_writer()
-                // returns a raw `*mut Writer`. Skip the JS stack trace for now.
+                jsc::ConsoleObject::write_trace(writer, global_this);
             }
             Output::flush();
+        }
+        // The formatter and `write_trace` above re-enter JS (getters, proxy
+        // traps, Error.prepareStackTrace), which can synchronously abort or
+        // end this request (e.g. AbortController.abort() inside a getter).
+        // We hold `&mut self` for the whole call, matching the rest of this
+        // promise-resolve path (`on_resolve` → `handle_resolve` also re-enter
+        // JS through `&mut`).
+        // The `RequestContextRef` guard taken in `on_resolve` keeps the
+        // allocation alive across the re-entry; re-check the request state so
+        // we never render onto a response that was ended underneath us.
+        if self.is_aborted_or_ended() {
+            return;
         }
         self.render_missing();
     }
@@ -850,8 +849,6 @@ where
     }
 
     /// destroy RequestContext, should be only called by deref or if defer_deinit_until_callback_completes is ref is set to true
-    // TODO(port): named `deinit` (not Drop) because RequestContext is pool-allocated and
-    // explicitly returned to a HiveArray; Drop semantics don't apply.
     pub fn deinit(&mut self) {
         ctx_log!("deinit");
         self.detach_response();
@@ -906,7 +903,6 @@ where
         self.ref_count += 1;
     }
 
-    // TODO(port): #[bun_jsc::host_fn] — see note on `on_resolve`.
     pub fn on_reject(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onReject");
 
@@ -1022,18 +1018,12 @@ where
         }
     }
 
-    // TODO(b2-blocked): `Api::FallbackMessageContainer` + `Fallback::render_backend`
-    // (bun_options_types::schema::api / bun_ast::runtime) — debug-only HTML
-    // error page. Production hits `render_production_error` instead.
-
     pub fn render_default_error(
         &mut self,
-        // TODO(port): arena_allocator param dropped; this is a non-AST crate, allocations use global mimalloc.
-        // PERF(port): was arena bulk-free — profile in Phase B
         log: &mut bun_ast::Log,
         err: bun_core::Error,
         exceptions: &[Api::JsException],
-        fmt: core::fmt::Arguments<'_>, // TODO(port): Zig `comptime fmt: string, args: anytype`
+        fmt: core::fmt::Arguments<'_>,
     ) {
         if !self.flags.has_written_status() {
             self.flags.set_has_written_status(true);
@@ -1052,7 +1042,6 @@ where
             reason: Some(Api::FallbackStep::fetch_event_handler),
             cwd: Some(cwd.to_vec().into_boxed_slice()),
             problems: Some(Api::Problems {
-                // Zig: `@truncate(@intFromError(err))`.
                 code: err.as_u16(),
                 name: err.name().as_bytes().to_vec().into_boxed_slice(),
                 exceptions: exceptions.to_vec(),
@@ -1068,9 +1057,12 @@ where
             }),
         });
 
-        // TODO(port): `if (comptime fmt.len > 0)` — fmt::Arguments has no const len; always print.
-        #[allow(clippy::disallowed_methods)] // fmt is a caller-provided Arguments parameter
-        Output::pretty_errorln(fmt);
+        // `fmt::Arguments` has no const len, but an empty format string is
+        // detectable at runtime via `as_str() == Some("")`.
+        if fmt.as_str() != Some("") {
+            #[allow(clippy::disallowed_methods)] // fmt is a caller-provided Arguments parameter
+            Output::pretty_errorln(fmt);
+        }
         Output::flush();
 
         // Explicitly use the global allocator and *not* the arena
@@ -1242,7 +1234,6 @@ where
         }
     }
 
-    // TODO(port): in-place init — `this` is a pre-allocated slot in a HiveArray pool.
     pub fn create(
         this: &mut core::mem::MaybeUninit<Self>,
         server: *const ThisServer,
@@ -1359,8 +1350,7 @@ where
         let vm = std::ptr::from_ref::<VirtualMachine>(server.vm()).cast_mut();
         let global_this = server.global_this();
         // Drop one ref on every exit path. Declared before the microtask drain
-        // so it runs *after* (LIFO) — matches Zig `defer this.deref()` ordered
-        // after `defer drainMicrotasks()`.
+        // so it runs *after* (LIFO).
         let _ref = RequestContextRef(std::ptr::from_mut::<Self>(this));
         // This is a task in the event loop.
         // If we called into JavaScript, we must drain the microtask queue.
@@ -1534,7 +1524,7 @@ where
         }
 
         // Copy to stack memory to prevent aliasing issues in release builds
-        // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
+        // NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
         // SAFETY: `this.blob`'s backing bytes are owned by the context and
         // outlive `send_writable_bytes_for_blob`; detaching the borrow lets
@@ -1655,15 +1645,13 @@ where
                 if auto_close {
                     fd.close();
                 }
-                // TODO(port): Zig `withPathLike(file.pathlike)` also sets
-                // `.fd` for the Fd arm; `bun_sys::Error` only carries a path
-                // slice, so render the fd as bytes for the error path.
+                // Attach the path for the Path arm and the fd for the Fd arm.
                 let js_err = match &file.pathlike {
                     crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
                         err.with_path(p.slice()).to_js(global_this)
                     }
-                    crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => {
-                        err.to_js(global_this)
+                    crate::webcore::node_types::PathOrFileDescriptor::Fd(pathlike_fd) => {
+                        err.with_fd(*pathlike_fd).to_js(global_this)
                     }
                 };
                 return self.run_error_handler(js_err);
@@ -1683,21 +1671,21 @@ where
                 if auto_close {
                     fd.close();
                 }
-                // TODO(port): Zig `withPathLike(file.pathlike)` also sets `.fd`
-                // for the Fd arm; `bun_sys::Error::with_path` only carries a
-                // path slice, so the fd arm gets no path attached.
-                let path_bytes: &[u8] = match &file.pathlike {
-                    crate::webcore::node_types::PathOrFileDescriptor::Path(p) => p.slice(),
-                    crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => b"",
-                };
-                let mut sys: jsc::SystemError = bun_sys::Error {
+                // Attach the path for the Path arm and the fd for the Fd arm.
+                let base_err = bun_sys::Error {
                     errno: bun_sys::E::EISDIR as _,
                     syscall: bun_sys::Tag::read,
                     ..Default::default()
-                }
-                .with_path(path_bytes)
-                .to_system_error()
-                .into();
+                };
+                let err = match &file.pathlike {
+                    crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
+                        base_err.with_path(p.slice())
+                    }
+                    crate::webcore::node_types::PathOrFileDescriptor::Fd(pathlike_fd) => {
+                        base_err.with_fd(*pathlike_fd)
+                    }
+                };
+                let mut sys: jsc::SystemError = err.to_system_error().into();
                 sys.message = BunString::static_("Cannot stream a directory as a response body");
                 return self.run_error_handler(sys.to_error_instance(global_this));
             }
@@ -1826,9 +1814,9 @@ where
         }
 
         // FileResponseStream registers its own onAborted/onWritable with itself
-        // as userData. uWS keeps a single shared userData slot per response, so
-        // any later setAbortHandler()/onWritable() from this RequestContext would
-        // stomp it and hand FileResponseStream's callbacks a *RequestContext.
+        // as userData; any later setAbortHandler()/onWritable() from this
+        // RequestContext would replace them and FileResponseStream would never
+        // hear about the abort/drain it is driving.
         self.flags.set_has_sendfile_ctx(true);
         self.flags.set_has_abort_handler(true);
         self.flags.set_has_marked_pending(true);
@@ -1907,7 +1895,6 @@ where
     }
 
     /// Tear down a heap `ResponseStreamJSSink` allocated by `do_render_stream`.
-    /// Mirrors Zig `response_stream.detach(); response_stream.sink.destroy()` —
     /// JSSink<T> is `repr(transparent)` so the inner-ptr free matches the
     /// outer allocation.
     fn destroy_sink(ptr: NonNull<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>) {
@@ -1923,7 +1910,7 @@ where
         ctx_log!("doRenderStream");
         // SAFETY: pair is a stack local threaded through cork user-data.
         let pair = unsafe { &mut *pair };
-        // PORT NOTE: reshaped for borrowck — split the two fields up front so
+        // NOTE: reshaped for borrowck — split the two fields up front so
         // `this` and `stream` are independent borrows of `*pair`.
         let this: &mut Self = &mut *pair.this;
         let stream = &mut pair.stream;
@@ -1958,7 +1945,7 @@ where
                 ..Default::default()
             },
         });
-        // PORT NOTE: reshaped for borrowck — own via raw ptr so `this.sink` and the
+        // NOTE: reshaped for borrowck — own via raw ptr so `this.sink` and the
         // local `response_stream` view can coexist with `&mut *this` calls below.
         let response_stream_ptr = bun_core::heap::into_raw_nn(response_stream_box);
         this.sink = Some(response_stream_ptr);
@@ -1992,8 +1979,12 @@ where
 
         assignment_result.ensure_still_alive();
 
-        // assert that it was updated
-        debug_assert!(!response_stream.sink.signal.is_dead());
+        // assignToStream stored the controller's encoded JSValue in
+        // signal.ptr. If the stream already finished synchronously inside the
+        // call, controller.end()/.close() detached the controller and cleared
+        // the signal again (`__controllerDetached`), so the signal may be
+        // legitimately dead here; the has_responded()/promise-status branches
+        // below handle that state.
 
         #[cfg(debug_assertions)]
         if resp.has_responded() {
@@ -2080,9 +2071,8 @@ where
                         stream_log!("promise Fulfilled");
                         let mut readable_ref =
                             core::mem::take(&mut this.response_body_readable_stream_ref);
-                        // PORT NOTE: reshaped for borrowck — Zig `defer` runs
-                        // after handle_resolve_stream; emulate by running the
-                        // body first then the deferred cleanup.
+                        // NOTE: cleanup runs after handle_resolve_stream:
+                        // body first, then the deferred cleanup.
                         Self::handle_resolve_stream(this);
                         stream.done(global_this);
                         readable_ref.deinit();
@@ -2681,7 +2671,6 @@ where
         req.end_stream(req.should_close_connection());
     }
 
-    // TODO(port): #[bun_jsc::host_fn] — see note on `on_resolve`.
     pub fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         stream_log!("onResolveStream");
         let args = callframe.arguments_old::<2>();
@@ -2693,7 +2682,6 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(port): #[bun_jsc::host_fn] — see note on `on_resolve`.
     pub fn on_reject_stream(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -2739,9 +2727,8 @@ where
         }
 
         if let Some(resp) = req.response_weakref.get() {
-            // PORT NOTE: Zig captures `bodyValue` ptr first then derefs after
-            // the stream calls; reordered here for borrowck (semantically
-            // identical — the Zig check reads through the pointer post-detach).
+            // NOTE: the body value is read after the stream calls (the check
+            // observes the post-detach state).
             if let Some(stream) = resp.get_body_readable_stream(global_this) {
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
@@ -2764,9 +2751,6 @@ where
         if !req.flags.has_written_status() {
             req.render_metadata();
         }
-
-        // TODO(b2-blocked): DEBUG_MODE dev-server HTML fallback page — gated on
-        // `Api::FallbackMessageContainer`/`Fallback::render_backend`.
 
         if DEBUG_MODE {
             if let Some(server) = req.server {
@@ -2868,8 +2852,7 @@ where
                 let readable_stream: Option<WebCore::ReadableStream> = 'brk: {
                     if let Some(stream) = lock.readable.get(global_this) {
                         // we hold the stream alive until we're done with it
-                        // PORT NOTE: Zig `= lock.readable` is a bitwise struct copy (no
-                        // dtor); Rust `Strong` is move-only — take() transfers ownership.
+                        // NOTE: `Strong` is move-only — take() transfers ownership.
                         this.response_body_readable_stream_ref =
                             core::mem::take(&mut lock.readable);
                         break 'brk Some(stream);
@@ -3005,13 +2988,12 @@ where
     }
 
     pub fn on_pipe(this: &mut Self, mut stream: WebCore::streams::Result) {
-        // TODO(port): allocator param dropped — global mimalloc per §Allocators
         let stream_needs_deinit = matches!(
             stream,
             WebCore::streams::Result::Owned(_) | WebCore::streams::Result::OwnedAndDone(_)
         );
         let is_done = stream.is_done();
-        // PORT NOTE: reshaped for borrowck — the defer reads `stream` through a
+        // NOTE: reshaped for borrowck — the defer reads `stream` through a
         // raw ptr so the body below can keep borrowing it.
         let stream_ptr: *mut WebCore::streams::Result = &raw mut stream;
         // Drop one ref only when the stream signals completion.
@@ -3095,7 +3077,7 @@ where
         if self.is_aborted_or_ended() {
             return;
         }
-        // PORT NOTE: WeakPtr::get borrows `&mut self`, and `do_render_with_body`
+        // NOTE: WeakPtr::get borrows `&mut self`, and `do_render_with_body`
         // also needs `&mut self` plus a `&mut BodyValue` from the response. The
         // response lives in a separate allocation (held by the WeakRef) so the
         // borrows are disjoint at runtime; route through a raw ptr to express that.
@@ -3160,15 +3142,10 @@ where
         // SAFETY: BACKREF
         let server = &*server;
         let global_this = server.global_this();
-        // TODO(b2-blocked): DEBUG_MODE branch renders the HTML fallback page via
-        // `Api::JsException` + `render_default_error`; gated until bun_schema/
-        // bun_js_parser surfaces are in. Falls through to the production path.
-
         // `ServerLike::vm()` is the process-static VM `BackRef`; `as_mut()` is
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
         if DEBUG_MODE {
-            // PERF(port): was arena bulk-free — profile in Phase B
             let mut exception_list_upstream: jsc::ExceptionList = Vec::new();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
             vm.on_unhandled_rejection_exception_list =
@@ -3178,7 +3155,7 @@ where
 
             let exception_list = jsc_exceptions_to_api(exception_list_upstream);
             let log = vm.log_mut().unwrap();
-            // PORT NOTE: format eagerly so `format_args!` doesn't hold an
+            // NOTE: format eagerly so `format_args!` doesn't hold an
             // immutable borrow of `self` across the `&mut self` call.
             let msg = format!(
                 "<r><red>{:?}<r> - <b>{}<r> failed",
@@ -3351,8 +3328,7 @@ where
 
         let (content_type, needs_content_type, content_type_needs_free) =
             get_content_type(response.get_init_headers_mut(), &self.blob);
-        // PORT NOTE: Zig `defer if (content_type_needs_free) content_type.deinit()`.
-        // `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
+        // NOTE: `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
         // Hold the value past all reads below, then let it drop at scope end.
         let _ct_guard = scopeguard::guard(content_type_needs_free, |_needs| {
             // Drop of `content_type` (moved into closure capture below would
@@ -3374,7 +3350,7 @@ where
 
             self.do_write_status(status);
             self.do_write_headers(&mut headers_);
-            // Zig: `defer headers_.deref()`. `HeadersRef` is RAII — its Drop
+            // `HeadersRef` is RAII — its Drop
             // already calls `WebCore__FetchHeaders__deref`, so an explicit
             // `.deref()` here would resolve (via DerefMut) to the inherent
             // `FetchHeaders::deref` and double-free the C++ object.
@@ -3416,7 +3392,6 @@ where
         // Advertise the QUIC endpoint on H1/H2 responses so browsers can
         // discover it (RFC 7838). Multiple Alt-Svc fields are valid, so a
         // user-supplied one composes rather than conflicts.
-        // TODO(port): `@hasDecl(ThisServer, "h3AltSvc")` — model as optional trait method.
         if !HTTP3 {
             // SAFETY: BACKREF
             if let Some(alt) = self.server().h3_alt_svc() {
@@ -3518,7 +3493,7 @@ where
 
     pub fn render_bytes(&mut self) {
         // copy it to stack memory to prevent aliasing issues in release builds
-        // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
+        // NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
         // SAFETY: `self.blob`'s backing bytes are owned by the context and
         // outlive the `try_end`/`on_writable` calls below; detaching the
@@ -3681,7 +3656,7 @@ where
 
         // This is the start of a task, so it's a good time to drain
         if let Some(body) = this.request_body_mut() {
-            // The up-front maxRequestBodySize check in server.zig only
+            // The up-front maxRequestBodySize check in the server only
             // sees Content-Length. HTTP/3 (and H1 chunked) bodies may
             // omit it, so cap accumulated bytes here too — otherwise a
             // single CL-less stream can grow request_body_buf without
@@ -3732,16 +3707,9 @@ where
 
                 let total = bytes.len() + chunk.len();
                 'getter: {
-                    // if (total <= jsc.WebCore.InlineBlob.available_bytes) {
-                    //     if (total == 0) {
-                    //         body.value = .{ .Empty = {} };
-                    //         break :getter;
-                    //     }
-                    //
-                    //     body.value = .{ .InlineBlob = jsc.WebCore.InlineBlob.concat(bytes.items, chunk) };
-                    //     this.request_body_buf.clearAndFree(this.allocator);
-                    // } else {
-                    // TODO(port): ensureTotalCapacityPrecise can OOM in Zig; Rust Vec aborts.
+                    // TODO: small-body fast path via InlineBlob is not
+                    // implemented; always build an InternalBlob.
+                    // Vec aborts on OOM (repo-wide abort-on-OOM policy).
                     bytes.reserve_exact(total.saturating_sub(bytes.len()));
                     bytes.extend_from_slice(chunk);
                     debug_assert_eq!(bytes.len(), total);
@@ -3749,7 +3717,6 @@ where
                         bytes: core::mem::take(bytes),
                         was_string: false,
                     });
-                    // }
                     break 'getter;
                 }
                 this.request_body_buf = Vec::new();
@@ -3910,13 +3877,13 @@ bun_jsc::jsc_host_abi! {
 }
 
 // ─── per-monomorphization C-ABI exports ──────────────────────────────────────
-// Zig: `comptime { @export(&jsc.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" }); ... }`
-// where `export_prefix = "Bun__HTTPRequestContext" ++ (debug ? "Debug" : "") ++ (h3 ? "H3" : ssl ? "TLS" : "")`.
+// The exported symbol name is "Bun__HTTPRequestContext" + (debug ? "Debug" : "")
+// + (h3 ? "H3" : ssl ? "TLS" : "") + "__on*".
 // Rust generics cannot own `#[no_mangle]` symbols, so each of the 6 concrete
 // instantiations × 4 callbacks is spelled out via `request_ctx_exports!`. The
 // generic body lives on the `impl<ThisServer, ..> RequestContext` block above
 // (`on_resolve` / `on_reject` / `on_resolve_stream` / `on_reject_stream`); each
-// shim is the `toJSHostFn` result-mapping (`JsResult<JSValue>` → raw `JSValue`,
+// shim is the result-mapping (`JsResult<JSValue>` → raw `JSValue`,
 // `.zero` on error) over the monomorphic associated fn.
 macro_rules! request_ctx_exports {
     ($(
@@ -3925,7 +3892,7 @@ macro_rules! request_ctx_exports {
     );* $(;)?) => {$(
         // Named C-ABI symbols for the C++ side. The bodies forward to the
         // generic `host_on_*` shims monomorphized at this tuple — `#[no_mangle]`
-        // pins the link name (Zig: `@export(&jsc.toJSHostFn(onResolve), …)`).
+        // pins the link name.
         #[unsafe(no_mangle)]
         #[bun_jsc::host_call]
         pub fn $on_resolve(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
@@ -4101,9 +4068,8 @@ pub struct SendfileContext {
     pub total: BlobSizeType,
 }
 
-// `NewFlags(comptime debug_mode: bool)` — packed struct(u16). All fields are bool
-// (with two debug-conditional ones), so `bitflags!` over u16 works. The Zig void/padding
-// fields collapse to absent bits in release; here we keep all bits and just gate the
+// All flags are bool (with two debug-conditional ones), so `bitflags!` over u16
+// works. We keep all bits in every build and just gate the
 // `is_web_browser_navigation` / `has_finalized` accessors on the const params.
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
@@ -4242,8 +4208,7 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
                 needs_content_type = false;
 
                 let content_slice = content.to_slice();
-                // Zig: `if (content_slice.allocator.isNull()) null else allocator` —
-                // i.e. dupe only when the latin1/utf16 slice was heap-converted.
+                // Dupe only when the latin1/utf16 slice was heap-converted.
                 let dupe = matches!(content_slice, bun_core::ZigStringSlice::Owned(_));
                 let mt = MimeType::init(
                     content_slice.slice(),
@@ -4275,5 +4240,3 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
 // `NewServer` monomorphizations.
 
 static WELCOME_PAGE_HTML_GZ: &[u8] = include_bytes!("../api/welcome-page.html.gz");
-
-// ported from: src/runtime/server/RequestContext.zig

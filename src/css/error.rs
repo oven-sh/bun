@@ -5,7 +5,6 @@ use crate::{Location, SourceLocation, Token};
 
 // Arena-owned byte slice. CSS is an AST crate (see PORTING.md §Allocators); these
 // slices point into the parser arena / source text and are never individually freed.
-// TODO(port): arena slice lifetime — thread `<'bump>` or switch to StoreRef.
 use crate::Str;
 
 #[inline(always)]
@@ -34,13 +33,11 @@ pub struct Err<T> {
 
 impl<T: fmt::Display> fmt::Display for Err<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Zig: `if (@hasDecl(T, "format"))` → trait bound `T: Display` IS that check.
         self.kind.fmt(f)
     }
 }
 
-// Zig: `pub const toErrorInstance = @import("../css_jsc/error_jsc.zig").toErrorInstance;`
-// Deleted per PORTING.md — `to_error_instance` lives as an extension-trait method in `bun_css_jsc`.
+// `to_error_instance` lives as an extension-trait method in `bun_css_jsc`.
 
 impl Err<ParserError> {
     pub fn from_parse_error(err: ParseError<ParserError>, filename: &[u8]) -> Err<ParserError> {
@@ -194,7 +191,6 @@ impl ErrorLocation {
         &self,
         source: &bun_ast::Source,
     ) -> Result<bun_ast::Location, bun_core::Error> {
-        // TODO(port): narrow error set (Zig narrowed to alloc-only).
         // SAFETY: `'bump`-erasure — `bun_ast::Location.line_text` is `Option<&'static [u8]>`
         // (`Str` placeholder per src/logger/lib.rs); the slice borrows
         // `source.contents` which outlives the diagnostic. Re-thread once
@@ -548,5 +544,3 @@ impl fmt::Display for MinifyErrorKind {
         }
     }
 }
-
-// ported from: src/css/error.zig

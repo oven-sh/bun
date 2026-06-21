@@ -5,5 +5,3 @@ pub enum ScriptExecutionStatus {
     Suspended = 1,
     Stopped = 2,
 }
-
-// ported from: src/jsc/ScriptExecutionStatus.zig

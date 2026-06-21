@@ -8,5 +8,3 @@
 pub const BUN_FFI_POINTER_OFFSET_TO_ARGUMENTS_LIST: usize = 6;
 pub(crate) const BUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_VECTOR: usize = 16;
 pub(crate) const BUN_FFI_POINTER_OFFSET_TO_TYPED_ARRAY_LENGTH: usize = 24;
-
-// ported from: src/jsc/sizes.zig

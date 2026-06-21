@@ -9,13 +9,11 @@
 //! Otherwise, it's expected that the containing struct will deallocate the task.
 
 use crate::ManagedTask;
-// TODO(port): confirm crate for UnboundedQueue (bun.UnboundedQueue) — assuming bun_threading
 use bun_threading::UnboundedQueue;
 use bun_threading::unbounded_queue::{Link, Linked};
 
 // ─── Module-level constructor forwarders ────────────────────────────────────
-// Zig spelled these as namespace calls (`ConcurrentTask.createFrom(...)`,
-// `ConcurrentTask.fromCallback(...)`). Several Rust callers import this file
+// Several callers import this file
 // as a *module* (`use bun_jsc::ConcurrentTask;`) rather than the struct, so
 // `ConcurrentTask::create_from(x)` resolves as a free-function lookup, not an
 // inherent-method call. Provide thin module-level forwarders so both spellings
@@ -44,13 +42,12 @@ pub fn from_callback<T>(
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct TaskTag(pub u8);
 
-/// Tag constants for `Task` — one per variant of Zig's `jsc.Task`
-/// `TaggedPointerUnion` (src/jsc/Task.zig). Values are sequential by source
+/// Tag constants for `Task` — one per dispatchable task type. Values are
+/// sequential by source
 /// order; `bun_runtime::dispatch::run_task` matches on these. Both sides MUST
 /// agree — adding a variant requires updating both this list and the runtime
 /// match arm.
-// PORT NOTE: Zig `TaggedPointerUnion` derived tags from a comptime type list;
-// Rust splits the table (here) from the type→arm mapping (runtime tier-6).
+// The tag table (here) is split from the type→arm mapping (runtime tier-6).
 #[allow(non_upper_case_globals)]
 pub mod task_tag {
     use super::TaskTag;
@@ -176,9 +173,7 @@ pub struct Task {
 }
 
 /// Type → tag binding for [`Task`]. Implement on every type that can be
-/// enqueued; the impl lives in whatever crate owns the type (mirrors Zig's
-/// comptime `TaggedPointerUnion` type-list lookup, where the tag was derived
-/// from `@typeName(std.meta.Child(@TypeOf(ptr)))`).
+/// enqueued; the impl lives in whatever crate owns the type.
 ///
 /// ```ignore
 /// impl bun_event_loop::Taskable for FetchTasklet {
@@ -208,14 +203,9 @@ impl Task {
         Task { tag, ptr }
     }
 
-    /// Zig: `TaggedPointerUnion.init(_ptr: anytype)` — `@typeInfo` asserted
-    /// `_ptr` was a pointer, then `@intFromEnum(@field(Tag, @typeName(Child)))`
-    /// resolved the tag from the comptime type list. Rust expresses the
-    /// type→tag table as the [`Taskable`] trait; the per-type impl supplies
-    /// `T::TAG` and the body is the Zig `TaggedPointer.init(ptr, tag)`.
-    // PORT NOTE: Zig accepted `anytype` and reflected on `@TypeOf`; Rust takes
-    // `*mut T` directly (the only shape Zig admitted). `&mut T` coerces at
-    // call sites.
+    /// The type→tag table is the [`Taskable`] trait; the per-type impl
+    /// supplies `T::TAG`.
+    // Takes `*mut T` directly; `&mut T` coerces at call sites.
     #[inline]
     pub fn init<T: Taskable>(ptr: *mut T) -> Task {
         Task::new(T::TAG, ptr.cast::<()>())
@@ -230,9 +220,8 @@ impl Task {
         Task::new(T::TAG, bun_core::heap::into_raw(task).cast::<()>())
     }
 
-    /// Zig: `TaggedPointerUnion.initWithType(comptime Type, _ptr)` — for the
-    /// rare case where the pointer's static type differs from the variant
-    /// (Zig used this when `_ptr` was `*anyopaque`).
+    /// For the rare case where the pointer's static type differs from the
+    /// variant (e.g. when `ptr` is already erased).
     #[inline]
     pub fn init_with_type<T: Taskable>(ptr: *mut ()) -> Task {
         Task::new(T::TAG, ptr)
@@ -264,7 +253,8 @@ pub struct ConcurrentTask {
 impl Default for ConcurrentTask {
     fn default() -> Self {
         Self {
-            // SAFETY: matches Zig `task: Task = undefined` — caller must set before use.
+            // SAFETY: all-zero is a valid bit pattern for `Task` (plain tag
+            // byte + raw pointer); caller must set a real task before use.
             task: unsafe { bun_core::ffi::zeroed_unchecked() },
             next: Link::new(),
             auto_delete: false,
@@ -272,10 +262,10 @@ impl Default for ConcurrentTask {
     }
 }
 
-// PORT NOTE: Zig packs `auto_delete` into bit 0 of `next` (`PackedNextPtr`) to
-// keep `ConcurrentTask` at 16 bytes. The Rust port deliberately splits it back
-// out: `Task` is already two words here (tag is not packed into the pointer),
-// so the struct was never 16B, and profiling (build/create-next benches) showed
+// `auto_delete` is deliberately its own field rather than packed into bit 0
+// of `next`: `Task` is already two words here (tag is not packed into the
+// pointer), so the struct was never 16B, and profiling (build/create-next
+// benches) showed
 // the packed form costs a Relaxed load + OR on every `atomic_store_next` —
 // turning the MPSC enqueue's single release-store into a load-then-store on a
 // cache line that is bouncing between producer threads and the JS-thread
@@ -307,14 +297,14 @@ pub enum AutoDeinit {
 }
 
 impl ConcurrentTask {
-    /// `bun.TrivialNew(@This())` — heap-allocate a ConcurrentTask and return a raw pointer.
+    /// Heap-allocate a ConcurrentTask and return a raw pointer.
     /// The pointer is intrusive (linked into `Queue`), so we use `heap::alloc` rather than `Box<T>`.
     #[inline]
     pub fn new(init: ConcurrentTask) -> *mut ConcurrentTask {
         bun_core::heap::into_raw(Box::new(init))
     }
 
-    /// `bun.TrivialDeinit(@This())` — free a ConcurrentTask previously returned by `new`.
+    /// Free a ConcurrentTask previously returned by `new`.
     ///
     /// # Safety
     /// `this` must have been produced by `ConcurrentTask::new` and not yet freed.
@@ -335,9 +325,7 @@ impl ConcurrentTask {
     }
 
     pub fn create_from<T: Taskable>(task: *mut T) -> core::ptr::NonNull<ConcurrentTask> {
-        // TODO(port): re-enable once `mark_binding!` macro arity matches
-        // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
-        // bun_core::mark_binding!();
+        bun_core::mark_binding!();
         Self::create(Task::init(task))
     }
 
@@ -350,19 +338,13 @@ impl ConcurrentTask {
         Self::create(Task::from_boxed(task))
     }
 
-    // TODO(port): `comptime callback: anytype` + `std.meta.Child(@TypeOf(ptr))` is comptime
-    // reflection. Modeled here as a generic over the pointee type `T` with a plain fn-pointer
-    // callback. Zig's `ManagedTask.New(T, cb).init(ptr)` collapses to `ManagedTask::new(ptr, cb)`.
-    // PORT NOTE: callback returns `JsResult<()>` to match `ManagedTask::new`'s stored ABI;
-    // Zig accepted both `fn(*T) void` and `fn(*T) JSError!void` via comptime — Rust callers
-    // that have a `fn(*mut T)` should wrap it as `|p| { f(p); Ok(()) }` at the call site.
+    // callback returns `JsResult<()>` to match `ManagedTask::new`'s stored ABI;
+    // callers that have a `fn(*mut T)` should wrap it as `|p| { f(p); Ok(()) }` at the call site.
     pub fn from_callback<T>(
         ptr: *mut T,
         callback: fn(*mut T) -> crate::JsResult<()>,
     ) -> core::ptr::NonNull<ConcurrentTask> {
-        // TODO(port): re-enable once `mark_binding!` macro arity matches
-        // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
-        // bun_core::mark_binding!();
+        bun_core::mark_binding!();
         Self::create(ManagedTask::ManagedTask::new(ptr, callback))
     }
 
@@ -371,9 +353,7 @@ impl ConcurrentTask {
         of: *mut T,
         auto_deinit: AutoDeinit,
     ) -> &mut ConcurrentTask {
-        // TODO(port): re-enable once `mark_binding!` macro arity matches
-        // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
-        // bun_core::mark_binding!();
+        bun_core::mark_binding!();
         *self = ConcurrentTask {
             task: Task::init(of),
             next: Link::new(),
@@ -388,5 +368,3 @@ impl ConcurrentTask {
         self.auto_delete
     }
 }
-
-// ported from: src/event_loop/ConcurrentTask.zig

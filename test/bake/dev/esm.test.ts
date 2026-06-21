@@ -273,6 +273,58 @@ devTest("ESM <-> CJS (async)", {
     await c.expectMessage("PASS");
   },
 });
+devTest("importer tracking survives flipping a module from ESM to CJS", {
+  // https://github.com/oven-sh/bun/issues/31942
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import './dep';
+      import.meta.hot.data.runs = (import.meta.hot.data.runs ?? 0) + 1;
+      console.log('index run ' + import.meta.hot.data.runs);
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `
+      export const value = 'esm';
+    `,
+    "leaf.ts": `
+      console.log('leaf 1');
+      export const value = 'leaf1';
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("index run 1");
+    // Flip `dep` from ESM to CJS. The dead branch gets `leaf` bundled (direct
+    // `require` calls are statically rewritten to `hmr.require`, which binds
+    // `this` correctly), while the indirect `m.require(...)` call is emitted
+    // verbatim and goes through the `require` function bound onto the
+    // replacement CJS module object, which must record `dep` as an importer
+    // of `leaf`.
+    await dev.write(
+      "dep.ts",
+      `
+        if (globalThis.__never_set) require('./leaf');
+        const m = module;
+        module.exports = { value: m.require(module.id.replace('dep', 'leaf')).value };
+      `,
+    );
+    await c.expectMessage("leaf 1", "index run 2");
+    // Editing `leaf` must propagate through the flipped module up to the
+    // self-accepting root as a hot update. If the importer edge was dropped,
+    // the dev server forces a full page reload instead (the client harness
+    // fails on unexpected reloads).
+    await dev.write(
+      "leaf.ts",
+      `
+        console.log('leaf 2');
+        export const value = 'leaf2';
+      `,
+    );
+    await c.expectMessage("leaf 2", "index run 3");
+  },
+});
 devTest("cannot require a module with top level await", {
   // TODO: after the module-loader rewrite the dev server's /_bun/report_error
   // handler can hang (never responds), so the client overlay never mounts and

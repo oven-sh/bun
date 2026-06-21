@@ -49,7 +49,6 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
     bump: &'bump Bump,
     ast: &mut JSAst<'_>,
 ) -> Result<(), AllocError> {
-    // TODO(port): narrow error set
     let hmr_api_ref = ast.wrapper_ref;
     let hmr_api_id = Expr::init_identifier(hmr_api_ref, Loc::EMPTY);
     let mut esm_decls: bun_alloc::ArenaVec<'bump, ArrayBinding> = bun_alloc::ArenaVec::new_in(bump);
@@ -89,7 +88,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     // empty object so body code referencing it doesn't throw.
                     // SAFETY: `st.items` is an arena-owned fat ptr; len is always sound to read.
                     let items_len = st.items.len();
-                    if st.star_name_loc.is_some() || items_len > 0 || st.default_name.is_some() {
+                    if !st.star_name_loc.is_empty() || items_len > 0 || st.default_name.is_some() {
                         stmts
                             .inside_wrapper_prefix
                             .append_non_dependency(Stmt::alloc(
@@ -117,7 +116,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     || record.tag == ImportRecordTag::Bun
                     || record.tag == ImportRecordTag::Runtime;
                 let is_bare_import =
-                    st.star_name_loc.is_none() && st.items.len() == 0 && st.default_name.is_none();
+                    st.star_name_loc.is_empty() && st.items.len() == 0 && st.default_name.is_none();
 
                 if is_builtin {
                     if !is_bare_import {
@@ -165,7 +164,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                             b::Identifier {
                                                 r#ref: st.namespace_ref,
                                             },
-                                            st.star_name_loc.unwrap_or(stmt.loc),
+                                            st.star_name_loc.to_nullable().unwrap_or(stmt.loc),
                                         ),
                                         value: Some(call),
                                     }]),
@@ -175,7 +174,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                             ))?;
                     }
                 } else {
-                    let loc = st.star_name_loc.unwrap_or(stmt.loc);
+                    let loc = st.star_name_loc.to_nullable().unwrap_or(stmt.loc);
                     if is_bare_import {
                         esm_decls.push(ArrayBinding {
                             binding: Binding {
@@ -184,7 +183,6 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                             },
                             default_value: None,
                         });
-                        // PERF(port): was assume_capacity-adjacent (arena append)
                         esm_callbacks.push(Expr::init(E::Arrow::NOOP_RETURN_UNDEFINED, Loc::EMPTY));
                     } else {
                         let binding = Binding::alloc(
@@ -277,7 +275,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                 Loc::EMPTY,
             ))?;
         // hmr.onUpdate = [ ... ];
-        // PORT NOTE: reshaped for borrowck — capture len before moving esm_callbacks
+        // Capture len before moving `esm_callbacks` (borrowck).
         let callbacks_len = esm_callbacks.len();
         stmts
             .inside_wrapper_prefix
@@ -318,5 +316,3 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
-
-// ported from: src/bundler/linker_context/convertStmtsForChunkForDevServer.zig

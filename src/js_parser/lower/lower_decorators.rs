@@ -1,6 +1,5 @@
 #![allow(clippy::too_many_arguments, clippy::needless_late_init)]
 //! Lowering for TC39 standard ES decorators.
-//! Extracted from P.zig to reduce duplication via shared helpers.
 
 use bun_alloc::ArenaVecExt as _;
 
@@ -14,8 +13,7 @@ use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt};
 
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 
-// Zig: `pub fn LowerDecorators(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
+// Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 
 // ── Local helper types ───────────────────────────────────────────────────────
@@ -68,7 +66,7 @@ enum RewriteKind {
 }
 
 // ── Shallow-copy helpers (Property / Class are not `Clone` because they hold
-//    raw arena pointers; copying the pointers is the intended Zig semantic). ──
+//    raw arena pointers; copying the raw pointers is intentional). ──
 
 #[inline]
 fn prop_copy(p: &Property) -> Property {
@@ -80,8 +78,12 @@ fn prop_copy(p: &Property) -> Property {
         ts_decorators: bun_alloc::AstAlloc::vec(),
         key: p.key,
         value: p.value,
-        // SAFETY: `Metadata` is a plain data enum (no Drop); shallow read is the
-        // intended Zig copy semantic.
+        // SAFETY: this duplicates ownership of any heap allocation inside
+        // `Metadata` (`MDot` owns a global-heap `Vec<Ref>`), but the source
+        // `Property` is an arena-resident AST node whose `Drop` never runs
+        // (AST stores are bulk-freed without dropping — see the
+        // `bun_alloc::ast_alloc` module docs), so at most one of the two
+        // copies ever reaches drop glue; no double free.
         ts_metadata: unsafe { core::ptr::read(&raw const p.ts_metadata) },
     }
 }
@@ -392,7 +394,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut v = BumpVec::<u8>::new_in(self.arena);
         v.extend_from_slice(prefix);
         if let Some(n) = n {
-            // PORT NOTE: bumpalo Vec<u8> doesn't impl io::Write; format into a
+            // bumpalo Vec<u8> doesn't impl io::Write; format into a
             // bump String and copy the bytes.
             let s = bun_alloc::arena_format!(in self.arena, "{}", n);
             v.extend_from_slice(s.as_bytes());
@@ -754,7 +756,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
                             let mut obj_expr = tgt_idx.target;
                             self.rewrite_private_accesses_in_expr(&mut obj_expr, map);
-                            let private_access = self.private_get_expr(obj_expr, &info, expr_loc);
+                            // `x.#m(...)` becomes `__privateGet(x, _m).call(x, ...)`, which
+                            // references the receiver twice. Only identifiers and `this` can
+                            // be repeated safely; any other receiver is captured in a
+                            // temporary so its side effects run once and nested private
+                            // calls don't duplicate the whole subtree (the duplication is
+                            // exponential in the length of a chain like `o.#m().#m().#m()`).
+                            let (get_obj, this_arg) = match &obj_expr.data {
+                                js_ast::ExprData::EIdentifier(id) => {
+                                    let obj_ref = id.ref_;
+                                    (obj_expr, self.use_ref(obj_ref, obj_expr.loc))
+                                }
+                                js_ast::ExprData::EThis(_) => {
+                                    (obj_expr, self.new_expr(E::This {}, obj_expr.loc))
+                                }
+                                _ => {
+                                    let tmp_ref = self.generate_temp_ref(Some(b"_obj"));
+                                    let write = self.assign_to(tmp_ref, obj_expr, expr_loc);
+                                    let read = self.use_ref(tmp_ref, expr_loc);
+                                    (write, read)
+                                }
+                            };
+                            let private_access = self.private_get_expr(get_obj, &info, expr_loc);
                             let call_target = self.new_expr(
                                 E::Dot {
                                     target: private_access,
@@ -767,7 +790,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let bump = self.arena;
                             let orig_args = e.args.slice_mut();
                             let mut new_args = BumpVec::with_capacity_in(1 + orig_args.len(), bump);
-                            new_args.push(obj_expr);
+                            new_args.push(this_arg);
                             for arg in orig_args.iter_mut() {
                                 self.rewrite_private_accesses_in_expr(arg, map);
                                 new_args.push(*arg);
@@ -840,15 +863,73 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_ast::ExprData::EFunction(e) => {
+                let temps_before = self.temp_refs_to_declare.len();
                 let stmts = e.func.body.stmts.slice_mut();
                 self.rewrite_private_accesses_in_stmts(stmts, map);
+                e.func.body.stmts = self.declare_capture_temps_in_fn_body(
+                    e.func.body.stmts,
+                    temps_before,
+                    e.func.body.loc,
+                );
             }
             js_ast::ExprData::EArrow(e) => {
+                let temps_before = self.temp_refs_to_declare.len();
                 let stmts = e.body.stmts.slice_mut();
                 self.rewrite_private_accesses_in_stmts(stmts, map);
+                e.body.stmts =
+                    self.declare_capture_temps_in_fn_body(e.body.stmts, temps_before, e.body.loc);
             }
             _ => {}
         }
+    }
+
+    /// Drain receiver-capture temporaries created past `baseline` into a
+    /// single `var` declaration statement; `None` if none were created.
+    fn drain_capture_temp_decls(&mut self, baseline: usize, loc: bun_ast::Loc) -> Option<Stmt> {
+        let total = self.temp_refs_to_declare.len();
+        if total == baseline {
+            return None;
+        }
+        let bump = self.arena;
+        let mut capture_decls = BumpVec::<G::Decl>::with_capacity_in(total - baseline, bump);
+        for i in baseline..total {
+            let capture_ref = self.temp_refs_to_declare[i].r#ref;
+            let binding = self.b(B::Identifier { r#ref: capture_ref }, loc);
+            capture_decls.push(G::Decl {
+                binding,
+                value: None,
+            });
+        }
+        self.temp_refs_to_declare.truncate(baseline);
+        Some(self.s(
+            S::Local {
+                decls: DeclList::from_bump_vec(capture_decls),
+                ..Default::default()
+            },
+            loc,
+        ))
+    }
+
+    /// Declare receiver-capture temporaries created past `temps_before` at the
+    /// top of the function body they were created in, so each invocation gets
+    /// a fresh binding. A binding hoisted outside the function would be shared
+    /// across invocations, and `__privateGet(_obj = recv, _s, getter)` runs the
+    /// user getter between the write and the `.call(_obj)` read; re-entering
+    /// the same call site through that getter would clobber the shared temp.
+    fn declare_capture_temps_in_fn_body(
+        &mut self,
+        stmts: js_ast::StmtNodeList,
+        temps_before: usize,
+        body_loc: bun_ast::Loc,
+    ) -> js_ast::StmtNodeList {
+        let Some(decl_stmt) = self.drain_capture_temp_decls(temps_before, body_loc) else {
+            return stmts;
+        };
+        let old_stmts = stmts.slice();
+        let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + 1, self.arena);
+        new_stmts.push(decl_stmt);
+        new_stmts.extend_from_slice(old_stmts);
+        js_ast::StmtNodeList::from_bump(new_stmts)
     }
 
     fn rewrite_private_accesses_in_stmts(&mut self, stmts: &mut [Stmt], map: &PrivateLoweredMap) {
@@ -1024,6 +1105,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let bump = p.arena;
 
+        // Receiver-capture temporaries created by `rewrite_private_accesses_in_expr`
+        // land in `temp_refs_to_declare`; everything pushed past this point is
+        // declared in a `var` statement alongside the other lowering variables
+        // right before output assembly.
+        let temp_refs_before = p.temp_refs_to_declare.len();
+
         // ── Phase 1: Setup ───────────────────────────────
         let mut class_name_ref: Ref;
         let mut class_name_loc: bun_ast::Loc;
@@ -1040,7 +1127,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value: None,
             });
             if let Some(cn) = &class.class_name {
-                class_name_ref = cn.ref_.expect("infallible: ref bound");
+                class_name_ref = cn.ref_;
                 class_name_loc = cn.loc;
             } else {
                 class_name_ref = ecr;
@@ -1050,18 +1137,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && can_be_class_binding_name(name)
                 {
                     class.class_name = Some(js_ast::LocRef {
-                        ref_: Some(p.new_sym(js_ast::symbol::Kind::Other, name)),
+                        ref_: p.new_sym(js_ast::symbol::Kind::Other, name),
                         loc,
                     });
                 }
             }
         } else {
-            class_name_ref = class
-                .class_name
-                .as_ref()
-                .unwrap()
-                .ref_
-                .expect("infallible: ref bound");
+            class_name_ref = class.class_name.as_ref().unwrap().ref_;
             class_name_loc = class.class_name.as_ref().unwrap().loc;
         }
 
@@ -1075,8 +1157,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             inner_class_ref = p.new_sym(js_ast::symbol::Kind::Other, name);
         }
 
-        // Zig: `const class_decorators = class.ts_decorators; class.ts_decorators = .{};`
-        // — a shallow `BabyList` copy. In Rust `ExprNodeList = Vec<Expr>` owns its
+        // `ExprNodeList = Vec<Expr>` owns its
         // buffer, so this MUST be a real ownership transfer; the previous
         // `ptr::read` left a second owner in the local that dropped at function
         // exit, freeing the buffer that `E::Array { items }` (Phase-2/5 below)
@@ -1728,7 +1809,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 loc,
             ));
-            dec_args.push(p.new_expr(E::Number { value: flags }, loc));
+            dec_args.push(p.new_expr(E::Number::new(flags), loc));
             dec_args.push(if is_private {
                 let priv_ref = match &key_expr.data {
                     js_ast::ExprData::EPrivateIdentifier(pi) => pi.ref_,
@@ -1955,7 +2036,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 loc,
             ));
-            cls_dec_args.push(p.new_expr(E::Number { value: 0.0 }, loc));
+            cls_dec_args.push(p.new_expr(E::Number::new(0.0), loc));
             cls_dec_args.push(p.new_expr(
                 E::EString {
                     data: class_name_str,
@@ -1998,7 +2079,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // 6: Static method extra initializers
         if !static_non_field_elements.is_empty() || has_static_private_methods {
             let i_e = p.use_ref(init_ref, loc);
-            let n_e = p.new_expr(E::Number { value: 3.0 }, loc);
+            let n_e = p.new_expr(E::Number::new(3.0), loc);
             let c_e = p.use_ref(class_name_ref, class_name_loc);
             suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
         }
@@ -2070,12 +2151,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         let mut run_args = BumpVec::with_capacity_in(4, bump);
                         run_args.push(p.use_ref(init_ref, loc));
-                        run_args.push(p.new_expr(
-                            E::Number {
-                                value: Self::init_flag(field_idx),
-                            },
-                            loc,
-                        ));
+                        run_args.push(p.new_expr(E::Number::new(Self::init_flag(field_idx)), loc));
                         run_args.push(p.use_ref(class_name_ref, class_name_loc));
                         if let Some(init_val) = entry.prop.initializer {
                             run_args.push(init_val);
@@ -2104,12 +2180,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         // Extra initializer
                         let i_e = p.use_ref(init_ref, loc);
-                        let n_e = p.new_expr(
-                            E::Number {
-                                value: Self::extra_init_flag(field_idx),
-                            },
-                            loc,
-                        );
+                        let n_e = p.new_expr(E::Number::new(Self::extra_init_flag(field_idx)), loc);
                         let c_e = p.use_ref(class_name_ref, class_name_loc);
                         suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
                     }
@@ -2120,7 +2191,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // 8: Class extra initializers
         if class_decorators_len > 0 {
             let i_e = p.use_ref(init_ref, loc);
-            let n_e = p.new_expr(E::Number { value: 1.0 }, loc);
+            let n_e = p.new_expr(E::Number::new(1.0), loc);
             let c_e = p.use_ref(class_name_ref, class_name_loc);
             suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
         }
@@ -2135,7 +2206,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // ── Phase 7: Constructor injection ───────────────
         if !instance_non_field_elements.is_empty() || has_instance_private_methods {
             let i_e = p.use_ref(init_ref, loc);
-            let n_e = p.new_expr(E::Number { value: 5.0 }, loc);
+            let n_e = p.new_expr(E::Number::new(5.0), loc);
             let t_e = p.new_expr(E::This {}, loc);
             let call = p.call_rt(loc, b"__runInitializers", &[i_e, n_e, t_e]);
             constructor_inject_stmts.push(p.s(
@@ -2164,12 +2235,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let mut run_args = BumpVec::with_capacity_in(4, bump);
                 run_args.push(p.use_ref(init_ref, loc));
-                run_args.push(p.new_expr(
-                    E::Number {
-                        value: Self::init_flag(field_idx),
-                    },
-                    loc,
-                ));
+                run_args.push(p.new_expr(E::Number::new(Self::init_flag(field_idx)), loc));
                 run_args.push(p.new_expr(E::This {}, loc));
                 if let Some(init_val) = entry.prop.initializer {
                     run_args.push(init_val);
@@ -2200,12 +2266,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // Extra initializer
                 let i_e = p.use_ref(init_ref, loc);
-                let n_e = p.new_expr(
-                    E::Number {
-                        value: Self::extra_init_flag(field_idx),
-                    },
-                    loc,
-                );
+                let n_e = p.new_expr(E::Number::new(Self::extra_init_flag(field_idx)), loc);
                 let t_e = p.new_expr(E::This {}, loc);
                 let call = p.call_rt(loc, b"__runInitializers", &[i_e, n_e, t_e]);
                 constructor_inject_stmts.push(p.s(
@@ -2257,7 +2318,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break;
                 }
                 let insert_at = if let Some(j) = super_index { j + 1 } else { 0 };
-                // PORT NOTE: BumpVec has no `splice`; rebuild.
+                // BumpVec has no `splice`; rebuild.
                 let mut spliced = BumpVec::<Stmt>::with_capacity_in(
                     body_stmts.len() + constructor_inject_stmts.len(),
                     bump,
@@ -2352,6 +2413,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class.has_decorators = false;
         class.should_lower_standard_decorators = false;
 
+        // Declare the receiver-capture temporaries that were created outside any
+        // function body (field initializers, static blocks, pre-eval/decorate
+        // expressions). Temps created inside method/function/arrow bodies were
+        // already declared there by `declare_capture_temps_in_fn_body`. Static
+        // blocks, static initializers, and decorate expressions run at most
+        // once per class evaluation; instance field initializers run once per
+        // construction and share the hoisted binding across constructions,
+        // matching where esbuild declares these temps.
+        if let Some(decl_stmt) = p.drain_capture_temp_decls(temp_refs_before, loc) {
+            prefix_stmts.push(decl_stmt);
+        }
+
         // ── Phase 8: Assemble output ─────────────────────
         if is_expr {
             let mut comma_parts = BumpVec::<Expr>::new_in(bump);
@@ -2362,9 +2435,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 comma_parts.push(ba);
             }
 
-            // PORT NOTE: Zig used a local anonymous-struct fn; can't capture
-            // `&mut self` in a Rust closure while also calling `p.method()`, so
-            // inline both call sites against a `&[Stmt]` slice array.
+            // Can't capture `&mut self` in a closure while also calling
+            // `p.method()`, so inline both call sites against a `&[Stmt]`
+            // slice array.
             for stmts_list in [&pre_eval_stmts[..], &prefix_stmts[..]] {
                 for pstmt in stmts_list.iter() {
                     match &pstmt.data {
@@ -2505,5 +2578,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 }
-
-// ported from: src/js_parser/ast/lowerDecorators.zig

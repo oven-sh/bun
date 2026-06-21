@@ -1,6 +1,6 @@
-//! HTTP/3 bindings. Method names mirror NewApp/NewResponse 1:1 so the
-//! comptime callers in server.zig and the `inline else` arms in AnyResponse
-//! see the same surface regardless of transport.
+//! HTTP/3 bindings. Method names mirror NewApp/NewResponse 1:1 so callers
+//! (including the AnyResponse dispatch arms) see the same surface regardless
+//! of transport.
 
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
@@ -93,8 +93,7 @@ impl Request {
     }
     /// Iterate all request headers.
     ///
-    /// Zig takes `comptime cb` and bakes it into the trampoline at
-    /// monomorphization time. Rust models this by requiring `H` to be a
+    /// `H` must be a
     /// zero-sized type (function item or capture-less closure): the trampoline
     /// is monomorphized over `H` and conjures the ZST inside, so the user
     /// handler is baked in with no runtime storage.
@@ -353,7 +352,7 @@ impl Response {
         c::uws_h3_res_on_data(self, None, ptr::null_mut())
     }
     pub fn corked(&mut self, handler: impl FnOnce()) {
-        // H3 has no corking; the Zig version just calls the handler immediately.
+        // H3 has no corking; call the handler immediately.
         let _ = self;
         handler();
     }
@@ -367,7 +366,6 @@ impl Response {
         extern "C" fn cb<UD>(p: *mut c_void) {
             // SAFETY: p points at a stack Ctx<UD> valid for this synchronous call.
             let ctx = unsafe { &*p.cast::<Ctx<UD>>() };
-            // PERF(port): was @call(.always_inline)
             (ctx.0)(ctx.1);
         }
         let mut ctx: Ctx<UD> = (handler, ud);
@@ -404,7 +402,7 @@ bun_core::impl_tag_error!(AddServerNameError);
 /// Stamps one `pub fn $name<UD, H>(&mut self, p, ud, h)` per HTTP verb,
 /// each forwarding to [`App::route`] with the matching [`RouteKind`].
 /// `connect`/`trace` are intentionally omitted — h3 exposes those only via
-/// [`App::method`], matching h3.zig.
+/// [`App::method`].
 macro_rules! h3_route_methods {
     ($($name:ident => $kind:ident),* $(,)?) => {$(
         pub fn $name<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
@@ -466,7 +464,6 @@ impl App {
                 thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
             }
         }
-        // PERF(port): was comptime enum dispatch — profile if it shows up on a hot path
         let f = match which {
             RouteKind::Get => c::uws_h3_app_get,
             RouteKind::Post => c::uws_h3_app_post,
@@ -807,5 +804,3 @@ mod c {
         );
     }
 }
-
-// ported from: src/uws_sys/h3.zig

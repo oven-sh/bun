@@ -1,5 +1,3 @@
-// const IPC = @import("../jsc/ipc.zig");
-
 use core::ffi::{c_char, c_void};
 use std::sync::Arc;
 
@@ -32,7 +30,7 @@ use enumset::EnumSet;
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::shell::util::OutKind;
 
-/// Local helper: `OutKind` → tag-name string for logs (Zig `@tagName`).
+/// Local helper: `OutKind` → tag-name string for logs.
 #[inline]
 fn out_kind_str(k: OutKind) -> &'static str {
     match k {
@@ -41,7 +39,7 @@ fn out_kind_str(k: OutKind) -> &'static str {
     }
 }
 
-/// Raw `*mut T` into an `Arc<T>` payload (Zig intrusive `*PipeReader` shape).
+/// Raw `*mut T` into an `Arc<T>` payload.
 ///
 /// Returns a **raw pointer**, not `&mut T`: an `(&Arc<T>) -> &mut T` accessor
 /// is unsound by construction — it lets two `&mut T` (or a `&mut T` and a
@@ -93,10 +91,9 @@ mod __pipe_reader_thread_confined {
 
 /// Mutably borrow a `RefPtr<StaticPipeWriter>` payload.
 ///
-/// `RefPtr` only exposes `&T` via `Deref`; the shell is single-threaded so
-/// the Zig spec mutates through any `*StaticPipeWriter` alias. Localises the
-/// `(*buffer.as_ptr()).method()` pattern at the five `Writable::Buffer`
-/// callsites.
+/// `RefPtr` only exposes `&T` via `Deref`; the shell is single-threaded.
+/// Localises the `(*buffer.as_ptr()).method()` pattern at the five
+/// `Writable::Buffer` callsites.
 ///
 /// # Safety
 /// Caller must ensure no other `&`/`&mut StaticPipeWriter` to the same
@@ -124,19 +121,16 @@ pub use crate::api::bun_spawn::stdio::Stdio as StdioReexport;
 pub use JscSubprocess::StdioKind;
 
 use crate::shell::ShellErr;
-// pub const ShellSubprocess = NewShellSubprocess(.js);
-// pub const ShellSubprocessMini = NewShellSubprocess(.mini);
 
 #[cfg(windows)]
 pub type StdioResult = WindowsStdioResult;
 #[cfg(not(windows))]
 pub type StdioResult = Option<Fd>;
 
-/// RAII handle owning one intrusive ref on a heap `FileSink` (Zig's
-/// `Writable.pipe: *FileSink`). `FileSink` carries its own
-/// `#[derive(CellRefCounted)]` refcount and is allocated via `Box::into_raw`
-/// in `FileSink::create*`, so it cannot live behind an `Arc`. Drop derefs
-/// (and frees on last ref), matching Zig's `pipe.deref()` on teardown.
+/// RAII handle owning one intrusive ref on a heap `FileSink`. `FileSink`
+/// carries its own `#[derive(CellRefCounted)]` refcount and is allocated via
+/// `Box::into_raw` in `FileSink::create*`, so it cannot live behind an `Arc`.
+/// Drop derefs (and frees on last ref) on teardown.
 pub struct FileSinkPtr(core::ptr::NonNull<FileSink>);
 
 impl FileSinkPtr {
@@ -158,8 +152,7 @@ impl FileSinkPtr {
         self.0.as_ptr()
     }
 
-    /// Mutably borrow the payload. Shell is single-threaded; mirrors Zig's
-    /// `*FileSink` mutation through any alias.
+    /// Mutably borrow the payload. Shell is single-threaded.
     ///
     /// # Safety
     /// Caller must ensure no overlapping `&`/`&mut` to the `FileSink` is live.
@@ -209,8 +202,7 @@ pub struct ShellIO {
     pub stderr: Option<Arc<IOWriter>>,
 }
 
-// PORT NOTE: Zig's `ShellIO.ref/deref` bumped intrusive IOWriter refcounts
-// without producing a handle. With `Arc<IOWriter>` the only correct way to
+// Note: with `Arc<IOWriter>` the only correct way to
 // retain is to *clone the Arc and keep it*; a freestanding `ref()` that
 // discards the clone is a no-op. Callers hold their own `Arc` clones and
 // `ShellIO`'s `Drop` releases them — no explicit ref/deref methods.
@@ -267,7 +259,7 @@ pub struct ShellSubprocess {
     /// Intrusively ref-counted process (`bun_ptr::ThreadSafeRefCount`).
     /// Stored raw because `Process` methods take `&mut self` and `RefPtr`
     /// only implements `Deref`; the shell is single-threaded so raw mutable
-    /// access mirrors the Zig `*Process` pattern.
+    /// access is sound.
     pub process: *mut Process,
 
     pub stdin: Writable,
@@ -277,8 +269,6 @@ pub struct ShellSubprocess {
     pub event_loop: EventLoopHandle,
 
     pub closed: EnumSet<StdioKind>,
-    // TODO(port): this_jsvalue was always .zero in Zig (never assigned) — dropped.
-    // A bare JSValue field on a Box-allocated struct is a UAF per PORTING.md §JSC.
     pub flags: Flags,
 }
 
@@ -289,7 +279,7 @@ bitflags::bitflags! {
         const IS_SYNC                = 1 << 0;
         const KILLED                 = 1 << 1;
         const WAITING_FOR_ONEXIT     = 1 << 2;
-        // remaining 5 bits unused (matches Zig `_: u5 = 0`)
+        // remaining 5 bits unused
     }
 }
 
@@ -405,10 +395,6 @@ impl ShellSubprocess {
         self.proc().kill(u8::try_from(sig).expect("int cast"))
     }
 
-    // fn has_called_getter(self: &Subprocess, comptime getter: @Type(.enum_literal)) -> bool {
-    //     return self.observable_getters.contains(getter);
-    // }
-
     fn close_process(&mut self) {
         let process = core::mem::replace(&mut self.process, core::ptr::null_mut());
         if process.is_null() {
@@ -419,9 +405,8 @@ impl ShellSubprocess {
         unsafe {
             (*process).set_exit_handler_default();
             (*process).close();
-            // Spec: `this.process.deref()` — release the intrusive ref taken
-            // by `spawn_result.toProcess`. `*mut Process` has no Drop, so this
-            // must be explicit.
+            // Release the intrusive ref taken by `to_process`. `*mut Process`
+            // has no Drop, so this must be explicit.
             bun_ptr::ThreadSafeRefCount::<Process>::deref(process);
         }
     }
@@ -452,9 +437,6 @@ impl ShellSubprocess {
             StdioKind::Stdout => self.stdout.finalize(),
             StdioKind::Stderr => self.stderr.finalize(),
         }
-        // } else {
-        // @field(self, @tagName(io)).close();
-        // }
     }
 
     // This must only be run once per Subprocess
@@ -470,16 +452,16 @@ impl ShellSubprocess {
         match kind {
             StdioKind::Stdin => match &mut self.stdin {
                 Writable::Pipe(pipe) => {
-                    // Mirrors Zig `this.stdin.pipe.signal.clear()` — DerefMut
-                    // on the owning `&mut FileSinkPtr` encapsulates the access.
+                    // DerefMut on the owning `&mut FileSinkPtr` encapsulates
+                    // the access.
                     pipe.signal.with_mut(|s| s.clear());
-                    // FileSinkPtr::drop derefs (Zig: `pipe.deref()`).
+                    // FileSinkPtr::drop derefs.
                     self.stdin = Writable::Ignore;
                 }
                 Writable::Buffer(_) => {
                     self.on_static_pipe_writer_done();
                     // RefPtr has no Drop — move it out before reassigning so the
-                    // create ref is actually released (mirrors Zig `buffer.deref()`).
+                    // create ref is actually released.
                     if let Writable::Buffer(buffer) =
                         core::mem::replace(&mut self.stdin, Writable::Ignore)
                     {
@@ -548,7 +530,7 @@ impl ShellSubprocess {
                 if let Readable::Pipe(pipe) = r {
                     // `start()` failed before any reader callback registered,
                     // so the `Arc` is expected to be uniquely held. Write
-                    // unconditionally (matching Zig spec) rather than via
+                    // unconditionally rather than via
                     // `Arc::get_mut`, which would silently skip the state
                     // transition if a future change bumped the strong count.
                     debug_assert_eq!(Arc::strong_count(pipe), 1);
@@ -612,15 +594,13 @@ impl ShellSubprocess {
     ) -> sh::Result<()> {
         const IS_SYNC: bool = false;
 
-        // Owns the `K=V\0` storage when inheriting the parent env. Zig used the
-        // spawn-local arena freed at function exit; here the struct keeps the
-        // buffers alive until after `spawn_process` returns (the raw pointers
-        // pushed into `env_array` borrow `inherited_env_storage.storage`).
+        // Owns the `K=V\0` storage when inheriting the parent env. The struct
+        // keeps the buffers alive until after `spawn_process` returns (the raw
+        // pointers pushed into `env_array` borrow `inherited_env_storage.storage`).
         let inherited_env_storage: Option<bun_dotenv::NullDelimitedEnvMap> =
             if !spawn_args.override_env && spawn_args.env_array.is_empty() {
-                // spawn_args.env_array.items = jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator);
                 let envmap = bun_core::handle_oom(event_loop.create_null_delimited_env_map());
-                // PORT NOTE: `as_slice()` *includes* the trailing null; strip it —
+                // Note: `as_slice()` *includes* the trailing null; strip it —
                 // the common tail below re-appends one null terminator.
                 let entries = envmap.as_slice();
                 spawn_args
@@ -699,8 +679,7 @@ impl ShellSubprocess {
         }
 
         // Backref so PipeReader callbacks can drive `Yield::run` from async I/O
-        // completion. Zig threads this implicitly via `Base.interpreter`; the
-        // NodeId-arena port plumbs it explicitly through `SpawnArgs`.
+        // completion; plumbed explicitly through `SpawnArgs`.
         let interp = spawn_args.interp;
         // argv is built by the caller (Cmd::transition_to_exec) from
         // `Cmd.args`, NUL-terminated and null-sentinel-terminated, so this
@@ -719,7 +698,7 @@ impl ShellSubprocess {
             )
         } {
             Err(err) => {
-                // Zig: `spawn_options.deinit()`. WindowsSpawnOptions has no Drop
+                // WindowsSpawnOptions has no Drop
                 // (its Stdio::Buffer/Ipc carry FFI-owned `*mut uv::Pipe` already
                 // `uv_pipe_init`ed by spawn_process_windows before uv_spawn fails),
                 // so an implicit `drop(spawn_options)` is a no-op and leaks the
@@ -759,7 +738,7 @@ impl ShellSubprocess {
 
         let mut spawn_result = spawn_result;
 
-        // PORT NOTE: Stdio impls Drop, so move out via mem::replace instead of clone.
+        // Note: Stdio impls Drop, so move out via mem::replace instead of clone.
         let stdio0 = core::mem::replace(&mut stdio_guard[0], Stdio::Ignore);
         let stdio1 = core::mem::replace(&mut stdio_guard[1], Stdio::Ignore);
         let stdio2 = core::mem::replace(&mut stdio_guard[2], Stdio::Ignore);
@@ -771,8 +750,7 @@ impl ShellSubprocess {
 
         // Two-phase init: allocate the Subprocess slot first so the stable
         // `*mut Subprocess` is available to `Writable::init` / `Readable::init`
-        // (they store it on StaticPipeWriter / PipeReader as a backref). Zig
-        // does `allocator.create()` then assigns the struct literal in place.
+        // (they store it on StaticPipeWriter / PipeReader as a backref).
         let mut slot = Box::<Subprocess>::new_uninit();
         let subprocess: *mut Subprocess = slot.as_mut_ptr();
         // SAFETY: `out_subproc` points at the `SubprocExec.child` slot inside
@@ -846,7 +824,6 @@ impl ShellSubprocess {
         });
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
 
-        // Spec: `subprocess.stdin.pipe.signal = Signal.init(&subprocess.stdin)`.
         // Wire the FileSink's close-signal back to the enclosing `Writable` so
         // `Writable::on_close` (drops the `Arc<FileSink>`) runs when the sink
         // finishes. `stdin` lives inside the Box-allocated `Subprocess` at a
@@ -1044,7 +1021,7 @@ impl Writable {
     ) -> Result<Writable, WritableInitError> {
         assert_stdio_result!(result);
 
-        // PORT NOTE: `Stdio` impls Drop, so we cannot partially move out via
+        // Note: `Stdio` impls Drop, so we cannot partially move out via
         // match (E0509). Dispatch on `&mut` and `mem::take` / ManuallyDrop the
         // non-Copy payloads.
         let mut stdio = stdio;
@@ -1054,8 +1031,7 @@ impl Writable {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
                     if let StdioResult::Buffer(buf) = result {
                         // Ownership of the `Box<uv::Pipe>` transfers into the
-                        // FileSink's writer (Zig: `result.buffer` is the same
-                        // heap pointer the sink takes over).
+                        // FileSink's writer.
                         let uv_pipe: *mut _ = bun_core::heap::into_raw(buf);
                         let pipe_ptr = FileSink::create_with_pipe(event_loop, uv_pipe);
 
@@ -1067,7 +1043,7 @@ impl Writable {
                             bun_sys::Result::Ok(()) => {}
                             bun_sys::Result::Err(_err) => {
                                 // SAFETY: pipe_ptr is live with refcount 1;
-                                // deref frees it (Zig: `pipe.deref()`).
+                                // deref frees it.
                                 unsafe { FileSink::deref(pipe_ptr) };
                                 return Err(WritableInitError::UnexpectedCreatingStdin);
                             }
@@ -1127,6 +1103,10 @@ impl Writable {
                 Stdio::Ipc | Stdio::Capture(_) => {
                     return Ok(Writable::Ignore);
                 }
+                Stdio::SocketFd => {
+                    // The shell never uses this; rejected at i < 3 anyway.
+                    panic!("Unimplemented stdin socket-fd");
+                }
             }
         }
         #[cfg(not(windows))]
@@ -1170,8 +1150,7 @@ impl Writable {
                 Stdio::Memfd(memfd) => {
                     debug_assert!(memfd.is_valid());
                     let fd = *memfd;
-                    // Ownership of the fd transfers to `Writable::Memfd` (Zig
-                    // sets `stdio_consumed = true` to suppress `Stdio.deinit`).
+                    // Ownership of the fd transfers to `Writable::Memfd`.
                     // Swap in `Ignore` and suppress the old value's destructor
                     // so `Stdio::Drop` doesn't close the fd we just took
                     // (`stdio = Stdio::Ignore` alone would drop+close the old
@@ -1188,26 +1167,18 @@ impl Writable {
                     // The shell never uses this
                     panic!("Unimplemented stdin readable_stream");
                 }
+                Stdio::SocketFd => {
+                    // The shell never uses this; rejected at i < 3 anyway.
+                    panic!("Unimplemented stdin socket-fd");
+                }
             }
         }
     }
 
-    // PORT NOTE: `Writable::toJS` from the Zig spec is intentionally **not**
-    // ported. It references `subprocess.flags.has_stdin_destructor_called` and
-    // `subprocess.weak_file_sink_stdin_ptr`, neither of which exist on
-    // `ShellSubprocess` — the function is dead under Zig's lazy compilation
-    // (copy-pasted from the JSC `Subprocess`, never instantiated). The shell
-    // never exposes its stdin Writable to JS.
+    // Note: there is intentionally no `Writable::toJS` here — the shell never
+    // exposes its stdin Writable to JS.
 
     pub fn finalize(&mut self) {
-        // PORT NOTE: Zig recovered `*Subprocess` via `container_of` to gate on
-        // `subprocess.this_jsvalue != .zero`. That field is never assigned on
-        // ShellSubprocess (dead code path under Zig lazy compilation) and was
-        // dropped from the port, so the parent-pointer recovery is unnecessary.
-        // Computing it would also require materialising a `&Subprocess` while
-        // `&mut self` (== `&mut subprocess.stdin`) is live — an aliasing
-        // violation under Stacked Borrows even if never read.
-
         match self {
             Writable::Pipe(_) => {
                 // deref via drop-on-reassign
@@ -1216,8 +1187,8 @@ impl Writable {
             Writable::Buffer(buffer) => {
                 // SAFETY: single-threaded; temporary `&mut` for the call only.
                 unsafe { buffer_mut(buffer) }.update_ref(false);
-                // Spec: `this.buffer.deref()` but does NOT reassign `this.*` —
-                // the variant tag is left as `.buffer`. RefPtr's Drop (on
+                // Intentionally does NOT reassign `*self` — the variant tag is
+                // left as `Writable::Buffer`. RefPtr's Drop (on
                 // Subprocess teardown) handles the final deref.
             }
             Writable::Memfd(fd) => {
@@ -1305,11 +1276,8 @@ impl Readable {
         }
     }
 
-    // PORT NOTE: `Readable::toSlice` from the Zig spec is intentionally **not**
-    // ported. Its `.pipe` arm writes `this.pipe.buffer.fifo.close_on_empty_read`,
-    // a field that does not exist on `PipeReader` (pre-BufferedReader-rewrite
-    // leftover) — the function is dead under Zig's lazy compilation and has no
-    // callers. Subprocess output is read via `PipeReader::buffered_output`.
+    // Note: there is intentionally no `Readable::toSlice` here — subprocess
+    // output is read via `PipeReader::buffered_output`.
 
     #[allow(clippy::too_many_arguments)]
     pub fn init(
@@ -1325,7 +1293,7 @@ impl Readable {
     ) -> Readable {
         assert_stdio_result!(result);
 
-        // PORT NOTE: `Stdio` impls Drop, so dispatch on `&mut` and `mem::take`
+        // Note: `Stdio` impls Drop, so dispatch on `&mut` and `mem::take`
         // Default-able payloads instead of partial moves (E0509).
         let mut stdio = stdio;
         #[cfg(windows)]
@@ -1360,6 +1328,8 @@ impl Readable {
                     event_loop, process, result, shellio, out_type, interp,
                 )),
                 Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
+                // The shell never uses this; rejected at i < 3 anyway.
+                Stdio::SocketFd => Readable::Ignore,
             };
         }
 
@@ -1375,8 +1345,7 @@ impl Readable {
                 Stdio::Blob(_) => Readable::Ignore,
                 Stdio::Memfd(memfd) => {
                     let fd = *memfd;
-                    // Ownership of the fd transfers to `Readable::Memfd` (Zig sets
-                    // `stdio_consumed = true` to suppress `Stdio.deinit`). Swap in
+                    // Ownership of the fd transfers to `Readable::Memfd`. Swap in
                     // `Ignore` and suppress the old value's destructor so
                     // `Stdio::Drop` doesn't close the fd we just took.
                     let _ =
@@ -1404,6 +1373,8 @@ impl Readable {
                     event_loop, process, result, shellio, out_type, interp,
                 )),
                 Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
+                // The shell never uses this; rejected at i < 3 anyway.
+                Stdio::SocketFd => Readable::Ignore,
             }
         }
     }
@@ -1469,10 +1440,8 @@ pub struct SpawnArgs<'a> {
     /// Must include the trailing null sentinel.
     pub argv: Vec<*const c_char>,
     /// Backref so [`PipeReader`] async-I/O callbacks can drive
-    /// [`Yield::run`]. Zig threaded the interpreter implicitly via
-    /// `Base.interpreter`; the NodeId-arena port drops that field, so the
-    /// spawning `Cmd` passes it explicitly here and it is plumbed through
-    /// `Readable::init` → `PipeReader::create`.
+    /// [`Yield::run`]. The spawning `Cmd` passes it explicitly here and it is
+    /// plumbed through `Readable::init` → `PipeReader::create`.
     pub interp: *mut crate::shell::interpreter::Interpreter,
 
     pub override_env: bool,
@@ -1517,9 +1486,8 @@ impl EnvMapIterKey<'_> {
 }
 
 pub struct EnvMapIterValue {
-    /// Zig stores `[:0]const u8` allocated from the spawn arena. Port owns the
-    /// NUL-terminated copy directly — `ZBox` is the `allocator.dupeZ` analogue.
-    // PERF(port): arena allocSentinel — profile if hot.
+    /// Owns the NUL-terminated copy directly via `ZBox`.
+    // PERF: could come from the spawn arena instead — profile if hot.
     pub val: bun_core::ZBox,
 }
 
@@ -1605,7 +1573,7 @@ impl<'a> SpawnArgs<'a> {
         env_iter: &mut crate::shell::env_map::Iterator<'_>,
     ) {
         self.override_env = true;
-        // PORT NOTE: `bun_collections::array_hash_map::Iter` doesn't impl
+        // Note: `bun_collections::array_hash_map::Iter` doesn't impl
         // `ExactSizeIterator`; use `size_hint` for the reservation.
         self.env_array
             .reserve_exact(env_iter.size_hint().0.saturating_sub(self.env_array.len()));
@@ -1619,7 +1587,7 @@ impl<'a> SpawnArgs<'a> {
             let key = entry.key_ptr.slice();
             let value = entry.value_ptr.slice();
 
-            // Spec: `std.fmt.allocPrintSentinel(arena, "{s}={s}", .{key, value}, 0)`.
+            // Build a NUL-terminated `key=value` string in the spawn arena.
             // Bumpalo owns the bytes; freed when the spawn arena is reset.
             let len = key.len() + 1 + value.len();
             // `self.arena: &'a Arena` is `Copy`, so binding it yields the full
@@ -1668,11 +1636,8 @@ pub struct PipeReader {
     /// `IOWriter::interp` / `IOReader::interp` for the same pattern. Wired
     /// from `Cmd::interp` at `PipeReader::create` time.
     pub interp: *mut crate::shell::interpreter::Interpreter,
-    // ref_count: handled by Arc<PipeReader> per LIFETIMES.tsv.
-    // TODO(port): Zig uses intrusive bun.ptr.RefCount and recovers *PipeReader via
-    // `container_of` from CapturedWriter — incompatible with Arc's header layout.
-    // Should switch to bun_ptr::IntrusiveRc<PipeReader> + Cell<u32> ref_count
-    // and update Readable::Pipe accordingly.
+    // ref_count: handled by Arc<PipeReader>; mutation through shared handles
+    // goes via the `arc_as_mut_ptr` interior-mutability helper below.
 }
 
 pub enum BufferedOutput {
@@ -1708,7 +1673,7 @@ impl BufferedOutput {
     pub fn append(&mut self, bytes: &[u8]) {
         match self {
             BufferedOutput::Bytelist(b) => {
-                let _ = b.append_slice(bytes); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                let _ = b.append_slice(bytes); // OOM/capacity: fire-and-forget
             }
             BufferedOutput::ArrayBuffer { buf, i } => {
                 let array_buf_slice = buf.slice_mut();
@@ -1742,7 +1707,7 @@ impl Drop for BufferedOutput {
 
 pub struct CapturedWriter {
     pub dead: bool,
-    /// `None` iff `dead == true` (Zig leaves the field undefined when dead).
+    /// `None` iff `dead == true`.
     pub writer: Option<Arc<IOWriter>>,
     pub written: usize,
     pub err: Option<SystemError>,
@@ -1869,8 +1834,6 @@ impl CapturedWriter {
     }
 
     pub fn on_error(&mut self, err: &bun_sys::Error) {
-        // TODO(port): Zig assigns bun.sys.Error to ?jsc.SystemError field — type mismatch
-        // in original (dead code under lazy compilation).
         self.err = Some(err.to_system_error());
     }
 
@@ -1888,7 +1851,6 @@ impl CapturedWriter {
 
 impl Drop for CapturedWriter {
     fn drop(&mut self) {
-        // PORT NOTE: Zig called `e.deref()` on the SystemError; in Rust the
         // `bun_sys::SystemError` strings drop themselves.
         let _ = self.err.take();
         // self.writer Arc drops automatically.
@@ -1902,13 +1864,13 @@ impl PipeReader {
             Arc::as_ptr(&self) as usize,
             out_kind_str(self.out_type)
         );
-        // Spec: `this.process = null; this.deref();` — clear the backref so any
+        // Clear the backref so any
         // late `on_reader_done`/`on_reader_error` after the Subprocess is freed
         // can't follow it. Arc only yields `&Self`; write through the
         // allocation pointer (single-threaded shell, no live `&`/`&mut` here).
         // SAFETY: see `arc_as_mut_ptr` rationale; field is a plain `Option<*mut _>`.
         unsafe { (*arc_as_mut_ptr(&self)).process = None };
-        // Dropping `self` releases the strong ref (Zig `this.deref()`).
+        // Dropping `self` releases the strong ref.
     }
 
     pub fn is_done(&self) -> bool {
@@ -1973,8 +1935,8 @@ impl PipeReader {
         //
         // `PipeReader` is deliberately `!Send + !Sync` (raw `*mut Interpreter`
         // / `*mut ShellSubprocess` fields); thread confinement is enforced at
-        // compile time by `__pipe_reader_thread_confined`, so the `Arc` is the
-        // Zig intrusive-refcount shape, not a cross-thread handle. `Rc` would
+        // compile time by `__pipe_reader_thread_confined`, so the `Arc` is a
+        // refcount, not a cross-thread handle. `Rc` would
         // change the `pub fn create -> Arc<PipeReader>` ABI.
         #[allow(clippy::arc_with_non_send_sync)]
         let arc = Arc::new(PipeReader {
@@ -2005,16 +1967,14 @@ impl PipeReader {
 
         #[cfg(windows)]
         {
-            // Zig aliases the same `*uv.Pipe` heap pointer in both
-            // `stdio_result.buffer` and `reader.source.pipe`. With
-            // `Box<uv::Pipe>` we cannot alias, so ownership transfers to
-            // `reader.source` (`stdio_result` is never read again on Windows —
-            // `start()` goes through `start_with_current_pipe`).
+            // With `Box<uv::Pipe>` the pipe cannot be aliased, so ownership
+            // transfers to `reader.source` (`stdio_result` is never read again
+            // on Windows — `start()` goes through `start_with_current_pipe`).
             this.reader.source = match core::mem::take(&mut this.stdio_result) {
                 StdioResult::Buffer(buf) => Some(bun_io::Source::Pipe(buf)),
                 StdioResult::BufferFd(fd) => {
                     // `Fd` is Copy; restore so `stdio_result` keeps reflecting
-                    // the spawn outcome (Zig leaves it in place).
+                    // the spawn outcome.
                     this.stdio_result = StdioResult::BufferFd(fd);
                     Some(bun_io::Source::File(bun_io::Source::open_file(fd)))
                 }
@@ -2052,7 +2012,6 @@ impl PipeReader {
                 #[cfg(unix)]
                 {
                     // TODO: are these flags correct
-                    // Spec: `poll.flags.insert(.socket); reader.flags.socket = true`.
                     if let Some(poll) = self.reader.handle.get_poll() {
                         poll.set_flag(bun_io::FilePollFlag::Socket);
                     }
@@ -2066,7 +2025,6 @@ impl PipeReader {
         }
     }
 
-    // TODO(port): move to shell_jsc
     pub const TO_JS: fn(Arc<Self>, &JSGlobalObject) -> jsc::JsResult<JSValue> =
         Self::to_readable_stream;
 
@@ -2107,9 +2065,9 @@ impl PipeReader {
     }
 
     /// Reconstruct an owning `Arc<Self>` from the raw parent pointer the
-    /// `BufferedReader` stored at `set_parent` time. Mirrors the Zig
-    /// `this.ref(); defer this.deref();` keepalive in `onReaderDone` /
-    /// `onReaderError`: the returned guard keeps the allocation alive across
+    /// `BufferedReader` stored at `set_parent` time. Keepalive for
+    /// `on_reader_done` / `on_reader_error`:
+    /// the returned guard keeps the allocation alive across
     /// `run_yield` (which may free the owning `Cmd`) and `on_close_io` (which
     /// drops the `Readable::Pipe` strong ref). Dropping the guard is the
     /// matching deref and may free `self`.
@@ -2132,10 +2090,9 @@ impl PipeReader {
     /// `try_signal_done_to_cmd` / `run_yield_with` calls — both reach back
     /// into this same allocation via the `Readable::Pipe` `Arc` clone.
     ///
-    /// NOTE: this does **not** gate on `is_done()` — Zig spec
-    /// `onReaderError` (subproc.zig:1369) runs unconditionally. The
-    /// `is_done()` early-return is `onReaderDone`-only and lives in
-    /// [`on_reader_done`].
+    /// NOTE: this does **not** gate on `is_done()` — the error path runs
+    /// unconditionally. The `is_done()` early-return is `on_reader_done`-only
+    /// and lives in [`on_reader_done`].
     fn finish_after_state_set(guard: &Arc<Self>) {
         let me = arc_as_mut_ptr(guard);
         // Snapshot `interp` *before* the Cmd call: `try_signal_done_to_cmd`
@@ -2178,7 +2135,7 @@ impl PipeReader {
             let me = unsafe { &mut *arc_as_mut_ptr(&guard) };
             let owned = me.to_owned_slice();
             me.state = PipeReaderState::Done(owned);
-            // Spec subproc.zig:1245 — `onReaderDone` (only) waits for the
+            // `on_reader_done` (only) waits for the
             // captured-writer tee to drain before signalling.
             if !me.is_done() {
                 return;
@@ -2241,13 +2198,13 @@ impl PipeReader {
                             me.state = old;
                         }
                         PipeReaderState::Pending => {
-                            // unreachable after is_done() guard; mirror Zig.
+                            // unreachable after is_done() guard.
                             me.state = PipeReaderState::Err(Some(Box::new(e)));
                         }
                     }
                 }
-                // PORT NOTE: Zig ref'd + cloned the SystemError; `bun_sys::SystemError`
-                // isn't ref-counted nor `Clone`. Move it out (the only reader of
+                // `bun_sys::SystemError` isn't ref-counted nor `Clone`.
+                // Move it out (the only reader of
                 // `state.Err` after this point is `Drop`, which tolerates `None`).
                 if let PipeReaderState::Err(slot) = &mut me.state {
                     slot.take().map(|b| *b)
@@ -2299,8 +2256,7 @@ impl PipeReader {
             return Box::default();
         }
         out.into_boxed_slice()
-        // PERF(port): Zig returned out.items (len < cap) without shrinking; into_boxed_slice
-        // may realloc to shrink. Profile if hot.
+        // PERF: into_boxed_slice may realloc to shrink. Profile if hot.
     }
 
     pub fn update_ref(&mut self, add: bool) {
@@ -2313,14 +2269,12 @@ impl PipeReader {
         }
     }
 
-    // TODO(port): move to shell_jsc
     pub fn to_readable_stream(
         this: Arc<Self>,
         global_object: &JSGlobalObject,
     ) -> jsc::JsResult<JSValue> {
-        // PORT NOTE: Zig `defer this.deinit()` — `this: Arc<Self>` dropping at
-        // scope end (all paths, including `?`) is that deref. Consumes the
-        // caller's +1 strong ref.
+        // `this: Arc<Self>` dropping at scope end (all paths, including `?`)
+        // releases the ref. Consumes the caller's +1 strong ref.
         let me = arc_as_mut_ptr(&this);
         let _consume_on_return = this;
 
@@ -2360,7 +2314,6 @@ impl PipeReader {
         }
     }
 
-    // TODO(port): move to shell_jsc
     pub fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
         match &mut self.state {
             PipeReaderState::Done(bytes) => {
@@ -2423,19 +2376,17 @@ impl PipeReader {
     }
 
     // Helper accessor used above to paper over Arc<PipeReader> interior mutability.
-    // TODO(port): remove once IntrusiveRc + Cell-wrapped fields land.
     //
     // Takes `*mut Self` (not `&self`) because `Arc<PipeReader>` only yields
     // `&Self`, and casting `&Self as *const Self as *mut Self` to write through is
     // immediate UB — shared-ref provenance is read-only. Callers obtain the pointer
     // via `Arc::as_ptr(&arc).cast_mut()`, which projects from the Arc allocation's
-    // original `NonNull` without materializing a `&Self`, mirroring Zig's intrusive
-    // `*PipeReader` (bun.ptr.RefCount) which is freely mutated through any alias.
+    // original `NonNull` without materializing a `&Self`.
     // The JS-thread single-mutator invariant means no live `&`/`&mut` to these
     // fields exists when this runs.
     unsafe fn take_done_buffer(this: *mut Self) -> Box<[u8]> {
-        // SAFETY: see block comment above. Mirrors onCloseIO:
-        //   out.* = .{ .buffer = pipe.state.done }; pipe.state = .{ .done = &.{} };
+        // SAFETY: see block comment above. Swaps the done buffer out, leaving
+        // an empty one in its place.
         // `ptr::replace` reads/writes through the raw field pointer without
         // materializing a `&mut Self` (on_reader_done may still hold one on the
         // caller's stack via the BufferedReader parent backref).
@@ -2478,7 +2429,6 @@ impl Drop for PipeReader {
         }
 
         if let PipeReaderState::Err(slot) = &mut self.state {
-            // PORT NOTE: Zig `e.deref()`; Rust drops via take().
             *slot = None;
         }
 
@@ -2522,14 +2472,13 @@ macro_rules! assert_stdio_result {
 }
 pub(crate) use assert_stdio_result;
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     // `_PATH_DEFPATH` string literal emitted from C; immutable, load-time
     // initialized, never null. Reading the pointer value has no precondition.
     pub safe static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
 }
 
-// IntoStaticStr for PipeReaderState (used in logs as @tagName).
+// IntoStaticStr for PipeReaderState (used in logs as the variant name).
 impl From<&PipeReaderState> for &'static str {
     fn from(s: &PipeReaderState) -> &'static str {
         match s {
@@ -2539,5 +2488,3 @@ impl From<&PipeReaderState> for &'static str {
         }
     }
 }
-
-// ported from: src/shell/subproc.zig

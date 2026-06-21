@@ -673,7 +673,7 @@ pub mod help_command {
   <b><blue>audit<r>                          Check installed packages for vulnerabilities
   <b><blue>outdated<r>                       Display latest versions of outdated dependencies
   <b><blue>link<r>      <d>[\\<package\\>]<r>          Register or link a local npm package
-  <b><blue>unlink<r>    <d>[\\<package\\>]<r>          Unregister a local npm package
+  <b><blue>unlink<r>    <d>[\\<package\\>]<r>          Unregister current package or unlink local package from current project
   <b><blue>publish<r>                        Publish a package to the npm registry
   <b><blue>patch <d>\\<pkg\\><r>                    Prepare a package for patching
   <b><blue>pm <d>\\<subcommand\\><r>                Additional package management utilities

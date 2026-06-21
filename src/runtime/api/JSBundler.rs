@@ -583,7 +583,8 @@ pub mod js_bundler {
                 this.bytecode = bytecode;
 
                 if bytecode {
-                    // Default to CJS for bytecode, since esm doesn't really work yet.
+                    // Default to CJS for bytecode for backward compatibility;
+                    // pass `format: "esm"` explicitly to opt into ESM bytecode.
                     this.format = options::Format::Cjs;
                     if did_set_target && this.target != Target::Bun && this.bytecode {
                         return Err(global_this.throw_invalid_arguments(format_args!(

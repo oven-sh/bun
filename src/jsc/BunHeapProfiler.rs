@@ -104,16 +104,17 @@ fn build_output_path(path: &mut AutoAbsPath, config: &HeapProfilerConfig) -> Res
         generate_default_filename(&mut filename_buf, config.text_format)?
     };
 
-    // Append directory if specified. Use `join` rather than `append` so an
-    // absolute `config.dir` is honored: `append` trims its input as relative
-    // to the already-rooted path and strips the leading separator, whereas
-    // `join` resets the accumulated path when a segment is absolute.
+    // Use `join` rather than `append` for both the directory and the filename
+    // so that an absolute `--heap-prof-dir` or `--heap-prof-name` is honored:
+    // `append` trims its input as relative to the already-rooted path and
+    // strips the leading separator (it also debug-asserts the input is
+    // relative), whereas `join` resets the accumulated path when a segment is
+    // absolute.
     if !config.dir.is_empty() {
         path.join(&[config.dir])?;
     }
 
-    // Append filename
-    path.append(filename)?;
+    path.join(&[filename])?;
     Ok(())
 }
 

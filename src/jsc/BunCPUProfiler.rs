@@ -178,15 +178,18 @@ fn build_output_path(
         generate_default_filename(&mut filename_buf, is_md_format)?
     };
 
-    // Append directory if specified
+    // Use `join` rather than `append` for both the directory and the filename
+    // so that an absolute `--cpu-prof-dir` or `--cpu-prof-name` is honored:
+    // `append` trims its input as relative to the already-rooted path and
+    // strips the leading separator, whereas `join` resets the accumulated path
+    // when a segment is absolute.
+    // AutoAbsPath uses CheckLength::ASSUME — Err arm is unreachable.
+    // See paths/Path.rs `options::Result` note.
     if !config.dir.is_empty() {
-        // AutoAbsPath uses CheckLength::ASSUME — Err arm is unreachable.
-        // See paths/Path.rs `options::Result` note.
         path.join(&[config.dir]).expect("unreachable");
     }
 
-    // Append filename
-    path.append(filename).expect("unreachable");
+    path.join(&[filename]).expect("unreachable");
 
     Ok(())
 }

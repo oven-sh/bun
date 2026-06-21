@@ -17,6 +17,7 @@
 import { SQL } from "bun";
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
+import { once } from "node:events";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -46,7 +47,8 @@ function mockPostgresTLSServer(afterUpgrade: (s: tls.TLSSocket) => void) {
 }
 
 async function listen(server: net.Server) {
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
   return (server.address() as net.AddressInfo).port;
 }
 

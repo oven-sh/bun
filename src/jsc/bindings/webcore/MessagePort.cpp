@@ -135,8 +135,29 @@ void MessagePort::close()
         deref();
     }
 
-    if (!scheduledClose)
+    if (!scheduledClose) {
+        // No 'close' event will be dispatched for this port (no listener, or
+        // JS can't run during teardown). Mark the close consumed so that a
+        // close listener added after close() does not pin the already-closed
+        // wrapper forever via hasPendingActivity().
+        m_closeEventDispatched = true;
         removeAllEventListeners();
+    }
+}
+
+void MessagePort::startForClose()
+{
+    // Register with the pipe so MessagePortPipe::close() on the peer can
+    // schedule a drain that reaches us and dispatches 'close'. Unlike start(),
+    // this does not set m_started, so a later 'message' listener still runs
+    // start() and re-attaches to flush any buffered messages. attach() is
+    // idempotent, so calling it again from start() is harmless.
+    if (!isEntangled())
+        return;
+    auto* context = scriptExecutionContext();
+    if (!context)
+        return;
+    m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
 }
 
 void MessagePort::dispatchCloseEvent()
@@ -333,10 +354,18 @@ bool MessagePort::hasPendingActivity() const
     uint64_t s = m_pipe->state(m_side);
 
     // Keep the wrapper (and its 'close' listener) alive until a pending close
-    // event has been dispatched and torn down. A close is pending when this
-    // side or its peer has closed while a close listener is still registered;
-    // removeAllEventListeners() clears the flag once the event has fired.
-    if (m_hasCloseEventListener && ((s & MessagePortPipe::Closed) || !m_pipe->isOtherSideOpen(m_side)))
+    // event is dispatched. A close is pending, and will actually fire, when a
+    // close listener is registered, it has not been dispatched yet, and either:
+    //   - this side has closed (the closing port's own scheduled 'close'), or
+    //   - this side is still attached and the peer has closed (the drain will
+    //     dispatch 'close' to us).
+    // The !m_closeEventDispatched guard is what lets an already-closed port be
+    // collected: close() marks it dispatched when no listener will fire, so a
+    // close listener added afterwards cannot pin the wrapper forever. The
+    // Attached guard avoids pinning a never-started port whose peer closed.
+    if (m_hasCloseEventListener && !m_closeEventDispatched
+        && ((s & MessagePortPipe::Closed)
+            || ((s & MessagePortPipe::Attached) && !m_pipe->isOtherSideOpen(m_side))))
         return true;
 
     if (m_isDetached)
@@ -407,6 +436,7 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
         start();
         m_hasMessageEventListener = true;
     } else if (eventType == eventNames().closeEvent) {
+        startForClose();
         m_hasCloseEventListener = true;
     }
     return EventTarget::addEventListener(eventType, WTF::move(listener), options);

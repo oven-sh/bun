@@ -157,6 +157,16 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
                 emptied = (st & Attached) != 0;
                 break;
             }
+            // A port attached only for a 'close' listener (no 'message'
+            // listener) must not have its queued messages dispatched to no one.
+            // Leave them buffered; adding a 'message' listener runs start(),
+            // which re-attaches and reschedules this drain. Don't set `emptied`
+            // — the inbox is non-empty, so a pending 'close' must wait behind
+            // the undelivered messages (matching Node).
+            if (!port->isListeningForMessages()) {
+                s.state.store(st & ~DrainScheduled, std::memory_order_release);
+                break;
+            }
             if (limit-- == 0) {
                 // Yield to the rest of the event loop; DrainScheduled stays
                 // set so concurrent sends don't double-schedule.
@@ -206,7 +216,11 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContextIdentifier ctxI
         s.port = WTF::move(port);
         uint64_t st = s.state.load(std::memory_order_relaxed);
         uint64_t ns = (st | Attached) & ~Closed;
-        if (queuedCount(st) > 0 && !(st & DrainScheduled)) {
+        // Schedule a drain if there is work to dispatch: queued messages, or a
+        // peer that has already closed (a 'close' event is owed). The latter
+        // covers a 'close' listener added after the peer closed, which would
+        // otherwise have missed the peer's wake-up in close().
+        if (!(st & DrainScheduled) && (queuedCount(st) > 0 || !isOtherSideOpen(side))) {
             ns |= DrainScheduled;
             wakeCtx = ctxId;
         }

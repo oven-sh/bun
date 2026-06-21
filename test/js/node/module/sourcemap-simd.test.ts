@@ -333,7 +333,7 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
       // body straddles whichever block boundary 2*pad is near.
       const filler: number[][] = [];
       for (let i = 0; i < pad; i++) filler.push([1]);
-      filler.push([1000, 0, 1000, 1000]); // 3-char VLQs: 12-byte body
+      filler.push([1000, 0, 1000, 1000]); // 10-byte body (3+1+3+3); seg_len=10 passes the >10 bail
       filler.push([1, 0, 0, 1]);
       while (filler.length < 80) filler.push([1, 0, 0, 0]);
       const { mappings, probes, sourcesLen } = build([filler]);

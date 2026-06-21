@@ -142,10 +142,10 @@ void MessagePort::close()
     }
 
     if (!scheduledClose) {
-        // No 'close' event will be dispatched for this port (no listener, or
-        // JS can't run during teardown). Mark the close consumed so that a
-        // close listener added after close() does not pin the already-closed
-        // wrapper forever via hasPendingActivity().
+        // No 'close' task could be posted (context teardown / postTaskTo
+        // failed), so no 'close' event will ever fire for this port. Mark the
+        // close consumed and tear down now, so a close listener added after
+        // close() cannot pin the already-closed wrapper via hasPendingActivity().
         m_closeEventDispatched = true;
         removeAllEventListeners();
     }
@@ -367,20 +367,20 @@ bool MessagePort::hasPendingActivity() const
     // Keep the wrapper (and its 'close' listener) alive until a pending close
     // event is dispatched. A close is pending, and will actually fire, when a
     // close listener is registered, it has not been dispatched yet, and either:
-    //   - this side has closed (the closing port's own scheduled 'close'), or
-    //   - this side is still attached, the peer has closed, AND the drain can
-    //     reach the close dispatch: that only happens once the inbox empties,
-    //     so the port must either be listening for messages (they will drain)
-    //     or already have an empty inbox. A close-only port sitting on
-    //     undelivered buffered messages has no dispatch path (close stays
-    //     blocked behind them, matching Node) and must not be pinned.
+    //   - this side has closed: the closing port's own 'close' task (posted by
+    //     close() while JS can run) will fire it, or close() already set
+    //     m_closeEventDispatched when it couldn't post (teardown); or
+    //   - the peer has closed AND a drain is scheduled on this side: that drain
+    //     is the only thing that calls dispatchCloseEventFromPeer(), so the pin
+    //     is tied to its existence. A peer closed via ~MessagePort /
+    //     ~TransferredMessagePort / teardown never wakes us (no drain), so such
+    //     a port is not pinned and stays collectable.
     // The !m_closeEventDispatched guard lets an already-closed port be
-    // collected: close() marks it dispatched when no listener will fire, so a
-    // close listener added afterwards cannot pin the wrapper forever.
+    // collected once its close has fired (or was marked consumed), so a close
+    // listener added afterwards cannot pin the wrapper forever.
     if (m_hasCloseEventListener && !m_closeEventDispatched
         && ((s & MessagePortPipe::Closed)
-            || ((s & MessagePortPipe::Attached) && !m_pipe->isOtherSideOpen(m_side)
-                && (m_hasMessageEventListener || MessagePortPipe::queuedCount(s) == 0))))
+            || ((s & MessagePortPipe::DrainScheduled) && !m_pipe->isOtherSideOpen(m_side))))
         return true;
 
     if (m_isDetached)

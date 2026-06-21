@@ -89,11 +89,6 @@ public:
     // registered) and tears the port down.
     void dispatchCloseEventFromPeer();
 
-    // The pipe drain delivers queued messages only to a port that is listening
-    // for them; otherwise messages stay buffered (a port attached solely for a
-    // 'close' listener must not drop them). Matches Node/HTML start() semantics.
-    bool isListeningForMessages() const { return m_hasMessageEventListener; }
-
     // Only here for JSMessagePortCustom's GC optimization; always null.
     MessagePort* locallyEntangledPort() { return nullptr; }
 

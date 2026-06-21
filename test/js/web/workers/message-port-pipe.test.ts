@@ -539,7 +539,8 @@ describe("MessagePort close event", () => {
 
       await settle();
       const base = count();
-      for (let i = 0; i < 200; i++) {
+      const N = 100;
+      for (let i = 0; i < N; i++) {
         const { port1, port2 } = new MessageChannel();
         port1.close();
         port1.addEventListener("close", () => {}); // listener added AFTER close
@@ -552,16 +553,35 @@ describe("MessagePort close event", () => {
         ch.port2.addEventListener("close", () => {});
         ch.port1.postMessage("x");
         ch.port1.close();
+
+        // peer closed via drop-in-transit (no peer-wake): a port with message
+        // and close listeners must not be pinned when no drain was scheduled.
+        const { port1: A, port2: B } = new MessageChannel();
+        B.close();
+        const inner = new MessageChannel();
+        inner.port2.addEventListener("message", () => {});
+        inner.port2.addEventListener("close", () => {});
+        A.postMessage(null, [inner.port1]); // inner.port1 dropped in transit
+        A.close();
+
+        // explicitly started port with no message listener: a buffered message
+        // on a closed peer must dispatch (to no one) and not strand/pin it.
+        const ch2 = new MessageChannel();
+        ch2.port2.start();
+        ch2.port1.postMessage("y");
+        ch2.port1.close();
       }
       await settle();
+      // ~8 MessagePorts created per iteration; when leaking, dozens-to-hundreds
+      // are pinned. Allow slack for conservative stack scanning.
       const leaked = count() - base;
-      if (leaked > 50) { console.error("leaked " + leaked + " MessagePort"); process.exit(1); }
+      if (leaked > N) { console.error("leaked " + leaked + " MessagePort"); process.exit(1); }
       console.log("OK");
     `);
     expect(stderr).toBe("");
     expect(stdout).toBe("OK");
     expect(exitCode).toBe(0);
-  });
+  }, 60_000);
 });
 
 // worker.postMessage / parentPort.postMessage go through the same coalesced

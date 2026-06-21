@@ -157,13 +157,16 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
                 emptied = (st & Attached) != 0;
                 break;
             }
-            // A port attached only for a 'close' listener (no 'message'
-            // listener) must not have its queued messages dispatched to no one.
-            // Leave them buffered; adding a 'message' listener runs start(),
-            // which re-attaches and reschedules this drain. Don't set `emptied`
-            // — the inbox is non-empty, so a pending 'close' must wait behind
-            // the undelivered messages (matching Node).
-            if (!port->isListeningForMessages()) {
+            // A port attached only for a 'close' listener (start() was never
+            // called) must not have its queued messages dispatched to no one;
+            // an unstarted port buffers per the HTML spec. Leave them queued —
+            // adding a 'message' listener (or start()) runs start(), which
+            // re-attaches and reschedules this drain. Don't set `emptied`: the
+            // inbox is non-empty, so a pending 'close' waits behind the
+            // undelivered messages (matching Node). A *started* port with no
+            // listener still dispatches (to no one) below, as the spec requires,
+            // which keeps its inbox draining and avoids stranding/pinning it.
+            if (!port->started()) {
                 s.state.store(st & ~DrainScheduled, std::memory_order_release);
                 break;
             }

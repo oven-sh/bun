@@ -481,13 +481,13 @@ impl ByteStream {
         }
         self.done.set(true);
         self.pending_value.with_mut(|pv| pv.deinit());
+        self.pending.with_mut(|p| {
+            p.result.release();
+            p.result = streams::Result::Done;
+        });
 
         if !view.is_empty() {
             self.pending_buffer.set(Self::empty_pending_buffer());
-            self.pending.with_mut(|p| {
-                p.result.release();
-                p.result = streams::Result::Done;
-            });
             self.pending.with_mut(|p| p.run());
         }
 

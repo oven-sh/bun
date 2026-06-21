@@ -164,9 +164,7 @@ test("Debugger.pause interrupts a busy loop and reports call frames", async () =
         pauseTimer = setTimeout(
           () =>
             reject(
-              new Error(
-                "Debugger.pause produced no Debugger.paused event within 4s (busy loop was never interrupted)",
-              ),
+              new Error("Debugger.pause produced no Debugger.paused event within 4s (busy loop was never interrupted)"),
             ),
           4000,
         );

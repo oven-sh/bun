@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { dedent, itBundled } from "./expectBundled";
 
 interface TemplateStringTest {
@@ -216,6 +216,64 @@ describe("bundler", () => {
       dOOPSl
       CONST_VALUE
       true`,
+    },
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/32576
+// A `\n` escape in a string literal must stay escaped inside a quoted string
+// unless syntax is being minified. Only --minify-syntax (the documented
+// template-literal conversion) may rewrite it to a backtick with a literal
+// newline. This matches esbuild across --minify-whitespace and friends.
+describe("bundler", () => {
+  itBundled("string/NewlineEscapeStaysQuotedWithoutMinify", {
+    files: {
+      "index.ts": `console.log("Hello\\nWorld");`,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain('"Hello\\nWorld"');
+      expect(code).not.toContain("`Hello");
+    },
+  });
+  itBundled("string/NewlineEscapeStaysQuotedWithMinifyWhitespace", {
+    files: {
+      "index.ts": `console.log("Hello\\nWorld");`,
+    },
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain('"Hello\\nWorld"');
+      expect(code).not.toContain("`Hello");
+    },
+  });
+  itBundled("string/NewlineEscapeBecomesTemplateWithMinifySyntax", {
+    files: {
+      "index.ts": `console.log("Hello\\nWorld");`,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("`Hello\nWorld`");
+    },
+  });
+  itBundled("string/BothQuotesUseBacktickWithoutMinify", {
+    files: {
+      "index.ts": `console.log("a'b\\"c");`,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("`a'b\"c`");
+    },
+  });
+  itBundled("string/DoubleQuoteWithNewlineUsesSingleQuoteWithoutMinify", {
+    files: {
+      "index.ts": `console.log("x\\"y\\nz");`,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("'x\"y\\nz'");
+      expect(code).not.toContain("`x");
     },
   });
 });

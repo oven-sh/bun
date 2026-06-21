@@ -70,8 +70,6 @@ test("GC controller fires a Full GC at idle so old-gen garbage is reclaimed", as
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-
   const initial = Number(/INITIAL=(\d+)/.exec(stdout)?.[1]);
   const final = Number(/FINAL=(\d+)/.exec(stdout)?.[1]);
   expect(initial).toBeGreaterThan(20 * 1024 * 1024);
@@ -82,5 +80,8 @@ test("GC controller fires a Full GC at idle so old-gen garbage is reclaimed", as
   // ~40 MB of promoted arrays is reclaimed and the heap drops to ~1 MB.
   expect(final).toBeLessThan(initial / 4);
 
-  expect(exitCode).toBe(0);
+  // Asserted last and as a combined object so a failure message shows
+  // stdout/stderr in full. ASAN/debug builds may emit benign stderr noise,
+  // so stderr is surfaced for context but not asserted empty.
+  expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
 }, 30_000);

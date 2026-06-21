@@ -64,6 +64,11 @@ public:
     void detach(uint8_t side);
     void close(uint8_t side);
 
+    // Schedules the entangled peer to dispatch its 'close' event after this
+    // side has been marked Closed. Only safe from a live (script-running)
+    // context, never from a destructor or teardown — see the impl comment.
+    void wakePeerForClose(uint8_t side);
+
     // Lockless snapshot for the GC visitor / hasPendingActivity.
     uint64_t state(uint8_t side) const { return m_sides[side].state.load(std::memory_order_acquire); }
     bool isOtherSideOpen(uint8_t side) const { return !(state(1 - side) & Closed); }

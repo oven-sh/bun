@@ -498,6 +498,18 @@ describe("MessagePort close event", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("fires on the closing port when its own close listener is added after close()", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const { MessageChannel } = require("node:worker_threads");
+      const { port1 } = new MessageChannel();
+      port1.close();
+      port1.on("close", () => console.log("closed"));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("closed");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("a close-only port does not drop queued messages", async () => {
     const { stdout, stderr, exitCode } = await run(`
       const { MessageChannel, receiveMessageOnPort } = require("node:worker_threads");
@@ -532,6 +544,14 @@ describe("MessagePort close event", () => {
         port1.close();
         port1.addEventListener("close", () => {}); // listener added AFTER close
         port2.addEventListener("close", () => {}); // close-only peer of a closed port
+
+        // close-only port whose peer posted a message and then closed: close is
+        // blocked behind the undelivered buffered message (no message listener),
+        // so it has no dispatch path and must not be pinned.
+        const ch = new MessageChannel();
+        ch.port2.addEventListener("close", () => {});
+        ch.port1.postMessage("x");
+        ch.port1.close();
       }
       await settle();
       const leaked = count() - base;

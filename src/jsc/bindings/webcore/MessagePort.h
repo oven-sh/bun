@@ -132,6 +132,10 @@ private:
     // listener calls). Idempotent with a later start().
     void startForClose();
 
+    // Whether this port's context can currently run JS (not mid-teardown).
+    // Gates scheduling close-event work that would otherwise never run.
+    bool canRunScript() const;
+
     // Fires the 'close' event on this port (once). Safe to call after the port
     // is detached: it bypasses the detached guard in dispatchEvent().
     void dispatchCloseEvent();

@@ -111,14 +111,20 @@ void MessagePort::close()
 
     // m_pipe is held for the port's whole lifetime (the GC thread reads
     // it in hasPendingActivity()); marking our side Closed is sufficient.
-    // close() also wakes the entangled peer so it can fire its own 'close'
-    // event after draining any queued messages.
     m_pipe->close(m_side);
 
+    // Wake the entangled peer so it can fire its own 'close' event after
+    // draining any queued messages — but only for a real close() from script.
+    // During context teardown (contextDestroyed) or GC (~MessagePort calls the
+    // pipe directly, bypassing this method), the scheduled drain task would
+    // never run and would leak, so gate it on the context being able to run JS.
+    if (canRunScript())
+        m_pipe->wakePeerForClose(m_side);
+
     // Fire our own 'close' event asynchronously (Node + HTML semantics), then
-    // tear down listeners. If there is no close listener or JS can't run
-    // (context teardown), tear down synchronously as before. scheduleCloseEvent()
-    // takes its own strong ref, so it is safe to run before releasing m_hasRef.
+    // tear down listeners. If JS can't run (context teardown) tear down
+    // synchronously as before. scheduleCloseEvent() takes its own strong ref,
+    // so it is safe to run before releasing m_hasRef.
     bool scheduledClose = scheduleCloseEvent();
 
     // Release the self-reference taken by jsRef() (set when .onmessage is
@@ -160,18 +166,22 @@ void MessagePort::startForClose()
     m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
 }
 
+bool MessagePort::canRunScript() const
+{
+    auto* context = scriptExecutionContext();
+    if (!context || !context->globalObject())
+        return false;
+    auto* globalObject = defaultGlobalObject(context->globalObject());
+    return Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running;
+}
+
 void MessagePort::dispatchCloseEvent()
 {
     if (m_closeEventDispatched)
         return;
     m_closeEventDispatched = true;
 
-    auto* context = scriptExecutionContext();
-    if (!context || !context->globalObject())
-        return;
-
-    auto* globalObject = defaultGlobalObject(context->globalObject());
-    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
+    if (!canRunScript())
         return;
 
     // Bypass MessagePort::dispatchEvent()'s detached guard: by the time the
@@ -190,17 +200,18 @@ void MessagePort::dispatchCloseEventSelf()
 
 bool MessagePort::scheduleCloseEvent()
 {
-    if (m_closeEventDispatched || !m_hasCloseEventListener)
+    if (m_closeEventDispatched)
+        return false;
+
+    // Post unconditionally when JS can run, even without a close listener yet:
+    // Node and the HTML spec queue the close task on close(), so a listener
+    // added synchronously afterwards (port.close(); port.on('close', cb)) still
+    // fires. dispatchCloseEventSelf() is a no-op dispatch when no listener
+    // exists and then tears the port down, so the wrapper still gets collected.
+    if (!canRunScript())
         return false;
 
     auto* context = scriptExecutionContext();
-    if (!context || !context->globalObject())
-        return false;
-
-    auto* globalObject = defaultGlobalObject(context->globalObject());
-    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
-        return false;
-
     return ScriptExecutionContext::postTaskTo(context->identifier(), [protectedThis = Ref { *this }](ScriptExecutionContext&) {
         protectedThis->dispatchCloseEventSelf();
     });
@@ -357,15 +368,19 @@ bool MessagePort::hasPendingActivity() const
     // event is dispatched. A close is pending, and will actually fire, when a
     // close listener is registered, it has not been dispatched yet, and either:
     //   - this side has closed (the closing port's own scheduled 'close'), or
-    //   - this side is still attached and the peer has closed (the drain will
-    //     dispatch 'close' to us).
-    // The !m_closeEventDispatched guard is what lets an already-closed port be
+    //   - this side is still attached, the peer has closed, AND the drain can
+    //     reach the close dispatch: that only happens once the inbox empties,
+    //     so the port must either be listening for messages (they will drain)
+    //     or already have an empty inbox. A close-only port sitting on
+    //     undelivered buffered messages has no dispatch path (close stays
+    //     blocked behind them, matching Node) and must not be pinned.
+    // The !m_closeEventDispatched guard lets an already-closed port be
     // collected: close() marks it dispatched when no listener will fire, so a
-    // close listener added afterwards cannot pin the wrapper forever. The
-    // Attached guard avoids pinning a never-started port whose peer closed.
+    // close listener added afterwards cannot pin the wrapper forever.
     if (m_hasCloseEventListener && !m_closeEventDispatched
         && ((s & MessagePortPipe::Closed)
-            || ((s & MessagePortPipe::Attached) && !m_pipe->isOtherSideOpen(m_side))))
+            || ((s & MessagePortPipe::Attached) && !m_pipe->isOtherSideOpen(m_side)
+                && (m_hasMessageEventListener || MessagePortPipe::queuedCount(s) == 0))))
         return true;
 
     if (m_isDetached)

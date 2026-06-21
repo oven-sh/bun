@@ -230,6 +230,31 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContextIdentifier ctxI
         scheduleDrain(side, wakeCtx);
 }
 
+void MessagePortPipe::wakePeerForClose(uint8_t side)
+{
+    ASSERT(side < 2);
+    // Called by MessagePort::close() (a real close() from script) after this
+    // side has been marked Closed: schedule a drain on the entangled peer so
+    // it can dispatch its 'close' event after its queued messages drain. Must
+    // NOT be called from ~MessagePort / context teardown — the scheduled task
+    // would never run (the event loop is gone) and would leak.
+    //
+    // If a drain is already in flight on the peer it will observe this side's
+    // Closed bit and dispatch close itself, so only schedule when none is.
+    auto& peer = m_sides[1 - side];
+    ScriptExecutionContextIdentifier peerCtx = 0;
+    {
+        Locker locker { peer.lock };
+        uint64_t ps = peer.state.load(std::memory_order_relaxed);
+        if ((ps & Attached) && !(ps & DrainScheduled)) {
+            peer.state.store(ps | DrainScheduled, std::memory_order_release);
+            peerCtx = peer.ctxId;
+        }
+    }
+    if (peerCtx)
+        scheduleDrain(1 - side, peerCtx);
+}
+
 void MessagePortPipe::detach(uint8_t side)
 {
     ASSERT(side < 2);
@@ -270,27 +295,6 @@ void MessagePortPipe::close(uint8_t side)
             // Closed is terminal; queued messages are dropped.
             s.state.store(Closed, std::memory_order_release);
             dropped = std::exchange(s.inbox, {});
-        }
-
-        // Wake the entangled peer (after its queued messages drain) so it can
-        // dispatch a 'close' event now that this side has closed. Only needed
-        // when the peer is attached and no drain is already in flight; an
-        // in-flight drain observes the Closed bit we just stored (set before
-        // this check) and dispatches close itself. Marked Closed above →
-        // checked here preserves that ordering.
-        {
-            auto& peer = pipe->m_sides[1 - sd];
-            ScriptExecutionContextIdentifier peerCtx = 0;
-            {
-                Locker locker { peer.lock };
-                uint64_t ps = peer.state.load(std::memory_order_relaxed);
-                if ((ps & Attached) && !(ps & DrainScheduled)) {
-                    peer.state.store(ps | DrainScheduled, std::memory_order_release);
-                    peerCtx = peer.ctxId;
-                }
-            }
-            if (peerCtx)
-                pipe->scheduleDrain(1 - sd, peerCtx);
         }
 
         // Harvest transferred pipes before `dropped` destructs so their

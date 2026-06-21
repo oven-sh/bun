@@ -34,8 +34,8 @@ import { spawn } from "node:child_process";
 // Windows: inter-process stdio-fd hand-off is not implemented. `FileReader`'s
 // pipe handle is a system-kind `HANDLE` and `Fd::uv()` panics on the non-stdio
 // HANDLEs that subprocess pipes produce, so `get_fd()` returns `-1` on Windows
-// and `nodeToBun` falls back to the unsupported-stream-stdio error.
-const describeSkipOnWindows = isWindows ? test.skip : test;
+// and `nodeToBun` falls back to the unsupported-stream-stdio error. Each test
+// below is `test.skipIf(isWindows)` for that reason.
 
 // Tiny uppercasing filter implemented in bun itself so the test doesn't
 // depend on `perl`/`tr`/`awk` being installed on the runner.
@@ -47,7 +47,7 @@ process.stdin.on("end", () => {
 });
 `;
 
-describeSkipOnWindows("spawn({ stdio: [..., childB.stdin, ...] }) pipes A's stdout into B's stdin", async () => {
+test.skipIf(isWindows)("spawn({ stdio: [..., childB.stdin, ...] }) pipes A's stdout into B's stdin", async () => {
   using pFilter = spawn(bunExe(), ["-e", UPPER], {
     stdio: ["pipe", "pipe", "pipe"],
     env: bunEnv,
@@ -90,7 +90,7 @@ describeSkipOnWindows("spawn({ stdio: [..., childB.stdin, ...] }) pipes A's stdo
   expect(filterExit).toBe(0);
 });
 
-describeSkipOnWindows(
+test.skipIf(isWindows)(
   "spawn({ stdio: [otherProc.stdout, ...] }) pipes A's stdout into B's stdin (reverse direction)",
   async () => {
     // Flip the direction: pSource owns the pipe (its stdout is piped), and
@@ -140,7 +140,7 @@ describeSkipOnWindows(
   },
 );
 
-describeSkipOnWindows(
+test.skipIf(isWindows)(
   "spawn({ stdio: [..., process.stdout, process.stderr] }) forwards via the stream→fd path",
   async () => {
     // `process.stdout.fd === 1` / `process.stderr.fd === 2` are set by
@@ -178,7 +178,7 @@ describeSkipOnWindows(
   },
 );
 
-describeSkipOnWindows("spawn failure (ENOENT) does not leave a passed-in source stream stuck", async () => {
+test.skipIf(isWindows)("spawn failure (ENOENT) does not leave a passed-in source stream stuck", async () => {
   // The quiesce step (setFlowing(false) + pause) MUST NOT run before
   // Bun.spawn succeeds: `setFlowing(false)` has no user-recoverable
   // counterpart, so running it on the failure path would leave

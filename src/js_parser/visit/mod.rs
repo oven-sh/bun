@@ -402,8 +402,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if !self.options.bundle {
                         break 'dyn_import_await;
                     }
-                    let ExprData::EAwait(aw) = val.data else { break 'dyn_import_await };
-                    let ExprData::EImport(im) = aw.value.data else { break 'dyn_import_await };
+                    let ExprData::EAwait(aw) = val.data else {
+                        break 'dyn_import_await;
+                    };
+                    let ExprData::EImport(im) = aw.value.data else {
+                        break 'dyn_import_await;
+                    };
                     if !im.namespace_ref.is_valid() {
                         break 'dyn_import_await;
                     }

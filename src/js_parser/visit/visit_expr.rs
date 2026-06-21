@@ -161,6 +161,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn e_identifier(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        // The substitution revisit re-enters with an already-resolved `Ref`.
+        // `find_symbol` below only looks in `scope.members`, so a symbol that
+        // lives only in `scope.generated` (e.g. a React Compiler outlined
+        // function) would be re-bound to a fresh `Unbound` and the renamer
+        // would lose the link to its declaration.
+        if p.is_revisit_for_substitution {
+            return;
+        }
         let expr = *e;
         let mut e_ = expr
             .data

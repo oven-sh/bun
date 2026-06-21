@@ -1,8 +1,5 @@
 use core::ffi::c_void;
 
-#[cfg(debug_assertions)]
-use bun_core::String as BunString;
-
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, VM};
 // `jsc.Strong.Optional` and `jsc.Weak(T)` collide with this module's own `Strong`/`Weak`,
 // so import them under aliases.
@@ -441,18 +438,6 @@ impl JSPromise {
     /// The value can be another Promise.
     /// If you want to create a new Promise that is already resolved, see `resolved_promise_value`.
     pub fn resolve(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
-        #[cfg(debug_assertions)]
-        {
-            // SAFETY: JS-thread singleton; short-lived `&mut EventLoop` reborrow at use site
-            // per VirtualMachine::event_loop() contract.
-            let loop_ = VirtualMachine::get().event_loop_mut();
-            loop_.debug.js_call_count_outside_tick_queue +=
-                (!loop_.debug.is_inside_tick_queue) as usize;
-            if loop_.debug.track_last_fn_name && !loop_.debug.is_inside_tick_queue {
-                loop_.debug.last_fn_name = BunString::static_(b"resolve").into();
-            }
-        }
-
         // `[[ZIG_EXPORT(check_slow)]]`
         crate::cpp::JSC__JSPromise__resolve(self, global, value)
             .map_err(|_| JsTerminated::JSTerminated)
@@ -463,18 +448,6 @@ impl JSPromise {
         global: &JSGlobalObject,
         value: JsResult<JSValue>,
     ) -> Result<(), JsTerminated> {
-        #[cfg(debug_assertions)]
-        {
-            // SAFETY: JS-thread singleton; short-lived `&mut EventLoop` reborrow at use site
-            // per VirtualMachine::event_loop() contract.
-            let loop_ = VirtualMachine::get().event_loop_mut();
-            loop_.debug.js_call_count_outside_tick_queue +=
-                (!loop_.debug.is_inside_tick_queue) as usize;
-            if loop_.debug.track_last_fn_name && !loop_.debug.is_inside_tick_queue {
-                loop_.debug.last_fn_name = BunString::static_(b"reject").into();
-            }
-        }
-
         let err = match value {
             Ok(v) => v,
             // We can't use `global.take_exception()` because it throws an

@@ -2178,18 +2178,18 @@ mod posix_impl {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     mod linux_statx {
         // glibc: libc 0.2.x exposes the full surface directly.
-        #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+        #[cfg(all(target_os = "linux", not(any(target_env = "musl", target_env = "ohos"))))]
         pub(super) use libc::{
             STATX_ATIME, STATX_BLOCKS, STATX_BTIME, STATX_CTIME, STATX_GID, STATX_INO, STATX_MODE,
             STATX_MTIME, STATX_NLINK, STATX_SIZE, STATX_TYPE, STATX_UID, statx,
         };
 
-        // musl/Android: `libc` gates `statx`/`STATX_*` behind a build-script
+        // musl/Android/OHOS: `libc` gates `statx`/`STATX_*` behind a build-script
         // `musl_v1_2_3` cfg that cross-compiles can't trigger, and bionic's
         // `statx()` wrapper requires API 30. Define the kernel-ABI struct +
         // bits ourselves and dispatch via raw `syscall` — works on every
         // Linux ABI.
-        #[cfg(any(target_env = "musl", target_os = "android"))]
+        #[cfg(any(target_env = "musl", target_env = "ohos", target_os = "android"))]
         mod raw {
             #![allow(non_camel_case_types)]
             use core::ffi::{c_char, c_int, c_uint};
@@ -2265,7 +2265,7 @@ mod posix_impl {
                 unsafe { libc::syscall(libc::SYS_statx, dirfd, path, flags, mask, buf) as c_int }
             }
         }
-        #[cfg(any(target_env = "musl", target_os = "android"))]
+        #[cfg(any(target_env = "musl", target_env = "ohos", target_os = "android"))]
         pub(super) use raw::*;
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -5315,9 +5315,9 @@ pub mod linux {
     // `time_t == c_long == i64` on every libc, so spell it `i64` on musl to
     // sidestep the deprecation without changing layout. The `const _` below
     // guards the layout-identical-to-`libc::timespec` invariant.
-    #[cfg(target_env = "musl")]
+    #[cfg(any(target_env = "musl", target_env = "ohos"))]
     type time_t = i64;
-    #[cfg(not(target_env = "musl"))]
+    #[cfg(not(any(target_env = "musl", target_env = "ohos")))]
     type time_t = libc::time_t;
 
     /// kernel-shaped timespec (`sec`/`nsec`, no `tv_` prefix).
@@ -6129,6 +6129,46 @@ pub mod RTLD {
     pub const NOW: i32 = 0x2;
     pub const GLOBAL: i32 = 0x100;
     pub const LOCAL: i32 = 0;
+}
+
+/// OHOS: sign a binary by path (runs `binary-sign-tool sign`). OHOS
+/// requires all ELF executables to carry a valid code signature section;
+/// `bun build --compile` calls this on the output before returning.
+///
+/// Idempotent: if the file already has a valid signature (`display-sign`
+/// succeeds), the call is a no-op. `binary-sign-tool` is expected in $PATH
+/// on OHOS development devices; on consumer devices, only pre-signed system
+/// binaries run, so this function is a build-time concern.
+#[cfg(target_env = "ohos")]
+pub fn ohos_sign_binary(path: &ZStr) {
+    use std::process::Command;
+    let path_str = match path.as_cstr().to_str() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    // Skip if already signed.
+    if Command::new("binary-sign-tool")
+        .args(["display-sign", "-inFile", path_str])
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        return;
+    }
+    let _ = Command::new("binary-sign-tool")
+        .args(["sign", "-selfSign", "1", "-inFile", path_str, "-outFile", path_str])
+        .output();
+}
+
+/// OHOS: sign a binary by byte path (convenience wrapper for callers that
+/// have a `&[u8]` path instead of a `ZStr`).
+#[cfg(target_env = "ohos")]
+pub fn ohos_sign_binary_bytes(path: &[u8]) {
+    let mut buf = Vec::with_capacity(path.len() + 1);
+    buf.extend_from_slice(path);
+    buf.push(0);
+    // `from_slice_with_nul` requires trailing NUL which we just appended.
+    let zstr = ZStr::from_slice_with_nul(&buf);
+    ohos_sign_binary(zstr);
 }
 
 /// `dlopen(filename, flags)`. Windows → `LoadLibraryA`.

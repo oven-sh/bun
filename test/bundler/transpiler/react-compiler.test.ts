@@ -410,11 +410,9 @@ describe("bundler", () => {
     [true, false],
     [true, true],
   ] as const) {
-    itBundled(
-      `react-compiler/OutlinedFunctionMinify-syntax=${minifySyntax}-identifiers=${minifyIdentifiers}`,
-      {
-        files: {
-          "/entry.tsx": /* tsx */ `
+    itBundled(`react-compiler/OutlinedFunctionMinify-syntax=${minifySyntax}-identifiers=${minifyIdentifiers}`, {
+      files: {
+        "/entry.tsx": /* tsx */ `
             import { useFoo, useBar } from "ext";
             export function C() {
               useFoo();
@@ -423,31 +421,30 @@ describe("bundler", () => {
               return <div />;
             }
           `,
-        },
-        reactCompiler: true,
-        target: "browser",
-        backend: "cli",
-        minifySyntax,
-        minifyIdentifiers,
-        external: ["*"],
-        onAfterBundle(api) {
-          const out = api.readFile("/out.js");
-          // The outlined function's declaration and its call site must share
-          // the same printed name. Match the decl name, then require that
-          // same name to appear as a bare identifier argument in a call.
-          const decl = out.match(/function\s+([A-Za-z_$][\w$]*)\s*\(\s*[A-Za-z_$][\w$]*\s*\)\s*\{\s*return\b/);
-          expect(decl).not.toBeNull();
-          const name = decl![1];
-          expect(out).toMatch(new RegExp(String.raw`\(\s*${name}\s*\)`));
-          if (minifyIdentifiers) {
-            // With identifier minification every react-compiler-generated
-            // `_temp*` name must be renamed; a surviving literal is an
-            // orphaned reference.
-            expect(out).not.toMatch(/\b_temp\d*\b/);
-          }
-        },
       },
-    );
+      reactCompiler: true,
+      target: "browser",
+      backend: "cli",
+      minifySyntax,
+      minifyIdentifiers,
+      external: ["*"],
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        // The outlined function's declaration and its call site must share
+        // the same printed name. Match the decl name, then require that
+        // same name to appear as a bare identifier argument in a call.
+        const decl = out.match(/function\s+([A-Za-z_$][\w$]*)\s*\(\s*[A-Za-z_$][\w$]*\s*\)\s*\{\s*return\b/);
+        expect(decl).not.toBeNull();
+        const name = decl![1];
+        expect(out).toMatch(new RegExp(String.raw`\(\s*${name}\s*\)`));
+        if (minifyIdentifiers) {
+          // With identifier minification every react-compiler-generated
+          // `_temp*` name must be renamed; a surviving literal is an
+          // orphaned reference.
+          expect(out).not.toMatch(/\b_temp\d*\b/);
+        }
+      },
+    });
   }
 
   itBundled("react-compiler/NonComponentUntouched", {

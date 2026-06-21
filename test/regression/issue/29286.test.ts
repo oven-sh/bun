@@ -1,19 +1,9 @@
 // Regression test for https://github.com/oven-sh/bun/issues/29286
 //
-// `bun build --bytecode --format=esm --target=bun --outdir` should emit:
-//   - dist/index.js     (ESM bundle with `// @bun @bytecode` header)
-//   - dist/index.js.jsc (serialized JSC bytecode)
-//
-// Before the fix this combination errored out with:
-//   "ESM bytecode requires --compile"
-// so codebases with top-level `await` could not use bytecode caching
-// without embedding the whole Bun runtime via --compile.
-//
-// A separate latent bug in the runtime loader (`ZStr::from_buf`
-// asserted a NUL terminator in uninitialized PathBuffer bytes) also
-// panicked on any non-trivial path — long enough that a stray non-zero
-// byte landed at the length offset. Both issues are fixed together so
-// the end-to-end `bun dist/index.js` path actually works.
+// `bun build --bytecode --format=esm --target=bun --outdir` previously
+// errored with "ESM bytecode requires --compile"; it now emits the ESM
+// bundle plus a `.js.jsc` bytecode sidecar that `bun dist/index.js`
+// loads, so top-level `await` works without embedding the runtime.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
@@ -62,8 +52,8 @@ test("issue #29286: --bytecode --format=esm --outdir emits .jsc sidecar", async 
   // Bytecode should be non-empty.
   expect(readFileSync(jscPath).byteLength).toBeGreaterThan(0);
 
-  // End-to-end: running the bundle must work (top-level await included,
-  // .jsc sidecar loaded without tripping the ZStr NUL assertion).
+  // End-to-end: running the bundle must work with top-level await,
+  // loading the .jsc sidecar bytecode.
   await using run = Bun.spawn({
     cmd: [bunExe(), jsPath],
     env: bunEnv,

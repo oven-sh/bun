@@ -898,9 +898,10 @@ pub unsafe fn spawn_process_posix(
                 // both; that's unavoidable, and matches libuv's
                 // `uv__process_child_init`, which runs the same
                 // `uv__nonblock_fcntl(fd, 0)` post-fork in the child (same
-                // OFD, same observable effect on the parent). For the
-                // `markStreamsAsStdio` caller the parent's reader is already
-                // paused, so parent-going-blocking is moot; for direct
+                // OFD, same observable effect on the parent). The
+                // `markStreamsAsStdio` caller pauses the parent's reader on
+                // the same JS tick once spawn returns (no FilePoll fires in
+                // between), so parent-going-blocking is moot; for direct
                 // numeric-fd callers this is documented Node-parity.
                 let _ = bun_sys::update_nonblocking(*fd, false);
                 actions.dup2(*fd, fileno)?;

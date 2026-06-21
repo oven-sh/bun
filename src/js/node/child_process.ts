@@ -1773,10 +1773,13 @@ function extractStreamFd(item: any): number | undefined {
 
 /**
  * Quiesce source streams whose fds have been inherited by a child. MUST be
- * invoked AFTER `Bun.spawn` / `Bun.spawnSync` returns successfully — the
+ * invoked AFTER `Bun.spawn` returns successfully: the
  * `$bunNativePtr.setFlowing(false)` side-effect is sticky at the native
  * layer with no user-recoverable counterpart, so running it when spawn
- * then throws would leave the source stream permanently stuck.
+ * then throws would leave the source stream permanently stuck. The sync
+ * path deliberately does not call this (see the comment at the
+ * `Bun.spawnSync` call site); Node likewise does not mark streams in
+ * `spawnSync`.
  *
  * Mirrors Node's `getValidStdio` post-spawn hook (`readStop()` + `pause()`
  * + `kIsUsedAsStdio` tag in `lib/internal/child_process.js`):

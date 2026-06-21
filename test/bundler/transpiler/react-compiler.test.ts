@@ -398,6 +398,58 @@ describe("bundler", () => {
     },
   });
 
+  // Function outlining hoists the anonymous callback to a module-level
+  // `function _temp(s) { ... }` and rewrites the call site to reference it.
+  // With minify.syntax on, the single-use `v` is substituted into the `if`
+  // test and the mangle pass re-visits the resulting `!useBar(_temp)`. That
+  // re-visit must keep the generated `_temp` `Ref` instead of resolving the
+  // name through `find_symbol`, which only walks `scope.members` and would
+  // mint a fresh unbound symbol that the identifier renamer never sees.
+  for (const [minifySyntax, minifyIdentifiers] of [
+    [false, true],
+    [true, false],
+    [true, true],
+  ] as const) {
+    itBundled(
+      `react-compiler/OutlinedFunctionMinify-syntax=${minifySyntax}-identifiers=${minifyIdentifiers}`,
+      {
+        files: {
+          "/entry.tsx": /* tsx */ `
+            import { useFoo, useBar } from "ext";
+            export function C() {
+              useFoo();
+              const v = useBar(s => s.x > 0);
+              if (!v) return null;
+              return <div />;
+            }
+          `,
+        },
+        reactCompiler: true,
+        target: "browser",
+        backend: "cli",
+        minifySyntax,
+        minifyIdentifiers,
+        external: ["*"],
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          // The outlined function's declaration and its call site must share
+          // the same printed name. Match the decl name, then require that
+          // same name to appear as a bare identifier argument in a call.
+          const decl = out.match(/function\s+([A-Za-z_$][\w$]*)\s*\(\s*[A-Za-z_$][\w$]*\s*\)\s*\{\s*return\b/);
+          expect(decl).not.toBeNull();
+          const name = decl![1];
+          expect(out).toMatch(new RegExp(String.raw`\(\s*${name}\s*\)`));
+          if (minifyIdentifiers) {
+            // With identifier minification every react-compiler-generated
+            // `_temp*` name must be renamed; a surviving literal is an
+            // orphaned reference.
+            expect(out).not.toMatch(/\b_temp\d*\b/);
+          }
+        },
+      },
+    );
+  }
+
   itBundled("react-compiler/NonComponentUntouched", {
     files: {
       "/entry.jsx": /* jsx */ `

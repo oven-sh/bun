@@ -367,8 +367,10 @@ impl ByteStream {
                     if let streams::StreamError::JSValue(v) = &err {
                         v.protect();
                     }
-                    self.pending
-                        .with_mut(|p| p.result = streams::Result::Err(err));
+                    self.pending.with_mut(|p| {
+                        p.result.release();
+                        p.result = streams::Result::Err(err);
+                    });
                 }
                 streams::Result::Done => {}
                 _ => unreachable!(),
@@ -393,8 +395,10 @@ impl ByteStream {
                 if let streams::StreamError::JSValue(v) = &err {
                     v.protect();
                 }
-                self.pending
-                    .with_mut(|p| p.result = streams::Result::Err(err));
+                self.pending.with_mut(|p| {
+                    p.result.release();
+                    p.result = streams::Result::Err(err);
+                });
             }
             streams::Result::Done => {}
             // We don't support the rest of these yet

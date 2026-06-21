@@ -30,8 +30,9 @@ test("S3 stream error should survive GC before consumption", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), exitCode }).toEqual({
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
     stdout: "rejected ERR_S3_MISSING_CREDENTIALS",
+    stderr: expect.any(String),
     exitCode: 0,
   });
 });

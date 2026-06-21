@@ -301,6 +301,82 @@ fn update_package_json_and_install_with_manager_with_updates(
             }
         }
 
+        Subcommand::Unlink => {
+            // `bun unlink <package>` only edits package.json when the entry is a
+            // `link:` specifier (i.e. it was written by `bun link --save <package>`).
+            // A registry-pinned entry is left untouched so the install below restores
+            // the published version; the node_modules symlink is removed before that
+            // install regardless.
+            for request in updates.iter() {
+                const LISTS: [&[u8]; 4] = [
+                    b"dependencies",
+                    b"devDependencies",
+                    b"optionalDependencies",
+                    b"peerDependencies",
+                ];
+
+                for list in LISTS {
+                    if let Some(query) = current_package_json_root.as_property(list) {
+                        if query.expr.data.is_e_object() {
+                            let mut e_object = query.expr.data.as_e_object();
+                            let dependencies = e_object.properties.slice_mut();
+                            let mut i: usize = 0;
+                            let mut new_len = dependencies.len();
+                            while i < new_len {
+                                let key = dependencies[i].key.unwrap();
+                                let matches_name = key.data.is_e_string()
+                                    && key.data.as_e_string().unwrap().eql_bytes(request.name);
+                                let is_link = dependencies[i]
+                                    .value
+                                    .as_ref()
+                                    .and_then(|value| value.as_utf8_string_literal())
+                                    .is_some_and(|value| value.starts_with(b"link:"));
+                                if matches_name && is_link {
+                                    if new_len > 1 {
+                                        dependencies.swap(i, new_len - 1);
+                                        new_len -= 1;
+                                    } else {
+                                        new_len = 0;
+                                    }
+
+                                    any_changes = true;
+                                }
+                                i += 1;
+                            }
+
+                            let changed = new_len != dependencies.len();
+                            if changed {
+                                e_object.properties.truncate(new_len);
+
+                                if e_object.properties.len_u32() == 0 {
+                                    let _ = current_package_json_root
+                                        .data
+                                        .as_e_object_mut()
+                                        .properties
+                                        .swap_remove(query.i as usize);
+                                    current_package_json_root
+                                        .data
+                                        .as_e_object_mut()
+                                        .package_json_sort();
+                                } else {
+                                    e_object.alphabetize_properties();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // `no_save` (default for link/unlink, set in CommandLineArguments unless
+            // `--save` is passed) cleared WRITE_PACKAGE_JSON/SAVE_LOCKFILE in
+            // PackageManagerOptions. Re-enable them only when a `link:` entry was
+            // actually removed, so the registry-pinned case leaves package.json untouched.
+            if any_changes {
+                manager.options.do_.set(Do::WRITE_PACKAGE_JSON, true);
+                manager.options.do_.set(Do::SAVE_LOCKFILE, true);
+            }
+        }
+
         Subcommand::Link | Subcommand::Add | Subcommand::Update => {
             // `bun update <package>` is basically the same as `bun add <package>`, except
             // update will not exceed the current dependency range if it exists
@@ -519,6 +595,24 @@ fn update_package_json_and_install_with_manager_with_updates(
             root_package_json_path_len,
         );
     };
+
+    if subcommand == Subcommand::Unlink {
+        // Remove the linked package from node_modules BEFORE install so the install
+        // restores the registry version when the dependency is still pinned in
+        // package.json, or leaves it absent when the `link:` entry was removed above.
+        // `delete_tree` unlinks the symlink/junction itself — it does not follow it —
+        // matching the global `bun unlink` and `bun link` cleanup paths.
+        let cwd = bun_sys::Dir::cwd();
+        let mut node_modules_buf = PathBuffer::uninit();
+        node_modules_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
+        node_modules_buf[b"node_modules".len()] = bun_paths::SEP;
+        for request in manager.update_requests.iter() {
+            let offset_buf = &mut node_modules_buf[b"node_modules/".len()..];
+            offset_buf[..request.name.len()].copy_from_slice(request.name);
+            let _ =
+                cwd.delete_tree(&node_modules_buf[..b"node_modules/".len() + request.name.len()]);
+        }
+    }
 
     install_with_manager::install_with_manager(manager, ctx, root_package_json_path, original_cwd)?;
 

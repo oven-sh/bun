@@ -12,6 +12,7 @@ use bun_install::lockfile_real::{Lockfile, package::Package};
 use bun_install::package_manager_real::{
     self as pm, CommandLineArguments, Subcommand, attempt_to_create_package_json,
     global_link_dir_path, options::LogLevel, package_manager_options, setup_global_dir,
+    update_package_json_and_install_with_manager,
 };
 
 use crate::command::ContextData;
@@ -26,7 +27,7 @@ impl UnlinkCommand {
 
 fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
     let cli = CommandLineArguments::parse(Subcommand::Unlink)?;
-    let (manager, _original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Unlink) {
+    let (manager, original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Unlink) {
         Ok(v) => v,
         Err(e) if e == err!(MissingPackageJSON) => {
             attempt_to_create_package_json()?;
@@ -37,7 +38,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         }
         Err(e) => return Err(e),
     };
-    // `defer ctx.allocator.free(original_cwd)` — `_original_cwd: Box<[u8]>` drops at scope exit.
+    // `defer ctx.allocator.free(original_cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
 
     if manager.options.should_print_command_name() {
         bun_core::prettyln!(
@@ -232,8 +233,8 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             BStr::new(name),
         );
         Global::exit(0);
-    } else {
-        bun_core::prettyln!("<r><red>error:<r> bun unlink {{packageName}} not implemented yet");
-        Global::crash();
     }
+
+    // bun unlink <package>
+    update_package_json_and_install_with_manager(manager, &mut *ctx, &original_cwd)
 }

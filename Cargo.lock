@@ -1880,6 +1880,7 @@ dependencies = [
  "bun_base64",
  "bun_collections",
  "bun_core",
+ "bun_highway",
  "bun_io",
  "bun_opaque",
  "bun_parsers",

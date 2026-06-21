@@ -142,6 +142,16 @@ _ZN3bun9N_SVE_25649IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh    [S
 
 
 # ----------------------------------------------------------------------------
+# Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
+# Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets. (4 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun5N_SVE17ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                       [SVE]
+_ZN3bun6N_SVE217ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                      [SVE]
+_ZN3bun9N_SVE_25617ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                   [SVE]
+_ZN3bun10N_SVE2_12817ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                 [SVE]
+
+
+# ----------------------------------------------------------------------------
 # Highway SVE detector.
 # (1 symbols)
 # ----------------------------------------------------------------------------

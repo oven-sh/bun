@@ -72,6 +72,19 @@ unsafe extern "C" {
     fn highway_xxhash64_reset(state: *mut u8, seed: u64);
     fn highway_xxhash64_update(state: *mut u8, input: *const u8, len: usize);
     fn highway_xxhash64_digest(state: *const u8) -> u64;
+
+    fn highway_parse_mappings(
+        bytes: *const u8,
+        len: usize,
+        out_generated: *mut i32,
+        out_original: *mut i32,
+        out_src_idx: *mut i32,
+        out_name_idx: *mut i32,
+        cap: usize,
+        sources_count: i32,
+        state: *mut i32,
+        err_at: *mut usize,
+    ) -> usize;
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -535,5 +548,88 @@ impl XxHash64State {
     pub fn digest(&self) -> u64 {
         // SAFETY: `self._storage` is a valid XXH64State; digest only reads it.
         unsafe { highway_xxhash64_digest(self._storage.as_ptr().cast()) }
+    }
+}
+
+/// In/out accumulator state for [`parse_mappings`]. Layout must match the
+/// `kSt*` indices in `highway_sourcemap.cpp`.
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+pub struct ParseMappingsState {
+    pub gen_line: i32,
+    pub gen_col: i32,
+    pub orig_line: i32,
+    pub orig_col: i32,
+    pub src_idx: i32,
+    pub name_idx: i32,
+    pub needs_sort: i32,
+    pub has_names: i32,
+    pub fast_blocks: i32,
+    pub slow_blocks: i32,
+}
+
+/// Output columns for [`parse_mappings`], one row per 4- or 5-field segment,
+/// holding ABSOLUTE (accumulated) values. `generated` and `original` are
+/// `[line, column]` i32 pairs per row (byte-compatible with
+/// `bun_sourcemap::LineColumnOffset`, which is `repr(C)`); `src_idx` and
+/// `name_idx` are one i32 per row.
+pub struct ParseMappingsOut<'a> {
+    pub generated: &'a mut [[i32; 2]],
+    pub original: &'a mut [[i32; 2]],
+    pub src_idx: &'a mut [i32],
+    pub name_idx: &'a mut [i32],
+}
+
+/// SIMD decode of a source-map `mappings` string. Writes one row per 4- or
+/// 5-field segment (accumulated absolute values) into `out`, up to the
+/// shortest column's length. On return, `err_at` is the byte offset in
+/// `bytes` where the caller should resume with the scalar decoder (== len
+/// when the whole input was consumed), and `state` holds the accumulator at
+/// that offset. Returns the number of rows written.
+///
+/// Any anomaly (invalid byte, unsupported field count, out-of-range value,
+/// segment longer than one SIMD block, output capacity exhausted, < one
+/// block of input remaining) ends the SIMD pass at the start of the
+/// offending segment; the scalar decoder owns all error reporting, so error
+/// messages and byte offsets are unchanged from a pure-scalar parse.
+#[inline]
+pub fn parse_mappings(
+    bytes: &[u8],
+    out: &mut ParseMappingsOut<'_>,
+    sources_count: i32,
+    state: &mut ParseMappingsState,
+    err_at: &mut usize,
+) -> usize {
+    let cap = out
+        .generated
+        .len()
+        .min(out.original.len())
+        .min(out.src_idx.len())
+        .min(out.name_idx.len());
+
+    if bytes.is_empty() || cap == 0 {
+        *err_at = 0;
+        return 0;
+    }
+
+    // SAFETY: `bytes` is a valid readable range; `out.generated` and
+    // `out.original` are each writable for `2*cap` i32s, `out.src_idx` and
+    // `out.name_idx` for `cap` i32s; `state` is a `#[repr(C)]` struct of 8
+    // contiguous i32s matching the kernel's `kSt*` indices; `err_at` is a
+    // valid write target. The kernel writes at most `cap` rows and never
+    // reads past `bytes.len()`.
+    unsafe {
+        highway_parse_mappings(
+            bytes.as_ptr(),
+            bytes.len(),
+            out.generated.as_mut_ptr().cast::<i32>(),
+            out.original.as_mut_ptr().cast::<i32>(),
+            out.src_idx.as_mut_ptr(),
+            out.name_idx.as_mut_ptr(),
+            cap,
+            sources_count,
+            core::ptr::from_mut::<ParseMappingsState>(state).cast::<i32>(),
+            err_at,
+        )
     }
 }

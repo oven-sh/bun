@@ -612,8 +612,16 @@ fn update_package_json_and_install_with_manager_with_updates(
         for request in manager.update_requests.iter() {
             let offset_buf = &mut node_modules_buf[b"node_modules/".len()..];
             offset_buf[..request.name.len()].copy_from_slice(request.name);
-            let _ =
-                cwd.delete_tree(&node_modules_buf[..b"node_modules/".len() + request.name.len()]);
+            if let Err(err) =
+                cwd.delete_tree(&node_modules_buf[..b"node_modules/".len() + request.name.len()])
+            {
+                Output::err(
+                    err,
+                    "failed to remove linked package '{s}' from node_modules before install",
+                    (BStr::new(request.name),),
+                );
+                Global::crash();
+            }
         }
     }
 

@@ -1191,10 +1191,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.track_only_dynamic_import_namespaces.insert(rest, ());
             self.imports_to_convert_from_dynamic_import
                 .push(DeferredImportNamespace {
-                    namespace: LocRef {
-                        loc,
-                        ref_: rest,
-                    },
+                    namespace: LocRef { loc, ref_: rest },
                     import_record_id,
                     scope: Some(self.current_scope),
                 });

@@ -588,7 +588,11 @@ impl ByteStream {
 
         if let streams::Result::Err(err) = &self.pending.get().result {
             let (err_js, _) = err.to_js_weak(global_this);
-            self.pending.with_mut(|p| p.result.release());
+            err_js.ensure_still_alive();
+            self.pending.with_mut(|p| {
+                p.result.release();
+                p.result = streams::Result::Done;
+            });
             self.done.set(true);
             self.buffer.with_mut(|b| {
                 b.clear();

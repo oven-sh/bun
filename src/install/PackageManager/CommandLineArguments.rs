@@ -763,9 +763,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
             }
             Subcommand::Unlink => {
                 let intro_text = r#"
-<b>Usage<r>: <b><green>bun unlink<r> <cyan>[flags]<r>
+<b>Usage<r>: <b><green>bun unlink<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
 
-  Unregister the current directory as a "linkable" package.
+  Unregister the current directory as a "linkable" package, or unlink a "linkable" package from the current project.
 
 <b>Flags:<r>"#;
 
@@ -774,6 +774,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
 <b>Examples:<r>
   <d>Unregister the current directory as a linkable package.<r>
   <b><green>bun unlink<r>
+
+  <d>Remove a previously-linked package from the current project.<r>
+  <d>A registry-pinned dependency is restored on the following install.<r>
+  <b><green>bun unlink<r> <blue>\<package\><r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/unlink<r>.
 ";

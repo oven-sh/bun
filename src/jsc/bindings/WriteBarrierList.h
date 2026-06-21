@@ -41,20 +41,8 @@ public:
         return m_list.mutableSpan();
     }
 
-    void moveTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& arguments)
-    {
-        WTF::Locker locker { owner->cellLock() };
-        for (JSC::WriteBarrier<T>& value : m_list) {
-            if (auto* cell = value.get()) {
-                arguments.append(cell);
-                value.clear();
-            }
-        }
-    }
-
     // Move every element into `arguments` and clear the backing vector in one
-    // pass under a single cellLock. Prefer this over a takeFirst() loop, which
-    // is O(n^2) (Vector::removeAt(0) memmove + per-element lock acquire).
+    // linear pass under a single cellLock.
     void drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& arguments)
     {
         WTF::Locker locker { owner->cellLock() };

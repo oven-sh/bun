@@ -1053,6 +1053,17 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
             return unhandledPromise.get() == promise;
         });
         if (removed) break;
+        // handleRejectedPromises() drains the list into a local buffer before
+        // running any handler. A handler may .catch() a later still-queued
+        // promise; that promise is no longer in m_aboutToBeNotifiedRejectedPromises
+        // but has not yet had 'unhandledRejection' fired, so it must not get
+        // 'rejectionHandled'. Check the in-flight tail.
+        if (auto* inflight = globalObj->m_rejectedPromisesBeingProcessed) {
+            for (size_t i = globalObj->m_rejectedPromisesBeingProcessedIndex, n = inflight->size(); i < n; ++i) {
+                if (inflight->at(i).asCell() == promise)
+                    return;
+            }
+        }
         // The promise rejection has already been notified, now we need to queue it for the rejectionHandled event
         Bun__handleHandledPromise(globalObj, promise);
         break;
@@ -3284,18 +3295,20 @@ void GlobalObject::handleRejectedPromises()
     JSC::VM& virtual_machine = vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(virtual_machine);
     do {
-        // Move the whole list out under one cellLock, then iterate linearly.
-        // The previous takeFirst() loop did Vector::removeAt(0) + cellLock per
-        // element, which is O(n^2) for n queued rejections. JSC's
-        // VM::didExhaustMicrotaskQueue and WebCore's RejectedPromiseTracker
-        // both use the same move-out-then-iterate pattern.
+        // Move the whole list out under one cellLock, then iterate linearly —
+        // the same pattern JSC's VM::didExhaustMicrotaskQueue and WebCore's
+        // RejectedPromiseTracker use.
         JSC::MarkedArgumentBuffer promises;
         m_aboutToBeNotifiedRejectedPromises.drainTo(this, promises);
         RELEASE_ASSERT(!promises.hasOverflowed());
+        // Expose the not-yet-processed tail so promiseRejectionTracker(Handle)
+        // can tell "still pending" apart from "already notified".
+        m_rejectedPromisesBeingProcessed = &promises;
         for (size_t i = 0, size = promises.size(); i < size; ++i) {
             auto* promise = static_cast<JSC::JSPromise*>(promises.at(i).asCell());
             if (promise->isHandled())
                 continue;
+            m_rejectedPromisesBeingProcessedIndex = i + 1;
 
             Bun__handleRejectedPromise(this, promise);
             if (auto ex = scope.exception()) {
@@ -3303,9 +3316,10 @@ void GlobalObject::handleRejectedPromises()
                 this->reportUncaughtExceptionAtEventLoop(this, ex);
             }
         }
+        m_rejectedPromisesBeingProcessed = nullptr;
+        m_rejectedPromisesBeingProcessedIndex = 0;
         // An unhandledRejection handler may itself reject a promise; loop
-        // until the list stays empty (matches the original takeFirst loop's
-        // semantics, which re-read m_list each iteration).
+        // until the list stays empty.
     } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
 }
 

@@ -833,6 +833,25 @@ describe.concurrent(() => {
           for (let i = 0; i < N; i++) if (seen[i] !== i) throw new Error("order at " + i + " got " + seen[i]);
           if (seen.includes("handled")) throw new Error("handled promise was delivered");
           if (!nestedSeen) throw new Error("rejection from inside handler was dropped");
+
+          // A handler that .catch()es a *later* still-pending rejection must
+          // suppress both 'unhandledRejection' AND 'rejectionHandled' for it.
+          let spuriousRejectionHandled = 0;
+          let lateUnhandled = false;
+          process.on("rejectionHandled", () => spuriousRejectionHandled++);
+          let pLate;
+          process.removeAllListeners("unhandledRejection");
+          process.on("unhandledRejection", reason => {
+            if (reason === "early") pLate.catch(() => {});
+            if (reason === "late") lateUnhandled = true;
+          });
+          Promise.reject("early");
+          pLate = Promise.reject("late");
+          await new Promise(r => setImmediate(r));
+          await new Promise(r => setImmediate(r));
+          if (lateUnhandled) throw new Error("late promise got unhandledRejection");
+          if (spuriousRejectionHandled !== 0)
+            throw new Error("spurious rejectionHandled fired " + spuriousRejectionHandled + "x");
           console.log("ok");
         `,
       ],

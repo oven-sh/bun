@@ -21,7 +21,6 @@
 use core::ffi::c_int;
 
 #[cfg(debug_assertions)]
-use bun_core::env_var;
 use bun_uws as uws;
 
 use crate::VM;
@@ -121,13 +120,6 @@ impl GarbageCollectionController {
             std::ptr::from_mut::<Self>(self),
         ));
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
-
-        #[cfg(debug_assertions)]
-        {
-            if env_var::BUN_TRACK_LAST_FN_NAME.get().unwrap_or(false) {
-                vm.event_loop_mut().debug.track_last_fn_name = true;
-            }
-        }
 
         // `Transpiler::init` is deferred to the high-tier
         // `init_runtime_state` hook (which runs *after* `ensure_waker` →

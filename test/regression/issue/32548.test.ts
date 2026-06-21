@@ -1,15 +1,14 @@
 // https://github.com/oven-sh/bun/issues/32548
-//
-// Debugger.pause sent while the inspected thread is spinning in a tight JS loop
-// (e.g. `while (true) {}`) never produced a Debugger.paused event: inspector
-// messages were delivered as event-loop tasks, and a busy loop never turns its
-// event loop to drain them. The fix interrupts the VM at a safepoint so the
-// queued pause is serviced and the loop pauses with usable call frames.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 
-test("Debugger.pause interrupts a busy loop and reports call frames", async () => {
+// The regression is a timing race: the busy loop monopolizing the JS thread vs.
+// the queued Debugger.pause being dispatched. Slow debug/ASAN builds reproduce
+// it deterministically; optimized release builds often win the race and pause
+// anyway, so a fail-before is flaky there. The fix is platform independent, so
+// running under ASAN is sufficient and avoids a flaky release-lane test.
+test.skipIf(!isASAN)("Debugger.pause interrupts a busy loop and reports call frames", async () => {
   using dir = tempDir("issue-32548", {
     "index.js": `
         let counter = 0;
@@ -67,14 +66,23 @@ test("Debugger.pause interrupts a busy loop and reports call frames", async () =
   });
 
   let stdoutBuf = "";
-  const { promise: busyPromise, resolve: busyResolve } = Promise.withResolvers<void>();
+  let busyReady = false;
+  const { promise: busyPromise, resolve: busyResolve, reject: busyReject } = Promise.withResolvers<void>();
   (async () => {
     const decoder = new TextDecoder();
     for await (const chunk of proc.stdout as ReadableStream<Uint8Array>) {
       stdoutBuf += decoder.decode(chunk);
-      if (stdoutBuf.includes("busy-ready")) busyResolve();
+      if (!busyReady && stdoutBuf.includes("busy-ready")) {
+        busyReady = true;
+        busyResolve();
+      }
     }
-  })().catch(() => {});
+    if (!busyReady) {
+      busyReject(new Error(`child stdout closed before "busy-ready": ${JSON.stringify(stdoutBuf)}`));
+    }
+  })().catch(err => {
+    if (!busyReady) busyReject(err);
+  });
 
   const url = await urlPromise;
 

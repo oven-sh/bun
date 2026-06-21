@@ -266,6 +266,18 @@ describe("bundler", () => {
       expect(code).toContain("`a'b\"c`");
     },
   });
+  // A string containing both ' and " picks a backtick to avoid escaping either
+  // quote, even without minify and even with a newline present: the two quote
+  // chars drive the choice, not the newline. esbuild emits the same backtick.
+  itBundled("string/BothQuotesWithNewlineUseBacktickWithoutMinify", {
+    files: {
+      "index.ts": `console.log("a'b\\"c\\nd");`,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("`a'b\"c\nd`");
+    },
+  });
   itBundled("string/DoubleQuoteWithNewlineUsesSingleQuoteWithoutMinify", {
     files: {
       "index.ts": `console.log("x\\"y\\nz");`,

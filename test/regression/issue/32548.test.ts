@@ -1,14 +1,17 @@
 // https://github.com/oven-sh/bun/issues/32548
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 
-// The regression is a timing race: the busy loop monopolizing the JS thread vs.
-// the queued Debugger.pause being dispatched. Slow debug/ASAN builds reproduce
-// it deterministically; optimized release builds often win the race and pause
-// anyway, so a fail-before is flaky there. The fix is platform independent, so
-// running under ASAN is sufficient and avoids a flaky release-lane test.
-test.skipIf(!isASAN)("Debugger.pause interrupts a busy loop and reports call frames", async () => {
+// This regression is a timing race: the busy loop must monopolize the JS thread
+// before the queued Debugger.pause is dispatched. Slow debug builds reproduce it
+// deterministically; optimized release builds routinely win the race and pause
+// anyway, making a fail-before flaky there. (Release+ASAN additionally aborts on a
+// pre-existing unchecked exception in WebKit's JSJavaScriptCallFrame::scopeChain
+// when validateExceptionChecks is on, which a plain `debugger;` pause hits too and
+// which is unrelated to this fix.) The fix is platform independent, so debug-only
+// coverage is sufficient.
+test.skipIf(!isDebug)("Debugger.pause interrupts a busy loop and reports call frames", async () => {
   using dir = tempDir("issue-32548", {
     "index.js": `
         let counter = 0;

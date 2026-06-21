@@ -2570,7 +2570,7 @@ it("resumes a backpressured Response(ReadableStream) once the client drains and 
 });
 
 // https://github.com/oven-sh/bun/issues/32469
-it("type: direct stream awaiting the write() backpressure promise does not re-enter pull", async () => {
+it("type: direct stream awaiting flush(true) under backpressure does not re-enter pull", async () => {
   const CHUNK = Buffer.alloc(256 * 1024, 67);
   const TOTAL_CHUNKS = 512; // 128 MiB
   let pullEntries = 0;
@@ -2584,11 +2584,11 @@ it("type: direct stream awaiting the write() backpressure promise does not re-en
         async pull(controller) {
           pullEntries++;
           for (let i = 0; i < TOTAL_CHUNKS; i++) {
-            const wrote = controller.write(CHUNK);
-            // write() returns the pending-flush promise when the socket is
-            // backed up; await it to pause until the drain.
-            if (wrote && typeof wrote.then === "function") {
-              await wrote;
+            // write() returns a negative number when the socket is backed up;
+            // await flush(true) (the pending-flush promise) to pause until the
+            // drain.
+            if (controller.write(CHUNK) < 0) {
+              await controller.flush(true);
             }
             writes++;
           }
@@ -2634,7 +2634,7 @@ it("type: direct stream awaiting the write() backpressure promise does not re-en
     await bodyDone;
 
     // pull must have been entered exactly once — on drain the sink resolves
-    // the write() backpressure promise, it must not also re-invoke pull.
+    // the flush(true) promise, it must not also re-invoke pull.
     expect(pullEntries).toBe(1);
     expect(writes).toBe(TOTAL_CHUNKS);
     expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
@@ -2712,8 +2712,7 @@ it("type: direct stream — small write queued under backpressure is delivered i
           // below highWaterMark — it lands in the sink's local buffer while
           // pending_flush is already parked.
           for (let i = 0; i < 256 && !hitBackpressure; i++) {
-            const r = controller.write(BIG);
-            if (r && typeof r.then === "function") hitBackpressure = true;
+            if (controller.write(BIG) < 0) hitBackpressure = true;
           }
           controller.write(SMALL);
           await controller.flush(true);
@@ -2740,11 +2739,11 @@ it("type: direct stream — small write queued under backpressure is delivered i
   try {
     await stalled;
     // Hold the client until the producer has parked on backpressure.
-    while (!hitBackpressure) await Bun.sleep(5);
+    for (let i = 0; i < 200 && !hitBackpressure; i++) await Bun.sleep(5);
+    expect(hitBackpressure).toBe(true);
     socket.resume();
     await bodyDone;
 
-    expect(hitBackpressure).toBe(true);
     const body = Buffer.concat(chunks).toString("latin1");
     // on_writable resending from uWS's cumulative write_offset would drop the
     // head of SMALL; it must arrive intact and contiguous.

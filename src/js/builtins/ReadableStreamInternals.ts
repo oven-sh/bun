@@ -924,13 +924,14 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
     }
 
     for (var i = 0, values = many.value, length = many.value.length; i < length; i++) {
-      // The native sink returns its pending-flush Promise when the transport
-      // is backed up; await it (only when not already fulfilled — skipping the
-      // microtask on the fast path while still propagating a rejection into
-      // the catch below) so we stop pulling until the socket catches up.
-      var wrote = sink.write(values[i]);
-      if ($isPromise(wrote) && !$isPromiseFulfilled(wrote)) {
-        await wrote;
+      // The HTTP response sink returns a negative number when the socket is
+      // backed up; await flush(true) (the pending-flush promise) so we stop
+      // pulling until it drains. FileSink may return a Promise on every write
+      // (Windows pipes are always async); awaiting that here would serialize
+      // every chunk behind a uv_write round-trip, so the negative-number check
+      // intentionally lets those fall through.
+      if (sink.write(values[i]) < 0) {
+        await sink.flush(true);
         // The sink's close path resolves the same promise; stop writing into a
         // dead sink.
         if (state.didClose) break;
@@ -951,9 +952,8 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
         return sink.end();
       }
 
-      var wrote = sink.write(value);
-      if ($isPromise(wrote) && !$isPromiseFulfilled(wrote)) {
-        await wrote;
+      if (sink.write(value) < 0) {
+        await sink.flush(true);
         if (state.didClose) return sink.end();
       }
     }
@@ -1887,15 +1887,14 @@ export function readableStreamFromAsyncIterator(target, fn) {
         }
 
         if (!$isUndefinedOrNull(value)) {
-          // The native sink returns its pending-flush Promise when the
-          // transport is backed up; await it (only when not already fulfilled)
-          // so we stop pulling until the socket catches up. A rejected promise
-          // from write() throws into the catch path below.
-          var wrote = controller.write(value);
-          if ($isPromise(wrote) && !$isPromiseFulfilled(wrote)) {
+          // See readStreamIntoSink: the HTTP response sink returns a negative
+          // number when the socket is backed up; await the drain via
+          // flush(true). FileSink's Promise return is intentionally not
+          // awaited here.
+          if (controller.write(value) < 0) {
             clearImmediate(immediateTask);
             immediateTask = undefined;
-            await wrote;
+            await controller.flush(true);
           }
         }
       }

@@ -6535,6 +6535,17 @@ impl VirtualMachine {
         // SAFETY: `instance` is the live boxed IPCInstance.
         unsafe { (*instance).data.write_version_packet(self.global()) };
 
+        // A message the parent queued before this child attached its listener
+        // is already sitting in the socket's receive buffer. Drain it on the
+        // first microtask checkpoint (before the event loop's first poll, hence
+        // before `setImmediate`) so it is observed on the child's startup turn
+        // like Node, instead of one event-loop iteration later. Deferred rather
+        // than read inline so the `message` handler never fires synchronously
+        // from inside `process.on(...)` / `process.send(...)`.
+        #[cfg(not(windows))]
+        self.global()
+            .queue_microtask_callback(instance, ipc_drain_pending_microtask);
+
         Some(instance)
     }
 
@@ -6547,6 +6558,23 @@ impl VirtualMachine {
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         self.transpiler.resolver.bust_dir_cache(path)
     }
+}
+
+/// Microtask thunk for [`VirtualMachine::get_ipc_instance`]: drain any IPC
+/// bytes the parent buffered before this child attached, delivering them on the
+/// startup turn. `ctx` is the `*mut IPCInstance` stored in `vm.ipc`; it is owned
+/// by the VM and must not be freed here.
+#[cfg(not(windows))]
+unsafe extern "C" fn ipc_drain_pending_microtask(ctx: *mut core::ffi::c_void) {
+    let instance = ctx.cast::<IPCInstance>();
+    // SAFETY: scheduled during the same synchronous turn that created
+    // `instance`; the microtask checkpoint runs at the end of that turn, before
+    // the event loop could close the channel and free the instance.
+    let socket = match unsafe { &(*instance).data.socket } {
+        crate::ipc::SocketUnion::Open(s) => *s,
+        _ => return,
+    };
+    socket.ipc_recv_pending();
 }
 
 fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bool> {

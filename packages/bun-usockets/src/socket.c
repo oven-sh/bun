@@ -453,6 +453,25 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
 #endif
 }
 
+/* Eagerly dispatch any bytes already sitting in the socket's receive buffer by
+ * running the readable handler now, instead of waiting for the next epoll
+ * iteration. The POLL_TYPE_SOCKET handler reads with MSG_DONTWAIT and tolerates
+ * EWOULDBLOCK, so this is a no-op when nothing is buffered.
+ *
+ * Used for inherited IPC channels on child startup: a message the parent queued
+ * before the child attached its listener is delivered on the first tick rather
+ * than one event-loop iteration later, matching Node. */
+void us_socket_ipc_recv_pending(struct us_socket_t *s) {
+#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
+    (void) s;
+#else
+    if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
+        return;
+    }
+    us_internal_dispatch_ready_poll((struct us_poll_t *) s, 0, 0, LIBUS_SOCKET_READABLE);
+#endif
+}
+
 void *us_socket_get_native_handle(struct us_socket_t *s) {
     if (s->ssl) {
         return us_internal_ssl_get_native_handle(s);

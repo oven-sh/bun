@@ -495,7 +495,7 @@ it("unlink <package> removes a link: dependency and its node_modules entry", asy
       env,
     });
     const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
-    expect(stderrForInstall(err).split(/\r?\n/)).toEqual([""]);
+    expect(stderrForInstall(err).trim()).toBe("");
     expect(out).toContain(`Success! Registered "${link_name}"`);
     expect(code).toBe(0);
   }

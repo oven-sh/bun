@@ -436,7 +436,11 @@ describe("bundler", () => {
         const decl = out.match(/function\s+([A-Za-z_$][\w$]*)\s*\(\s*[A-Za-z_$][\w$]*\s*\)\s*\{\s*return\b/);
         expect(decl).not.toBeNull();
         const name = decl![1];
-        expect(out).toMatch(new RegExp(String.raw`\(\s*${name}\s*\)`));
+        // minifyWhitespace is off, so the call argument is printed as
+        // `(<name>)` with no surrounding whitespace. Use a literal
+        // substring so a `$` in the minified name cannot be misread as a
+        // regex metacharacter.
+        expect(out).toContain(`(${name})`);
         if (minifyIdentifiers) {
           // With identifier minification every react-compiler-generated
           // `_temp*` name must be renamed; a surviving literal is an

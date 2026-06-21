@@ -41,12 +41,9 @@ impl HTTPServerAgent {
     // #region Events
     //
     // `notify_server_started` / `notify_server_stopped` /
-    // `notify_server_routes_updated` reach into `bun_jsc::api::AnyServer` and
+    // `notify_server_routes_updated` reach into `AnyServer` and
     // `ServerConfig::RouteDeclaration`, which live in `bun_runtime` (forward
-    // dep). The C++ side only needs `Bun__HTTPServerAgent__setEnabled` for
-    // linkage; the per-event notifiers are called from Rust → C++ (FFI decls
-    // below) and are wired from `bun_runtime` once that tier un-gates. The
-    // event bodies will land when `AnyServer` is reachable.
+    // dep), so they are defined there (`runtime/server/mod.rs`).
 
     // #endregion
 }

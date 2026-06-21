@@ -26,9 +26,6 @@ impl JSSink<ArrayBufferSink> {
     }
 }
 
-// Re-export FileSink so gated `streams::Start` references to
-// `crate::webcore::sink::{FileSink, FileSinkOptions, FileSinkInputPath}` resolve
-// once those callers un-gate. The Options/InputPath types live on FileSink.
 pub use crate::webcore::file_sink::FileSink;
 
 /// A `Sink` is a hand-rolled vtable-based writable stream sink.
@@ -1017,17 +1014,6 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         // The wrapper stays attached so `run_pending` can resolve the Promise;
         // `~JS${name}` → `finalize` releases the per-wrapper +1 once GC
         // sweeps.
-        //
-        // 13f9cff9 added an eager `detach_ptr_extern + finalize()` in the
-        // non-pending else-branch as a #53265 defense. But the `end` host-fn
-        // must not detach (only `${name}__doClose` does), and the eager detach
-        // breaks Node `.end()` idempotency: child_process stdin teardown
-        // calls `.end()` → eager-detach → subsequent `.ref()`/`.unref()`/
-        // `.end()` from the Writable destroy path hit `get_this` → DETACHED →
-        // "already been closed" (8+ [new] in #53781). Reverted; the #53265
-        // root cause is the missing per-wrapper `ref_()` (df4f2c44) +
-        // `Blob::get_writer` leaking init's +1 (now fixed at Blob.rs:1894/
-        // 1959), not the lack of eager detach.
         if T::HAS_PROTECT_JS_WRAPPER && this.sink.pending_state_is_pending() {
             this.sink.protect_js_wrapper(global, frame.this());
         }
@@ -1039,6 +1025,28 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
     #[inline]
     pub fn js_finalize(this: &mut T) {
         this.finalize();
+    }
+
+    /// `${abi_name}__controllerDetached` body — called from
+    /// `JSReadable*Controller::detach()` (controller `.end()`/`.close()` host
+    /// fns) and from the controller's destructor, i.e. whenever the
+    /// controller stops being attached to this sink.
+    ///
+    /// `signal.ptr` stores the controller's encoded JSValue bits (written by
+    /// `__assignToStream`) without rooting the cell, so the controller can be
+    /// collected while the native sink still has a flush in flight (e.g. a
+    /// response stream parked on tryEnd() backpressure). Once the controller
+    /// detaches or dies the signal must never fire again: `onClose`/`onReady`
+    /// would decode a dead cell. Clear it, but only when it still holds this
+    /// controller's bits — `connect()`-style signals store a live native
+    /// pointer instead, and a sink re-assigned to a new stream holds the
+    /// newer controller's bits.
+    pub fn js_controller_detached(this: &mut T, controller: crate::webcore::jsc::JSValue) {
+        if let Some(signal) = this.signal() {
+            if signal.ptr.map(|p| p.as_ptr() as usize) == Some(controller.encoded()) {
+                signal.clear();
+            }
+        }
     }
 
     /// `${abi_name}__close` body — called from

@@ -123,11 +123,6 @@ macro_rules! dispatch {
     }};
 }
 
-// ─── dispatch arms calling gated RequestContext methods ──────────────────────
-// set_timeout / set_cookies / set_timeout_handler / get_remote_socket_info /
-// on_abort / ref_ / deref / set_signal_aborted forward to RequestContext
-// methods that live in `_gated_state_machine`. Un-gate alongside.
-
 impl AnyRequestContext {
     pub fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
         dispatch!(self, (), |_T, ctx| {

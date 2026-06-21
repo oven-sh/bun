@@ -416,11 +416,6 @@ mod shim {
         bun_ptr::BackRef::from(s).unpipe_without_deref()
     }
 }
-// `Api::FallbackMessageContainer`/`JsException`/`Problems`/`Fallback::render_backend`
-// live in `bun_options_types::schema::api` + `bun_ast::runtime`; both are
-// still being filled in by concurrent ports. The DEBUG_MODE error-page paths
-// that use them stay ``-gated below.
-
 use bun_options_types::schema::api as Api;
 
 use bun_js_parser::parser::Runtime::Fallback;
@@ -1819,9 +1814,9 @@ where
         }
 
         // FileResponseStream registers its own onAborted/onWritable with itself
-        // as userData. uWS keeps a single shared userData slot per response, so
-        // any later setAbortHandler()/onWritable() from this RequestContext would
-        // stomp it and hand FileResponseStream's callbacks a *RequestContext.
+        // as userData; any later setAbortHandler()/onWritable() from this
+        // RequestContext would replace them and FileResponseStream would never
+        // hear about the abort/drain it is driving.
         self.flags.set_has_sendfile_ctx(true);
         self.flags.set_has_abort_handler(true);
         self.flags.set_has_marked_pending(true);
@@ -1984,8 +1979,12 @@ where
 
         assignment_result.ensure_still_alive();
 
-        // assert that it was updated
-        debug_assert!(!response_stream.sink.signal.is_dead());
+        // assignToStream stored the controller's encoded JSValue in
+        // signal.ptr. If the stream already finished synchronously inside the
+        // call, controller.end()/.close() detached the controller and cleared
+        // the signal again (`__controllerDetached`), so the signal may be
+        // legitimately dead here; the has_responded()/promise-status branches
+        // below handle that state.
 
         #[cfg(debug_assertions)]
         if resp.has_responded() {

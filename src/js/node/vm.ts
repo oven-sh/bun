@@ -463,8 +463,11 @@ function importModuleDynamicallyWrap(importModuleDynamically) {
 function getConstructorOf(obj) {
   while (obj) {
     const descriptor = ObjectGetOwnPropertyDescriptor(obj, "constructor");
-    if (descriptor !== undefined && typeof descriptor.value === "function" && descriptor.value.name !== "") {
-      return descriptor.value;
+    if (descriptor !== undefined) {
+      const value = descriptor.value;
+      if (typeof value === "function" && value.name !== "") {
+        return value;
+      }
     }
 
     obj = ObjectGetPrototypeOf(obj);

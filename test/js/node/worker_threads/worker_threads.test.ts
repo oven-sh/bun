@@ -1,4 +1,4 @@
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -486,4 +486,145 @@ describe("getHeapSnapshot", () => {
     ]);
     worker.postMessage(0);
   });
+});
+
+test("failed Worker construction restores transferred FileHandles", async () => {
+  const dir = tmpdirSync("worker-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh = await fs.promises.open(file, "r");
+  // Non-cloneable workerData makes the WebWorker constructor throw after the
+  // FileHandle has already been neutered by the transfer machinery; the fd
+  // must be restored so the handle stays usable.
+  expect(() => {
+    new Worker(file, { transferList: [fh as any], workerData: { fh, bad: () => {} } } as any);
+  }).toThrow();
+  const { bytesRead } = await fh.read(Buffer.alloc(5), 0, 5, 0);
+  expect(bytesRead).toBe(5);
+  await fh.close();
+});
+
+test("partially transferred FileHandles are restored when a later transfer throws", async () => {
+  const dir = tmpdirSync("worker-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh1 = await fs.promises.open(file, "r");
+  const fh2 = await fs.promises.open(file, "r");
+  const pending = fh2.read(Buffer.alloc(5), 0, 5, 0); // fh2 is in use -> its transfer throws
+  expect(() => {
+    new Worker(file, { transferList: [fh1 as any, fh2 as any], workerData: { fh1, fh2 } } as any);
+  }).toThrow(expect.objectContaining({ name: "DataCloneError" }));
+  await pending;
+  const { bytesRead } = await fh1.read(Buffer.alloc(5), 0, 5, 0);
+  expect(bytesRead).toBe(5);
+  await fh1.close();
+  await fh2.close();
+});
+
+test("a FileHandle referenced twice in workerData deserializes to one instance", async () => {
+  const dir = tmpdirSync("worker-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const script = join(dir, "w.mjs");
+  fs.writeFileSync(
+    script,
+    `import { workerData, parentPort } from "worker_threads";
+     const { a, b } = workerData;
+     const same = a === b;
+     await a.close();
+     // b is the same handle, so it must be closed too (no stale second
+     // instance wrapping an already-closed fd)
+     const closed = b.fd === -1;
+     parentPort.postMessage({ same, closed });`,
+  );
+  const fh = await fs.promises.open(file, "r");
+  const worker = new Worker(script, { workerData: { a: fh, b: fh }, transferList: [fh as any] } as any);
+  const [message] = await once(worker, "message");
+  await worker.terminate();
+  expect(message).toEqual({ same: true, closed: true });
+});
+
+test("duplicate FileHandle transferList entries throw DataCloneError and roll back", async () => {
+  const dir = tmpdirSync("worker-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh = await fs.promises.open(file, "r");
+  expect(() => {
+    new Worker(file, { workerData: { fh }, transferList: [fh as any, fh as any] } as any);
+  }).toThrow(expect.objectContaining({ name: "DataCloneError" }));
+  // like node, the handle is still usable after the rejected transfer
+  const { bytesRead } = await fh.read(Buffer.alloc(5), 0, 5, 0);
+  expect(bytesRead).toBe(5);
+  await fh.close();
+});
+
+test("a FileHandle in transferList but not in workerData is detached without leaking", async () => {
+  const dir = tmpdirSync("worker-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const script = join(dir, "noop.mjs");
+  fs.writeFileSync(script, `import { parentPort } from "worker_threads"; parentPort.postMessage("ok");`);
+  const fh = await fs.promises.open(file, "r");
+  const fd = fh.fd;
+  const ino = fs.fstatSync(fd).ino;
+  const worker = new Worker(script, { workerData: {}, transferList: [fh as any] } as any);
+  const [message] = await once(worker, "message");
+  expect(message).toBe("ok");
+  await worker.terminate();
+  // the parent handle is neutered like node...
+  expect(fh.fd).toBe(-1);
+  // ...and the orphaned fd was closed (not leaked). The number may have been
+  // recycled by the worker machinery in the meantime, so accept either EBADF
+  // or a descriptor that no longer refers to our file.
+  let closedOrRecycled = false;
+  try {
+    closedOrRecycled = fs.fstatSync(fd).ino !== ino;
+  } catch (e: any) {
+    closedOrRecycled = e.code === "EBADF";
+  }
+  expect(closedOrRecycled).toBe(true);
+});
+
+test("failed construction restores an unreferenced transferred FileHandle intact", async () => {
+  const dir = tmpdirSync("worker-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh = await fs.promises.open(file, "r");
+  // workerData is non-cloneable, so WebWorker construction throws *after*
+  // the handle was neutered; the rollback must hand back a live fd, not a
+  // number that was already closed by the orphan-fd cleanup.
+  expect(() => {
+    new Worker(file, { workerData: () => {}, transferList: [fh as any] } as any);
+  }).toThrow();
+  const { bytesRead } = await fh.read(Buffer.alloc(5), 0, 5, 0);
+  expect(bytesRead).toBe(5);
+  await fh.close();
+});
+
+test("FileHandles nested in Map and Set workerData are transferred", async () => {
+  const dir = tmpdirSync("worker-fh-transfer");
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const script = join(dir, "ms.mjs");
+  fs.writeFileSync(
+    script,
+    `import { workerData, parentPort } from "worker_threads";
+     const m = workerData.m.get("h");
+     const s = [...workerData.s][0];
+     const sameInstance = m === s;
+     const { buffer, bytesRead } = await m.read(Buffer.alloc(5), 0, 5, 0);
+     parentPort.postMessage({ sameInstance, text: buffer.toString("utf8", 0, bytesRead) });
+     await m.close();`,
+  );
+  const fh = await fs.promises.open(file, "r");
+  const worker = new Worker(script, {
+    workerData: { m: new Map([["h", fh]]), s: new Set([fh]) },
+    transferList: [fh as any],
+  } as any);
+  const [message] = await once(worker, "message");
+  await worker.terminate();
+  // parent side is neutered, worker read through the Map entry, and the Map
+  // and Set entries deserialized to the same single instance
+  expect(fh.fd).toBe(-1);
+  expect(message).toEqual({ sameInstance: true, text: "hello" });
 });

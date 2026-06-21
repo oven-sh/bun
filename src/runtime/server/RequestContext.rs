@@ -2048,10 +2048,10 @@ where
         // A fully-synchronous ReadableStream can drain through writeBytes
         // and reach endFromJS() inside assignToStream(). If tryEnd() then
         // hits transport backpressure (common on QUIC right after the
-        // HEADERS frame), the sink parks a pending_flush promise and
-        // registers onWritable, but assignToStream() itself returns
-        // undefined. Surface that promise here so the request waits for
-        // the drain instead of falling through to the cancel path below.
+        // HEADERS frame), the sink parks a pending_flush promise, but
+        // assignToStream() itself returns undefined. Surface that promise
+        // here so the request waits for the drain (the Pending branch below
+        // arms on_writable) instead of falling through to the cancel path.
         let mut effective_result = assignment_result;
         if effective_result.is_empty_or_undefined_or_null() {
             if let Some(flush) = response_stream.sink.pending_flush {

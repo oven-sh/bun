@@ -886,6 +886,7 @@ export function readStreamIntoSinkOnClose(this: { didThrow: boolean; didClose: b
   if (!this.didThrow && !this.didClose && stream && stream.$state !== $streamClosed) {
     $readableStreamCancel(stream, reason);
   }
+  this.didClose = true;
 }
 
 export async function readStreamIntoSink(stream: ReadableStream, sink, isNative) {
@@ -930,12 +931,15 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       var wrote = sink.write(values[i]);
       if ($isPromise(wrote) && $isPromisePending(wrote)) {
         await wrote;
+        // The sink's close path resolves the same promise; stop writing into a
+        // dead sink.
+        if (state.didClose) break;
       }
     }
     values = many = undefined;
 
     var streamState = $getByIdDirectPrivate(stream, "state");
-    if (streamState === $streamClosed) {
+    if (state.didClose || streamState === $streamClosed) {
       state.didClose = true;
       return sink.end();
     }
@@ -950,6 +954,7 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       var wrote = sink.write(value);
       if ($isPromise(wrote) && $isPromisePending(wrote)) {
         await wrote;
+        if (state.didClose) return sink.end();
       }
     }
   } catch (e) {

@@ -845,13 +845,6 @@ pub enum AlreadyBundled {
 }
 
 impl AlreadyBundled {
-    pub fn is_bytecode(&self) -> bool {
-        matches!(
-            self,
-            AlreadyBundled::Bytecode(_) | AlreadyBundled::BytecodeCjs(_)
-        )
-    }
-
     pub fn is_common_js(&self) -> bool {
         matches!(
             self,

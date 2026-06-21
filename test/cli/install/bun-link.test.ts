@@ -1,5 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { existsSync, readFileSync } from "fs";
 import { access, mkdir, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -471,4 +472,175 @@ it("should link dependency without crashing", async () => {
 
   // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
+});
+
+it("unlink <package> removes a link: dependency and its node_modules entry", async () => {
+  const link_name = basename(link_dir).slice("bun-link.".length);
+  await writeFile(
+    join(link_dir, "package.json"),
+    JSON.stringify({
+      name: link_name,
+      version: "0.0.1",
+    }),
+  );
+
+  // Register the local package globally.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "link"],
+      cwd: link_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(stderrForInstall(err).split(/\r?\n/)).toEqual([""]);
+    expect(out).toContain(`Success! Registered "${link_name}"`);
+    expect(code).toBe(0);
+  }
+
+  // Consumer depends on it through the link: protocol.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "consumer",
+      version: "0.0.1",
+      dependencies: { [link_name]: `link:${link_name}` },
+    }),
+  );
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, , code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(code).toBe(0);
+  }
+  // The link: dependency is symlinked into node_modules.
+  expect(await file(join(package_dir, "node_modules", link_name, "package.json")).json()).toEqual({
+    name: link_name,
+    version: "0.0.1",
+  });
+
+  // Unlink it from the consumer.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "unlink", link_name],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(stderrForInstall(err)).not.toContain("error:");
+    expect(code).toBe(0);
+  }
+
+  // The link: entry is removed from package.json and the node_modules entry is gone.
+  const pkg = await file(join(package_dir, "package.json")).json();
+  expect(pkg.dependencies?.[link_name]).toBeUndefined();
+  expect(existsSync(join(package_dir, "node_modules", link_name))).toBe(false);
+});
+
+it("unlink <package> keeps a non-link: dependency and restores it", async () => {
+  // A "published" copy of baz, installed through the file: protocol (no registry).
+  await mkdir(join(package_dir, "local-baz"), { recursive: true });
+  await writeFile(
+    join(package_dir, "local-baz", "package.json"),
+    JSON.stringify({
+      name: "baz",
+      version: "0.0.3",
+    }),
+  );
+
+  // A different local baz registered globally, used to link over the file: copy.
+  await writeFile(
+    join(link_dir, "package.json"),
+    JSON.stringify({
+      name: "baz",
+      version: "9.9.9",
+    }),
+  );
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "link"],
+      cwd: link_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, , code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(out).toContain(`Success! Registered "baz"`);
+    expect(code).toBe(0);
+  }
+
+  // Consumer depends on the file: copy — a non-link: specifier.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "consumer",
+      version: "0.0.1",
+      dependencies: { baz: "file:./local-baz" },
+    }),
+  );
+
+  const readJson = (...parts: string[]) => JSON.parse(readFileSync(join(package_dir, ...parts), "utf8"));
+
+  // Install the file: copy.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, , code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(code).toBe(0);
+  }
+  expect(readJson("node_modules", "baz", "package.json").version).toBe("0.0.3");
+
+  // Link the global copy over it (does not touch package.json).
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "link", "baz", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, , code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(code).toBe(0);
+  }
+  // node_modules holds the LINKED version; package.json keeps the file: specifier.
+  expect(readJson("node_modules", "baz", "package.json").version).toBe("9.9.9");
+  expect(readJson("package.json").dependencies.baz).toBe("file:./local-baz");
+
+  // Unlink it: the non-link: specifier must be preserved and the file: copy reinstalled.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "unlink", "baz", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(stderrForInstall(err)).not.toContain("error:");
+    expect(code).toBe(0);
+  }
+
+  // package.json still has the file: specifier, and node_modules holds the file: copy again.
+  expect(readJson("package.json").dependencies.baz).toBe("file:./local-baz");
+  expect(readJson("node_modules", "baz", "package.json").version).toBe("0.0.3");
 });

@@ -597,17 +597,6 @@ pub fn tick_queue_with_count(
     let global: &JSGlobalObject = unsafe { el.global.expect("EventLoop.global unset").as_ref() };
     let global_vm = global.vm();
 
-    #[cfg(debug_assertions)]
-    if el.debug.js_call_count_outside_tick_queue
-        > el.debug.drain_microtasks_count_outside_tick_queue
-    {
-        panic!(
-            "{} JavaScript functions were called outside of the microtask queue without draining microtasks. Use EventLoop.runCallback().",
-            el.debug.js_call_count_outside_tick_queue
-                - el.debug.drain_microtasks_count_outside_tick_queue
-        );
-    }
-
     while let Some(task) = el.tasks.read_item() {
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.

@@ -885,10 +885,27 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
   var started = false;
   const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark") || 0;
 
+  // The native sink fires onSinkDrain (via signal.ready -> m_onPull) once the
+  // socket has room again; resolve any parked drain waiter so the read loop
+  // resumes. onSinkClose also resumes so an abort while paused doesn't hang.
+  var drainCapability;
+  function onSinkDrain() {
+    var cap = drainCapability;
+    if (cap) {
+      drainCapability = undefined;
+      cap.resolve.$call();
+    }
+  }
+  function waitForDrain() {
+    drainCapability = $newPromiseCapability(Promise);
+    return drainCapability.promise;
+  }
+
   try {
     var reader = stream.getReader();
     var many = reader.readMany();
     function onSinkClose(stream, reason) {
+      onSinkDrain();
       if (!didThrow && !didClose && stream && stream.$state !== $streamClosed) {
         $readableStreamCancel(stream, reason);
       }
@@ -899,7 +916,7 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       // abort, for example. So we have to start it, if only so that we can
       // receive a notification when it closes or cancels.
       // https://github.com/oven-sh/bun/issues/6758
-      if (isNative) $startDirectStream.$call(sink, stream, undefined, onSinkClose, stream.$asyncContext);
+      if (isNative) $startDirectStream.$call(sink, stream, onSinkDrain, onSinkClose, stream.$asyncContext);
       sink.start({ highWaterMark });
       started = true;
 
@@ -911,12 +928,16 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
     }
 
     if (!started) {
-      if (isNative) $startDirectStream.$call(sink, stream, undefined, onSinkClose, stream.$asyncContext);
+      if (isNative) $startDirectStream.$call(sink, stream, onSinkDrain, onSinkClose, stream.$asyncContext);
       sink.start({ highWaterMark });
     }
 
     for (var i = 0, values = many.value, length = many.value.length; i < length; i++) {
-      sink.write(values[i]);
+      // A negative result means the bytes were accepted but the transport is
+      // backed up; pause until the sink's drain signal fires.
+      if (sink.write(values[i]) < 0 && isNative) {
+        await waitForDrain();
+      }
     }
 
     var streamState = $getByIdDirectPrivate(stream, "state");
@@ -932,7 +953,9 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
         return sink.end();
       }
 
-      sink.write(value);
+      if (sink.write(value) < 0 && isNative) {
+        await waitForDrain();
+      }
     }
   } catch (e) {
     didThrow = true;

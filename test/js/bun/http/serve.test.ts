@@ -2429,3 +2429,140 @@ it.if(isPosix)("serves /bun:info over a unix socket in development mode", async 
   expect(text).toContain("bun_version");
   expect(res.status).toBe(200);
 });
+
+// https://github.com/oven-sh/bun/issues/32469
+it("applies backpressure to a Response(ReadableStream) body when the client stalls", async () => {
+  const CHUNK = Buffer.alloc(64 * 1024, 65); // 64 KiB
+  // Without backpressure the producer runs to this cap (128 MiB) and closes;
+  // with it, pull plateaus at roughly the socket send buffer.
+  const CAP_CHUNKS = 2048;
+  let pulls = 0;
+  let producedEverything = false;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream(
+        {
+          pull(controller) {
+            pulls++;
+            controller.enqueue(CHUNK);
+            if (pulls >= CAP_CHUNKS) {
+              producedEverything = true;
+              controller.close();
+            }
+          },
+        },
+        { highWaterMark: 1 },
+      );
+      return new Response(stream);
+    },
+  });
+
+  // Raw client: send the request, read the head of the response, then stop
+  // reading so TCP backpressure propagates back to the server.
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
+  socket.once("data", () => {
+    socket.pause();
+    onStalled();
+  });
+
+  try {
+    await stalled;
+
+    // Poll a bounded window for the absence of a runaway: wait until the pull
+    // count plateaus (backpressure engaged) or the server produces the whole
+    // capped body (the bug).
+    let last = -1;
+    let stable = 0;
+    while (!producedEverything && stable < 12) {
+      await Bun.sleep(25);
+      if (pulls === last) stable++;
+      else {
+        stable = 0;
+        last = pulls;
+      }
+    }
+
+    // Without backpressure the producer runs to CAP_CHUNKS and closes; with
+    // it, pulls plateau at roughly the kernel send/recv buffer. The exact
+    // count depends on per-platform socket sizing, so assert the property
+    // (plateau well below the cap) rather than a hard number.
+    expect(producedEverything).toBe(false);
+    expect(pulls).toBeLessThan(CAP_CHUNKS / 2);
+  } finally {
+    socket.destroy();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32469
+it("resumes a backpressured Response(ReadableStream) once the client drains and delivers the full body", async () => {
+  const CHUNK = Buffer.alloc(256 * 1024, 66);
+  const TOTAL_CHUNKS = 512; // 128 MiB — well past any kernel socket buffer
+  let pulls = 0;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      let sent = 0;
+      const stream = new ReadableStream(
+        {
+          pull(controller) {
+            pulls++;
+            controller.enqueue(CHUNK);
+            if (++sent === TOTAL_CHUNKS) controller.close();
+          },
+        },
+        { highWaterMark: 1 },
+      );
+      return new Response(stream);
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
+  const { promise: bodyDone, resolve: onBodyDone } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+  let received = 0;
+  socket.on("data", chunk => {
+    received += chunk.length;
+  });
+  socket.on("close", () => onBodyDone());
+  socket.once("data", () => {
+    socket.pause();
+    onStalled();
+  });
+
+  try {
+    await stalled;
+
+    // Wait for the producer to pause under backpressure.
+    let last = -1;
+    let stable = 0;
+    while (stable < 8 && pulls < TOTAL_CHUNKS) {
+      await Bun.sleep(25);
+      if (pulls === last) stable++;
+      else {
+        stable = 0;
+        last = pulls;
+      }
+    }
+    // The producer must have paused well before the full body.
+    expect(pulls).toBeLessThan(TOTAL_CHUNKS);
+
+    // Now drain the client and confirm the producer resumes and completes.
+    socket.resume();
+    await bodyDone;
+
+    expect(pulls).toBe(TOTAL_CHUNKS);
+    // received includes HTTP head + chunked framing, so just assert the full
+    // payload made it through.
+    expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
+  } finally {
+    socket.destroy();
+  }
+});

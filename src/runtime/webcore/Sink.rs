@@ -704,7 +704,14 @@ impl<T: JsSinkAbi> SinkSignal<T> {
             _o: Option<crate::webcore::BlobSizeType>,
         ) {
             let cpp = JSValue::from_encoded(this as usize);
-            T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED);
+            // `${abi}__onReady` calls m_onPull through the bare
+            // `AsyncContextFrame::call` overload (no TopExceptionScope of its
+            // own); see `close` above. Same wrapper.
+            // TODO: this should be got from a parameter / properly propagate exception upwards.
+            let global = ::bun_jsc::virtual_machine::VirtualMachine::get().global();
+            let _ = ::bun_jsc::call_check_slow(global, || {
+                T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
+            });
         }
         fn start(_this: *mut c_void) {}
         Signal {

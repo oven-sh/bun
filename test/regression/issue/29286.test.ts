@@ -9,7 +9,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-test("issue #29286: --bytecode --format=esm --outdir emits .jsc sidecar", async () => {
+test.concurrent("issue #29286: --bytecode --format=esm --outdir emits .jsc sidecar", async () => {
   using dir = tempDir("29286", {
     "index.ts": `
       async function getConfig() {
@@ -71,7 +71,7 @@ test("issue #29286: --bytecode --format=esm --outdir emits .jsc sidecar", async 
   });
 });
 
-test("issue #29286: Bun.build({ bytecode: true, format: 'esm' }) no longer requires compile", async () => {
+test.concurrent("issue #29286: Bun.build({ bytecode: true, format: 'esm' }) no longer requires compile", async () => {
   using dir = tempDir("29286-api", {
     "entry.ts": `
         const x = await Promise.resolve(42);
@@ -119,7 +119,7 @@ test("issue #29286: Bun.build({ bytecode: true, format: 'esm' }) no longer requi
 // its own .jsc sidecar; running an entry loads that chunk at runtime. Covers
 // the multi-chunk ESM bytecode path (code splitting + sidecar load), which the
 // single-file cases above don't reach.
-test("issue #29286: shared ESM bytecode chunk loads and runs", async () => {
+test.concurrent("issue #29286: shared ESM bytecode chunk loads and runs", async () => {
   using dir = tempDir("29286-split", {
     "shared.ts": `export const value = await Promise.resolve(42);`,
     "a.ts": `import { value } from "./shared.ts"; console.log("a:", value);`,
@@ -154,7 +154,7 @@ test("issue #29286: shared ESM bytecode chunk loads and runs", async () => {
   const sharedJsc = entries.find(f => f.endsWith(".jsc") && !/^(a|b)\.js\.jsc$/.test(f));
   expect(sharedJsc).toBeDefined();
 
-  // Running the entry pulls the shared chunk through the async path.
+  // Running the entry loads the shared chunk's .jsc sidecar at runtime.
   await using run = Bun.spawn({
     cmd: [bunExe(), join(distDir, "a.js")],
     env: bunEnv,

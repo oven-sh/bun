@@ -238,9 +238,12 @@ void MessagePortPipe::wakePeerForClose(uint8_t side)
     ASSERT(side < 2);
     // Called by MessagePort::close() (a real close() from script) after this
     // side has been marked Closed: schedule a drain on the entangled peer so
-    // it can dispatch its 'close' event after its queued messages drain. Must
-    // NOT be called from ~MessagePort / context teardown — the scheduled task
-    // would never run (the event loop is gone) and would leak.
+    // it can dispatch its 'close' event after its queued messages drain.
+    // Deliberately reached only from an explicit close() (gated on
+    // canRunScript()), not from ~MessagePort / context teardown: firing the
+    // peer's 'close' on teardown/GC is intentionally not supported, and
+    // hasPendingActivity() matches by not pinning a port whose peer died that
+    // way (no drain is scheduled for it).
     //
     // If a drain is already in flight on the peer it will observe this side's
     // Closed bit and dispatch close itself, so only schedule when none is.

@@ -115,9 +115,10 @@ void MessagePort::close()
 
     // Wake the entangled peer so it can fire its own 'close' event after
     // draining any queued messages — but only for a real close() from script.
-    // During context teardown (contextDestroyed) or GC (~MessagePort calls the
-    // pipe directly, bypassing this method), the scheduled drain task would
-    // never run and would leak, so gate it on the context being able to run JS.
+    // A close via context teardown (contextDestroyed) or GC (~MessagePort calls
+    // the pipe directly, bypassing this method) deliberately does NOT fire the
+    // peer's 'close': hasPendingActivity() correspondingly does not pin a port
+    // whose peer died that way. Gate on the context being able to run JS.
     if (canRunScript())
         m_pipe->wakePeerForClose(m_side);
 
@@ -222,11 +223,12 @@ void MessagePort::dispatchCloseEventFromPeer()
     if (m_isDetached || m_closeEventDispatched || !m_hasCloseEventListener)
         return;
 
-    // Runs JS (the close handler), which may drop the last external ref.
+    // Runs JS (the close handler), which may drop the last external ref. The
+    // caller (the drain) holds a RefPtr and we take our own Ref here, so the
+    // C++ object survives; the JS wrapper is rooted for the handler by the
+    // event's target on the JS stack (same GC tolerance as the message path).
     Ref protectedThis { *this };
-    // Stop message delivery and make a re-entrant close() a no-op. The close
-    // branch of hasPendingActivity() (driven by pipe state + the listener
-    // flag) keeps the wrapper alive across the dispatch below.
+    // Stop message delivery and make a re-entrant close() a no-op.
     m_isDetached = true;
 
     dispatchCloseEvent();

@@ -574,10 +574,12 @@ describe("MessagePort close event", () => {
         ch2.port1.close();
       }
       await settle();
-      // ~8 MessagePorts created per iteration; when leaking, dozens-to-hundreds
-      // are pinned. Allow slack for conservative stack scanning.
+      // 10 MessagePorts per iteration; each of the four scenarios guards one
+      // port, so regressing a single scenario pins ~N of them. Threshold N/2
+      // catches that while staying well above the single-digit residue that
+      // conservative stack scanning leaves after settle().
       const leaked = count() - base;
-      if (leaked > N) { console.error("leaked " + leaked + " MessagePort"); process.exit(1); }
+      if (leaked > N / 2) { console.error("leaked " + leaked + " MessagePort"); process.exit(1); }
       console.log("OK");
     `);
       expect(stderr).toBe("");

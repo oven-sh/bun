@@ -9,6 +9,7 @@
 #include <JavaScriptCore/JSCConfig.h>
 #include <JavaScriptCore/VM.h>
 #include <wtf/Condition.h>
+#include <wtf/Scope.h>
 #include "ScriptExecutionContext.h"
 #include "debug-helpers.h"
 #include "BunInjectedScriptHost.h"
@@ -231,6 +232,16 @@ public:
             connections.appendVector(inspectorConnections->get(global->scriptExecutionContext()->identifier()));
         }
 
+        // Mark these connections as paused so the debugger thread skips firing a VM
+        // trap for messages that runWhilePaused will service anyway (see
+        // interruptInspectedThreadIfBusy). A depth counter keeps nested pauses correct.
+        for (auto* connection : connections)
+            connection->runWhilePausedDepth.fetch_add(1);
+        auto clearPausedDepth = WTF::makeScopeExit([&] {
+            for (auto* connection : connections)
+                connection->runWhilePausedDepth.fetch_sub(1);
+        });
+
         for (auto* connection : connections) {
             if (connection->status == ConnectionStatus::Pending) {
                 connection->connect();
@@ -440,10 +451,11 @@ public:
         // Already paused: runWhilePaused services messages once notifyPausedThread()
         // wakes it, so the thread is parked in C++ rather than running JS. Firing a
         // trap here would just leave the SignalSender polling (every 1ms) for a
-        // safepoint that won't be reached until the debugger resumes. The isPaused()
-        // read races with the JS thread but is only a best-effort optimization: the
-        // posted task and notifyPausedThread() already cover both states.
-        if (auto* debugger = inspectedGlobalObject->debugger(); debugger && debugger->isPaused())
+        // safepoint that won't be reached until the debugger resumes. This is a
+        // best-effort optimization (the posted task and notifyPausedThread() cover
+        // both states); the counter is atomic because it is written by the JS thread
+        // in runWhilePaused and read here on the debugger thread.
+        if (runWhilePausedDepth.load() > 0)
             return;
 
         inspectedGlobalObject->vm().notifyNeedShellTimeoutCheck();
@@ -462,6 +474,10 @@ public:
     JSC::Strong<JSC::Unknown> jsBunDebuggerOnMessageFunction {};
 
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
+
+    // Nonzero while the inspected thread is parked in runWhilePaused. Written by
+    // the JS thread, read by the debugger thread in interruptInspectedThreadIfBusy.
+    std::atomic<uint32_t> runWhilePausedDepth { 0 };
 
     bool unrefOnDisconnect = false;
 

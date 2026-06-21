@@ -165,10 +165,10 @@ test("Debugger.pause interrupts a busy loop and reports call frames", async () =
           () =>
             reject(
               new Error(
-                "Debugger.pause produced no Debugger.paused event within 10s (busy loop was never interrupted)",
+                "Debugger.pause produced no Debugger.paused event within 4s (busy loop was never interrupted)",
               ),
             ),
-          10000,
+          4000,
         );
       }),
     ]).finally(() => clearTimeout(pauseTimer));
@@ -195,4 +195,4 @@ test("Debugger.pause interrupts a busy loop and reports call frames", async () =
     proc.kill();
     await proc.exited.catch(() => {});
   }
-}, 30000);
+});

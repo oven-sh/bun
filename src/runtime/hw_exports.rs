@@ -102,8 +102,7 @@ pub fn set_override_module_run_main_promise(
     promise: *mut JSInternalPromise,
 ) {
     if vm.pending_internal_promise.is_none() {
-        vm.pending_internal_promise = Some(promise);
-        vm.pending_internal_promise_is_protected = false;
+        vm.set_pending_internal_promise(Some(promise));
     }
 }
 

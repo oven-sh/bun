@@ -661,8 +661,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     unsafe { (*vm).is_in_preload = true };
     // Note: copy the raw ptr into a guard-owned local so the defer body
-    // doesn't borrow the fn param — later `(*vm).pending_internal_promise = …`
-    // would otherwise alias the guard's capture.
+    // doesn't borrow the fn param — later `(*vm)` accesses would otherwise
+    // alias the guard's capture.
     let vm_for_guard = vm;
     scopeguard::defer! {
         // SAFETY: per fn contract.
@@ -774,9 +774,9 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             }
         };
 
-        // SAFETY: per fn contract.
-        unsafe { (*vm).pending_internal_promise = Some(promise) };
-        let _protected = JSValue::from_cell(promise).protected();
+        // SAFETY: per fn contract — short-lived `&mut *vm` for the field store;
+        // `promise` is a live JSC heap cell from `import_ptr` just above.
+        unsafe { (*vm).set_pending_internal_promise(Some(promise)) };
 
         // ── wait ────────────────────────────────────────────────────────
         // HMR `pending_internal_promise` swap loop; non-watcher path uses
@@ -825,7 +825,6 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         if unsafe { &*promise }.status() == PromiseStatus::Rejected {
             return Ok(promise);
         }
-        // `_protected` drops here → unprotect.
     }
 
     // Under --isolate each test file gets

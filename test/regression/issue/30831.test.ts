@@ -233,9 +233,9 @@ test.skipIf(isWindows)("a destroyed subprocess stdout does not leak a stale fd t
   // The destroyed stream must not be accepted as stdio with that stale fd:
   // `extractStreamFd` now returns undefined, so `spawn` raises the
   // unsupported-stream-stdio error instead of `dup2`'ing a closed fd.
-  expect(() =>
-    spawn(bunExe(), ["-e", ""], { stdio: [pSource.stdout!, "pipe", "ignore"], env: bunEnv }),
-  ).toThrow(/stream\.Readable stdio/);
+  expect(() => spawn(bunExe(), ["-e", ""], { stdio: [pSource.stdout!, "pipe", "ignore"], env: bunEnv })).toThrow(
+    /stream\.Readable stdio/,
+  );
 });
 
 test.skipIf(isWindows)("spawnSync does not brick a stream passed as stdio", async () => {

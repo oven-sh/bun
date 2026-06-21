@@ -3886,6 +3886,12 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
             rc
         );
     }
+    // Another handle already set the delete disposition; the file is on its
+    // way out, which is what the caller asked for. Checked here so it covers
+    // both the FileDispositionInformationEx result and the legacy fallback.
+    if rc == windows::ntstatus::DELETE_PENDING || rc == windows::ntstatus::FILE_DELETED {
+        return bun_sys::Result::success();
+    }
     if let Some(err) = bun_sys::Result::<()>::errno_sys(rc, bun_sys::Tag::NtSetInformationFile) {
         return err;
     }

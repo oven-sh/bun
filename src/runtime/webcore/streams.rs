@@ -1475,15 +1475,24 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         let mut total_written: u64 = 0;
 
-        // do not write more than available
-        // if we do, it will cause this to be delayed until the next call, each time
-        // TODO: should we break it in smaller chunks?
-        let to_write = (write_offset as BlobSizeType).min(self.buffer.len() as BlobSizeType - 1);
+        // try_end resend vs streaming-write drain:
+        // - end_len > 0: the buffer holds the body uWS partially sent via
+        //   try_end; `write_offset` is the resume point into that same buffer.
+        // - end_len == 0: the buffer holds *new* data the user queued while the
+        //   socket was backed up (e.g. write(small) after a write(big) that hit
+        //   backpressure). uWS already owns the earlier bytes; send from 0.
+        //   `write_offset` is uWS's cumulative response count here and is not a
+        //   valid index into our buffer.
+        let chunk_start = if self.end_len > 0 {
+            // do not write more than available
+            (write_offset as BlobSizeType).min(self.buffer.len() as BlobSizeType - 1) as usize
+        } else {
+            0
+        };
         // Capture the chunk length before send.
         // `send_readable` re-slices the buffer at call time, which observes any
         // mutation send's internals perform. The length is used only for
         // `total_written` and the empty check.
-        let chunk_start = to_write as usize;
         let chunk_len = self.readable_slice().len().saturating_sub(chunk_start);
         // if we have nothing to write, we are done
         if chunk_len == 0 {
@@ -1606,6 +1615,14 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         if let Some(prom) = self.pending_flush {
+            // The promise was parked by `writable_result()` on a prior write,
+            // so a streaming drain is already pending. Any data buffered since
+            // then (below highWaterMark) still needs to reach uWS before we
+            // hand the same promise back; otherwise it would sit here until
+            // `on_writable` fires.
+            if self.end_len == 0 && !self.readable_slice().is_empty() {
+                let _ = self.send_readable(0);
+            }
             // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
             return bun_sys::Result::Ok(JSPromise::opaque_ref(prom).to_js());
         }

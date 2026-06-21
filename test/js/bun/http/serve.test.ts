@@ -2694,3 +2694,62 @@ it("applies backpressure to a Response(async generator) body when the client sta
     socket.destroy();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/32469
+it("type: direct stream — small write queued under backpressure is delivered intact after drain", async () => {
+  const BIG = Buffer.alloc(512 * 1024, 65);
+  const SMALL = Buffer.from("the-tail-marker\n");
+  let hitBackpressure = false;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          // Drive the socket into backpressure via the fast path (chunk ≥
+          // highWaterMark goes straight to uWS), then queue a small chunk
+          // below highWaterMark — it lands in the sink's local buffer while
+          // pending_flush is already parked.
+          for (let i = 0; i < 256 && !hitBackpressure; i++) {
+            const r = controller.write(BIG);
+            if (r && typeof r.then === "function") hitBackpressure = true;
+          }
+          controller.write(SMALL);
+          await controller.flush(true);
+          await controller.end();
+        },
+      } as any);
+      return new Response(stream);
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
+  const { promise: bodyDone, resolve: onBodyDone } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+  const chunks: Buffer[] = [];
+  socket.on("data", c => chunks.push(c));
+  socket.on("close", () => onBodyDone());
+  socket.once("data", () => {
+    socket.pause();
+    onStalled();
+  });
+
+  try {
+    await stalled;
+    // Hold the client until the producer has parked on backpressure.
+    while (!hitBackpressure) await Bun.sleep(5);
+    socket.resume();
+    await bodyDone;
+
+    expect(hitBackpressure).toBe(true);
+    const body = Buffer.concat(chunks).toString("latin1");
+    // on_writable resending from uWS's cumulative write_offset would drop the
+    // head of SMALL; it must arrive intact and contiguous.
+    expect(body.includes(SMALL.toString("latin1"))).toBe(true);
+  } finally {
+    socket.destroy();
+  }
+});

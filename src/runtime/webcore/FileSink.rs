@@ -976,31 +976,13 @@ impl FileSink {
         this
     }
 
-    /// Map `to_result(Pending)` for `write*`: the input bytes are buffered in
-    /// the writer's `outgoing` queue, so the producer can continue. Returning
-    /// the WritablePending promise made Windows pipe writes (always async via
-    /// uv_write) report a Promise on every call while POSIX returned a number
-    /// for the same path — and made readStreamIntoSink serialize every chunk
-    /// behind a libuv round-trip. A Promise from write() now means transport
-    /// backpressure (matching HTTPServerWritable); flush()/end() remain the
-    /// completion-await primitives. `to_result` still records the in-flight
-    /// state (keep-alive ref, pending bookkeeping) before this remap.
-    #[inline]
-    fn to_write_result(&self, write_result: WriteResult, accepted: usize) -> streams::Writable {
-        match self.to_result(write_result) {
-            streams::Writable::Pending(_) => streams::Writable::Owned(accepted as u64),
-            other => other,
-        }
-    }
-
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
-        let bytes = data.slice();
         // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
-        let rc = self.writer.with_mut(|w| w.write(bytes));
-        self.to_write_result(rc, bytes.len())
+        let rc = self.writer.with_mut(|w| w.write(data.slice()));
+        self.to_result(rc)
     }
 
     #[inline]
@@ -1012,20 +994,18 @@ impl FileSink {
         if self.done.get() {
             return streams::Writable::Done;
         }
-        let bytes = data.slice();
         // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
-        let rc = self.writer.with_mut(|w| w.write_latin1(bytes));
-        self.to_write_result(rc, bytes.len())
+        let rc = self.writer.with_mut(|w| w.write_latin1(data.slice()));
+        self.to_result(rc)
     }
 
     pub fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
-        let units = data.slice16();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
-        let rc = self.writer.with_mut(|w| w.write_utf16(units));
-        self.to_write_result(rc, units.len())
+        let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
+        self.to_result(rc)
     }
 
     pub fn end(&self, _err: Option<sys::Error>) -> sys::Result<()> {

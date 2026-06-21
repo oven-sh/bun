@@ -1,4 +1,5 @@
 use crate::lockfile::package::PackageColumns as _;
+use crate::update_request::Options::Enable;
 use bun_collections::VecExt;
 use core::fmt;
 use std::borrow::Cow;
@@ -373,7 +374,9 @@ fn update_package_json_and_install_with_manager_with_updates(
             // actually removed, so the registry-pinned case leaves package.json untouched.
             if any_changes {
                 manager.options.do_.set(Do::WRITE_PACKAGE_JSON, true);
-                manager.options.do_.set(Do::SAVE_LOCKFILE, true);
+                if !manager.options.enable.contains(Enable::FROZEN_LOCKFILE) {
+                    manager.options.do_.set(Do::SAVE_LOCKFILE, true);
+                }
             }
         }
 

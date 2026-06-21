@@ -925,11 +925,11 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
 
     for (var i = 0, values = many.value, length = many.value.length; i < length; i++) {
       // The native sink returns its pending-flush Promise when the transport
-      // is backed up; await it (only if still pending — an already-drained
-      // socket resolves it before we get here) so we stop pulling until the
-      // socket catches up.
+      // is backed up; await it (only when not already fulfilled — skipping the
+      // microtask on the fast path while still propagating a rejection into
+      // the catch below) so we stop pulling until the socket catches up.
       var wrote = sink.write(values[i]);
-      if ($isPromise(wrote) && $isPromisePending(wrote)) {
+      if ($isPromise(wrote) && !$isPromiseFulfilled(wrote)) {
         await wrote;
         // The sink's close path resolves the same promise; stop writing into a
         // dead sink.
@@ -952,7 +952,7 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       }
 
       var wrote = sink.write(value);
-      if ($isPromise(wrote) && $isPromisePending(wrote)) {
+      if ($isPromise(wrote) && !$isPromiseFulfilled(wrote)) {
         await wrote;
         if (state.didClose) return sink.end();
       }
@@ -1887,7 +1887,16 @@ export function readableStreamFromAsyncIterator(target, fn) {
         }
 
         if (!$isUndefinedOrNull(value)) {
-          controller.write(value);
+          // The native sink returns its pending-flush Promise when the
+          // transport is backed up; await it (only when not already fulfilled)
+          // so we stop pulling until the socket catches up. A rejected promise
+          // from write() throws into the catch path below.
+          var wrote = controller.write(value);
+          if ($isPromise(wrote) && !$isPromiseFulfilled(wrote)) {
+            clearImmediate(immediateTask);
+            immediateTask = undefined;
+            await wrote;
+          }
         }
       }
     } catch (e) {

@@ -1961,10 +1961,11 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         if !self.done {
             self.unregister_auto_flusher();
             if let Some(res) = self.any_res() {
-                // Detach the handlers this sink registered before flushing.
-                // onAborted/onData belong to RequestContext, not the sink —
-                // clearing them here would drop the holder's pointer (and on
-                // H3, where the stream is freed after FIN, leave it dangling).
+                // The body is finished; drop the drain callback so the owning
+                // RequestContext is not re-entered for a sink that will never
+                // write again. onAborted/onData stay installed — clearing them
+                // here would drop the holder's pointer (and on H3, where the
+                // stream is freed after FIN, leave it dangling).
                 res.clear_on_writable();
             }
             let _ = self.flush_no_wait();

@@ -2490,8 +2490,10 @@ it("applies backpressure to a Response(ReadableStream) body when the client stal
     // Without backpressure the producer runs to CAP_CHUNKS and closes; with
     // it, pulls plateau at roughly the kernel send/recv buffer. The exact
     // count depends on per-platform socket sizing, so assert the property
-    // (plateau well below the cap) rather than a hard number.
+    // (plateau well below the cap) rather than a hard number. The lower bound
+    // proves pull() actually ran and was paused, not that nothing happened.
     expect(producedEverything).toBe(false);
+    expect(pulls).toBeGreaterThan(0);
     expect(pulls).toBeLessThan(CAP_CHUNKS / 2);
   } finally {
     socket.destroy();
@@ -2568,7 +2570,7 @@ it("resumes a backpressured Response(ReadableStream) once the client drains and 
 });
 
 // https://github.com/oven-sh/bun/issues/32469
-it("type: direct stream awaiting controller.flush(true) under backpressure does not re-enter pull", async () => {
+it("type: direct stream awaiting the write() backpressure promise does not re-enter pull", async () => {
   const CHUNK = Buffer.alloc(256 * 1024, 67);
   const TOTAL_CHUNKS = 512; // 128 MiB
   let pullEntries = 0;
@@ -2631,11 +2633,63 @@ it("type: direct stream awaiting controller.flush(true) under backpressure does 
     socket.resume();
     await bodyDone;
 
-    // pull must have been entered exactly once — the drain signal resolves the
-    // flush(true) promise, it must not also re-invoke the user's pull.
+    // pull must have been entered exactly once — on drain the sink resolves
+    // the write() backpressure promise, it must not also re-invoke pull.
     expect(pullEntries).toBe(1);
     expect(writes).toBe(TOTAL_CHUNKS);
     expect(received).toBeGreaterThanOrEqual(TOTAL_CHUNKS * CHUNK.length);
+  } finally {
+    socket.destroy();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32469
+it("applies backpressure to a Response(async generator) body when the client stalls", async () => {
+  const CHUNK = Buffer.alloc(64 * 1024, 68);
+  const CAP_CHUNKS = 2048;
+  let yields = 0;
+  let producedEverything = false;
+
+  using server = serve({
+    port: 0,
+    fetch() {
+      async function* body() {
+        while (yields < CAP_CHUNKS) {
+          yields++;
+          yield CHUNK;
+        }
+        producedEverything = true;
+      }
+      return new Response(body());
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
+  socket.on("error", onSocketError);
+  socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
+  socket.once("data", () => {
+    socket.pause();
+    onStalled();
+  });
+
+  try {
+    await stalled;
+
+    let last = -1;
+    let stable = 0;
+    while (!producedEverything && stable < 12) {
+      await Bun.sleep(25);
+      if (yields === last) stable++;
+      else {
+        stable = 0;
+        last = yields;
+      }
+    }
+
+    expect(producedEverything).toBe(false);
+    expect(yields).toBeGreaterThan(0);
+    expect(yields).toBeLessThan(CAP_CHUNKS / 2);
   } finally {
     socket.destroy();
   }

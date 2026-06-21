@@ -169,8 +169,9 @@ async function assertSimdMatchesScalar(
 
 describe.concurrent("SourceMap SIMD mappings decode", () => {
   test("all 1-char 4-field segments (the 76% case)", async () => {
-    // 200 segments of "XXXX," on one line so the SIMD path sees many full
-    // blocks. Deltas cycle through the whole 1-char VLQ range.
+    // 200 segments of (4 one-char fields + comma) on one line so the SIMD
+    // path sees many full blocks. Deltas cycle through the whole 1-char
+    // VLQ range.
     const segs: number[][] = [];
     for (let i = 0; i < 200; i++) {
       segs.push([1 + (i % 14), 0, i % 3, (i % 5) + 1]);

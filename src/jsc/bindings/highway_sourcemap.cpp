@@ -413,8 +413,9 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
     alignas(64) uint8_t sextets[64 + 16] = {};
     alignas(64) int8_t deltas[64];
 
-    // A block that is wall-to-wall "XXXX," (4 one-char fields + comma) has
-    // its delimiter bits at positions 4,9,14,.. and no other structure.
+    // A block that is wall-to-wall 5-byte segments (4 one-char fields +
+    // comma) has its delimiter bits at positions 4,9,14,.. and no other
+    // structure.
     // `kComma5` precomputes that pattern; matching it lets the whole block
     // be processed as `N/5` segments in a tight loop with no per-segment
     // branches. Only the first kSeg5*5 bytes are constrained; the trailing
@@ -457,8 +458,8 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             hn::Store(SignMagI8(d, sx), hn::RebindToSigned<decltype(d)>(), deltas);
         }
 
-        // Uniform-block fast path: every segment is a 4-field, all-1-char
-        // "XXXX," and the block starts on a segment boundary. This is the
+        // Uniform-block fast path: every segment is 4 one-char fields +
+        // comma and the block starts on a segment boundary. This is the
         // measured 76% case on bundler output, and large maps have long
         // runs of it; the serial accumulate is a straight dependency
         // chain of adds with one fused range check at the end.

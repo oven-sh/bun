@@ -38,7 +38,33 @@ type Entry = {
 };
 
 // Spawn a child that constructs the SourceMap and dumps findEntry results at
-// every probe point. The child runs with or without the SIMD path.
+// every probe point. The child runs with or without the SIMD path. The
+// payload (which can be tens of KiB) is piped over stdin rather than
+// embedded in `-e`, since Windows caps the command line at ~32 KiB.
+const dumpScript = `
+  const { SourceMap } = require("node:module");
+  const { payload, probes } = await Bun.stdin.json();
+  let error = null;
+  let entries = [];
+  try {
+    const map = new SourceMap(payload);
+    for (const [l, c] of probes) {
+      const e = map.findEntry(l, c);
+      entries.push({
+        generatedLine: e.generatedLine ?? null,
+        generatedColumn: e.generatedColumn ?? null,
+        originalLine: e.originalLine ?? null,
+        originalColumn: e.originalColumn ?? null,
+        originalSource: e.originalSource ?? null,
+        name: e.name ?? null,
+      });
+    }
+  } catch (err) {
+    error = String(err);
+  }
+  process.stdout.write(JSON.stringify({ entries, error }));
+`;
+
 async function dumpMappings(
   mappings: string,
   sourcesLen: number,
@@ -48,30 +74,6 @@ async function dumpMappings(
 ): Promise<{ entries: Entry[]; error: string | null; debug: string }> {
   const sources = Array.from({ length: sourcesLen }, (_, i) => `s${i}.js`);
   const names = Array.from({ length: namesLen }, (_, i) => `n${i}`);
-  const script = `
-    const { SourceMap } = require("node:module");
-    const payload = ${JSON.stringify({ version: 3, sources, names, mappings })};
-    const probes = ${JSON.stringify(probes)};
-    let error = null;
-    let entries = [];
-    try {
-      const map = new SourceMap(payload);
-      for (const [l, c] of probes) {
-        const e = map.findEntry(l, c);
-        entries.push({
-          generatedLine: e.generatedLine ?? null,
-          generatedColumn: e.generatedColumn ?? null,
-          originalLine: e.originalLine ?? null,
-          originalColumn: e.originalColumn ?? null,
-          originalSource: e.originalSource ?? null,
-          name: e.name ?? null,
-        });
-      }
-    } catch (err) {
-      error = String(err);
-    }
-    process.stdout.write(JSON.stringify({ entries, error }));
-  `;
   const env = { ...bunEnv };
   if (disableSimd) {
     env.BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP = "1";
@@ -82,8 +84,9 @@ async function dumpMappings(
   // verify the SIMD path actually fired (see assertSimdMatchesScalar).
   if (isDebug) env.BUN_DEBUG_SourceMap = "1";
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
+    cmd: [bunExe(), "-e", dumpScript],
     env,
+    stdin: new Blob([JSON.stringify({ payload: { version: 3, sources, names, mappings }, probes })]),
     stdout: "pipe",
     stderr: "pipe",
   });

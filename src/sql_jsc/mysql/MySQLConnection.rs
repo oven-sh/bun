@@ -272,7 +272,16 @@ impl MySQLConnection {
     }
 
     pub fn close(&mut self) {
-        self.socket.close(uws::CloseKind::Normal);
+        // Closing a TLS socket synchronously dispatches on_handshake and
+        // on_close, both of which re-enter fail_with_js_value → close().
+        // Detach the stored handle first and close through a local copy so
+        // the re-entrant call sees a closed socket, and so nothing reads
+        // through the stored pointer after the us_socket_t is freed.
+        let socket = core::mem::replace(&mut self.socket, Socket::SocketTcp(uws::SocketTCP::detached()));
+        if !socket.is_closed() && !self.flags.contains(ConnectionFlags::CLOSE_INITIATED) {
+            self.flags.insert(ConnectionFlags::CLOSE_INITIATED);
+            socket.close(uws::CloseKind::Normal);
+        }
         self.write_buffer = OffsetByteList::default();
     }
 

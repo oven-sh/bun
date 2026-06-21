@@ -1343,6 +1343,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _: i32,
         _: Option<*mut c_void>,
     ) {
+        // The us_socket_t is freed at the end of this loop iteration; drop
+        // the stored handle so nothing can read through it afterwards.
+        this.socket
+            .set(Socket::SocketTcp(uws::SocketTCP::detached()));
         this.on_close();
     }
 
@@ -1525,11 +1529,20 @@ impl PostgresSQLConnection {
     fn ref_and_close(&self, js_reason: Option<JSValue>) {
         // refAndClose is always called when we wanna to disconnect or when we are closed
 
-        if !self.socket.get().is_closed() {
+        // Closing a TLS socket synchronously dispatches on_handshake (when the
+        // handshake never completed) and then on_close, both of which re-enter
+        // fail_with_js_value. When the outer entry was disconnect() the status
+        // is Disconnected, not Failed, so that guard does not trip and we
+        // reach a nested ref_and_close. The on_handshake dispatch runs before
+        // the C layer flips is_closed, so is_closed() alone is not sufficient;
+        // CLOSE_INITIATED is set once and never cleared.
+        let socket = *self.socket.get();
+        if !socket.is_closed() && !self.flags.get().contains(ConnectionFlags::CLOSE_INITIATED) {
+            self.update_flags(|f| f.insert(ConnectionFlags::CLOSE_INITIATED));
             // event loop need to be alive to close the socket
             self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
             // will unref on socket close
-            self.socket.get().close(uws::CloseKind::Normal);
+            socket.close(uws::CloseKind::Normal);
         }
 
         // cleanup requests

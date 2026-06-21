@@ -511,7 +511,7 @@ pub use stack_fallback::{ArenaPtr, StackFallback};
 pub mod mimalloc_arena;
 
 pub mod ast_alloc;
-pub use ast_alloc::{AstAlloc, AstVec};
+pub use ast_alloc::{AstAlloc, AstBox, AstVec, ast_box};
 mod hashbrown_bridge;
 /// Re-export so `bun_collections` can name the polyfill trait in
 /// `StringHashMap`'s `A` bound without taking its own direct dep on

@@ -252,14 +252,18 @@ impl LinkerContext<'_> {
             // majority of parts (it only fills for `import * as ns`/enum
             // property accesses); skip the `to_vec()` alloc-round-trip in
             // that case.
-            let prop_use_refs: Vec<Ref> = if part.import_symbol_property_uses.is_empty() {
-                Vec::new()
-            } else {
-                part.import_symbol_property_uses.keys().to_vec()
+            let prop_use_refs: Vec<Ref> = match part.import_symbol_property_uses.as_ref() {
+                None => Vec::new(),
+                Some(m) => m.keys().to_vec(),
             };
             for ref_ in &prop_use_refs {
                 // Re-fetch each iteration to avoid overlapping &mut.
-                let properties: *const _ = part.import_symbol_property_uses.get(ref_).unwrap();
+                let properties: *const _ = part
+                    .import_symbol_property_uses
+                    .as_ref()
+                    .unwrap()
+                    .get(ref_)
+                    .unwrap();
                 let use_: &mut SymbolUse = part.symbol_uses.get_ptr_mut(ref_).unwrap();
 
                 // Rare path: this import is a TypeScript enum

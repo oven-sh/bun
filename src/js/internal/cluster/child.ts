@@ -144,7 +144,8 @@ function shared(message, { handle, indexesKey, index }, cb) {
 
 // Round-robin. Master distributes handles across workers.
 function rr(message, { indexesKey, index }, cb) {
-  if (message.errno) return cb(message.errno, null);
+  const errno = message.errno;
+  if (errno) return cb(errno, null);
 
   let key = message.key;
 

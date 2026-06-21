@@ -629,9 +629,6 @@ pub use bake_body::get_hmr_runtime;
 // NUL-terminated `&ZStr` form for JSC handoff; the bundler-side one is plain
 // `&[u8]`.)
 
-// `bake.UserOptions` — top-level JS-facing options struct. Full body (with
-// `from_js`) lives in the un-gated `bake_body.rs` draft and is re-exported
-// above; the keystone `(())` stub is gone now that `bake_body` compiles.
 pub use bake_body::StringRefList;
 
 // ══════════════════════════════════════════════════════════════════════════

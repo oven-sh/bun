@@ -195,7 +195,7 @@ impl BodyMixin for Request {
     }
 }
 
-// ─── un-gated header accessors & simple getters ─────────────────────────────
+// ─── header accessors & simple getters ──────────────────────────────────────
 impl Request {
     /// Inherent shim; `impl BodyMixin for Request` supplies the real trait method.
     #[inline]

@@ -59,7 +59,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text)?;
             name = Some(js_ast::LocRef {
                 loc: name_loc,
-                ref_: Some(ref_),
+                ref_,
             });
         }
 
@@ -142,7 +142,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::symbol::Kind::HoistedFunction
             };
 
-            n.ref_ = Some(p.declare_symbol(kind, n.loc, name_text)?);
+            n.ref_ = p.declare_symbol(kind, n.loc, name_text)?;
         }
         func.name = name;
 
@@ -183,7 +183,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut func = G::Fn {
             name,
             flags: initial_flags,
-            arguments_ref: None,
+            arguments_ref: js_ast::Ref::NONE,
             open_parens_loc: p.lexer.loc(),
             ..Default::default()
         };
@@ -357,16 +357,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // this if it wasn't already declared above because arguments are allowed to
         // be called "arguments", in which case the real "arguments" is inaccessible.
         if !p.current_scope().members.contains_key(arguments_str) {
-            func.arguments_ref = Some(
-                p.declare_symbol_maybe_generated::<false>(
+            func.arguments_ref = p
+                .declare_symbol_maybe_generated::<false>(
                     js_ast::symbol::Kind::Arguments,
                     func.open_parens_loc,
                     arguments_str,
                 )
-                .expect("unreachable"),
-            );
-            p.symbols[func.arguments_ref.unwrap().inner_index() as usize].must_not_be_renamed =
-                true;
+                .expect("unreachable");
+            p.symbols[func.arguments_ref.inner_index() as usize].set_must_not_be_renamed(true);
         }
 
         p.lexer.expect(T::TCloseParen)?;
@@ -407,6 +405,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let mut temp_opts = opts;
         func.body = p.parse_fn_body(&mut temp_opts)?;
+        if p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression {
+            func.flags.insert(Flags::Function::HasReactHooksSuppression);
+            // next-line semantics: a suppression marks the enclosing top-level
+            // function and is consumed; it never reaches that function's siblings.
+            if p.fn_or_arrow_data_parse.is_top_level {
+                p.lexer.has_react_hooks_suppression_before = false;
+            }
+        }
 
         Ok(func)
     }
@@ -446,7 +452,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             name = Some(js_ast::LocRef {
                 loc: name_loc,
-                ref_: Some(ref_),
+                ref_,
             });
 
             p.lexer.next()?;
@@ -550,9 +556,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TOpenBrace {
             let body = p.parse_fn_body(data)?;
             p.after_arrow_body_loc = p.lexer.loc();
+            let has_react_hooks_suppression = p.lexer.has_react_hooks_suppression_before
+                || p.lexer.has_react_hooks_block_suppression;
+            if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
+                p.lexer.has_react_hooks_suppression_before = false;
+            }
             return Ok(E::Arrow {
                 args: args_slice,
                 body,
+                has_react_hooks_suppression,
                 ..Default::default()
             });
         }
@@ -578,6 +590,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);
 
         p.pop_scope();
+        let has_react_hooks_suppression =
+            p.lexer.has_react_hooks_suppression_before || p.lexer.has_react_hooks_block_suppression;
+        if has_react_hooks_suppression && p.fn_or_arrow_data_parse.is_top_level {
+            p.lexer.has_react_hooks_suppression_before = false;
+        }
         Ok(E::Arrow {
             args: args_slice,
             prefer_expr: true,
@@ -585,6 +602,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc: arrow_loc,
                 stmts: bun_ast::StoreSlice::new_mut(stmts),
             },
+            has_react_hooks_suppression,
             ..Default::default()
         })
     }

@@ -301,12 +301,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     fn pfx_t_numeric_literal(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        let value = p.new_expr(
-            E::Number {
-                value: p.lexer.number,
-            },
-            loc,
-        );
+        let value = p.new_expr(E::Number::new(p.lexer.number), loc);
         // p.checkForLegacyOctalLiteral()
         p.lexer.next()?;
         Ok(value)
@@ -565,10 +560,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 name = Some(js_ast::LocRef {
                     loc: p.lexer.loc(),
-                    ref_: Some(
-                        p.new_symbol(symbol::Kind::Other, name_text)
-                            .expect("unreachable"),
-                    ),
+                    ref_: p
+                        .new_symbol(symbol::Kind::Other, name_text)
+                        .expect("unreachable"),
                 });
                 p.lexer.next()?;
             }
@@ -631,10 +625,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 name = Some(js_ast::LocRef {
                     loc: p.lexer.loc(),
-                    ref_: Some(
-                        p.new_symbol(symbol::Kind::Other, name_text)
-                            .expect("unreachable"),
-                    ),
+                    ref_: p
+                        .new_symbol(symbol::Kind::Other, name_text)
+                        .expect("unreachable"),
                 });
                 p.lexer.next()?;
             }
@@ -802,7 +795,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(
             E::Array {
                 items: items_list,
-                comma_after_spread: comma_after_spread.to_nullable(),
+                comma_after_spread,
                 is_single_line,
                 close_bracket_loc,
                 ..Default::default()
@@ -892,11 +885,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(
             E::Object {
                 properties: properties_list,
-                comma_after_spread: if comma_after_spread.start > 0 {
-                    Some(comma_after_spread)
-                } else {
-                    None
-                },
+                comma_after_spread,
                 is_single_line,
                 close_brace_loc,
                 ..Default::default()

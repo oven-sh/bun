@@ -1127,7 +1127,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value: None,
             });
             if let Some(cn) = &class.class_name {
-                class_name_ref = cn.ref_.expect("infallible: ref bound");
+                class_name_ref = cn.ref_;
                 class_name_loc = cn.loc;
             } else {
                 class_name_ref = ecr;
@@ -1137,18 +1137,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && can_be_class_binding_name(name)
                 {
                     class.class_name = Some(js_ast::LocRef {
-                        ref_: Some(p.new_sym(js_ast::symbol::Kind::Other, name)),
+                        ref_: p.new_sym(js_ast::symbol::Kind::Other, name),
                         loc,
                     });
                 }
             }
         } else {
-            class_name_ref = class
-                .class_name
-                .as_ref()
-                .unwrap()
-                .ref_
-                .expect("infallible: ref bound");
+            class_name_ref = class.class_name.as_ref().unwrap().ref_;
             class_name_loc = class.class_name.as_ref().unwrap().loc;
         }
 
@@ -1814,7 +1809,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 loc,
             ));
-            dec_args.push(p.new_expr(E::Number { value: flags }, loc));
+            dec_args.push(p.new_expr(E::Number::new(flags), loc));
             dec_args.push(if is_private {
                 let priv_ref = match &key_expr.data {
                     js_ast::ExprData::EPrivateIdentifier(pi) => pi.ref_,
@@ -2041,7 +2036,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 loc,
             ));
-            cls_dec_args.push(p.new_expr(E::Number { value: 0.0 }, loc));
+            cls_dec_args.push(p.new_expr(E::Number::new(0.0), loc));
             cls_dec_args.push(p.new_expr(
                 E::EString {
                     data: class_name_str,
@@ -2084,7 +2079,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // 6: Static method extra initializers
         if !static_non_field_elements.is_empty() || has_static_private_methods {
             let i_e = p.use_ref(init_ref, loc);
-            let n_e = p.new_expr(E::Number { value: 3.0 }, loc);
+            let n_e = p.new_expr(E::Number::new(3.0), loc);
             let c_e = p.use_ref(class_name_ref, class_name_loc);
             suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
         }
@@ -2156,12 +2151,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         let mut run_args = BumpVec::with_capacity_in(4, bump);
                         run_args.push(p.use_ref(init_ref, loc));
-                        run_args.push(p.new_expr(
-                            E::Number {
-                                value: Self::init_flag(field_idx),
-                            },
-                            loc,
-                        ));
+                        run_args.push(p.new_expr(E::Number::new(Self::init_flag(field_idx)), loc));
                         run_args.push(p.use_ref(class_name_ref, class_name_loc));
                         if let Some(init_val) = entry.prop.initializer {
                             run_args.push(init_val);
@@ -2190,12 +2180,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         // Extra initializer
                         let i_e = p.use_ref(init_ref, loc);
-                        let n_e = p.new_expr(
-                            E::Number {
-                                value: Self::extra_init_flag(field_idx),
-                            },
-                            loc,
-                        );
+                        let n_e = p.new_expr(E::Number::new(Self::extra_init_flag(field_idx)), loc);
                         let c_e = p.use_ref(class_name_ref, class_name_loc);
                         suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
                     }
@@ -2206,7 +2191,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // 8: Class extra initializers
         if class_decorators_len > 0 {
             let i_e = p.use_ref(init_ref, loc);
-            let n_e = p.new_expr(E::Number { value: 1.0 }, loc);
+            let n_e = p.new_expr(E::Number::new(1.0), loc);
             let c_e = p.use_ref(class_name_ref, class_name_loc);
             suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
         }
@@ -2221,7 +2206,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // ── Phase 7: Constructor injection ───────────────
         if !instance_non_field_elements.is_empty() || has_instance_private_methods {
             let i_e = p.use_ref(init_ref, loc);
-            let n_e = p.new_expr(E::Number { value: 5.0 }, loc);
+            let n_e = p.new_expr(E::Number::new(5.0), loc);
             let t_e = p.new_expr(E::This {}, loc);
             let call = p.call_rt(loc, b"__runInitializers", &[i_e, n_e, t_e]);
             constructor_inject_stmts.push(p.s(
@@ -2250,12 +2235,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let mut run_args = BumpVec::with_capacity_in(4, bump);
                 run_args.push(p.use_ref(init_ref, loc));
-                run_args.push(p.new_expr(
-                    E::Number {
-                        value: Self::init_flag(field_idx),
-                    },
-                    loc,
-                ));
+                run_args.push(p.new_expr(E::Number::new(Self::init_flag(field_idx)), loc));
                 run_args.push(p.new_expr(E::This {}, loc));
                 if let Some(init_val) = entry.prop.initializer {
                     run_args.push(init_val);
@@ -2286,12 +2266,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // Extra initializer
                 let i_e = p.use_ref(init_ref, loc);
-                let n_e = p.new_expr(
-                    E::Number {
-                        value: Self::extra_init_flag(field_idx),
-                    },
-                    loc,
-                );
+                let n_e = p.new_expr(E::Number::new(Self::extra_init_flag(field_idx)), loc);
                 let t_e = p.new_expr(E::This {}, loc);
                 let call = p.call_rt(loc, b"__runInitializers", &[i_e, n_e, t_e]);
                 constructor_inject_stmts.push(p.s(

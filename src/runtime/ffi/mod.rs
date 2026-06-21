@@ -13,7 +13,6 @@ use bun_core::ZBox;
 
 use crate::jsc::JSGlobalObject;
 
-// ─── un-gated host-fn bodies (open/close/compile/generate_symbols) ───────────
 mod host_fns;
 pub use host_fns::{generate_symbol_for_function, generate_symbols};
 

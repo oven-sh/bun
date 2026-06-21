@@ -1096,6 +1096,14 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub ctx: Option<*mut c_void>,
 
     pub auto_flusher: AutoFlusher,
+
+    /// GC root for the JS controller cell while the streaming promise is
+    /// pending. While the JS reader loop is parked on a drain promise (no
+    /// pending `reader.read()` to root it via the stream), nothing else keeps
+    /// the controller — and so this sink — reachable. Set by RequestContext in
+    /// the pending-promise branch of `do_render_stream`; released when the
+    /// owning RequestContext drops this struct via `destroy()`.
+    pub controller_strong: crate::webcore::jsc::strong::Optional,
 }
 
 impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTTP3> {
@@ -1120,6 +1128,7 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
             on_first_write: None,
             ctx: None,
             auto_flusher: AutoFlusher::default(),
+            controller_strong: crate::webcore::jsc::strong::Optional::empty(),
         }
     }
 }
@@ -1324,8 +1333,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // unsent tail internally) and reports whether the socket is now backed
         // up. Track that so the JS writer can pause; the owning RequestContext
         // holds the on_writable registration and forwards the drain to
-        // `on_writable()` below (uWS shares one userData slot across
-        // onWritable/onAborted, so the sink cannot register its own).
+        // `on_writable()` below.
         if self.requested_end {
             res.end(buf, false);
             self.has_backpressure = false;

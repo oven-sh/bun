@@ -1510,11 +1510,11 @@ where
     /// Forward uWS's drain notification to the streaming response sink so it
     /// can resend any `try_end` tail and signal the JS writer to resume.
     ///
-    /// The sink cannot register `on_writable` itself: uWS's `HttpResponseData`
-    /// has a single `userData` slot shared by `onWritable`/`onAborted`/
-    /// `onTimeout`/`onData`, and that slot already holds this `RequestContext`
-    /// (via `set_abort_handler`). Registering through the context keeps every
-    /// handler agreeing on the user-data type.
+    /// Registered once in `do_render_stream` (pending-promise branch) for the
+    /// lifetime of the streaming response, so the sink itself never touches
+    /// uWS callback registration — it only tracks `has_backpressure`. uWS only
+    /// invokes the handler once its own send buffer has fully drained, so an
+    /// always-armed registration costs nothing on the no-backpressure path.
     pub(crate) fn on_writable_response_stream(
         this: *mut Self,
         write_offset: u64,
@@ -1526,7 +1526,9 @@ where
         // while the response (and so this context) is alive.
         let this = unsafe { &mut *this };
         if let Some(wrapper) = this.sink_mut() {
-            return wrapper.sink.on_writable(write_offset, core::ptr::null_mut());
+            return wrapper
+                .sink
+                .on_writable(write_offset, core::ptr::null_mut());
         }
         true
     }
@@ -2075,23 +2077,21 @@ where
                         }
 
                         // The sink only tracks `has_backpressure`; the
-                        // on_writable registration lives here so it shares the
-                        // RequestContext userData with onAborted (uWS has one
-                        // slot for both — see `on_writable_response_stream`).
+                        // on_writable registration lives here so it is armed
+                        // once for the response's lifetime instead of toggled
+                        // on every write — see `on_writable_response_stream`.
                         resp.on_writable(
-                            |this, off, resp| {
-                                Self::on_writable_response_stream(this, off, resp)
-                            },
+                            |this, off, resp| Self::on_writable_response_stream(this, off, resp),
                             std::ptr::from_mut::<Self>(this),
                         );
-                        // Root the controller cell while we own it. While the
-                        // JS reader loop is parked on a drain promise (no
-                        // pending `reader.read()` to root it via the stream),
-                        // nothing else keeps the controller — and so the sink —
-                        // alive. `JSSink::detach` (in handle_resolve_stream /
-                        // handle_reject_stream) drops this protection.
+                        // Root the controller cell while we own the sink: see
+                        // `HTTPServerWritable::controller_strong`. Released
+                        // when `destroy_sink` drops the box.
                         if let Some(ptr) = response_stream.sink.signal.ptr {
-                            JSValue::from_encoded(ptr.as_ptr() as usize).protect();
+                            response_stream.sink.controller_strong = jsc::strong::Optional::create(
+                                JSValue::from_encoded(ptr.as_ptr() as usize),
+                                global_this,
+                            );
                         }
 
                         // TODO: should this timeout?

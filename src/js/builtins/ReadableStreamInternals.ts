@@ -879,37 +879,48 @@ export function assignStreamIntoResumableSink(stream, sink) {
   }
 }
 
+// Bound (via `this`) to readStreamIntoSink's per-request state object so the
+// callbacks the native sink stores in m_onPull/m_onClose hold only that small
+// state, not the whole readStreamIntoSink activation. The native sink fires
+// the drain callback (signal.ready -> m_onPull) once the socket has room
+// again; resolving the parked capability resumes the read loop. The close
+// callback resumes the same waiter so an abort while paused does not hang.
+export function readStreamIntoSinkOnDrain(this: { drainCapability: any }) {
+  var cap = this.drainCapability;
+  if (cap) {
+    this.drainCapability = undefined;
+    cap.resolve.$call();
+  }
+}
+
+export function readStreamIntoSinkOnClose(
+  this: { drainCapability: any; didThrow: boolean; didClose: boolean },
+  stream,
+  reason,
+) {
+  var cap = this.drainCapability;
+  if (cap) {
+    this.drainCapability = undefined;
+    cap.resolve.$call();
+  }
+  if (!this.didThrow && !this.didClose && stream && stream.$state !== $streamClosed) {
+    $readableStreamCancel(stream, reason);
+  }
+}
+
 export async function readStreamIntoSink(stream: ReadableStream, sink, isNative) {
-  var didClose = false;
-  var didThrow = false;
   var started = false;
   const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark") || 0;
 
-  // The native sink fires onSinkDrain (via signal.ready -> m_onPull) once the
-  // socket has room again; resolve any parked drain waiter so the read loop
-  // resumes. onSinkClose also resumes so an abort while paused doesn't hang.
-  var drainCapability;
-  function onSinkDrain() {
-    var cap = drainCapability;
-    if (cap) {
-      drainCapability = undefined;
-      cap.resolve.$call();
-    }
-  }
-  function waitForDrain() {
-    drainCapability = $newPromiseCapability(Promise);
-    return drainCapability.promise;
-  }
+  // Mutable state the sink callbacks need; bound below so they don't capture
+  // this function's scope.
+  var state = { __proto__: null, didThrow: false, didClose: false, drainCapability: undefined };
+  var onSinkDrain = isNative ? $readStreamIntoSinkOnDrain.bind(state) : undefined;
+  var onSinkClose = isNative ? $readStreamIntoSinkOnClose.bind(state) : undefined;
 
   try {
     var reader = stream.getReader();
     var many = reader.readMany();
-    function onSinkClose(stream, reason) {
-      onSinkDrain();
-      if (!didThrow && !didClose && stream && stream.$state !== $streamClosed) {
-        $readableStreamCancel(stream, reason);
-      }
-    }
 
     if (many && $isPromise(many)) {
       // Some time may pass before this Promise is fulfilled. The sink may
@@ -923,7 +934,7 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       many = await many;
     }
     if (many.done) {
-      didClose = true;
+      state.didClose = true;
       return sink.end();
     }
 
@@ -936,29 +947,32 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       // A negative result means the bytes were accepted but the transport is
       // backed up; pause until the sink's drain signal fires.
       if (sink.write(values[i]) < 0 && isNative) {
-        await waitForDrain();
+        var cap = (state.drainCapability = $newPromiseCapability(Promise));
+        await cap.promise;
       }
     }
+    values = many = undefined;
 
     var streamState = $getByIdDirectPrivate(stream, "state");
     if (streamState === $streamClosed) {
-      didClose = true;
+      state.didClose = true;
       return sink.end();
     }
 
     while (true) {
       var { value, done } = await reader.read();
       if (done) {
-        didClose = true;
+        state.didClose = true;
         return sink.end();
       }
 
       if (sink.write(value) < 0 && isNative) {
-        await waitForDrain();
+        var cap = (state.drainCapability = $newPromiseCapability(Promise));
+        await cap.promise;
       }
     }
   } catch (e) {
-    didThrow = true;
+    state.didThrow = true;
 
     try {
       reader = undefined;
@@ -968,8 +982,8 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       }
     } catch {}
 
-    if (sink && !didClose) {
-      didClose = true;
+    if (sink && !state.didClose) {
+      state.didClose = true;
       try {
         sink.close(e);
       } catch (j) {
@@ -1002,7 +1016,7 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
         readableStreamController = undefined;
       }
 
-      if (stream && !didThrow && streamState !== $streamClosed && streamState !== $streamErrored) {
+      if (stream && !state.didThrow && streamState !== $streamClosed && streamState !== $streamErrored) {
         $readableStreamCloseIfPossible(stream);
       }
       stream = undefined;

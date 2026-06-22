@@ -77,6 +77,22 @@ class HTTPClientAsyncResource {
   }
 }
 
+// In Node the native HTTPParser is an AsyncWrap that re-enters the request's
+// async scope around its JS callbacks. Bun's parser binding ignores the
+// resource argument, so a reused keep-alive socket would otherwise dispatch
+// parser callbacks in the AsyncLocalStorage context of whichever request first
+// connected it. We bridge this in JS: tickOnSocket snapshots the active
+// $asyncContext frame on the request, and the socket data/end listeners run
+// inside it. The raw frame is used directly so http.request() does not flip on
+// async-context tracking when no AsyncLocalStorage is in use.
+const kClientAsyncContext = Symbol("kClientAsyncContext");
+
+function closeRequest(req) {
+  if (req[kClientAsyncContext] !== undefined) req[kClientAsyncContext] = undefined;
+  req._closed = true;
+  req.emit("close");
+}
+
 function isURLInstance(input) {
   return input != null && typeof input === "object" && input instanceof URL;
 }
@@ -480,8 +496,7 @@ function socketCloseListener() {
     if (!res.complete) {
       res.destroy(new ConnResetException("aborted"));
     }
-    req._closed = true;
-    req.emit("close");
+    closeRequest(req);
     if (!res.aborted && res.readable) {
       res.push(null);
     }
@@ -493,8 +508,7 @@ function socketCloseListener() {
       req.socket._hadError = true;
       emitErrorEvent(req, new ConnResetException("socket hang up"));
     }
-    req._closed = true;
-    req.emit("close");
+    closeRequest(req);
   }
 
   // Too bad.  That output wasn't getting written.
@@ -534,6 +548,18 @@ function socketErrorListener(err) {
 }
 
 function socketOnEnd() {
+  const frame = this._httpMessage?.[kClientAsyncContext];
+  if (frame === undefined) return socketOnEndInner.$call(this);
+  const prev = $getInternalField($asyncContext, 0);
+  $putInternalField($asyncContext, 0, frame);
+  try {
+    return socketOnEndInner.$call(this);
+  } finally {
+    $putInternalField($asyncContext, 0, prev);
+  }
+}
+
+function socketOnEndInner() {
   const socket = this;
   const req = this._httpMessage;
   const parser = this.parser;
@@ -552,6 +578,18 @@ function socketOnEnd() {
 }
 
 function socketOnData(d) {
+  const frame = this._httpMessage?.[kClientAsyncContext];
+  if (frame === undefined) return socketOnDataInner.$call(this, d);
+  const prev = $getInternalField($asyncContext, 0);
+  $putInternalField($asyncContext, 0, frame);
+  try {
+    return socketOnDataInner.$call(this, d);
+  } finally {
+    $putInternalField($asyncContext, 0, prev);
+  }
+}
+
+function socketOnDataInner(d) {
   const socket = this;
   const req = this._httpMessage;
   const parser = this.parser;
@@ -602,8 +640,7 @@ function socketOnData(d) {
 
         req.emit(eventName, res, socket, bodyHead);
         req.destroyed = true;
-        req._closed = true;
-        req.emit("close");
+        closeRequest(req);
       } else {
         // Requested Upgrade or used CONNECT method, but have no handler.
         socket.destroy();
@@ -820,8 +857,7 @@ function requestOnFinish() {
 }
 
 function emitFreeNT(req) {
-  req._closed = true;
-  req.emit("close");
+  closeRequest(req);
   const socket = req.socket;
   if (socket) {
     socket.emit("free");
@@ -831,6 +867,8 @@ function emitFreeNT(req) {
 function tickOnSocket(req, socket) {
   const parser = parsers.alloc();
   req.socket = socket;
+  const frame = $getInternalField($asyncContext, 0);
+  if (frame !== undefined) req[kClientAsyncContext] = frame;
   const lenient = req.insecureHTTPParser === undefined ? isLenient() : req.insecureHTTPParser;
   parser.initialize(
     HTTPParser.RESPONSE,
@@ -913,8 +951,7 @@ function destroyRequestOnSocketNT(req, socket, err) {
   if (err && err.code !== "ERR_PROXY_TUNNEL" && !socket?._hadError) {
     emitErrorEvent(req, err);
   }
-  req._closed = true;
-  req.emit("close");
+  closeRequest(req);
 }
 
 function onSocketNT(req, socket, err) {

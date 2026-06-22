@@ -1,5 +1,5 @@
 // Hardcoded module "node:perf_hooks"
-const { throwNotImplemented, kNodeEntryTypes, NodeEntryObserver, enqueueNodeEntry } = require("internal/shared");
+const { throwNotImplemented, kNodeEntryTypes, NodeEntryObserver, enqueueNodeEntry, hasObserver } = require("internal/shared");
 const { validateFunction, validateObject } = require("internal/validators");
 
 const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
@@ -285,7 +285,9 @@ function processTimerifyComplete(name, start, args, histogram) {
   if (histogram !== undefined) {
     histogram.record(Math.ceil(duration * 1e6));
   }
-  enqueueNodeEntry(new PerformanceNodeEntry(name, "function", start, duration, args));
+  if (hasObserver("function")) {
+    enqueueNodeEntry(new PerformanceNodeEntry(name, "function", start, duration, args));
+  }
 }
 
 export default {

@@ -222,8 +222,15 @@ class AsyncLocalStorage {
           // restore by value, re-adding the previous value even after a
           // disable() during the callback.
           context2 = context2 ? context2.slice() : []; // array is cloned here
-          const idx = context2.indexOf(this);
-          $assert(idx === -1 || idx % 2 === 0);
+          // Scan even (key) slots only — a value slot can hold this storage
+          // when another ALS stored it via enterWith/run.
+          let idx = -1;
+          for (let j = 0, len = context2.length; j < len; j += 2) {
+            if (context2[j] === this) {
+              idx = j;
+              break;
+            }
+          }
           if (idx > -1) {
             if (hasPrevious) {
               context2[idx + 1] = previous_value;

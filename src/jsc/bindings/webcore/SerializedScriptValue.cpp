@@ -959,20 +959,22 @@ public:
 
     static bool serialize(StringView string, Vector<uint8_t>& out)
     {
-        writeLittleEndian(out, CurrentVersion);
-        if (string.isEmpty()) {
-            writeLittleEndian<uint8_t>(out, EmptyStringTag);
-            return true;
-        }
-        writeLittleEndian<uint8_t>(out, StringTag);
+        if (!writeLittleEndian(out, CurrentVersion))
+            return false;
+        if (string.isEmpty())
+            return writeLittleEndian<uint8_t>(out, EmptyStringTag);
+        if (!writeLittleEndian<uint8_t>(out, StringTag))
+            return false;
         const auto length = string.length();
         if (string.is8Bit()) {
             const auto span = string.span8();
-            writeLittleEndian(out, length | StringDataIs8BitFlag);
+            if (!writeLittleEndian(out, length | StringDataIs8BitFlag))
+                return false;
             return writeLittleEndian(out, span.data(), length);
         }
         const auto span = string.span16();
-        writeLittleEndian(out, length);
+        if (!writeLittleEndian(out, length))
+            return false;
         return writeLittleEndian(out, span.data(), length);
     }
 

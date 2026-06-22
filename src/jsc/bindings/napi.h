@@ -408,9 +408,15 @@ public:
     // Returns true if finalizers from this module need to be scheduled for the next tick after garbage collection, instead of running during garbage collection
     inline bool mustDeferFinalizers() const
     {
-        // Even when we'd normally have to defer the finalizer, if this is happening during the VM's last chance to finalize,
-        // we can't defer the finalizer and have to call it now.
-        return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL && !isVMTerminating();
+        // The deferred path (NapiFinalizerTask::schedule) is responsible for the
+        // shutdown case: once is_shutting_down() it either pushes a cleanup hook
+        // (if those haven't run yet) or drops the task (if they have). Running a
+        // non-EXPERIMENTAL finalizer immediately during the final collectNow() is
+        // never safe — by then on_exit() has already run cleanup hooks (including
+        // the napi_set_instance_data finalizer that frees per-addon state the
+        // object finalizer reads), the heap is sweeping (no allocation, no handle
+        // scope), and napi_call_function returns the termination exception.
+        return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL;
     }
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }

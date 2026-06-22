@@ -899,7 +899,9 @@ impl<'a> Parser<'a> {
         // --inspect-brk
         if p.options.features.set_breakpoint_on_first_line {
             let debugger_stmts = p.arena.alloc_slice_fill_with(1, |_| Stmt {
-                data: js_ast::StmtData::SDebugger(Default::default()),
+                data: js_ast::StmtData::SDebugger(S::Debugger {
+                    break_on_first_line: true,
+                }),
                 loc: bun_ast::Loc::EMPTY,
             });
             before.push(js_ast::Part {

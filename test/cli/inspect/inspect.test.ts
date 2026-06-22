@@ -603,3 +603,114 @@ test("error.stack doesnt lose frames", () => {
   // We allow it to differ by the existence of <anonymous> as a string. But that's it.
   expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
 });
+
+// https://github.com/oven-sh/bun/issues/32591
+// With --inspect-brk, Bun injects a `debugger;` statement to break on the first
+// line. It used to be printed on its own line, which shifted every following
+// statement down one line in the transpiled output. Because the inspector
+// reports positions in transpiled-line space against the original file URL, a
+// breakpoint requested on line N landed on line N-1, so the previous top-level
+// lexical binding was still in its temporal dead zone when execution stopped.
+test("--inspect-brk breakpoint stops on the requested line, not the line before it (#32591)", async () => {
+  const dir = tempDirWithFiles("inspect-brk-line", {
+    // Keep each statement on its own line; the breakpoint is set on the last one.
+    "target.ts": [
+      `const label = "bun-dap-repro";`,
+      `const values = [2, 3, 5];`,
+      `const total = values.reduce((sum, value) => sum + value, 0);`,
+      `const payload = { label, values, total };`,
+      "console.log(`${payload.label}:${payload.total}`);",
+      "",
+    ].join("\n"),
+  });
+  const program = fs.realpathSync(join(dir, "target.ts"));
+  // 0-based line of `console.log(...)`, the statement the breakpoint targets.
+  const consoleLogLine = 4;
+
+  await using proc = spawn({
+    // Bind an explicit IPv4 loopback so the URL we connect to cannot be steered
+    // to ::1 by the system's localhost resolution.
+    cmd: [bunExe(), "--inspect-brk=127.0.0.1:0", program],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  // The inspector prints "ws://localhost:<port>/<uuid>" to stderr once it is
+  // listening. Keep draining stderr so the child never blocks on a full pipe.
+  const { promise: urlPromise, resolve: resolveUrl, reject: rejectUrl } = Promise.withResolvers<string>();
+  let stderr = "";
+  (async () => {
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stderr) {
+      stderr += decoder.decode(chunk as Uint8Array, { stream: true });
+      const match = stderr.match(/ws:\/\/\S+/);
+      if (match) resolveUrl(match[0]);
+    }
+    rejectUrl(new Error("inspector URL never printed; stderr:\n" + stderr));
+  })();
+
+  const url = await urlPromise;
+
+  const ws = new WebSocket(url, { headers: { "Ref-Event-Loop": "0" } });
+  try {
+    let nextId = 1;
+    const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+    const pausedResolvers = Promise.withResolvers<any>();
+    ws.addEventListener("message", event => {
+      const message = JSON.parse(typeof event.data === "string" ? event.data : Buffer.from(event.data).toString("utf8"));
+      if (typeof message.id === "number") {
+        const p = pending.get(message.id);
+        if (p) {
+          pending.delete(message.id);
+          if (message.error) p.reject(new Error(message.error.message ?? "inspector error"));
+          else p.resolve(message.result);
+        }
+      } else if (message.method === "Debugger.paused") {
+        pausedResolvers.resolve(message.params);
+      }
+    });
+    const send = (method: string, params: Record<string, unknown> = {}): Promise<any> => {
+      const id = nextId++;
+      ws.send(JSON.stringify({ id, method, params }));
+      return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+    };
+
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve(), { once: true });
+      ws.addEventListener("error", () => reject(new Error("inspector socket failed to open")), { once: true });
+    });
+
+    await send("Runtime.enable");
+    await send("Debugger.enable");
+    await send("Debugger.setBreakpointsActive", { active: true });
+    await send("Debugger.setBreakpointByUrl", { url: program, lineNumber: consoleLogLine, columnNumber: 0 });
+    await send("Inspector.initialized");
+
+    const paused = await Promise.race([
+      pausedResolvers.promise,
+      proc.exited.then(code => {
+        throw new Error(`process exited (code ${code}) before the breakpoint was hit; stderr:\n${stderr}`);
+      }),
+    ]);
+
+    const topFrame = paused.callFrames[0];
+    // Evaluate the lexical bindings declared on the lines above the breakpoint.
+    // When execution really stopped on the console.log line, every `const`
+    // above it has been initialized; the off-by-one stopped one line early and
+    // left `payload` in its temporal dead zone.
+    const evaluated = await send("Debugger.evaluateOnCallFrame", {
+      callFrameId: topFrame.callFrameId,
+      expression: `(() => ({
+        total: (() => { try { return total; } catch { return "TDZ"; } })(),
+        payloadTotal: (() => { try { return payload.total; } catch { return "TDZ"; } })(),
+      }))()`,
+      returnByValue: true,
+    });
+
+    expect(topFrame.location.lineNumber).toBe(consoleLogLine);
+    expect(evaluated.result.value).toEqual({ total: 10, payloadTotal: 10 });
+  } finally {
+    ws.close();
+  }
+});

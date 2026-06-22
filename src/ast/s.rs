@@ -74,7 +74,14 @@ pub struct Label {
 pub struct TypeScript {}
 
 #[derive(Clone, Copy, Default)]
-pub struct Debugger {}
+pub struct Debugger {
+    /// Set only on the synthetic `debugger;` injected for `--inspect-brk` /
+    /// `?break=1` (see `set_breakpoint_on_first_line`). The printer emits this
+    /// one inline (no trailing newline) so the first real statement keeps its
+    /// original line number; a standalone `debugger;` line would shift every
+    /// inspector line number by one. See oven-sh/bun#32591.
+    pub break_on_first_line: bool,
+}
 
 pub struct ExportFrom {
     pub items: StoreSlice<ClauseItem>, // arena-owned

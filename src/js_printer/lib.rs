@@ -6411,12 +6411,21 @@ pub mod __gated_printer {
                     );
                     self.print_newline();
                 }
-                StmtData::SDebugger(_) => {
-                    self.print_indent();
-                    self.print_space_before_identifier();
-                    self.add_source_mapping(stmt.loc);
-                    self.print(b"debugger");
-                    self.print_semicolon_after_statement();
+                StmtData::SDebugger(s) => {
+                    if s.break_on_first_line {
+                        // Emit the injected `--inspect-brk` debugger inline (no
+                        // trailing newline) so it does not shift the first real
+                        // statement onto the next line. See the field comment on
+                        // `S::Debugger` and oven-sh/bun#32591.
+                        self.print_space_before_identifier();
+                        self.print(b"debugger;");
+                    } else {
+                        self.print_indent();
+                        self.print_space_before_identifier();
+                        self.add_source_mapping(stmt.loc);
+                        self.print(b"debugger");
+                        self.print_semicolon_after_statement();
+                    }
                 }
                 StmtData::SDirective(s) => {
                     if IS_JSON {

@@ -231,6 +231,98 @@ describe("bundler", () => {
       [{"$$typeof":"Symbol(jsx)","type":"Symbol(jsx.fragment)","props":{"children":{"$$typeof":"Symbol(jsx)","type":"div","props":{},"key":"undefined"}},"key":"undefined"},"undefined","undefined","undefined"]
     `,
   });
+  // Same as above but with `--minify-identifiers`. Before the fix the renamer
+  // assigned the same minified name to both the runtime import and the user's
+  // local. Covers jsx / jsxs / Fragment / createElement (prod) and
+  // jsxDEV / Fragment (dev).
+  itBundled("jsx/AutomaticLocalShadowMinifyIdentifiersProd", {
+    files: {
+      "/index.tsx": /* tsx */ `
+        export function f() {
+          let jsx: any
+          let jsxs: any
+          let Fragment: any
+          let createElement: any
+          const props = {}
+          const els = [<div />, <div><a/><b/></div>, <><div /></>, <div {...props} key="k" />]
+          return [els, jsx, jsxs, Fragment, createElement]
+        }
+      `,
+    },
+    external: ["react", "react/*"],
+    minifyIdentifiers: true,
+    env: {
+      NODE_ENV: "production",
+    },
+    bundleWarnings: {
+      "/index.tsx": ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.'],
+    },
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
+        "// index.tsx
+        import { jsx as e, jsxs as i, Fragment as o } from "react/jsx-runtime";
+        import { createElement as v } from "react";
+        function y() {
+          let n;
+          let t;
+          let l;
+          let s;
+          const a = {};
+          const d = [/* @__PURE__ */ e("div", {}), /* @__PURE__ */ i("div", {
+            children: [
+              /* @__PURE__ */ e("a", {}),
+              /* @__PURE__ */ e("b", {})
+            ]
+          }), /* @__PURE__ */ e(o, {
+            children: /* @__PURE__ */ e("div", {})
+          }), /* @__PURE__ */ v("div", {
+            ...a,
+            key: "k"
+          })];
+          return [d, n, t, l, s];
+        }
+        export {
+          y as f
+        };"
+      `);
+    },
+  });
+  itBundled("jsx/AutomaticLocalShadowMinifyIdentifiersDev", {
+    files: {
+      "/index.tsx": /* tsx */ `
+        export function f() {
+          let jsxDEV: any
+          let Fragment: any
+          const els = [<div />, <><div /></>]
+          return [els, jsxDEV, Fragment]
+        }
+      `,
+    },
+    external: ["react", "react/*"],
+    minifyIdentifiers: true,
+    env: {
+      NODE_ENV: "development",
+    },
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
+        "// index.tsx
+        import { jsxDEV as n, Fragment as o } from "react/jsx-dev-runtime";
+        function a() {
+          let t;
+          let e;
+          const l = [/* @__PURE__ */ n("div", {}, undefined, false, undefined, this), /* @__PURE__ */ n(o, {
+            children: /* @__PURE__ */ n("div", {}, undefined, false, undefined, this)
+          }, undefined, false, undefined, this)];
+          return [l, t, e];
+        }
+        export {
+          a as f
+        };"
+      `);
+    },
+  });
   itBundledDevAndProd("jsx/ImportSource", {
     prodTodo: true,
     files: {

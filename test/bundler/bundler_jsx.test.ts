@@ -203,10 +203,7 @@ describe("bundler", () => {
   });
   // A user's local `jsx` / `jsxDEV` / `Fragment` binding in the scope
   // containing the first JSX element must not capture the automatic JSX
-  // runtime import. Before the fix, the runtime symbol was declared in
-  // `p.current_scope` (the nested function scope) and linked to the user's
-  // local, so the bundled output called the user's uninitialized local
-  // instead of the runtime helper.
+  // runtime import.
   itBundledDevAndProd("jsx/AutomaticLocalShadow", {
     files: {
       "/index.tsx": /* tsx */ `
@@ -231,10 +228,8 @@ describe("bundler", () => {
       [{"$$typeof":"Symbol(jsx)","type":"Symbol(jsx.fragment)","props":{"children":{"$$typeof":"Symbol(jsx)","type":"div","props":{},"key":"undefined"}},"key":"undefined"},"undefined","undefined","undefined"]
     `,
   });
-  // Same as above but with `--minify-identifiers`. Before the fix the renamer
-  // assigned the same minified name to both the runtime import and the user's
-  // local. Covers jsx / jsxs / Fragment / createElement (prod) and
-  // jsxDEV / Fragment (dev).
+  // Same as above but with `--minify-identifiers`. Covers jsx / jsxs /
+  // Fragment / createElement (prod) and jsxDEV / Fragment (dev).
   itBundled("jsx/AutomaticLocalShadowMinifyIdentifiersProd", {
     files: {
       "/index.tsx": /* tsx */ `

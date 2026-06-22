@@ -679,6 +679,9 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             // SAFETY: `proc` carries the +1 ref taken at queue time; this drops it.
             unsafe { Process::on_wait_pid_from_event_loop_task(proc) };
         }
+        poll_tag::MEMORY_PRESSURE => {
+            crate::node::memory_pressure::on_poll(owner.ptr.cast(), size_or_offset);
+        }
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
             // Mac-only — debug-assert elsewhere (Linux uses prctl(PR_SET_PDEATHSIG)).

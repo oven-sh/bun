@@ -110,6 +110,8 @@ pub mod node_fs_watcher;
 #[cfg(windows)]
 #[path = "node/uv_signal_handle_windows.rs"]
 pub mod uv_signal_handle_windows;
+#[path = "node/memory_pressure.rs"]
+pub mod memory_pressure;
 
 // Type defs + non-JSC FFI bodies are live; every `#[bun_jsc::host_fn]` /
 // `#[bun_jsc::JsClass]` item is wrapped in ` mod _impl` inside

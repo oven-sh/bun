@@ -94,6 +94,26 @@ declare global {
       _exiting: boolean;
       noDeprecation?: boolean | undefined;
 
+      /**
+       * Emitted when the operating system signals that available memory is
+       * running low. Use this to release caches or reap idle resources instead
+       * of polling.
+       *
+       * On macOS `level` distinguishes `"warning"` from `"critical"` based on
+       * the kernel's memorystatus thresholds. On Linux (PSI) and Windows the
+       * event is always emitted with `"critical"`. On Linux, the underlying
+       * PSI trigger requires `CAP_SYS_RESOURCE` on kernels before 6.6; when
+       * unavailable the event is simply never emitted.
+       *
+       * This listener does not keep the event loop alive.
+       */
+      on(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      once(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      off(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      addListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      removeListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
+      emit(event: "memoryPressure", level: "warning" | "critical"): boolean;
+
       binding(m: "constants"): {
         os: typeof import("node:os").constants;
         fs: typeof import("node:fs").constants;

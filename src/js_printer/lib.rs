@@ -6427,13 +6427,12 @@ pub mod __gated_printer {
                         // shift this inline emission avoids.
                         self.prev_stmt_tag = StmtTag::SEmpty;
                         return Ok(());
-                    } else {
-                        self.print_indent();
-                        self.print_space_before_identifier();
-                        self.add_source_mapping(stmt.loc);
-                        self.print(b"debugger");
-                        self.print_semicolon_after_statement();
                     }
+                    self.print_indent();
+                    self.print_space_before_identifier();
+                    self.add_source_mapping(stmt.loc);
+                    self.print(b"debugger");
+                    self.print_semicolon_after_statement();
                 }
                 StmtData::SDirective(s) => {
                     if IS_JSON {

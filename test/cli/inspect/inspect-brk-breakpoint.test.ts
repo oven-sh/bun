@@ -97,7 +97,7 @@ async function evaluateAtInspectBrkBreakpoint(program: string, breakpointLine: n
 // reports positions in transpiled-line space against the original file URL, a
 // breakpoint requested on line N landed on line N-1, so the previous top-level
 // lexical binding was still in its temporal dead zone when execution stopped.
-test("--inspect-brk breakpoint stops on the requested line, not the line before it (#32591)", async () => {
+test.concurrent("--inspect-brk breakpoint stops on the requested line, not the line before it (#32591)", async () => {
   using dir = tempDir("inspect-brk-line", {
     // Keep each statement on its own line; the breakpoint is set on the last one.
     "target.ts": [
@@ -137,7 +137,7 @@ test("--inspect-brk breakpoint stops on the requested line, not the line before 
 // `prev != SEmpty` path; it is not used here because a class body prints across
 // multiple transpiled lines, which is a separate generated-vs-original line
 // concern.)
-test("--inspect-brk keeps line numbers when the first statement is an export (#32591)", async () => {
+test.concurrent("--inspect-brk keeps line numbers when the first statement is an export (#32591)", async () => {
   using dir = tempDir("inspect-brk-first-stmt", {
     "target.ts": [
       `export {};`, //                    line 0: prints a leading readability newline

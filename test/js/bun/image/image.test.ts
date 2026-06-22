@@ -1088,6 +1088,136 @@ describe("Bun.Image", () => {
       expect(buf[1]).toBe(0xd8);
     });
   });
+
+  describe("raw pixel I/O", () => {
+    test(".pixels() returns decoded RGBA8 {data, width, height, channels: 4}", async () => {
+      const out = await new Bun.Image(cornersPng).pixels();
+      expect(out.width).toBe(4);
+      expect(out.height).toBe(3);
+      expect(out.channels).toBe(4);
+      expect(out.data).toBeInstanceOf(Uint8Array);
+      expect(out.data.length).toBe(4 * 3 * 4);
+      for (let y = 0; y < 3; y++)
+        for (let x = 0; x < 4; x++) expect(rgbaAt(out.data, 4, x, y)).toEqual(cornerPattern(x, y));
+    });
+
+    test(".pixels() is post-pipeline: ops apply before extraction", async () => {
+      // flop is an exact pixel permutation — no resampling jitter to tolerate.
+      const flopped = await new Bun.Image(cornersPng).flop().pixels();
+      expect([flopped.width, flopped.height, flopped.channels]).toEqual([4, 3, 4]);
+      for (let y = 0; y < 3; y++)
+        for (let x = 0; x < 4; x++) expect(rgbaAt(flopped.data, 4, x, y)).toEqual(cornerPattern(3 - x, y));
+
+      // rotate(90) CW swaps the reported dims (same corner mapping as the
+      // encode-path rotate test above).
+      const rot = await new Bun.Image(cornersPng).rotate(90).pixels();
+      expect([rot.width, rot.height]).toEqual([3, 4]);
+      expect(rgbaAt(rot.data, 3, 2, 0)).toEqual([255, 0, 0, 255]); // red
+      expect(rgbaAt(rot.data, 3, 0, 0)).toEqual([0, 0, 255, 255]); // blue
+      expect(rgbaAt(rot.data, 3, 0, 3)).toEqual([255, 255, 255, 255]); // white
+
+      // resize updates dims and the buffer size together.
+      const small = await new Bun.Image(gradientPng).resize(8, 8).pixels();
+      expect([small.width, small.height, small.data.length]).toEqual([8, 8, 8 * 8 * 4]);
+    });
+
+    test(".pixels() agrees with the PNG encode path byte-for-byte", async () => {
+      const img = new Bun.Image(gradientPng).resize(8, 8);
+      const viaPixels = await img.pixels();
+      const viaPng = decodePngRaw(await new Bun.Image(gradientPng).resize(8, 8).png().bytes());
+      expect(Uint8Array.from(viaPixels.data)).toEqual(Uint8Array.from(viaPng.data));
+    });
+
+    test("raw RGBA input round-trips through .pixels() byte-for-byte", async () => {
+      const w = 5;
+      const h = 4;
+      const src = new Uint8Array(w * h * 4);
+      for (let i = 0; i < src.length; i++) src[i] = (i * 7 + 3) & 255;
+      const out = await new Bun.Image(src, { raw: { width: w, height: h, channels: 4 } }).pixels();
+      expect(out.width).toBe(w);
+      expect(out.height).toBe(h);
+      expect(out.channels).toBe(4);
+      expect(Uint8Array.from(out.data)).toEqual(src);
+    });
+
+    test("raw input feeds the normal encode pipeline (raw → PNG → exact pixels)", async () => {
+      const w = 4;
+      const h = 3;
+      const src = new Uint8Array(w * h * 4);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) src.set(cornerPattern(x, y), (y * w + x) * 4);
+      const png = await new Bun.Image(src, { raw: { width: w, height: h, channels: 4 } }).png().bytes();
+      const back = decodePngRaw(png);
+      expect([back.w, back.h]).toEqual([w, h]);
+      expect(Uint8Array.from(back.data)).toEqual(src);
+      // Pipeline ops work on raw sources too: flop then read back.
+      const flopped = await new Bun.Image(src, { raw: { width: w, height: h, channels: 4 } }).flop().pixels();
+      for (let y = 0; y < h; y++)
+        for (let x = 0; x < w; x++) expect(rgbaAt(flopped.data, w, x, y)).toEqual(cornerPattern(w - 1 - x, y));
+    });
+
+    test("raw input with channels: 3 expands to RGBA with opaque alpha", async () => {
+      const w = 3;
+      const h = 2;
+      const rgb = new Uint8Array(w * h * 3);
+      for (let i = 0; i < rgb.length; i++) rgb[i] = (i * 11 + 5) & 255;
+      const out = await new Bun.Image(rgb, { raw: { width: w, height: h, channels: 3 } }).pixels();
+      expect(out.width).toBe(w);
+      expect(out.height).toBe(h);
+      expect(out.channels).toBe(4);
+      expect(out.data.length).toBe(w * h * 4);
+      for (let p = 0; p < w * h; p++) {
+        expect(out.data[p * 4]).toBe(rgb[p * 3]);
+        expect(out.data[p * 4 + 1]).toBe(rgb[p * 3 + 1]);
+        expect(out.data[p * 4 + 2]).toBe(rgb[p * 3 + 2]);
+        expect(out.data[p * 4 + 3]).toBe(255);
+      }
+    });
+
+    test("raw input validates length and dimensions at constructor time", () => {
+      const buf = new Uint8Array(2 * 2 * 4);
+      // data.length must equal width*height*channels.
+      expect(() => new Bun.Image(buf, { raw: { width: 3, height: 2, channels: 4 } })).toThrow();
+      expect(() => new Bun.Image(buf.subarray(0, 15), { raw: { width: 2, height: 2, channels: 4 } })).toThrow();
+      expect(() => new Bun.Image(buf, { raw: { width: 2, height: 2, channels: 3 } })).toThrow();
+      // Zero dimensions are rejected even when the length product matches.
+      expect(() => new Bun.Image(new Uint8Array(0), { raw: { width: 0, height: 0, channels: 4 } })).toThrow();
+      expect(() => new Bun.Image(new Uint8Array(0), { raw: { width: 0, height: 2, channels: 4 } })).toThrow();
+      expect(() => new Bun.Image(new Uint8Array(0), { raw: { width: 2, height: 0, channels: 4 } })).toThrow();
+    });
+
+    test("raw input validates the descriptor and the input kind", () => {
+      const buf = new Uint8Array(2 * 2 * 4);
+      // channels must be exactly 3 or 4.
+      expect(() => new Bun.Image(buf, { raw: { width: 2, height: 2, channels: 2 as any } })).toThrow(/channels/);
+      expect(() => new Bun.Image(buf, { raw: { width: 4, height: 2, channels: 1 as any } })).toThrow(/channels/);
+      expect(() => new Bun.Image(buf, { raw: { width: 2, height: 2 } as any })).toThrow(/channels/);
+      // Dimensions must be positive integers.
+      expect(() => new Bun.Image(buf, { raw: { width: 1.5, height: 2, channels: 4 } })).toThrow(/width/);
+      expect(() => new Bun.Image(buf, { raw: { width: 2, height: NaN, channels: 4 } })).toThrow(/height/);
+      expect(() => new Bun.Image(buf, { raw: { width: -2, height: 2, channels: 4 } })).toThrow(/width/);
+      // `raw` only makes sense for in-memory pixel bytes — paths, data: URLs
+      // and Blobs throw instead of silently sniffing pixel data.
+      expect(() => new Bun.Image("some/file.bin" as any, { raw: { width: 2, height: 2, channels: 4 } })).toThrow(
+        /ArrayBuffer or TypedArray/,
+      );
+      expect(() => new Bun.Image(new Blob([buf]) as any, { raw: { width: 2, height: 2, channels: 4 } })).toThrow(
+        /ArrayBuffer or TypedArray/,
+      );
+      // The error names the actual vs expected byte count.
+      expect(() => new Bun.Image(buf, { raw: { width: 3, height: 2, channels: 4 } })).toThrow(/16 bytes.*24/);
+    });
+
+    test("raw sources answer metadata() and width/height from the descriptor", async () => {
+      const w = 6;
+      const h = 2;
+      const img = new Bun.Image(new Uint8Array(w * h * 4), { raw: { width: w, height: h, channels: 4 } });
+      // Dims are constructor-known for raw sources — no terminal needed.
+      expect([img.width, img.height]).toEqual([w, h]);
+      // No container was sniffed (a raw buffer could even start with a JPEG
+      // SOI), so format reports "raw".
+      expect(await img.metadata()).toEqual({ width: w, height: h, format: "raw" });
+    });
+  });
 });
 
 describe("decode-only formats (BMP / TIFF / GIF)", () => {
@@ -1441,6 +1571,460 @@ describe("decode-only formats (BMP / TIFF / GIF)", () => {
       await expect(new Bun.Image(tiff).png().bytes()).rejects.toMatchObject({ code: "ERR_IMAGE_FORMAT_UNSUPPORTED" });
     });
   }
+});
+
+// ─── composite() ────────────────────────────────────────────────────────────
+// Sharp-compatible layering. Layers blend bottom-to-top into the base AFTER
+// all other pipeline ops (final-canvas coordinates), in premultiplied-alpha
+// space (Porter-Duff `over` in v1). Placement is explicit top/left (negatives
+// clip, never error) or gravity using sharp's CalculateCrop math. The overlay
+// must be ≤ the base in both dimensions. Inputs are hand-rolled PNGs and the
+// output is read back through our own PNG decoder, so these tests depend on
+// composite() alone — verified against hand-computed Porter-Duff vectors, not
+// the sharp fixture file (fixtures/sharp-reference.bin stays untouched).
+
+describe("composite()", () => {
+  type RGBA = [number, number, number, number];
+  const BLACK: RGBA = [0, 0, 0, 255];
+  const RED: RGBA = [255, 0, 0, 255];
+  const GREEN: RGBA = [0, 255, 0, 255];
+  const HALF_BLUE: RGBA = [0, 0, 255, 128];
+
+  const solidPng = (w: number, h: number, rgba: RGBA) => makePng(w, h, () => rgba);
+
+  function compositeBytes(base: Uint8Array, layers: any[]): Promise<Uint8Array> {
+    return new Bun.Image(base).composite(layers).png().bytes();
+  }
+  async function compositePixels(base: Uint8Array, layers: any[]): Promise<{ w: number; h: number; data: Uint8Array }> {
+    return decodePngRaw(await compositeBytes(base, layers));
+  }
+
+  // Float-exact Porter-Duff `over` in premultiplied space, rounded once at the
+  // end. The shipped kernel is integer fixed-point (the byte-identical-output
+  // guarantee forbids ISA-dependent float paths), so blended channels may sit
+  // a couple of LSB from this reference; channels with no fractional part
+  // (alpha 0/255 inputs) must match it exactly.
+  function overRef(src: RGBA, dst: RGBA): RGBA {
+    const sa = src[3] / 255;
+    const da = dst[3] / 255;
+    const oa = sa + da * (1 - sa);
+    if (oa === 0) return [0, 0, 0, 0];
+    const ch = (s: number, d: number) => Math.round((((s / 255) * sa + (d / 255) * da * (1 - sa)) / oa) * 255);
+    return [ch(src[0], dst[0]), ch(src[1], dst[1]), ch(src[2], dst[2]), Math.round(oa * 255)];
+  }
+
+  // Assert the whole canvas: `inner` colour inside the rect, `outer` outside.
+  function expectRect(
+    data: Uint8Array,
+    w: number,
+    h: number,
+    rect: { left: number; top: number; w: number; h: number },
+    inner: RGBA,
+    outer: RGBA,
+  ) {
+    const mismatches: Array<{ x: number; y: number; got: number[]; want: RGBA }> = [];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const inside = x >= rect.left && x < rect.left + rect.w && y >= rect.top && y < rect.top + rect.h;
+        const want = inside ? inner : outer;
+        const got = rgbaAt(data, w, x, y);
+        if (got[0] !== want[0] || got[1] !== want[1] || got[2] !== want[2] || got[3] !== want[3]) {
+          mismatches.push({ x, y, got: [...got], want });
+        }
+      }
+    }
+    expect(mismatches).toEqual([]);
+  }
+
+  // ── over blend ──────────────────────────────────────────────────────────
+
+  test("over: 50%-alpha blue over opaque red matches the hand-computed Porter-Duff vector", async () => {
+    const { w, h, data } = await compositePixels(solidPng(4, 4, RED), [{ image: solidPng(4, 4, HALF_BLUE) }]);
+    expect([w, h]).toEqual([4, 4]);
+    for (let i = 0; i < data.length; i += 4) {
+      // aA = 128/255: r = 255·(1−aA) = 127.0 and b = 255·aA = 128.0 in exact
+      // arithmetic → (126..127, 0, 127..128, 255) depending on whether the
+      // fixed-point kernel floors ((255·127)>>8 = 126) or divides by 255 with
+      // round-half-up (127). Green and alpha admit no rounding at all.
+      expect(data[i]).toBeGreaterThanOrEqual(126);
+      expect(data[i]).toBeLessThanOrEqual(127);
+      expect(data[i + 1]).toBe(0);
+      expect(data[i + 2]).toBeGreaterThanOrEqual(127);
+      expect(data[i + 2]).toBeLessThanOrEqual(128);
+      expect(data[i + 3]).toBe(255);
+    }
+    // A full-cover solid-over-solid blend has no positional dependence.
+    for (let i = 4; i < data.length; i++) expect(data[i]).toBe(data[i % 4]);
+  });
+
+  test("over: opaque overlay replaces base pixels exactly", async () => {
+    const overlay = makePng(3, 3, (x, y) => [x * 40, y * 40, (x ^ y) * 30, 255]);
+    const { data } = await compositePixels(solidPng(3, 3, RED), [{ image: overlay }]);
+    expect([...data]).toEqual([...decodePngRaw(overlay).data]);
+  });
+
+  test("over: zero-alpha overlay is a pixel-exact no-op (its RGB must not bleed through)", async () => {
+    const base = makePng(3, 3, (x, y) => [x * 50, y * 50, 200, 255]);
+    const { data } = await compositePixels(base, [{ image: solidPng(3, 3, [255, 255, 0, 0]) }]);
+    expect([...data]).toEqual([...decodePngRaw(base).data]);
+  });
+
+  test("over blend tracks the premultiplied Porter-Duff reference across alpha combinations", async () => {
+    const cases: Array<{ src: RGBA; dst: RGBA }> = [
+      { src: [255, 255, 255, 64], dst: [0, 0, 0, 255] }, // quarter-white over black
+      { src: [200, 40, 90, 200], dst: [10, 250, 60, 255] }, // arbitrary colours, opaque base
+      { src: [50, 100, 150, 1], dst: [200, 60, 20, 255] }, // near-transparent overlay
+      // Semi-transparent BASE: separates correct premultiplied `over` from a
+      // naive straight-alpha lerp (which would put g≈155 here, not ≈96).
+      { src: [255, 0, 0, 100], dst: [0, 255, 0, 100] },
+      { src: [0, 0, 255, 128], dst: [255, 0, 0, 0] }, // fully transparent base
+    ];
+    for (const { src, dst } of cases) {
+      const { data } = await compositePixels(solidPng(2, 2, dst), [{ image: solidPng(2, 2, src) }]);
+      const got = [...rgbaAt(data, 2, 0, 0)];
+      const ref = overRef(src, dst);
+      // Result alpha: one rounding step. RGB: premultiply + blend + (when the
+      // result is non-opaque) an unpremultiply that amplifies intermediate
+      // rounding — hence the wider window there.
+      const rgbTol = ref[3] === 255 ? 2 : 3;
+      for (let c = 0; c < 4; c++) {
+        const tol = c === 3 ? 1 : rgbTol;
+        if (Math.abs(got[c] - ref[c]) > tol) {
+          expect({ src, dst, got }).toEqual({ src, dst, got: ref }); // readable failure
+        }
+      }
+    }
+  });
+
+  // ── gravity placement (sharp CalculateCrop math) ──────────────────────────
+
+  // 8×6 base, 3×3 overlay: both deltas are odd, so the `+1` in sharp's
+  // centring formula left=(inW−outW+1)/2 is load-bearing (3, not 2).
+  const gravityCases: Array<[string, number, number]> = [
+    ["centre", 3, 2],
+    ["center", 3, 2], // US-spelling alias
+    ["north", 3, 0],
+    ["northeast", 5, 0],
+    ["east", 5, 2],
+    ["southeast", 5, 3],
+    ["south", 3, 3],
+    ["southwest", 0, 3],
+    ["west", 0, 2],
+    ["northwest", 0, 0],
+  ];
+  test.each(gravityCases)(
+    "gravity '%s' places a 3×3 overlay on an 8×6 base at (%i, %i)",
+    async (gravity, left, top) => {
+      const { w, h, data } = await compositePixels(solidPng(8, 6, BLACK), [{ image: solidPng(3, 3, GREEN), gravity }]);
+      expect([w, h]).toEqual([8, 6]);
+      expectRect(data, 8, 6, { left, top, w: 3, h: 3 }, GREEN, BLACK);
+    },
+  );
+
+  test("default placement (no gravity, no top/left) is centre", async () => {
+    const { data } = await compositePixels(solidPng(8, 6, BLACK), [{ image: solidPng(3, 3, GREEN) }]);
+    expectRect(data, 8, 6, { left: 3, top: 2, w: 3, h: 3 }, GREEN, BLACK);
+  });
+
+  test("explicit top/left override gravity", async () => {
+    const { data } = await compositePixels(solidPng(8, 6, BLACK), [
+      { image: solidPng(3, 3, GREEN), gravity: "southeast", left: 1, top: 0 },
+    ]);
+    expectRect(data, 8, 6, { left: 1, top: 0, w: 3, h: 3 }, GREEN, BLACK);
+  });
+
+  // ── offset clipping ───────────────────────────────────────────────────────
+
+  test("negative top/left clip the overlay instead of erroring", async () => {
+    // Overlay pixel (ox,oy) lands at (left+ox, top+oy); with left=−2, top=−1
+    // only the ox=2, oy∈{1,2} column survives → green at (0,0) and (0,1).
+    const { data } = await compositePixels(solidPng(4, 4, RED), [{ image: solidPng(3, 3, GREEN), left: -2, top: -1 }]);
+    expectRect(data, 4, 4, { left: 0, top: 0, w: 1, h: 2 }, GREEN, RED);
+  });
+
+  test("offsets past the bottom-right edge clip", async () => {
+    const { data } = await compositePixels(solidPng(4, 4, RED), [{ image: solidPng(3, 3, GREEN), left: 2, top: 3 }]);
+    expectRect(data, 4, 4, { left: 2, top: 3, w: 2, h: 1 }, GREEN, RED);
+  });
+
+  test("a fully off-canvas overlay leaves the base untouched", async () => {
+    const base = makePng(4, 4, (x, y) => [x * 60, y * 60, 0, 255]);
+    const { data } = await compositePixels(base, [{ image: solidPng(3, 3, GREEN), left: -3, top: 0 }]);
+    expect([...data]).toEqual([...decodePngRaw(base).data]);
+  });
+
+  // ── oversized overlay rejection ───────────────────────────────────────────
+
+  test("an overlay larger than the base rejects with a clear error", async () => {
+    const base = solidPng(4, 4, BLACK);
+    for (const [ow, oh] of [
+      [5, 4], // wider only
+      [4, 6], // taller only
+      [9, 9], // both
+    ] as const) {
+      await expect(compositeBytes(base, [{ image: solidPng(ow, oh, GREEN) }])).rejects.toThrow(
+        /smaller|larger|exceed|dimension|fit|size/i,
+      );
+    }
+    // Boundary: exactly base-sized is allowed.
+    const { data } = await compositePixels(base, [{ image: solidPng(4, 4, GREEN) }]);
+    expect([...rgbaAt(data, 4, 0, 0)]).toEqual(GREEN);
+  });
+
+  test("oversized overlay error carries .code on both the async terminal and the sync Response path", async () => {
+    const make = () => new Bun.Image(solidPng(2, 2, BLACK)).composite([{ image: solidPng(3, 3, GREEN) }]);
+    // async terminal rejection
+    await expect(make().png().bytes()).rejects.toMatchObject({
+      code: "ERR_IMAGE_COMPOSITE_OVERSIZED",
+      message: expect.stringMatching(/same dimensions or smaller/),
+    });
+    // `new Response(image)` encodes synchronously on the JS thread — the same
+    // error, including `.code`, must surface there too.
+    let caught: any = null;
+    try {
+      new Response(make());
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toMatchObject({
+      code: "ERR_IMAGE_COMPOSITE_OVERSIZED",
+      message: expect.stringMatching(/same dimensions or smaller/),
+    });
+  });
+
+  // ── layer list semantics ──────────────────────────────────────────────────
+
+  test("repeat .composite() replaces the layer set (sharp semantics) and is chainable", async () => {
+    const img = new Bun.Image(solidPng(2, 2, BLACK));
+    expect(img.composite([{ image: solidPng(2, 2, RED) }])).toBe(img); // records + returns this
+    img.composite([{ image: solidPng(2, 2, HALF_BLUE) }]); // replaces, not appends
+    const { data } = decodePngRaw(await img.png().bytes());
+    // Half-blue over BLACK: had the red layer survived, r would be ≈127.
+    expect(data[0]).toBe(0);
+    expect(data[1]).toBe(0);
+    expect(data[2]).toBeGreaterThanOrEqual(127);
+    expect(data[2]).toBeLessThanOrEqual(128);
+    expect(data[3]).toBe(255);
+  });
+
+  test("layers in a single call stack bottom-to-top", async () => {
+    const base = solidPng(2, 2, BLACK);
+    const red = solidPng(2, 2, RED);
+    const halfBlue = solidPng(2, 2, HALF_BLUE);
+    // red (bottom) then half-blue (top) → red shows through at ≈half strength
+    let { data } = await compositePixels(base, [{ image: red }, { image: halfBlue }]);
+    expect(data[0]).toBeGreaterThanOrEqual(126);
+    expect(data[0]).toBeLessThanOrEqual(127);
+    expect(data[2]).toBeGreaterThanOrEqual(127);
+    expect(data[2]).toBeLessThanOrEqual(128);
+    // reversed: opaque red on top hides the blue completely
+    ({ data } = await compositePixels(base, [{ image: halfBlue }, { image: red }]));
+    expect([...rgbaAt(data, 2, 0, 0)]).toEqual(RED);
+  });
+
+  // ── pipeline position & input forms ───────────────────────────────────────
+
+  test("composite runs after resize (final-canvas coordinates)", async () => {
+    // The 3×3 overlay would not fit the raw 2×2 base — it must be placed on
+    // the post-resize 8×8 canvas, exactly like sharp.
+    const { w, h, data } = decodePngRaw(
+      await new Bun.Image(solidPng(2, 2, BLACK))
+        .resize(8, 8)
+        .composite([{ image: solidPng(3, 3, GREEN), gravity: "northwest" }])
+        .png()
+        .bytes(),
+    );
+    expect([w, h]).toEqual([8, 8]);
+    expectRect(data, 8, 8, { left: 0, top: 0, w: 3, h: 3 }, GREEN, BLACK);
+  });
+
+  test("overlay accepts a Bun.Image instance and a file path", async () => {
+    const base = solidPng(2, 2, BLACK);
+    // Bun.Image instance
+    let { data } = await compositePixels(base, [{ image: new Bun.Image(solidPng(2, 2, GREEN)) }]);
+    expect([...rgbaAt(data, 2, 0, 0)]).toEqual(GREEN);
+    // path string
+    using dir = tempDir("image-composite-path", {});
+    const p = join(String(dir), "overlay.png");
+    await Bun.write(p, solidPng(2, 2, GREEN));
+    ({ data } = await compositePixels(base, [{ image: p }]));
+    expect([...rgbaAt(data, 2, 0, 0)]).toEqual(GREEN);
+    // path-backed Bun.file() Image — resolves to its path like a path string
+    ({ data } = await compositePixels(base, [{ image: new Bun.Image(Bun.file(p)) }]));
+    expect([...rgbaAt(data, 2, 0, 0)]).toEqual(GREEN);
+    ({ data } = await compositePixels(base, [{ image: Bun.file(p).image() }]));
+    expect([...rgbaAt(data, 2, 0, 0)]).toEqual(GREEN);
+  });
+
+  test("JPEG overlay EXIF orientation follows the base's autoOrient", async () => {
+    // 4×2 black JPEG with a spliced APP1 Orientation=6 (90° CW) — the same
+    // splice as the metadata EXIF test. Upright it is 2 wide × 4 tall.
+    const jpg = await new Bun.Image(solidPng(4, 2, BLACK)).jpeg({ quality: 95 }).bytes();
+    // prettier-ignore
+    const tiff = new Uint8Array([
+      0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08, // header
+      0x00, 0x01,                                     // 1 entry
+      0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,                         // next IFD = 0
+    ]);
+    const exif = Buffer.concat([Buffer.from("Exif\0\0"), tiff]);
+    const seglen = exif.length + 2;
+    const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, seglen >> 8, seglen & 255]), exif]);
+    const withExif = Buffer.concat([jpg.subarray(0, 2), app1, jpg.subarray(2)]);
+
+    const base = solidPng(6, 6, [255, 255, 255, 255]);
+    // autoOrient (default): blends upright — dark inside the 2×4 rect only.
+    const on = await compositePixels(base, [{ image: withExif, top: 0, left: 0 }]);
+    expect(rgbaAt(on.data, 6, 1, 3)[0]).toBeLessThan(80); // inside upright rect
+    expect(rgbaAt(on.data, 6, 3, 1)[0]).toBeGreaterThan(200); // outside it
+    // autoOrient: false on the base: stored orientation (4 wide × 2 tall).
+    const off = decodePngRaw(
+      await new Bun.Image(base, { autoOrient: false })
+        .composite([{ image: withExif, top: 0, left: 0 }])
+        .png()
+        .bytes(),
+    );
+    expect(rgbaAt(off.data, 6, 3, 1)[0]).toBeLessThan(80);
+    expect(rgbaAt(off.data, 6, 1, 3)[0]).toBeGreaterThan(200);
+  });
+
+  // ── raw-pixel-sourced Image overlays ─────────────────────────────────────
+  // A `new Bun.Image(buf, {raw})` overlay blends its pixel buffer directly —
+  // no encode round-trip, no sniff/decode on the worker.
+
+  test("raw-sourced Image overlay blends byte-identically to the same pixels PNG-encoded", async () => {
+    const w = 5;
+    const h = 4;
+    const px = new Uint8Array(w * h * 4);
+    for (let i = 0; i < w * h; i++) {
+      px[i * 4 + 0] = (i * 37) & 0xff;
+      px[i * 4 + 1] = (i * 91) & 0xff;
+      px[i * 4 + 2] = (i * 53) & 0xff;
+      px[i * 4 + 3] = (i * 29) & 0xff; // includes 0 and partial alphas
+    }
+    const base = makePng(8, 8, (x, y) => [x * 30, y * 30, 128, 255]);
+    const encoded = await new Bun.Image(px, { raw: { width: w, height: h, channels: 4 } }).png().bytes();
+    const viaRaw = await compositePixels(base, [
+      { image: new Bun.Image(px, { raw: { width: w, height: h, channels: 4 } }), top: 1, left: 2, opacity: 0.7 },
+    ]);
+    const viaPng = await compositePixels(base, [{ image: encoded, top: 1, left: 2, opacity: 0.7 }]);
+    expect([...viaRaw.data]).toEqual([...viaPng.data]);
+  });
+
+  test("raw-sourced overlay with channels: 3 blends as opaque RGB", async () => {
+    const rgb = new Uint8Array([255, 0, 0, 0, 255, 0, 0, 0, 255, 9, 9, 9]);
+    const overlay = new Bun.Image(rgb, { raw: { width: 2, height: 2, channels: 3 } });
+    const { data } = await compositePixels(solidPng(2, 2, BLACK), [{ image: overlay, top: 0, left: 0 }]);
+    expect([...data]).toEqual([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 9, 9, 9, 255]);
+  });
+
+  test("raw-sourced overlay still enforces the oversized rule and the base's maxPixels", async () => {
+    const big = new Uint8Array(4 * 4 * 4).fill(255);
+    const overlay = new Bun.Image(big, { raw: { width: 4, height: 4, channels: 4 } });
+    // larger than the 2×2 base in both dimensions
+    await expect(compositeBytes(solidPng(2, 2, BLACK), [{ image: overlay }])).rejects.toThrow(
+      /same dimensions or smaller/,
+    );
+    // The base's maxPixels caps the overlay's pixel count even though the
+    // raw buffer was validated by ITS OWN constructor (whose roomier default
+    // cap accepted 8×9). The pixel-count guard fires before the dims rule,
+    // mirroring the decode path where maxPixels is checked pre-allocation.
+    const base = new Bun.Image(solidPng(8, 8, BLACK), { maxPixels: 8 * 8 });
+    const wide = new Uint8Array(8 * 9 * 4).fill(255);
+    const overLimit = new Bun.Image(wide, { raw: { width: 8, height: 9, channels: 4 } });
+    await expect(
+      base
+        .composite([{ image: overLimit }])
+        .png()
+        .bytes(),
+    ).rejects.toThrow(/TooManyPixels|pixel/i);
+    // sanity: a within-cap raw overlay (smaller than the base in both dims) works
+    const ok = new Bun.Image(big, { raw: { width: 4, height: 4, channels: 4 } });
+    await base
+      .composite([{ image: ok }])
+      .png()
+      .bytes();
+  });
+
+  // ── opacity (Bun extension) ──────────────────────────────────────────────
+  // Sharp has no per-layer opacity, so there is no fixture to diff against —
+  // these are hand-computed vectors. opacity scales the premultiplied overlay
+  // (colour AND alpha) before the `over` accumulate, so opaque-red-at-0.5
+  // must equal the 50%-alpha-red blend, not a straight RGB lerp.
+
+  test("opacity 0.5: opaque red over opaque green matches the hand-computed vector", async () => {
+    const { data } = await compositePixels(solidPng(2, 2, GREEN), [{ image: solidPng(2, 2, RED), opacity: 0.5 }]);
+    // Effective source alpha 255·0.5 → 128: r = 128·255/255 = 128 and
+    // g = 255·(127/255) = 127 in exact arithmetic. Allow ±1 on the blended
+    // channels for fixed-point rounding-mode changes; b and the opaque result
+    // alpha admit no rounding at all.
+    for (let y = 0; y < 2; y++) {
+      for (let x = 0; x < 2; x++) {
+        const [r, g, b, a] = rgbaAt(data, 2, x, y);
+        expect(Math.abs(r - 128)).toBeLessThanOrEqual(1);
+        expect(Math.abs(g - 127)).toBeLessThanOrEqual(1);
+        expect(b).toBe(0);
+        expect(a).toBe(255);
+      }
+    }
+  });
+
+  test("opacity 0 leaves the base pixel-exact", async () => {
+    const base = makePng(3, 3, (x, y) => [x * 50, y * 50, 200, 255]);
+    const { data } = await compositePixels(base, [{ image: solidPng(3, 3, RED), opacity: 0 }]);
+    expect([...data]).toEqual([...decodePngRaw(base).data]);
+  });
+
+  test("out-of-range and non-finite opacity clamp instead of erroring", async () => {
+    const base = solidPng(2, 2, GREEN);
+    const overlay = solidPng(2, 2, RED);
+    // > 1 clamps to 1; NaN/Infinity take the same identity policy as
+    // .modulate() — all three behave as full-strength overlay.
+    for (const opacity of [2, NaN, Infinity]) {
+      const { data } = await compositePixels(base, [{ image: overlay, opacity }]);
+      expect([...rgbaAt(data, 2, 0, 0)]).toEqual(RED);
+    }
+    // < 0 clamps to 0: base untouched.
+    const { data } = await compositePixels(base, [{ image: overlay, opacity: -1 }]);
+    expect([...rgbaAt(data, 2, 0, 0)]).toEqual(GREEN);
+  });
+
+  // ── premultiplied input ──────────────────────────────────────────────────
+
+  test("premultiplied: true skips the premultiply pass — [128,0,0,128] ≡ straight [255,0,0,128]", async () => {
+    const base = solidPng(2, 2, GREEN);
+    const straight = await compositePixels(base, [{ image: solidPng(2, 2, [255, 0, 0, 128]) }]);
+    const prem = await compositePixels(base, [{ image: solidPng(2, 2, [128, 0, 0, 128]), premultiplied: true }]);
+    expect([...prem.data]).toEqual([...straight.data]);
+    // Sanity: blending actually happened (the result is not the bare base) …
+    expect([...rgbaAt(straight.data, 2, 0, 0)]).not.toEqual(GREEN);
+    // … and the flag is load-bearing: without it the same bytes premultiply
+    // AGAIN (128·128/255 ≈ 64), landing visibly darker.
+    const twice = await compositePixels(base, [{ image: solidPng(2, 2, [128, 0, 0, 128]) }]);
+    expect(rgbaAt(twice.data, 2, 0, 0)[0]).toBeLessThan(rgbaAt(prem.data, 2, 0, 0)[0]);
+  });
+
+  // ── argument validation (composite() parses eagerly, so all throws are
+  // synchronous — no terminal needed) ──────────────────────────────────────
+
+  test("composite() validates its arguments synchronously", () => {
+    const img = (): any => new Bun.Image(solidPng(2, 2, BLACK));
+    const overlay = solidPng(2, 2, GREEN);
+    // non-array argument
+    expect(() => img().composite({ image: overlay })).toThrow(/array/);
+    expect(() => img().composite()).toThrow(/array/);
+    // non-object layer
+    expect(() => img().composite([42])).toThrow(/object/);
+    // missing / null `image`
+    expect(() => img().composite([{}])).toThrow(/image/);
+    expect(() => img().composite([{ image: null }])).toThrow(/image/);
+    // top/left are both-or-neither (sharp semantics)
+    expect(() => img().composite([{ image: overlay, top: 1 }])).toThrow(/both/);
+    expect(() => img().composite([{ image: overlay, left: 1 }])).toThrow(/both/);
+    // unknown gravity / blend names
+    expect(() => img().composite([{ image: overlay, gravity: "middle" }])).toThrow(/gravity/);
+    expect(() => img().composite([{ image: overlay, blend: "multiply" }])).toThrow(/over/);
+  });
 });
 
 describe("Bun.Image clipboard statics", () => {

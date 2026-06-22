@@ -8240,6 +8240,8 @@ declare module "bun" {
      *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
+     * - `ERR_IMAGE_COMPOSITE_OVERSIZED` — a composite overlay is larger than
+     *   the base in either dimension.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.
      * - File-backed inputs surface the underlying syscall code (`ENOENT`,
@@ -8251,6 +8253,7 @@ declare module "bun" {
       | "ERR_IMAGE_DECODE_FAILED"
       | "ERR_IMAGE_ENCODE_FAILED"
       | "ERR_IMAGE_UNKNOWN_FORMAT"
+      | "ERR_IMAGE_COMPOSITE_OVERSIZED"
       | "ERR_INVALID_STATE";
 
     /**
@@ -8285,6 +8288,123 @@ declare module "bun" {
        * @default true
        */
       autoOrient?: boolean;
+      /**
+       * Treat `input` as raw, tightly-packed pixel data instead of an encoded
+       * image. Format sniffing and decoding are skipped; `input` must be the
+       * pixel buffer (`ArrayBuffer`/`TypedArray`) and its byte length must be
+       * exactly `width × height × channels` — anything else throws at
+       * construction. Round-trips with the `pixels()` terminal:
+       *
+       * ```ts
+       * const px = await new Bun.Image("photo.jpg").pixels();
+       * // ...mutate px.data...
+       * const out = await new Bun.Image(px.data, { raw: px }).png().bytes();
+       * ```
+       */
+      raw?: RawOptions;
+    }
+
+    /**
+     * Describes the layout of a raw pixel buffer passed to the `Bun.Image`
+     * constructor via {@link ConstructorOptions.raw}. The `pixels()` terminal
+     * resolves to a compatible shape, so its result can be passed back
+     * directly.
+     */
+    interface RawOptions {
+      /** Width of the raw pixel buffer, in pixels. Must be at least 1. */
+      width: number;
+      /** Height of the raw pixel buffer, in pixels. Must be at least 1. */
+      height: number;
+      /**
+       * Channels per pixel in the input buffer. `3` (RGB) is expanded to
+       * RGBA on ingest; the pipeline always operates on 4-channel RGBA.
+       */
+      channels: 3 | 4;
+    }
+
+    /**
+     * Where a composite layer is placed on the base image when `top`/`left`
+     * are not given: the centre or one of the 8 compass points. Both the
+     * `"centre"` and `"center"` spellings are accepted.
+     */
+    type Gravity =
+      | "centre"
+      | "center"
+      | "north"
+      | "northeast"
+      | "east"
+      | "southeast"
+      | "south"
+      | "southwest"
+      | "west"
+      | "northwest";
+
+    /**
+     * Blend mode for `composite()`. Only Porter-Duff `"over"`
+     * (source-over) is currently supported.
+     */
+    type Blend = "over";
+
+    /** One overlay in a `composite()` call. Layers apply bottom-to-top. */
+    interface CompositeLayerOptions {
+      /**
+       * The overlay — another `Bun.Image` (including one constructed from a
+       * `raw` pixel descriptor, whose buffer is blended directly), a path
+       * string or `data:` URL, or encoded bytes as
+       * `ArrayBuffer`/`TypedArray`. For a `Blob`/`Bun.file` source, pass
+       * `await blob.bytes()` or the path string instead. Decoded with the
+       * same `maxPixels` guard as the base. Must be the same size as the
+       * base or smaller in both dimensions, in final (post-`resize`)
+       * coordinates.
+       */
+      image: Image | string | ArrayBuffer | NodeJS.TypedArray;
+      /**
+       * Pixel offset of the overlay's top edge from the base's top edge.
+       * `top` and `left` must be given together; together they override
+       * `gravity`. Negative values are allowed — the overlay is clipped
+       * against the base.
+       */
+      top?: number;
+      /**
+       * Pixel offset of the overlay's left edge from the base's left edge.
+       * See {@link top}.
+       */
+      left?: number;
+      /**
+       * Placement when `top`/`left` are omitted.
+       * @default "centre"
+       */
+      gravity?: Gravity;
+      /**
+       * How the overlay is blended onto the image below it.
+       * @default "over"
+       */
+      blend?: Blend;
+      /**
+       * Multiply the overlay's alpha by this factor (`0`–`1`) before
+       * blending. `1` leaves it unchanged. Not in sharp — there you'd
+       * hand-roll this with raw pixel math.
+       * @default 1
+       */
+      opacity?: number;
+      /**
+       * Set to `true` if the overlay's pixel data already has premultiplied
+       * alpha, to skip the premultiply pass before blending.
+       * @default false
+       */
+      premultiplied?: boolean;
+    }
+
+    /** Result of the `pixels()` terminal — raw post-pipeline RGBA. */
+    interface Pixels {
+      /** Tightly-packed RGBA bytes, `width × height × 4` long. */
+      data: Uint8Array;
+      /** Width of the pixel buffer, in pixels. */
+      width: number;
+      /** Height of the pixel buffer, in pixels. */
+      height: number;
+      /** Always `4` — the pipeline operates in RGBA. */
+      channels: 4;
     }
 
     interface ResizeOptions {
@@ -8310,7 +8430,12 @@ declare module "bun" {
     interface Metadata {
       width: number;
       height: number;
-      format: Format;
+      /**
+       * The sniffed container format of the source, or `"raw"` when the
+       * image was constructed from raw pixels via
+       * {@link ConstructorOptions.raw}.
+       */
+      format: Format | "raw";
     }
   }
 
@@ -8321,11 +8446,12 @@ declare module "bun" {
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a
-   * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `metadata`) is awaited.
+   * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `metadata`, `pixels`)
+   * is awaited.
    *
    * Chainables overwrite (calling `.resize()` twice keeps the second). Order
    * of execution is fixed regardless of call order:
-   * `autoOrient → rotate → flip/flop → resize → modulate`.
+   * `autoOrient → rotate → flip/flop → resize → modulate → composite`.
    *
    * The source ICC colour profile (Display P3, Adobe RGB, Jpegli XYB, etc.)
    * is preserved through re-encode to JPEG, PNG, and WebP so non-sRGB
@@ -8388,6 +8514,29 @@ declare module "bun" {
     flop(): this;
     /** Adjust brightness/saturation. */
     modulate(options: Image.ModulateOptions): this;
+    /**
+     * Overlay images onto this one, bottom-to-top. Compositing runs as the
+     * **last** pipeline stage (after `modulate`), so `top`/`left`/`gravity`
+     * are in final, post-`resize` coordinates and overlays are not affected
+     * by the base's `resize()`.
+     *
+     * Each layer is decoded, alpha-blended at the resolved position, then
+     * the next layer applies on top. Calling `composite()` again *replaces*
+     * the previous layer list, like every other chainable.
+     *
+     * Layers are blended in raw RGBA without ICC profile conversion; only
+     * the base image's colour profile is carried through to the output.
+     *
+     * @example
+     * ```ts
+     * await new Bun.Image("photo.jpg")
+     *   .resize(1200, 800)
+     *   .composite([{ image: "logo.png", gravity: "southeast", opacity: 0.5 }])
+     *   .webp({ quality: 80 })
+     *   .write("out.webp");
+     * ```
+     */
+    composite(layers: Image.CompositeLayerOptions[]): this;
 
     /** Set output format to JPEG. */
     jpeg(options?: {
@@ -8466,6 +8615,15 @@ declare module "bun" {
     toBase64(): Promise<string>;
     /** Decode just enough to read width/height/format. */
     metadata(): Promise<Image.Metadata>;
+    /**
+     * Run the pipeline and return the raw, post-pipeline RGBA pixels instead
+     * of encoding — the equivalent of sharp's `.raw().toBuffer()`. `data` is
+     * tightly packed, `width × height × 4` bytes, `channels` is always `4`.
+     *
+     * The result round-trips through the constructor's `raw` option:
+     * `new Bun.Image(px.data, { raw: px })`.
+     */
+    pixels(): Promise<Image.Pixels>;
 
     /** Populated after the first awaited terminal; `-1` before. */
     readonly width: number;

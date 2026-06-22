@@ -360,17 +360,18 @@ function makePortWritable(port) {
 }
 
 function setupWorkerStdio(stdio) {
-  if (stdio.stdout) {
+  const { stdin, stdout, stderr } = stdio;
+  if (stdout) {
     Object.defineProperty(process, "stdout", {
-      value: makePortWritable(stdio.stdout),
+      value: makePortWritable(stdout),
       writable: true,
       configurable: true,
       enumerable: true,
     });
   }
-  if (stdio.stderr) {
+  if (stderr) {
     Object.defineProperty(process, "stderr", {
-      value: makePortWritable(stdio.stderr),
+      value: makePortWritable(stderr),
       writable: true,
       configurable: true,
       enumerable: true,
@@ -380,8 +381,8 @@ function setupWorkerStdio(stdio) {
   // otherwise an immediately-EOF'd stream — never the process-wide fd 0, which
   // would race the main thread (and hang on a TTY).
   Object.defineProperty(process, "stdin", {
-    value: stdio.stdin
-      ? makePortReadable(stdio.stdin)
+    value: stdin
+      ? makePortReadable(stdin)
       : new Readable({
           read() {
             this.push(null);
@@ -393,7 +394,7 @@ function setupWorkerStdio(stdio) {
   });
   // node routes console.log through process.stdout/stderr; Bun's global console
   // writes the fd directly, so rebind it to the captured streams when present.
-  if (stdio.stdout || stdio.stderr) {
+  if (stdout || stderr) {
     const { Console } = require("node:console");
     globalThis.console = new Console(process.stdout, process.stderr);
   }
@@ -1121,8 +1122,9 @@ class Worker extends EventEmitter {
     // ignores these knobs but the range checks must still match.
     if (options !== undefined && options !== null) {
       validateObject(options, "options");
-      if (options.maxBufferSize !== undefined) validateInteger(options.maxBufferSize, "options.maxBufferSize", 1);
-      if (options.sampleInterval !== undefined) validateNumber(options.sampleInterval, "options.sampleInterval");
+      const { maxBufferSize, sampleInterval } = options;
+      if (maxBufferSize !== undefined) validateInteger(maxBufferSize, "options.maxBufferSize", 1);
+      if (sampleInterval !== undefined) validateNumber(sampleInterval, "options.sampleInterval");
     }
     return this.#worker.startCpuProfileInternal().then(() => {
       // Cache so a second stop() returns the first call's profile (node caches
@@ -1133,33 +1135,42 @@ class Worker extends EventEmitter {
   }
 
   cpuUsage(prevValue?: { user: number; system: number }) {
+    let prevUser = 0;
+    let prevSystem = 0;
     if (prevValue) {
       validateObject(prevValue, "prevValue");
-      validateNumber(prevValue.user, "prevValue.user");
-      if (prevValue.user < 0 || !Number.isFinite(prevValue.user))
-        throw $ERR_OUT_OF_RANGE("prevValue.user", ">= 0 and a finite number", prevValue.user);
-      validateNumber(prevValue.system, "prevValue.system");
-      if (prevValue.system < 0 || !Number.isFinite(prevValue.system))
-        throw $ERR_OUT_OF_RANGE("prevValue.system", ">= 0 and a finite number", prevValue.system);
+      ({ user: prevUser, system: prevSystem } = prevValue);
+      validateNumber(prevUser, "prevValue.user");
+      if (prevUser < 0 || !Number.isFinite(prevUser))
+        throw $ERR_OUT_OF_RANGE("prevValue.user", ">= 0 and a finite number", prevUser);
+      validateNumber(prevSystem, "prevValue.system");
+      if (prevSystem < 0 || !Number.isFinite(prevSystem))
+        throw $ERR_OUT_OF_RANGE("prevValue.system", ">= 0 and a finite number", prevSystem);
     }
     return this.#worker
       .cpuUsageInternal()
       .then((abs: { user: number; system: number }) =>
-        prevValue ? { user: abs.user - prevValue.user, system: abs.system - prevValue.system } : abs,
+        prevValue ? { user: abs.user - prevUser, system: abs.system - prevSystem } : abs,
       );
   }
 
   startHeapProfile(options?: object) {
     if (options !== undefined && options !== null) {
       validateObject(options, "options");
-      const o = options as any;
-      if (o.sampleInterval !== undefined) validateInteger(o.sampleInterval, "options.sampleInterval", 1);
-      if (o.stackDepth !== undefined) validateInteger(o.stackDepth, "options.stackDepth", 0);
-      if (o.forceGC !== undefined) validateBoolean(o.forceGC, "options.forceGC");
-      if (o.includeObjectsCollectedByMajorGC !== undefined)
-        validateBoolean(o.includeObjectsCollectedByMajorGC, "options.includeObjectsCollectedByMajorGC");
-      if (o.includeObjectsCollectedByMinorGC !== undefined)
-        validateBoolean(o.includeObjectsCollectedByMinorGC, "options.includeObjectsCollectedByMinorGC");
+      const {
+        sampleInterval,
+        stackDepth,
+        forceGC,
+        includeObjectsCollectedByMajorGC,
+        includeObjectsCollectedByMinorGC,
+      } = options as any;
+      if (sampleInterval !== undefined) validateInteger(sampleInterval, "options.sampleInterval", 1);
+      if (stackDepth !== undefined) validateInteger(stackDepth, "options.stackDepth", 0);
+      if (forceGC !== undefined) validateBoolean(forceGC, "options.forceGC");
+      if (includeObjectsCollectedByMajorGC !== undefined)
+        validateBoolean(includeObjectsCollectedByMajorGC, "options.includeObjectsCollectedByMajorGC");
+      if (includeObjectsCollectedByMinorGC !== undefined)
+        validateBoolean(includeObjectsCollectedByMinorGC, "options.includeObjectsCollectedByMinorGC");
     }
     if (this.#exited) {
       return Promise.$reject($ERR_WORKER_NOT_RUNNING("Worker instance not running"));
@@ -1219,8 +1230,9 @@ class Worker extends EventEmitter {
     }
     // Reshape the native 'ModuleNotFound ... (entry point)' error into node's
     // "Cannot find module '<path>'" (MODULE_NOT_FOUND).
-    if (typeof error?.message === "string" && error.message.includes("(entry point)")) {
-      const m = /ModuleNotFound resolving "(.+?)"/.exec(error.message);
+    const errorMessage = error?.message;
+    if (typeof errorMessage === "string" && errorMessage.includes("(entry point)")) {
+      const m = /ModuleNotFound resolving "(.+?)"/.exec(errorMessage);
       if (m) {
         error = new Error(`Cannot find module '${m[1]}'`, { cause: error });
         (error as any).code = "MODULE_NOT_FOUND";

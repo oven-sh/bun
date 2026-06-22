@@ -251,9 +251,19 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             options.shareEnv = shareEnvValue.toBoolean(lexicalGlobalObject);
         }
 
+        auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        // Recognize the SHARE_ENV registry symbol directly so `new globalThis.Worker(url, { env: SHARE_ENV })`
+        // (which bypasses the node:worker_threads wrapper) shares env instead of throwing
+        // ERR_INVALID_ARG_TYPE on its own sentinel.
+        if (envValue && envValue.isSymbol()) {
+            auto key = vm.symbolRegistry().symbolForKey("nodejs.worker_threads.SHARE_ENV"_s);
+            if (&asSymbol(envValue)->uid() == key.ptr()) {
+                options.shareEnv = true;
+            }
+        }
+
         if (!options.shareEnv) {
-            auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
-            RETURN_IF_EXCEPTION(throwScope, {});
             if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull())) {
                 return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
             }

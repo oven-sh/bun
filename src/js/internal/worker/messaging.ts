@@ -129,9 +129,10 @@ function receiveMessageFromWorker(source, value, memory) {
   // listeners (can't detect NO_LISTENERS) and routes a throwing listener to
   // uncaughtException (can't map it to LISTENER_ERROR). Invoke the listeners directly.
   const listeners = process.listeners("workerMessage");
-  if (listeners.length > 0) {
+  const listenerCount = listeners.length;
+  if (listenerCount > 0) {
     try {
-      for (let i = 0; i < listeners.length; i++) {
+      for (let i = 0; i < listenerCount; i++) {
         listeners[i].$call(process, value, source);
       }
       response = WORKER_MESSAGING_RESULT_DELIVERED;

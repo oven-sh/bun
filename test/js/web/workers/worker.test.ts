@@ -129,6 +129,38 @@ describe("web worker", () => {
     };
   });
 
+  // https://github.com/oven-sh/bun/issues/32247
+  test("worker-env: SHARE_ENV via the global Worker constructor", async () => {
+    const { SHARE_ENV } = require("worker_threads");
+    const key = `BUN_TEST_SHARE_ENV_${process.pid}`;
+    process.env[key] = "from-parent";
+    try {
+      const worker = new Worker(
+        "data:text/javascript," +
+          encodeURIComponent(`
+            self.onmessage = e => {
+              const seen = process.env[e.data.key];
+              process.env[e.data.key] = "from-worker";
+              self.postMessage(seen);
+            };
+          `),
+        // The Web Worker constructor doesn't go through node:worker_threads, so the
+        // native option parser must recognize the SHARE_ENV registry symbol itself.
+        { env: SHARE_ENV } as any,
+      );
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      worker.onmessage = e => resolve(e.data);
+      worker.onerror = e => reject(e.error ?? new Error(e.message));
+      worker.postMessage({ key });
+      const seen = await promise;
+      worker.terminate();
+      expect(seen).toBe("from-parent");
+      expect(process.env[key]).toBe("from-worker");
+    } finally {
+      delete process.env[key];
+    }
+  });
+
   test("worker-env with a lot of properties", done => {
     const obj: any = {};
 

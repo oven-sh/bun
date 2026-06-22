@@ -1264,7 +1264,7 @@ impl<'a> Parser<'a> {
                 let Some(map) = p.import_items_for_namespace.get(&ns_ref) else {
                     continue;
                 };
-                let track_only = p.track_only_dynamic_import_namespaces.contains_key(&ns_ref);
+                let track_only = p.dynamic_import_namespace_locals.get(&ns_ref) == Some(&true);
                 for key in map.keys().iter() {
                     let loc_ref = *map.get(key).unwrap();
                     let item_ref = loc_ref.ref_;
@@ -1298,12 +1298,9 @@ impl<'a> Parser<'a> {
             }
 
             let inline_mode = !p.options.code_splitting;
-            for (import_record_id, rec) in by_record
-                .keys()
-                .iter()
-                .copied()
-                .zip(by_record.values().iter())
-            {
+            for i in 0..by_record.len() {
+                let import_record_id = by_record.keys()[i];
+                let rec = &mut by_record.values_mut()[i];
                 // When the namespace escaped (or, in inline mode, a track-only
                 // shape forced a bail), the record stays an ordinary wrapped
                 // dynamic import. Any import-item refs that were eagerly
@@ -1332,10 +1329,9 @@ impl<'a> Parser<'a> {
                     }
                     continue;
                 }
-                let mut aliases: Vec<(bun_ast::StoreStr, bun_ast::LocRef, bun_ast::Ref)> =
-                    rec.aliases.clone();
-                aliases.sort_by(|a, b| b.0.slice().cmp(a.0.slice()));
-                aliases.dedup_by(|a, b| a.0.slice() == b.0.slice());
+                rec.aliases.sort_by(|a, b| b.0.slice().cmp(a.0.slice()));
+                rec.aliases.dedup_by(|a, b| a.0.slice() == b.0.slice());
+                let aliases = &rec.aliases;
 
                 // Record the (possibly empty) alias set so the linker can
                 // narrow the dynamic entry's exports.

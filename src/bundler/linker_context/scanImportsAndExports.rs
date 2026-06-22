@@ -187,10 +187,40 @@ pub fn scan_imports_and_exports(
                 let other_kind = col_ref!(exports_kind)[other_file];
 
                 if this.graph.code_splitting && record.kind != ImportKind::Dynamic {
-                    // A file reachable via a static import (or `require()`)
-                    // must keep every export the static side may need —
-                    // never narrow its dynamic-entry chunk in that case.
-                    col!(dyn_ref_aliases)[other_file].merge_all();
+                    // A file reachable non-dynamically must keep every export
+                    // the static side may need. For named ESM imports the
+                    // needed set is exactly the importer's aliases for this
+                    // record, so merge those instead of the whole namespace.
+                    match record.kind {
+                        ImportKind::Stmt
+                            if !record
+                                .flags
+                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                                && !col_ref!(export_star_import_records)[id]
+                                    .contains(&(import_record_index as u32)) =>
+                        {
+                            let mut aliases: Vec<bun_ast::StoreStr> = Vec::new();
+                            let mut all = false;
+                            for ni in col_ref!(named_imports)[id].values() {
+                                if ni.import_record_index != import_record_index as u32 {
+                                    continue;
+                                }
+                                if ni.alias_is_star {
+                                    all = true;
+                                    break;
+                                }
+                                if let Some(alias) = ni.alias {
+                                    aliases.push(alias);
+                                }
+                            }
+                            if all {
+                                col!(dyn_ref_aliases)[other_file].merge_all();
+                            } else if !aliases.is_empty() {
+                                col!(dyn_ref_aliases)[other_file].merge_partial(&aliases);
+                            }
+                        }
+                        _ => col!(dyn_ref_aliases)[other_file].merge_all(),
+                    }
                 }
 
                 match record.kind {

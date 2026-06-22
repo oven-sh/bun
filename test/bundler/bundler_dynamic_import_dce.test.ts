@@ -1347,19 +1347,21 @@ describe("bundler", () => {
     },
   });
 
-  itBundled("dynamic_import_dce/SplittingThenRejectHandlerBails", {
+  itBundled("dynamic_import_dce/SplittingThenRejectHandlerNarrows", {
+    // The rejection handler never observes the namespace, so the chunk can
+    // still narrow to the fulfillment handler's destructure (rolldown parity).
     files: {
       "/entry.js": /* js */ `
         await import("./b.js").then(({ c }) => console.log(c), err => console.log("caught"));
       `,
-      "/b.js": `export const c = 1; export const d = "KEEP_d";`,
+      "/b.js": `export const c = 1; export const d = "DROP_d";`,
     },
     splitting: true,
     format: "esm",
     outdir: "/out",
     run: { file: "/out/entry.js", stdout: "1" },
     onAfterBundle(api) {
-      expect(readAllOutputs(api.outdir)).toContain("KEEP_d");
+      expect(readAllOutputs(api.outdir)).not.toContain("DROP_d");
     },
   });
 
@@ -1418,7 +1420,7 @@ describe("bundler", () => {
 
   // `export const {x} = await import(...)` — `x` may be re-exported without
   // any local read (use_count_estimate == 0). Tracking must bail so the kept
-  // declaration destructures the real namespace, not `Promise.resolve()`.
+  // declaration destructures the real namespace, not an emptied chunk.
   itBundled("dynamic_import_dce/SplittingExportedDestructureKept", {
     files: {
       "/entry.js": `export const { value } = await import("./lib.js");`,
@@ -1531,6 +1533,72 @@ describe("bundler", () => {
       const all = readAllOutputs(api.outdir);
       expect(all).toContain("KEEP_y");
       expect(all).toContain("KEEP_z");
+    },
+  });
+
+  // Static side only names {A}; dynamic side names {A,B,C}. The shared chunk
+  // should export the union and tree-shake D.
+  itBundled("dynamic_import_dce/SplittingStaticNamedPlusDynamicTracked", {
+    files: {
+      "/a.js": `import { A } from './lib.js'; console.log(A);`,
+      "/b.js": `const { A, B, C } = await import('./lib.js'); console.log(A, B, C);`,
+      "/lib.js": `export const A = 1; export const B = 2; export const C = 3; export const D = "DROP_D";`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "1" },
+      { file: "/out/b.js", stdout: "1 2 3" },
+    ],
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).not.toContain("DROP_D");
+    },
+  });
+
+  // Static side names {D} (so D is needed) disjoint from dynamic {A,B,C}.
+  // E is referenced by neither and must drop.
+  itBundled("dynamic_import_dce/SplittingStaticNamedDisjointFromDynamic", {
+    files: {
+      "/a.js": `import { D } from './lib.js'; console.log(D);`,
+      "/b.js": `const { A, B, C } = await import('./lib.js'); console.log(A, B, C);`,
+      "/lib.js": `export const A = 1; export const B = 2; export const C = 3; export const D = "KEEP_D"; export const E = "DROP_E";`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "KEEP_D" },
+      { file: "/out/b.js", stdout: "1 2 3" },
+    ],
+    onAfterBundle(api) {
+      const all = readAllOutputs(api.outdir);
+      expect(all).toContain("KEEP_D");
+      expect(all).not.toContain("DROP_E");
+    },
+  });
+
+  // `export * from` re-exports the whole namespace, so the importee must keep
+  // every export even when the only dynamic importer tracked a single alias.
+  itBundled("dynamic_import_dce/SplittingExportStarPlusDynamicTracked", {
+    files: {
+      "/a.js": `export * from './lib.js';`,
+      "/b.js": `const { A } = await import('./lib.js'); console.log(A);`,
+      "/consumer.js": `import { B } from './out/a.js'; console.log(B);`,
+      "/lib.js": `export const A = 1; export const B = "KEEP_B";`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: [
+      { file: "/out/b.js", stdout: "1" },
+      { file: "/consumer.js", stdout: "KEEP_B" },
+    ],
+    onAfterBundle(api) {
+      expect(readAllOutputs(api.outdir)).toContain("KEEP_B");
     },
   });
 
@@ -2032,19 +2100,43 @@ describe("bundler", () => {
     },
   });
 
-  itBundled("dynamic_import_dce/SplittingThenCatchChainBails", {
+  itBundled("dynamic_import_dce/SplittingThenCatchChainNarrows", {
     files: {
       "/entry.js": /* js */ `
         await import("./b.js").then(({ c }) => console.log(c)).catch(err => console.log("caught"));
       `,
-      "/b.js": `export const c = 1; export const d = "KEEP_d";`,
+      "/b.js": `export const c = 1; export const d = "DROP_d";`,
     },
     splitting: true,
     format: "esm",
     outdir: "/out",
     run: { file: "/out/entry.js", stdout: "1" },
     onAfterBundle(api) {
-      expect(readAllOutputs(api.outdir)).toContain("KEEP_d");
+      expect(readAllOutputs(api.outdir)).not.toContain("DROP_d");
+    },
+  });
+
+  // A hoisted function declaration that closes over `ns` reads it BEFORE the
+  // `const ns = await import()` line registers it for tracking, so the use
+  // count stays > 0 and the chunk keeps every export. rolldown over-shakes
+  // here (narrows to {a} → `f()` returns undefined); pin our correct behavior.
+  itBundled("dynamic_import_dce/SplittingHoistedForwardRefKeepsAll", {
+    files: {
+      "/entry.js": /* js */ `
+        function f() { return ns.b; }
+        const ns = await import("./b.js");
+        console.log(ns.a, f());
+      `,
+      "/b.js": `export const a = "A"; export const b = "KEEP_B"; export const c = "KEEP_C";`,
+    },
+    splitting: true,
+    format: "esm",
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "A KEEP_B" },
+    onAfterBundle(api) {
+      const all = readAllOutputs(api.outdir);
+      expect(all).toContain("KEEP_B");
+      expect(all).toContain("KEEP_C");
     },
   });
 

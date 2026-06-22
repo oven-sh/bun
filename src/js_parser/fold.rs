@@ -165,37 +165,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EIdentifier(id) => {
-                    // For an assign/delete target on a dynamic-import namespace
-                    // local (`const ns = await import(...)`, `.then(ns => ...)`),
-                    // do not route into the import-item arm below — that mints
-                    // a `Kind::Import` symbol and `handle_identifier` would emit
-                    // a hard "Cannot assign to import" error where pre-existing
-                    // behavior bundled it. Real `import * as ns` and unwrapped
-                    // `const x = require()` namespace refs keep the error.
-                    if !can_track_dynamic_import_member
-                        && p.is_dynamic_import_namespace_local.contains_key(&id.ref_)
-                    {
-                        break 'sw;
-                    }
-                    // Track-only dynamic-import namespace: `const ns = await import(...)` /
-                    // `.then(ns => ...)`. Record the alias so the dynamic chunk can drop
-                    // unreferenced exports, but leave the property access intact.
-                    if can_track_dynamic_import_member
-                        && p.track_only_dynamic_import_namespaces
-                            .contains_key(&id.ref_)
-                    {
-                        if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
-                            map.put(
-                                name,
-                                LocRef {
-                                    loc: name_loc,
-                                    ref_: bun_ast::Ref::NONE,
-                                },
-                            )
-                            .expect("oom");
-                            p.ignore_usage(id.ref_);
+                    // Dynamic-import namespace local (`const ns = await import(...)`,
+                    // `.then(ns => ...)`, `{...rest}`):
+                    // - assign/delete target → leave intact so the namespace use
+                    //   stays counted (avoids the "Cannot assign to import"
+                    //   build error the import-item arm below would emit; real
+                    //   `import * as` / unwrapped-require refs are not in this
+                    //   map and keep the error).
+                    // - track-only → record the alias so the dynamic chunk can
+                    //   drop unreferenced exports, leave the access intact.
+                    // - inline-mode → fall through to the import-item arm.
+                    if let Some(&track_only) = p.dynamic_import_namespace_locals.get(&id.ref_) {
+                        if !can_track_dynamic_import_member {
+                            break 'sw;
                         }
-                        break 'sw;
+                        if track_only {
+                            if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
+                                map.put(
+                                    name,
+                                    LocRef {
+                                        loc: name_loc,
+                                        ref_: bun_ast::Ref::NONE,
+                                    },
+                                )
+                                .expect("oom");
+                                p.ignore_usage(id.ref_);
+                            }
+                            break 'sw;
+                        }
                     }
                     // Rewrite property accesses on explicit namespace imports as an identifier.
                     // This lets us replace them easily in the printer to rebind them to

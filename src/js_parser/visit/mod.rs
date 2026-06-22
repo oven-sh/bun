@@ -418,6 +418,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // are not implemented.
                     let inline = single && was_const && !self.options.code_splitting && !is_export;
                     match decl.binding.data {
+                        // `export const {x}` — re-export does not bump `x`'s
+                        // use_count, so the per-ref filter would drop the
+                        // alias and empty the chunk.
                         BData::BObject(obj) if !is_export => {
                             let Some(keep_decl) = self.try_track_dynamic_import_destructure(
                                 im.namespace_ref,
@@ -434,43 +437,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         BData::BIdentifier(id) if !is_export => {
                             // `var ns` redeclaration resolves to the same ref;
-                            // re-registering would clobber the alias map
-                            // populated between the two decls (rspack gates on
-                            // `kind != var` for this reason).
+                            // accesses after the second decl would be tracked
+                            // against the FIRST decl's record. rspack gates on
+                            // `kind != var` for this reason.
                             if kind == LocalKind::KVar {
                                 break 'dyn_import_await;
                             }
-                            // `const|let ns = await import("str")` — register
-                            // `ns` as a namespace so later `ns.foo` accesses
-                            // are recorded. In split mode the access stays as
+                            // Register `ns` so later `ns.foo` accesses are
+                            // recorded. In split mode the access stays as
                             // `ns.foo` (track only); in inline mode it is
                             // rewritten to an import item so the importee
-                            // tree-shakes. The declaration is kept either way:
-                            // when fully tracked it prints as
-                            // `await Promise.resolve()` (a dead binding), and
-                            // when `ns` escapes the record stays untracked so
-                            // the wrapped namespace is assigned as before.
+                            // tree-shakes. The declaration is kept either way.
                             let local = id.r#ref;
                             if self.import_items_for_namespace.contains_key(&local) {
                                 break 'dyn_import_await;
                             }
-                            self.import_items_for_namespace
-                                .insert(local, ImportItemForNamespaceMap::default());
-                            self.is_dynamic_import_namespace_local.insert(local, ());
-                            if !inline {
-                                self.track_only_dynamic_import_namespaces.insert(local, ());
-                            }
-                            self.ignore_usage(im.namespace_ref);
-                            self.imports_to_convert_from_dynamic_import.push(
-                                crate::parser::DeferredImportNamespace {
-                                    namespace: js_ast::LocRef {
-                                        loc: decl.binding.loc,
-                                        ref_: local,
-                                    },
-                                    import_record_id: im.import_record_index,
-                                    scope: Some(self.current_scope),
-                                },
+                            self.register_dynamic_import_namespace_local(
+                                local,
+                                decl.binding.loc,
+                                im.import_record_index,
+                                !inline,
                             );
+                            self.ignore_usage(im.namespace_ref);
                         }
                         _ => {}
                     }

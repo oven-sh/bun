@@ -306,14 +306,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Namespace refs whose property accesses are recorded for dynamic-import
     /// alias tracking but NOT rewritten to `E::ImportIdentifier` (the
     /// expression stays as `ns.foo` so a split-out chunk can serve it at
-    /// runtime). Used for `const ns = await import(...)` and
-    /// `.then(ns => ...)` shapes.
-    pub track_only_dynamic_import_namespaces: RefMap,
-    /// User-declared locals (`const ns`, `.then(ns => …)`, `{...rest}`) that
-    /// hold a dynamic-import namespace. Superset of the track-only set; used
-    /// to gate the assign/delete bail in `maybe_rewrite_property_access`
-    /// without catching unwrap_commonjs `const x = require()` locals.
-    pub is_dynamic_import_namespace_local: RefMap,
+    /// runtime). Used for `const ns = await import(...)`, `.then(ns => ...)`
+    /// and `{...rest}` shapes. Value `true` = track-only (the property access
+    /// stays as `ns.foo`); `false` = inline-mode rewrite to import items.
+    /// Membership distinguishes these from unwrap_commonjs
+    /// `const x = require()` locals in `maybe_rewrite_property_access`.
+    pub dynamic_import_namespace_locals: HashMap<Ref, bool>,
     pub unwrap_all_requires: bool,
 
     pub commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
@@ -1189,18 +1187,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("oom");
         }
         if let Some((rest, loc)) = rest_ref {
-            self.import_items_for_namespace
-                .insert(rest, ImportItemForNamespaceMap::default());
-            self.track_only_dynamic_import_namespaces.insert(rest, ());
-            self.is_dynamic_import_namespace_local.insert(rest, ());
-            self.imports_to_convert_from_dynamic_import
-                .push(DeferredImportNamespace {
-                    namespace: LocRef { loc, ref_: rest },
-                    import_record_id,
-                    scope: Some(self.current_scope),
-                });
+            self.register_dynamic_import_namespace_local(rest, loc, import_record_id, true);
         }
         Some(keep_decl)
+    }
+
+    /// Register a user-declared local (`const|let|var ns`, `.then(ns => …)`,
+    /// `{...rest}`) as a dynamic-import namespace so later `ns.foo` accesses
+    /// are recorded for tree-shaking.
+    pub fn register_dynamic_import_namespace_local(
+        &mut self,
+        local: Ref,
+        loc: bun_ast::Loc,
+        import_record_id: u32,
+        track_only: bool,
+    ) {
+        self.import_items_for_namespace
+            .insert(local, ImportItemForNamespaceMap::default());
+        self.dynamic_import_namespace_locals
+            .insert(local, track_only);
+        self.imports_to_convert_from_dynamic_import
+            .push(DeferredImportNamespace {
+                namespace: LocRef { loc, ref_: local },
+                import_record_id,
+                scope: Some(self.current_scope),
+            });
     }
 
     pub fn transpose_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
@@ -9317,8 +9328,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             imports_to_convert_from_require: BumpVec::new_in(arena),
             imports_to_convert_from_dynamic_import: BumpVec::new_in(arena),
             dynamic_import_aliases: Default::default(),
-            track_only_dynamic_import_namespaces: Default::default(),
-            is_dynamic_import_namespace_local: Default::default(),
+            dynamic_import_namespace_locals: Default::default(),
             unwrap_all_requires,
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,

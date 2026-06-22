@@ -1962,21 +1962,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !im.namespace_ref.is_valid() {
                 break 'dyn_import_then;
             }
+            let args = e_.args.slice_mut();
+            if args.is_empty() || args.len() > 2 {
+                break 'dyn_import_then;
+            }
             // `.then(fn).catch(err)` / `.then(fn, err)` — a rejection handler
             // is an explicit signal the import may fail; hoisting would make
-            // it dead. The flag was set during the target visit by
-            // `transpose_import` via the then/catch chain walker.
-            if p.import_records.items()[im.import_record_index as usize]
-                .flags
-                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
-            {
-                break 'dyn_import_then;
-            }
-            let inline = !p.options.code_splitting;
-            let args = e_.args.slice_mut();
-            if args.len() != 1 {
-                break 'dyn_import_then;
-            }
+            // it dead, so force track-only. Split-mode narrowing is still
+            // sound (the rejection handler never observes the namespace).
+            let has_error_handler = args.len() == 2
+                || p.import_records.items()[im.import_record_index as usize]
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+            let inline = !p.options.code_splitting && !has_error_handler;
             // Only arrows are safe: a `function(m){…}` body can reach the
             // namespace via `arguments[0]` without ever referencing `m`, which
             // would be tracked as zero exports observed and over-tree-shake.
@@ -2024,29 +2022,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         js_ast::binding::Data::BIdentifier(id) => {
                             // `.then(ns => …)` — register `ns` as a namespace
-                            // so `ns.foo` inside the body is recorded. Track-
-                            // only in split mode (keeps `ns.foo` verbatim);
-                            // full rewrite in inline mode so the importee
-                            // tree-shakes. The body is visited *after* this
-                            // block so the registration is observed there.
-                            let local = id.r#ref;
-                            p.import_items_for_namespace
-                                .insert(local, crate::parser::ImportItemForNamespaceMap::default());
-                            p.is_dynamic_import_namespace_local.insert(local, ());
-                            if !inline {
-                                p.track_only_dynamic_import_namespaces.insert(local, ());
-                            }
-                            p.ignore_usage(im.namespace_ref);
-                            p.imports_to_convert_from_dynamic_import.push(
-                                crate::parser::DeferredImportNamespace {
-                                    namespace: bun_ast::LocRef {
-                                        loc: first_param.binding.loc,
-                                        ref_: local,
-                                    },
-                                    import_record_id: im.import_record_index,
-                                    scope: Some(p.current_scope),
-                                },
+                            // so `ns.foo` inside the body is recorded. The
+                            // body is visited *after* this block so the
+                            // registration is observed there.
+                            p.register_dynamic_import_namespace_local(
+                                id.r#ref,
+                                first_param.binding.loc,
+                                im.import_record_index,
+                                !inline,
                             );
+                            p.ignore_usage(im.namespace_ref);
                         }
                         _ => {}
                     }

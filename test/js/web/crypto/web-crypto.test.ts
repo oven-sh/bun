@@ -364,15 +364,31 @@ describe("AES-KW wrapKey/unwrapKey with jwk format", () => {
     expect(roundTrippedJwk.k).toBe(originalJwk.k);
   });
 
-  it("does not pad raw-format key material", async () => {
-    const keyToWrap = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+  it("does not apply jwk padding to raw-format keys", async () => {
     const wrappingKey = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, [
       "wrapKey",
       "unwrapKey",
     ]);
-    // 32-byte key is already a multiple of 8; wrapped output is key + 8 bytes, no padding.
-    const wrapped = await crypto.subtle.wrapKey("raw", keyToWrap, wrappingKey, "AES-KW");
+
+    // A 32-byte key is already a multiple of 8; wrapped output is key + 8 bytes.
+    const alignedKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+    const wrapped = await crypto.subtle.wrapKey("raw", alignedKey, wrappingKey, "AES-KW");
     expect(wrapped.byteLength).toBe(40);
+
+    // A raw key whose length is not a multiple of 8 must still be rejected: the
+    // jwk whitespace padding must not leak into the raw branch. A 56-bit HMAC
+    // key exports to 7 raw bytes, which AES-KW cannot wrap.
+    const unalignedKey = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256", length: 56 }, true, [
+      "sign",
+      "verify",
+    ]);
+    expect((await crypto.subtle.exportKey("raw", unalignedKey)).byteLength).toBe(7);
+    const err = await crypto.subtle.wrapKey("raw", unalignedKey, wrappingKey, "AES-KW").then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(DOMException);
+    expect(err.name).toBe("OperationError");
   });
 
   it("unwraps an AES-KW jwk blob produced by Node.js", async () => {

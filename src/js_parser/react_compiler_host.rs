@@ -74,7 +74,6 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
                     loc: bun_ast::Loc::EMPTY,
                     ref_: new_ref,
                 };
-                VecExt::append(&mut p.module_scope_mut().generated, new_ref);
                 p.is_import_item.insert(new_ref, ());
                 p.jsx_imports.set(kind, loc_ref);
                 new_ref

@@ -367,7 +367,11 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
     ["ArrayBuffer in array", "[new ArrayBuffer(size)]", "r[0].byteLength === size"],
     ["Uint8Array in object", "{ h: new Uint8Array(size) }", "r.h.byteLength === size"],
     ["nested ArrayBuffer", "{ a: { b: new ArrayBuffer(size) } }", "r.a.b.byteLength === size"],
-    ["resizable ArrayBuffer in object", "{ h: new ArrayBuffer(size, { maxByteLength: size }) }", "r.h.byteLength === size"],
+    [
+      "resizable ArrayBuffer in object",
+      "{ h: new ArrayBuffer(size, { maxByteLength: size }) }",
+      "r.h.byteLength === size",
+    ],
   ] as const) {
     test(`${label} under 2GiB clones without crashing`, async () => {
       const script = `

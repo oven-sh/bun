@@ -915,7 +915,7 @@ impl<C: SourceContext> NewSource<C> {
 
     pub fn increment_count(&mut self) {
         self.ref_count
-            .fetch_add(1, core::sync::atomic::Ordering::Release);
+            .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
     }
 
     /// Called from the GC thread via the codegen
@@ -926,7 +926,7 @@ impl<C: SourceContext> NewSource<C> {
     /// cell is dead-but-unswept. Only touches the atomic field so `&self` is
     /// sound across threads.
     pub fn has_pending_activity(&self) -> bool {
-        self.ref_count.load(core::sync::atomic::Ordering::Acquire) > 1
+        self.ref_count.load(core::sync::atomic::Ordering::SeqCst) > 1
     }
 
     /// Release one reference. If the count hits zero, runs context teardown and
@@ -944,10 +944,10 @@ impl<C: SourceContext> NewSource<C> {
         let remaining = unsafe {
             let r = &(*this).ref_count;
             #[cfg(debug_assertions)]
-            if r.load(core::sync::atomic::Ordering::Relaxed) == 0 {
+            if r.load(core::sync::atomic::Ordering::SeqCst) == 0 {
                 panic!("Attempted to decrement ref count below zero");
             }
-            r.fetch_sub(1, core::sync::atomic::Ordering::Release) - 1
+            r.fetch_sub(1, core::sync::atomic::Ordering::SeqCst) - 1
         };
         if remaining == 0 {
             // SAFETY: still live; run side-effect teardown while fields are valid.

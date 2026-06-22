@@ -1,6 +1,7 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isArm64, isPosix, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "path";
 
 const impls = [
@@ -260,6 +261,55 @@ for (const [name, copy] of impls) {
       // pointed at from/abs_link and would dangle once from/ was removed.
       fs.rmSync(join(basename, "from"), { recursive: true, force: true });
       expect(fs.readFileSync(join(basename, "to", "abs_link"), "utf8")).toBe("hello");
+    });
+
+    test("symlinks - relative target inside the tree is resolved against the source tree", async () => {
+      // node resolves a relative link target against the directory of the
+      // source link and writes the absolute result into the copy. A verbatim
+      // copy of the link (e.g. a whole-tree clonefile) would keep "../a.txt".
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+        "from/sub/keep.txt": "keep",
+      });
+      fs.symlinkSync(join("..", "a.txt"), join(basename, "from", "sub", "link"));
+
+      await copy(join(basename, "from"), join(basename, "result"), { recursive: true });
+
+      const copiedLink = join(basename, "result", "sub", "link");
+      expect(fs.lstatSync(copiedLink).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(copiedLink)).toBe(join(basename, "from", "a.txt"));
+      expect(fs.readFileSync(copiedLink, "utf8")).toBe("a");
+    });
+
+    test.skipIf(isWindows)("recursive - file and directory modes are preserved into a fresh destination", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/d/f.txt": "x",
+      });
+      fs.chmodSync(join(basename, "from", "d", "f.txt"), 0o600);
+      fs.chmodSync(join(basename, "from", "d"), 0o700);
+
+      await copy(join(basename, "from"), join(basename, "result"), { recursive: true });
+
+      expect({
+        dirMode: fs.statSync(join(basename, "result", "d")).mode & 0o777,
+        fileMode: fs.statSync(join(basename, "result", "d", "f.txt")).mode & 0o777,
+        content: fs.readFileSync(join(basename, "result", "d", "f.txt"), "utf8"),
+      }).toEqual({
+        dirMode: 0o700,
+        fileMode: 0o600,
+        content: "x",
+      });
+    });
+
+    test.skipIf(isWindows)("recursive - FIFO inside the tree is rejected with ERR_FS_CP_FIFO_PIPE", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+      });
+      mkfifo(join(basename, "from", "pipe"), 0o666);
+      expect(fs.lstatSync(join(basename, "from", "pipe")).isFIFO()).toBe(true);
+
+      const e = await copyShouldThrow(join(basename, "from"), join(basename, "result"), { recursive: true });
+      expect(e.code).toBe("ERR_FS_CP_FIFO_PIPE");
     });
 
     test("filter - works", async () => {

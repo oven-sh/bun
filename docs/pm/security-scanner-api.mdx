@@ -13,7 +13,7 @@ Configure a security scanner in your `bunfig.toml`:
 
 ```toml bunfig.toml icon="settings"
 [install.security]
-scanner = "@acme/bun-security-scanner"
+scanner = "@oven/bun-security-scanner"
 ```
 
 When configured, Bun will:
@@ -52,11 +52,11 @@ Many security companies publish Bun security scanners as npm packages that you c
 Install a security scanner from npm:
 
 ```bash terminal icon="terminal"
-bun add -d @acme/bun-security-scanner
+bun add -d @oven/bun-security-scanner
 ```
 
 <Note>
-  `@acme/bun-security-scanner` is an example package name, not a real package. Replace it with the scanner you want to
+  `@oven/bun-security-scanner` is an example package name, not a real package. Replace it with the scanner you want to
   use, and consult that scanner's documentation for the exact package name and installation instructions. Most scanners
   are installed with `bun add`.
 </Note>
@@ -67,7 +67,7 @@ After installation, configure it in your `bunfig.toml`:
 
 ```toml bunfig.toml icon="settings"
 [install.security]
-scanner = "@acme/bun-security-scanner"
+scanner = "@oven/bun-security-scanner"
 ```
 
 ### Enterprise Configuration

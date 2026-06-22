@@ -24,9 +24,11 @@ use crate::program::Host;
 /// Corresponds to NonLocalImportSpecifier in the TS compiler.
 #[derive(Debug, Clone, Copy)]
 pub struct NonLocalImportSpecifier {
-    /// Bun symbol for the local binding; minted via `Host::new_generated`
-    /// so codegen emits `EIdentifier { ref_: name_ref }`. The textual name
-    /// is recoverable via `Host::ref_name(name_ref)`.
+    /// Bun symbol for the local binding; minted via `Host::new_import_item`
+    /// (Kind::Import + `is_import_item`) so codegen emits
+    /// `E::ImportIdentifier { ref_: name_ref }` and the linker's
+    /// `namespace_alias` rewrite applies. The textual name is recoverable
+    /// via `Host::ref_name(name_ref)`.
     pub name_ref: bun_ast::Ref,
     pub module: &'static str,
     pub imported: &'static str,

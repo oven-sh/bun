@@ -6419,6 +6419,14 @@ pub mod __gated_printer {
                         // `S::Debugger` and oven-sh/bun#32591.
                         self.print_space_before_identifier();
                         self.print(b"debugger;");
+                        // Leave `prev_stmt_tag` as if nothing was printed. The
+                        // next statement is the first real one, and some arms
+                        // (SClass, the export statements) print a leading
+                        // newline when the previous statement is neither empty
+                        // nor export-like, which would re-introduce the line
+                        // shift this inline emission avoids.
+                        self.prev_stmt_tag = StmtTag::SEmpty;
+                        return Ok(());
                     } else {
                         self.print_indent();
                         self.print_space_before_identifier();

@@ -162,6 +162,17 @@ jobs:
             fi
           fi
 
+      - name: Install system dependencies
+        run: |
+          # openEuler: libatomic required by node for msgpackr-extract postinstall
+          if ! rpm -q libatomic &>/dev/null; then
+            echo "⚠️  libatomic not found — installing..."
+            dnf install -y libatomic 2>&1 | tail -3
+            echo "✅ libatomic installed"
+          else
+            echo "✅ libatomic already installed"
+          fi
+
       - name: Setup environment
         run: |
           echo "OHOS_SDK_ROOT=${{ env.OHOS_SDK_ROOT }}" >> $GITHUB_ENV

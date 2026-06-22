@@ -69,7 +69,6 @@ type Http2ConnectOptions = {
 const TLSSocket = tls.TLSSocket;
 const Socket = net.Socket;
 const EventEmitter = require("node:events");
-const { AsyncResource } = require("node:async_hooks");
 const { Duplex } = Stream;
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
 const { promisify } = require("internal/promisify");
@@ -2570,17 +2569,23 @@ class Http2Stream extends Duplex {
   }
 }
 class ClientHttp2Stream extends Http2Stream {
-  #asyncResource;
-  constructor(streamId, session, headers) {
-    super(streamId, session, headers);
-    // Capture the async context active when the request was created so that
-    // events emitted from native parser callbacks (response, data, end, ...)
-    // observe it, matching Node's Http2Stream async resource semantics.
-    this.#asyncResource = new AsyncResource("Http2Stream");
-  }
+  // Capture the async context active when the request was created so that
+  // events emitted from native parser callbacks (response, data, end, ...)
+  // observe it, matching Node's Http2Stream async resource semantics. The raw
+  // $asyncContext frame is snapshotted directly so session.request() does not
+  // flip on async-context tracking when no AsyncLocalStorage is in use.
+  #asyncContextFrame = $getInternalField($asyncContext, 0);
 
   emit(event, ...args) {
-    return this.#asyncResource.runInAsyncScope(super.emit, this, event, ...args);
+    const frame = this.#asyncContextFrame;
+    if (frame === undefined) return super.emit(event, ...args);
+    const prev = $getInternalField($asyncContext, 0);
+    $putInternalField($asyncContext, 0, frame);
+    try {
+      return super.emit(event, ...args);
+    } finally {
+      $putInternalField($asyncContext, 0, prev);
+    }
   }
 }
 function tryClose(fd) {

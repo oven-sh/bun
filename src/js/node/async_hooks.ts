@@ -187,9 +187,16 @@ class AsyncLocalStorage {
     } else {
       // it's safe to mutate context now that it was cloned
       context = context!.slice();
-      i = context.indexOf(this);
+      // Scan even (key) slots only — a value slot can hold this storage when
+      // another ALS stored it via enterWith/run.
+      i = -1;
+      for (var j = 0, len = context.length; j < len; j += 2) {
+        if (context[j] === this) {
+          i = j;
+          break;
+        }
+      }
       if (i > -1) {
-        $assert(i % 2 === 0);
         hasPrevious = true;
         previous_value = context[i + 1];
         context[i + 1] = store_value;

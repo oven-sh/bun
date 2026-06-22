@@ -2198,11 +2198,14 @@ pub fn NewParser_(
             }
 
             // Server-side components:
-            // Declare upfront the symbols for "Response" and "bun:app"
+            // Declare upfront the symbols for "Response" and "bun:app".
+            // Unlike the other generated symbols above, this one is looked up
+            // by name during visit (user `new Response(...)` resolves via
+            // `findSymbol`), so it must live in `module_scope.members`.
             switch (p.options.features.server_components) {
                 .none, .client_side => {},
                 else => {
-                    p.response_ref = try p.declareGeneratedSymbol(.import, "Response");
+                    p.response_ref = try p.declareCommonJSSymbol(.import, "Response");
                     p.bun_app_namespace_ref = try p.newSymbol(
                         .other,
                         "import_bun_app",

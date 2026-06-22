@@ -3214,12 +3214,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // Server-side components:
-            // Declare upfront the symbols for "Response" and "bun:app"
+            // Declare upfront the symbols for "Response" and "bun:app".
+            // Unlike the other generated symbols above, this one is looked up
+            // by name during visit (user `new Response(...)` resolves via
+            // `find_symbol`), so it must live in `module_scope.members`.
             match self.options.features.server_components {
                 options::ServerComponents::None | options::ServerComponents::ClientSide => {}
                 _ => {
                     self.response_ref =
-                        self.declare_generated_symbol(js_ast::symbol::Kind::Import, b"Response")?;
+                        self.declare_common_js_symbol(js_ast::symbol::Kind::Import, b"Response")?;
                     self.bun_app_namespace_ref =
                         self.new_symbol(js_ast::symbol::Kind::Other, b"import_bun_app")?;
                     let symbol = &mut self.symbols[self.response_ref.inner_index() as usize];

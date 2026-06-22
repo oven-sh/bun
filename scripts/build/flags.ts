@@ -1374,8 +1374,10 @@ export const linkerFlags: Flag[] = [
   },
   {
     // OHOS: gc-sections with Rust FFI strips uSockets symbols referenced
-    // only from Rust. --export-dynamic ensures they remain available at
-    // startup when the dynamic linker resolves them.
+    // only from Rust. --version-script exports Bun__dlopen to .dynsym.
+    // --export-dynamic is NOT used (it bloats .dynsym 40x → OOM).
+    // --export-dynamic makes symbols dynamic (needed for PIE), then
+    // --version-script with local: *; restricts exports to only Bun__dlopen.
     flag: c => ["-Wl,--gc-sections", "-Wl,--export-dynamic", `-Wl,--version-script=${c.cwd}/src/symbols.dyn`,
       "-Wl,--undefined=us_ssl_pop_pending_session",
       "-Wl,--undefined=us_ssl_pop_pending_keylog",

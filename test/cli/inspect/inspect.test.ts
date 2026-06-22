@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isPosix, randomPort, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isPosix, randomPort, tempDir, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -612,7 +612,7 @@ test("error.stack doesnt lose frames", () => {
 // breakpoint requested on line N landed on line N-1, so the previous top-level
 // lexical binding was still in its temporal dead zone when execution stopped.
 test("--inspect-brk breakpoint stops on the requested line, not the line before it (#32591)", async () => {
-  const dir = tempDirWithFiles("inspect-brk-line", {
+  using dir = tempDir("inspect-brk-line", {
     // Keep each statement on its own line; the breakpoint is set on the last one.
     "target.ts": [
       `const label = "bun-dap-repro";`,
@@ -623,7 +623,7 @@ test("--inspect-brk breakpoint stops on the requested line, not the line before 
       "",
     ].join("\n"),
   });
-  const program = fs.realpathSync(join(dir, "target.ts"));
+  const program = fs.realpathSync(join(String(dir), "target.ts"));
   // 0-based line of `console.log(...)`, the statement the breakpoint targets.
   const consoleLogLine = 4;
 

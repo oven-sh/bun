@@ -76,6 +76,37 @@ if (isDockerEnabled()) {
       expect(stdout).toBe('query: [{"x":1}]\nonclose: Connection closed\nuncaught: boom from onclose\nended\n');
       expect(exitCode).toBe(0);
     });
+
+    // PostgresSQLQuery.do_run refs the connection's poll_ref KeepAlive (a
+    // two-state flag, not a counter). When do_run returns early with a
+    // synchronous error before enqueueing — here a boxed Boolean binding
+    // rejected inside Signature::generate — the poll_ref must not be left
+    // Active, or the event loop stays pinned and the process never exits. The
+    // setImmediate forces do_run onto a later turn so on_data's epilogue
+    // doesn't mask the leak.
+    test("a synchronous do_run failure does not pin the event loop", async () => {
+      await container.ready;
+      const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+      const fixture = /* ts */ `
+const sql = new Bun.SQL({
+  url: process.env.FIXTURE_URL,
+  max: 1,
+  idleTimeout: 0,
+  maxLifetime: 0,
+  connectionTimeout: 30,
+});
+await sql.connect();
+await new Promise(r => setImmediate(r));
+const err = await sql\`SELECT \${new Boolean(true)}\`.catch(e => e);
+console.log("rejected:" + (err?.code ?? err?.name ?? String(err)));
+`;
+      const { stdout, stderr, exitCode } = await runFixture(fixture, { FIXTURE_URL: url });
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "rejected:ERR_INVALID_ARG_TYPE\n",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    });
   });
 
   describeWithContainer("mysql", { image: "mysql_plain" }, container => {

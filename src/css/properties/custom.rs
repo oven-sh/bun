@@ -5,15 +5,6 @@
 // `EnvironmentVariable::{parse, parse_nested, to_css}`,
 // `EnvironmentVariableName::{parse, to_css}`, `Function::to_css`,
 // `CustomProperty::parse`, `UnparsedProperty::parse` are now real.
-//
-// A few leaf calls (Url::parse/to_css, CustomIdent::to_css) are still
-// ``-gated in *other* files; those bodies are inlined verbatim
-// under `mod ext` below so the hub compiles without touching
-// `values/{url,ident}.rs`. `DashedIdentReference::{parse_with_options,to_css}`
-// are now real and forwarded directly. Remaining internal
-// `` gates carry `blocked_on:` notes for the next round
-// (ComponentParser un-gate from `values::color::gated_full_impl`;
-// `properties::animation` un-gate; `get_fallback` chain).
 
 use crate as css;
 use crate::PrintResult;
@@ -44,20 +35,15 @@ use bun_wyhash::Wyhash;
 use crate::generics::{CssEql, CssHash, DeepClone};
 use bun_alloc::Arena;
 
-// ─── External-gate shims ───────────────────────────────────────────────────
-// `TokenList::{parse,to_css}` bottom out on a handful of leaf fns that still
-// carry `` in *other* files (`values/{url,ident}.rs`,
-// `css_modules.rs`). Those gates are stale — every dependency they cite now
-// exists — but this round's edit scope is `custom.rs` + `css_parser.rs` only.
-// To un-gate the TokenList hub without touching those files, the leaf bodies
-// are inlined here verbatim. Once `url.rs`/`ident.rs` un-gate, callers below
-// can swap back to the canonical methods and this module drops.
+// ─── leaf fn inlines ───────────────────────────────────────────────────────
+// `TokenList::{parse,to_css}` bottom out on a handful of leaf fns from
+// `values/{url,ident}.rs` / `css_modules.rs`; inlined here so the hub does
+// not circularly depend on those modules.
 mod ext {
     use super::*;
     use crate::dependencies;
 
-    /// Inline of `Url::parse` (gated in `values/url.rs` on
-    /// `Parser::add_import_record`, which now exists at css_parser.rs:3228).
+    /// Inline of `Url::parse`.
     pub(super) fn url_parse(input: &mut Parser) -> Result<Url> {
         let start_pos = input.position();
         let loc = input.current_source_location();
@@ -73,8 +59,7 @@ mod ext {
         })
     }
 
-    /// Inline of `Url::to_css` (gated in `values/url.rs` on `WriteAll for
-    /// Vec<u8>`, which this round adds in css_parser.rs).
+    /// Inline of `Url::to_css`.
     pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
         let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
             // `get_import_records` borrows &mut *dest, so capture
@@ -143,9 +128,9 @@ mod ext {
         Ok(())
     }
 
-    /// Forwarder to `DashedIdentReference::parse_with_options` (now un-gated
-    /// in `values/ident.rs`). Honors `options.css_modules.dashed_idents` and
-    /// parses the `from <specifier>` suffix when enabled.
+    /// Forwarder to `DashedIdentReference::parse_with_options`. Honors
+    /// `options.css_modules.dashed_idents` and parses the
+    /// `from <specifier>` suffix when enabled.
     #[inline]
     pub(super) fn dashed_ident_ref_parse(
         input: &mut Parser,
@@ -154,9 +139,7 @@ mod ext {
         DashedIdentReference::parse_with_options(input, options)
     }
 
-    /// Forwarder to `DashedIdentReference::to_css` (now un-gated in
-    /// `values/ident.rs`). `CssModule::reference_dashed` is real; the
-    /// CSS-Modules `dashed_idents` remapping path is wired.
+    /// Forwarder to `DashedIdentReference::to_css`.
     #[inline]
     pub(super) fn dashed_ident_ref_to_css(
         this: &DashedIdentReference,
@@ -165,8 +148,7 @@ mod ext {
         this.to_css(dest)
     }
 
-    /// Inline of `CustomIdent::to_css` (gated in `values/ident.rs` on
-    /// `Printer::write_ident`, which now exists at printer.rs:534).
+    /// Inline of `CustomIdent::to_css`.
     pub(super) fn custom_ident_to_css(this: &CustomIdent, dest: &mut Printer) -> PrintResult<()> {
         let css_module_custom_idents_enabled = match &dest.css_module {
             Some(m) => m.config.custom_idents,
@@ -382,8 +364,6 @@ impl TokenList {
                     has_whitespace = false;
                 }
                 TokenOrValue::DashedIdent(v) => {
-                    // Inline of `DashedIdent::to_css` (gated in ident.rs on
-                    // `Printer::write_dashed_ident`, which now exists).
                     dest.write_dashed_ident(v, true)?;
                     has_whitespace = false;
                 }

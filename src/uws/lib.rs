@@ -143,14 +143,8 @@ pub fn get_default_ciphers() -> &'static ZStr {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MOVE-IN: ssl_wrapper (MOVE_DOWN bun_runtime::socket::ssl_wrapper → bun_uws)
-// Requested by: http_jsc
+// ssl_wrapper (moved down from bun_runtime::socket::ssl_wrapper for http_jsc)
 // ═══════════════════════════════════════════════════════════════════════════
-// `bun_boringssl_sys` is currently empty (bindgen not yet run), so every fn
-// body that calls a BoringSSL symbol is re-gated below; the
-// type/struct surface compiles against opaque `SSL`/`SSL_CTX` from
-// `bun_boringssl::c`. `init_from_options` additionally needs
-// `bun_uws_sys::socket_context::BunSocketContextOptions` (gated in lower tier).
 pub mod ssl_wrapper {
     use core::ffi::{c_int, c_void};
     use core::ptr::NonNull;
@@ -580,24 +574,26 @@ pub mod ssl_wrapper {
             };
             // we already sent the ssl shutdown
             if Self::r(this).flags.sent_ssl_shutdown() || Self::r(this).flags.fatal_error() {
-                if fast_shutdown && !Self::r(this).flags.received_ssl_shutdown() {
-                    // The peer went away (raw EOF / destroy) after we had
-                    // already sent our shutdown, and its close_notify will
-                    // never arrive. A fast shutdown means we are done for
-                    // sure: mark received and run the close callback so the
-                    // owner's teardown (UpgradedDuplex::on_close ->
-                    // DuplexUpgradeContext::on_close -> deinit) actually
-                    // happens. Without this, a TLS-over-duplex socket whose
-                    // peer half-closes at the TCP level never tears down and
-                    // leaks its whole context graph (LeakSanitizer caught
-                    // this in test-tls-js-stream / test-tls-inception).
+                if fast_shutdown {
+                    // A fast shutdown is a full teardown — the owner calls it
+                    // right before detaching/freeing handlers.ctx (proxy tunnel
+                    // on response-complete; TLS-over-duplex on raw EOF).
+                    //
+                    // Run the close callback now, regardless of whether the
+                    // peer's close_notify has arrived: if it HAS (processed
+                    // mid handle_reading, which sets sent_ssl_shutdown before
+                    // flushing the final decrypted bytes), closed_notified may
+                    // still be unset and handle_reading's deferred
+                    // trigger_close_callback would otherwise fire on_close
+                    // into the freed ctx; if it has NOT (peer went away after
+                    // our shutdown), the TLS-over-duplex teardown chain
+                    // (UpgradedDuplex::on_close -> DuplexUpgradeContext::on_close
+                    // -> deinit) never runs and leaks the whole context graph.
                     // trigger_close_callback is idempotent (closed_notified).
                     Self::r(this).flags.set_received_ssl_shutdown(true);
                     Self::r(this).trigger_close_callback();
                     // Do not read self after the close callback: the owner's
-                    // teardown chain has started (deinit is deferred to the
-                    // next tick today, but nothing here should rely on that).
-                    // The answer is known - we just set it.
+                    // teardown chain has started.
                     return true;
                 }
                 return Self::r(this).flags.received_ssl_shutdown();
@@ -1270,15 +1266,9 @@ pub mod ssl_wrapper {
 // Loop / InternalLoopData
 // ═══════════════════════════════════════════════════════════════════════════
 // Mirrors `struct us_internal_loop_data_t` (packages/bun-usockets/src/internal/
-// loop_data.h) and `struct us_loop_t` (epoll_kqueue.h / libuv.h). Defined here
-// rather than re-exported from bun_uws_sys because that crate currently gates
-// every module and only exposes opaques — and we cannot `impl` foreign opaques.
-// When bun_uws_sys un-gates, collapse these into `pub use bun_uws_sys::loop_::*`.
-
-// bun_uws_sys provides the real Loop/PosixLoop/WindowsLoop/InternalLoopData/
-// SocketGroup. Re-export them here so `bun_uws::Loop` and `bun_uws_sys::Loop`
-// are the SAME type (bun_io's EventLoopCtxVTable is typed against the uws_sys
-// version).
+// loop_data.h) and `struct us_loop_t` (epoll_kqueue.h / libuv.h). Re-exported
+// from bun_uws_sys so `bun_uws::Loop` and `bun_uws_sys::Loop` are the same
+// type (bun_io's EventLoopCtxVTable is typed against the uws_sys version).
 pub use bun_uws_sys::loop_::{LoopHandler, us_wakeup_loop};
 pub use bun_uws_sys::{InternalLoopData, Loop, PosixLoop, Timespec, WindowsLoop};
 

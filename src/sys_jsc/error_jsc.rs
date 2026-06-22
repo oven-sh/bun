@@ -75,6 +75,37 @@ pub mod TestingAPIs {
         }
     }
 
+    /// Exposes NTSTATUS -> `bun.sys.E` translation so tests can feed NTSTATUS
+    /// values that filter drivers and cloud-sync placeholders return in the
+    /// wild (STATUS_CANNOT_DELETE etc.) and verify they map to a sensible
+    /// errno rather than `UNKNOWN`. Windows-only; returns `undefined` elsewhere.
+    #[bun_jsc::host_fn]
+    pub fn translate_nt_status_to_e(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = frame.arguments();
+        if arguments.is_empty() || !arguments[0].is_number() {
+            return Err(global.throw(format_args!(
+                "translateNtStatusToE: expected 1 number argument"
+            )));
+        }
+        #[cfg(not(windows))]
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        #[cfg(windows)]
+        {
+            let raw: u32 = arguments[0].to_u32();
+            let status = bun_sys::windows::NTSTATUS::from_raw(raw);
+            let result = bun_sys::windows::translate_nt_status_to_errno(status);
+            return bun_jsc::bun_string_jsc::create_utf8_for_js(
+                global,
+                <&'static str>::from(result).as_bytes(),
+            );
+        }
+    }
+
     /// Exposes libuv -> `bun.sys.E` translation so tests can feed out-of-range
     /// negative values and verify it does not panic. Windows-only.
     #[bun_jsc::host_fn]

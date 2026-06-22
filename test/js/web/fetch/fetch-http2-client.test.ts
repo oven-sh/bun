@@ -99,7 +99,11 @@ async function withRawH2Server(
   };
   const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2"] }, socket => {
     const connIndex = state.connections++;
-    closed.push(once(socket, "close"));
+    // Track teardown with a promise that resolves on "close" even when the
+    // client tears the connection down abortively (RST → ECONNRESET emits an
+    // "error" first). `once(socket, "close")` would reject in that case,
+    // making allClosed() throw and leaving unhandled rejections behind.
+    closed.push(new Promise(resolve => socket.once("close", resolve)));
     const conn: RawConn = {
       socket,
       settings: () => socket.write(frame(4, 0, 0)),

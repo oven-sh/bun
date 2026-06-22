@@ -104,7 +104,7 @@ pub(crate) fn array_to_js(
 }
 
 pub(crate) fn number_to_js(this: E::Number) -> JSValue {
-    JSValue::js_number(this.value)
+    JSValue::js_number(this.value())
 }
 
 pub(crate) fn object_to_js(

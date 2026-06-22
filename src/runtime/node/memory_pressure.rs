@@ -48,7 +48,7 @@ pub fn emit(global: &JSGlobalObject, lvl: i32) {
     };
     // SAFETY: `global` is the live per-thread global; the C++ side handles
     // the "no listeners" case via `hasEventListeners`.
-    unsafe { Process__emitMemoryPressureEvent(global as *const _ as *mut _, lvl) };
+    unsafe { Process__emitMemoryPressureEvent(core::ptr::from_ref(global).cast_mut(), lvl) };
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -126,7 +126,7 @@ mod posix {
         let ctx: EventLoopCtx = unsafe { VirtualMachine::event_loop_ctx(vm) };
 
         let watcher = bun_core::heap::into_raw(Box::new(MemoryPressureWatcher {
-            global: global as *const _ as *mut _,
+            global: ptr::from_ref(global).cast_mut(),
             poll: ptr::null_mut(),
             registered: false,
         }));
@@ -339,7 +339,7 @@ mod windows {
         // SAFETY: `watcher` is a freshly allocated, uv-initialised struct.
         unsafe {
             (*watcher).async_.data = watcher.cast();
-            (*watcher).global = global as *const _ as *mut _;
+            (*watcher).global = ptr::from_ref(global).cast_mut();
             (*watcher).notify = ptr::null_mut();
             (*watcher).wait = ptr::null_mut();
             ptr::addr_of_mut!((*watcher).pending_level).write(AtomicI32::new(0));

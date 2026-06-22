@@ -81,15 +81,17 @@ export function initializeTransformStream(this) {
   $setUpTransformStreamDefaultControllerFromTransformer(this, transformer, transformerDict);
 
   if ("start" in transformerDict) {
-    // Spec step 14: resolve startPromise *with* the result of invoking
-    // start — synchronously, so the writable/readable [[started]] reaction
-    // is queued before any user code that runs in the same turn.
     const controller = $getByIdDirectPrivate(this, "controller");
-    try {
-      startPromiseCapability.resolve.$call(undefined, transformerDict["start"].$call(transformer, controller));
-    } catch (error) {
-      startPromiseCapability.reject.$call(undefined, error);
-    }
+    const startAlgorithm = () => $promiseInvokeOrNoopMethodNoCatch(transformer, transformerDict["start"], [controller]);
+    startAlgorithm().$then(
+      () => {
+        // FIXME: We probably need to resolve start promise with the result of the start algorithm.
+        startPromiseCapability.resolve.$call();
+      },
+      error => {
+        startPromiseCapability.reject.$call(undefined, error);
+      },
+    );
   } else startPromiseCapability.resolve.$call();
 
   return this;

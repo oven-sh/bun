@@ -577,6 +577,10 @@ pub trait SourceContext: Sized {
     fn js_on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     /// `js_${NAME}InternalReadableStreamSource::on_drain_callback_get_cached`
     fn js_on_drain_callback_get_cached(this: JSValue) -> Option<JSValue>;
+    /// `js_${NAME}InternalReadableStreamSource::on_close_callback_set_cached`
+    fn js_on_close_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    /// `js_${NAME}InternalReadableStreamSource::on_close_callback_get_cached`
+    fn js_on_close_callback_get_cached(this: JSValue) -> Option<JSValue>;
 
     fn on_start(&mut self) -> streams::Start;
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result;
@@ -646,7 +650,6 @@ pub struct NewSource<C: SourceContext> {
     /// owned/freed here). The JS path stores
     /// `on_js_close` and leaves this `None` — see [`Self::on_close`].
     pub close_ctx: Option<NonNull<c_void>>,
-    pub close_jsvalue: bun_jsc::strong::Optional,
     /// R-2: cleared via `&self` from `FetchTasklet::clear_stream_cancel_handler`
     /// (through `ByteStream::parent_const`), so interior-mutable.
     pub cancel_handler: Cell<Option<fn(Option<*mut c_void>)>>,
@@ -672,7 +675,6 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             pending_err: None,
             close_handler: None,
             close_ctx: None,
-            close_jsvalue: bun_jsc::strong::Optional::empty(),
             cancel_handler: Cell::new(None),
             cancel_ctx: Cell::new(None),
             global_this: None,
@@ -692,6 +694,8 @@ pub(crate) trait NewSourceCodegen {
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     fn on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     fn on_drain_callback_get_cached(this: JSValue) -> Option<JSValue>;
+    fn on_close_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    fn on_close_callback_get_cached(this: JSValue) -> Option<JSValue>;
 }
 
 /// Binds the four `SourceContext::js_*` accessors to the codegen'd
@@ -732,6 +736,20 @@ macro_rules! source_context_codegen {
         ) -> Option<$crate::webcore::jsc::JSValue> {
             $crate::generated_classes::$gen::on_drain_callback_get_cached(this)
         }
+        #[inline]
+        fn js_on_close_callback_set_cached(
+            this: $crate::webcore::jsc::JSValue,
+            global: &$crate::webcore::jsc::JSGlobalObject,
+            value: $crate::webcore::jsc::JSValue,
+        ) {
+            $crate::generated_classes::$gen::on_close_callback_set_cached(this, global, value)
+        }
+        #[inline]
+        fn js_on_close_callback_get_cached(
+            this: $crate::webcore::jsc::JSValue,
+        ) -> Option<$crate::webcore::jsc::JSValue> {
+            $crate::generated_classes::$gen::on_close_callback_get_cached(this)
+        }
     };
 }
 
@@ -753,6 +771,12 @@ impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
     }
     fn on_drain_callback_get_cached(this: JSValue) -> Option<JSValue> {
         C::js_on_drain_callback_get_cached(this)
+    }
+    fn on_close_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        C::js_on_close_callback_set_cached(this, global, value)
+    }
+    fn on_close_callback_get_cached(this: JSValue) -> Option<JSValue> {
+        C::js_on_close_callback_get_cached(this)
     }
 }
 
@@ -870,10 +894,21 @@ impl<C: SourceContext> NewSource<C> {
     fn on_js_close(ptr: Option<*mut c_void>) {
         // SAFETY: ptr was set to `self as *mut NewSource<C>` in on_close()/set_on_close_from_js.
         let this = unsafe { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };
-        if let Some(cb) = this.close_jsvalue.try_swap() {
-            this.global_this().queue_microtask(cb, &[]);
+        if this.this_jsvalue != JSValue::ZERO {
+            let global_this = this.global_this();
+            if let Some(cb) =
+                <Self as NewSourceCodegen>::on_close_callback_get_cached(this.this_jsvalue)
+            {
+                if !cb.is_undefined() {
+                    global_this.queue_microtask(cb, &[]);
+                }
+            }
+            <Self as NewSourceCodegen>::on_close_callback_set_cached(
+                this.this_jsvalue,
+                global_this,
+                JSValue::UNDEFINED,
+            );
         }
-        this.close_jsvalue.deinit();
     }
 
     pub fn increment_count(&mut self) {
@@ -904,7 +939,6 @@ impl<C: SourceContext> NewSource<C> {
         if remaining == 0 {
             // SAFETY: still live; run side-effect teardown while fields are valid.
             unsafe {
-                (*this).close_jsvalue.deinit();
                 (*this).context.deinit_fn();
             }
             // SAFETY: `this` originated from `Box::into_raw` in `Self::new`. No
@@ -1084,7 +1118,13 @@ impl<C: SourceContext> NewSource<C> {
         self.global_this = Some(bun_ptr::BackRef::new(global_object));
 
         if value.is_undefined() {
-            self.close_jsvalue.deinit();
+            if self.this_jsvalue != JSValue::ZERO {
+                <Self as NewSourceCodegen>::on_close_callback_set_cached(
+                    self.this_jsvalue,
+                    global_object,
+                    JSValue::UNDEFINED,
+                );
+            }
             return Ok(());
         }
 
@@ -1096,7 +1136,13 @@ impl<C: SourceContext> NewSource<C> {
             ));
         }
         let cb = value.with_async_context_if_needed(global_object);
-        self.close_jsvalue.set(global_object, cb);
+        if self.this_jsvalue != JSValue::ZERO {
+            <Self as NewSourceCodegen>::on_close_callback_set_cached(
+                self.this_jsvalue,
+                global_object,
+                cb,
+            );
+        }
         Ok(())
     }
 
@@ -1133,7 +1179,14 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn get_on_close_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
-        self.close_jsvalue.get().unwrap_or(JSValue::UNDEFINED)
+        if self.this_jsvalue != JSValue::ZERO {
+            if let Some(val) =
+                <Self as NewSourceCodegen>::on_close_callback_get_cached(self.this_jsvalue)
+            {
+                return val;
+            }
+        }
+        JSValue::UNDEFINED
     }
 
     pub fn get_on_drain_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {

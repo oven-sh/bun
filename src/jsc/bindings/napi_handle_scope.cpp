@@ -146,8 +146,7 @@ extern "C" void NapiHandleScope__append(napi_env env, JSC::EncodedJSValue value)
     // Match toNapi() in napi.h: non-cell values need no rooting, and the
     // current handle scope is null when a finalizer runs immediately during
     // sweep (NapiHandleScope::open returns nullptr while the mutator is
-    // sweeping, and during VM teardown mustDeferFinalizers() is false so
-    // NapiRef::callFinalizer dispatches without a scope).
+    // sweeping).
     JSC::JSValue v = JSC::JSValue::decode(value);
     if (!v.isCell())
         return;

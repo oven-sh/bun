@@ -50,9 +50,7 @@
 #include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/BigIntObject.h"
-// JSOrderedHashTableHelper.h was removed in the upstream prebuilt WebKit.
-// It was only included for type definitions that are no longer needed.
-// #include "JavaScriptCore/JSOrderedHashTableHelper.h"
+#include "JavaScriptCore/JSOrderedHashTableHelper.h"
 
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSClassRef.h"

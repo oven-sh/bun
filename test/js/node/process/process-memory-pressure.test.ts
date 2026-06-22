@@ -34,28 +34,39 @@ describe.concurrent("process.on('memoryPressure')", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("disarms when the last listener is removed", async () => {
+  test("arms on first listener and disarms on last removal", async () => {
     const { stdout, stderr, exitCode } = await run(/* js */ `
-      const { emitMemoryPressure } = require("bun:internal-for-testing");
+      const { emitMemoryPressure, isMemoryPressureWatcherInstalled } = require("bun:internal-for-testing");
       const seen = [];
+      const installed = [];
       const a = level => seen.push("a:" + level);
       const b = level => seen.push("b:" + level);
+      installed.push(isMemoryPressureWatcherInstalled()); // false: no listeners yet
       process.on("memoryPressure", a);
+      installed.push(isMemoryPressureWatcherInstalled()); // true: first listener armed it
       process.on("memoryPressure", b);
+      installed.push(isMemoryPressureWatcherInstalled()); // true: still armed
       emitMemoryPressure("warning");
       process.off("memoryPressure", a);
+      installed.push(isMemoryPressureWatcherInstalled()); // true: one listener left
       emitMemoryPressure("critical");
       process.off("memoryPressure", b);
+      installed.push(isMemoryPressureWatcherInstalled()); // false: last listener removed
       // No listeners registered; emit should be a no-op.
       emitMemoryPressure("critical");
       // Re-arm and emit again to prove the watcher can be reinstalled.
       process.on("memoryPressure", a);
+      installed.push(isMemoryPressureWatcherInstalled()); // true: re-armed
       emitMemoryPressure("warning");
       process.off("memoryPressure", a);
-      process.stdout.write(JSON.stringify(seen));
+      installed.push(isMemoryPressureWatcherInstalled()); // false: disarmed again
+      process.stdout.write(JSON.stringify({ seen, installed }));
     `);
     expect({ stdout, stderr: stderr.trim() }).toEqual({
-      stdout: JSON.stringify(["a:warning", "b:warning", "b:critical", "a:warning"]),
+      stdout: JSON.stringify({
+        seen: ["a:warning", "b:warning", "b:critical", "a:warning"],
+        installed: [false, true, true, true, false, true, false],
+      }),
       stderr: "",
     });
     expect(exitCode).toBe(0);

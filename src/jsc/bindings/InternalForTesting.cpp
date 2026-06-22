@@ -102,6 +102,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta, (JSC::J
 }
 
 extern "C" void Bun__MemoryPressure__emit(JSC::JSGlobalObject* global, int level);
+extern "C" bool Bun__MemoryPressure__isInstalled(JSC::JSGlobalObject* global);
 
 // Synthetically fire process.on("memoryPressure") so tests can exercise the
 // emit path without depending on real OS memory pressure.
@@ -114,6 +115,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitMemoryPressure, (JSC::JSGlobalObject * g
     int level = str == "warning"_s ? 2 : 4;
     Bun__MemoryPressure__emit(defaultGlobalObject(globalObject), level);
     return encodedJSUndefined();
+}
+
+// Whether the per-VM memory-pressure watcher is currently installed, so tests
+// can observe that process.on/off actually arm/disarm the OS backend.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return JSValue::encode(jsBoolean(Bun__MemoryPressure__isInstalled(defaultGlobalObject(globalObject))));
 }
 
 }

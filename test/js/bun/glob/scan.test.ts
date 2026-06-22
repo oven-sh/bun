@@ -684,6 +684,15 @@ describe("brace patterns containing path separators", async () => {
     const b = await Array.fromAsync(new Glob(`{${cwd}/svc/*.ts,${cwd}/nope/*.ts}`).scan({ dot: true }));
     expect(b).toEqual(want);
   });
+
+  // The missing-root tolerance is only for an absolute alternative's own
+  // prefix. A non-existent cwd is the shared root for every relative
+  // alternative, so it must still surface its error instead of silently
+  // returning no matches.
+  test("missing cwd still throws for a relative brace pattern", () => {
+    const missing = path.join(cwd, "definitely-missing-32596");
+    expect(() => [...new Glob("{a/b,c/d}").scanSync({ cwd: missing })]).toThrow();
+  });
 });
 
 describe("trailing directory separator", async () => {

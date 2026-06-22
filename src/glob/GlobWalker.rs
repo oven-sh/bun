@@ -517,11 +517,15 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             Err(err) => {
                 // Brace expansions are walked as independent patterns, each with
                 // its own root. Alternatives are an unordered set, so a missing
-                // or non-directory root for one (e.g. `{/missing/*.ts,ok/*.ts}`)
-                // must yield no matches for that alternative rather than abort
-                // the whole scan. Single patterns keep the original error so a
-                // bad cwd still surfaces.
-                if !self.walker.brace_expansions.is_empty()
+                // or non-directory absolute root for one (e.g.
+                // `{/missing/*.ts,ok/*.ts}`) must yield no matches for that
+                // alternative rather than abort the whole scan. Gated on
+                // `was_absolute` so this only covers an expansion's own literal
+                // prefix: a missing `cwd` (the root for relative alternatives,
+                // shared by all of them) still surfaces its error, as do single
+                // patterns.
+                if was_absolute
+                    && !self.walker.brace_expansions.is_empty()
                     && matches!(err.get_errno(), E::ENOENT | E::ENOTDIR)
                 {
                     self.iter_state = IterState::GetNext;
@@ -2230,14 +2234,31 @@ const BRACE_EXPANSION_LIMIT: usize = 10_000;
 /// stack overflow on adversarial input; far beyond any realistic pattern.
 const BRACE_EXPANSION_MAX_DEPTH: u32 = 32;
 
+/// Bytes to advance past a non-Windows backslash escape at index `i`. Returns 1
+/// when the next byte is a native separator so the caller still sees it on the
+/// following iteration: `build_pattern_components` splits on a separator even
+/// when backslash-escaped, so the detector/parser must not hide it. Any other
+/// escaped byte is skipped entirely (returns 2).
+fn escape_advance(pattern: &[u8], i: usize) -> usize {
+    if pattern
+        .get(i + 1)
+        .is_some_and(|&n| bun_core::path_sep::is_sep_native(n))
+    {
+        1
+    } else {
+        2
+    }
+}
+
 /// Returns true if `pattern` contains a brace group (`{...}`) with a path
 /// separator inside it. `[...]` bracket classes are honored for brace depth
 /// (commas/braces inside a class are not structural), but a separator inside a
 /// class still counts, because `build_pattern_components` splits on separators
 /// regardless of bracket state. On non-Windows a backslash escapes the next
-/// byte; on Windows a backslash is a native path separator (matching
-/// `is_sep_native` / `build_pattern_components`), not an escape, so a `\` inside
-/// a brace group triggers expansion there too.
+/// byte, except a following separator still counts (the splitter cuts on it
+/// regardless); on Windows a backslash is itself a native path separator
+/// (matching `is_sep_native` / `build_pattern_components`), not an escape, so a
+/// `\` inside a brace group triggers expansion there too.
 fn brace_group_spans_separator(pattern: &[u8]) -> bool {
     let mut depth: u32 = 0;
     let mut in_brackets = false;
@@ -2246,7 +2267,7 @@ fn brace_group_spans_separator(pattern: &[u8]) -> bool {
         let c = pattern[i];
         match c {
             b'\\' if !cfg!(windows) => {
-                i += 2;
+                i += escape_advance(pattern, i);
                 continue;
             }
             b'[' if !in_brackets => in_brackets = true,
@@ -2278,7 +2299,7 @@ fn find_first_brace_group(pattern: &[u8]) -> Option<(usize, usize, Vec<&[u8]>)> 
     while i < pattern.len() {
         match pattern[i] {
             b'\\' if !cfg!(windows) => {
-                i += 2;
+                i += escape_advance(pattern, i);
                 continue;
             }
             b'[' if !in_brackets => in_brackets = true,
@@ -2301,7 +2322,7 @@ fn find_first_brace_group(pattern: &[u8]) -> Option<(usize, usize, Vec<&[u8]>)> 
     while j < pattern.len() {
         match pattern[j] {
             b'\\' if !cfg!(windows) => {
-                j += 2;
+                j += escape_advance(pattern, j);
                 continue;
             }
             b'[' if !in_brackets => in_brackets = true,
@@ -2514,6 +2535,19 @@ mod brace_expansion_tests {
         // so the detector must expand to rescue the other alternatives.
         assert!(brace_group_spans_separator(b"{x,a[/]b}"));
         assert_eq!(expand("{x,a[/]b}"), vec!["a[/]b", "x"]);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn escaped_separator_inside_braces_is_counted() {
+        // `build_pattern_components` splits on a `/` even when backslash-escaped,
+        // so the detector counts it and the group expands. (Windows treats `\`
+        // as a separator, a different path, so this is POSIX-only.)
+        assert!(brace_group_spans_separator(b"svc/{src\\/env.ts,env.ts}"));
+        assert_eq!(
+            expand("svc/{src\\/env.ts,env.ts}"),
+            vec!["svc/env.ts", "svc/src\\/env.ts"]
+        );
     }
 
     #[test]

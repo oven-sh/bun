@@ -372,6 +372,49 @@ static HWY_INLINE hn::Vec<hn::RebindToSigned<D>> SignMagI8(D d, hn::Vec<D> sx)
     return hn::Sub(hn::Xor(mag, s), s);
 }
 
+// Masked-VByte decode of one segment's up-to-5 fields into i16 lanes.
+// Returns lanes [d_gc, d_si, d_ol, d_oc, d_name, 0, 0, 0]. Caller has
+// already checked the segment is shuffle-eligible (seg_cont < 256 and
+// kShufTable[seg_cont].idx[15] != kShufBad) so this is branch-free.
+template<class D8>
+static HWY_INLINE hn::Vec<hn::Repartition<int16_t, D8>>
+ShuffleDecodeI16(D8 d8, const uint8_t* HWY_RESTRICT sextets_p, uint64_t seg_cont)
+{
+    using bun::sourcemap_vlq::kShufTable;
+    const hn::Repartition<uint16_t, D8> d16;
+    const hn::Repartition<int16_t, D8> di16;
+    const auto v_in = hn::LoadU(d8, sextets_p);
+    const auto v_shuf = hn::Load(d8, kShufTable.e[seg_cont].idx);
+    // 0x80 indices mark absent second sextets; Or0 zeros those lanes.
+    const auto gathered = hn::BitCast(d16, hn::TableLookupBytesOr0(v_in, v_shuf));
+    const auto lo5 = hn::And(gathered, hn::Set(d16, uint16_t { 0x001F }));
+    const auto hi5 = hn::ShiftRight<3>(hn::And(gathered, hn::Set(d16, uint16_t { 0x1F00 })));
+    const auto raw = hn::Or(lo5, hi5);
+    const auto sgn = hn::BitCast(di16,
+        hn::Sub(hn::Zero(d16), hn::And(raw, hn::Set(d16, uint16_t { 1 }))));
+    const auto mag = hn::BitCast(di16, hn::ShiftRight<1>(raw));
+    return hn::Sub(hn::Xor(mag, sgn), sgn);
+}
+
+// Kogge-Stone inclusive prefix sum on an i32 vector: lane i becomes
+// sum(v[0..i]). log2(K) steps of SlideUpLanes-by-2^s (shift toward
+// higher lanes, zero-filling lanes 0..2^s-1) + add. K is the i32 lane
+// count (4 on NEON/SSE, 8 on AVX2, 16 on AVX-512, runtime on SVE).
+// ShiftLeftLanes operates on independent 128-bit blocks so would be
+// wrong for K > 4; SlideUpLanes is cross-block. With up to 16 deltas
+// each in [-511, 511] the running sum fits i32 without overflow. The
+// loop trip count is Lanes-dependent so it unrolls fully on fixed-
+// width targets and stays a runtime loop on scalable ones (where
+// SlideUpLanes by >= Lanes would be implementation-defined).
+template<class DI32>
+static HWY_INLINE hn::Vec<DI32> PrefixSumI32(DI32 d, hn::Vec<DI32> v)
+{
+    v = hn::Add(v, hn::Slide1Up(d, v));
+    for (size_t s = 2; s < hn::Lanes(d); s <<= 1)
+        v = hn::Add(v, hn::SlideUpLanes(d, v, s));
+    return v;
+}
+
 // Count of ',' and ';' bytes. Segments on a line are comma-separated and
 // lines are semicolon-separated, so `count + 1` upper-bounds the number of
 // segments (and therefore rows). Used once up front so the output list can
@@ -418,6 +461,13 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
     // this is 16 lanes, on AVX2 32, on AVX-512 64.
     const hn::CappedTag<uint8_t, 64> d;
     const size_t N = hn::Lanes(d);
+    // i32 lane count K (N/4): 4 on NEON/SSE, 8 on AVX2, 16 on AVX-512.
+    // With seg_len >= 4 and one delimiter, a block holds <= N/5 complete
+    // segments, which is < K for every N, so one i32 vector per column
+    // is enough to batch all segments of a block.
+    const hn::Repartition<int32_t, decltype(d)> di32;
+    constexpr size_t K = hn::MaxLanes(di32);
+    const hn::CappedTag<uint8_t, 16> d8_16;
 
     int32_t gen_line = state[kStGenLine];
     int32_t gen_col = state[kStGenCol];
@@ -434,14 +484,29 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
     // seg_len are 0x80), but the load itself must be valid.
     alignas(64) uint8_t sextets[64 + 16] = {};
     alignas(64) int8_t deltas[64];
+    // Batch-path column staging: row i holds the i'th segment's delta
+    // for each of the four accumulated columns. K rows are reserved
+    // (>= max segments per block) and zero-initialised so lanes past
+    // the actual segment count contribute nothing to the prefix sum
+    // and their output slots (which go unwritten) are irrelevant.
+    alignas(64) int32_t bcol_gc[K] = {};
+    alignas(64) int32_t bcol_si[K] = {};
+    alignas(64) int32_t bcol_ol[K] = {};
+    alignas(64) int32_t bcol_oc[K] = {};
+    // Interleaved og/oo staging (K rows of {line, col}); vector-stored
+    // all at once and then the first 2*M i32s memcpy'd to the output.
+    alignas(64) int32_t bgen[2 * K];
+    alignas(64) int32_t borg[2 * K];
 
-    // A block that is wall-to-wall 5-byte segments (4 one-char fields +
-    // comma) has its delimiter bits at positions 4,9,14,.. and no other
-    // structure.
-    // `kComma5` precomputes that pattern; matching it lets the whole block
-    // be processed as `N/5` segments in a tight loop with no per-segment
-    // branches. Only the first kSeg5*5 bytes are constrained; the trailing
-    // N mod 5 bytes belong to the next segment and are reloaded.
+    // Uniform-block fast path constants. A block that is wall-to-wall
+    // 5-byte segments (4 one-char fields + comma) has its delimiter
+    // bits at positions 4,9,14,.. and no other structure. kComma5 is
+    // that pattern; matching it lets the whole block be processed as
+    // N/5 segments with no per-segment branches. The batch path below
+    // subsumes this case functionally, but on 100%-uniform input
+    // (typical bundler output) the straight unrolled accumulate here
+    // is ~2x faster than the batch path's tzcnt walk + shuffle table
+    // lookups.
     const size_t kSeg5 = N / 5;
     uint64_t comma5 = 0;
     for (size_t i = 4; i < kSeg5 * 5; i += 5)
@@ -471,32 +536,27 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
         uint64_t delim_bits, semi_bits, cont_bits, invalid_bits;
         ClassifyBlock(d, bytes + pos, sextets, delim_bits, semi_bits, cont_bits, invalid_bits);
 
-        // Sign-magnitude decode every sextet in SIMD (one-char VLQ values
-        // are in [-15, 15], which fits i8). Done once per block: both the
-        // uniform fast path and the general loop's cont==0 case read these
-        // directly instead of calling SignMag per byte.
+        // Sign-magnitude decode every sextet in SIMD (one-char VLQ
+        // values are in [-15, 15], which fits i8). Only the uniform
+        // fast path reads these (at fixed compile-time offsets, so
+        // the store-forward is clean); the batch and general paths
+        // decode via ShuffleDecodeI16 instead.
         {
             const auto sx = hn::Load(d, sextets);
             hn::Store(SignMagI8(d, sx), hn::RebindToSigned<decltype(d)>(), deltas);
         }
 
-        // Uniform-block fast path: every segment is 4 one-char fields +
-        // comma and the block starts on a segment boundary. This is the
-        // measured 76% case on bundler output, and large maps have long
-        // runs of it; the serial accumulate is a straight dependency
-        // chain of adds with one fused range check at the end.
+        // Uniform-block fast path: every segment is 4 one-char fields
+        // + comma and the block starts on a segment boundary. This is
+        // the measured 76% case on bundler output, and large maps have
+        // long runs of it.
         if (((cont_bits | semi_bits | invalid_bits | (delim_bits ^ kComma5)) & kMask5) == 0
             && HWY_LIKELY(os + kSeg5 <= os_end)) {
             const int32_t s_gc = gen_col, s_si = src_idx,
                           s_ol = orig_line, s_oc = orig_col;
             int32_t sort = 0, range = 0;
             const int8_t* dp = deltas;
-            // 4-field rows carry the previous 5-field segment's name, or
-            // -1 if none seen yet (matches the scalar parser: rows appended
-            // before `ensure_with_names` get name_index = -1 via to_named).
             const int32_t nv = has_names ? name_idx : -1;
-            // kSeg5 is fixed per ISA so the compiler fully unrolls this;
-            // the `2 * k` indices become constant displacements.
             for (size_t k = 0; k < kSeg5; ++k) {
                 const int32_t d0 = dp[0];
                 gen_col = WrapAdd(gen_col, d0);
@@ -516,10 +576,6 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 dp += 5;
             }
             if (HWY_UNLIKELY(range < 0)) {
-                // One of the accumulators went out of range somewhere in
-                // this block. Restore block-entry state and hand the block
-                // to the general per-segment loop, which bails at the exact
-                // segment so scalar reports the right byte offset.
                 gen_col = s_gc;
                 src_idx = s_si;
                 orig_line = s_ol;
@@ -533,6 +589,164 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
             if (on)
                 on += kSeg5;
             pos += kSeg5 * 5;
+            state[kStFastBlocks] += 1;
+            continue;
+        }
+
+        // Batched prefix-sum path. For blocks with no ';' and no invalid
+        // bytes (the AllFalse(rare) case, true for >99.9% of blocks on
+        // measured real-world maps), walk every segment in the block to
+        // collect its four field deltas into column-major staging, then
+        // accumulate all segments at once via a Kogge-Stone prefix sum
+        // per column and commit with vector stores. This replaces the
+        // general loop's per-segment serial accumulate + scalar commit,
+        // which on 16-byte targets (NEON) was barely beating the scalar
+        // decoder: the serial chain and vector->scalar forward stalls
+        // left only a few cycles of headroom vs Apple Silicon's very
+        // wide OoO scalar baseline.
+        //
+        // Any segment that isn't a shuffle-eligible 4-field (every VLQ
+        // at most 2 chars, seg_cont < 256 with no adjacent set bits)
+        // falls through to the general per-segment loop below, which
+        // still handles 5-field names, 1-field column-only segments,
+        // 3+-char VLQs and the ';'/invalid cases. On a measured 3.5 MB
+        // tsc bundle 99.96% of segments are batch-eligible.
+        if (HWY_LIKELY((semi_bits | invalid_bits) == 0 && delim_bits != 0)) {
+            uint64_t dm = delim_bits;
+            uint64_t cm = cont_bits;
+            size_t bp = 0;
+            size_t m = 0;
+            // Walk segments; validate each as 4-field shuffle-eligible
+            // and stage its four deltas into lane m of the columns.
+            for (;;) {
+                const size_t sl = static_cast<size_t>(
+                    hwy::Num0BitsBelowLS1Bit_Nonzero64(dm));
+                // 4-field shuffle-eligible segments have sl in [4,8]
+                // (4 one-char + up to 4 two-char fields), but the
+                // seg_cont upper bound for the shuffle table is
+                // sl <= 10 with sc < 256. sl outside [4,10] (including
+                // sl==0, a leading ',') → general. Checked before the
+                // `cm >> (sl-1)` which would be UB for sl==0.
+                if (HWY_UNLIKELY(sl - 4 > 6))
+                    goto general;
+                if (HWY_UNLIKELY((cm >> (sl - 1)) & 1))
+                    goto general;
+                const uint64_t sc = cm & ((uint64_t { 1 } << sl) - 1);
+                const size_t fc = (sc == 0)
+                    ? sl
+                    : sl - static_cast<size_t>(hwy::PopCount(sc));
+                // Require 4-field shuffle-eligible. 5-field, 1-field,
+                // 3+-char VLQ, or {2,3,6..}-field → general loop.
+                if (HWY_UNLIKELY(fc != 4 || (sc >> 8) != 0
+                        || kShufTable.e[sc & 0xFF].idx[15] == kShufBad))
+                    goto general;
+                // Decode this segment's 4 deltas via the shuffle table
+                // and write them to lane m of each column. The store is
+                // to four separate i32 slots so no transpose is needed
+                // for the prefix-sum load; the compiler sees four
+                // independent stores from smov'd lanes.
+                {
+                    const auto dv = ShuffleDecodeI16(d8_16, sextets + bp, sc & 0xFF);
+                    bcol_gc[m] = hn::ExtractLane(dv, 0);
+                    bcol_si[m] = hn::ExtractLane(dv, 1);
+                    bcol_ol[m] = hn::ExtractLane(dv, 2);
+                    bcol_oc[m] = hn::ExtractLane(dv, 3);
+                }
+                m += 1;
+                const size_t adv = sl + 1;
+                bp += adv;
+                // adv <= 11 (sl <= 10) so the shifts stay defined.
+                dm >>= adv;
+                cm >>= adv;
+                if (dm == 0 || bp >= N)
+                    break; // next segment straddles or block exhausted
+            }
+            // `m` segments staged in lanes 0..m-1; lanes m..Lanes-1
+            // must be zero so the prefix sum leaves them at the
+            // (m-1)th value and the range check sees no spurious
+            // negatives past m. Lanes(di32) (runtime on SVE) bounds
+            // what hn::Load actually reads.
+            const size_t kLanesI32 = hn::Lanes(di32);
+            for (size_t z = m; z < kLanesI32; ++z) {
+                bcol_gc[z] = 0;
+                bcol_si[z] = 0;
+                bcol_ol[z] = 0;
+                bcol_oc[z] = 0;
+            }
+            if (HWY_UNLIKELY(os + m > os_end))
+                goto general;
+
+            // Prefix-sum each column and add running state.
+            auto p_gc = PrefixSumI32(di32, hn::Load(di32, bcol_gc));
+            auto p_si = PrefixSumI32(di32, hn::Load(di32, bcol_si));
+            auto p_ol = PrefixSumI32(di32, hn::Load(di32, bcol_ol));
+            auto p_oc = PrefixSumI32(di32, hn::Load(di32, bcol_oc));
+            const auto a_gc = hn::Add(p_gc, hn::Set(di32, gen_col));
+            const auto a_si = hn::Add(p_si, hn::Set(di32, src_idx));
+            const auto a_ol = hn::Add(p_ol, hn::Set(di32, orig_line));
+            const auto a_oc = hn::Add(p_oc, hn::Set(di32, orig_col));
+
+            // Range check over the first m lanes only. For gc/ol/oc the
+            // check is `< 0`; for si it is `< 0 || >= sources_count`.
+            // OR'ing lanes past m (which equal lane m-1's value since
+            // those deltas are 0 and prefix-sum propagates) is harmless.
+            const auto a_si_hi = hn::Sub(hn::Set(di32, sources_count - 1), a_si);
+            const auto bad = hn::Or(hn::Or(a_gc, a_si),
+                hn::Or(a_si_hi, hn::Or(a_ol, a_oc)));
+            // Any sign bit set in lanes 0..m-1 → out of range. Lanes
+            // m..K-1 hold lane m-1's value (zero deltas propagate), so
+            // testing all lanes is equivalent.
+            if (HWY_UNLIKELY(
+                    !hn::AllFalse(di32, hn::Lt(bad, hn::Zero(di32)))))
+                goto general;
+
+            // needs_sort: any negative gen-col delta in this block.
+            // p_gc lane 0 is d0; Slide1Up gives [0, p0, p1, ..] so
+            // p_gc - Slide1Up(p_gc) = deltas. Simpler: reload bcol_gc.
+            {
+                const auto dgc = hn::Load(di32, bcol_gc);
+                if (!hn::AllFalse(di32, hn::Lt(dgc, hn::Zero(di32))))
+                    needs_sort = 1;
+            }
+
+            // Stage og = zip(gen_line, a_gc) and oo = zip(a_ol, a_oc),
+            // then copy the first m rows. InterleaveWholeLower/Upper
+            // (cross-block, unlike InterleaveLower which is per-128b)
+            // produce [gl, gc0, gl, gc1, ..] for rows 0..K/2-1 and
+            // K/2..K-1 respectively.
+            {
+                const auto vgl = hn::Set(di32, gen_line);
+                const auto g_lo = hn::InterleaveWholeLower(di32, vgl, a_gc);
+                const auto g_hi = hn::InterleaveWholeUpper(di32, vgl, a_gc);
+                const auto o_lo = hn::InterleaveWholeLower(di32, a_ol, a_oc);
+                const auto o_hi = hn::InterleaveWholeUpper(di32, a_ol, a_oc);
+                hn::Store(g_lo, di32, bgen);
+                hn::Store(g_hi, di32, bgen + K);
+                hn::Store(o_lo, di32, borg);
+                hn::Store(o_hi, di32, borg + K);
+                hn::Store(a_si, di32, bcol_si);
+                std::memcpy(og, bgen, sizeof(int32_t) * 2 * m);
+                std::memcpy(oo, borg, sizeof(int32_t) * 2 * m);
+                std::memcpy(os, bcol_si, sizeof(int32_t) * m);
+                if (on) {
+                    const int32_t nv = has_names ? name_idx : -1;
+                    for (size_t i = 0; i < m; ++i)
+                        on[i] = nv;
+                }
+            }
+
+            // Commit running state from lane m-1.
+            gen_col = hn::ExtractLane(a_gc, m - 1);
+            src_idx = hn::ExtractLane(a_si, m - 1);
+            orig_line = hn::ExtractLane(a_ol, m - 1);
+            orig_col = hn::ExtractLane(a_oc, m - 1);
+
+            og += 2 * m;
+            oo += 2 * m;
+            os += m;
+            if (on)
+                on += m;
+            pos += bp;
             state[kStFastBlocks] += 1;
             continue;
         }
@@ -622,48 +836,22 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                 goto bail;
 
             int32_t d_gen, d_src = 0, d_ol = 0, d_oc = 0, d_name = 0;
-            if (HWY_LIKELY(seg_cont == 0 && field_count >= 4)) {
-                // All 1-char: the precomputed i8 deltas[] ARE the field
-                // values. field_count == seg_len here, in {4, 5}.
-                if (HWY_UNLIKELY(os >= os_end))
-                    goto bail;
-                const int8_t* dp = deltas + p;
-                d_gen = dp[0];
-                d_src = dp[1];
-                d_ol = dp[2];
-                d_oc = dp[3];
-                d_name = (field_count == 5) ? dp[4] : 0;
-            } else if (HWY_LIKELY(field_count >= 4 && (seg_cont >> 8) == 0
-                           && kShufTable.e[seg_cont & 0xFF].idx[15] != kShufBad)) {
+            if (HWY_LIKELY(field_count >= 4 && (seg_cont >> 8) == 0
+                    && kShufTable.e[seg_cont & 0xFF].idx[15] != kShufBad)) {
                 // Masked-VByte gather: one pshufb packs each field's 1-2
-                // sextets into a fixed u16 lane. After the shuffle, lane k
-                // holds (b1<<8)|b0 and the decoded delta is
-                // SignMag((b0 & 31) | ((b1 & 31) << 5)), all in [-511,511].
+                // sextets into a fixed u16 lane (see ShuffleDecodeI16).
+                // kShufTable[0] handles the all-1-char case so there is
+                // no separate seg_cont==0 arm. The batch path above is
+                // the hot route; this loop is the fallback for blocks
+                // containing ';' / 5-field / 1-field / 3+-char segments.
                 if (HWY_UNLIKELY(os >= os_end))
                     goto bail;
-                const hn::CappedTag<uint8_t, 16> d8;
-                const hn::CappedTag<uint16_t, 8> d16;
-                const hn::CappedTag<int16_t, 8> di16;
-                const auto v_in = hn::LoadU(d8, sextets + p);
-                const auto v_shuf = hn::Load(d8, kShufTable.e[seg_cont & 0xFF].idx);
-                // 0x80 indices mark absent second sextets. Highway only
-                // guarantees zero-on-high-bit for the Or0 variant (free on
-                // x86/NEON, one extra select on SVE).
-                const auto gathered = hn::BitCast(d16, hn::TableLookupBytesOr0(v_in, v_shuf));
-                const auto lo5 = hn::And(gathered, hn::Set(d16, uint16_t { 0x001F }));
-                const auto hi5 = hn::ShiftRight<3>(hn::And(gathered, hn::Set(d16, uint16_t { 0x1F00 })));
-                const auto raw = hn::Or(lo5, hi5);
-                const auto sgn = hn::BitCast(di16,
-                    hn::Sub(hn::Zero(d16), hn::And(raw, hn::Set(d16, uint16_t { 1 }))));
-                const auto mag = hn::BitCast(di16, hn::ShiftRight<1>(raw));
-                const auto dv = hn::Sub(hn::Xor(mag, sgn), sgn);
-                alignas(16) int16_t df[8];
-                hn::Store(dv, di16, df);
-                d_gen = df[0];
-                d_src = df[1];
-                d_ol = df[2];
-                d_oc = df[3];
-                d_name = (field_count == 5) ? df[4] : 0;
+                const auto dv = ShuffleDecodeI16(d8_16, sextets + p, seg_cont & 0xFF);
+                d_gen = hn::ExtractLane(dv, 0);
+                d_src = hn::ExtractLane(dv, 1);
+                d_ol = hn::ExtractLane(dv, 2);
+                d_oc = hn::ExtractLane(dv, 3);
+                d_name = (field_count == 5) ? hn::ExtractLane(dv, 4) : 0;
             } else if (HWY_LIKELY(field_count >= 4)) {
                 // 4/5-field segment with at least one 3+ -char VLQ, or a
                 // 2-char 5th field at positions 8-9 (seg_cont bit 8 set).

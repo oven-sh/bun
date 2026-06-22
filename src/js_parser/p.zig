@@ -3256,16 +3256,23 @@ pub fn NewParser_(
 
         /// Declare an ambient symbol resolvable BY NAME via `findSymbol` during
         /// visit (writes `module_scope.members[name]`). Use for parser-minted
-        /// symbols that user code references as a bare identifier — CJS wrapper
+        /// symbols that user code references as a bare identifier: CJS wrapper
         /// vars (`exports`, `module`, `require`, `__dirname`, `__filename`),
         /// jest globals, `hmr`, server-components `Response`.
         ///
-        /// If a user binding already owns `name` in `module_scope.members`,
-        /// returns a fresh ref appended to `module_scope.generated` instead (so
-        /// generated code referencing it still gets a renamer-unique name) and
-        /// leaves the user's member entry untouched. Callers that gate on
-        /// whether the user shadowed (e.g. the `Response` → `bun:app` import)
-        /// can check `symbols[ref].use_count_estimate > 0`.
+        /// Collision contract when a user binding already owns `name` in
+        /// `module_scope.members`:
+        /// - Both sides `.hoisted` and the file has no ESM syntax: not a
+        ///   collision (`var exports` inside the CJS wrapper merges with the
+        ///   `exports` argument). Returns the user's existing ref.
+        /// - Otherwise: returns a fresh ref appended to `module_scope.generated`
+        ///   (so generated code referencing it still gets a renamer-unique
+        ///   name) and leaves the user's member entry untouched.
+        ///
+        /// Callers that only want to emit when the ambient was actually reached
+        /// (e.g. the `Response` → `bun:app` import) check
+        /// `symbols[ref].use_count_estimate > 0` after visit: a fresh shadowed
+        /// ref is never recorded by `findSymbol`, so the count stays 0.
         ///
         /// Named for its original CJS-wrapper callers. For parser-generated
         /// symbols consumed BY REF (never via `findSymbol`), use

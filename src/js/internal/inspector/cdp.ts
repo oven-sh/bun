@@ -279,13 +279,11 @@ class InspectorCDPAdapter {
 
       // ── Debugger ─────────────────────────────────────────────────────────
       case "Debugger.enable":
-        // Note: breakpoints are not activated (Debugger.setBreakpointsActive)
-        // and `debugger;` statements do not pause yet: pausing with a debugger
-        // that was attached at runtime currently crashes inside JSC's module
-        // evaluation (llint_slow_path_put_to_scope reads an empty scope), so
-        // the Debugger domain is limited to inspection (scriptParsed,
-        // getScriptSource, evaluate) until that is fixed.
         this.#sendToBackend("Debugger.enable", undefined, id, method);
+        // V8's Debugger.enable activates breakpoints and pauses on `debugger;`
+        // by default; JSC requires explicit opt-in for both.
+        this.#sendToBackend("Debugger.setBreakpointsActive", { active: true });
+        this.#sendToBackend("Debugger.setPauseOnDebuggerStatements", { enabled: true });
         return;
 
       case "Debugger.disable":

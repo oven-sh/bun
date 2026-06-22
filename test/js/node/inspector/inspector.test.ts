@@ -485,6 +485,216 @@ test("a console argument whose toString throws does not break console.log", asyn
   }
 });
 
+// Activating breakpoints on a debugger that was attached at runtime (after the
+// entry module has already been linked) used to crash the inspected process:
+// JSC's clearCode discarded the module's UnlinkedModuleProgramCodeBlock, and
+// the next executeModuleProgram regenerated it under CodeGenerationMode::
+// Debugger with a different module-environment / generator-frame layout, so the
+// resumed top-level-await body wrote past the live JSModuleEnvironment.
+test("activating breakpoints with a runtime-attached debugger does not crash module evaluation", async () => {
+  using dir = tempDir("inspector-runtime-attach", {
+    "entry.mjs": `
+let warm = 0;
+for (let i = 0; i < 5; i++) warm += i;
+process.stdout.write("ready\\n");
+await new Promise(resolve => process.stdin.once("data", resolve));
+process.stdout.write("importing\\n");
+const mod = await import("./mod.mjs");
+process.stdout.write(JSON.stringify({ after: mod.after, bump: mod.bump(), warm }) + "\\n");
+process.exit(0);
+`,
+    "mod.mjs": `
+let counter = 0;
+export function bump() { counter++; return counter; }
+let after = counter + 1;
+export { after };
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect=127.0.0.1:0/runtime-attach", "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  const stderrReader = proc.stderr.getReader();
+  let stderrText = "";
+  let wsUrl: string | undefined;
+  while (!wsUrl) {
+    const { value, done } = await stderrReader.read();
+    if (done) throw new Error(`stderr closed before listening line: ${stderrText}`);
+    stderrText += decoder.decode(value);
+    wsUrl = stderrText.match(/ws:\/\/[\w.:-]+\/runtime-attach/)?.[0];
+  }
+  const stderrDrained = (async () => {
+    for (;;) {
+      const { value, done } = await stderrReader.read();
+      if (done) break;
+      stderrText += decoder.decode(value);
+    }
+  })();
+
+  const stdoutReader = proc.stdout.getReader();
+  let stdoutText = "";
+  async function waitForStdout(marker: string) {
+    while (!stdoutText.includes(marker)) {
+      const { value, done } = await stdoutReader.read();
+      if (done) throw new Error(`stdout closed before "${marker}": ${stdoutText}\n${stderrText}`);
+      stdoutText += decoder.decode(value);
+    }
+  }
+  await waitForStdout("ready");
+
+  // Connect a JSC-protocol client and activate breakpoints — this is what
+  // forces the recompileAllJSFunctions() / deleteAllCode() path.
+  const ws = new WebSocket(wsUrl);
+  await new Promise<void>((resolve, reject) => {
+    ws.onopen = () => resolve();
+    ws.onerror = err => reject(err);
+  });
+  let nextId = 1;
+  const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  ws.onmessage = event => {
+    const msg = JSON.parse(String(event.data));
+    if (msg.id != null && pending.has(msg.id)) {
+      const p = pending.get(msg.id)!;
+      pending.delete(msg.id);
+      msg.error ? p.reject(new Error(JSON.stringify(msg.error))) : p.resolve(msg.result);
+    }
+  };
+  function send(method: string, params?: unknown) {
+    return new Promise((resolve, reject) => {
+      const id = nextId++;
+      pending.set(id, { resolve, reject });
+      ws.send(JSON.stringify({ id, method, params }));
+    });
+  }
+  await send("Inspector.enable");
+  await send("Debugger.enable");
+  await send("Debugger.setBreakpointsActive", { active: true });
+
+  proc.stdin.write("go\n");
+  await waitForStdout("importing");
+  await waitForStdout("}\n");
+  ws.close();
+
+  expect(JSON.parse(stdoutText.trim().split("\n").at(-1)!)).toEqual({ after: 1, bump: 1, warm: 10 });
+  expect(await proc.exited).toBe(0);
+  await stderrDrained;
+});
+
+// End-to-end pause/resume over the DevTools-protocol server started by
+// inspector.open(): the entry module is a top-level-await module that calls
+// open() at runtime, the client attaches and enables the Debugger domain
+// (which the adapter activates breakpoints for), the entry module then imports
+// a module containing `debugger;`, and the client resumes the pause.
+test("breakpoints pause and resume over the inspector.open() DevTools server", async () => {
+  using dir = tempDir("inspector-breakpoints", {
+    "entry.mjs": `
+import inspector from "node:inspector";
+let beforeOpen = 1;
+inspector.open(0, "127.0.0.1");
+process.stdout.write("ready\\n");
+await new Promise(resolve => process.stdin.once("data", resolve));
+const mod = await import("./mod.mjs");
+console.log(JSON.stringify({ after: mod.after, beforeOpen }));
+process.exit(0);
+`,
+    "mod.mjs": `
+let counter = 0;
+debugger;
+let after = counter + 1;
+export { after };
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  const stderrReader = proc.stderr.getReader();
+  let stderrText = "";
+  let wsUrl: string | undefined;
+  while (!wsUrl) {
+    const { value, done } = await stderrReader.read();
+    if (done) throw new Error(`stderr closed before listening line: ${stderrText}`);
+    stderrText += decoder.decode(value);
+    wsUrl = stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+  }
+  const stderrDrained = (async () => {
+    for (;;) {
+      const { value, done } = await stderrReader.read();
+      if (done) break;
+      stderrText += decoder.decode(value);
+    }
+  })();
+
+  const stdoutReader = proc.stdout.getReader();
+  let stdoutText = "";
+  while (!stdoutText.includes("ready")) {
+    const { value, done } = await stdoutReader.read();
+    if (done) throw new Error(`stdout closed before ready: ${stdoutText}`);
+    stdoutText += decoder.decode(value);
+  }
+
+  const ws = new WebSocket(wsUrl);
+  await new Promise<void>((resolve, reject) => {
+    ws.onopen = () => resolve();
+    ws.onerror = err => reject(err);
+  });
+  let nextId = 1;
+  const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  let pausedReason: string | undefined;
+  const paused = Promise.withResolvers<void>();
+  ws.onmessage = event => {
+    const msg = JSON.parse(String(event.data));
+    if (msg.id != null && pending.has(msg.id)) {
+      const p = pending.get(msg.id)!;
+      pending.delete(msg.id);
+      msg.error ? p.reject(new Error(JSON.stringify(msg.error))) : p.resolve(msg.result);
+    } else if (msg.method === "Debugger.paused") {
+      pausedReason = msg.params?.reason;
+      paused.resolve();
+    }
+  };
+  function send(method: string, params?: unknown) {
+    return new Promise((resolve, reject) => {
+      const id = nextId++;
+      pending.set(id, { resolve, reject });
+      ws.send(JSON.stringify({ id, method, params }));
+    });
+  }
+  await send("Runtime.enable");
+  await send("Debugger.enable");
+  await send("Runtime.runIfWaitingForDebugger");
+
+  proc.stdin.write("go\n");
+  await paused.promise;
+  expect(pausedReason).toBe("other");
+  await send("Debugger.resume");
+
+  for (;;) {
+    const { value, done } = await stdoutReader.read();
+    if (done) break;
+    stdoutText += decoder.decode(value);
+  }
+  ws.close();
+  await stderrDrained;
+
+  expect(JSON.parse(stdoutText.trim().split("\n").at(-1)!)).toEqual({ after: 1, beforeOpen: 1 });
+  expect(await proc.exited).toBe(0);
+});
+
 test("disconnect does not clobber a console method reassigned by user code", () => {
   const session = new inspector.Session();
   session.connect();

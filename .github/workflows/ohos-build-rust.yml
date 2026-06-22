@@ -135,7 +135,10 @@ jobs:
             cd bun/vendor/WebKit
             git remote set-url origin "https://github.com/$WK_REPO.git"
             git fetch origin "$WK_REF" --depth=1 2>/dev/null || true
-            git checkout -f "$WK_REF" 2>/dev/null || git checkout -f FETCH_HEAD
+            # Must use FETCH_HEAD — local branch from the initial clone
+            # still points to the old ref and `git checkout "$WK_REF"` would
+            # skip the just-fetched HEAD.
+            git checkout -f FETCH_HEAD
             echo "✅ WebKit cloned from local reference"
           else
             git clone --depth 1 --branch "$WK_REF" \

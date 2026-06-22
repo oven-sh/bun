@@ -95,7 +95,9 @@ jobs:
             cd bun/vendor/WebKit
             git remote set-url origin "https://github.com/$WK_REPO.git"
             git fetch origin "$WK_REF" --depth=1 2>/dev/null || true
-            git checkout -f "$WK_REF" 2>/dev/null || git checkout -f FETCH_HEAD
+            # Must use FETCH_HEAD — local branch from the initial clone
+            # still points to the old ref and checkout "$WK_REF" would skip it.
+            git checkout -f FETCH_HEAD
             echo "✅ WebKit cloned from local reference"
           else
             git clone --depth 1 --branch "$WK_REF" \
@@ -264,3 +266,18 @@ jobs:
           mkdir -p $SHARE
           cp build/release-ohos/bun $SHARE/bun-ohos-${{ env.artifact_name }}.elf
           echo "✅ 制品已复制到 $SHARE/bun-ohos-${{ env.artifact_name }}.elf"
+
+      - name: Install system dependencies
+        run: |
+          # openEuler: libatomic required by node for msgpackr-extract postinstall
+          if ! rpm -q libatomic &>/dev/null; then
+            echo "⚠️  libatomic not found — installing..."
+            dnf install -y libatomic 2>&1 | tail -3
+            echo "✅ libatomic installed"
+          else
+            echo "✅ libatomic already installed"
+          fi
+
+      - name: Setup environment
+        run: |
+          echo "OHOS_SDK_ROOT=${{ env.OHOS_SDK_ROOT }}" >> $GITHUB_ENV

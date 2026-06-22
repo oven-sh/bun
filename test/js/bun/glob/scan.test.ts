@@ -671,15 +671,18 @@ describe("brace patterns containing path separators", async () => {
     expect(entries.length).toBe(2);
   });
 
-  // Expanded alternatives that are absolute literals hit the no-special-syntax
-  // fast path; it must still record matches (so they surface) and dedupe them.
-  // POSIX-only: the pattern is built with "/" to keep separators unambiguous.
-  test.skipIf(isWindows)("absolute literal brace expansions surface and dedupe", async () => {
-    const distinct = await Array.fromAsync(new Glob(`${cwd}/{svc/env.ts,svc/src/env.ts}`).scan({ dot: true }));
-    expect(distinct.sort()).toEqual([`${cwd}/svc/env.ts`, `${cwd}/svc/src/env.ts`].sort());
-
-    const overlapping = await Array.fromAsync(new Glob(`${cwd}/{svc/env.ts,svc/env.ts}`).scan({ dot: true }));
-    expect(overlapping).toEqual([`${cwd}/svc/env.ts`]);
+  // Brace alternatives are an unordered set, so an alternative whose root
+  // directory is missing must yield nothing for that alternative rather than
+  // abort the whole scan. POSIX-only: the pattern is built with "/" so the
+  // absolute expansions have unambiguous separators.
+  test.skipIf(isWindows)("alternative with a missing root yields the others", async () => {
+    const want = [`${cwd}/svc/env.ts`];
+    // Missing root listed first.
+    const a = await Array.fromAsync(new Glob(`{${cwd}/nope/*.ts,${cwd}/svc/*.ts}`).scan({ dot: true }));
+    expect(a).toEqual(want);
+    // Missing root listed last (order independence).
+    const b = await Array.fromAsync(new Glob(`{${cwd}/svc/*.ts,${cwd}/nope/*.ts}`).scan({ dot: true }));
+    expect(b).toEqual(want);
   });
 });
 

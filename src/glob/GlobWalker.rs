@@ -252,8 +252,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     /// `svc/env.ts`). Empty when the pattern needs no expansion, in which case
     /// `pattern` / `pattern_components` describe the single pattern directly.
     /// When non-empty, the walker walks each entry in turn (see `walk` and
-    /// `Iterator::try_advance_to_next_expansion`), rebuilding
-    /// `pattern_components` per entry and deduping results via `matched_paths`.
+    /// `Iterator::try_advance_to_next_expansion`), rebuilding `pattern_components`
+    /// per entry and deduping results via `matched_paths`.
     pub brace_expansions: Vec<Box<[u8]>>,
     /// Index into `brace_expansions` of the pattern currently being walked.
     expansion_cursor: usize,
@@ -449,19 +449,17 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 //
                 // In that case we don't need to do any walking and can just open up the FS entry
                 if starting_component_idx as usize >= self.walker.pattern_components.len() {
-                    // The open() probe always needs a NUL-terminated path.
+                    // Matched-path payload must respect SENTINEL. The open()
+                    // probe always needs a NUL — use a separate dupeZ for it so
+                    // SENTINEL=false matched paths don't carry a spurious 0x00.
+                    let path = dupe_matched::<SENTINEL>(path_without_special_syntax);
                     let pathz_owned = dupe_z(path_without_special_syntax);
                     // SAFETY: dupe_z appends NUL at len()-1; ZStr len excludes it.
                     let pathz = ZStr::from_slice_with_nul(&pathz_owned[..]);
                     let fd = match A::open(pathz)? {
                         Err(e) => {
-                            // ENOTDIR means a path component is a file, i.e. the
-                            // literal itself exists as a file: that's a match.
                             if e.get_errno() == E::ENOTDIR {
-                                self.iter_state = GlobWalker::<A, SENTINEL>::matched_or_next(
-                                    &mut self.walker.matched_paths,
-                                    path_without_special_syntax,
-                                )?;
+                                self.iter_state = IterState::Matched(path);
                                 return Ok(Ok(()));
                             }
                             // Doesn't exist
@@ -469,16 +467,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 self.iter_state = IterState::GetNext;
                                 return Ok(Ok(()));
                             }
-                            let path = dupe_matched::<SENTINEL>(path_without_special_syntax);
                             return Ok(Err(e.with_path(matched_as_slice::<SENTINEL>(&path))));
                         }
                         Ok(fd) => fd,
                     };
                     let _ = A::close(fd);
-                    self.iter_state = GlobWalker::<A, SENTINEL>::matched_or_next(
-                        &mut self.walker.matched_paths,
-                        path_without_special_syntax,
-                    )?;
+                    self.iter_state = IterState::Matched(path);
                     return Ok(Ok(()));
                 }
 
@@ -521,6 +515,18 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         let root_path_z = unsafe { ZStr::from_raw(path_buf_ptr, root_path_len) };
         let cwd_fd = match A::open(root_path_z)? {
             Err(err) => {
+                // Brace expansions are walked as independent patterns, each with
+                // its own root. Alternatives are an unordered set, so a missing
+                // or non-directory root for one (e.g. `{/missing/*.ts,ok/*.ts}`)
+                // must yield no matches for that alternative rather than abort
+                // the whole scan. Single patterns keep the original error so a
+                // bad cwd still surfaces.
+                if !self.walker.brace_expansions.is_empty()
+                    && matches!(err.get_errno(), E::ENOENT | E::ENOTDIR)
+                {
+                    self.iter_state = IterState::GetNext;
+                    return Ok(Ok(()));
+                }
                 return Ok(Err(self.walker.handle_sys_err_with_path(
                     &err,
                     // SAFETY: NUL at index `root_path_len` written above.
@@ -1919,51 +1925,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         // if SENTINEL { return name[0..name.len()-1 :0]; }
         log!("prepared match: {}", bstr::BStr::new(&name_matched_path));
         Ok(Some(name_matched_path))
-    }
-
-    /// Record a fully-resolved match (`full_path` is NUL-less), deduping it
-    /// against `matched_paths`. Returns the payload to emit, or `None` if it was
-    /// already matched. Used by `Iterator::init`'s no-special-syntax fast path,
-    /// which would otherwise emit a `Matched` state without recording it: for
-    /// `walk` (reads `matched_paths`) the match would be dropped, and across
-    /// brace expansions an overlapping absolute literal (`/x/{a,a}`) would be
-    /// emitted twice to `next()` consumers. Mirrors `prepare_matched_path`'s NUL
-    /// handling so dedupe is exact in both SENTINEL modes (stored keys carry a
-    /// trailing NUL when SENTINEL is true).
-    ///
-    /// Takes `matched_paths` by reference (rather than `&mut self`) so the caller
-    /// can pass a slice borrowed from a different `self` field (`pattern`).
-    fn record_full_match(
-        matched_paths: &mut MatchedMap,
-        full_path: &[u8],
-    ) -> Result<Option<MatchedPath>, AllocError> {
-        if SENTINEL {
-            let with_nul = dupe_z(full_path);
-            if matched_paths.contains_key(&with_nul) {
-                return Ok(None);
-            }
-            matched_paths.insert(&with_nul, ());
-            Ok(Some(with_nul))
-        } else {
-            if matched_paths.contains_key(full_path) {
-                return Ok(None);
-            }
-            let slice: Box<[u8]> = Box::from(full_path);
-            matched_paths.insert(&slice, ());
-            Ok(Some(slice))
-        }
-    }
-
-    /// Record `full_path` and return the iterator state to enter: `Matched` when
-    /// it is a newly seen match, `GetNext` when it was already emitted.
-    fn matched_or_next(
-        matched_paths: &mut MatchedMap,
-        full_path: &[u8],
-    ) -> Result<IterState<A>, AllocError> {
-        Ok(match Self::record_full_match(matched_paths, full_path)? {
-            Some(p) => IterState::Matched(p),
-            None => IterState::GetNext,
-        })
     }
 
     #[inline]

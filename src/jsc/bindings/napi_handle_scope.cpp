@@ -143,7 +143,16 @@ extern "C" void NapiHandleScope__close(napi_env env, NapiHandleScopeImpl* curren
 
 extern "C" void NapiHandleScope__append(napi_env env, JSC::EncodedJSValue value)
 {
-    env->globalObject()->m_currentNapiHandleScopeImpl.get()->append(JSC::JSValue::decode(value));
+    // Match toNapi() in napi.h: non-cell values need no rooting, and the
+    // current handle scope is null when a finalizer runs immediately during
+    // sweep (NapiHandleScope::open returns nullptr while the mutator is
+    // sweeping, and during VM teardown mustDeferFinalizers() is false so
+    // NapiRef::callFinalizer dispatches without a scope).
+    JSC::JSValue v = JSC::JSValue::decode(value);
+    if (!v.isCell())
+        return;
+    if (auto* scope = env->globalObject()->m_currentNapiHandleScopeImpl.get())
+        scope->append(v);
 }
 
 extern "C" bool NapiHandleScope__escape(NapiHandleScopeImpl* handleScope, JSC::EncodedJSValue value)

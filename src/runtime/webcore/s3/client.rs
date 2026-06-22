@@ -1215,8 +1215,6 @@ pub fn readable_stream(
                     // Wake the HTTP thread so it observes the abort even when the
                     // socket is idle; otherwise the final `has_more == false`
                     // callback never fires and both the task and wrapper leak.
-                    // The mutex guards against `update_state`'s write to `http`.
-                    let _guard = (*task).mutex.lock_guard();
                     bun_http::http_thread().schedule_shutdown((*task).http.assume_init_ref());
                 }
             }

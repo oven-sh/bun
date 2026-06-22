@@ -886,18 +886,26 @@ describe("CompressionStream large-chunk work-pool offload", () => {
     const cs = new CompressionStream("gzip");
     const writer = cs.writable.getWriter();
     const reader = cs.readable.getReader();
+    // The writable controller's started flag is set in a microtask; until
+    // then write() only queues the chunk and transformAsync is never
+    // reached, so pending_close would not be exercised.
+    await writer.ready;
     // Do not await: the work-pool job is in flight when cancel runs.
     const writePromise = writer.write(big);
     await reader.cancel("stop");
-    // The write took the async path and the stream is now torn down; either
-    // the in-flight work resolved before teardown reached the writable, or
-    // teardown rejected it — what must not happen is a hang or a crash from
-    // closing the engine under the worker.
+    // The write took the async path and the stream is now torn down. The
+    // transformer's cancel() hook closed the handle with the worker still
+    // running, so the close is deferred via pending_close and the worker's
+    // then() releases the engine. The write then settles: the worker may
+    // have resolved before the writable was errored, or the writable
+    // errors it with the cancel reason, or enqueue throws on the closed
+    // readable — what must not happen is a hang or a crash from closing
+    // the engine under the worker.
     const outcome = await writePromise.then(
       () => "fulfilled",
       e => (e === "stop" ? "rejected:stop" : `rejected:${e?.constructor?.name}`),
     );
-    expect(["fulfilled", "rejected:stop"]).toContain(outcome);
+    expect(["fulfilled", "rejected:stop", "rejected:TypeError"]).toContain(outcome);
     expect(
       await writer.closed.then(
         () => null,
@@ -923,6 +931,36 @@ describe("CompressionStream large-chunk work-pool offload", () => {
         e => e,
       ),
     ).toBe(err);
+  });
+
+  // brotli at the default quality 11 only buffers input during PROCESS
+  // and encodes a whole ~256KB metablock when the ring buffer fills, so a
+  // stream of sub-64KB writes (the common pipeThrough case from network
+  // or file sources) would run that encode on the JS thread if brotli
+  // encode kept the input-size threshold. Every non-empty brotli write
+  // takes the work pool.
+  test("brotli metablock encode from small writes runs on the work pool", async () => {
+    const cs = new CompressionStream("brotli");
+    const writer = cs.writable.getWriter();
+    const drain = (async () => {
+      for await (const _ of cs.readable);
+    })();
+    await writer.ready;
+
+    // 16KB incompressible chunks: each is below the 64KB zlib/zstd
+    // threshold. The 16th write fills the 256KB ring buffer and triggers
+    // the q11 metablock encode (hundreds of ms). If that write took the
+    // sync path the event loop would not turn before its promise settles.
+    for (let i = 0; i < 15; i++) await writer.write(randomBytes(16 * 1024));
+    let eventLoopTurned = false;
+    setImmediate(() => {
+      eventLoopTurned = true;
+    });
+    await writer.write(randomBytes(16 * 1024));
+    expect(eventLoopTurned).toBe(true);
+
+    await writer.close();
+    await drain;
   });
 
   // brotli at the default quality 11 buffers input during PROCESS and

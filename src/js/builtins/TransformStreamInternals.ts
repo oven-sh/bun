@@ -501,8 +501,15 @@ export function createCompressionTransform(mode) {
   // the JS thread for its whole drive loop, so the decode modes (INFLATE,
   // GUNZIP, INFLATERAW, BROTLI_DECODE, ZSTD_DECOMPRESS) always take the async
   // path (the previous adapter was always async here too).
+  //
+  // BROTLI_ENCODE (mode 9) is the same: at the default quality 11, PROCESS
+  // only buffers input until the encoder's ring buffer fills (~256KB) and
+  // then entropy-codes the whole metablock in one call, so a stream of
+  // sub-threshold writes would run that encode on the JS thread every time
+  // cumulative input crosses a block boundary. zlib and zstd encode
+  // compress incrementally per call, so their sync fast path is sound.
   const isDecode = mode === 2 || mode === 4 || mode === 6 || mode === 8 || mode === 11;
-  const asyncThreshold = isDecode ? 1 : 4 * chunkSize;
+  const asyncThreshold = isDecode || mode === 9 ? 1 : 4 * chunkSize;
 
   // node surfaces engine failures as a TypeError carrying the error code
   // (its webstreams adapter wraps them); match the class and code but keep

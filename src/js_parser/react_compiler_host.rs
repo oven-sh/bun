@@ -68,13 +68,12 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
             Some(existing) => existing,
             None => {
                 let new_ref = p
-                    .declare_generated_symbol(js_ast::symbol::Kind::Other, kind.tag_name())
+                    .new_generated_symbol(js_ast::symbol::Kind::Other, kind.tag_name())
                     .expect("oom");
                 let loc_ref = js_ast::LocRef {
                     loc: bun_ast::Loc::EMPTY,
                     ref_: new_ref,
                 };
-                VecExt::append(&mut p.module_scope_mut().generated, new_ref);
                 p.is_import_item.insert(new_ref, ());
                 p.jsx_imports.set(kind, loc_ref);
                 new_ref

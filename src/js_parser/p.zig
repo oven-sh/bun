@@ -4575,9 +4575,22 @@ pub fn NewParser_(
                         if (p.jsx_imports.getWithTag(kind) == null) {
                             const symbol_name = @tagName(field);
 
+                            // This runs during visit, so `p.current_scope` may be a
+                            // nested scope containing a user binding named "jsx" /
+                            // "jsxDEV" / "Fragment" etc. Do not route through
+                            // `declareGeneratedSymbol` (which inserts into
+                            // `p.current_scope.members` and would link the runtime
+                            // symbol to the user's local). Create the symbol
+                            // directly and register it on `module_scope.generated`
+                            // only; the renamer handles uniqueness.
+                            const new_ref = if (p.options.bundle)
+                                p.newSymbol(.other, symbol_name) catch unreachable
+                            else
+                                p.newSymbol(.other, generatedSymbolName(symbol_name)) catch unreachable;
+
                             const loc_ref = LocRef{
                                 .loc = loc,
-                                .ref = (p.declareGeneratedSymbol(.other, symbol_name) catch unreachable),
+                                .ref = new_ref,
                             };
 
                             bun.handleOom(p.module_scope.generated.append(p.allocator, loc_ref.ref.?));

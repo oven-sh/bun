@@ -4837,6 +4837,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.declare_symbol_maybe_generated::<true>(kind, bun_ast::Loc::EMPTY, hashed)
     }
 
+    /// Like [`Self::declare_generated_symbol`] but never touches
+    /// `current_scope.members`. Use for module-level auto-imports created
+    /// during the visit pass, where `current_scope` may be a nested scope
+    /// containing a user binding of the same name; `declare_generated_symbol`
+    /// would link the generated symbol to that binding via the
+    /// `IS_GENERATED` merge path.
+    pub fn new_generated_symbol(
+        &mut self,
+        kind: js_ast::symbol::Kind,
+        name: &'static [u8],
+    ) -> Result<Ref, bun_core::Error> {
+        // The bundler runs the renamer, so it is ok to not append a hash
+        let ref_ = if self.options.bundle {
+            self.new_symbol(kind, name)?
+        } else {
+            let hash = bun_wyhash::hash(name);
+            let hashed: &'a [u8] = bun_alloc::arena_format!(in self.arena, "{}_{}", bstr::BStr::new(name), bun_core::fmt::truncated_hash32(hash)).into_bump_str().as_bytes();
+            self.new_symbol(kind, hashed)?
+        };
+        VecExt::append(&mut self.module_scope_mut().generated, ref_);
+        Ok(ref_)
+    }
+
     pub fn declare_symbol(
         &mut self,
         kind: js_ast::symbol::Kind,
@@ -6145,10 +6168,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             None => {
                 let symbol_name = kind.tag_name();
                 let new_ref = self
-                    .declare_generated_symbol(js_ast::symbol::Kind::Other, symbol_name)
+                    .new_generated_symbol(js_ast::symbol::Kind::Other, symbol_name)
                     .expect("unreachable");
                 let loc_ref = LocRef { loc, ref_: new_ref };
-                VecExt::append(&mut self.module_scope_mut().generated, new_ref);
                 self.is_import_item.insert(new_ref, ());
                 self.jsx_imports.set(kind, loc_ref);
                 new_ref

@@ -201,6 +201,36 @@ describe("bundler", () => {
     devStdout: `["symbol","object"]`,
     prodStdout: `["symbol","object"]`,
   });
+  // A user's local `jsx` / `jsxDEV` / `Fragment` binding in the scope
+  // containing the first JSX element must not capture the automatic JSX
+  // runtime import. Before the fix, the runtime symbol was declared in
+  // `p.current_scope` (the nested function scope) and linked to the user's
+  // local, so the bundled output called the user's uninitialized local
+  // instead of the runtime helper.
+  itBundledDevAndProd("jsx/AutomaticLocalShadow", {
+    files: {
+      "/index.tsx": /* tsx */ `
+        import { print } from 'bun-test-helpers'
+        function f() {
+          let jsx: any
+          let jsxDEV: any
+          let Fragment: any
+          const el = <><div /></>
+          return [el, jsx, jsxDEV, Fragment]
+        }
+        const [el, a, b, c] = f()
+        print([el, a, b, c])
+      `,
+      ...helpers,
+    },
+    target: "bun",
+    devStdout: `
+      [{"$$typeof":"Symbol(jsxdev)","type":"Symbol(jsxdev.fragment)","props":{"children":{"$$typeof":"Symbol(jsxdev)","type":"div","props":{},"key":"undefined","source":false,"self":"undefined"}},"key":"undefined","source":false,"self":"undefined"},"undefined","undefined","undefined"]
+    `,
+    prodStdout: `
+      [{"$$typeof":"Symbol(jsx)","type":"Symbol(jsx.fragment)","props":{"children":{"$$typeof":"Symbol(jsx)","type":"div","props":{},"key":"undefined"}},"key":"undefined"},"undefined","undefined","undefined"]
+    `,
+  });
   itBundledDevAndProd("jsx/ImportSource", {
     prodTodo: true,
     files: {

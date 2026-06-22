@@ -490,6 +490,28 @@ export function createCompressionTransform(mode) {
     }
   }
 
+  // Chunks at or past this many bytes run on the work pool instead of the JS
+  // thread. Below it the synchronous path is faster (no input copy, no thread
+  // hop, no promise allocation); above it the compression work dominates and
+  // offloading keeps the main thread responsive — the previous node:zlib
+  // adapter paid a threadpool round-trip per 16KB of output regardless.
+  const asyncThreshold = 4 * chunkSize;
+
+  // node surfaces engine failures as a TypeError carrying the error code
+  // (its webstreams adapter wraps them); match the class and code but keep
+  // the engine's message, which the adapter dropped.
+  function wrapEngineError(error) {
+    const wrapped = $makeTypeError(error.message);
+    wrapped.code = error.code;
+    wrapped.errno = error.errno;
+    wrapped.cause = error;
+    return wrapped;
+  }
+
+  function enqueueOutputs(controller, outputs) {
+    for (let i = 0; i < outputs.length; i++) $transformStreamDefaultControllerEnqueue(controller, outputs[i]);
+  }
+
   // The consume/produce loop lives in the native transformer; this wrapper
   // only normalizes chunk types, wraps engine errors, and enqueues the
   // returned output chunks (each an exact-size Uint8Array, ≤ chunkSize).
@@ -499,6 +521,9 @@ export function createCompressionTransform(mode) {
   // ERR_INVALID_ARG_TYPE, null with its dedicated streams error. Strings
   // are still accepted for compatibility with node's zlib Transform write
   // path.
+  //
+  // Returns a promise when the chunk took the async path; the TransformStream
+  // gates the next write on it.
   function drive(chunk, isFinish, controller) {
     if (typeof chunk === "string") chunk = Buffer.from(chunk);
     else if (ArrayBuffer.$isView(chunk)) {
@@ -512,20 +537,25 @@ export function createCompressionTransform(mode) {
     } else if (chunk === null) throw $ERR_STREAM_NULL_VALUES();
     else throw $ERR_INVALID_ARG_TYPE("chunk", ["ArrayBuffer", "Buffer", "TypedArray", "DataView"], chunk);
 
+    if (chunk.byteLength >= asyncThreshold) {
+      return handle.transformAsync(chunk, isFinish).$then(
+        outputs => {
+          enqueueOutputs(controller, outputs);
+        },
+        error => {
+          close();
+          throw wrapEngineError(error);
+        },
+      );
+    }
+
     let outputs;
     try {
       outputs = handle.transform(chunk, isFinish);
     } catch (error) {
-      // node surfaces engine failures as a TypeError carrying the error
-      // code (its webstreams adapter wraps them); match the class and
-      // code but keep the engine's message, which the adapter dropped.
-      const wrapped = $makeTypeError(error.message);
-      wrapped.code = error.code;
-      wrapped.errno = error.errno;
-      wrapped.cause = error;
-      throw wrapped;
+      throw wrapEngineError(error);
     }
-    for (let i = 0; i < outputs.length; i++) $transformStreamDefaultControllerEnqueue(controller, outputs[i]);
+    enqueueOutputs(controller, outputs);
   }
 
   const emptyChunk = new Uint8Array(0);
@@ -537,7 +567,7 @@ export function createCompressionTransform(mode) {
       // again, so release the native handle on the way out.
       transform(chunk, controller) {
         try {
-          drive(chunk, false, controller);
+          return drive(chunk, false, controller);
         } catch (e) {
           close();
           throw e;

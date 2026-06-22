@@ -14,6 +14,10 @@ export default [
         fn: "transform",
         length: 2,
       },
+      transformAsync: {
+        fn: "transform_async",
+        length: 2,
+      },
       close: {
         fn: "close",
         length: 0,

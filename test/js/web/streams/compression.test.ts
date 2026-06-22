@@ -813,3 +813,114 @@ describe("engine lifecycle", () => {
     expect(growth).toBeLessThan(RSS_BUDGET_MB);
   });
 });
+
+// Chunks past createCompressionTransform's asyncThreshold (4 * 16KB) take the
+// transformAsync path: input is copied, the drive loop runs on the work pool,
+// and the write resolves once the worker completes. Output must be
+// byte-identical to the synchronous path and to node:zlib's defaults.
+describe("CompressionStream large-chunk work-pool offload", () => {
+  // Well past asyncThreshold; non-uniform so a corruption shows in the
+  // round-trip equality.
+  const big = (() => {
+    const b = new Uint8Array(256 * 1024);
+    for (let i = 0; i < b.length; i++) b[i] = (i * 131) & 0xff;
+    return b;
+  })();
+
+  async function collect(readable: ReadableStream<Uint8Array>) {
+    const chunks: Uint8Array[] = [];
+    for await (const c of readable) chunks.push(c);
+    return Buffer.concat(chunks);
+  }
+
+  async function roundTrip(format: "gzip" | "deflate" | "deflate-raw" | "brotli" | "zstd") {
+    const cs = new CompressionStream(format);
+    const w = cs.writable.getWriter();
+    w.write(big);
+    w.close();
+    const compressed = await collect(cs.readable);
+
+    const ds = new DecompressionStream(format);
+    const dw = ds.writable.getWriter();
+    dw.write(compressed);
+    dw.close();
+    const out = await collect(ds.readable);
+
+    expect(out.equals(big)).toBe(true);
+    return compressed;
+  }
+
+  for (const format of ["gzip", "deflate", "deflate-raw", "brotli", "zstd"] as const) {
+    test(`${format} round-trips a 256KB single-write chunk`, async () => {
+      await roundTrip(format);
+    });
+  }
+
+  test("gzip output is byte-identical to node:zlib's defaults", async () => {
+    const compressed = await roundTrip("gzip");
+    expect(compressed.equals(zlib.gzipSync(big))).toBe(true);
+  });
+
+  test("multiple large writes in sequence are gated and round-trip", async () => {
+    const cs = new CompressionStream("gzip");
+    const w = cs.writable.getWriter();
+    // Each write awaits the work-pool round-trip before the next starts.
+    for (let i = 0; i < 4; i++) await w.write(big);
+    await w.close();
+    const compressed = await collect(cs.readable);
+
+    const ds = new DecompressionStream("gzip");
+    const dw = ds.writable.getWriter();
+    dw.write(compressed);
+    dw.close();
+    const out = await collect(ds.readable);
+
+    expect(out.length).toBe(4 * big.length);
+    for (let i = 0; i < 4; i++) {
+      expect(out.subarray(i * big.length, (i + 1) * big.length).equals(big)).toBe(true);
+    }
+  });
+
+  test("reader.cancel() while a large write is in flight defers the engine close", async () => {
+    const cs = new CompressionStream("gzip");
+    const writer = cs.writable.getWriter();
+    const reader = cs.readable.getReader();
+    // Do not await: the work-pool job is in flight when cancel runs.
+    const writePromise = writer.write(big);
+    await reader.cancel("stop");
+    // The write took the async path and the stream is now torn down; either
+    // the in-flight work resolved before teardown reached the writable, or
+    // teardown rejected it — what must not happen is a hang or a crash from
+    // closing the engine under the worker.
+    const outcome = await writePromise.then(
+      () => "fulfilled",
+      e => (e === "stop" ? "rejected:stop" : `rejected:${e?.constructor?.name}`),
+    );
+    expect(["fulfilled", "rejected:stop"]).toContain(outcome);
+    expect(
+      await writer.closed.then(
+        () => null,
+        e => e,
+      ),
+    ).toBe("stop");
+  });
+
+  test("a corrupt large chunk rejects on the async path with the engine code", async () => {
+    const ds = new DecompressionStream("gzip");
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+    const bad = Buffer.alloc(128 * 1024, 0xff);
+    const err = await writer.write(bad).then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(TypeError);
+    expect((err as any).code).toBe("Z_DATA_ERROR");
+    expect(
+      await reader.read().then(
+        () => null,
+        e => e,
+      ),
+    ).toBe(err);
+  });
+});

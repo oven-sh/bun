@@ -143,6 +143,7 @@ pub mod js_bundler {
         pub source_map: options::SourceMapOption,
         pub public_path: OwnedString,
         pub conditions: StringSet,
+        pub no_default_conditions: bool,
         pub packages: options::PackagesOption,
         pub format: options::Format,
         pub bytecode: bool,
@@ -209,6 +210,7 @@ pub mod js_bundler {
                 source_map: options::SourceMapOption::None,
                 public_path: OwnedString::default(),
                 conditions: StringSet::default(),
+                no_default_conditions: false,
                 packages: options::PackagesOption::Bundle,
                 format: options::Format::Esm,
                 bytecode: false,
@@ -854,6 +856,10 @@ pub mod js_bundler {
                         "Expected conditions to be an array of strings"
                     )));
                 }
+            }
+
+            if let Some(flag) = config.get_boolean_loose(global_this, "noDefaultConditions")? {
+                this.no_default_conditions = flag;
             }
 
             {

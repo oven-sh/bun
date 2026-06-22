@@ -1260,6 +1260,8 @@ pub struct BundleOptions<'a> {
     pub server_components: bool,
     pub hot_module_reloading: bool,
     pub react_fast_refresh: bool,
+    pub react_compiler: bun_ast::runtime::ReactCompilerMode,
+    pub react_compiler_parse_test_pragmas: bool,
     pub inject: Option<Box<[Box<[u8]>]>>,
     // `bun_url::URL<'a>` borrows its input string; the owned variant keeps the
     // struct self-contained.
@@ -1325,6 +1327,7 @@ pub struct BundleOptions<'a> {
 
     pub conditions: ESMConditions,
     pub tree_shaking: bool,
+    pub tree_shaking_override: Option<bool>,
     pub code_splitting: bool,
     pub source_map: SourceMapOption,
     pub packages: PackagesOption,
@@ -1475,6 +1478,8 @@ impl<'a> BundleOptions<'a> {
             server_components: self.server_components,
             hot_module_reloading: self.hot_module_reloading,
             react_fast_refresh: self.react_fast_refresh,
+            react_compiler: self.react_compiler,
+            react_compiler_parse_test_pragmas: self.react_compiler_parse_test_pragmas,
             inject: self.inject.clone(),
             origin: self.origin.clone(),
             // The owning handle stays with the parent; copying it here would
@@ -1532,6 +1537,7 @@ impl<'a> BundleOptions<'a> {
                 style: bun_core::handle_oom(self.conditions.style.clone()),
             },
             tree_shaking: self.tree_shaking,
+            tree_shaking_override: self.tree_shaking_override,
             code_splitting: self.code_splitting,
             source_map: self.source_map,
             packages: self.packages,
@@ -1767,6 +1773,8 @@ impl<'a> BundleOptions<'a> {
             server_components: false,
             hot_module_reloading: false,
             react_fast_refresh: false,
+            react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
+            react_compiler_parse_test_pragmas: false,
             inject: None,
             origin: bun_url::OwnedURL::from_href(Box::default()),
             output_dir_handle: None,
@@ -1804,6 +1812,7 @@ impl<'a> BundleOptions<'a> {
                 style: Default::default(),
             }, // filled below
             tree_shaking: false,
+            tree_shaking_override: None,
             code_splitting: false,
             source_map: SourceMapOption::None,
             packages: PackagesOption::Bundle,
@@ -2096,6 +2105,7 @@ pub struct TransformOptions {
     pub resolve_dir: Box<[u8]>,
     pub jsx: Option<jsx::Pragma>,
     pub react_fast_refresh: bool,
+    pub react_compiler: bun_ast::runtime::ReactCompilerMode,
     pub inject: Option<Box<[Box<[u8]>]>>,
     pub origin: &'static [u8],
     pub preserve_symlinks: bool,
@@ -2156,6 +2166,7 @@ impl TransformOptions {
                 None
             },
             react_fast_refresh: false,
+            react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
             inject: None,
             origin: b"",
             preserve_symlinks: false,

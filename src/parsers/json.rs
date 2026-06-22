@@ -192,13 +192,13 @@ where
             T::TNumericLiteral => {
                 let value = self.lexer.number;
                 self.lexer.next()?;
-                Ok(new_expr(E::Number { value }, loc))
+                Ok(new_expr(E::Number::new(value), loc))
             }
             T::TMinus => {
                 self.lexer.next()?;
                 let value = self.lexer.number;
                 self.lexer.expect(T::TNumericLiteral)?;
-                Ok(new_expr(E::Number { value: -value }, loc))
+                Ok(new_expr(E::Number::new(-value), loc))
             }
             T::TOpenBracket => {
                 self.lexer.next()?;
@@ -498,13 +498,13 @@ where
             T::TNumericLiteral => {
                 let value = self.lexer.number;
                 self.lexer.next()?;
-                Ok(new_expr(E::Number { value }, loc))
+                Ok(new_expr(E::Number::new(value), loc))
             }
             T::TMinus => {
                 self.lexer.next()?;
                 let value = self.lexer.number;
                 self.lexer.expect(T::TNumericLiteral)?;
-                Ok(new_expr(E::Number { value: -value }, loc))
+                Ok(new_expr(E::Number::new(-value), loc))
             }
             T::TOpenBracket => {
                 self.lexer.next()?;
@@ -641,7 +641,7 @@ macro_rules! impl_to_ast_int {
         impl ToAst for $t {
             fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
                 Ok(Expr {
-                    data: js_ast::expr::Data::ENumber(E::Number { value: *self as f64 }),
+                    data: js_ast::expr::Data::ENumber(E::Number::new(*self as f64)),
                     loc: bun_ast::Loc::default(),
                 })
             }
@@ -658,7 +658,7 @@ macro_rules! impl_to_ast_float {
         impl ToAst for $t {
             fn to_ast(&self, _bump: &Bump) -> Result<Expr, bun_core::Error> {
                 Ok(Expr {
-                    data: js_ast::expr::Data::ENumber(E::Number { value: *self as f64 }),
+                    data: js_ast::expr::Data::ENumber(E::Number::new(*self as f64)),
                     loc: bun_ast::Loc::default(),
                 })
             }

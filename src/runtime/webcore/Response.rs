@@ -564,7 +564,7 @@ impl Response {
     }
 }
 
-// ─── un-gated getters & header helpers ──────────────────────────────────────
+// ─── getters & header helpers ───────────────────────────────────────────────
 impl Response {
     pub fn redirect_location(&self) -> Option<ZigString> {
         self.header(HTTPHeaderName::Location)

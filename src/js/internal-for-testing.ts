@@ -304,6 +304,12 @@ export const translateUVErrorToE: (code: number) => string | undefined = $newZig
   1,
 );
 
+export const translateNtStatusToE: (status: number) => string | undefined = $newZigFunction(
+  "sys.zig",
+  "TestingAPIs.translateNtStatusToE",
+  1,
+);
+
 export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $newZigFunction(
   "sys/Error.zig",
   "TestingAPIs.sysErrorNameFromLibuv",

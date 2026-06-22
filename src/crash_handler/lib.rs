@@ -1564,7 +1564,7 @@ mod draft {
 
     const METADATA_VERSION_LINE: &str = const_format::formatcp!(
         "Bun {}v{} {} {}{}\n",
-        if cfg!(debug_assertions) {
+        if Environment::IS_DEBUG {
             "Debug "
         } else if Environment::IS_CANARY {
             "Canary "

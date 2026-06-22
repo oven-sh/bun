@@ -1209,8 +1209,9 @@ class Worker extends EventEmitter {
     let error = event?.error;
     // if the thrown value serialized successfully, the message will be empty
     // if not the message is the actual error
-    if (event.message !== "") {
-      error = new Error(event.message, { cause: event });
+    const message = event.message;
+    if (message !== "") {
+      error = new Error(message, { cause: event });
       const stack = event?.stack;
       if (stack) {
         error.stack = stack;

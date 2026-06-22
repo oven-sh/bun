@@ -2070,7 +2070,7 @@ impl<'a> PackageInstaller<'a> {
                                 ),
                             ),
                         );
-                        #[cfg(debug_assertions)]
+                        #[cfg(bun_debug)]
                         {
                             let t = cause.debug_trace;
                             bun_crash_handler::dump_stack_trace(&t.trace(), Default::default());

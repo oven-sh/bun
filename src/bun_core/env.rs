@@ -24,7 +24,16 @@ pub(crate) const IS_MAC: bool = IS_NATIVE && cfg!(target_os = "macos");
 pub(crate) const IS_BROWSER: bool = !IS_WASI && IS_WASM;
 pub const IS_WINDOWS: bool = cfg!(windows);
 pub(crate) const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
-pub const IS_DEBUG: bool = cfg!(debug_assertions);
+/// `true` only for the `dev` cargo profile (Debug buildtype). Keyed on
+/// `--cfg=bun_debug` (set by `scripts/build/rust.ts` when `cfg.debug`), not on
+/// `cfg!(debug_assertions)`: release-asan / release-assertions builds enable
+/// `debug-assertions` so `debug_assert!()` invariant checks run, but must not
+/// inherit Debug-build conveniences (`DUMP_SOURCE`, `debug_warn!`, the
+/// `bun-debug` self-name, experimental feature-flag defaults). Bare
+/// `cargo check` doesn't set `bun_debug`, so rust-analyzer sees release
+/// semantics; that matches a bare `cargo build` landing in `release`-like
+/// behaviour and keeps IDE diagnostics closer to what ships.
+pub const IS_DEBUG: bool = cfg!(bun_debug);
 pub(crate) const IS_TEST: bool = cfg!(test);
 // Android is a Linux kernel target, but Rust splits the two into separate
 // `target_os` values, so this const has to OR them — otherwise `OS` (below)

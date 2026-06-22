@@ -328,6 +328,20 @@ pub struct AstAlloc;
 /// `Vec` whose backing buffer lives in the thread-local AST allocation state.
 pub type AstVec<T> = Vec<T, AstAlloc>;
 
+/// `Box` whose header lives in the thread-local AST allocation state.
+/// `AstAlloc::deallocate` is a no-op, so the header is reclaimed by spill-heap
+/// reset rather than `Drop` — same lifetime story as `AstVec`. As with any
+/// arena-backed value, **`T::drop` is not guaranteed to run**: a `T` that owns
+/// a global-heap allocation, refcount, or fd will leak it. Use only for
+/// AST-lifetime payloads whose own storage is also `AstAlloc`/arena-backed.
+pub type AstBox<T> = Box<T, AstAlloc>;
+
+/// See [`AstBox`] for the drop-safety contract.
+#[inline]
+pub fn ast_box<T>(value: T) -> AstBox<T> {
+    Box::new_in(value, AstAlloc)
+}
+
 use crate::alloc_result;
 
 #[inline(always)]

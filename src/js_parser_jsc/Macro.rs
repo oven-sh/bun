@@ -809,17 +809,13 @@ impl<'a> Run<'a> {
 
             T::Integer => {
                 return Ok(Expr::init(
-                    E::Number {
-                        value: value.to_int32() as f64,
-                    },
+                    E::Number::new(value.to_int32() as f64),
                     self.caller.loc,
                 ));
             }
             T::Double => {
                 return Ok(Expr::init(
-                    E::Number {
-                        value: value.as_number(),
-                    },
+                    E::Number::new(value.as_number()),
                     self.caller.loc,
                 ));
             }
@@ -911,7 +907,7 @@ impl Runner {
         id: i32,
         javascript_object: JSValue,
     ) -> Result<Expr, MacroError> {
-        if cfg!(debug_assertions) {
+        if bun_core::env::IS_DEBUG {
             bun_core::prettyln!(
                 "<r><d>[macro]<r> call <d><b>{}<r>",
                 bstr::BStr::new(function_name)

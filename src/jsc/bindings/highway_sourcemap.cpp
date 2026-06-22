@@ -871,9 +871,12 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
                     d_name = DecodeVlqSextets(sextets, cont_bits, q, p + seg_len);
             } else if (field_count == 1) {
                 // 1-field segments don't emit a row (scalar skips them),
-                // only gen-col moves. seg_len <= 10; a 1-field VLQ of 8+
-                // sextets makes the scalar decoder return no-progress, so
-                // bail to scalar for byte-identical error reporting.
+                // only gen-col moves. seg_len <= 10; a 1-field VLQ of >= 9
+                // sextets (>= 8 continuation bytes) makes the scalar
+                // decoder return no-progress, so bail to scalar for
+                // byte-identical error reporting. Bailing at > 7 is
+                // conservative for seg_len == 8 (scalar succeeds there)
+                // and keeps DecodeVlqSextets' shift <= 30.
                 if (HWY_UNLIKELY(seg_len > 7))
                     goto bail;
                 size_t q = p;
